@@ -89,19 +89,17 @@ COMPOSE_ONLY = {
 }
 
 #: The settings whose absence from the stack is invisible until somebody configures one — every
-#: credential, every upstream address, every model list. Not "all settings": most have defaults
-#: that are genuinely the right answer, and a test demanding all 90 of them would be noise nobody
-#: reads. These are the ones where the default means *this adapter does not exist*.
-MUST_REACH_THE_GATEWAY = {
-    "AIRA_GOOGLE_API_KEY",
+#: upstream address and every model list. Not "all settings": most have defaults that are genuinely
+#: the right answer, and a test demanding all 90 of them would be noise nobody reads. These are the
+#: ones where the default means *this adapter does not exist*.
+#:
+#: Credentials are **not** in this list. They are found by shape — see :func:`_credentials`.
+MUST_REACH_A_CONTAINER = {
     "AIRA_GEMINI_MODELS",
     "AIRA_GEMINI_BASE_URL",
     "AIRA_VERTEX_PROJECT",
-    "AIRA_VERTEX_CREDENTIALS",
-    "AIRA_VERTEX_API_KEY",
     "AIRA_VERTEX_MODELS",
     "AIRA_FOUNDRY_ENDPOINT",
-    "AIRA_FOUNDRY_API_KEY",
     "AIRA_FOUNDRY_DEPLOYMENTS",
     "AIRA_OPENAI_SERVERS",
     "AIRA_OLLAMA_URL",
@@ -112,7 +110,25 @@ MUST_REACH_THE_GATEWAY = {
     "AIRA_OIDC_ISSUER",
     "AIRA_OIDC_AUDIENCE",
     "AIRA_ROLE_GROUPS",
+    "AIRA_DIRECTORY_CLIENT_ID",
 }
+
+#: What a credential's *name* looks like. Recognised by shape rather than listed by name, because
+#: the list version was the defect: `MUST_REACH_THE_GATEWAY` named nine credentials, every one of
+#: them on the gateway, and `AIRA_DIRECTORY_CLIENT_SECRET` — a Keycloak service-account secret on
+#: the **management** plane — was on no list and reached no container. `build_directory()` needs the
+#: id *and* the secret and returns `None` without either, so `FRD-209`'s directory search was
+#: unreachable in every containerised deployment: the console fell back to what Management already
+#: knows and said so, whatever the operator put in `.env`.
+#:
+#: `LESSONS.md` §1: **recognise a shape, do not remember a list of names.** A hand-written list
+#: covers the credentials somebody thought of, and the next credential is by definition the one
+#: nobody did — this one arrived on the plane the list did not cover.
+CREDENTIAL_SUFFIXES = ("_API_KEY", "_PASSWORD", "_SECRET", "_CREDENTIALS", "_TOKEN")
+
+#: A credential that deliberately reaches no container, with the reason. Empty is the honest state
+#: today; an entry here is a claim somebody has to defend.
+CREDENTIAL_NOT_IN_THE_STACK: dict[str, str] = {}
 
 
 def _text() -> str:
@@ -178,15 +194,55 @@ def test_no_compose_line_names_a_setting_that_does_not_exist() -> None:
     )
 
 
-def test_every_credential_and_upstream_setting_reaches_the_container() -> None:
-    passed = set(re.findall(r"^\s+(AIRA_[A-Z0-9_]+):", _wiring(), re.M))
-    unwired = sorted(MUST_REACH_THE_GATEWAY - passed)
+def _passed_to_a_container() -> set[str]:
+    return set(re.findall(r"^\s+(AIRA_[A-Z0-9_]+):", _wiring(), re.M))
+
+
+def _credentials() -> set[str]:
+    """Every setting whose **name** says it carries a credential, on either plane."""
+    return {
+        name
+        for name in _settings_names()
+        if name.endswith(CREDENTIAL_SUFFIXES) and name not in CREDENTIAL_NOT_IN_THE_STACK
+    }
+
+
+def test_every_upstream_setting_reaches_the_container() -> None:
+    unwired = sorted(MUST_REACH_A_CONTAINER - _passed_to_a_container())
 
     assert not unwired, (
         f"These settings cannot be set through the shipped stack: {unwired}. Each one's default "
         "means 'this adapter does not exist', so an operator who configures it sees nothing happen "
         "— the defect this file's docstring records four instances of."
     )
+
+
+def test_every_credential_reaches_the_container_whatever_it_is_called() -> None:
+    """Found by shape, so the next credential is covered before anybody thinks to list it.
+
+    The list version passed while `AIRA_DIRECTORY_CLIENT_SECRET` reached no container at all — see
+    :data:`CREDENTIAL_SUFFIXES` for what that cost.
+    """
+    unwired = sorted(_credentials() - _passed_to_a_container())
+
+    assert not unwired, (
+        f"These credentials cannot be set through the shipped stack: {unwired}. A credential the "
+        "stack cannot pass is a feature no containerised deployment has — and it degrades quietly, "
+        "because the code that needs it is written to work without it. Pass it in "
+        "`docker-compose.apps.yml`, or record the reason in CREDENTIAL_NOT_IN_THE_STACK."
+    )
+
+
+def test_the_credential_shapes_still_match_something() -> None:
+    """A guard on the guard: a renamed suffix would make the check above vacuous and silent."""
+    found = _credentials()
+    assert len(found) >= 8, f"only {len(found)} settings look like credentials: {sorted(found)}"
+
+
+def test_a_credential_waiver_still_names_a_real_setting() -> None:
+    """A waiver that outlives its setting silently covers the next one to take the name."""
+    stale = sorted(set(CREDENTIAL_NOT_IN_THE_STACK) - _settings_names())
+    assert not stale, f"These are waived and are settings nowhere: {stale}."
 
 
 def test_the_exempt_names_are_still_absent_from_the_settings_classes() -> None:

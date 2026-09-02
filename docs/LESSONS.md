@@ -120,7 +120,15 @@ reading code.
   and **the evidence was in the user's own output** — the `::1` rows were in the port listing I had
   already read, and I skimmed them because I was looking for a missing forward rather than a
   present one.
-- **Recognise a shape, do not remember a list of names.** `strip_attachments` matched wrapper keys
+- **Recognise a shape, do not remember a list of names.** *And a hand-written list of what-must-
+  be-checked is the same defect one level up.* `test_compose_passes_the_settings_it_names.py`
+  exists to catch a credential the shipped stack cannot pass, and carried nineteen names by hand —
+  nine credentials, every one of them on the gateway. `AIRA_DIRECTORY_CLIENT_SECRET`, a Keycloak
+  service-account secret on the **management** plane, was on no list and reached no container, so
+  `FRD-209`'s directory search was unreachable in every containerised deployment; it degrades
+  quietly by design, so nothing said so. A guard's own coverage is a list somebody maintains, and
+  the next item is by definition the one nobody thought of — derive it (`_SECRET`, `_PASSWORD`,
+  `_API_KEY`, … are a *shape*) and keep the exceptions as a waiver that has to name something real. `strip_attachments` matched wrapper keys
   — `inlineData`, `inline_data` — under a comment saying the second surface's shape would be added
   "when it lands". It landed, nothing was added, and every attachment on that surface went into the
   audit row verbatim: a 5 KB PDF stored whole, on a request that was *refused*. A dict carrying a

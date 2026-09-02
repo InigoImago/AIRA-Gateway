@@ -193,7 +193,12 @@ services:
       AIRA_API_KEY_MAX_DAYS: ${AIRA_API_KEY_MAX_DAYS:-180}
       AIRA_APP_NAME: ${AIRA_APP_NAME:-aira-management}
       AIRA_CURRENCY: ${AIRA_CURRENCY:-EUR}
+      # **Both halves.** `build_directory()` needs the id *and* the secret and returns `None`
+      # without either, so passing only the id made `FRD-209`'s directory search unreachable
+      # in any containerised deployment: the console silently fell back to what Management
+      # already knows, whatever the operator put in `.env`. Prefer Vault for the secret.
       AIRA_DIRECTORY_CLIENT_ID: ${AIRA_DIRECTORY_CLIENT_ID:-}
+      AIRA_DIRECTORY_CLIENT_SECRET: ${AIRA_DIRECTORY_CLIENT_SECRET:-}
       AIRA_LOG_LEVEL: ${AIRA_LOG_LEVEL:-INFO}
       AIRA_OIDC_CLOCK_SKEW_SECONDS: ${AIRA_OIDC_CLOCK_SKEW_SECONDS:-60.0}
       AIRA_OIDC_EXPIRY_LEEWAY_SECONDS: ${AIRA_OIDC_EXPIRY_LEEWAY_SECONDS:-0.0}

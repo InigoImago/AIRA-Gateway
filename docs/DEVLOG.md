@@ -5,6 +5,47 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The file you copy named 15 of 90 settings (2026-09-02)
+
+Asked to run the integration and browser suites against the stack, and whether `.env.example`
+lists every variable *"so I know how to bring up what"*. It did not: **15 of 90**.
+
+### What was actually missing
+
+The other 75 were all settable — `docker-compose.apps.yml` passes 84 of them as
+`${VAR:-default}` — and nothing in the file said so, so the only way to find one was to read the
+settings classes. `docs/CONFIGURATION.md` is the full reference and is good; it is not the file
+`make env` copies, and for many installations that file is the only place an operator meets this
+product's configuration.
+
+The file now names **85**, commented out — an uncommented line *is* the value, and a file that
+sets ninety of them is one where nobody can see which six were decisions. Five are named as
+deliberately unsettable with the reason (`AIRA_TEST_DATABASE`, and the four build-provenance
+values stamped into the image, which a container must not be able to claim at run time).
+
+It also opens with what the question actually was: which `make` target starts what, the six
+switches that change what you get, and four ready-made combinations — demo, dev, integrating,
+production. `tools/tests/test_the_env_example_names_every_setting.py` keeps all of that true.
+
+### And a credential that reached no container
+
+`AIRA_DIRECTORY_CLIENT_ID` was passed to Management and `AIRA_DIRECTORY_CLIENT_SECRET` was not.
+`build_directory()` needs both and returns `None` without either, so `FRD-209`'s directory search
+— looking up people who have never signed in — was unreachable in **every** containerised
+deployment, whatever the operator put in `.env`. It degrades quietly by design: the console falls
+back to what Management already knows and says so.
+
+`test_compose_passes_the_settings_it_names.py` exists to catch exactly this and did not, because
+its list of what-must-be-wired was **hand-written**: nineteen names, nine of them credentials,
+every one on the gateway. The next credential is by definition the one nobody thought of, and this
+one arrived on the plane the list did not cover. Credentials are now found by the *shape* of the
+name — `_API_KEY`, `_PASSWORD`, `_SECRET`, `_CREDENTIALS`, `_TOKEN` — with a waiver map that has
+to name a real setting. `LESSONS.md` §1: recognise a shape, do not remember a list of names.
+
+Verified by deleting the line again and watching the guard name it.
+
+---
+
 ## One line per call to a system that is not ours (2026-09-01)
 
 The owner spent a day unable to see why OTLP pushes were failing, with Vault, Kafka and Keycloak
