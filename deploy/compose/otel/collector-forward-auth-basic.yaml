@@ -1,0 +1,39 @@
+# HTTP basic authentication on the forwarding leg.
+#
+#     AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-basic.yaml
+#     AIRA_OTEL_FORWARD_BASIC_USERNAME=aira
+#     AIRA_OTEL_FORWARD_BASIC_PASSWORD=…
+#
+# Unglamorous and common: an on-premises collector behind nginx, an Elastic or OpenSearch cluster,
+# a log platform somebody stood up with the simplest thing that authenticates. It is here because
+# the alternative was telling that installation to base64 its own credentials into
+# `AIRA_OTEL_FORWARD_AUTHORIZATION` — which works, and is a step nobody should have to know is a
+# step, done by hand, in a `.env` file, without a way to tell a typo from a rejection.
+#
+# **Only ever over TLS.** Basic auth is the credential in clear text on every request. Against a
+# plaintext endpoint — `AIRA_OTEL_FORWARD_GRPC_PLAINTEXT=true`, or an `http://` URL — it is a
+# password broadcast to the network. The collector will not stop you; this sentence is the only
+# guard there is.
+#
+# Both exporters carry it, so the fragment works on either transport
+# (`forward-grpc.yaml` or not) without being edited.
+
+extensions:
+  basicauth/forward:
+    client_auth:
+      username: ${env:AIRA_OTEL_FORWARD_BASIC_USERNAME}
+      password: ${env:AIRA_OTEL_FORWARD_BASIC_PASSWORD}
+
+exporters:
+  otlphttp/forward:
+    auth:
+      authenticator: basicauth/forward
+  otlp/forward:
+    auth:
+      authenticator: basicauth/forward
+
+service:
+  # A merged list **replaces**, and the base configuration names no extensions — so this is the
+  # whole list, and it is one entry. Anything added to `collector-config.yaml` later has to be
+  # repeated here, the same rule the exporter lists live under.
+  extensions: [basicauth/forward]

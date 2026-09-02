@@ -226,19 +226,35 @@ services:
     image: otel/opentelemetry-collector-contrib:0.157.0
     container_name: ${AIRA_STACK:-aira}-otel-collector
     profiles: ["observability"]
-    # **Two `--config` flags, always.** The collector merges them, and the second is an empty
-    # fragment until `AIRA_OTEL_FORWARD_CONFIG` names the forwarding one — so a second destination
-    # is a variable rather than a fourth compose file, and the base configuration is never copied.
+    # **Four `--config` flags, always.** The collector merges them, and the last three are the empty
+    # fragment until a variable names a real one — so a second destination is configuration rather
+    # than a fourth compose file, and the base configuration is never copied.
+    #
+    # Three slots because a destination varies in three ways that do not depend on each other:
+    # **where** it is, **how** it is reached (OTLP/HTTP or OTLP/gRPC), and **who** we say we are.
+    # A branch would be the alternative and YAML has none — and the last time two of these shared
+    # a file, the result was a `headers:` block that was always present, so with no credential
+    # configured the collector sent `authorization: ''` on every request. Measured 2026-09-02.
     command:
       - --config=/etc/otelcol-contrib/config.yaml
       - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/noforward.yaml}
+      - --config=${AIRA_OTEL_FORWARD_PROTOCOL_CONFIG:-/etc/otelcol-contrib/noforward.yaml}
+      - --config=${AIRA_OTEL_FORWARD_AUTH_CONFIG:-/etc/otelcol-contrib/noforward.yaml}
     volumes:
       - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
       - ./otel/collector-forward.yaml:/etc/otelcol-contrib/forward.yaml:ro
+      - ./otel/collector-forward-grpc.yaml:/etc/otelcol-contrib/forward-grpc.yaml:ro
+      - ./otel/collector-forward-auth-header.yaml:/etc/otelcol-contrib/forward-auth-header.yaml:ro
+      - ./otel/collector-forward-auth-basic.yaml:/etc/otelcol-contrib/forward-auth-basic.yaml:ro
+      - ./otel/collector-forward-auth-oauth2.yaml:/etc/otelcol-contrib/forward-auth-oauth2.yaml:ro
+      - ./otel/collector-forward-auth-azure-identity.yaml:/etc/otelcol-contrib/forward-auth-azure-identity.yaml:ro
       - ./otel/collector-noforward.yaml:/etc/otelcol-contrib/noforward.yaml:ro
       # Writable, for `AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json`. Git-ignored, and nothing is
       # written here unless that variable names a path inside it.
       - ./payload:/payload
+      # Where a private CA's certificate goes, for `AIRA_OTEL_FORWARD_CA_FILE`. Git-ignored except
+      # for its README; empty until somebody puts a `.crt` in it, and the mount costs nothing then.
+      - ./otel/ca:/etc/otelcol-contrib/ca:ro
     environment:
       # How much the collector says about what **arrives**: basic | normal | detailed.
       # `normal` is one line per span and is what this stack has always printed.
@@ -260,8 +276,56 @@ services:
       # `.invalid` never resolves (RFC 2606), so the collector starts, this one exporter fails
       # loudly, and `make otel-status` names it while everything else keeps working.
       AIRA_OTEL_FORWARD_ENDPOINT: ${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}
+      # **One URL per signal, computed here from the one above.** `otlphttp` given a single
+      # `endpoint` appends `/v1/traces`; a destination that puts a route in front of OTLP needs the
+      # whole path spelled out, and a different host for metrics than for logs. Azure Monitor —
+      # the way telemetry reaches Microsoft Sentinel — is exactly that, so the three are nameable
+      # and default to what a plain receiver expects. `FRD-618`.
+      AIRA_OTEL_FORWARD_TRACES_ENDPOINT: ${AIRA_OTEL_FORWARD_TRACES_ENDPOINT:-${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}/v1/traces}
+      AIRA_OTEL_FORWARD_LOGS_ENDPOINT: ${AIRA_OTEL_FORWARD_LOGS_ENDPOINT:-${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}/v1/logs}
+      AIRA_OTEL_FORWARD_METRICS_ENDPOINT: ${AIRA_OTEL_FORWARD_METRICS_ENDPOINT:-${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}/v1/metrics}
+      # `json` to read it, `proto` where the receiver insists. The OTLP specification makes protobuf
+      # required and JSON optional, so a conformant receiver may take protobuf only — several
+      # managed endpoints do. A third value stops the collector at validation.
+      AIRA_OTEL_FORWARD_ENCODING: ${AIRA_OTEL_FORWARD_ENCODING:-json}
+      # `host:port`, no scheme — the OTLP/gRPC leg, used only when the protocol fragment is
+      # selected. gRPC has no per-signal paths, so there is one address rather than three.
+      AIRA_OTEL_FORWARD_GRPC_ENDPOINT: ${AIRA_OTEL_FORWARD_GRPC_ENDPOINT:-forward-endpoint-not-set.invalid:4317}
+      # No TLS at all (plaintext h2c) — not the same as `_INSECURE`, which keeps the encryption and
+      # stops checking the certificate. For a receiver on this network, not across a boundary.
+      AIRA_OTEL_FORWARD_GRPC_PLAINTEXT: ${AIRA_OTEL_FORWARD_GRPC_PLAINTEXT:-false}
+      # gzip | none | zstd | snappy. `none` is for a receiver that does not unwrap gzip — the
+      # symptom otherwise is a 400 about a malformed payload, which reads as *our telemetry is wrong*.
+      AIRA_OTEL_FORWARD_COMPRESSION: ${AIRA_OTEL_FORWARD_COMPRESSION:-gzip}
+      # ---- Credentials, read only by the auth fragment that is selected ---------------------
+      #
+      # The header **name** is a variable because `Authorization` is what a minority of receivers
+      # use: `x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team` are all in the field.
+      AIRA_OTEL_FORWARD_AUTH_HEADER: ${AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}
       AIRA_OTEL_FORWARD_AUTHORIZATION: ${AIRA_OTEL_FORWARD_AUTHORIZATION:-}
+      AIRA_OTEL_FORWARD_BASIC_USERNAME: ${AIRA_OTEL_FORWARD_BASIC_USERNAME:-}
+      AIRA_OTEL_FORWARD_BASIC_PASSWORD: ${AIRA_OTEL_FORWARD_BASIC_PASSWORD:-}
+      # OAuth2 client credentials (RFC 6749 §4.4) — Keycloak, Okta, Auth0, Ping, Entra. One
+      # fragment for every identity provider an installation already runs, rather than one per
+      # vendor. The secret is long-lived; the token it buys is not, which is the point.
+      AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL: ${AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL:-}
+      AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID: ${AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID:-}
+      AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET: ${AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET:-}
+      AIRA_OTEL_FORWARD_OAUTH_SCOPES: ${AIRA_OTEL_FORWARD_OAUTH_SCOPES:-[]}
+      AIRA_OTEL_FORWARD_OAUTH_CA_FILE: ${AIRA_OTEL_FORWARD_OAUTH_CA_FILE:-}
+      # The one credential shape OAuth2 cannot express: a platform identity with no secret.
+      AIRA_OTEL_FORWARD_AZURE_CLIENT_ID: ${AIRA_OTEL_FORWARD_AZURE_CLIENT_ID:-}
+      AIRA_OTEL_FORWARD_AZURE_SCOPE: ${AIRA_OTEL_FORWARD_AZURE_SCOPE:-https://monitor.azure.com/.default}
+      # ---- TLS ------------------------------------------------------------------------------
       AIRA_OTEL_FORWARD_INSECURE: ${AIRA_OTEL_FORWARD_INSECURE:-false}
+      # A private CA's certificate, inside the container: `/etc/otelcol-contrib/ca/<file>.crt`.
+      # Empty means the system trust store. The alternative was `_INSECURE=true`, which answers a
+      # missing root by not checking any of them.
+      AIRA_OTEL_FORWARD_CA_FILE: ${AIRA_OTEL_FORWARD_CA_FILE:-}
+      # And the other direction: mutual TLS, where the receiver authenticates *us* by certificate
+      # instead of — or as well as — a credential in a header.
+      AIRA_OTEL_FORWARD_CLIENT_CERT_FILE: ${AIRA_OTEL_FORWARD_CLIENT_CERT_FILE:-}
+      AIRA_OTEL_FORWARD_CLIENT_KEY_FILE: ${AIRA_OTEL_FORWARD_CLIENT_KEY_FILE:-}
       # Polite rather than fast, because the destination is usually one somebody is trying for the
       # first time — see `collector-forward.yaml` for what each is measured to do.
       AIRA_OTEL_FORWARD_BATCH_SECONDS: ${AIRA_OTEL_FORWARD_BATCH_SECONDS:-10s}
@@ -292,6 +356,41 @@ services:
     depends_on:
       otel-lgtm:
         condition: service_started
+    networks: [aira]
+    restart: unless-stopped
+
+  # --- What the second destination receives, on a page (opt-in via the "debug" profile) ---
+  #
+  # A standing-in SIEM: an ordinary OTLP/HTTP receiver that keeps the last few hundred batches and
+  # renders them. `make otlp-inspector` starts it and prints the address. `FRD-618`.
+  #
+  # **Not part of any other profile, and never published beyond this machine.** It has no
+  # authentication, and what it holds — `aira.subject`, `aira.source_ip`, whatever a log line
+  # carried — is the content `FRD-505` puts behind a role check and a retention clock. It is a
+  # thing you start while wiring a destination up, and stop again.
+  #
+  # The script is mounted rather than baked into an image: it is stdlib-only Python by design
+  # (`tools/otlp_inspector.py` says why), so there is nothing to install, and an edit is a restart
+  # rather than a rebuild — which is what a debugging tool should cost.
+  otlp-inspector:
+    image: python:3.14-slim
+    container_name: ${AIRA_STACK:-aira}-otlp-inspector
+    profiles: ["debug"]
+    command: ["python", "/app/otlp_inspector.py"]
+    volumes:
+      - ../../tools/otlp_inspector.py:/app/otlp_inspector.py:ro
+    environment:
+      # Batches, not records: one batch carries up to `AIRA_OTEL_FORWARD_BATCH_SIZE` of them.
+      AIRA_OTLP_INSPECTOR_KEEP: ${AIRA_OTLP_INSPECTOR_KEEP:-200}
+    ports:
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_INSPECTOR_PORT:-4319}:4318"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_INSPECTOR_PORT:-4319}:4318"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:4318/healthz').read()"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks: [aira]
     restart: unless-stopped
 

@@ -1,0 +1,67 @@
+# OAuth2 **client credentials** on the forwarding leg — the vendor-neutral answer to a credential
+# that expires.
+#
+#     AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-oauth2.yaml
+#     AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL=https://idp.internal/oauth2/token
+#     AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID=aira-gateway
+#     AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET=…            # → Vault in a real deployment
+#     AIRA_OTEL_FORWARD_OAUTH_SCOPES=["telemetry.write"] # optional; a bare word also works
+#
+# The collector fetches a token from `token_url`, caches it, and refreshes it before it expires.
+# What lives in `.env` is a **client secret** — long-lived — rather than a token, which is not.
+#
+# ## This is the fragment to reach for, and the reason is worth a paragraph
+#
+# RFC 6749 §4.4 is what Keycloak, Okta, Auth0, Ping, Entra and every product that sits behind one
+# implement. So this single fragment authenticates against essentially any identity provider an
+# installation already runs, without this repository knowing which — which is the whole point:
+# **AIRA emits, somebody else's identity provider decides.** A fragment per vendor is how a project
+# acquires four of them, and each one is a file nobody outside that vendor's customers can use.
+#
+# Two worked token URLs, as examples rather than as support for a product:
+#
+#     Keycloak   https://kc.internal/realms/<realm>/protocol/openid-connect/token
+#     Entra ID   https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token
+#                with AIRA_OTEL_FORWARD_OAUTH_SCOPES=["https://monitor.azure.com/.default"]
+#
+# The second is how a collector **outside** Azure authenticates to Azure Monitor, and it is the
+# reason there is no service-principal fragment in this directory: it would have been this file
+# with three values filled in. `forward-auth-azure-identity.yaml` remains for the one case OAuth2
+# genuinely cannot express — a platform identity with no secret anywhere.
+#
+# ## Scopes
+#
+# `${env:…}` in a value position is resolved and then parsed as YAML, so one variable can carry a
+# list: `["a","b"]`. A bare word works too and becomes a single scope. Empty is `[]` — valid, and
+# right for a provider that decides scope from the client itself.
+#
+# ## The audience trap
+#
+# A token is minted **for an audience**, and for many providers that audience is not the hostname
+# you are posting to. If the receiver answers `401` while the token endpoint answers `200`, the
+# scope or audience is what to look at first — not the credential, which is the thing everybody
+# checks twice.
+#
+# Both exporters carry it, so this works on either transport without being edited.
+
+extensions:
+  oauth2client:
+    token_url: ${env:AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL}
+    client_id: ${env:AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID}
+    client_secret: ${env:AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET}
+    scopes: ${env:AIRA_OTEL_FORWARD_OAUTH_SCOPES:-[]}
+    tls:
+      # The identity provider's own certificate, which is a different trust decision from the
+      # receiver's — an internal IdP behind a private CA is ordinary. Empty is the system store.
+      ca_file: ${env:AIRA_OTEL_FORWARD_OAUTH_CA_FILE}
+
+exporters:
+  otlphttp/forward:
+    auth:
+      authenticator: oauth2client
+  otlp/forward:
+    auth:
+      authenticator: oauth2client
+
+service:
+  extensions: [oauth2client]

@@ -61,6 +61,11 @@ PUBLISHED = {
     "otlp_http": "AIRA_PUBLISH_OTLP_HTTP_PORT",
     #: The collector's own Prometheus endpoint — what it accepted, and what it forwarded.
     "otlp_metrics": "AIRA_PUBLISH_OTLP_METRICS_PORT",
+    #: The standing-in SIEM (`debug` profile): what the *forwarding* leg sends, on a page. A third
+    #: OTLP port, and deliberately not 4318 on the host — the collector already has that one, and
+    #: two receivers reachable at the same address is how a measurement ends up being taken from
+    #: the wrong end of the wire.
+    "otlp_inspector": "AIRA_PUBLISH_OTLP_INSPECTOR_PORT",
     "ollama": "AIRA_PUBLISH_OLLAMA_PORT",
 }
 

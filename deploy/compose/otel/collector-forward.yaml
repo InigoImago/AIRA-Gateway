@@ -21,9 +21,52 @@
 #
 # Both, or neither. The first is what makes this file part of the configuration at all; the second
 # is where it sends. Off, the collector is handed an empty fragment and behaves exactly as before.
+#
+# ## Protocol and credential are two more files
+#
+# This file is the OTLP/HTTP leg. Two things about a destination vary independently of *where* it
+# is, so each has its own fragment and its own variable rather than a branch in here — YAML has no
+# branch, and the alternative is a block that is always present and sometimes empty (see below).
+#
+#     AIRA_OTEL_FORWARD_PROTOCOL_CONFIG
+#       (unset)                          OTLP/HTTP, this file, `json` or `proto`
+#       …/forward-grpc.yaml              OTLP/gRPC — same filter, same batching, `otlp/forward`
+#
+#     AIRA_OTEL_FORWARD_AUTH_CONFIG
+#       (unset)                          no credential of any kind
+#       …/forward-auth-header.yaml       any header name and value — `x-api-key`, `DD-API-KEY`, …
+#       …/forward-auth-basic.yaml        HTTP basic
+#       …/forward-auth-oauth2.yaml       OAuth2 client credentials (RFC 6749), refreshed
+#       …/forward-auth-azure-identity.yaml   the one thing OAuth2 cannot say: no secret at all
+#
+# **There is deliberately no `headers:` block in this file.** There used to be —
+# `authorization: ${env:AIRA_OTEL_FORWARD_AUTHORIZATION}` — and with the variable unset the
+# collector sent the header **empty** rather than omitting it. Measured on 2026-09-02 against a
+# receiver that prints what it got: `authorization: ''` on every request. Harmless against a
+# receiver that ignores it, and not harmless against one that parses it — and actively wrong
+# beside an authenticator extension, which sets a header itself.
+#
+# `FRD-618` is why the list above is what it is.
 
 exporters:
   otlphttp/forward:
+    # **One URL per signal, and they are not `endpoint` + a suffix.**
+    #
+    # `otlphttp` given a single `endpoint` appends `/v1/traces`, `/v1/logs`, `/v1/metrics` —
+    # measured, and correct for the many receivers that speak plain OTLP. It is *not* correct for
+    # one that puts a route in front of it: a per-tenant path, a stream or index name, an API
+    # version in the query, or a different host for one signal than for the others. Managed
+    # OTLP endpoints do all four, and no base URL plus a fixed suffix produces any of them.
+    #
+    # So the three are named separately and Compose computes the ordinary `<endpoint>/v1/<signal>`
+    # when nothing overrides them: one variable still works for a plain receiver, and a routed
+    # destination is expressible at all. (A worked example of the routed case — Azure Monitor,
+    # which needs all three plus a different metrics host — is in `INTEGRATIONS.md` §6.)
+    #
+    # **That computation is Compose's, not this file's.** Running this collector outside
+    # `docker-compose.yml` means setting all three yourself; `AIRA_OTEL_FORWARD_ENDPOINT` alone
+    # reaches nothing but the fallback below, which is the point of the fallback being visible.
+    #
     # **A default that fails at the right moment.** Without one, switching the fragment on and
     # forgetting the endpoint makes the collector fail *validation* and **restart for ever** — and
     # one container carries every exporter, so Grafana goes down with it, with the reason only in
@@ -32,15 +75,53 @@ exporters:
     # Compose cannot express *"required only when that other variable is set"*, so the guard lives
     # here: the collector starts, this exporter cannot resolve `…-not-set.invalid` (RFC 2606 —
     # never resolves), and `make otel-status` says so by name while everything else keeps working.
-    endpoint: ${env:AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}
-    # OTLP/JSON rather than protobuf. Whether your receiver parses it is the question to answer
-    # **before** wiring this up: it is the protobuf-JSON mapping, one nested document per batch,
-    # and not one flat event per line. `docs/features/FRD-616-…` says what the content is.
-    encoding: json
+    traces_endpoint: ${env:AIRA_OTEL_FORWARD_TRACES_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318/v1/traces}
+    logs_endpoint: ${env:AIRA_OTEL_FORWARD_LOGS_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318/v1/logs}
+    metrics_endpoint: ${env:AIRA_OTEL_FORWARD_METRICS_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318/v1/metrics}
+
+    # **`json` or `proto`, and the wrong one is silence rather than an error.**
+    #
+    # OTLP/JSON is the readable half of the wire and was hard-coded here until `FRD-618`: it is the
+    # protobuf-JSON mapping, one nested document per batch, and whether your receiver parses it is
+    # the question to answer *before* wiring this up. `FRD-616` says what the content is.
+    #
+    # It is hard-coded no longer, because a receiver that refuses JSON is not hypothetical.
+    # **The OTLP specification makes protobuf the required encoding and JSON optional**, so a
+    # conformant receiver may take protobuf only — and managed endpoints do: Azure Monitor's, for
+    # one, documents "OTLP HTTP/protobuf only; JSON payloads and OTLP/gRPC aren't supported".
+    # Against any of them the old default was not a preference, it was a wall.
+    #
+    # Unlike every other variable in this file, a **typo here stops the collector**: `protobuf`
+    # instead of `proto` fails validation (`'encoding' invalid encoding type: protobuf`) and the
+    # container restarts, taking Grafana with it. That is the opposite of the endpoint's treatment
+    # above, and deliberately so — an endpoint can be *forgotten*, which is an accident somebody
+    # else's variable causes, while an encoding is two words you have just typed on purpose.
+    # `make otel-status` is what says the collector is not running.
+    encoding: ${env:AIRA_OTEL_FORWARD_ENCODING:-json}
+
     tls:
+      # For a first reachability test, not for a deployment.
       insecure_skip_verify: ${env:AIRA_OTEL_FORWARD_INSECURE}
-    headers:
-      authorization: ${env:AIRA_OTEL_FORWARD_AUTHORIZATION}
+      # **The alternative to that switch, and the one an installation should reach for.** A SIEM
+      # behind a private CA is the ordinary case in the deployments this system is built for, and
+      # without this the only way to talk to one was to stop verifying certificates altogether —
+      # a decision about the whole leg, taken to solve a missing root. Empty means the system trust
+      # store, which is what a public certificate needs. Mount the file into
+      # `/etc/otelcol-contrib/ca/` (`deploy/compose/otel/ca/`, git-ignored).
+      ca_file: ${env:AIRA_OTEL_FORWARD_CA_FILE}
+      # **And the other direction: proving who *we* are.** Mutual TLS is how a good many internal
+      # collectors and log platforms authenticate a sender — instead of a credential in a header,
+      # or as well as one. Both empty is ordinary one-way TLS. Same directory as the CA above.
+      cert_file: ${env:AIRA_OTEL_FORWARD_CLIENT_CERT_FILE}
+      key_file: ${env:AIRA_OTEL_FORWARD_CLIENT_KEY_FILE}
+
+    # **How it is compressed, because not every receiver unwraps gzip.** The collector's default is
+    # `gzip` and that is right for almost everything; `none` is what a receiver behind a proxy that
+    # rewrites bodies, or one that simply does not implement it, needs — and the symptom otherwise
+    # is a `400` about a malformed payload, which reads as *our telemetry is wrong*. `zstd` and
+    # `snappy` are also accepted by this exporter.
+    compression: ${env:AIRA_OTEL_FORWARD_COMPRESSION:-gzip}
+
     # **How hard this pushes.** A receiver answering `429` is asking for fewer requests, and the
     # exporter's own defaults push the other way: ten concurrent POSTs, and a `429` is *retryable*,
     # so every refusal comes back and the loop tightens under load. Measured on this stack: 40
@@ -50,11 +131,53 @@ exporters:
       enabled: true
       num_consumers: ${env:AIRA_OTEL_FORWARD_CONSUMERS}
       # Held rather than dropped while a receiver says no; `memory_limiter` keeps it bounded.
+      #
+      # **In memory, and that is a decision with a cost.** A collector restart while the far end is
+      # down loses whatever is queued, and for an audit feed that is a gap nobody is told about.
+      # `file_storage` is in this image and would fix it; it is not wired up here because a
+      # persistent queue needs a writable volume and a size policy, which is its own round.
+      # `FRD-616` §6 is where that belongs. Named rather than left to be discovered.
       queue_size: ${env:AIRA_OTEL_FORWARD_QUEUE}
     retry_on_failure:
       enabled: true
       # Further out than the default second: against a quota, retrying quickly is asking the same
       # question before the window has moved.
+      initial_interval: ${env:AIRA_OTEL_FORWARD_RETRY_INITIAL}
+      max_interval: 60s
+      max_elapsed_time: 300s
+
+  # **The same destination over OTLP/gRPC**, defined here and used by nothing until
+  # `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` selects `forward-grpc.yaml`, which swaps the pipelines onto
+  # it. OTLP defines two transports and a receiver may implement either; a component's type is part
+  # of its name and a pipeline's exporter list is static, so *"speak gRPC instead"* is a different
+  # exporter rather than a field.
+  #
+  # **It lives here, not in that fragment, and that is not tidiness.** An exporter is validated
+  # whether or not a pipeline references it — measured: `exporters::otlp/forward: requires a
+  # non-empty "endpoint"` from a configuration where nothing used it. So a fragment that introduced
+  # this exporter by adding a `headers:` block to it — which is exactly what an auth fragment does,
+  # and it cannot know which transport is in play — would stop the collector. Both are defined
+  # always, both carry the guard, and the pipelines below decide.
+  otlp/forward:
+    # `host:port`, **no scheme**: gRPC has no per-signal paths, and TLS is the switch below rather
+    # than an `https://`. `encoding` does not apply either — OTLP/gRPC is protobuf, always.
+    endpoint: ${env:AIRA_OTEL_FORWARD_GRPC_ENDPOINT:-forward-endpoint-not-set.invalid:4317}
+    tls:
+      # **`insecure` means no TLS at all** — plaintext h2c — and is not `insecure_skip_verify`,
+      # which keeps the encryption and stops checking who is on the other end. A collector on the
+      # same private network is the case for `true`; anything crossing a boundary is not.
+      insecure: ${env:AIRA_OTEL_FORWARD_GRPC_PLAINTEXT:-false}
+      insecure_skip_verify: ${env:AIRA_OTEL_FORWARD_INSECURE}
+      ca_file: ${env:AIRA_OTEL_FORWARD_CA_FILE}
+      cert_file: ${env:AIRA_OTEL_FORWARD_CLIENT_CERT_FILE}
+      key_file: ${env:AIRA_OTEL_FORWARD_CLIENT_KEY_FILE}
+    compression: ${env:AIRA_OTEL_FORWARD_COMPRESSION:-gzip}
+    sending_queue:
+      enabled: true
+      num_consumers: ${env:AIRA_OTEL_FORWARD_CONSUMERS}
+      queue_size: ${env:AIRA_OTEL_FORWARD_QUEUE}
+    retry_on_failure:
+      enabled: true
       initial_interval: ${env:AIRA_OTEL_FORWARD_RETRY_INITIAL}
       max_interval: 60s
       max_elapsed_time: 300s
@@ -65,7 +188,9 @@ processors:
   # The `otel` leg wants everything: SQL statements, pool connections, ASGI internals — that is how
   # *"was the gateway slow or was the model slow"* gets answered. A SIEM wants the opposite: one
   # record per request, and the calls that carried data outside this installation. Measured on this
-  # stack, three requests produced **184 spans**, of which **6** are those two things.
+  # stack, three requests produced **184 spans**, of which **6** are those two things; measured
+  # again on 2026-09-02 across a full demo run, **347 spans reached Grafana and 20 reached the
+  # second destination** — eleven requests and the nine upstream calls they made.
   #
   # So this is not a volume knob dressed as a filter. Sending a SIEM 178 spans about connection
   # pooling is worse than sending it nothing: it buries the six that matter, and every one of them
@@ -80,11 +205,18 @@ processors:
   # a first draft of this filter selected, and not one of them a request. An empty parent is
   # sixteen zeroes rather than an empty string, which the first draft got wrong and only replaying
   # a real sample through a real collector revealed.
+  #
+  # **`http.url` is the attribute this build's clients actually write**, verified on the running
+  # stack rather than taken from the specification, which has since renamed it `url.full`. The
+  # rename arrives with an opt-in in `opentelemetry-instrumentation-httpx`, and on the day it does
+  # this expression starts dropping every upstream call silently — a filter that selects nothing
+  # looks exactly like a system making no calls. `test_the_siem_gets_requests_not_plumbing.py`
+  # asserts both names, so the upgrade fails a test rather than quietly emptying the feed.
   filter/siem:
     error_mode: ignore
     traces:
       span:
-        - 'attributes["aira.use_case"] == nil and (attributes["http.url"] == nil or parent_span_id.string == "0000000000000000")'
+        - 'attributes["aira.use_case"] == nil and ((attributes["http.url"] == nil and attributes["url.full"] == nil) or parent_span_id.string == "0000000000000000")'
 
   # Fewer, larger requests. The base leaves `batch` at its defaults, which send every 200ms — the
   # worst available shape for a destination that counts requests.

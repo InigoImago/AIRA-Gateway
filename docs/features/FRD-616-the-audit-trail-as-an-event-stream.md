@@ -28,9 +28,22 @@ delivers the wrong thing. A SIEM asks four questions of a system like this:
 
 **Telemetry answers none of them.** `FRD-615` established what actually travels: spans carrying
 attribution, model, outcome, tokens and cost — good for *"why is this slow"* and useless for
-*"who read Frau Müller's prompt on Tuesday"*. AIRA's own security lines go to stdout past the
-standard library, so they are not in OTLP either. A SIEM fed from the collector today receives a
-performance feed.
+*"who read Frau Müller's prompt on Tuesday"*.
+
+> **Half of this paragraph has since stopped being true, and the half that changed is the
+> interesting one.** It read: *"AIRA's own security lines go to stdout past the standard library,
+> so they are not in OTLP either."* That was correct when it was written and `f49bd2c` fixed it —
+> `forward_to_stdlib` hands every rendered structlog line to the root logger, where the OTLP
+> handler is. So `payload_read`, `request_suspended` and `oidc_token_rejected` **do** travel, and a
+> SIEM attached today receives them. Verified on 2026-09-02 across the forwarding leg (`FRD-618`).
+>
+> What has *not* changed is the table above. A log line is not the audit row: it is emitted where
+> somebody chose to emit one, in a wording nobody promised to keep, with no schema and no closed
+> vocabulary — and there is **no line per served request** at all, because the record of a request
+> is a database write. So the four questions still have the answers in the right-hand column, and
+> the rest of this document stands. The correction matters anyway: *"a SIEM fed from the collector
+> receives a performance feed"* would send a reader looking for a security signal that is in fact
+> arriving.
 
 ## 2. What already exists, and it is half of this
 
@@ -112,9 +125,10 @@ installation that wants a flat event shape puts a `transform` processor in front
 and this document's §1 is the list of what those events would have to contain.
 
 (b) can be tried today without touching the reference stack:
-`AIRA_OTEL_FORWARD_CONFIG` merges a collector fragment that fans out to your endpoint
-in OTLP/JSON beside Grafana (`docs/deployment/dev.md`). What arrives is what §1 describes, which is
-the point of being able to look before building anything.
+`AIRA_OTEL_FORWARD_CONFIG` merges a collector fragment that fans out to your endpoint beside
+Grafana (`docs/deployment/dev.md`), in OTLP/JSON or protobuf, with or without a credential, and
+`make otlp-inspector` will stand in for the receiver while you look (`FRD-618`). What arrives is
+what §1 describes, which is the point of being able to look before building anything.
 
 **Recommendation: (a), with (b) available.** Kafka because the reliability semantics are already
 decided and already operated here; OTLP as the low-ceremony option for an installation that has a

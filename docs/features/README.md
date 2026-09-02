@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**76 of 84 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**77 of 85 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -95,3 +95,4 @@ status that goes stale in the copy nobody opens.
 | [615](FRD-615-a-trace-crosses-the-bus.md) | A trace crosses the bus | 1 (observability) | ✅ Built |
 | [616](FRD-616-the-audit-trail-as-an-event-stream.md) | The audit trail as an event stream | 7 | ○ Draft |
 | [617](FRD-617-watching-the-wire-to-another-system.md) | Watching the wire to another system | 1 (observability) | ✅ Built |
+| [618](FRD-618-any-otlp-consumer.md) | Any OTLP consumer, not one of them | 1 (observability) | ✅ Built |

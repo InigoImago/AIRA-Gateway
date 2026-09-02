@@ -167,6 +167,20 @@ reading code.
   check it prescribes is a rule that has been agreed with, not adopted**; the repository already
   fails a build for a stale FRD header, and this is the same shape one level up.
 
+- **A correction has to be made where the sentence was quoted, not only where it was written.**
+  `FRD-615` §8 stated that AIRA's own log lines never reach OTLP. True on the day, fixed a commit
+  later, and left standing — so `FRD-616` §1 built on it (*"a SIEM fed from the collector receives
+  a performance feed"*), and the two documents a reader consults to ask *what would a SIEM actually
+  receive* both answered *nothing useful*, while those lines had been arriving all along. Found by
+  standing up a receiver, not by reading.
+
+  The fix that was tempting was to delete both sentences. The fix that was right was to strike them
+  through and say what replaced them **in the place the wrong version had been linked from**,
+  because the reader who needs the correction is the one who followed the link. And to say what
+  still holds: `FRD-616`'s table survived — a log line is not an audit row — so exactly one premise
+  fell, and a silent deletion would have left that indistinguishable from the whole document
+  falling. **When a claim propagates, its retraction has to travel the same edges.**
+
 - **A success returned by a client library is a claim about the client's own call, not about the
   far end.** `SpanExportResult.SUCCESS` means `resp.ok` and nothing more — and OTLP answers `200`
   with a body saying it dropped half the batch, which the Python exporter discards unread. So the
@@ -909,6 +923,31 @@ reading code.
 
 ## 3. Configuration, defaults and refusals
 
+- **A literal in a configuration file is a preference until a real destination makes it a
+  constraint.** The forwarding leg's `encoding: json` was hard-coded, for a good reason — OTLP/JSON
+  is the readable half, and being able to read what goes over is worth a lot while wiring something
+  up. Then the destination somebody actually had was Azure Monitor, which documents *"OTLP
+  HTTP/protobuf only"*, and the default was not a preference at all: it was the one thing making
+  that destination unreachable, chosen by nobody who had weighed it. Same shape as the endpoint one
+  file over, which *is* a variable. **Ask of every literal in a configuration: is this a choice, or
+  is it a choice on behalf of every future integrator?**
+
+  The same round found its mirror image. `headers: {authorization: ${env:…}}` was spelled in the
+  fragment, so the block was **always present** — and an unset variable sent an empty header rather
+  than no header, on every request. Measured against a receiver that prints what it got:
+  `authorization: ''`. YAML has no conditional, so a value that must sometimes be *absent* cannot
+  live beside values that are merely *empty*: it needs its own file, its own switch, and a default
+  of nothing. **A block that cannot be absent will one day send what it holds, including nothing.**
+
+  And the follow-up round found the third of the family, which is the sharpest: the fix for a
+  hard-coded *header name* is `${env:…}` in the key, and that **validates and does not work**.
+  `otelcol validate` answered `rc=0`; every export then failed with `invalid header field name
+  "${env:AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}"`, because substitution happens in values
+  and not in keys — and a validator cannot see the difference, since a key is a string and that
+  string is a valid one. **A configuration validator answers "is this well formed", never "does
+  this do what you wrote it for"**, which is why every one of these is driven against a real
+  receiver rather than validated. The two questions look identical from the terminal.
+
 - **A convenience default is a production default, one variable away.** Open routes, a published
   password, OIDC with no audience: refusals are *environment-shaped* rather than uniformly
   stricter, because a hardening pass that breaks the demo gets reverted (`ADR-0015`).
@@ -920,6 +959,20 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A vendor fragment earns its place only by doing something the generic one cannot say.** Asked
+  whether a named SIEM could be attached, a first round answered that SIEM: four of its
+  requirements, two files with its vendor's name on them. The owner's correction — *the example
+  was an example; generic compatibility matters more* — turned the same four requirements into the
+  **axes on which any destination varies**, and asking it that way found three more that no
+  endpoint from that vendor would ever have surfaced.
+
+  It also **deleted** a file rather than adding one: the vendor's service-principal fragment was
+  the generic OAuth2 one with three values filled in, because that vendor implements RFC 6749 §4.4
+  like everybody else. What survived was the single capability the generic mechanism genuinely
+  cannot express. The test to apply before writing a file with a product's name on it: *what does
+  this say that the neutral version cannot* — and if the answer is "the token URL", it is
+  configuration, not a feature.
+
 - **A pre-flight check that blames the file for the checker's environment is one nobody reads.**
   `make config-check` first reported *"2 things this file has to answer for"* when the only
   problem was that the machine running it had no Vault secret-id. Three outcomes have to stay

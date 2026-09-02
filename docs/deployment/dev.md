@@ -184,6 +184,19 @@ configuration — **fan-out, not replacement**, so Grafana keeps working and an 
 costs you nothing you already had. What arrives there is OTLP/JSON; `docs/INTEGRATIONS.md` §6 says
 what that shape actually is before you plan a parser around it.
 
+**And you can look at it without having a receiver.** `make otlp-inspector` starts one in the
+`debug` profile — set `AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318` and the page shows
+every batch that leaves: the spans with their `aira.*` attributes, the content type, and whether a
+credential was on the request (`FRD-618`). `make otlp-inspector-down` when you are done.
+
+**A destination that is not a plain OTLP receiver** varies on seven axes — transport (HTTP or
+gRPC), encoding, per-signal URLs, the credential's header name, its kind (header · basic · OAuth2),
+a client certificate, and compression. Each is a variable or a fragment;
+[`INTEGRATIONS.md` §6](../INTEGRATIONS.md#6-observability) has the table and three worked shapes.
+
+**Sending telemetry *to* this stack needs nothing at all.** The collector takes OTLP on 4317 (gRPC)
+and 4318 (HTTP), protobuf or JSON — any conformant producer can point at it.
+
 This used to be a fourth Compose file called the *laboratory overlay*, on the argument that the
 Collector merges nothing so a second destination needed a whole second configuration. Measured
 against collector-contrib 0.157 on 2026-09-02, that is no longer true: repeated `--config` flags

@@ -1,0 +1,66 @@
+# A credential in a header — whichever header your receiver wants.
+#
+#     AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-header.yaml
+#     AIRA_OTEL_FORWARD_AUTH_HEADER=x-api-key           # default: authorization
+#     AIRA_OTEL_FORWARD_AUTHORIZATION=…                 # sent verbatim, scheme and all
+#
+# **The header name is a variable, because `Authorization` is not what most of them use.** What
+# OTLP-accepting products actually ask for: `x-api-key`, `api-key`, `DD-API-KEY`,
+# `X-Honeycomb-Team`, `X-Seq-ApiKey`, `Authorization: Bearer …`, `Authorization: Splunk …`. Pinning
+# the name would make this fragment useful to a minority of them and leave everybody else editing
+# a file the repository ships.
+#
+# ## Why an extension rather than three lines of `headers:`
+#
+# The obvious version is `headers: {${env:AIRA_OTEL_FORWARD_AUTH_HEADER}: ${env:…}}`, and it
+# **validates and does not work**. Measured on 2026-09-02 against the running stack: the collector
+# substitutes `${env:…}` in a *value* and not in a **key**, so the request went out with the header
+# literally named
+#
+#     net/http: invalid header field name "${env:AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}"
+#
+# — every export failing, in a container log, while `otelcol validate` had answered `rc=0` because
+# a key is a string and that string is a perfectly good one. This project's own sentence, one layer
+# down: **"no errors" and "it worked" are different statements**, and a configuration validator
+# only ever answers the first.
+#
+# `headers_setter` takes the name in a *value* position (`key:` inside a list item), where
+# substitution does happen. Verified end to end: `x-api-key: (opaque, 13 chars)` on the receiver.
+#
+# ## Which credential fragment
+#
+# This one for a **long-lived key** — the kind a console shows you once and you paste into a secret
+# store. It is the wrong shape for anything an identity provider mints: those expire, and a header
+# set at start-up stops working later with a `401` in a container log. `forward-auth-oauth2.yaml`
+# is that case; it fetches and refreshes.
+#
+# **Selecting this fragment and leaving the value empty sends an empty header.** That is the defect
+# this whole area began with, and it is survivable only because it now takes a deliberate act: the
+# default path selects no auth fragment at all and sends no header. Nothing here can tell an
+# empty credential from an unset one — `make otlp-inspector` can, and shows it as `(empty)`.
+#
+# An authenticator applies to whichever exporter is in play, so this works over OTLP/HTTP and
+# OTLP/gRPC — on gRPC the header becomes call metadata — without being edited.
+#
+# It is a secret: `.env` (git-ignored) or the deployment's secret store, never a committed file.
+
+extensions:
+  headers_setter:
+    headers:
+      - action: upsert
+        key: ${env:AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}
+        value: ${env:AIRA_OTEL_FORWARD_AUTHORIZATION}
+
+exporters:
+  otlphttp/forward:
+    auth:
+      authenticator: headers_setter
+  otlp/forward:
+    auth:
+      authenticator: headers_setter
+
+service:
+  # A merged list **replaces**, and the base configuration names no extensions — so this is the
+  # whole list, and it is one entry. Anything added to `collector-config.yaml` later has to be
+  # repeated here, the same rule the exporter lists live under.
+  extensions: [headers_setter]

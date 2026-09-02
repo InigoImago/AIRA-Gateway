@@ -64,3 +64,8 @@ matrix-result.json
 
 # The marker `--verify` reads: one path, no secrets. Local to an installation.
 .aira-config-source
+
+# A private CA for the OTLP forwarding leg (`AIRA_OTEL_FORWARD_CA_FILE`). The directory and its
+# README are tracked so the mount point exists; whose certificate it holds is the installation's.
+deploy/compose/otel/ca/*
+!deploy/compose/otel/ca/README.md

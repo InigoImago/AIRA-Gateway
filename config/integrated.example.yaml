@@ -248,7 +248,56 @@ otel:
   # per request and a trace backend wants the SQL underneath it. Metrics and logs go over whole.
   forward_config: ''
   forward_endpoint: ''
-  # forward_authorization: → Vault. It authenticates, so it does not belong in this file.
+
+  # ---- And the seven ways a destination varies (`FRD-618`) -----------------------------------
+  #
+  # `forward_endpoint` above is enough for a plain OTLP receiver. Everything below is for one that
+  # is not, and each was a wall rather than a preference when it was missing.
+  #
+  # **Which transport.** OTLP defines gRPC and HTTP and a receiver may implement either. gRPC has
+  # one address, no scheme, and no per-signal paths — and no JSON, so `forward_encoding` does not
+  # reach that leg.
+  forward_protocol_config: ''
+  forward_grpc_endpoint: ''
+  forward_grpc_plaintext: false
+
+  # **What is on the wire.** The OTLP specification makes protobuf required and JSON optional, so a
+  # conformant receiver may refuse JSON — several managed endpoints do. A third value stops the
+  # collector at validation rather than being ignored. `none` compression is for a receiver that
+  # does not unwrap gzip; otherwise the symptom is a 400 about a malformed payload.
+  forward_encoding: json
+  forward_compression: gzip
+
+  # **One URL per signal**, for a destination that puts a route in front of OTLP — a per-tenant
+  # path, a stream or index name, an API version in the query, or a different host for one signal.
+  # Empty means `forward_endpoint` plus /v1/traces, /v1/logs, /v1/metrics.
+  forward_traces_endpoint: ''
+  forward_logs_endpoint: ''
+  forward_metrics_endpoint: ''
+
+  # **Who we say we are**, as its own fragment — empty is no credential header at all. A `headers:`
+  # block that is always present sends `authorization: ''` when nothing is configured; measured.
+  #   …/forward-auth-header.yaml  any header name and value
+  #   …/forward-auth-basic.yaml   HTTP basic
+  #   …/forward-auth-oauth2.yaml  OAuth2 client credentials — Keycloak, Okta, Auth0, Ping, Entra
+  #   …/forward-auth-azure-identity.yaml  a platform identity, the one shape OAuth2 cannot express
+  forward_auth_config: ''
+  # `Authorization` is what a minority of receivers ask for: x-api-key, DD-API-KEY, X-Honeycomb-Team.
+  forward_auth_header: authorization
+  # forward_authorization:        → Vault. It authenticates, so it does not belong in this file.
+  # forward_basic_password:       → Vault, for the same reason.
+  # forward_oauth_client_secret:  → Vault, for the same reason.
+  forward_oauth_token_url: ''
+  forward_oauth_client_id: ''
+  forward_oauth_scopes: '[]'
+
+  # A private CA, inside the collector: `/etc/otelcol-contrib/ca/<file>.crt`, mounted from
+  # `deploy/compose/otel/ca/`. Empty means the system trust store. This is the answer to a receiver
+  # behind an internal CA; `forward_insecure` is not, and stops verifying every certificate.
+  forward_ca_file: ''
+  # And the other direction: mutual TLS, where the receiver authenticates *us* by certificate.
+  forward_client_cert_file: ''
+  forward_client_key_file: ''
   forward_insecure: false
   # How hard it pushes. Polite rather than fast, because a destination one is attaching for the
   # first time is the one to be wrong about: the collector's own defaults forward every 200ms from

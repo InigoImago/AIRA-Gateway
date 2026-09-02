@@ -47,7 +47,7 @@ COMPOSE_FULL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) \
 # `tools/tests/test_compose_lifecycle_covers_the_stack.py` fails when a profile is declared that
 # this line does not name.
 COMPOSE_ALL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) \
-               --profile observability --profile demo --profile verify
+               --profile observability --profile demo --profile verify --profile debug
 ENV_FILE := $(COMPOSE_DIR)/.env
 ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
@@ -83,6 +83,7 @@ KEYCLOAK_URL   := $(call stack_url,keycloak)
 OLLAMA_URL     := $(call stack_url,ollama)
 VAULT_URL      := $(call stack_url,vault)
 GRAFANA_URL    := $(call stack_url,grafana)
+INSPECTOR_URL  := $(call stack_url,otlp_inspector)
 KAFKA_ADDR     := $(call stack_url,kafka.netloc)
 
 # The bare ports, for the two dev targets that **bind** rather than connect: `ng serve` and Django's
@@ -98,6 +99,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
         purge-e2e-use-cases config-verify config-check up-apps otel-status otel-arrivals \
+        otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
         run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
@@ -186,6 +188,28 @@ otel-status: ## Did telemetry reach the collector, and did the collector pass it
 	@# `receiver_accepted` / `receiver_refused` against `exporter_sent` / `send_failed`, which is
 	@# the difference between "we sent it" and "it arrived".
 	@uv run python tools/otel_status.py
+
+otlp-inspector: env ## Stand in for a SIEM: show what the forwarding leg actually sends
+	@# **The leg `make otel-arrivals` cannot see.** That one is what *arrived* at the collector,
+	@# before the SIEM filter and before anything is forwarded. This is what leaves on the second
+	@# destination's own pipeline — the eleven request spans rather than the three hundred, with
+	@# whatever credential the auth fragment put on the request.
+	@#
+	@# It only receives once the collector is pointed at it, which is two variables and a recreate:
+	@#
+	@#   AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+	@#   AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318
+	@#
+	@# A debugging tool: in memory, capped, unauthenticated, and holding attribution — start it
+	@# while you are wiring a destination up, and `make otlp-inspector-down` when you are done.
+	$(COMPOSE_CORE) --profile debug up -d otlp-inspector
+	@echo
+	@echo "  what the second destination receives: $(INSPECTOR_URL)"
+	@echo "  point the collector at it:            AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318"
+	@echo
+
+otlp-inspector-down: ## Stop the standing-in SIEM and forget what it held
+	$(COMPOSE_CORE) --profile debug rm -sf otlp-inspector
 
 up-full: env ## Start EVERYTHING in containers, demo provisioning included (infra + apps + showcase)
 	@-$(MAKE) --no-print-directory config-verify

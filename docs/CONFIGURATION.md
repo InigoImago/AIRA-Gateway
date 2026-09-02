@@ -304,12 +304,37 @@ The full worked explanation, with what each is measured to do, is
 Off unless **both** of the first two are set. `AIRA_OTEL_FORWARD_CONFIG` is the switch; the rest are
 read only once it is.
 
+A destination varies in three ways that do not depend on each other, so there are three switches:
+**where** it is (`_CONFIG` plus an endpoint), **how it is reached** (`_PROTOCOL_CONFIG`: OTLP/HTTP
+or OTLP/gRPC), and **who we say we are** (`_AUTH_CONFIG`). Each is a fragment the collector merges,
+because a `.yaml` has no conditional — and the last time two of them shared a file, the result was
+a header that was always present and sometimes empty.
+
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `AIRA_OTEL_FORWARD_CONFIG` | _(the empty fragment)_ | `/etc/otelcol-contrib/forward.yaml` turns forwarding on. Anything else, including unset, merges `noforward.yaml` — an empty `{}` — and nothing exists: no exporter, no filter pipeline, no second container. |
-| `AIRA_OTEL_FORWARD_ENDPOINT` | `…not-set.invalid:4318` | Where to send. The default never resolves (RFC 2606) **on purpose**: switching the fragment on without an endpoint used to fail validation and restart the collector for ever, taking Grafana with it. Now that one exporter fails by name and everything else keeps working. |
-| `AIRA_OTEL_FORWARD_AUTHORIZATION` | _(empty)_ | Whatever your receiver authenticates with. |
-| `AIRA_OTEL_FORWARD_INSECURE` | `false` | Skip certificate verification. For a first reachability test, not for a deployment. |
+| `AIRA_OTEL_FORWARD_ENDPOINT` | `…not-set.invalid:4318` | Where to send, for a receiver that speaks plain OTLP — Compose turns it into the three per-signal URLs below by appending `/v1/traces`, `/v1/logs`, `/v1/metrics`. The default never resolves (RFC 2606) **on purpose**: switching the fragment on without an endpoint used to fail validation and restart the collector for ever, taking Grafana with it. Now that one exporter fails by name and everything else keeps working. |
+| `AIRA_OTEL_FORWARD_TRACES_ENDPOINT` | `<endpoint>/v1/traces` | One URL per signal, for a destination that puts a route in front of OTLP. Set verbatim — nothing is appended. |
+| `AIRA_OTEL_FORWARD_LOGS_ENDPOINT` | `<endpoint>/v1/logs` | The same, for logs. |
+| `AIRA_OTEL_FORWARD_METRICS_ENDPOINT` | `<endpoint>/v1/metrics` | And for metrics, which for Azure Monitor is a **different host** than the other two. |
+| `AIRA_OTEL_FORWARD_ENCODING` | `json` | `json` or `proto`. The OTLP specification makes protobuf **required** and JSON optional, so a conformant receiver may refuse JSON — several managed endpoints do. Any other value stops the collector at validation. Has no effect on the gRPC leg, which is protobuf by definition. |
+| `AIRA_OTEL_FORWARD_COMPRESSION` | `gzip` | `gzip` · `none` · `zstd` · `snappy`. `none` is for a receiver that does not unwrap gzip; otherwise the symptom is a `400` about a malformed payload, which reads as *our telemetry is wrong*. |
+| `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | _(the empty fragment)_ | **Which OTLP transport.** Unset is HTTP; `/etc/otelcol-contrib/forward-grpc.yaml` is gRPC. Same filter, same batching, same credential — only the exporter the pipelines use changes. |
+| `AIRA_OTEL_FORWARD_GRPC_ENDPOINT` | `…not-set.invalid:4317` | `host:port`, **no scheme**. gRPC has no per-signal paths, so this is one address rather than three. Read only on the gRPC leg. |
+| `AIRA_OTEL_FORWARD_GRPC_PLAINTEXT` | `false` | No TLS at all (h2c). **Not** `_INSECURE`, which keeps the encryption and stops checking the certificate. For a receiver on the same private network. |
+| `AIRA_OTEL_FORWARD_AUTH_CONFIG` | _(the empty fragment)_ | **Who we say we are, as its own fragment.** Unset sends no credential header of any kind. `…/forward-auth-header.yaml` (any header name) · `…/forward-auth-basic.yaml` · `…/forward-auth-oauth2.yaml` (fetched and refreshed) · `…/forward-auth-azure-identity.yaml` (a platform identity, no secret). Whichever is chosen applies on both transports. |
+| `AIRA_OTEL_FORWARD_AUTH_HEADER` | `authorization` | **The header name.** `Authorization` is what a minority of OTLP receivers ask for: `x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, `X-Seq-ApiKey` are all in the field. |
+| `AIRA_OTEL_FORWARD_AUTHORIZATION` | _(empty)_ | Its value, sent verbatim, scheme included. Read only by the header fragment — set alone it does nothing, the same shape as the endpoint and the switch. |
+| `AIRA_OTEL_FORWARD_BASIC_USERNAME` / `_PASSWORD` | _(empty)_ | HTTP basic, for the basic fragment. Only ever over TLS: it is the credential in clear text on every request. |
+| `AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL` | _(empty)_ | OAuth2 client credentials (RFC 6749 §4.4) — Keycloak, Okta, Auth0, Ping, Entra, and anything behind one. **One fragment for every identity provider**, rather than one per vendor. |
+| `AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` | _(empty)_ | The client. The secret is long-lived and belongs in Vault; the token it buys is not, which is why this is an extension rather than a header. |
+| `AIRA_OTEL_FORWARD_OAUTH_SCOPES` | `[]` | A YAML list in one variable: `["a","b"]`. A bare word works too. Empty is right for a provider that decides scope from the client. |
+| `AIRA_OTEL_FORWARD_OAUTH_CA_FILE` | _(empty)_ | The identity provider's own CA, which is a different trust decision from the receiver's. |
+| `AIRA_OTEL_FORWARD_AZURE_CLIENT_ID` | _(empty)_ | For the platform-identity fragment only. Empty means the **system-assigned** managed identity; a guid means a user-assigned one. |
+| `AIRA_OTEL_FORWARD_AZURE_SCOPE` | `https://monitor.azure.com/.default` | The audience the token is minted for. Not the host: a per-instance hostname is not what the token is issued for. |
+| `AIRA_OTEL_FORWARD_CA_FILE` | _(empty)_ | A private CA's certificate, inside the collector — put the file in `deploy/compose/otel/ca/` and name it `/etc/otelcol-contrib/ca/<file>.crt`. Empty means the system trust store. **This** is the answer to a receiver behind an internal CA. |
+| `AIRA_OTEL_FORWARD_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | _(empty)_ | Mutual TLS: the receiver authenticates **us** by certificate, instead of or as well as a header. |
+| `AIRA_OTEL_FORWARD_INSECURE` | `false` | Skip certificate verification altogether. For a first reachability test, not for a deployment — and not a substitute for the CA file above, which answers a missing root without abandoning the check. |
 | `AIRA_OTEL_FORWARD_BATCH_SECONDS` | `10s` | How long the collector holds telemetry to send it in one piece. |
 | `AIRA_OTEL_FORWARD_BATCH_SIZE` | `8192` | And how much fits in one request. |
 | `AIRA_OTEL_FORWARD_CONSUMERS` | `1` | Concurrent senders. The collector's own default is **ten**, and a `429` is retryable — ten senders against a quota is a loop that tightens under load. |
@@ -317,8 +342,21 @@ read only once it is.
 | `AIRA_OTEL_FORWARD_RETRY_INITIAL` | `5s` | How long before asking again. The default is one second, which against a quota asks the same question before the window has moved. |
 
 **What the second destination receives is not what Grafana receives.** Traces are filtered to a
-request and the calls made inside one — measured, 6 spans of 184 — because a SIEM wants one record
-per request and Grafana wants the SQL underneath it. Metrics and logs go over whole.
+request and the calls made inside one — measured, 6 spans of 184, and again on 2026-09-02 across a
+full demo run: **347 spans to Grafana, 20 to the second destination** — because a SIEM wants one
+record per request and Grafana wants the SQL underneath it. Metrics and logs go over whole.
+
+**And you can look at it before a SIEM exists.** `make otlp-inspector` starts a receiver in the
+`debug` profile that keeps the last few hundred batches and renders them — the spans, their
+`aira.*` attributes, the content type, and whether a credential was on the request. Point the
+collector at `http://otlp-inspector:4318` and the page is what your SIEM would have been handed.
+A debugging tool: in memory, unauthenticated, and holding attribution, so it belongs on a
+developer's machine and nowhere else (`FRD-618`).
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `AIRA_PUBLISH_OTLP_INSPECTOR_PORT` | `4319` | Where the inspector's page is published. Deliberately not `4318`: the collector has that one, and two receivers at the same address is how a measurement gets taken from the wrong end of the wire. |
+| `AIRA_OTLP_INSPECTOR_KEEP` | `200` | How many **batches** it keeps. A batch carries up to `AIRA_OTEL_FORWARD_BATCH_SIZE` records, so this bounds arrivals rather than records. |
 
 ### And one that is neither
 

@@ -5,6 +5,186 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Sentinel was the example, not the target (2026-09-02)
+
+The owner, after the round below: *I only named Sentinel as an example; generic compatibility with
+the OTel consumers matters more than any Azure integration. If it is not ensured, implement it.*
+
+Correct, and the correction improved the design rather than merely redirecting it. What had been
+one vendor's four requirements became **the axes on which any destination varies** — and asking the
+question that way found three more that no Azure endpoint would have surfaced.
+
+### The receiving side was already fine, and that is worth having measured
+
+Half the question, checked first: a hand-written OTLP/JSON document posted from outside the stack
+answered `200` and the span went through the pipeline; gzipped, `200`; malformed, `400`. The
+collector takes gRPC on 4317 and HTTP on 4318, protobuf or JSON. **Any conformant OTel producer can
+send to this installation today** — a fact nobody had written down, and one an integrator asks
+before they ask anything else.
+
+### Seven axes, of which three were new
+
+| | was |
+| --- | --- |
+| transport | **HTTP only** — OTLP defines gRPC too, and a receiver may implement either |
+| credential name | **`Authorization`, hard-coded** — which is what a *minority* of receivers ask for |
+| credential kind | a static string — no basic, no OAuth2 |
+| compression | **gzip, always** |
+| encoding · path · client certificate | the round below |
+
+`x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, `X-Seq-ApiKey` — pinning the header name
+to `Authorization` made the credential fragment useful to a minority and left everybody else editing
+a shipped file.
+
+### And it deleted a file rather than adding one
+
+The first round shipped an Azure **service-principal** fragment. It is gone: it was
+`forward-auth-oauth2.yaml` with three values filled in, because Entra implements RFC 6749 §4.4 like
+Keycloak and Okta, and its token URL is a value in a `.env` file. One generic fragment now
+authenticates against essentially any identity provider an installation already runs.
+
+What survives of Azure is the **managed identity** — no secret to configure anywhere, the token
+from the instance metadata endpoint, which identity a platform fact. **A vendor fragment earns its
+place only by doing something the generic one cannot say**, and that rule is now written where the
+next round will read it.
+
+Driven end to end against a token endpoint stood up for the purpose: the collector asked for a
+token with both scopes carried in one variable
+(`grant_type=client_credentials&scope=telemetry.write+telemetry.read`), and what it was issued
+arrived at the receiver as `Bearer (21 chars)`. The client secret is nowhere on the page.
+
+### A configuration that validated and did not work
+
+The obvious way to make the header name a variable is to put `${env:…}` in the key. It
+**validates** — `otelcol validate` answered `rc=0` — and on the running stack every export then
+failed with
+
+```
+net/http: invalid header field name "${env:AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}"
+```
+
+The collector substitutes in a *value* and not in a **key**, and validation cannot see the
+difference because a key is a string and that string is a valid one. The symptom was retries in a
+container log and a page with no arrivals — indistinguishable from a receiver that is down.
+
+This project's own sentence one layer further down: **"no errors" and "it worked" are different
+statements**, and a configuration validator only ever answers the first. `headers_setter` takes the
+name in a value position; verified as `x-api-key: (opaque, 13 chars)` on the receiver, and a guard
+test now fails on any fragment that keys a header by a variable.
+
+### Both transports are defined, always
+
+`forward-grpc.yaml` contains **nothing but four pipeline exporter lists**, and both exporters live
+in `collector-forward.yaml`. That looks like the wrong place until the other arrangement is tried:
+an exporter is validated whether or not a pipeline references it — measured,
+`exporters::otlp/forward: requires a non-empty "endpoint"` from a configuration where nothing used
+it. A credential fragment must attach `auth:` to *both* exporters, since it cannot know which
+transport is in play, so a fragment that introduced the gRPC exporter that way would have stopped
+the collector on every HTTP deployment.
+
+gRPC driven against a real gRPC receiver chained into the inspector: 13 spans and 11 log records
+delivered, no failures, `aira.use_case` and the rest intact on the far side.
+
+### And the inspector was looking for the wrong header
+
+It reported *no credential on this request* for anything not called `Authorization` — the worst
+available wrong answer, because it sends somebody to re-check a credential that was fine. It now
+describes **every** credential-ish header by name, scheme and length, and shows the rest verbatim.
+
+Five new mutations and one re-anchored; the harness defends **723** properties. Eleven merged
+configurations — off, plus two transports against five credential states — validate against the
+real 0.157.0 image, and five of them were driven end to end.
+
+---
+
+## Could Sentinel be attached to this? Four reasons it could not (2026-09-02)
+
+Asked by the owner: are the OTel interfaces built so that something like **Microsoft Sentinel**
+could be attached — standardised, and supporting JSON — and is that area correct? Checked against
+a real destination rather than against the design, and against a receiver that prints what it got.
+
+**The shape of the answer was right and the answer was wrong.** The applications speak OTLP, the
+collector is the seam, a second destination is a variable. Held against Azure Monitor's OTLP
+ingestion — which is how telemetry reaches a Log Analytics workspace and therefore Sentinel — the
+shipped configuration could not express the destination at all, for four separate reasons:
+
+- **`encoding: json` was a literal.** Azure documents *"OTLP HTTP/protobuf only; JSON payloads and
+  OTLP/gRPC aren't supported"*. The most likely destination this installation has was the one the
+  default made unreachable, and not by a preference anybody had weighed.
+- **One `endpoint` cannot address three streams.** Measured: `otlphttp` appends `/v1/traces`.
+  Azure wants a data-collection-rule id and a stream name mid-path, and a **different host** for
+  metrics. No base URL plus a suffix produces those.
+- **A static header is the wrong kind of credential.** Entra issues about an hour; a header set at
+  start-up is a `401` after lunch. `azure_auth` was in the image and wired to nothing.
+- **A private CA had no answer but `insecure_skip_verify`** — abandoning verification on the whole
+  leg to solve a missing root.
+
+### And a defect nobody's destination caused
+
+With forwarding on and no credential configured, measured against a printing receiver:
+`authorization: ''` on **every request**. The `headers:` block was spelled in the forwarding
+fragment, so it was always present, and an unset variable produced an empty header rather than no
+header. Harmless against a receiver that ignores it, a `400` from one that parses it, and actively
+wrong beside an authenticator extension, which sets that same header itself.
+
+### What changed
+
+A third `--config`: **where** it sends and **how it authenticates** are now separate fragments with
+separate failure modes (`FRD-618`). Per-signal endpoints defaulted by Compose to the ordinary
+`<endpoint>/v1/<signal>`. `AIRA_OTEL_FORWARD_ENCODING`, `_CA_FILE`, and Entra through `azure_auth`
+in two fragments — service principal for a collector outside Azure, managed identity for one
+inside, because an empty `client_id` means opposite things on either side.
+
+**Two of the new knobs stop the collector rather than degrading**, unlike the endpoint, and that is
+written down rather than smoothed over: a mistyped encoding and an Azure fragment without
+credentials are values somebody has just typed on purpose, while an endpoint is what gets forgotten
+while configuring something else.
+
+All four merged configurations validate against the real 0.157.0 image. Both new states driven on
+the running stack: `application/x-protobuf` with `Bearer test-siem-credential`, and — the fix —
+no `Authorization` header at all where there used to be an empty one.
+
+### The filter would have emptied itself on an upgrade
+
+`filter/siem` tests `attributes["http.url"]`, which is what this build's clients write. The
+semantic conventions have renamed it `url.full`, and the rename arrives with an opt-in in
+`opentelemetry-instrumentation-httpx`. On that day the expression drops **every upstream call**
+silently — the request spans keep arriving, so the feed looks alive while the half a SIEM is there
+for stops. Both spellings are named now, with a test on each.
+
+### Seeing what leaves, which nothing could
+
+`make otlp-inspector` (`debug` profile) is an ordinary OTLP receiver with a page in front of it:
+the last few hundred batches, each span on a row with its `aira.*` attributes, the content type
+actually used, and whether a credential was on the request — scheme and length, never the value.
+
+Every existing tool answers a different leg. `make otel-arrivals` and `AIRA_OTEL_ARRIVED_FILE` are
+what **arrived** at the collector, before the filter; `make otel-status` is counters. *What left,
+on the leg that leaves* — where the filter, the encoding and the credential all take effect — had
+no answer, and it is the one an integrator is actually asking about.
+
+Driven on the running stack: 11 request spans and their upstream calls on the page, with
+`aira.subject`, `aira.use_case`, `aira.outcome`, `aira.total_tokens`, `aira.cost_nanos`,
+`aira.source_ip`; `auth Bearer (32 chars)` and the credential nowhere in the HTML.
+
+### Two documents were saying something false about exactly this
+
+`FRD-615` §8 and `FRD-616` §1 both stated that **AIRA's own log lines are not exported** — structlog
+writing past the standard library. True when written; `f49bd2c` added `forward_to_stdlib` and fixed
+it, and neither document was updated. So the two places a reader goes to ask *what would a SIEM
+actually receive* answered *a performance feed*, while `pipeline_applied` was arriving on the
+forwarding leg the whole time — 4 of 45 log records, measured.
+
+Both corrected in place rather than deleted, because the sentence had been **quoted onward**: §1 of
+`FRD-616` rests on §8 of `FRD-615`, and a reader who followed that link needed to arrive at the
+correction. What has *not* changed is `FRD-616`'s table: a log line is not an audit row, there is
+no line per served request, and the four questions a SIEM asks still have their answers in a
+database. `FRD-616` stands; one of its premises does not.
+
+Eight new mutations; the harness defends **718** properties.
+
+---
+
 ## Documented, in the configs — and two variables that were not the feature (2026-09-02)
 
 Asked whether the new knobs are documented and in the configuration files. Audited all seventeen

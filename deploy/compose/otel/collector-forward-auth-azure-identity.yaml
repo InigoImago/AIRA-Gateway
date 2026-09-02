@@ -1,0 +1,47 @@
+# The one credential shape OAuth2 client credentials cannot express: **no secret anywhere.**
+#
+# For a collector running *inside* Azure — a VM, a scale set, an Arc-enabled server, AKS — where
+# the platform holds the identity and nothing has to be configured with it.
+#
+#     AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-azure-identity.yaml
+#     AIRA_OTEL_FORWARD_AZURE_CLIENT_ID=          # empty → the system-assigned identity
+#     AIRA_OTEL_FORWARD_AZURE_CLIENT_ID=<guid>    # a user-assigned one
+#
+# ## Why this is the only vendor fragment here
+#
+# Everything else about reaching a managed OTLP endpoint is generic and is configured generically:
+# the protocol, the per-signal URLs, the encoding, the CA, and — for a collector with a client
+# secret — `forward-auth-oauth2.yaml`, which authenticates against Microsoft Entra exactly as it
+# does against Keycloak or Okta, because they all implement RFC 6749 §4.4. There was a
+# service-principal fragment in this directory and it was deleted for that reason: it was the
+# generic file with three values filled in.
+#
+# What is left is genuinely not expressible any other way. A managed identity has no secret to put
+# in a variable; the token comes from the instance metadata endpoint, and *which* identity is a
+# platform fact rather than a configuration one. **A vendor fragment earns its place only by
+# doing something the generic one cannot say** — and this one does exactly that and nothing else.
+#
+# Everything else — the endpoints, the encoding, the DCR and its **Monitoring Metrics Publisher**
+# role assignment — is in `INTEGRATIONS.md` §6, as a worked example of the generic mechanisms
+# rather than as a supported product.
+
+extensions:
+  azure_auth:
+    managed_identity:
+      client_id: ${env:AIRA_OTEL_FORWARD_AZURE_CLIENT_ID}
+    # **The audience, not the host.** A data collection endpoint's hostname is specific to your
+    # instance; the token Azure Monitor accepts is issued for `monitor.azure.com`. Left to default,
+    # the extension asks for a token for the host it is calling and Azure refuses it.
+    scopes:
+      - ${env:AIRA_OTEL_FORWARD_AZURE_SCOPE:-https://monitor.azure.com/.default}
+
+exporters:
+  otlphttp/forward:
+    auth:
+      authenticator: azure_auth
+  otlp/forward:
+    auth:
+      authenticator: azure_auth
+
+service:
+  extensions: [azure_auth]

@@ -589,14 +589,18 @@ package both planes use, does not implement it. `AIRA_OTEL_ENDPOINT` chooses *wh
 chooses the encoding. If your destination cannot read protobuf, put a collector in front of it;
 that is what the second leg is for.
 
-**Leg 2, the collector onward, is yours.** One line on an `otlphttp` exporter:
+**Leg 2, the collector onward, is yours**, and on the shipped stack it is a variable rather than
+a file you edit:
 
-```yaml
-exporters:
-  otlphttp/siem:
-    endpoint: https://siem.internal:4318
-    encoding: json          # ← this is the switch. Default is protobuf.
+```bash
+AIRA_OTEL_FORWARD_ENCODING=json     # readable, and what most OTLP receivers take
+AIRA_OTEL_FORWARD_ENCODING=proto    # what Azure Monitor requires — see "A destination that
+                                    # routes OTLP" below
 ```
+
+It was hard-coded to `json` until `FRD-618`, which is fine until a receiver refuses JSON — and one
+that matters here does. **Answer this before you wire anything up**; it is the single most likely
+reason a correctly configured leg delivers nothing.
 
 The shipped stack already carries a worked example: `deploy/compose/otel/collector-config.lab.yaml`
 `otel/collector-forward.yaml` is a worked example, merged on top of the reference configuration
@@ -707,6 +711,102 @@ The fallback is spelled in `docker-compose.yml` and not in the fragment, which i
 choice: Compose passes an **empty string** for an unset variable, and an empty string overrides a
 `${env:…:-default}` inside the collector.
 
+### Attaching an OTLP consumer — the seven things that vary
+
+**The protocol is standard, which is not the same as "one variable reaches everything".** A
+destination varies on seven axes, and each is a variable or a fragment (`FRD-618`):
+
+| | variable | |
+|---|---|---|
+| **transport** | `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | HTTP (default) or `…/forward-grpc.yaml` for gRPC |
+| **encoding** | `AIRA_OTEL_FORWARD_ENCODING` | `json` · `proto`. The spec makes protobuf **required** and JSON optional, so a conformant receiver may refuse JSON |
+| **path** | `_TRACES_ENDPOINT` / `_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` | full URLs, for a receiver with a route in front of OTLP; default `<endpoint>/v1/<signal>` |
+| **credential name** | `AIRA_OTEL_FORWARD_AUTH_HEADER` | `Authorization` is what a *minority* ask for |
+| **credential kind** | `AIRA_OTEL_FORWARD_AUTH_CONFIG` | none · header · basic · OAuth2 · a platform identity |
+| **who we are** | `_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | mutual TLS |
+| **compression** | `AIRA_OTEL_FORWARD_COMPRESSION` | `gzip` · `none` · `zstd` · `snappy` |
+
+Full reference: [`CONFIGURATION.md` §5a](CONFIGURATION.md). Three worked shapes:
+
+**A plain OTLP receiver** — most of them. One variable:
+
+```bash
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_ENDPOINT=https://otel.internal:4318
+```
+
+**One that wants an API key and gRPC:**
+
+```bash
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/forward-grpc.yaml
+AIRA_OTEL_FORWARD_GRPC_ENDPOINT=otel.vendor.example:4317
+AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-header.yaml
+AIRA_OTEL_FORWARD_AUTH_HEADER=x-api-key
+AIRA_OTEL_FORWARD_AUTHORIZATION=…
+```
+
+**One behind your identity provider** — Keycloak, Okta, Auth0, Ping, Entra, or anything that
+implements RFC 6749 §4.4. The collector fetches the token and refreshes it, so what is in `.env` is
+a long-lived secret rather than a token that stops working during the afternoon:
+
+```bash
+AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-oauth2.yaml
+AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL=https://kc.internal/realms/ops/protocol/openid-connect/token
+AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID=aira-gateway
+AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET=…            # → Vault
+AIRA_OTEL_FORWARD_OAUTH_SCOPES=["telemetry.write"]
+```
+
+**With no auth fragment selected, no credential header is sent at all.** Worth stating because it
+used to be otherwise: the header was always present, so with nothing configured the collector sent
+`authorization: ''` on every request — measured, and a `400` from any receiver that parses it.
+
+**Two things stop the collector rather than degrading**, unlike a missing endpoint, and the
+difference is deliberate: a mistyped `AIRA_OTEL_FORWARD_ENCODING`, and a credential fragment
+selected with nothing in its variables. Both are values somebody has just typed on purpose; an
+*endpoint* is what gets forgotten while configuring something else, so that one keeps its harmless
+fallback. `make otel-status` is what tells you the collector is not running.
+
+#### And the other direction: sending **to** this installation
+
+Nothing needed. The collector accepts OTLP on 4317 (gRPC) and 4318 (HTTP), in protobuf **or** JSON,
+gzipped or not — verified with a hand-written OTLP/JSON document posted from outside the stack
+(`200`, and the span through the pipeline; a malformed one answers `400`). Any conformant OTel
+producer — another team's service, a sidecar, a third-party agent — can point at it and its spans
+join the same pipelines, filters and destinations as AIRA's own.
+
+#### A worked routed destination: Azure Monitor, and therefore Microsoft Sentinel
+
+An example of the mechanisms above rather than a supported product, and the one that needs four of
+them at once. Sentinel reads a Log Analytics workspace; telemetry gets in through Azure Monitor's
+OTLP ingestion — an endpoint on a Data Collection Endpoint, routed by a Data Collection Rule.
+
+```bash
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_ENCODING=proto                   # Microsoft: "JSON payloads … aren't supported"
+AIRA_OTEL_FORWARD_TRACES_ENDPOINT=https://<dce>.<region>-1.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Microsoft-OTLP-Traces/otlp/v1/traces
+AIRA_OTEL_FORWARD_LOGS_ENDPOINT=https://<dce>.<region>-1.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Microsoft-OTLP-Logs/otlp/v1/logs
+AIRA_OTEL_FORWARD_METRICS_ENDPOINT=https://<dce>.<region>-1.metrics.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Custom-Metrics-Otel/otlp/v1/metrics
+# and the credential — Entra is an OAuth2 provider like any other:
+AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-oauth2.yaml
+AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL=https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token
+AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID=<app-id>
+AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET=…            # → Vault
+AIRA_OTEL_FORWARD_OAUTH_SCOPES=["https://monitor.azure.com/.default"]
+```
+
+Azure-side work this repository cannot do: the DCE, the DCR pointing at the workspace, and
+**Monitoring Metrics Publisher** granted on that rule to the collector's identity. A collector
+running *inside* Azure uses `…/forward-auth-azure-identity.yaml` instead and needs no secret at all
+— that fragment exists because a platform identity is the one credential shape OAuth2 cannot
+express.
+
+**Metrics will want one more step.** Application Insights expects delta temporality and exponential
+histograms; `opentelemetry-python` produces cumulative with explicit buckets. The
+`cumulativetodelta` processor is in the collector image and is not wired up — it would change what
+the Grafana leg receives too, so it belongs to whoever has the workspace open.
+
 ### When the receiver answers `429`
 
 Measured on this stack, so the numbers are a starting point rather than a rule of thumb:
@@ -745,6 +845,34 @@ requests: **8 HTTP requests carrying 696 spans** (87 per request), against **27 
 telemetry, and sequential rather than in bursts of ten.
 
 `make otel-status` shows whether anything is being dropped while you tune.
+
+### Seeing what *leaves*, before a SIEM exists
+
+`make otel-arrivals` and `AIRA_OTEL_ARRIVED_FILE` below are what **arrived** at the collector,
+before the SIEM filter and before anything is forwarded. That is a different question from what
+goes out on the forwarding leg — where the filter, the encoding and the credential all take effect
+— and until `FRD-618` there was nothing to point that leg at while you were still deciding.
+
+```bash
+make otlp-inspector      # a receiver that stands in for your SIEM, with a page in front of it
+```
+
+Then two variables and a recreate:
+
+```bash
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318
+```
+
+The page lists the last few hundred batches: each span on one row with its `aira.*` attributes, the
+content type and encoding actually used, the sizes on the wire and after gunzip, and **whether a
+credential was on the request** — its scheme and length, never its value. Protobuf batches are
+counted and labelled rather than decoded, which is enough to answer *is it going out and is it
+authenticated*; flip `AIRA_OTEL_FORWARD_ENCODING=json` to read the contents.
+
+It is a debugging tool: in memory, capped, lost on restart, unauthenticated, and it holds
+attribution — a developer's machine, and nowhere else. `make otlp-inspector-down` stops it and
+forgets what it held.
 
 ### Seeing what *arrives* at the collector
 

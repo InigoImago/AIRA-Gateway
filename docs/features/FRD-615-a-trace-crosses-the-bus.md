@@ -166,10 +166,21 @@ Two things a reader will look for and not find, neither of them changed here:
 - **Tokens and cost are not metrics.** `get_meter` appears nowhere in the project; the figures live
   in `request_logs` and are served through the reporting API. They are span *attributes* on a
   single request, not a time series.
-- **AIRA's own log lines are not exported.** structlog writes to stdout through
-  `PrintLoggerFactory`, past the standard library, so the OTLP log handler on the root logger
-  carries framework records only — uvicorn, Django, library warnings. `payload_read`,
-  `request_suspended` and `oidc_token_rejected` are in the container log, not in Loki.
+- ~~**AIRA's own log lines are not exported.**~~ **It was true when this was written and it is
+  not true now**, and the correction is left visible rather than deleted because the line was
+  quoted onward: `FRD-616` §1 rests on it, and this paragraph is where that reader arrives.
+
+  structlog wrote to stdout through `PrintLoggerFactory`, past the standard library, so the OTLP
+  log handler on the root logger carried framework records only. `f49bd2c` added
+  `forward_to_stdlib` — a processor after the renderer that hands the rendered line to
+  `logging.getLogger("aira.app")`, which propagates to the root logger and therefore to the OTLP
+  handler. One rendering, two sinks; stdout is byte-for-byte what it was.
+
+  So `payload_read`, `request_suspended` and `oidc_token_rejected` **do** reach a log backend, and
+  a second destination receives them. Verified on 2026-09-02 through the forwarding leg: of 45 log
+  records that reached a standing-in receiver, 4 were `pipeline_applied` — an AIRA event, not a
+  framework one. The one exception is deliberate and stays: lines *about* OTel are held back
+  (`FRD-617` §3.2), because a report that an export failed must not be queued for export.
 
 ## 9. How many tools were offered, and how many were used
 

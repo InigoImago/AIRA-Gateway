@@ -15,6 +15,7 @@ demo mode. It is driven from the repo root via the `Makefile` (preferred), or di
 | vault           | `hashicorp/vault:1.18` (dev)            | 8200         | Secrets (dev root token `root`) — **not read by any code yet**        |
 | otel-collector  | `otel/opentelemetry-collector-contrib`  | 4317, 4318   | OTLP ingest (profile `observability`)                                 |
 | otel-lgtm       | `grafana/otel-lgtm`                     | 3000         | Grafana + Tempo + Prometheus + Loki (profile `observability`)         |
+| otlp-inspector  | `python:3.14-slim`                      | 4319         | What the **forwarding** leg sends, on a page (profile `debug`, `make otlp-inspector`) |
 
 > Image tags are pinned per `ADR-0003`. Observability is Grafana `otel-lgtm` per **ADR-0004**,
 > which supersedes the SigNoz choice in ADR-0002. `make up` includes the `observability` profile;
