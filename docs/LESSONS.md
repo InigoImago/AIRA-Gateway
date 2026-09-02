@@ -22,6 +22,19 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **Know which quantity a lever moves before reaching for it.** An external OTLP receiver
+  answering `429` looks like "we send too much", and the obvious knob is the sample ratio — which
+  is measured to reduce spans per request from 17.5 to 5.9 and to leave the **request count
+  unchanged**. The request count is set by the batch *timer*; the payload is set by sampling. A
+  receiver that limits requests per second and one that limits ingested volume need opposite
+  answers, and the wrong one produces a confident change with no effect.
+
+  *And the default of a component you did not write is a decision you have made.* The collector's
+  `otlphttp` exporter forwards every 200 ms from ten concurrent senders and retries a `429`,
+  because a `429` is retryable — three defaults that are individually reasonable and together are
+  the worst available shape for a rate-limited endpoint. Nothing in this repository had ever
+  chosen them.
+
 - **A diagnostic that is present, correct and unreadable is worse than an absent one**, because
   its presence is taken for coverage. Two in one day, both reported by a user of the thing: the
   `otel` export line was in the log and carried no `trace_id` — an export is a timer, not a step in

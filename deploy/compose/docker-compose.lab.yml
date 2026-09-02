@@ -47,6 +47,30 @@ services:
       LAB_LOG_LEVEL: ${LAB_LOG_LEVEL:-info}
       # What the `debug` exporter prints about traffic **arriving**: basic | normal | detailed.
       LAB_DEBUG_VERBOSITY: ${LAB_DEBUG_VERBOSITY:-normal}
+      # ---- How hard the collector pushes at your endpoint -------------------------------------
+      #
+      # For the destination that answers `429`. Measured on this stack: a gateway produces about
+      # **17.5 spans per request**, and the applications' own exporter posts every 5 seconds — so
+      # the collector receives in bursts, and left at its defaults it forwards them every 200ms
+      # from ten concurrent senders. A receiver counting requests sees the worst possible shape.
+      #
+      # These four turn that into few, large, sequential requests. Raise them back when you know
+      # the quota you actually have.
+      #
+      # How long the collector will hold telemetry to send it in one piece.
+      LAB_SIEM_BATCH_SECONDS: ${LAB_SIEM_BATCH_SECONDS:-10s}
+      # And how much fits in one. 8192 is the collector's own default; larger means fewer requests
+      # and a bigger body, which is the trade a rate limit asks you to make.
+      LAB_SIEM_BATCH_SIZE: ${LAB_SIEM_BATCH_SIZE:-8192}
+      # Concurrent senders. **One** by default: the exporter's own default is ten, and a `429` is
+      # retryable, so ten senders against a quota is a loop that tightens under load.
+      LAB_SIEM_CONSUMERS: ${LAB_SIEM_CONSUMERS:-1}
+      # How much may wait while the receiver says no. Held rather than dropped; `memory_limiter`
+      # is what keeps that bounded.
+      LAB_SIEM_QUEUE: ${LAB_SIEM_QUEUE:-5000}
+      # How long to wait before asking again. The default is one second, which against a quota is
+      # the same question before the window has moved.
+      LAB_SIEM_RETRY_INITIAL: ${LAB_SIEM_RETRY_INITIAL:-5s}
     ports:
       # The collector's own metrics — `sent` against `send_failed`, per exporter. Published so
       # `make lab-status` can ask from outside the network, and bound to loopback like everything

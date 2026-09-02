@@ -5,6 +5,66 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## How much do we actually send over OTel (2026-09-02)
+
+Asked because an **external** OTLP receiver was answering `429`. Measured on the running stack
+rather than reasoned about, and the answer contains one thing that is not obvious.
+
+### The numbers
+
+| | |
+|---|---|
+| Spans one gateway request produces | **17.5** — server span, httpx client spans, SQLAlchemy spans |
+| Applications → collector | one POST per signal per **5 s**, up to **512** spans in it |
+| Idle | ~6 POSTs/min per service, plus one metrics reader per minute |
+| Across 600 log lines under load | traces 156 POSTs / 2889 spans · logs 8 / 183 · metrics 29 |
+
+Traces dominate by an order of magnitude, which is what a per-request span count of 17.5 predicts.
+
+### The part that is not obvious
+
+**The request count is governed by the batch timer, not by traffic** — until a batch fills. So the
+two levers do different things, and picking the wrong one changes nothing:
+
+- `AIRA_OTEL_SAMPLE_RATIO=0.25` took spans from **17.5 to 5.9 per request** and left the POST count
+  **unchanged at 6**. It is the lever for a receiver that limits *volume*.
+- For a receiver that limits *requests*, only batching helps.
+
+Both measured against a counting listener with the delta taken across two runs — the first attempt
+compared absolute counters on a sink whose totals never reset, and reported *more* spans at a lower
+sample ratio. A measurement that says the opposite of the mechanism is a measurement to re-take.
+
+### What was missing
+
+The 429 came from the **collector's** leg, not the applications', and none of that leg was
+configurable. The `otlphttp/lab` exporter ran on the collector's own defaults, which are the worst
+available shape for a rate limit: forward every **200 ms** from **ten concurrent senders**, and a
+`429` is *retryable*, so every refusal comes back and tightens the loop.
+
+Five variables now, with defaults that are polite rather than fast — `LAB_SIEM_BATCH_SECONDS=10s`,
+`LAB_SIEM_BATCH_SIZE=8192`, `LAB_SIEM_CONSUMERS=1`, `LAB_SIEM_QUEUE=5000`,
+`LAB_SIEM_RETRY_INITIAL=5s`. This overlay exists for a destination somebody is trying for the first
+time, and the polite setting is the one to be wrong about.
+
+Measured, 40 gateway requests: **8 HTTP requests carrying 696 spans** against **27 carrying 1399**
+on the defaults — 11.5 requests per 1000 spans against 19.3, and sequential instead of bursts of
+ten.
+
+### Also worth having checked
+
+`AIRA_DEBUG_INTEGRATIONS=all` was **99.5 % of the gateway's log output** (769 of 773 lines) and
+turned out not to be the volume story: those lines do reach the OTLP log pipeline — verified
+directly, `redis` and `postgres` records arrive at the root handler and only `otel` is held back —
+but logs are 183 items against 2889 spans. The channel is loud in a terminal and quiet on the wire.
+
+And the `429`s in this installation's own audit trail were all the test suites doing their job:
+`budget_exceeded` and `rate_limited` on `itest-*`/`dev-*` use cases against `mock-1`.
+
+Two new variables, no new mutations — the collector's configuration is validated by
+`otelcol validate` against the shipped image, which is the check that fits it.
+
+---
+
 ## Two lines that were there and could not be read (2026-09-02)
 
 Both reported from actually using the thing, which is the only way either would have surfaced.

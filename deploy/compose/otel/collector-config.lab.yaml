@@ -33,7 +33,13 @@ processors:
       - key: collector
         value: aira-otel-collector
         action: insert
-  batch: {}
+  # **Fewer, larger requests.** Left at `{}` this sends every 200ms — which for a destination
+  # that counts requests is the worst shape available. `LAB_SIEM_BATCH_SECONDS` is how long the
+  # collector is willing to hold telemetry in order to send it in one piece.
+  batch:
+    timeout: ${env:LAB_SIEM_BATCH_SECONDS}
+    send_batch_size: ${env:LAB_SIEM_BATCH_SIZE}
+    send_batch_max_size: ${env:LAB_SIEM_BATCH_SIZE}
 
 exporters:
   otlp_grpc/lgtm:
@@ -55,8 +61,26 @@ exporters:
     # Whatever your SIEM authenticates with. Empty is fine for a first reachability test.
     headers:
       authorization: ${env:LAB_SIEM_AUTHORIZATION}
+    # **How hard this pushes.** A receiver that answers `429` is asking for fewer requests, and
+    # the exporter's own defaults push in the other direction: `num_consumers: 10` means up to ten
+    # concurrent POSTs, and a `429` is *retryable*, so every refusal comes back — a rate limit and
+    # a default retry policy make a loop that gets worse under load.
+    #
+    # One consumer by default here, because this overlay's whole purpose is a destination somebody
+    # is trying for the first time, and the polite setting is the one to be wrong about. Raise it
+    # when you know the quota:  make up-lab LAB_SIEM_CONSUMERS=4
+    sending_queue:
+      enabled: true
+      num_consumers: ${env:LAB_SIEM_CONSUMERS}
+      # Deep enough to ride out a rate limit rather than dropping — telemetry held is telemetry
+      # that still arrives, and the memory_limiter above is what stops this becoming unbounded.
+      queue_size: ${env:LAB_SIEM_QUEUE}
     retry_on_failure:
       enabled: true
+      # Starts further out than the default second: against a quota, retrying quickly is asking
+      # the same question before the window has moved.
+      initial_interval: ${env:LAB_SIEM_RETRY_INITIAL}
+      max_interval: 60s
       max_elapsed_time: 300s
 
 service:

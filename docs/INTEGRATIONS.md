@@ -650,6 +650,45 @@ batch twice — that is why the reference stack shows double. `undelivered` coun
 an attempt, so an exporter still retrying a dead endpoint reads `0` for as long as its backoff
 lasts; `make lab-status` prints the collector's own words about why.
 
+### When the receiver answers `429`
+
+Measured on this stack, so the numbers are a starting point rather than a rule of thumb:
+
+| | |
+|---|---|
+| Spans one gateway request produces | **17.5** (server span, httpx client spans, SQLAlchemy spans) |
+| Applications → collector | one POST per signal per **5 seconds**, up to **512** spans in it |
+| At idle | ~6 POSTs/min per service; the metrics reader adds one per minute |
+
+**The request count is governed by a timer, not by your traffic** — until a batch fills. That is the
+part worth taking in before you tune anything, because it decides which lever helps:
+
+- A receiver limiting **requests per second**: lower the request count. Sampling will not do it —
+  measured, `AIRA_OTEL_SAMPLE_RATIO=0.25` took spans from 17.5 to 5.9 per request and left the POST
+  count unchanged at 6. Batch harder instead (below).
+- A receiver limiting **volume or ingested events**: `AIRA_OTEL_SAMPLE_RATIO` is the lever, and it
+  scales roughly linearly. It applies to traces only; logs and metrics are unaffected.
+
+If your endpoint sits behind the collector — the `make up-lab` shape, and the one to prefer — the
+collector's own defaults are the wrong shape for a rate limit: it forwards every **200 ms** from
+**ten concurrent senders**, and a `429` is retryable, so refusals come back and tighten the loop.
+Four variables change that:
+
+```bash
+# hold telemetry this long, put this much in one request, send one at a time,
+# and do not ask again before the window has moved:
+make up-lab LAB_SIEM_ENDPOINT=https://siem.internal:4318 \
+    LAB_SIEM_BATCH_SECONDS=10s LAB_SIEM_BATCH_SIZE=8192 \
+    LAB_SIEM_CONSUMERS=1 LAB_SIEM_RETRY_INITIAL=5s
+```
+
+Those are the defaults the overlay now ships. Measured against a counting listener, 40 gateway
+requests: **8 HTTP requests carrying 696 spans** (87 per request), against **27 carrying 1399**
+(52 per request) with the collector's own defaults — about 40 % fewer requests for the same
+telemetry, and sequential rather than in bursts of ten.
+
+`make otel-status` shows whether anything is being dropped while you tune.
+
 ### Not the same switch
 
 `AIRA_LOG_JSON` is unrelated: it is whether **the service's own log lines on stdout** are JSON or
