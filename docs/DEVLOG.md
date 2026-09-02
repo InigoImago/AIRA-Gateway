@@ -30,6 +30,35 @@ attempt validated in isolation and still restarted on the real stack.
 
 Two new mutations; the harness defends **710** properties.
 
+### Both states driven end to end, with a real receiver
+
+Asked to test both states completely. Driven against the running stack with a listener standing in
+for a SIEM, rather than reading counters:
+
+| | **A: off** | **B: on** | **C: half on** |
+|---|---|---|---|
+| `.env` | no `FORWARD` variable | `_CONFIG` + `_ENDPOINT` | `_CONFIG` only |
+| Collector loads | `config.yaml` + `noforward.yaml` | `config.yaml` + `forward.yaml` | `config.yaml` + `forward.yaml` |
+| Status | `Up` | `Up` | `Up` — no restart loop |
+| Exporters | 3 | **4** | 4, one failing by name |
+| Receiver got | **nothing** | 3 requests + 2 model calls, `application/json` | — |
+| Grafana got | 32 spans for the trace | **32 spans for the trace** | still receiving |
+| Containers | 1 collector | 1 collector | 1 collector |
+
+The separation is the row worth reading twice: in **B**, the same trace is 32 spans in Tempo and
+5 at the second destination. Nothing was taken away from Grafana to feed the SIEM.
+
+**B produced an unplanned proof.** The third request hit a rate limit and never reached a model —
+and the receiver shows exactly that: *3 requests, 2 model calls*. The filter is not counting
+requests and calling them upstream calls; it is selecting the calls that actually happened.
+
+**C is the state this round was about.** Collector `Up`, Grafana receiving, and
+`not-set.invalid:4318` in the log naming what is missing. Before the fallback this was
+`Restarting (1)` for ever with Grafana down.
+
+Restored to A afterwards, `.env` byte-identical, and the demo budget reset — the `429`s at the end
+were my own traffic exhausting a member's daily cost budget, which is the governance working.
+
 ### The shape
 
 *"Optional"* is a claim with two halves, and only the first is usually checked: that switching it
