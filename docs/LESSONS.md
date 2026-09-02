@@ -88,6 +88,12 @@ reading code.
   show a wire format, that means **standing up the other end and diffing whole documents**: doing
   that here turned one reported symptom into three findings, the third of which nobody had noticed.
 
+  *And the rule was written a day before the check was.* The entry above went into this file with
+  the fix, and the test it names — hand the output to a real collector and ask whether it took it —
+  was not written until a reader asked *did you actually check*. **A rule recorded without the
+  check it prescribes is a rule that has been agreed with, not adopted**; the repository already
+  fails a build for a stale FRD header, and this is the same shape one level up.
+
 - **A success returned by a client library is a claim about the client's own call, not about the
   far end.** `SpanExportResult.SUCCESS` means `resp.ok` and nothing more — and OTLP answers `200`
   with a body saying it dropped half the batch, which the Python exporter discards unread. So the

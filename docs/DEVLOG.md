@@ -83,6 +83,31 @@ One thing that is a limitation rather than a defect, and is said as such: the fi
 literally the first *n*, and a stack with health probes puts `GET /healthz` at the front of every
 batch — `=2` shows two health checks and nothing else. `=40` reaches a real request here.
 
+### Asked to prove all three, and the third proof was missing
+
+*Did you check that the OTel interface runs with normal encoding, that it is delivered in the
+proper JSON format, and that it is printed to the console?* Re-measured rather than cited:
+
+1. **The wire is untouched.** `Content-Type: application/x-protobuf`, 286 bytes for one span,
+   measured inside the running gateway through the full wrapper. The `_export` seam does not alter
+   what is posted.
+2. **A real collector takes the rendered JSON.** Posted to an OTLP/JSON endpoint: `HTTP 200`,
+   body `{"partialSuccess":{}}` — nothing rejected — and the receiver's own debug output read it
+   back correctly: `generateContent dbda1a5487cebafd177e6d530b0389d8 ca50c0c5b896b05d
+   aira.use_case=kundenservice text=Grüße ✓`.
+3. **The console shows it.** 153 payload lines in the gateway's log, and the documented `jq -Rr
+   'fromjson? | …'` recipe extracts a span from it unchanged.
+
+The third was already demonstrated; the second had **never been asked as a question**, and that is
+the gap worth naming. The lesson written yesterday says a rendering meant to show what the far end
+receives is only tested by comparing with the far end — and it was written without the test.
+`tests/integration/test_the_rendered_payload_is_accepted_by_a_collector.py` now hands the output to
+the stack's own collector and asks whether it took it, with a guard on the guard: the same document
+with base64 identifiers is **refused with `400`**, so the acceptance is not vacuous.
+
+Writing down a rule and not the check it names is the shape this repository keeps paying for. It
+took a reader asking *did you check* for me to notice I had done the first and skipped the second.
+
 ### Three guards, again
 
 Adding one setting failed the configuration reference, both config-example checks, the compose
