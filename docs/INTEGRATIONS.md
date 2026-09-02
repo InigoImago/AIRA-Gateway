@@ -689,6 +689,47 @@ telemetry, and sequential rather than in bursts of ten.
 
 `make otel-status` shows whether anything is being dropped while you tune.
 
+### Seeing what *arrives* at the collector
+
+The collector already prints every batch it receives — `make otel-arrivals`, which is
+`docker logs -f <stack>-otel-collector`. `AIRA_OTEL_DEBUG_VERBOSITY` decides how much:
+
+| | |
+|---|---|
+| `basic` | counts only — "3 spans", nothing about them |
+| `normal` | one line per span: name, trace id, span id, attributes (**the default**) |
+| `detailed` | every attribute, event, link and resource field, indented |
+
+```
+Span #0
+    Trace ID       : 95fb847b00318cfb108ff3eee0d616b6
+    ID             : 95797a75c0c57fe9
+    Name           : GET healthz
+    Kind           : Server
+Attributes:
+     -> http.scheme: Str(http)
+```
+
+And the same arrivals as **OTLP/JSON**, to parse rather than read — one document per line, all
+three signals:
+
+```bash
+# in deploy/compose/.env, then recreate the collector
+AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json
+# then: deploy/compose/payload/arrived.json
+```
+
+Measured on the shipped stack: 22 lines, none broken, carrying `resourceSpans`, `resourceLogs`
+**and `resourceMetrics`** — metrics were the one signal nothing could be seen arriving on until
+2026-09-02, which is an asymmetry rather than a decision and the hardest absence to notice, because
+a metric that never arrives looks exactly like one whose value did not change.
+
+`/dev/stdout` works for a quick look and mangles anything large — Docker's json-file driver cuts at
+a 16 KiB boundary. A file under `deploy/compose/payload/` comes out whole.
+
+**This is what arrived, not what was forwarded.** The two are different questions and a green log
+cannot tell them apart; `make otel-status` answers the second.
+
 ### Seeing the payload itself
 
 Two places, and they show different things.

@@ -6325,6 +6325,14 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID30",
+        "the collector says what arrives on every signal, metrics included",
+        "deploy/compose/otel/collector-config.yaml",
+        "      exporters: [otlp_grpc/lgtm, debug, file/arrived]\n    metrics:",
+        "      exporters: [otlp_grpc/lgtm]\n    metrics:",
+        "tools/tests/test_the_collector_says_what_arrives.py",
+    ),
+    Mutation(
         "ID29",
         "a rendered payload is one line, so a log stays line-oriented",
         "libs/src/aira_common/observability.py",

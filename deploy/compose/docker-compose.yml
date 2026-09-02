@@ -229,6 +229,16 @@ services:
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      # Writable, for `AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json`. Git-ignored, and nothing is
+      # written here unless that variable names a path inside it.
+      - ./payload:/payload
+    environment:
+      # How much the collector says about what **arrives**: basic | normal | detailed.
+      # `normal` is one line per span and is what this stack has always printed.
+      AIRA_OTEL_DEBUG_VERBOSITY: ${AIRA_OTEL_DEBUG_VERBOSITY:-normal}
+      # And the same thing as OTLP/JSON, for parsing rather than reading. `/dev/null` is off;
+      # `/payload/arrived.json` writes to `deploy/compose/payload/` on the host.
+      AIRA_OTEL_ARRIVED_FILE: ${AIRA_OTEL_ARRIVED_FILE:-/dev/null}
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC

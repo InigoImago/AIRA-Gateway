@@ -27,23 +27,47 @@ exporters:
     endpoint: otel-lgtm:4317
     tls:
       insecure: true
+  # **What arrives, in the collector's own words.** `docker logs <stack>-otel-collector`, or
+  # `make otel-arrivals`. Three levels, and the difference matters:
+  #
+  #   basic     counts only — "3 spans" and nothing about them
+  #   normal    one line per span: name, trace id, span id, attributes  (the default)
+  #   detailed  every attribute, event, link and resource field, indented
+  #
+  # This is what **arrived**, after the processors above and before anything is forwarded. It is
+  # not what was delivered onward — that is `make otel-status`, and the two are different
+  # questions that a green log cannot tell apart.
   debug:
-    verbosity: normal
+    verbosity: ${env:AIRA_OTEL_DEBUG_VERBOSITY}
+
+  # **The same thing as OTLP/JSON**, for handing to whoever has to parse it rather than read it.
+  #
+  # The path is the switch: a collector pipeline is a static list, so this is always present and
+  # writes to `/dev/null` until `AIRA_OTEL_ARRIVED_FILE` names somewhere else. `/dev/stdout` works
+  # for a look, and **mangles anything large** — Docker's json-file driver cuts at a 16 KiB
+  # boundary, measured: a 49 692-character document came back truncated at 48 KiB and would not
+  # parse. A file under `deploy/compose/payload/` comes out whole, however big.
+  file/arrived:
+    path: ${env:AIRA_OTEL_ARRIVED_FILE}
+    format: json
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [otlp_grpc/lgtm, debug]
+      exporters: [otlp_grpc/lgtm, debug, file/arrived]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [otlp_grpc/lgtm]
+      # `debug` here too. Metrics were the one signal nothing could be seen arriving on, which is
+      # an asymmetry rather than a decision — and the signal whose absence is hardest to notice,
+      # because a metric that never arrives looks exactly like a metric whose value did not change.
+      exporters: [otlp_grpc/lgtm, debug, file/arrived]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [otlp_grpc/lgtm, debug]
+      exporters: [otlp_grpc/lgtm, debug, file/arrived]
   telemetry:
     logs:
       level: info

@@ -84,6 +84,10 @@ COMPOSE_ONLY = {
     "AIRA_PUBLISH_OTLP_GRPC_PORT",
     "AIRA_PUBLISH_OTLP_HTTP_PORT",
     "AIRA_PUBLISH_OTLP_METRICS_PORT",
+    # Read by the **collector's** configuration, through `${env:…}`, and by no settings class:
+    # how much it says about what arrives, and where to write the same thing as OTLP/JSON.
+    "AIRA_OTEL_DEBUG_VERBOSITY",
+    "AIRA_OTEL_ARRIVED_FILE",
     "AIRA_PUBLISH_OLLAMA_PORT",
     "AIRA_PUBLISH_GATEWAY_PORT",
     "AIRA_PUBLISH_MANAGEMENT_PORT",

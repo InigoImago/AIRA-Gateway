@@ -100,7 +100,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        purge-e2e-use-cases config-verify config-check up-apps otel-status \
+        purge-e2e-use-cases config-verify config-check up-apps otel-status otel-arrivals \
         verify-up verify-down test-verify \
         run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
@@ -173,6 +173,19 @@ up-lab: env ## Start the stack with the laboratory overlay (LAB_SIEM_ENDPOINT=..
 	@echo ""
 	@echo "  Laboratory overlay active. The reference stack is unchanged; drop $(LAB_F) to leave."
 	@echo "  Sending to: $${LAB_SIEM_ENDPOINT:-(unset — Compose will have refused)}"
+
+otel-arrivals: ## Watch what arrives at the collector, in its own words
+	@# **What arrived**, which is a different question from what was delivered onward
+	@# (`make otel-status`) and from what a service says it sent (`AIRA_DEBUG_INTEGRATIONS=otel`).
+	@# Three levels, set in deploy/compose/.env and applied by recreating the collector:
+	@#
+	@#   AIRA_OTEL_DEBUG_VERBOSITY=basic     counts only
+	@#   AIRA_OTEL_DEBUG_VERBOSITY=normal    one line per span   (the default)
+	@#   AIRA_OTEL_DEBUG_VERBOSITY=detailed  every attribute, event and link
+	@#
+	@# For the same thing as OTLP/JSON — to parse rather than read — set
+	@# `AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json` and read deploy/compose/payload/arrived.json.
+	docker logs -f --tail 100 $${AIRA_STACK:-aira}-otel-collector
 
 otel-status: ## Did telemetry reach the collector, and did the collector pass it on?
 	@# **The hop `AIRA_DEBUG_INTEGRATIONS=otel` cannot see.** That channel says the export left and

@@ -5,6 +5,46 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Seeing what arrives, in the reference stack (2026-09-02)
+
+Asked whether the raw incoming data can be looked at through the collector. Half of it already
+could — `docker logs <stack>-otel-collector` has printed one line per span since the stack was
+built. Three things were missing, and all three are now in the **reference** configuration rather
+than in the laboratory overlay, which the owner has said they do not want to route through.
+
+- **The verbosity was hard-coded** at `normal`. `AIRA_OTEL_DEBUG_VERBOSITY` now selects
+  `basic` (counts), `normal` (a line per span, unchanged default) or `detailed` (every attribute,
+  event and link).
+- **Metrics could not be seen arriving at all.** That pipeline had no `debug` exporter — an
+  asymmetry rather than a decision, and the hardest absence to notice, because a metric that never
+  arrives looks exactly like one whose value did not change.
+- **No machine-readable form.** `AIRA_OTEL_ARRIVED_FILE` writes the arrivals as OTLP/JSON, one
+  document per line, all three signals. Measured on the shipped stack: 22 lines, none broken,
+  carrying `resourceSpans`, `resourceLogs` **and** `resourceMetrics`.
+
+`/dev/stdout` is offered and its limit is stated rather than discovered: Docker's json-file driver
+cuts at a 16 KiB boundary, so anything large comes back truncated — a file under
+`deploy/compose/payload/` comes out whole.
+
+### Three questions that a green log cannot tell apart
+
+The round's real subject, and now said in one place:
+
+| | |
+|---|---|
+| what a service says it **sent** | `AIRA_DEBUG_INTEGRATIONS=otel` — its own log |
+| what **arrived** at the collector | `make otel-arrivals` |
+| what the collector **forwarded** | `make otel-status` — its own counters |
+
+`tools/tests/test_the_collector_says_what_arrives.py` reads the pipelines as YAML — a check that
+grepped for a name would pass on a name inside a comment explaining why it is missing — and holds
+every signal to being inspectable *and* still reaching the backend, because a pipeline that lost
+its real destination while gaining a debug one would look fine in a log and store nothing.
+
+One new mutation; the harness defends **704** properties.
+
+---
+
 ## Printing the payload, in the two places it means different things (2026-09-02)
 
 Asked for directly: *print the JSON that goes over.* There are two answers and they are not
