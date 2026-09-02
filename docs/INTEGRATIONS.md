@@ -572,8 +572,11 @@ publishes a price.
 OTLP over HTTP to any collector. Traces carry `aira.*` attributes — subject, use case, model,
 outcome, tokens, cost, provider/publisher/region — so a trace can be filtered by any of them.
 
-`?key=` is redacted from spans; credentials never appear in a log line. `x-trace-id` is on **every**
-response including failures, which are the ones most worth correlating.
+`?key=` is redacted from spans; credentials never appear in a log line. `x-trace-id` is on every
+**traced** response including failures, which are the ones most worth correlating. The health
+probes are deliberately untraced (they were 20 of 86 spans in a measured minute), so `/healthz` and
+`/readyz` carry no id — an id that correlates with nothing is worse than none, because somebody
+searches for it.
 
 ### The two legs, and which one you can change
 

@@ -151,12 +151,22 @@ async def test_a_stopped_upstream_becomes_degraded_but_the_gateway_stays_ready()
 # == correlation and version =====================================================================
 
 
-async def test_every_response_carries_a_trace_id_including_the_failures() -> None:
+async def test_every_traced_response_carries_a_trace_id_including_the_failures() -> None:
     """FR-4. The requests that most need correlating are the ones that went wrong, which is why
     the middleware sits outside the exception handlers — a placement only a deployed stack with
-    tracing enabled can confirm."""
+    tracing enabled can confirm.
+
+    **The control is a traced route, and it used to be `/healthz`.** That is the one endpoint
+    guaranteed *not* to carry the header: the health probes are excluded from tracing on purpose
+    (`observability.HEALTH_PATHS` — 20 of 86 spans in a measured minute), so no span exists and the
+    middleware omits the id rather than inventing one. So this test skipped on **every** stack,
+    tracing on or off, and said "tracing is disabled on this deployment" while it was enabled —
+    a wrong diagnosis in the place somebody reads to find out why nothing ran.
+
+    `/version-info` is unauthenticated and traced, which is what a control has to be.
+    """
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
-        ok = await client.get("/healthz")
+        ok = await client.get("/version-info")
         refused = await client.post("/v1beta/models/mock-1:generateContent", json={})
 
     if "x-trace-id" not in ok.headers:
@@ -165,6 +175,21 @@ async def test_every_response_carries_a_trace_id_including_the_failures() -> Non
     assert refused.status_code == 401
     assert refused.headers.get("x-trace-id"), "the failing response carries no trace id"
     assert refused.headers["x-trace-id"] != ok.headers["x-trace-id"], "the id is not per request"
+
+
+async def test_a_health_probe_carries_no_trace_id_because_it_carries_no_trace() -> None:
+    """The other half of the rule above, asserted rather than left as a surprise.
+
+    An id that correlates with nothing is worse than none — somebody searches for it — so the
+    middleware omits the header when no span is active, and the probes deliberately have none.
+    This is what makes *"on every response"* the wrong summary of the guarantee, in the middleware's
+    own docstring and in `INTEGRATIONS.md`; both now say *every traced response*.
+    """
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+        probe = await client.get("/healthz")
+
+    assert probe.status_code == 200
+    assert "x-trace-id" not in probe.headers
 
 
 async def test_version_info_answers_without_a_credential() -> None:

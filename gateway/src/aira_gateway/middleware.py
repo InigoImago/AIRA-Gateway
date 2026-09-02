@@ -272,7 +272,13 @@ class SecurityHeadersMiddleware:
 
 
 class TraceIdMiddleware:
-    """Put the active trace id on **every** response, including the failures (`FRD-117` FR-4).
+    """Put the active trace id on every **traced** response, failures included (`FRD-117` FR-4).
+
+    *Traced* is the load-bearing word and it was missing from this line for a while. The health
+    probes are excluded from tracing on purpose (`observability.HEALTH_PATHS`), so they have no
+    span and get no header — which is the second paragraph below working as intended, and not a
+    gap. Saying "every response" here cost a real test: `test_diagnostics.py` used `/healthz` as its
+    control, found no header, and skipped on every stack while reporting that tracing was off.
 
     Pure ASGI and mounted outermost, and both are load-bearing. Outermost, because a response
     produced by an exception handler is still a response — and the requests that most need
