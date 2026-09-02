@@ -724,6 +724,33 @@ telemetry, and sequential rather than in bursts of ten.
 
 ### Seeing what *arrives* at the collector
 
+**The comfortable way is already running.** `make up` starts Grafana with Tempo, Loki and
+Prometheus behind it, and the collector forwards everything to them — so every span the collector
+receives is browsable at <http://localhost:3000> → *Explore* → *Tempo*, with all its attributes,
+without turning anything on.
+
+The fastest route to one request: every response carries an `x-trace-id` header, including the
+failures, and pasting it into Tempo's *TraceID* search resolves at once (a tag search takes about
+a minute to index). What you get is the request span with its `aira.*` attributes — subject,
+credential, use case, model, outcome, status, tokens, cost — and everything underneath it: the
+model call, the SQL statements, the pool connections.
+
+```
+POST /v1beta/models/{resource}
+  aira.subject = ucadmin        aira.outcome      = served
+  aira.use_case = kundenservice aira.status       = 200
+  aira.model = qwen3:0.6b       aira.total_tokens = 53
+  aira.credential = dd533902    aira.cost_nanos   = 15800
+  aira.source_ip = 172.19.0.1   aira.api.surface  = gemini
+```
+
+**No prompt and no response** — those never reach a span (`ADR-0016`); they are stored on the audit
+row and read through the console, where every read is recorded. The `trace_id` is the same in both,
+so a span in Tempo and its stored payload are one lookup apart.
+
+The two ways below are for when you need the bytes rather than a view of them — a receiver that
+will not parse something, or a question about the wire itself.
+
 The collector already prints every batch it receives — `make otel-arrivals`, which is
 `docker logs -f <stack>-otel-collector`. `AIRA_OTEL_DEBUG_VERBOSITY` decides how much:
 
