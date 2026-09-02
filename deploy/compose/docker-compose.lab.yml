@@ -35,6 +35,9 @@ services:
     # than an overlay, and for what OTLP/JSON actually is.
     volumes:
       - ./otel/collector-config.lab.yaml:/etc/otelcol-contrib/config.yaml:ro
+      # Writable, for `LAB_PAYLOAD_PATH=/payload/otlp.json`. Git-ignored; nothing is written here
+      # unless that variable names a path inside it.
+      - ./payload:/payload
     environment:
       # **No default, on purpose.** An exporter with nowhere to send retries with growing backoff
       # and holds telemetry in memory; the failure is a log line nobody reads. Compose refuses to
@@ -71,6 +74,27 @@ services:
       # How long to wait before asking again. The default is one second, which against a quota is
       # the same question before the window has moved.
       LAB_SIEM_RETRY_INITIAL: ${LAB_SIEM_RETRY_INITIAL:-5s}
+      # ---- The payload itself, on the collector's stdout --------------------------------------
+      #
+      # `/dev/stdout` prints the **exact OTLP/JSON** that goes to your endpoint — same encoding,
+      # so what you read is what your SIEM has to parse. `make lab-logs` to watch it.
+      #
+      #     make up-lab LAB_SIEM_ENDPOINT=… LAB_PAYLOAD_PATH=/dev/stdout
+      #
+      # `/dev/null` by default because one span batch is up to 8192 spans and each is a page of
+      # JSON.
+      #
+      # **stdout mangles a large one.** Measured: Docker's json-file driver splits at a 16 KiB
+      # boundary and `docker logs` hands back a fragment — a 49 692-character payload came out cut
+      # at exactly 48 KiB and would not parse, while everything under ~8 KiB was intact. So stdout
+      # is for a look, and a **file** is for a payload you mean to keep or hand to somebody:
+      #
+      #     make up-lab LAB_SIEM_ENDPOINT=… LAB_PAYLOAD_PATH=/payload/otlp.json
+      #     # then: deploy/compose/payload/otlp.json, whole, however big
+      #
+      # Pair either with a small `LAB_SIEM_BATCH_SIZE` while you are reading — one span per line is
+      # worth more than eight thousand.
+      LAB_PAYLOAD_PATH: ${LAB_PAYLOAD_PATH:-/dev/null}
     ports:
       # The collector's own metrics — `sent` against `send_failed`, per exporter. Published so
       # `make lab-status` can ask from outside the network, and bound to loopback like everything

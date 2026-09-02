@@ -10,7 +10,7 @@ from aira_common.config import BaseAiraSettings
 from aira_common.integration_debug import configure_integration_debug
 from aira_common.kafka import KafkaSecurity
 from aira_common.logging import configure_logging
-from aira_common.observability import configure_observability
+from aira_common.observability import configure_observability, set_payload_rendering
 from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
 from aira_common.roles import Role, parse_role_groups
 from aira_gateway import __version__
@@ -384,6 +384,7 @@ def configure_worker(settings: GatewaySettings) -> bool:
     # The worker is where Kafka is actually spoken, so it is the process where the channel is most
     # often wanted — and the one a `create_app`-shaped fix would have missed (`FRD-617`).
     configure_integration_debug(settings.debug_integrations)
+    set_payload_rendering(settings.debug_otel_payload)
     return configure_observability(
         service_name=settings.app_name,
         service_version=__version__,

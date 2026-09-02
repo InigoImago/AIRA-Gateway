@@ -192,6 +192,24 @@ class BaseAiraSettings(BaseSettings):
     `AIRA_LOG_LEVEL=DEBUG` is also required before the feature appears to work.
     """
 
+    debug_otel_payload: int = 0
+    """Print this many items of each OTLP batch as **OTLP/JSON** (`FRD-617` §3.10). 0 is off.
+
+    For handing a real payload to whoever has to parse it. A number rather than a flag, because
+    the useful request is "show me three spans" and never "show me the 512 this batch holds" —
+    what is printed is a real OTLP/JSON document of that many items, truncated in content and
+    faithful in shape.
+
+    **Not what goes over this leg.** The applications post `application/x-protobuf` and cannot be
+    made to post JSON; this is the protobuf-JSON *mapping* of the same content — the shape a
+    collector produces with `encoding: json`, which is what a SIEM parses. See
+    `docs/INTEGRATIONS.md` §6.
+
+    Expensive and loud: it renders on the exporter's thread, on every export. A debugging setting,
+    never a deployment one — and it carries span attributes (subject, use case, model, source
+    address). No prompt or response ever reaches a span (`ADR-0016`).
+    """
+
     @field_validator("debug_integrations")
     @classmethod
     def _integrations_are_known(cls, value: str) -> str:

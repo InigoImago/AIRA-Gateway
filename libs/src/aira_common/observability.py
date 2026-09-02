@@ -156,6 +156,70 @@ def _partial_success(signal: str, body: bytes) -> tuple[int, str]:
         return 0, ""
 
 
+#: How many items of a batch :func:`payload_as_json` renders. 0 is off and is the default.
+#:
+#: A **number** rather than a flag, because the useful request is "show me three spans", never
+#: "show me the 512 this batch happens to hold". The rendered document is a real OTLP/JSON
+#: document of that many items — truncated in content, faithful in shape, which is what somebody
+#: hands to the team that has to parse it.
+_payload_items = 0
+
+
+def set_payload_rendering(items: int) -> int:
+    """How many items per export to render as OTLP/JSON. Returns what is now set."""
+    global _payload_items
+    _payload_items = max(0, int(items))
+    return _payload_items
+
+
+#: The encoder per signal — the **exporter's own**, so what is printed is what would be sent and
+#: not a second rendering that agrees with it until one of them changes.
+_ENCODERS: dict[str, tuple[str, str]] = {
+    "traces": ("opentelemetry.exporter.otlp.proto.common.trace_encoder", "encode_spans"),
+    "logs": ("opentelemetry.exporter.otlp.proto.common._internal._log_encoder", "encode_logs"),
+    "metrics": (
+        "opentelemetry.exporter.otlp.proto.common._internal.metrics_encoder",
+        "encode_metrics",
+    ),
+}
+
+
+def payload_as_json(signal: str, args: tuple[Any, ...], items: int) -> str:
+    """The batch as OTLP/JSON — what a receiver would be handed, rendered readably.
+
+    **Not what goes over this leg.** The applications post `application/x-protobuf` and cannot be
+    made to post JSON (`INTEGRATIONS.md` §6), so this is the protobuf-JSON *mapping* of the same
+    content: the shape a collector produces with `encoding: json`, and the shape a SIEM has to
+    parse. Said plainly because printing JSON beside a protobuf request invites the conclusion that
+    the encoding is switchable, and it is not.
+
+    Rendered through the exporter's own encoder, so it cannot drift from what is actually sent.
+
+    Metrics are handed over whole: they arrive as a tree rather than a sequence, so there is no
+    first-`n` to take and truncating one would produce a document that is not one.
+
+    Never raises. A debug rendering that could fail an export is not worth having, and this runs
+    inside the exporter.
+    """
+    if not args or items <= 0:
+        return ""
+    try:
+        import importlib
+
+        from google.protobuf.json_format import MessageToJson
+
+        module_name, function_name = _ENCODERS[signal]
+        encode = getattr(importlib.import_module(module_name), function_name)
+        batch = args[0]
+        # Metrics arrive as a tree rather than a sequence, so there is no first-`n` to take and
+        # slicing raises — handed over whole, as the docstring says.
+        with contextlib.suppress(TypeError):
+            batch = batch[:items]
+        return str(MessageToJson(encode(batch)))
+    except Exception:  # noqa: BLE001 — never the reason an export fails
+        return ""
+
+
 class WatchedExport:
     """An OTLP exporter that says what each export attempt did (`FRD-617` §3.1).
 
@@ -222,6 +286,32 @@ class WatchedExport:
             raise AttributeError(name)
         return getattr(self._exporter, name)
 
+    def _show_payload(self, args: tuple[Any, ...]) -> None:
+        """Print the batch as OTLP/JSON, when somebody asked for it.
+
+        **Before the export**, so the payload is on the terminal even when the export then fails —
+        which is the case somebody turns this on for.
+
+        Marked local-only for the reason every `otel` line is (`FRD-617` §3.2): a rendering of a
+        log batch, logged, would join the next log batch. That is not a slow leak here but a
+        doubling per export.
+        """
+        if _payload_items <= 0:
+            return
+        rendered = payload_as_json(self._signal, args, _payload_items)
+        if rendered:
+            # Imported here, like `SdkDiagnostics` below: `aira_common.logging` imports this
+            # module for the access-log redaction, and a second edge the other way is a cycle.
+            from aira_common.logging import get_logger
+
+            get_logger("aira_common.observability").info(
+                "otel_payload",
+                signal=self._signal,
+                shown=_payload_items,
+                payload=rendered,
+                local_only=True,
+            )
+
     def export(self, *args: Any, **kwargs: Any) -> Any:
         from aira_common.integration_debug import watch
 
@@ -238,6 +328,7 @@ class WatchedExport:
             # is noise, and `items` already carries the "we did not count" case for that batch.
             fields["traces"] = _distinct_traces(args)
         with watch("otel", "export", **fields) as call:
+            self._show_payload(args)
             result = self._exporter.export(*args, **kwargs)
             # **The failure that raises nothing.** An OTLP exporter answers `FAILURE` as a *value*
             # after it has exhausted its own retries, so a channel watching only for exceptions

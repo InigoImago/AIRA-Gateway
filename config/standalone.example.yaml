@@ -57,6 +57,9 @@ core:
   #
   #     debug_integrations: otel,kafka
   debug_integrations: ""
+  # How many items of each OTLP batch to print as OTLP/JSON on stdout. 0 is off, and off is what
+  # an installation runs — this renders on the exporter's thread, on every export.
+  debug_otel_payload: 0
   app_name: AIRA Gateway
   # One installation, one currency. It labels every figure in the console, every CSV column and
   # the prices in the model catalog — see `docs/DEVLOG.md` for the round where three screens said

@@ -166,6 +166,8 @@ services:
       # One line per call to a system that is not ours, while one is being integrated
       # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.
       AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}
+      # How many items of each OTLP batch to print as OTLP/JSON. 0 is off (`FRD-617` §3.10).
+      AIRA_DEBUG_OTEL_PAYLOAD: ${AIRA_DEBUG_OTEL_PAYLOAD:-0}
     depends_on:
       postgres:
         condition: service_healthy
@@ -252,6 +254,8 @@ services:
       # One line per call to a system that is not ours, while one is being integrated
       # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.
       AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}
+      # How many items of each OTLP batch to print as OTLP/JSON. 0 is off (`FRD-617` §3.10).
+      AIRA_DEBUG_OTEL_PAYLOAD: ${AIRA_DEBUG_OTEL_PAYLOAD:-0}
     depends_on:
       postgres:
         condition: service_healthy

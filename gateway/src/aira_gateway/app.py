@@ -24,6 +24,7 @@ from aira_common.logging import configure_logging, get_logger
 from aira_common.observability import (
     configure_observability,
     redact_query_string,
+    set_payload_rendering,
     trace_context_fields,
 )
 from aira_gateway import __version__
@@ -94,6 +95,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # (`FRD-617`). Empty means off, which is what an installation that is not being
     # integrated runs.
     configure_integration_debug(settings.debug_integrations)
+    set_payload_rendering(settings.debug_otel_payload)
     otel_enabled = configure_observability(
         service_name=settings.app_name,
         service_version=__version__,

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from aira_common.integration_debug import configure_integration_debug
 from aira_common.logging import configure_logging
+from aira_common.observability import set_payload_rendering
 from aira_management.config.database import build_databases
 from aira_management.config.observability import setup_observability
 from aira_management.config.runtime import get_settings
@@ -20,6 +21,7 @@ _settings = get_settings()
 configure_logging(_settings.log_level, json_output=_settings.log_json)
 # One line per call to a system that is not ours, while one is being integrated (`FRD-617`).
 configure_integration_debug(_settings.debug_integrations)
+set_payload_rendering(_settings.debug_otel_payload)
 # The **providers** only. Django is instrumented from `apps.api.ApiConfig.ready()`, because
 # that instrumentation inserts a middleware and `MIDDLEWARE` is assigned forty lines below.
 setup_observability(_settings)

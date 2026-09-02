@@ -62,7 +62,10 @@ module = ["aira_gateway.*", "aira_common.*", "aira_management.*"]
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["guardian.*", "aiokafka.*"]
+# `google.protobuf.json_format` ships no stubs, and it is read in exactly one place:
+# rendering an OTLP batch as JSON for `AIRA_DEBUG_OTEL_PAYLOAD`. Adding `types-protobuf` to the
+# dependency group would put a stub package in every deployment for one debug call.
+module = ["guardian.*", "aiokafka.*", "google.protobuf.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -1,0 +1,3 @@
+# Written by the laboratory overlay when LAB_PAYLOAD_PATH names a file in here.
+*
+!.gitignore

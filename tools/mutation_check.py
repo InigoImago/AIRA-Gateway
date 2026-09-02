@@ -5647,6 +5647,8 @@ MUTATIONS = [
         "      # One line per call to a system that is not ours, while one is being integrated\n"
         "      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.\n"
         "      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}\n"
+        "      # How many items of each OTLP batch to print as OTLP/JSON. 0 is off (`FRD-617` §3.10).\n"
+        "      AIRA_DEBUG_OTEL_PAYLOAD: ${AIRA_DEBUG_OTEL_PAYLOAD:-0}\n"
         "    depends_on:\n      postgres:",
         "      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}\n"
         "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
@@ -5655,6 +5657,8 @@ MUTATIONS = [
         "      # One line per call to a system that is not ours, while one is being integrated\n"
         "      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.\n"
         "      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}\n"
+        "      # How many items of each OTLP batch to print as OTLP/JSON. 0 is off (`FRD-617` §3.10).\n"
+        "      AIRA_DEBUG_OTEL_PAYLOAD: ${AIRA_DEBUG_OTEL_PAYLOAD:-0}\n"
         "    depends_on:\n      vault-init:\n        condition: service_completed_successfully\n"
         "      postgres:",
         "tools/tests/test_the_core_stack_carries_no_demo.py",
@@ -5670,6 +5674,8 @@ MUTATIONS = [
         "      # One line per call to a system that is not ours, while one is being integrated\n"
         "      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.\n"
         "      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}\n"
+        "      # How many items of each OTLP batch to print as OTLP/JSON. 0 is off (`FRD-617` §3.10).\n"
+        "      AIRA_DEBUG_OTEL_PAYLOAD: ${AIRA_DEBUG_OTEL_PAYLOAD:-0}\n"
         "    depends_on:\n      postgres:",
         "      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}\n"
         "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
@@ -5678,6 +5684,8 @@ MUTATIONS = [
         "      # One line per call to a system that is not ours, while one is being integrated\n"
         "      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.\n"
         "      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}\n"
+        "      # How many items of each OTLP batch to print as OTLP/JSON. 0 is off (`FRD-617` §3.10).\n"
+        "      AIRA_DEBUG_OTEL_PAYLOAD: ${AIRA_DEBUG_OTEL_PAYLOAD:-0}\n"
         "    depends_on:\n      nobody-defines-me:\n        condition: service_started\n"
         "      postgres:",
         "tools/tests/test_the_core_stack_carries_no_demo.py",
@@ -6314,6 +6322,22 @@ MUTATIONS = [
         "libs/src/aira_common/observability.py",
         '                call.failed(f"exporter returned {name}")',
         "                pass",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
+        "ID25",
+        "the OTLP batch is rendered as JSON only when somebody asked for it",
+        "libs/src/aira_common/observability.py",
+        '    if not args or items <= 0:\n        return ""',
+        '    if not args:\n        return ""',
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
+        "ID26",
+        "only as many items as were asked for are rendered",
+        "libs/src/aira_common/observability.py",
+        "            batch = batch[:items]",
+        "            batch = batch[:]",
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(

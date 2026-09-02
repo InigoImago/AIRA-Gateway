@@ -42,7 +42,9 @@ from aira_common.integration_debug import configure_integration_debug
 from aira_common.logging import configure_logging, get_logger
 from aira_common.observability import (
     SdkDiagnostics,
+    payload_as_json,
     route_sdk_diagnostics,
+    set_payload_rendering,
     watched_export,
 )
 
@@ -470,3 +472,109 @@ def test_a_signal_with_no_traces_in_it_does_not_claim_a_count(capsys: Any) -> No
 
     line = next(c for c in calls(capsys) if c["operation"] == "export")
     assert "traces" not in line
+
+
+# --- the payload itself ---------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_payload_rendering() -> Iterator[None]:
+    """Off before and after every case: it is process-wide, and a leaked setting would make the
+    other tests here print a page of JSON per export."""
+    set_payload_rendering(0)
+    yield
+    set_payload_rendering(0)
+
+
+def _payload_lines(capsys: Any) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{") and '"otel_payload"' in line
+    ]
+
+
+def test_nothing_is_printed_unless_it_is_asked_for(capsys: Any) -> None:
+    _one_span(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    assert _payload_lines(capsys) == []
+
+
+def test_the_batch_is_printed_as_the_otlp_json_a_receiver_would_parse(capsys: Any) -> None:
+    """Rendered through the exporter's **own** encoder, so it cannot drift from what is sent."""
+    set_payload_rendering(1)
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    )
+    with provider.get_tracer("t").start_as_current_span("generateContent") as span:
+        span.set_attribute("aira.use_case", "kundenservice")
+    provider.force_flush()
+    provider.shutdown()
+
+    (line,) = _payload_lines(capsys)
+    assert line["signal"] == "traces"
+    document = json.loads(line["payload"])
+    # The protobuf-JSON mapping, which is the shape a SIEM has to parse — not one flat event.
+    spans = document["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    assert spans[0]["name"] == "generateContent"
+    keys = {a["key"] for a in spans[0]["attributes"]}
+    assert "aira.use_case" in keys
+
+
+def test_only_as_many_items_as_were_asked_for(capsys: Any) -> None:
+    """ "Show me three spans", never "show me the 512 this batch holds"."""
+    set_payload_rendering(2)
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    )
+    tracer = provider.get_tracer("t")
+    for index in range(5):
+        tracer.start_span(f"span-{index}").end()
+    provider.force_flush()
+    provider.shutdown()
+
+    # **One `readouterr()`.** It drains, so a second call sees nothing — which is how this first
+    # failed, with an empty-unpack error two lines below an assertion that had already passed.
+    printed = [
+        json.loads(text)
+        for text in capsys.readouterr().out.splitlines()
+        if text.strip().startswith("{")
+    ]
+    (line,) = [entry for entry in printed if entry.get("event") == "otel_payload"]
+    document = json.loads(line["payload"])
+    assert len(document["resourceSpans"][0]["scopeSpans"][0]["spans"]) == 2
+    # …and the line still reports the whole batch, so the truncation cannot be mistaken for it.
+    (call,) = [entry for entry in printed if entry.get("operation") == "export"]
+    assert call["items"] == 5
+
+
+def test_the_payload_does_not_travel_by_otel_either(
+    exported: InMemoryLogRecordExporter, capsys: Any
+) -> None:
+    """A rendering of a log batch, logged, joins the next log batch — a doubling per export, not
+    a slow leak. Held back for the same reason every `otel` line is (`FRD-617` §3.2)."""
+    set_payload_rendering(1)
+    _one_span(watched_export(FakeSpanExporter(), "traces", "http://c"))
+
+    assert _payload_lines(capsys), "it reaches stdout"
+    bodies = [str(r.log_record.body) for r in exported.get_finished_logs()]
+    assert not any("otel_payload" in body for body in bodies)
+
+
+def test_a_batch_it_cannot_render_is_not_an_error(capsys: Any) -> None:
+    """This runs inside the exporter. A debug rendering that could fail an export is not worth
+    having, so an unfamiliar batch is silence rather than a raise."""
+    set_payload_rendering(1)
+    assert payload_as_json("traces", (object(),), 1) == ""
+    assert payload_as_json("traces", (), 1) == ""
+    assert payload_as_json("nonsense", ([],), 1) == ""
+
+
+def test_asking_for_none_renders_nothing_even_with_a_real_batch() -> None:
+    assert set_payload_rendering(0) == 0
+    assert payload_as_json("traces", ([],), 0) == ""
+
+
+def test_a_negative_count_is_off_rather_than_an_error() -> None:
+    assert set_payload_rendering(-5) == 0

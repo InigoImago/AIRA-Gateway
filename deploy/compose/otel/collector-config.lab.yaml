@@ -51,6 +51,20 @@ exporters:
     # attribute. This is what *arrived at the collector* — not what was delivered onward, which is
     # a different question and is answered by the metrics below.
     verbosity: ${env:LAB_DEBUG_VERBOSITY}
+  # **The exact bytes your endpoint receives**, on the collector's own stdout — `make lab-logs`.
+  #
+  # Distinct from the `debug` exporter above, which prints what *arrived* in the collector's own
+  # format. This is the OTLP/JSON that `otlphttp/lab` posts, written by the same encoding, so what
+  # you read is what your SIEM has to parse rather than a second rendering of it.
+  #
+  # **The path is the switch.** A collector pipeline is a static list — there is no way to add an
+  # exporter conditionally — so this one is always in the traces and logs pipelines and writes to
+  # `/dev/null` until `LAB_PAYLOAD_PATH=/dev/stdout` says otherwise. It still *encodes* either way,
+  # which is why it lives only in this overlay: the reference stack does not pay for it.
+  file/payload:
+    path: ${env:LAB_PAYLOAD_PATH}
+    format: json
+
   # The second destination. **Fan-out, not replacement**: Grafana keeps working, so a SIEM that is
   # unreachable costs you nothing you already had.
   otlphttp/lab:
@@ -88,7 +102,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [otlp_grpc/lgtm, debug, otlphttp/lab]
+      exporters: [otlp_grpc/lgtm, debug, otlphttp/lab, file/payload]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
@@ -96,7 +110,7 @@ service:
     logs:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [otlp_grpc/lgtm, debug, otlphttp/lab]
+      exporters: [otlp_grpc/lgtm, debug, otlphttp/lab, file/payload]
   telemetry:
     logs:
       # `LAB_LOG_LEVEL`. At `info` a delivery **failure** is already a line — the retry sender says

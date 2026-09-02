@@ -689,6 +689,33 @@ telemetry, and sequential rather than in bursts of ten.
 
 `make otel-status` shows whether anything is being dropped while you tune.
 
+### Seeing the payload itself
+
+Two places, and they show different things.
+
+**What this gateway produces** — `AIRA_DEBUG_OTEL_PAYLOAD=3` prints three items of every batch as
+OTLP/JSON on the service's own stdout. It is rendered through the exporter's own encoder, so it
+cannot drift from what is sent; it is *not* the bytes on that leg, which are protobuf.
+
+**The exact bytes your endpoint receives** — the collector, which is already sending JSON:
+
+```bash
+make up-lab LAB_SIEM_ENDPOINT=https://siem.internal:4318 \
+    LAB_PAYLOAD_PATH=/payload/otlp.json LAB_SIEM_BATCH_SIZE=20
+# then read deploy/compose/payload/otlp.json
+```
+
+`LAB_PAYLOAD_PATH=/dev/stdout` works for a quick look (`make lab-logs`), but **stdout mangles a
+large payload**: measured, Docker's json-file driver cuts at a 16 KiB boundary and a
+49 692-character document came back truncated at 48 KiB and would not parse, while everything
+under ~8 KiB was intact. A file in `deploy/compose/payload/` comes out whole, however big. Pair
+either with a small `LAB_SIEM_BATCH_SIZE` while you are reading — one span per line is worth more
+than eight thousand.
+
+What a span carries: `aira.api.surface`, `aira.auth_method`, `aira.credential`, `aira.model`,
+`aira.operation`, `aira.outcome`, `aira.source_ip`, `aira.status`, tokens and cost. **No prompt and
+no response** — those never reach a span (`ADR-0016`).
+
 ### Not the same switch
 
 `AIRA_LOG_JSON` is unrelated: it is whether **the service's own log lines on stdout** are JSON or
