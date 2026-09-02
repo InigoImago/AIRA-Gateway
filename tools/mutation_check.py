@@ -6325,6 +6325,14 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID29",
+        "a rendered payload is one line, so a log stays line-oriented",
+        "libs/src/aira_common/observability.py",
+        '        return str(json.dumps(_to_otlp_json(json.loads(rendered)), separators=(",", ":")))',
+        "        return str(json.dumps(_to_otlp_json(json.loads(rendered)), indent=2))",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
         "ID27",
         "OTLP identifiers are rendered as hex, not protobuf's base64",
         "libs/src/aira_common/observability.py",

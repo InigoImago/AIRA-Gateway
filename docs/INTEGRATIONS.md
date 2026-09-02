@@ -693,9 +693,25 @@ telemetry, and sequential rather than in bursts of ten.
 
 Two places, and they show different things.
 
-**What this gateway produces** — `AIRA_DEBUG_OTEL_PAYLOAD=3` prints three items of every batch as
-OTLP/JSON on the service's own stdout. It is rendered through the exporter's own encoder, so it
-cannot drift from what is sent; it is *not* the bytes on that leg, which are protobuf.
+**What this gateway produces** — `AIRA_DEBUG_OTEL_PAYLOAD=<n>` prints the first *n* items of every
+batch as OTLP/JSON on the service's own stdout, one payload per line:
+
+```bash
+docker logs aira-gateway \
+  | jq -Rr 'fromjson? | select(.event=="otel_payload" and .signal=="traces") | .payload' \
+  | tail -1 | jq .
+```
+
+Two things that bite, both found by doing it:
+
+- **`jq -R … fromjson?`, not plain `jq`.** `docker logs` carries the web server's own access lines,
+  which are not JSON; plain `jq` stops at the first of them and prints nothing at all.
+- **The first *n* is literally the first *n*.** A stack with health probes puts `GET /healthz`
+  spans at the front of every batch, so `=2` shows you two health checks and nothing else. `=40`
+  is a usable number on this stack; raise it until the span you came for is in there.
+
+Rendered to match a collector's OTLP/JSON exactly — hex identifiers, integer enums, measured
+against one. It is *not* the bytes on that leg, which are protobuf.
 
 **The exact bytes your endpoint receives** — the collector, which is already sending JSON:
 
@@ -712,9 +728,21 @@ under ~8 KiB was intact. A file in `deploy/compose/payload/` comes out whole, ho
 either with a small `LAB_SIEM_BATCH_SIZE` while you are reading — one span per line is worth more
 than eight thousand.
 
-What a span carries: `aira.api.surface`, `aira.auth_method`, `aira.credential`, `aira.model`,
-`aira.operation`, `aira.outcome`, `aira.source_ip`, `aira.status`, tokens and cost. **No prompt and
-no response** — those never reach a span (`ADR-0016`).
+What a span carries, from a real request on the shipped stack:
+
+```
+POST /v1beta/models/{resource}   traceId=4a57ae30937c9637d39df1d79b5b4b56
+  aira.api.surface        = gemini            aira.outcome  = served
+  aira.auth_method        = api_key           aira.source_ip = 172.19.0.1
+  aira.credential         = dd533902          aira.status   = 200
+  aira.model              = qwen3:0.6b        aira.subject  = ucadmin
+  aira.operation          = generateContent   aira.use_case = kundenservice
+  aira.upstream.provider  = local             aira.upstream.region = 
+```
+
+**No prompt and no response** — those never reach a span (`ADR-0016`). `aira.subject`,
+`aira.credential` and `aira.source_ip` do, which is worth knowing before you forward this
+anywhere.
 
 ### Not the same switch
 

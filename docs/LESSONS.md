@@ -70,6 +70,14 @@ reading code.
   files most likely to have the defect were the ones checked for nothing. **An early return that
   skips a whole class of file is a check that does not cover its likeliest case.**
 
+- **Write the reader's command out, and run it.** A debug facility is finished when somebody can
+  extract what it produced, not when it produces it. Printing the OTLP payload passed every test
+  and was unusable twice over: it was pretty-printed, so one payload was forty lines and no longer
+  one line of a log — `tail -1` returned a closing brace — and the obvious `docker logs … | jq`
+  prints *nothing at all*, because the web server's access lines are not JSON and `jq` stops at the
+  first one. Both surfaced in the minute spent writing the recipe into the documentation, and
+  neither is visible from inside a test that already holds the parsed object.
+
 - **A rendering meant to show what the far end receives is only tested by comparing with the far
   end.** `payload_as_json` printed an OTLP batch "through the exporter's own encoder, so it cannot
   drift from what is sent" — and `MessageToJson` applies protobuf's *generic* JSON mapping, which

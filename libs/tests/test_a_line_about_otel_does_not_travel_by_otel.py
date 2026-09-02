@@ -681,3 +681,21 @@ def test_the_whole_document_parses_as_json() -> None:
 
     document = json.loads(payload_as_json("traces", (memory.get_finished_spans(),), 1))
     assert document["resourceSpans"]
+
+
+def test_the_payload_is_one_line_so_a_log_stays_line_oriented(capsys: Any) -> None:
+    """Found by trying to read it: indented output spanned forty lines, so one payload was no
+    longer one line of the log — `tail -1` returned a closing brace and `grep` a fragment. Every
+    other event this system writes is one line, and pretty-printing is the reader's `jq`."""
+    set_payload_rendering(1)
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    )
+    provider.get_tracer("t").start_span("gen").end()
+    provider.force_flush()
+    provider.shutdown()
+
+    (line,) = _payload_lines(capsys)
+    assert "\n" not in line["payload"], "the payload spans more than one line"
+    assert json.loads(line["payload"])["resourceSpans"]

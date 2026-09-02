@@ -259,7 +259,13 @@ def payload_as_json(signal: str, args: tuple[Any, ...], items: int) -> str:
         # `"kind": "SPAN_KIND_INTERNAL"`. Both are legal protobuf JSON; only one is what the
         # receiver on the other end will actually be handed.
         rendered = MessageToJson(encode(batch), use_integers_for_enums=True)
-        return str(json.dumps(_to_otlp_json(json.loads(rendered)), indent=2))
+        # **Compact, and on one line.** Indented output was the first shape and it broke the tools
+        # a log is read with: a payload spanning forty lines is no longer one line of the log, so
+        # `tail -1` returns a closing brace and `grep` returns a fragment. Everything else this
+        # system writes is one event per line, and pretty-printing is what the reader's `jq` is
+        # for. Separators without spaces because the escaped copy sits inside another JSON string,
+        # where every byte is paid for twice.
+        return str(json.dumps(_to_otlp_json(json.loads(rendered)), separators=(",", ":")))
     except Exception:  # noqa: BLE001 — never the reason an export fails
         return ""
 

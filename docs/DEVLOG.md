@@ -66,6 +66,23 @@ other end.
 
 Two new mutations; the harness defends **702** properties.
 
+### And then trying to read it found two more
+
+Asked next: *how do I see it in the console?* Writing the recipe out is what found both.
+
+**The payload was pretty-printed**, so one payload spanned forty lines and was no longer one line
+of the log. `tail -1` returned a closing brace; `grep` returned a fragment. Every other event this
+system writes is one line, and pretty-printing is what the reader's `jq` is for — compact now, and
+a test asserts there is no newline in it.
+
+**`jq` alone does not work on `docker logs`**, because the web server's access lines are not JSON
+and plain `jq` stops at the first one having printed nothing. `jq -Rr 'fromjson? | …'` is the
+form, and it is now in the documentation rather than left for the reader to rediscover.
+
+One thing that is a limitation rather than a defect, and is said as such: the first *n* is
+literally the first *n*, and a stack with health probes puts `GET /healthz` at the front of every
+batch — `=2` shows two health checks and nothing else. `=40` reaches a real request here.
+
 ### Three guards, again
 
 Adding one setting failed the configuration reference, both config-example checks, the compose
