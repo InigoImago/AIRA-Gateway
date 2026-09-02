@@ -98,3 +98,34 @@ def test_the_file_says_which_stack_each_recipe_starts() -> None:
     text = ENV_EXAMPLE.read_text(encoding="utf-8")
     for target in ("make up", "make up-core", "make up-apps", "make up-full", "make showcase"):
         assert target in text, f"`{target}` starts a stack and this file does not mention it"
+
+
+def _compose_only_names() -> set[str]:
+    """Names Compose itself reads — ports, bind addresses, the stack prefix.
+
+    Borrowed from the guard next door rather than listed again: two copies of *which names are
+    not settings* is two answers, and this file would be the one that goes stale.
+    """
+    from tools.tests.test_compose_passes_the_settings_it_names import COMPOSE_ONLY
+
+    return set(COMPOSE_ONLY)
+
+
+def test_no_example_line_names_a_variable_that_nothing_defines() -> None:
+    """A knob wired to a name that does not exist reads as done and is worse than an absent one.
+
+    `test_one_owner_for_the_stack_addresses.py` records `AIRA_KEYCLOAK_PORT` as exactly that
+    defect in the Makefile — one occurrence in the whole repository, nothing setting it, so the
+    report always went to `8080`. The copy in **this** file outlived that fix: it sat in the
+    two-stacks example alongside `AIRA_POSTGRES_PORT`, which is the *setting* the paragraph three
+    lines below warns against reusing for a published port. Both were wrong, in the file an
+    operator copies, next to the prose explaining why.
+    """
+    named = _named_in_the_example()
+    phantom = sorted(named - _settings_names() - _compose_only_names())
+
+    assert not phantom, (
+        f"These are offered as settable in `.env.example` and nothing reads them: {phantom}. "
+        "Either the name is a typo, or it was renamed and this file was not — both read to an "
+        "operator as a knob that works."
+    )

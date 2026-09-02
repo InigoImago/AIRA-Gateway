@@ -12,7 +12,7 @@ lists every variable *"so I know how to bring up what"*. It did not: **15 of 90*
 
 ### The integration suite found yesterday's column
 
-**1037 passed, 5 failed, 21 skipped.** All five failures were one cause, and it is worth the
+**1037 passed, 5 failed, 21 skipped** — and after the fix, **1040 passed, 0 failed, 23 skipped**. All five failures were one cause, and it is worth the
 paragraph: `FRD-615` added `OutboxEvent.traceparent` yesterday — a Django `CharField`, so `NOT
 NULL` with no database default. The ORM supplies `""` on every save, so every ORM writer kept
 working and `make ci` stayed green. What broke were the four hand-written
@@ -33,6 +33,19 @@ while the integration suite was running against the same containers. I had start
 against one shared, stateful stack, which is exactly what `playwright.config.ts` refuses to do
 *within* the suite (`fullyParallel: false, workers: 1`, "the suite drives shared, stateful
 services"). The rule does not stop at the suite boundary. Re-run separately: green.
+
+### A phantom name in the file an operator copies
+
+Found while reading the file end to end. The two-stacks example read
+`AIRA_STACK=aira2 AIRA_POSTGRES_PORT=5442 AIRA_KEYCLOAK_PORT=8090` — and three lines below it, the
+paragraph explaining that published ports are `AIRA_PUBLISH_*` *precisely because*
+`AIRA_POSTGRES_PORT` already means the port the gateway connects to. `AIRA_KEYCLOAK_PORT` is worse:
+`test_one_owner_for_the_stack_addresses.py` records it as a fixed defect in the Makefile — a name
+occurring once in the whole repository with nothing setting it — and the copy in this file outlived
+the fix. Both wrong, in the file an operator copies, beside the prose saying why.
+
+`test_the_env_example_names_every_setting.py` now also refuses a name nothing defines, borrowing
+`COMPOSE_ONLY` from the guard next door rather than listing it twice.
 
 ### Verifying my own claims found a real disagreement between the planes
 
@@ -57,6 +70,37 @@ that signs every administrator's session, and a published one on a reachable net
 forgery rather than an inconvenience. A decision to take, not a gap to close quietly.
 
 All four combinations are now verified by the product's own checks rather than by me.
+
+### And: how do you get OTLP out as JSON?
+
+Asked mid-round, and the honest answer was **it was not documented where anybody would look**.
+`encoding: json` existed in `collector-config.lab.yaml` with a good comment beside it, and was
+mentioned in `FRD-616` and a DEVLOG entry — but `CONFIGURATION.md` had nothing, and
+`INTEGRATIONS.md` §6 was nine lines that did not mention encoding at all.
+
+Two facts, both measured rather than reasoned about:
+
+- **The applications' leg cannot be JSON.** `Content-Type: application/x-protobuf` on the wire,
+  measured inside the running gateway against a throwaway listener. Not a withheld setting: the
+  OTLP spec defines `http/json` and `opentelemetry-exporter-otlp-proto-http` — the package both
+  planes use — does not implement it. There is no `opentelemetry.exporter.otlp.json` module and
+  no encoding argument on the exporter.
+- **The collector's leg can be, and the stack already ships a working example.** Driven through
+  `make up-lab LAB_SIEM_ENDPOINT=…` into a listener that prints what it got:
+  `Content-Type: application/json`, body `{"resourceSpans": [...]}` — the protobuf-JSON mapping,
+  one nested document per batch, every attribute a `{"key", "value": {"stringValue"}}` pair. Which
+  is the part worth telling somebody before they plan a SIEM around it: it is not one flat event
+  per line.
+
+`INTEGRATIONS.md` §6 now carries both legs, the switch, what the JSON actually looks like, the
+non-OTLP exporters this collector build ships for a flat shape, and a line saying `AIRA_LOG_JSON`
+is a different question entirely — it is the *service's own stdout*, not OTLP, and the two names
+invite exactly that conflation.
+
+A suspicion checked and dropped on the way: this collector build lists its exporters as `otlp_http`
+and `otlp_grpc`, while the lab config says `otlphttp/lab` — `validate --config` accepts it, so the
+classic id still resolves. Worth the two minutes; a config that names an exporter the build does
+not have fails at start-up, in an overlay whose whole point is to be started rarely.
 
 ### What was actually missing
 

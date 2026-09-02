@@ -575,7 +575,62 @@ outcome, tokens, cost, provider/publisher/region — so a trace can be filtered 
 `?key=` is redacted from spans; credentials never appear in a log line. `x-trace-id` is on **every**
 response including failures, which are the ones most worth correlating.
 
-> done an OTLP endpoint · `AIRA_OTEL_ENABLED=true` · a sample ratio you can afford
+### The two legs, and which one you can change
+
+```
+  gateway ─── application/x-protobuf ──▶ collector ─── your choice ──▶ wherever you send it
+  management        (fixed)                                              (protobuf or JSON)
+```
+
+**Leg 1, the applications to the collector, is protobuf and is not switchable.** Measured on the
+running stack: `Content-Type: application/x-protobuf`. This is not a setting anybody withheld —
+the OTLP spec defines an `http/json` protocol and `opentelemetry-exporter-otlp-proto-http`, the
+package both planes use, does not implement it. `AIRA_OTEL_ENDPOINT` chooses *where*; nothing
+chooses the encoding. If your destination cannot read protobuf, put a collector in front of it;
+that is what the second leg is for.
+
+**Leg 2, the collector onward, is yours.** One line on an `otlphttp` exporter:
+
+```yaml
+exporters:
+  otlphttp/siem:
+    endpoint: https://siem.internal:4318
+    encoding: json          # ← this is the switch. Default is protobuf.
+```
+
+The shipped stack already carries a worked example: `deploy/compose/otel/collector-config.lab.yaml`
+fans out to a second destination in JSON, and `make up-lab LAB_SIEM_ENDPOINT=…` starts it without
+touching the reference stack ([§0](#0-when-it-does-not-work-watching-the-wire) for the debug
+channel, `make lab-status` for whether it arrived).
+
+### What "OTLP/JSON" actually is, before you plan around it
+
+Measured through the overlay above into a throwaway listener:
+
+```json
+{"resourceSpans": [{"resource": {"attributes": [{"key": "service.name",
+ "value": {"stringValue": "aira-gateway"}}]}, "scopeSpans": [{"spans": [ … ]}]}]}
+```
+
+`Content-Type: application/json`, and the body is the **protobuf-JSON mapping**: one nested
+document per batch, `resourceSpans[].scopeSpans[].spans[]`, with every attribute as a
+`{"key": …, "value": {"stringValue": …}}` pair. It is **not** one flat event per line, and a SIEM
+that ingests newline-delimited JSON will not read it as events without a transform. Answer that
+question before wiring it up — [`FRD-616`](features/FRD-616-the-audit-trail-as-an-event-stream.md)
+says what the content is and, more usefully, what it is not.
+
+If a flat shape is what you need, the collector is where to produce it: this build ships the
+`file`, `kafka`, `elasticsearch`, `opensearch`, `splunk_hec` and `syslog` exporters alongside
+`otlphttp`, and those speak their destinations' own formats rather than OTLP.
+
+### Not the same switch
+
+`AIRA_LOG_JSON` is unrelated: it is whether **the service's own log lines on stdout** are JSON or
+human-readable text. It does not touch OTLP. `AIRA_LOG_JSON=false` is for reading a terminal during
+development; leave it `true` anywhere something collects container output.
+
+> done an OTLP endpoint · `AIRA_OTEL_ENABLED=true` · a sample ratio you can afford · the encoding
+> decided on the collector, not in AIRA
 
 ---
 
