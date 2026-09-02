@@ -22,6 +22,21 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **A configuration that validates is a configuration that parses.** Two OTTL filter expressions
+  passed `otelcol validate` and selected the wrong spans: `kind != SPAN_KIND_CLIENT` was meant to
+  exclude database work and let 99 SQL spans through, because SQLAlchemy's spans are `CLIENT` too;
+  `parent_span_id.string == ""` was meant to separate a real upstream call from a background
+  prober, and an empty parent is **sixteen zeroes**. One draft selected 35 spans of which 32 were
+  probers and not one was a request — it would have shipped as *"the SIEM sees your upstream
+  calls"* while showing a health check every minute. Both were found by replaying a captured
+  sample through a throwaway collector and counting what came out. **A predicate about production
+  data is only tested against production data**, and a validator that says nothing about meaning
+  is the most convincing kind of green.
+
+  *And check what the sample contains before believing an empty result.* The first attempt to
+  confirm the SIEM sees model calls found none — because every test request had died on
+  `budget_exceeded` and never reached a model. The filter was right and the traffic was wrong.
+
 - **An exporter that counts a batch as sent has not necessarily written it anywhere.**
   `AIRA_OTEL_ARRIVED_FILE` pointing into a bind-mounted directory the collector cannot write
   produced no file at all, while `otelcol_exporter_sent_spans{exporter="file/arrived"}` read 116 —

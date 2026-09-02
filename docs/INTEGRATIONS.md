@@ -651,6 +651,38 @@ batch twice — that is why the reference stack shows double. `undelivered` coun
 an attempt, so an exporter still retrying a dead endpoint reads `0` for as long as its backoff
 lasts; `make otel-status` prints the collector's own words about why.
 
+### Two destinations that want different things
+
+The `otel` leg and a SIEM are not the same question, and treating them as one is what makes a
+second destination a volume problem.
+
+**Grafana wants everything** — SQL statements, pool connections, ASGI internals — because that is
+how *"was the gateway slow or was the model slow"* gets answered. **A SIEM wants one record per
+request**, and the calls that carried data outside this installation. Measured on the shipped
+stack: three requests produced **184 spans**, of which **6** are those two things.
+
+So the forwarding fragment gives the second destination its **own trace pipeline** over the same
+receiver:
+
+```
+                      ┌─ traces      → Grafana + the inspection exporters   (184 spans)
+  applications ─▶ collector
+                      └─ traces/siem → filter → your endpoint               (6 spans)
+```
+
+What the SIEM pipeline keeps: a span with `aira.use_case` (the request), or an HTTP call made
+*inside* one (the model the prompt actually went to). What it drops: SQL, pool connections, ASGI
+send/receive halves, and the reachability prober — which asks every configured model every 60
+seconds whether it is there and, in a first draft of this filter, was **32 of the 35 spans it
+selected**, without one of them being a request.
+
+Metrics and logs go over whole; they are small, and a `oidc_jwks_unavailable` is exactly what a
+SIEM is for.
+
+One thing to know before editing the fragment: **a merged exporter list replaces, it does not
+extend.** Every exporter the base configuration names has to be repeated there, or it silently
+stops receiving — `test_the_siem_gets_requests_not_plumbing.py` checks that.
+
 ### When the receiver answers `429`
 
 Measured on this stack, so the numbers are a starting point rather than a rule of thumb:

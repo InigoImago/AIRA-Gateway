@@ -5,6 +5,60 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two destinations, two questions (2026-09-02)
+
+The owner's idea: *could the requests to the gateway be sent to a different server as well? We have
+the normal OTel interface where I want to push all data, and a SIEM interface that will look at
+requests.* Exactly the right split, and the measurement says why.
+
+### What actually goes out
+
+Three real requests, captured through the collector's own arrivals file: **184 spans**. By
+category — 51 % SQL statements, 26 % pool `connect`, 12 % ASGI send/receive halves, 6 % upstream
+calls, **4 % requests**.
+
+So a second destination fed from the same stream is 96 % plumbing. That is not a volume knob
+dressed as a filter: sending a SIEM 178 spans about connection pooling is *worse* than sending it
+nothing, because it buries the six that matter and each one costs whatever the far end charges —
+which is how this started, with a receiver answering `429`.
+
+### Two pipelines, not one with a filter on the end
+
+`traces` keeps everything for Grafana; `traces/siem` selects, over the same receiver. A shared
+pipeline could only ever send both destinations the same thing.
+
+The selection is *a request, or an HTTP call made inside one*. Measured after: **6 of 184**, and
+both halves present — the three requests and the three `POST /v1/chat/completions` that carried
+their prompts to the model.
+
+### The filter was wrong twice, and only a real collector said so
+
+Both drafts validated. `otelcol validate` checks syntax, not meaning.
+
+**First:** `kind != SPAN_KIND_CLIENT` to exclude database work — but SQLAlchemy's spans are
+`CLIENT` too, so 99 SQL spans came through. **Second:** `parent_span_id.string == ""` to separate a
+real upstream call from the reachability prober (`FRD-117`), which asks every model every 60
+seconds. An empty parent is **sixteen zeroes**, not an empty string, so four prober spans passed.
+
+Both found by replaying the captured sample through a throwaway collector and counting what came
+out the other side — the same method as the payload encoding two rounds ago, and the same lesson:
+**a predicate about production data is only tested against production data.**
+
+An earlier draft selected 35 spans of which **32 were probers and not one was a request**, which
+would have shipped as "the SIEM sees your upstream calls" while showing it a health check every
+minute.
+
+### And a measurement that was measuring the wrong thing
+
+The first attempt to check "does the SIEM see the model calls" found none at all — because all
+three test requests had died on `budget_exceeded` and never reached a model. The filter was right
+and the traffic was wrong. `demo_reset_usage.py`, three requests that actually served, and the
+`chat/completions` spans appeared. **An empty result is a claim about the sample first.**
+
+Two new mutations; the harness defends **708** properties.
+
+---
+
 ## The probes stopped being requests, and a silent write (2026-09-02)
 
 *Can we send healthz less often — I cannot see what it sends otherwise. And are you sure it is

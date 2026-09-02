@@ -6325,6 +6325,22 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID33",
+        "the second destination gets requests, not every database span",
+        "deploy/compose/otel/collector-forward.yaml",
+        "      processors: [memory_limiter, resource, filter/siem, batch]",
+        "      processors: [memory_limiter, resource, batch]",
+        "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
+    ),
+    Mutation(
+        "ID34",
+        "the unfiltered pipeline keeps Grafana and does not forward",
+        "deploy/compose/otel/collector-forward.yaml",
+        "    traces:\n      exporters: [otlp_grpc/lgtm, debug, file/arrived]",
+        "    traces:\n      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]",
+        "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
+    ),
+    Mutation(
         "ID31",
         "the health probes produce no spans",
         "libs/src/aira_common/observability.py",

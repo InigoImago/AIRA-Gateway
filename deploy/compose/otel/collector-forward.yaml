@@ -52,6 +52,32 @@ exporters:
       max_elapsed_time: 300s
 
 processors:
+  # **What a second destination is for, and what it is not.**
+  #
+  # The `otel` leg wants everything: SQL statements, pool connections, ASGI internals — that is how
+  # *"was the gateway slow or was the model slow"* gets answered. A SIEM wants the opposite: one
+  # record per request, and the calls that carried data outside this installation. Measured on this
+  # stack, three requests produced **184 spans**, of which **6** are those two things.
+  #
+  # So this is not a volume knob dressed as a filter. Sending a SIEM 178 spans about connection
+  # pooling is worse than sending it nothing: it buries the six that matter, and every one of them
+  # costs whatever the far end charges — which is how this started, with a receiver answering 429.
+  #
+  # `filter` **drops what the expression makes true**, so the shape is a negation and reads
+  # backwards. In words: drop a span unless it is a request (`aira.use_case`), or an HTTP call made
+  # *inside* one.
+  #
+  # The parent test is what separates a real upstream call from the reachability prober
+  # (`FRD-117`), which asks every model every 60 seconds whether it is there — 32 of the 35 spans
+  # a first draft of this filter selected, and not one of them a request. An empty parent is
+  # sixteen zeroes rather than an empty string, which the first draft got wrong and only replaying
+  # a real sample through a real collector revealed.
+  filter/siem:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["aira.use_case"] == nil and (attributes["http.url"] == nil or parent_span_id.string == "0000000000000000")'
+
   # Fewer, larger requests. The base leaves `batch` at its defaults, which send every 200ms — the
   # worst available shape for a destination that counts requests.
   batch:
@@ -61,11 +87,22 @@ processors:
 
 service:
   pipelines:
-    # **Fan-out, not replacement.** Grafana and the inspection exporters stay, so a destination
-    # that is unreachable costs you nothing you already had.
+    # **Two pipelines over one receiver, not one pipeline with a filter at the end.** They want
+    # different things, so they are different pipelines: the base keeps every span for Grafana,
+    # and `traces/siem` selects. A shared pipeline could only ever send both destinations the same
+    # thing, which is the design that made this a volume problem in the first place.
+    #
+    # The base three are named again here because a merged exporter list **replaces**; leaving
+    # them out would silently unhook Grafana.
     traces:
-      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]
+      exporters: [otlp_grpc/lgtm, debug, file/arrived]
     metrics:
       exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]
     logs:
       exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]
+
+    # The second destination's own trace pipeline. Same receiver, its own filter, its own batching.
+    traces/siem:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, filter/siem, batch]
+      exporters: [otlphttp/forward]
