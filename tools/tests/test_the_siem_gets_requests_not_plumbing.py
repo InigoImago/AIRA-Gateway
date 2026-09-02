@@ -98,3 +98,42 @@ def test_the_filter_names_the_two_things_a_siem_needs() -> None:
     assert 'attributes["aira.use_case"] == nil' in expression
     assert 'attributes["http.url"] == nil' in expression
     assert 'parent_span_id.string == "0000000000000000"' in expression
+
+
+# --- and it is genuinely optional ----------------------------------------------------------------
+
+
+COMPOSE = ROOT / "deploy" / "compose" / "docker-compose.yml"
+NOFORWARD = ROOT / "deploy" / "compose" / "otel" / "collector-noforward.yaml"
+
+
+def test_the_off_state_is_an_empty_fragment() -> None:
+    """One collector, two `--config` flags, and the second is `{}` until somebody selects the
+    forwarding one. Off, the merge is a no-op — there is no second container, no second exporter
+    and no filter pipeline."""
+    assert yaml.safe_load(NOFORWARD.read_text(encoding="utf-8")) == {}
+
+
+def test_compose_defaults_to_the_empty_fragment() -> None:
+    compose = COMPOSE.read_text(encoding="utf-8")
+
+    assert "--config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/noforward.yaml}" in compose
+
+
+def test_the_endpoint_has_a_fallback_that_lets_the_collector_start() -> None:
+    """**Compose passes an empty string for an unset variable**, and an empty string overrides a
+    `${env:…:-default}` inside the collector — so the fallback has to be spelled at this end or it
+    never applies.
+
+    Without it, switching forwarding on and forgetting the endpoint fails *validation*, and the
+    collector restarts for ever — taking Grafana with it, because one container carries every
+    exporter. Measured: `Restarting (1)`, with the reason only in the logs of a container nobody
+    is watching. `.invalid` never resolves (RFC 2606), so instead the collector starts, that one
+    exporter fails by name, and everything else keeps working.
+    """
+    compose = COMPOSE.read_text(encoding="utf-8")
+
+    assert (
+        "AIRA_OTEL_FORWARD_ENDPOINT: ${AIRA_OTEL_FORWARD_ENDPOINT:-"
+        "http://forward-endpoint-not-set.invalid:4318}" in compose
+    )

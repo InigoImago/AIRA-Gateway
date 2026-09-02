@@ -22,6 +22,19 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **"Optional" has two halves, and the second is the one nobody checks.** That switching a
+  feature *on* works is the obvious test; that switching it **half** on does not take down what
+  was already working is the one an interrupted afternoon actually performs. Selecting the
+  telemetry-forwarding fragment without its endpoint failed collector validation and restarted for
+  ever — and one container carries every exporter, so Grafana went down with a feature nobody was
+  using yet. Ask it of every optional piece that lands in a shared process: what does *half*
+  configured do?
+
+  *And a default only helps where the value is actually absent.* Compose passes an **empty string**
+  for an unset variable, and an empty string overrides a `${env:…:-default}` inside the collector —
+  so a fallback written in the collector's own configuration never applied. It validated in
+  isolation and still restarted on the real stack.
+
 - **A configuration that validates is a configuration that parses.** Two OTTL filter expressions
   passed `otelcol validate` and selected the wrong spans: `kind != SPAN_KIND_CLIENT` was meant to
   exclude database work and let 99 SQL spans through, because SQLAlchemy's spans are `CLIENT` too;

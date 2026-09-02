@@ -5,6 +5,41 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Is the second destination really optional (2026-09-02)
+
+Asked, and worth measuring rather than answering from the design.
+
+**Off is absent.** With no `AIRA_OTEL_FORWARD_*` set: the collector loads `config.yaml` plus
+`noforward.yaml` — an empty `{}` — runs `otlp_grpc/lgtm`, `debug` and `file/arrived` and no
+`otlphttp/forward`, there is one container as always, and the `traces/siem` pipeline does not
+exist. `AIRA_OTEL_FORWARD_ENDPOINT` on its own changes nothing; `AIRA_OTEL_FORWARD_CONFIG` is the
+switch.
+
+**And the question found a real defect.** Setting `_CONFIG` and forgetting `_ENDPOINT` put the
+collector in `Restarting (1)` **for ever** — `exporters::otlphttp/forward: at least one endpoint
+must be specified` — and one container carries every exporter, so Grafana went down with it, with
+the reason only in `docker logs` of a container nobody is watching. Half a configuration took the
+whole observability stack out.
+
+The fix is a fallback of `http://forward-endpoint-not-set.invalid:4318` (RFC 2606 — never
+resolves): the collector starts, that one exporter fails by name, everything else keeps working.
+It sits in `docker-compose.yml` rather than in the fragment, and that took a second measurement to
+get right — **Compose passes an empty string for an unset variable, and an empty string overrides
+a `${env:…:-default}` inside the collector**, so the fallback in the fragment never applied. First
+attempt validated in isolation and still restarted on the real stack.
+
+Two new mutations; the harness defends **710** properties.
+
+### The shape
+
+*"Optional"* is a claim with two halves, and only the first is usually checked: that switching it
+on works. The second is that switching it **half** on — one variable of five, which is what an
+interrupted afternoon produces — does not take down what was already working. A shared container
+turns any component's misconfiguration into everybody's outage, and that is worth asking of every
+optional piece that lands in one.
+
+---
+
 ## Two destinations, two questions (2026-09-02)
 
 The owner's idea: *could the requests to the gateway be sent to a different server as well? We have

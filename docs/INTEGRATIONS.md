@@ -683,6 +683,30 @@ One thing to know before editing the fragment: **a merged exporter list replaces
 extend.** Every exporter the base configuration names has to be repeated there, or it silently
 stops receiving — `test_the_siem_gets_requests_not_plumbing.py` checks that.
 
+### It is off until you say so, and off means absent
+
+Verified on the running stack rather than asserted:
+
+| | |
+|---|---|
+| No `AIRA_OTEL_FORWARD_*` set | collector loads `config.yaml` + `noforward.yaml` (an empty `{}`) |
+| Exporters running | `otlp_grpc/lgtm`, `debug`, `file/arrived` — **no `otlphttp/forward`** |
+| Containers | one collector, as always |
+| `traces/siem` pipeline | does not exist |
+
+`AIRA_OTEL_FORWARD_ENDPOINT` **alone does nothing** — measured. `AIRA_OTEL_FORWARD_CONFIG` is what
+makes the fragment part of the configuration at all; the rest are read only once it is.
+
+**And forgetting the endpoint no longer breaks the stack.** It used to: the collector failed
+validation and restarted for ever, taking Grafana with it, because one container carries every
+exporter — with the reason only in the logs of a container nobody watches. There is now a fallback
+of `http://forward-endpoint-not-set.invalid:4318` (RFC 2606 — never resolves), so the collector
+starts, that one exporter fails by name, and everything else keeps working.
+
+The fallback is spelled in `docker-compose.yml` and not in the fragment, which is not a stylistic
+choice: Compose passes an **empty string** for an unset variable, and an empty string overrides a
+`${env:…:-default}` inside the collector.
+
 ### When the receiver answers `429`
 
 Measured on this stack, so the numbers are a starting point rather than a rule of thumb:

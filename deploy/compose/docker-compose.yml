@@ -250,7 +250,16 @@ services:
       #
       # Read only when AIRA_OTEL_FORWARD_CONFIG selects `forward.yaml`; harmless otherwise, which
       # is why they can carry defaults rather than being required.
-      AIRA_OTEL_FORWARD_ENDPOINT: ${AIRA_OTEL_FORWARD_ENDPOINT:-}
+      # **The fallback is here, not in the fragment.** Compose passes an *empty string* for an
+      # unset variable, and an empty string overrides a `${env:…:-default}` in the collector — so
+      # the default has to be spelled at this end or it never applies. Measured on 2026-09-02:
+      # with the fallback only in `collector-forward.yaml`, switching forwarding on without an
+      # endpoint put the collector in `Restarting (1)` for ever, taking Grafana down with it,
+      # because one container carries every exporter.
+      #
+      # `.invalid` never resolves (RFC 2606), so the collector starts, this one exporter fails
+      # loudly, and `make otel-status` names it while everything else keeps working.
+      AIRA_OTEL_FORWARD_ENDPOINT: ${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}
       AIRA_OTEL_FORWARD_AUTHORIZATION: ${AIRA_OTEL_FORWARD_AUTHORIZATION:-}
       AIRA_OTEL_FORWARD_INSECURE: ${AIRA_OTEL_FORWARD_INSECURE:-false}
       # Polite rather than fast, because the destination is usually one somebody is trying for the

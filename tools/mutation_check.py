@@ -6325,6 +6325,22 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID35",
+        "forgetting the endpoint does not put the collector in a restart loop",
+        "deploy/compose/docker-compose.yml",
+        "      AIRA_OTEL_FORWARD_ENDPOINT: ${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}",
+        "      AIRA_OTEL_FORWARD_ENDPOINT: ${AIRA_OTEL_FORWARD_ENDPOINT:-}",
+        "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
+    ),
+    Mutation(
+        "ID36",
+        "the second destination is off unless a variable selects it",
+        "deploy/compose/docker-compose.yml",
+        "      - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/noforward.yaml}",
+        "      - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/forward.yaml}",
+        "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
+    ),
+    Mutation(
         "ID33",
         "the second destination gets requests, not every database span",
         "deploy/compose/otel/collector-forward.yaml",

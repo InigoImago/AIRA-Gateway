@@ -24,7 +24,15 @@
 
 exporters:
   otlphttp/forward:
-    endpoint: ${env:AIRA_OTEL_FORWARD_ENDPOINT}
+    # **A default that fails at the right moment.** Without one, switching the fragment on and
+    # forgetting the endpoint makes the collector fail *validation* and **restart for ever** — and
+    # one container carries every exporter, so Grafana goes down with it, with the reason only in
+    # `docker logs` of a container nobody is watching. Measured on 2026-09-02: `Restarting (1)`.
+    #
+    # Compose cannot express *"required only when that other variable is set"*, so the guard lives
+    # here: the collector starts, this exporter cannot resolve `…-not-set.invalid` (RFC 2606 —
+    # never resolves), and `make otel-status` says so by name while everything else keeps working.
+    endpoint: ${env:AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}
     # OTLP/JSON rather than protobuf. Whether your receiver parses it is the question to answer
     # **before** wiring this up: it is the protobuf-JSON mapping, one nested document per batch,
     # and not one flat event per line. `docs/features/FRD-616-…` says what the content is.
