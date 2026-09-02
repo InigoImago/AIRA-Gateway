@@ -48,6 +48,35 @@ all four URIs came out; the running stack was not touched to prove it.
 
 `.env.example` now carries the four in order, with what breaks at each and the whole set together.
 
+### Then the obvious question, answered by running it
+
+*Does the showcase work if I generate `.env` and run `make showcase`?* Measured rather than
+reasoned about: the live `.env` was moved aside, `make env` copied the rewritten example, and
+`make showcase` ran to `EXIT=0`.
+
+**On the Docker host: yes, end to end.** A real model call returned `200` with an answer from
+`qwen3:0.6b`; the console, `runtime-config.js` and the realm's discovery document all answered
+`200`; and the authorization endpoint accepted `redirect_uri=http://localhost:4200/` with a `302`.
+
+**From another machine: no, and at two walls rather than one.** The generated file binds to
+`127.0.0.1` / `::1`, so nothing is listening on a reachable interface — and the second wall is the
+one worth knowing about: `AIRA_CONSOLE_HOST` is read by the **realm import**, which runs only when
+the realm does not exist. On a stack whose Postgres volume already holds one, the new URIs are not
+there. Measured on the restored stack: `redirect_uri=http://aira.intern.example:4200/` → `400`,
+while `localhost` → `302`.
+
+So the knob is real (verified against a throwaway Keycloak 26, all four URIs imported) and it is
+**not retroactive**. `.env.example` says so at the fourth step; this is the confirmation that the
+sentence was needed.
+
+Two things also worth having measured: the rendered-from-YAML path configures the demo's model
+through `ollama.*` rather than `openai.servers`, so an empty `AIRA_OPENAI_SERVERS` in the render is
+correct and not a hole; and a freshly copied example carries `AIRA_OTEL_ENABLED=false`, so a
+showcase started that way exports nothing until it is turned on — which is the documented default
+and the reason `make up` prints the sentence about it.
+
+The user's configuration was restored byte-for-byte and the stack brought back on it.
+
 ### The shape
 
 Making the port a variable and leaving the host a literal is *half a rule*, and the half that was
