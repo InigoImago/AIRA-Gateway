@@ -70,6 +70,16 @@ reading code.
   files most likely to have the defect were the ones checked for nothing. **An early return that
   skips a whole class of file is a check that does not cover its likeliest case.**
 
+- **A rendering meant to show what the far end receives is only tested by comparing with the far
+  end.** `payload_as_json` printed an OTLP batch "through the exporter's own encoder, so it cannot
+  drift from what is sent" — and `MessageToJson` applies protobuf's *generic* JSON mapping, which
+  OTLP overrides: identifiers came out base64 (`TETTPxm0Rt5w6G3guyzfIA==`) where a receiver expects
+  hex, and enums as names where a collector sends numbers. Every test passed, because they asked
+  whether the document parsed and said the right span name — questions about the renderer. A reader
+  found it in a day. Ask the question the feature exists to answer, and for anything claiming to
+  show a wire format, that means **standing up the other end and diffing whole documents**: doing
+  that here turned one reported symptom into three findings, the third of which nobody had noticed.
+
 - **A success returned by a client library is a claim about the client's own call, not about the
   far end.** `SpanExportResult.SUCCESS` means `resp.ok` and nothing more — and OTLP answers `200`
   with a body saying it dropped half the batch, which the Python exporter discards unread. So the

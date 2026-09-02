@@ -6325,6 +6325,22 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID27",
+        "OTLP identifiers are rendered as hex, not protobuf's base64",
+        "libs/src/aira_common/observability.py",
+        "                base64.b64decode(value).hex()",
+        "                value",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
+        "ID28",
+        "enums are rendered as the numbers a receiver is handed",
+        "libs/src/aira_common/observability.py",
+        "        rendered = MessageToJson(encode(batch), use_integers_for_enums=True)",
+        "        rendered = MessageToJson(encode(batch))",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
         "ID25",
         "the OTLP batch is rendered as JSON only when somebody asked for it",
         "libs/src/aira_common/observability.py",

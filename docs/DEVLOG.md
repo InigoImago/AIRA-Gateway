@@ -29,6 +29,43 @@ would not parse, while everything under ~8 KiB was intact. So the overlay now mo
 `deploy/compose/payload/` and the documentation says which of the two to use for what. Verified
 end to end: seven JSON lines, none broken, carrying real `aira.*` attributes.
 
+### The encoding was wrong, and a reader caught it before the tests did
+
+Reported the same day: *the encoding is wrong, characters come through that cannot be parsed.*
+Correct, and the tests I had written could not have seen it — they asserted the document parses
+and carries the right span names, which it did.
+
+`MessageToJson` applies protobuf's **generic** JSON mapping, and OTLP overrides it in two places:
+
+| | mine | a real collector |
+|---|---|---|
+| `traceId` | `TETTPxm0Rt5w6G3guyzfIA==` | `884f54bb8d85bdab950bf58afbaf110d` |
+| `spanId` | `xIjhVVjS5rI=` | `1204dd4a6c4e3a8f` |
+| `kind` | `"SPAN_KIND_INTERNAL"` | `1` |
+
+Base64 for `bytes`, enum *names* for enums. So the identifiers carried `+`, `/` and `=` — an id in
+the wrong alphabet, which nothing can be looked up by — and the docstring promising it "cannot
+drift from what is sent" was true of the *protobuf* and false of the JSON, which is the half a
+reader was being handed.
+
+Found by comparing whole documents rather than the field that was reported: a throwaway collector
+with a `file` exporter, the same span sent to it and rendered here, and every leaf compared. That
+turned one report into three findings, the third of which nobody had mentioned.
+
+Fixed to match a collector byte for byte — `use_integers_for_enums`, and a walk that hex-encodes
+`traceId`, `spanId` and `parentSpanId` wherever they appear. Walked rather than addressed by path
+because those fields sit on spans, span links, log records and metric exemplars, and a fifth place
+is a version away (`LESSONS.md` §1: recognise a shape). Verified against the collector afterwards:
+identical trace id, span id, kind and attributes for the same span.
+
+The lesson is about the test, not the code. *"Rendered through the exporter's own encoder, so it
+cannot drift"* was a claim about the encoder and I tested it as one — that the document parses and
+says `generateContent`. What was never asked is the question the feature exists to answer: **is
+this what the other end would receive?** The only test that can answer it compares against the
+other end.
+
+Two new mutations; the harness defends **702** properties.
+
 ### Three guards, again
 
 Adding one setting failed the configuration reference, both config-example checks, the compose

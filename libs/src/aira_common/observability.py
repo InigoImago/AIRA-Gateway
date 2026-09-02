@@ -8,7 +8,9 @@ without a collector.
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import json
 import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -184,8 +186,46 @@ _ENCODERS: dict[str, tuple[str, str]] = {
 }
 
 
+#: The OTLP fields that are protobuf `bytes` and are **hex** in OTLP/JSON, not base64.
+#:
+#: This is the whole reason `MessageToJson` is not enough on its own. Protobuf's JSON mapping turns
+#: every `bytes` field into base64 — `"traceId": "TETTPxm0Rt5w6G3guyzfIA=="` — and OTLP overrides
+#: that for identifiers, which a receiver expects as `"884f54bb8d85bdab950bf58afbaf110d"`.
+#:
+#: Reported by a reader: *the encoding is wrong, characters come through that cannot be parsed.*
+#: Correct — base64 carries `+`, `/` and `=`, none of which belongs in a trace id, and an id in the
+#: wrong alphabet is one nothing can be looked up by. Measured against a real collector writing the
+#: same span, which is the reference this now matches.
+_HEX_FIELDS = frozenset({"traceId", "spanId", "parentSpanId"})
+
+
+def _to_otlp_json(document: Any) -> Any:
+    """Turn protobuf's JSON into **OTLP's** JSON: the identifiers as hex.
+
+    Walks the whole document rather than the paths that carry ids today, because they appear on
+    spans, on span links, on log records and on metric exemplars — four places, and a fifth is a
+    version away. `LESSONS.md` §1: recognise a shape, do not remember a list of names.
+    """
+    if isinstance(document, dict):
+        return {
+            key: (
+                base64.b64decode(value).hex()
+                if key in _HEX_FIELDS and isinstance(value, str)
+                else _to_otlp_json(value)
+            )
+            for key, value in document.items()
+        }
+    if isinstance(document, list):
+        return [_to_otlp_json(item) for item in document]
+    return document
+
+
 def payload_as_json(signal: str, args: tuple[Any, ...], items: int) -> str:
     """The batch as OTLP/JSON — what a receiver would be handed, rendered readably.
+
+    Rendered to match a **collector's** OTLP/JSON byte for byte — hex identifiers, integer enums —
+    because the point of printing it is to show what a receiver is handed. Protobuf's own JSON
+    mapping gets both wrong; see :data:`_HEX_FIELDS`.
 
     **Not what goes over this leg.** The applications post `application/x-protobuf` and cannot be
     made to post JSON (`INTEGRATIONS.md` §6), so this is the protobuf-JSON *mapping* of the same
@@ -215,7 +255,11 @@ def payload_as_json(signal: str, args: tuple[Any, ...], items: int) -> str:
         # slicing raises — handed over whole, as the docstring says.
         with contextlib.suppress(TypeError):
             batch = batch[:items]
-        return str(MessageToJson(encode(batch)))
+        # `use_integers_for_enums`, because that is what a collector emits — `"kind": 1` and not
+        # `"kind": "SPAN_KIND_INTERNAL"`. Both are legal protobuf JSON; only one is what the
+        # receiver on the other end will actually be handed.
+        rendered = MessageToJson(encode(batch), use_integers_for_enums=True)
+        return str(json.dumps(_to_otlp_json(json.loads(rendered)), indent=2))
     except Exception:  # noqa: BLE001 — never the reason an export fails
         return ""
 

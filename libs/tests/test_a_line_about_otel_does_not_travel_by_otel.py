@@ -578,3 +578,106 @@ def test_asking_for_none_renders_nothing_even_with_a_real_batch() -> None:
 
 def test_a_negative_count_is_off_rather_than_an_error() -> None:
     assert set_payload_rendering(-5) == 0
+
+
+def test_identifiers_are_hex_and_not_base64(capsys: Any) -> None:
+    """**The encoding that was wrong.** Protobuf's JSON mapping turns every `bytes` field into
+    base64 — `"traceId": "TETTPxm0Rt5w6G3guyzfIA=="` — and OTLP overrides that for identifiers.
+    Reported by a reader as *characters come through that cannot be parsed*, which base64's `+`,
+    `/` and `=` are, in a field nothing can be looked up by.
+
+    Measured against a real collector writing the same span:
+    `traceId: 37db8282a2911589e7a739b786f157f9`, and this now matches it exactly.
+    """
+    set_payload_rendering(1)
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    )
+    with provider.get_tracer("t").start_as_current_span("generateContent"):
+        pass
+    provider.force_flush()
+    provider.shutdown()
+
+    (line,) = _payload_lines(capsys)
+    span = json.loads(line["payload"])["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+
+    assert len(span["traceId"]) == 32, span["traceId"]
+    assert len(span["spanId"]) == 16, span["spanId"]
+    for identifier in (span["traceId"], span["spanId"]):
+        int(identifier, 16)  # hex, or this raises
+        assert not set(identifier) & set("+/="), f"base64 alphabet in {identifier!r}"
+
+
+def test_enums_are_numbers_because_that_is_what_a_receiver_is_handed(capsys: Any) -> None:
+    """`"kind": 1`, not `"kind": "SPAN_KIND_INTERNAL"`. Both are legal protobuf JSON and only one
+    is what a collector emits — measured against one."""
+    set_payload_rendering(1)
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    )
+    provider.get_tracer("t").start_span("gen").end()
+    provider.force_flush()
+    provider.shutdown()
+
+    (line,) = _payload_lines(capsys)
+    span = json.loads(line["payload"])["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    assert isinstance(span["kind"], int), span["kind"]
+
+
+def test_a_span_that_has_a_parent_has_that_identifier_in_hex_too(capsys: Any) -> None:
+    """`parentSpanId` is a fourth `bytes` field and lives on a different key, which is why the
+    conversion walks the document rather than naming the paths that carry ids today."""
+    set_payload_rendering(2)
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    )
+    tracer = provider.get_tracer("t")
+    with tracer.start_as_current_span("request"):
+        tracer.start_span("upstream").end()
+    provider.force_flush()
+    provider.shutdown()
+
+    (line,) = _payload_lines(capsys)
+    spans = json.loads(line["payload"])["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    parented = [span for span in spans if span.get("parentSpanId")]
+    assert parented, spans
+    identifier = parented[0]["parentSpanId"]
+    assert len(identifier) == 16 and not set(identifier) & set("+/=")
+
+
+def test_non_ascii_survives_the_rendering(capsys: Any) -> None:
+    """An attribute is a caller's text, and a debug rendering that mangles it is one nobody can
+    compare against what their receiver got."""
+    set_payload_rendering(1)
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    )
+    with provider.get_tracer("t").start_as_current_span("gen") as span:
+        span.set_attribute("text", "Grüße — „Anführung“ ✓")
+    provider.force_flush()
+    provider.shutdown()
+
+    (line,) = _payload_lines(capsys)
+    document = json.loads(line["payload"])
+    values = document["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+    text = next(a for a in values if a["key"] == "text")["value"]["stringValue"]
+    assert text == "Grüße — „Anführung“ ✓"
+
+
+def test_the_whole_document_parses_as_json() -> None:
+    """The reader's actual complaint, as a property: whatever is printed can be parsed."""
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    memory = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(memory))
+    with provider.get_tracer("t").start_as_current_span("gen") as span:
+        span.set_attribute("aira.use_case", "kundenservice")
+
+    document = json.loads(payload_as_json("traces", (memory.get_finished_spans(),), 1))
+    assert document["resourceSpans"]
