@@ -337,17 +337,36 @@ Each of the following is a state where starting successfully would be worse than
 operator would have a service that looks healthy and is not doing what they believe it is doing.
 
 **Outside `AIRA_ENVIRONMENT=local`** — hardening that a development machine legitimately waives
-(`ADR-0015`: a hardening pass that breaks the demo gets reverted). A **demo** waives a named few of
-these and no more; the list is `WAIVED_BY_A_DEMO`, never a blanket:
+(`ADR-0015`: a hardening pass that breaks the demo gets reverted).
 
-- `AIRA_SECRET_KEY` is still the development value
-- `AIRA_DEBUG` is on
-- `AIRA_ALLOWED_HOSTS` is `*`
-- CORS allows `*` **and** credentials
-- `AIRA_AUTH_REQUIRED` is off
-- the Postgres password is still the published development default
-- an OIDC issuer is configured with no audience
-- Kafka speaks `PLAINTEXT`
+| Refuses to boot when | Plane | Waived by `AIRA_DEMO_MODE`? |
+| --- | --- | :--: |
+| the Postgres password is still the published development default | gateway | yes |
+| an OIDC issuer is configured with no audience | both | gateway only |
+| Kafka speaks `PLAINTEXT` | both | gateway only |
+| `AIRA_AUTH_REQUIRED` is off | gateway | **no** |
+| CORS allows `*` **and** credentials | gateway | **no** |
+| `AIRA_SECRET_KEY` is still the development value | management | **no** |
+| `AIRA_DEBUG` is on | management | **no** |
+| `AIRA_ALLOWED_HOSTS` is `*` | management | **no** |
+| `AIRA_ROLE_GROUPS` names no global-admin group | management | **no** |
+
+**A demo is a gateway concession, not an installation-wide one**, and the difference is not
+cosmetic. `WAIVED_BY_A_DEMO` is a gateway list of six named settings; Management has no equivalent
+and waives *nothing* — its `is_local` is `environment == "local"` alone, while the gateway's is
+`environment == "local" or demo_mode`. Measured on `AIRA_ENVIRONMENT=production` with
+`AIRA_DEMO_MODE=true`: the gateway goes from three objections to none, and Management stays at six.
+
+So **`AIRA_ENVIRONMENT=demo` gives you a stack whose gateway starts and whose control plane
+refuses.** The demo shape works on `local`, where both planes waive everything. This paragraph
+exists because the list above used to be one flat set of eight with the sentence *"a demo waives a
+named few of these"* over it — true of the three gateway rows and false of the five below them,
+which is the half an operator meets first.
+
+Whether Management *should* have a demo waiver is an open question and deliberately not answered
+here: it holds the `SECRET_KEY` that signs every administrator's session, and a published one on a
+reachable network is session forgery rather than an inconvenience. Recorded as a decision to take
+rather than a gap to close quietly.
 
 **In every environment, `local` included** — these are not hardening but *correctness*, and a
 local process that started anyway would be doing something different from the one it stands in for:

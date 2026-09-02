@@ -12,7 +12,6 @@ data — and nothing in-process compares the two.
 
 from __future__ import annotations
 
-import json
 import uuid
 
 import httpx
@@ -21,7 +20,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .conftest import GATEWAY_URL
-from .test_config_distribution import _management_engine, _run_relay, _wait_for
+from .test_config_distribution import (
+    _management_engine,
+    _queue_outbox_event,
+    _run_relay,
+    _wait_for,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -35,14 +39,9 @@ async def _declare(engine: AsyncEngine, name: str, payload: dict) -> None:
     """
     management = await _management_engine()
     try:
-        async with management.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO outbox_outboxevent (topic, key, event_type, payload, created_at)"
-                    " VALUES ('aira.models', :key, 'model.upserted', :payload, now())"
-                ),
-                {"key": name, "payload": json.dumps({"name": name, **payload})},
-            )
+        await _queue_outbox_event(
+            management, "aira.models", name, "model.upserted", {"name": name, **payload}
+        )
         relay = _run_relay()
         assert relay.returncode == 0, relay.stderr
         row = await _wait_for(

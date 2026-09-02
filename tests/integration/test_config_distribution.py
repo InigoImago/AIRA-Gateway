@@ -41,6 +41,46 @@ async def _management_engine() -> AsyncEngine:
     return build_engine(MANAGEMENT_DB)
 
 
+async def _queue_outbox_event(
+    management: AsyncEngine,
+    topic: str,
+    key: str,
+    event_type: str,
+    payload: dict,
+    traceparent: str = "",
+) -> None:
+    """Put one row in Management's outbox, the way Management would.
+
+    **One writer, because four hand-written copies of this INSERT is how it broke.** Each of the
+    four named `(topic, key, event_type, payload, created_at)`, and `FRD-615` added a
+    `traceparent` column — `NOT NULL` with no database default, which is Django's ordinary shape
+    for a `CharField`: the ORM always supplies `""`, and raw SQL that omits it does not. So five
+    integration tests died on a `NotNullViolation` naming a column none of them had ever heard of,
+    in a round whose subject was the column.
+
+    That is `LESSONS.md` §1's *search-and-replace that stops two files early*, arrived at from the
+    other side: nothing stopped early, there was simply no single place to change. There is now.
+
+    ``traceparent`` defaults to empty because that is what a row with no causing request carries —
+    a seed, a management command — and it is the honest value here too: no browser asked for this.
+    """
+    async with management.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO outbox_outboxevent"
+                " (topic, key, event_type, payload, traceparent, created_at)"
+                " VALUES (:topic, :key, :event_type, :payload, :traceparent, now())"
+            ),
+            {
+                "topic": topic,
+                "key": key,
+                "event_type": event_type,
+                "payload": json.dumps(payload),
+                "traceparent": traceparent,
+            },
+        )
+
+
 def _run_relay() -> subprocess.CompletedProcess[str]:
     """Publish pending outbox rows. Run out-of-process so Django uses Postgres, not the
     in-memory SQLite the test settings select while pytest is imported."""
@@ -70,24 +110,18 @@ async def test_a_use_case_published_by_the_relay_reaches_the_gateway(engine: Asy
     slug = f"itest-{uuid.uuid4().hex[:8]}"
     management = await _management_engine()
     try:
-        async with management.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO outbox_outboxevent (topic, key, event_type, payload, created_at)"
-                    " VALUES ('aira.usecases', :key, 'usecase.upserted', :payload, now())"
-                ),
-                {
-                    "key": slug,
-                    "payload": json.dumps(
-                        {
-                            "slug": slug,
-                            "name": "Integration probe",
-                            "description": "",
-                            "processing_notes": "",
-                        }
-                    ),
-                },
-            )
+        await _queue_outbox_event(
+            management,
+            "aira.usecases",
+            slug,
+            "usecase.upserted",
+            {
+                "slug": slug,
+                "name": "Integration probe",
+                "description": "",
+                "processing_notes": "",
+            },
+        )
 
         relay = _run_relay()
         assert relay.returncode == 0, relay.stderr
@@ -124,26 +158,20 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
     slug = f"itest-{uuid.uuid4().hex[:8]}"
     management = await _management_engine()
     try:
-        async with management.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO outbox_outboxevent (topic, key, event_type, payload, created_at)"
-                    " VALUES ('aira.api-keys', :key, 'api_key.created', :payload, now())"
-                ),
-                {
-                    "key": prefix,
-                    "payload": json.dumps(
-                        {
-                            "prefix": prefix,
-                            "key_hash": key_hash,
-                            "subject": "integration-distributed",
-                            "use_case": slug,
-                            "label": "integration",
-                            "status": "active",
-                        }
-                    ),
-                },
-            )
+        await _queue_outbox_event(
+            management,
+            "aira.api-keys",
+            prefix,
+            "api_key.created",
+            {
+                "prefix": prefix,
+                "key_hash": key_hash,
+                "subject": "integration-distributed",
+                "use_case": slug,
+                "label": "integration",
+                "status": "active",
+            },
+        )
 
         assert _run_relay().returncode == 0
 

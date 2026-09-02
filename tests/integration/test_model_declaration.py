@@ -11,7 +11,6 @@ which reads as "the feature does not work" and looks like a gateway bug.
 
 from __future__ import annotations
 
-import json
 import uuid
 
 import httpx
@@ -20,7 +19,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .conftest import MANAGEMENT_URL
-from .test_config_distribution import _management_engine, _run_relay, _wait_for
+from .test_config_distribution import (
+    _management_engine,
+    _queue_outbox_event,
+    _run_relay,
+    _wait_for,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -89,32 +93,26 @@ async def test_a_declaration_published_by_the_relay_reaches_the_gateway(
     name = f"itest-model-{uuid.uuid4().hex[:8]}"
     management = await _management_engine()
     try:
-        async with management.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO outbox_outboxevent (topic, key, event_type, payload, created_at)"
-                    " VALUES ('aira.models', :key, 'model.upserted', :payload, now())"
-                ),
-                {
-                    "key": name,
-                    "payload": json.dumps(
-                        {
-                            "name": name,
-                            "display_name": "Integration probe",
-                            "provider": "anthropic",
-                            "capabilities": ["generate", "thinking"],
-                            "publisher": "anthropic",
-                            "platform": "vertex",
-                            "context_window": 200000,
-                            "max_output_tokens": 64000,
-                            "default_max_output_tokens": 4096,
-                            "thinking": {"modes": ["auto", "limited"], "max_tokens": 32000},
-                            "hosting": "managed",
-                            "deprecated": False,
-                        }
-                    ),
-                },
-            )
+        await _queue_outbox_event(
+            management,
+            "aira.models",
+            name,
+            "model.upserted",
+            {
+                "name": name,
+                "display_name": "Integration probe",
+                "provider": "anthropic",
+                "capabilities": ["generate", "thinking"],
+                "publisher": "anthropic",
+                "platform": "vertex",
+                "context_window": 200000,
+                "max_output_tokens": 64000,
+                "default_max_output_tokens": 4096,
+                "thinking": {"modes": ["auto", "limited"], "max_tokens": 32000},
+                "hosting": "managed",
+                "deprecated": False,
+            },
+        )
 
         relay = _run_relay()
         assert relay.returncode == 0, relay.stderr

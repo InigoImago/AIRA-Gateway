@@ -22,6 +22,33 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **A recipe in a document is a claim; ask the product.** The `.env.example` rewrite offered four
+  ready-made configurations, and one of them did not start — found by running each through both
+  planes' own `unsafe_settings` in a subprocess rather than by reading them back. Underneath was a
+  real asymmetry: `AIRA_DEMO_MODE` waives six checks on the gateway and none on Management, so
+  `AIRA_ENVIRONMENT=demo` yields a stack whose data plane starts and whose control plane refuses —
+  and `CONFIGURATION.md` said the opposite in a flat list of eight that mixed the two planes.
+  **Where a check exists per plane, a document that lists checks without naming the plane is wrong
+  for one of them**, and it is wrong for whichever half the reader meets first.
+
+- **A shared stateful stack is one test run at a time, and the rule does not stop at the suite
+  boundary.** `playwright.config.ts` sets `fullyParallel: false, workers: 1` with the reason in a
+  comment — *the suite drives shared, stateful services*. Starting the integration suite and the
+  browser suite against the same containers at once produced one failure that passes alone in a
+  tenth of the time. Whatever a suite says about its own concurrency is a statement about the
+  stack, not about the suite.
+
+- **A schema change is a change to every writer, and the ORM hides how many there are.**
+  `FRD-615` added `OutboxEvent.traceparent` — a `CharField`, so `NOT NULL` with no database
+  default, which is Django's ordinary shape: the ORM supplies `""` on every save, so every ORM
+  writer kept working and nothing in `make ci` moved. The writers that broke were the four
+  hand-written `INSERT INTO outbox_outboxevent (…)` statements in `tests/integration/`, which name
+  their columns — and that layer does not run by default, so five tests sat red for a day with a
+  `NotNullViolation` naming the very column the round was about. **Ask, of any added column: who
+  writes this table without the ORM?** — raw SQL, a fixture, a backfill, another service, a
+  `COPY`. And note where the answer lives: raw SQL survives in the layer that needs a live stack,
+  which is exactly the layer a green `make ci` says nothing about.
+
 - **Two correct halves and no wire.** Both ends exist and nothing joins them, so every review of
   either end passes. *Six instances:* `record_to_outbox` had no topic for an event type;
   `payload_size` counted bytes into a column nothing wrote; the seed wrote a catalog and emitted

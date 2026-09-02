@@ -5,10 +5,58 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
-## The file you copy named 15 of 90 settings (2026-09-02)
+## Both live suites, and the file you copy named 15 of 90 settings (2026-09-02)
 
 Asked to run the integration and browser suites against the stack, and whether `.env.example`
 lists every variable *"so I know how to bring up what"*. It did not: **15 of 90**.
+
+### The integration suite found yesterday's column
+
+**1037 passed, 5 failed, 21 skipped.** All five failures were one cause, and it is worth the
+paragraph: `FRD-615` added `OutboxEvent.traceparent` yesterday — a Django `CharField`, so `NOT
+NULL` with no database default. The ORM supplies `""` on every save, so every ORM writer kept
+working and `make ci` stayed green. What broke were the four hand-written
+`INSERT INTO outbox_outboxevent (topic, key, event_type, payload, created_at)` statements in
+`tests/integration/`, which name their columns and had never heard of this one.
+
+So five tests died on a `NotNullViolation` naming the very column that round was about, in the
+layer that does not run by default. **A schema change is a change to every writer, and the ORM
+hides how many there are** (`LESSONS.md` §1). The four copies are now one
+`_queue_outbox_event(...)`, so the fifth writer cannot repeat it.
+
+Re-run after the fix: green.
+
+### The browser suite: 161 of 162, and the one was mine
+
+The failure — a hover tooltip that never appeared — passes **alone in 1.1 s** and failed in 11.2 s
+while the integration suite was running against the same containers. I had started both at once
+against one shared, stateful stack, which is exactly what `playwright.config.ts` refuses to do
+*within* the suite (`fullyParallel: false, workers: 1`, "the suite drives shared, stateful
+services"). The rule does not stop at the suite boundary. Re-run separately: green.
+
+### Verifying my own claims found a real disagreement between the planes
+
+The `.env.example` rewrite offers four ready-made combinations, and rather than assert they work I
+asked the product: a subprocess per combination with only that environment in it, calling both
+planes' own `unsafe_settings`. **Combination 3 did not start** — six objections.
+
+The cause is a genuine asymmetry nobody had written down. `AIRA_DEMO_MODE` waives six named checks
+on the **gateway** (`WAIVED_BY_A_DEMO`) and **nothing at all** on Management: the gateway's
+`is_local` is `environment == "local" or demo_mode`, Management's is `environment == "local"`
+alone. Measured on `AIRA_ENVIRONMENT=production` with `AIRA_DEMO_MODE=true`: the gateway goes from
+three objections to none, Management stays at six. So **`AIRA_ENVIRONMENT=demo` gives a stack whose
+gateway starts and whose control plane refuses.**
+
+`CONFIGURATION.md` §8 stated this wrongly: one flat list of eight checks under the sentence *"a
+demo waives a named few of these"* — true of the three gateway rows and false of the five
+Management ones below them, which is the half an operator meets first. It is now a table with a
+plane and a waiver column per row.
+
+Whether Management *should* have a demo waiver is left open and said so: it holds the `SECRET_KEY`
+that signs every administrator's session, and a published one on a reachable network is session
+forgery rather than an inconvenience. A decision to take, not a gap to close quietly.
+
+All four combinations are now verified by the product's own checks rather than by me.
 
 ### What was actually missing
 
