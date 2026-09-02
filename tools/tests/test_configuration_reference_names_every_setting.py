@@ -50,6 +50,23 @@ NOT_SETTINGS = {
     "AIRA_GATEWAY_URL",
     "AIRA_CONSOLE_URL",
     "AIRA_DEMO_CHAT_MODEL",
+    # Read by the **collector's** own configuration through `${env:…}` and by Compose, not by any
+    # settings class — how much it says about what arrives, where to write it, and everything about
+    # a second destination. Documented in §5a for the reason the whole file exists: an operator
+    # looking for a knob does not care which process reads it.
+    "AIRA_OTEL_DEBUG_VERBOSITY",
+    "AIRA_OTEL_ARRIVED_FILE",
+    "AIRA_OTEL_FORWARD_CONFIG",
+    "AIRA_OTEL_FORWARD_ENDPOINT",
+    "AIRA_OTEL_FORWARD_AUTHORIZATION",
+    "AIRA_OTEL_FORWARD_INSECURE",
+    "AIRA_OTEL_FORWARD_BATCH_SECONDS",
+    "AIRA_OTEL_FORWARD_BATCH_SIZE",
+    "AIRA_OTEL_FORWARD_CONSUMERS",
+    "AIRA_OTEL_FORWARD_QUEUE",
+    "AIRA_OTEL_FORWARD_RETRY_INITIAL",
+    # The host a browser types, read by the Keycloak realm import for twenty seconds.
+    "AIRA_CONSOLE_HOST",
 }
 
 
@@ -138,3 +155,88 @@ def test_the_reference_names_nothing_that_does_not_exist() -> None:
         + "\n\nEither the setting was renamed and the document was not, or the variable belongs to "
         "Compose or the console entrypoint — in which case add it to `NOT_SETTINGS` with a reason."
     )
+
+
+# --- and the knobs that are not settings ---------------------------------------------------------
+
+
+COMPOSE_DIR = ROOT / "deploy" / "compose"
+ENV_EXAMPLE = COMPOSE_DIR / ".env.example"
+
+#: Named in `.env.example` and deliberately absent from the reference, with the reason.
+#:
+#: Kept tiny on purpose. The point of the check below is that an operator meeting a variable in the
+#: file they copy can look it up, so every entry here is a promise that they will not need to.
+NOT_IN_THE_REFERENCE = {
+    "AIRA_BIND_HOST6": "documented beside AIRA_BIND_HOST, which the reference does carry",
+}
+
+
+def _offered_by_the_example() -> set[str]:
+    """`AIRA_*` names `.env.example` offers as settable, commented out or not."""
+    return set(re.findall(r"^\s*#?\s*(AIRA_[A-Z0-9_]+)\s*=", ENV_EXAMPLE.read_text(), re.M))
+
+
+def _documented_names() -> set[str]:
+    """Every `AIRA_*` the reference names, **including the suffix shorthand it writes tables in**.
+
+    A row reads ``AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD`` — one row for five
+    variables, which is right for the reader and invisible to a naive search. Expanding the
+    shorthand here rather than exploding the table into five rows: the document is for a person,
+    and the check exists to serve that document rather than to reshape it.
+    """
+    text = REFERENCE.read_text()
+    names = set(re.findall(r"`(AIRA_[A-Z0-9_]+)`", text))
+    # `AIRA_X_HOST` / `_PORT` — a bare suffix belongs to the last full name before it on the line.
+    for line in text.splitlines():
+        current = ""
+        for token in re.findall(r"`(AIRA_[A-Z0-9_]+|_[A-Z0-9_]+)`", line):
+            if token.startswith("AIRA_"):
+                current = token
+            elif current:
+                # `AIRA_POSTGRES_HOST` + `_DB` -> `AIRA_POSTGRES_DB`. Every prefix is tried,
+                # because a family's shared stem can be any depth — `AIRA_OLLAMA_URL` +
+                # `_EMBEDDING_MODELS` is two segments — and pinning one depth made the check
+                # report a variable that is documented on the very line it was reading.
+                parts = current.split("_")
+                for cut in range(len(parts), 0, -1):
+                    names.add("_".join(parts[:cut]) + token)
+    return names
+
+
+def test_every_knob_the_example_offers_is_in_the_reference() -> None:
+    """**The gap that let seventeen variables through.**
+
+    The checks above compare the reference against the *settings classes*, so a knob read by the
+    collector or by Compose is invisible to them — and on 2026-09-02 fifteen of seventeen new
+    variables were in `.env.example`, wired into Compose, working, and named nowhere in the
+    document that promises to list every one.
+
+    That is this file's own docstring happening again one layer out: *"a reference document is the
+    copy nobody opens until it matters, which is the worst moment to discover it is short."* The
+    first check was written from the settings classes because that is where settings live, and the
+    knobs that are not settings are exactly the ones nobody thinks to add.
+
+    `AIRA_PUBLISH_*` is exempt as a family: they are ports, the reference explains the family once,
+    and a table row per port would be fourteen rows saying the same thing.
+    """
+    offered = _offered_by_the_example()
+    documented = _documented_names()
+    missing = sorted(
+        offered
+        - documented
+        - set(NOT_IN_THE_REFERENCE)
+        - {name for name in offered if name.startswith("AIRA_PUBLISH_")}
+    )
+
+    assert not missing, (
+        f"`.env.example` offers these and `CONFIGURATION.md` does not name them: {missing}. "
+        "An operator who meets a variable in the file they copy has one place to look it up — "
+        "add a row, or add it to NOT_IN_THE_REFERENCE with the reason it belongs nowhere."
+    )
+
+
+def test_the_exemptions_are_still_offered() -> None:
+    """A waiver for a variable nobody offers any more is one that silently covers the next."""
+    stale = sorted(set(NOT_IN_THE_REFERENCE) - _offered_by_the_example())
+    assert not stale, f"These are exempt and `.env.example` no longer offers them: {stale}."

@@ -230,6 +230,35 @@ otel:
   endpoint: http://otel-collector.internal:4318
   sample_ratio: 0.1
 
+  # ---- What the collector says about what arrives (`FRD-617`) --------------------------------
+  # `basic` counts · `normal` a line per span · `detailed` every attribute, event and link.
+  # `make otel-arrivals` reads it; leave it at `normal` unless something is being investigated.
+  debug_verbosity: normal
+  # The same arrivals as OTLP/JSON, to parse rather than read. `/dev/null` is off.
+  arrived_file: /dev/null
+
+  # ---- A second destination beside your trace backend -----------------------------------------
+  #
+  # Off unless **both** `forward_config` and `forward_endpoint` are set. The first is the switch:
+  # anything but the fragment path merges an empty file and nothing exists — no exporter, no
+  # filter pipeline, no second container.
+  #
+  # What it receives is **not** what your trace backend receives: traces are filtered to a request
+  # and the calls made inside one — measured at 6 spans of 184 — because a SIEM wants one record
+  # per request and a trace backend wants the SQL underneath it. Metrics and logs go over whole.
+  forward_config: ''
+  forward_endpoint: ''
+  # forward_authorization: → Vault. It authenticates, so it does not belong in this file.
+  forward_insecure: false
+  # How hard it pushes. Polite rather than fast, because a destination one is attaching for the
+  # first time is the one to be wrong about: the collector's own defaults forward every 200ms from
+  # ten concurrent senders, and a `429` is retryable, so refusals tighten the loop.
+  forward_batch_seconds: 10s
+  forward_batch_size: 8192
+  forward_consumers: 1
+  forward_queue: 5000
+  forward_retry_initial: 5s
+
 log:
   level: INFO
   json: true

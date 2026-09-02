@@ -47,6 +47,24 @@ CONSOLE_DEPLOYMENT = (
 #: `AIRA_CONFIG__` is the JavaScript global the file writes, not a variable at all.
 CONSOLE_DERIVED = {"AIRA_ISSUER_ORIGIN", "AIRA_CONFIG__"}
 
+#: Read by the **collector's** own configuration through `${env:…}`, and by Compose. Real knobs an
+#: integrator sets, declared by no Pydantic class because the process that reads them is written in
+#: Go — the same shape as the console entry below, and found the same way: by asking whether the
+#: examples let somebody configure what the stack can actually do.
+COLLECTOR_READ = {
+    "AIRA_OTEL_DEBUG_VERBOSITY",
+    "AIRA_OTEL_ARRIVED_FILE",
+    "AIRA_OTEL_FORWARD_CONFIG",
+    "AIRA_OTEL_FORWARD_ENDPOINT",
+    "AIRA_OTEL_FORWARD_AUTHORIZATION",
+    "AIRA_OTEL_FORWARD_INSECURE",
+    "AIRA_OTEL_FORWARD_BATCH_SECONDS",
+    "AIRA_OTEL_FORWARD_BATCH_SIZE",
+    "AIRA_OTEL_FORWARD_CONSUMERS",
+    "AIRA_OTEL_FORWARD_QUEUE",
+    "AIRA_OTEL_FORWARD_RETRY_INITIAL",
+}
+
 #: Read before, or outside, the settings classes. Each with the reason it is not a field.
 NOT_A_SETTING = {
     # Vault's own client configuration: read by `aira_common.secrets` before any settings object
@@ -126,7 +144,7 @@ def test_there_are_examples_to_check() -> None:
 
 @pytest.mark.parametrize("example", EXAMPLES, ids=lambda p: p.name)
 def test_every_key_an_example_renders_is_a_real_setting(example: Path) -> None:
-    known = _settings_fields() | NOT_A_SETTING
+    known = _settings_fields() | NOT_A_SETTING | COLLECTOR_READ
     invented = sorted(name for name in _rendered(example) if name not in known)
 
     assert invented == [], (

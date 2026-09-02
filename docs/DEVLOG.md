@@ -5,6 +5,58 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Documented, in the configs — and two variables that were not the feature (2026-09-02)
+
+Asked whether the new knobs are documented and in the configuration files. Audited all seventeen
+across five places rather than answered from memory, and the table had a hole: **`.env.example` and
+Compose carried every one, `CONFIGURATION.md` carried two of seventeen.**
+
+### Why no guard caught it
+
+`test_configuration_reference_names_every_setting.py` compares the reference against the **settings
+classes** — and these are read by the *collector*, through `${env:…}`, and by Compose. Fifteen
+working, wired, documented-nowhere variables were invisible to the check whose whole subject is
+"does the reference list everything".
+
+That is this repository's own recurring shape: the check was written from where settings live, and
+the knobs that are not settings are exactly the ones nobody thinks to add. `CONFIGURATION.md` now
+has a §5a for them, and the guard has a second direction —
+`test_every_knob_the_example_offers_is_in_the_reference` — comparing the file an operator **copies**
+against the file they **look things up in**, which is the pair that matters to them.
+
+That new check immediately found nine more. Six were false: the reference writes families as
+``AIRA_POSTGRES_HOST` / `_PORT` / `_DB`` — one row for five variables, right for the reader and
+invisible to a naive search — so the check resolves the shorthand rather than the document being
+exploded into five rows. **A check exists to serve the document, not to reshape it.** Two were
+real (`AIRA_DEMO_CHAT_MODEL` and its embedding twin) and are documented now.
+
+The YAML examples could carry the collector variables all along — verified by rendering one — so
+`integrated.example.yaml` has them, which is the shape where a second destination belongs.
+
+### And two variables that were not the feature
+
+The owner, mid-round: *what are you doing with host forward ip — I wanted a feature where the
+accesses to the gateway with their outcomes and metadata, and the actual model accesses, are sent
+to another OTel collector as well.*
+
+The feature is exactly that and was demonstrated in both states. But
+`AIRA_OTEL_FORWARD_HOST_ALIAS` / `_HOST_IP` are **not part of it**: they came across when the
+laboratory overlay was dissolved, where they existed for network experiments. Two variables, four
+documentation entries and three guard registrations for a case a hostname in the endpoint already
+covers — containers on this network resolve each other by name, and the daemon's resolver handles
+an FQDN or an IP. Removed. `host.docker.internal:host-gateway` stays, because that one fixed a
+measured defect (the resolver answering `fe80::1`).
+
+**Carrying something across during a move is not the same as it belonging there.** The question to
+ask of each piece is not *did this work where it came from* but *is this what the new place is
+for* — and the owner asked it about the one piece I had not.
+
+Verified after the removal, against a listener: two gateway requests with their full metadata
+(`subject`, `credential`, `use_case`, `model`, `outcome`, `status`, `tokens`, `cost`, `source_ip`)
+and the two `POST /v1/chat/completions` they caused. Which is the feature as described.
+
+---
+
 ## Is the second destination really optional (2026-09-02)
 
 Asked, and worth measuring rather than answering from the design.

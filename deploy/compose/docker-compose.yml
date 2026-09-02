@@ -278,13 +278,6 @@ services:
       # IPv6 link-local address the collector cannot reach — and every forward failed with `EOF`
       # after the connection appeared to open. `host-gateway` pins it to the address that works.
       - "host.docker.internal:host-gateway"
-      # One machine on your network, by name, straight into `/etc/hosts` — no DNS involved, so
-      # nothing it can break. The defaults are deliberately nowhere: `.invalid` never resolves
-      # (RFC 2606) and `192.0.2.0/24` is unroutable test space (RFC 5737), so the entry is inert
-      # until you mean it:
-      #
-      #   AIRA_OTEL_FORWARD_HOST_ALIAS=siem.intern  AIRA_OTEL_FORWARD_HOST_IP=10.20.30.40
-      - "${AIRA_OTEL_FORWARD_HOST_ALIAS:-unset.invalid}:${AIRA_OTEL_FORWARD_HOST_IP:-192.0.2.1}"
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC

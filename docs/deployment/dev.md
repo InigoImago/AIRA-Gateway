@@ -177,9 +177,6 @@ in `deploy/compose/.env` and no extra Compose file:
 ```bash
 AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
 AIRA_OTEL_FORWARD_ENDPOINT=http://t-siem-otel:4318
-# a machine on your network Docker cannot otherwise find:
-AIRA_OTEL_FORWARD_HOST_ALIAS=t-siem-otel
-AIRA_OTEL_FORWARD_HOST_IP=10.20.30.40
 ```
 
 Then recreate the collector. It merges `otel/collector-forward.yaml` on top of its own

@@ -22,6 +22,25 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **A check written from where a thing usually lives cannot see the ones that live elsewhere.**
+  `CONFIGURATION.md` promises to list every `AIRA_*` variable, and its guard compares the document
+  against the **settings classes** — so fifteen knobs read by the collector through `${env:…}` were
+  wired, working, and named nowhere, with the guard green. The knobs that are not settings are
+  precisely the ones nobody thinks to add. The second direction — compare the file an operator
+  *copies* against the file they *look things up in* — is the pair that matters to the reader, and
+  it is a different question from the one the first check asks.
+
+  *And a check exists to serve its document, not to reshape it.* That new check reported nine
+  missing variables, six of which the reference documents as families —
+  ``AIRA_POSTGRES_HOST` / `_PORT` / `_DB``, one row for five, right for the reader. The fix was to
+  teach the check the shorthand, not to explode the table.
+
+- **Carrying something across during a move is not the same as it belonging there.** Dissolving
+  the laboratory overlay brought its `extra_hosts` aliases along with the exporter that needed
+  moving, and they survived into two documents, three guards and a config example before the owner
+  asked what they were for. The question to ask of each piece is not *did this work where it came
+  from* but *is this what the new place is for*.
+
 - **"Optional" has two halves, and the second is the one nobody checks.** That switching a
   feature *on* works is the obvious test; that switching it **half** on does not take down what
   was already working is the one an interrupted afternoon actually performs. Selecting the

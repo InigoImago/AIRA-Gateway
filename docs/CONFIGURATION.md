@@ -17,6 +17,7 @@ environment ([§7](#7-secrets-from-vault)).
 | [3 Model platforms](#3-model-platforms)                       | Vertex, Foundry, OpenAI-compatible, Gemini API |
 | [4 Management](#4-management)                                 | the control plane                              |
 | [5 Frontend](#5-frontend)                                     | build-time, not run-time                       |
+| [5a Collector](#5a-the-collector-and-a-second-destination)    | what arrives, and a second destination         |
 | [6 Missing pieces](#6-what-happens-when-something-is-missing) | degradation, decided                           |
 | [7 Vault](#7-secrets-from-vault)                              |                                                |
 | [8 Safe defaults](#8-what-refuses-to-boot)                    | what refuses to boot                           |
@@ -277,6 +278,54 @@ the shipped configuration sets `proxy_buffering off` and a read timeout above th
 The local Compose stack publishes every port on `AIRA_BIND_HOST` (default `127.0.0.1`). It runs
 Postgres, Redis, Kafka and a dev-mode Vault with the credentials printed in `.env.example`, and
 Compose's plain `"5432:5432"` would put all of them on every interface of the machine.
+
+---
+
+## 5a. The collector, and a second destination
+
+**These are not settings.** Nothing in `GatewaySettings` or `ManagementSettings` declares them —
+they are read by the **OpenTelemetry Collector's** own configuration through `${env:…}`, and by
+Compose. They are here because an operator looking for a knob does not care which process reads it,
+and this is the document that promises to list them.
+
+The full worked explanation, with what each is measured to do, is
+[`INTEGRATIONS.md` §6](INTEGRATIONS.md#6-observability).
+
+### What arrives at the collector
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `AIRA_OTEL_DEBUG_VERBOSITY` | `normal` | How much the collector says about each batch it receives: `basic` (counts), `normal` (a line per span), `detailed` (every attribute, event and link). `make otel-arrivals` reads it. |
+| `AIRA_OTEL_ARRIVED_FILE` | `/dev/null` | Write those arrivals as OTLP/JSON, one document per line, all three signals. `/payload/arrived.json` lands in `deploy/compose/payload/`. `/dev/stdout` works for a look and **mangles anything large** — Docker's log driver cuts at 16 KiB. |
+| `AIRA_PUBLISH_OTLP_METRICS_PORT` | `8889` | Where the collector's own counters are published — accepted/refused against sent/failed. `make otel-status` reads them. |
+
+### A second destination beside Grafana
+
+Off unless **both** of the first two are set. `AIRA_OTEL_FORWARD_CONFIG` is the switch; the rest are
+read only once it is.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `AIRA_OTEL_FORWARD_CONFIG` | _(the empty fragment)_ | `/etc/otelcol-contrib/forward.yaml` turns forwarding on. Anything else, including unset, merges `noforward.yaml` — an empty `{}` — and nothing exists: no exporter, no filter pipeline, no second container. |
+| `AIRA_OTEL_FORWARD_ENDPOINT` | `…not-set.invalid:4318` | Where to send. The default never resolves (RFC 2606) **on purpose**: switching the fragment on without an endpoint used to fail validation and restart the collector for ever, taking Grafana with it. Now that one exporter fails by name and everything else keeps working. |
+| `AIRA_OTEL_FORWARD_AUTHORIZATION` | _(empty)_ | Whatever your receiver authenticates with. |
+| `AIRA_OTEL_FORWARD_INSECURE` | `false` | Skip certificate verification. For a first reachability test, not for a deployment. |
+| `AIRA_OTEL_FORWARD_BATCH_SECONDS` | `10s` | How long the collector holds telemetry to send it in one piece. |
+| `AIRA_OTEL_FORWARD_BATCH_SIZE` | `8192` | And how much fits in one request. |
+| `AIRA_OTEL_FORWARD_CONSUMERS` | `1` | Concurrent senders. The collector's own default is **ten**, and a `429` is retryable — ten senders against a quota is a loop that tightens under load. |
+| `AIRA_OTEL_FORWARD_QUEUE` | `5000` | How much may wait while the receiver says no. Held rather than dropped. |
+| `AIRA_OTEL_FORWARD_RETRY_INITIAL` | `5s` | How long before asking again. The default is one second, which against a quota asks the same question before the window has moved. |
+
+**What the second destination receives is not what Grafana receives.** Traces are filtered to a
+request and the calls made inside one — measured, 6 spans of 184 — because a SIEM wants one record
+per request and Grafana wants the SQL underneath it. Metrics and logs go over whole.
+
+### And one that is neither
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `AIRA_DEMO_CHAT_MODEL` / `_EMBED_MODEL` | `qwen3:0.6b` / `all-minilm` | Which models the demo pulls and catalogues. Read by the Ollama pull loop and the seed, never by a settings class — **demo only**; a real deployment names its models through `AIRA_OPENAI_SERVERS` or a platform's own list. |
+| `AIRA_CONSOLE_HOST` | `localhost` | The host a **browser** types to reach the console. Read by the Keycloak realm import, and only when the realm does not yet exist, so it is not retroactive on a stack that already has one. `localhost` and `127.0.0.1` stay valid whatever it says. |
 
 ---
 
