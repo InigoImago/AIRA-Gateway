@@ -5,6 +5,64 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The forwarding came into the stack, and the fourth file went (2026-09-02)
+
+The owner: *I am not doing it through the LAB points, I will just put the elements into the
+showcase — I do not find "lab" quite fitting anyway.* Then: bring the forwarding over too.
+
+### The premise the overlay rested on was no longer true
+
+`docker-compose.lab.yml` existed because a second telemetry destination needed a second whole
+collector configuration — `collector-config.lab.yaml` was `collector-config.yaml` plus one
+exporter, eighty duplicated lines, under a header stating it plainly: *"Not an overlay: the
+Collector merges nothing, a `--config` is the whole configuration."*
+
+Measured against collector-contrib 0.157 before touching anything: **repeated `--config` flags
+merge**, and deeply enough to keep each pipeline's receivers and processors while replacing its
+exporter list. The sentence the whole file was built on had expired, and nobody had re-asked.
+
+So the second destination is now a **fragment** — `otel/collector-forward.yaml`, an exporter and
+three exporter lists — merged on top of the reference configuration by
+`AIRA_OTEL_FORWARD_CONFIG`, whose default is an empty file. Two `--config` flags, always; the
+second is `{}` until you mean it. The reference stack gained forwarding without gaining a file, and
+the copy went.
+
+### What only running it would have found
+
+The first live attempt forwarded nothing. `host.docker.internal` **resolved** — the POST reached a
+socket and came back `EOF`, which is the shape `LESSONS.md` §1 warns about: something accepted, so
+the diagnosis starts at the wrong end. The embedded resolver was answering `fe80::1`, an IPv6
+link-local address the collector cannot reach; the lab overlay had carried an `extra_hosts:
+host.docker.internal:host-gateway` line that I had not brought with the exporter. Moving a feature
+means moving what makes it reachable.
+
+With it: **15 HTTP requests, 119 spans, `application/json`, gzip, 0 errors**, and `make otel-status`
+showing `forwarded` at four times `accepted` — four exporters, fan-out intact, Tempo still holding
+the traces.
+
+### What went with the file
+
+`docker-compose.lab.yml`, `collector-config.lab.yaml`, `tools/lab_status.py`, two tests and three
+`make` targets. `lab_status.py` could do one thing `otel_status.py` could not — read the collector's
+*log* for the reason a delivery failed, which no counter carries — so that was folded in first. A
+table of four numbers ending in "something is wrong, go and look" makes its reader do the last step
+by hand, every time.
+
+`compose_files.py` keeps a note where `LAB` was, because the rule the removed guard encoded still
+holds for whatever comes next: **a compose file nobody registers here is one that thirteen tests
+quietly do not read.**
+
+### The shape
+
+A design decision is only as good as the constraint it was made under, and constraints in other
+people's software expire silently. The overlay was *right* when it was written and had been wrong
+for some number of releases, with the reason for it written down in a header that read as current.
+**A recorded rationale citing an external limitation deserves re-measuring, not re-reading** — the
+same shape as `LESSONS.md`'s *an FRD that cites a control as an existing fact is not a check that
+it exists*, pointed at somebody else's changelog.
+
+---
+
 ## Seeing what arrives, in the reference stack (2026-09-02)
 
 Asked whether the raw incoming data can be looked at through the collector. Half of it already

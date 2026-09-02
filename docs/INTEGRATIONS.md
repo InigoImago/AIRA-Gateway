@@ -62,7 +62,7 @@ the reasoning: [`FRD-617`](features/FRD-617-watching-the-wire-to-another-system.
 [`ADR-0022`](adr/ADR-0022-a-call-to-another-system-says-so.md).
 
 For the leg **after** the collector — what your OTLP collector managed to forward onward — the
-counters are in `make lab-status` (§6).
+counters are in `make otel-status` (§6).
 
 ---
 
@@ -599,9 +599,10 @@ exporters:
 ```
 
 The shipped stack already carries a worked example: `deploy/compose/otel/collector-config.lab.yaml`
-fans out to a second destination in JSON, and `make up-lab LAB_SIEM_ENDPOINT=…` starts it without
-touching the reference stack ([§0](#0-when-it-does-not-work-watching-the-wire) for the debug
-channel, `make lab-status` for whether it arrived).
+`otel/collector-forward.yaml` is a worked example, merged on top of the reference configuration
+by `AIRA_OTEL_FORWARD_CONFIG` — see *A second destination* below
+([§0](#0-when-it-does-not-work-watching-the-wire) for the debug channel, `make otel-status` for
+whether it arrived).
 
 ### What "OTLP/JSON" actually is, before you plan around it
 
@@ -648,7 +649,7 @@ spans                  65         0        130            0
 `forwarded` is summed across exporters, so a stack fanning out to two destinations counts each
 batch twice — that is why the reference stack shows double. `undelivered` counts a *give-up*, not
 an attempt, so an exporter still retrying a dead endpoint reads `0` for as long as its backoff
-lasts; `make lab-status` prints the collector's own words about why.
+lasts; `make otel-status` prints the collector's own words about why.
 
 ### When the receiver answers `429`
 
@@ -669,20 +670,20 @@ part worth taking in before you tune anything, because it decides which lever he
 - A receiver limiting **volume or ingested events**: `AIRA_OTEL_SAMPLE_RATIO` is the lever, and it
   scales roughly linearly. It applies to traces only; logs and metrics are unaffected.
 
-If your endpoint sits behind the collector — the `make up-lab` shape, and the one to prefer — the
-collector's own defaults are the wrong shape for a rate limit: it forwards every **200 ms** from
-**ten concurrent senders**, and a `429` is retryable, so refusals come back and tighten the loop.
-Four variables change that:
+The forwarding leg's own defaults are the wrong shape for a rate limit: the collector forwards
+every **200 ms** from **ten concurrent senders**, and a `429` is retryable, so refusals come back
+and tighten the loop. Four variables change that:
 
 ```bash
-# hold telemetry this long, put this much in one request, send one at a time,
-# and do not ask again before the window has moved:
-make up-lab LAB_SIEM_ENDPOINT=https://siem.internal:4318 \
-    LAB_SIEM_BATCH_SECONDS=10s LAB_SIEM_BATCH_SIZE=8192 \
-    LAB_SIEM_CONSUMERS=1 LAB_SIEM_RETRY_INITIAL=5s
+# in deploy/compose/.env — hold telemetry this long, put this much in one request,
+# send one at a time, and do not ask again before the window has moved:
+AIRA_OTEL_FORWARD_BATCH_SECONDS=10s
+AIRA_OTEL_FORWARD_BATCH_SIZE=8192
+AIRA_OTEL_FORWARD_CONSUMERS=1
+AIRA_OTEL_FORWARD_RETRY_INITIAL=5s
 ```
 
-Those are the defaults the overlay now ships. Measured against a counting listener, 40 gateway
+Those are the defaults the stack now ships. Measured against a counting listener, 40 gateway
 requests: **8 HTTP requests carrying 696 spans** (87 per request), against **27 carrying 1399**
 (52 per request) with the collector's own defaults — about 40 % fewer requests for the same
 telemetry, and sequential rather than in bursts of ten.
@@ -757,16 +758,18 @@ against one. It is *not* the bytes on that leg, which are protobuf.
 **The exact bytes your endpoint receives** — the collector, which is already sending JSON:
 
 ```bash
-make up-lab LAB_SIEM_ENDPOINT=https://siem.internal:4318 \
-    LAB_PAYLOAD_PATH=/payload/otlp.json LAB_SIEM_BATCH_SIZE=20
-# then read deploy/compose/payload/otlp.json
+# in deploy/compose/.env, then recreate the collector
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_ENDPOINT=https://siem.internal:4318
+AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json
+# then read deploy/compose/payload/arrived.json
 ```
 
-`LAB_PAYLOAD_PATH=/dev/stdout` works for a quick look (`make lab-logs`), but **stdout mangles a
+`AIRA_OTEL_ARRIVED_FILE=/dev/stdout` works for a quick look (`make otel-arrivals`), but **stdout mangles a
 large payload**: measured, Docker's json-file driver cuts at a 16 KiB boundary and a
 49 692-character document came back truncated at 48 KiB and would not parse, while everything
 under ~8 KiB was intact. A file in `deploy/compose/payload/` comes out whole, however big. Pair
-either with a small `LAB_SIEM_BATCH_SIZE` while you are reading — one span per line is worth more
+either with a small `AIRA_OTEL_FORWARD_BATCH_SIZE` while you are reading — one span per line is worth more
 than eight thousand.
 
 What a span carries, from a real request on the shipped stack:

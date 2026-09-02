@@ -20,13 +20,15 @@ one before it is where the telemetry is going missing.
     make otel-status
 
 Reads the collector's own Prometheus endpoint (`AIRA_PUBLISH_OTLP_METRICS_PORT`, default 8889).
-`make lab-status` is the same question for the laboratory overlay's second destination, and stays
-because it also reads the collector's log for the *reason* a delivery failed.
+It also reads the collector's log for the **reason** a delivery failed, which the counters cannot
+give — carried here when the laboratory overlay was folded into the reference stack.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -51,13 +53,50 @@ def _totals(body: str, pattern: re.Pattern[str]) -> dict[str, float]:
     """Summed per signal, across receivers/exporters.
 
     Per **signal** and not per component on purpose: this answers *is telemetry getting through*,
-    and a reader who needs to know which of two exporters is losing it has `make lab-status` and
-    the raw endpoint. One table that fits on a screen beats one that is complete.
+    and a reader who needs to know which of several exporters is losing it has the raw endpoint.
+    One table that fits on a screen beats one that is complete.
     """
     totals: dict[str, float] = {}
     for signal, _labels, value in pattern.findall(body):
         totals[signal] = totals.get(signal, 0.0) + float(value)
     return totals
+
+
+CONTAINER = f"{os.environ.get('AIRA_STACK', 'aira')}-otel-collector"
+
+
+#: The reason, inside the collector's structured log line. Extracted rather than printed with the
+#: line, because the line begins with a timestamp, a file position and a resource block — and the
+#: first draft of this tool truncated at 200 characters and cut the reason off. What a reader needs
+#: is `no such host`, not the first two hundred characters of a log format.
+_REASON = re.compile(r'"error":\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _recent_failures(lines: int = 3) -> list[str]:
+    """The collector's own words about why. Its log is the only place the *reason* exists."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["docker", "logs", "--tail", "400", CONTAINER],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except OSError, subprocess.SubprocessError:
+        return []
+    reasons: list[str] = []
+    for line in (result.stdout + result.stderr).splitlines():
+        if "Exporting failed" not in line and "Dropping data" not in line:
+            continue
+        match = _REASON.search(line)
+        reasons.append(match.group(1).replace('\\"', '"') if match else line.strip())
+    # De-duplicated, newest last: a retry loop produces the same sentence every few seconds, and
+    # five identical lines say no more than one while hiding a second, different failure.
+    unique: list[str] = []
+    for reason in reasons:
+        if reason not in unique:
+            unique.append(reason)
+    return unique[-lines:]
 
 
 def _fetch(url: str) -> str | None:
@@ -110,8 +149,19 @@ def main() -> int:
     print("undelivered          — a give-up, not an attempt: a retrying exporter shows 0 for now.")
     if not losing:
         print("\nNothing is being lost between the applications and the collector's exporters.")
+        return 0
+
+    # **The counters say how many; only the log says why.** Carried here when `lab_status.py` was
+    # folded in — a table of four numbers that ends in "something is wrong, go and look" is one
+    # that makes its reader do the last step by hand, every time.
+    failures = _recent_failures()
+    if failures:
+        print("\nWhy, in the collector's own words:")
+        for reason in failures:
+            print(f"  {reason}")
     else:
-        print("\nSomething is being dropped — the collector's log says why:  make lab-logs")
+        print("\nSomething is being dropped and no reason is in the recent log — look further")
+        print("back with:  make otel-arrivals")
     return 0
 
 

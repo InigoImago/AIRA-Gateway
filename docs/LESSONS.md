@@ -22,6 +22,22 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **A design decision is only as good as the constraint it was made under, and constraints in
+  other people's software expire silently.** The laboratory overlay was a fourth Compose file with
+  a duplicated eighty-line collector configuration, because *"the Collector merges nothing, a
+  `--config` is the whole configuration"*. True when written; false by collector-contrib 0.157,
+  where repeated `--config` flags merge deeply enough to keep each pipeline's receivers and
+  processors. The rationale sat in the file header reading as current, and nobody re-asked — the
+  question was settled. **A recorded rationale that cites an external limitation deserves
+  re-measuring, not re-reading**, which is `LESSONS.md`'s *an FRD that cites a control as an
+  existing fact is not a check that it exists*, pointed at somebody else's changelog.
+
+  *And moving a feature means moving what makes it reachable.* The exporter came across and the
+  `extra_hosts: host.docker.internal:host-gateway` line did not, so the first live forward resolved
+  its name, opened a connection and returned `EOF` — something accepted, so the diagnosis starts at
+  the wrong end. The resolver was answering an IPv6 link-local address. Ask, of anything relocated:
+  what else in the old place was holding it up?
+
 - **Know which quantity a lever moves before reaching for it.** An external OTLP receiver
   answering `429` looks like "we send too much", and the obvious knob is the sample ratio — which
   is measured to reduce spans per request from 17.5 to 5.9 and to leave the **request count

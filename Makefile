@@ -11,9 +11,6 @@ COMPOSE_CORE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml
 INFRA_F    := -f $(COMPOSE_DIR)/docker-compose.yml
 APPS_F     := -f $(COMPOSE_DIR)/docker-compose.apps.yml
 SHOWCASE_F := -f $(COMPOSE_DIR)/docker-compose.showcase.yml
-# The laboratory overlay: never in the lists above, added by `make up-lab` alone. See
-# `tools/compose_files.py` for why being a fourth file is the point rather than an omission.
-LAB_F      := -f $(COMPOSE_DIR)/docker-compose.lab.yml
 
 # Infrastructure + the application processes: **what a real deployment runs**, and nothing that
 # exists for the demo. Startable on its own — `tools/tests/test_the_core_stack_carries_no_demo.py`
@@ -160,20 +157,6 @@ up-apps: env ## Start the product: infra + the application processes, no demo pr
 	@-$(MAKE) --no-print-directory config-verify
 	$(COMPOSE_APPS) up -d --build
 
-up-lab: env ## Start the stack with the laboratory overlay (LAB_SIEM_ENDPOINT=... required)
-	@# For trying something **alongside** the stack — a SIEM, a machine on your network, a second
-	@# exporter — without editing the files the documentation describes. The overlay is a fourth
-	@# `-f`, so undoing an experiment is leaving it out.
-	@#
-	@# Compose refuses to start without `LAB_SIEM_ENDPOINT`, on purpose: an exporter pointing
-	@# nowhere retries with growing backoff and holds telemetry in memory, and the only symptom is
-	@# a log line nobody reads.
-	@-$(MAKE) --no-print-directory config-verify
-	docker compose $(INFRA_F) $(APPS_F) $(LAB_F) --profile observability up -d --build
-	@echo ""
-	@echo "  Laboratory overlay active. The reference stack is unchanged; drop $(LAB_F) to leave."
-	@echo "  Sending to: $${LAB_SIEM_ENDPOINT:-(unset — Compose will have refused)}"
-
 otel-arrivals: ## Watch what arrives at the collector, in its own words
 	@# **What arrived**, which is a different question from what was delivered onward
 	@# (`make otel-status`) and from what a service says it sent (`AIRA_DEBUG_INTEGRATIONS=otel`).
@@ -194,19 +177,6 @@ otel-status: ## Did telemetry reach the collector, and did the collector pass it
 	@# `receiver_accepted` / `receiver_refused` against `exporter_sent` / `send_failed`, which is
 	@# the difference between "we sent it" and "it arrived".
 	@uv run python tools/otel_status.py
-
-lab-status: ## Did the laboratory endpoint receive anything? (counts + the last failures)
-	@# **"No errors" and "it arrived" are different statements**, and only one of them can be read
-	@# off a log: the collector logs a delivery failure and says nothing at all about a success, at
-	@# any level. So this reads the collector's own metrics — `sent` against `send_failed`, per
-	@# exporter — and prints the recent failures underneath, which carry the endpoint and the
-	@# reason. Both halves, because a zero in the first is explained by the second.
-	@uv run python tools/lab_status.py
-
-lab-logs: ## Follow the collector while the laboratory overlay is running
-	@# `LAB_LOG_LEVEL=debug` in deploy/compose/.env makes the export attempts themselves visible;
-	@# at `info` only the failures are.
-	docker logs -f $${AIRA_STACK:-aira}-otel-collector
 
 up-full: env ## Start EVERYTHING in containers, demo provisioning included (infra + apps + showcase)
 	@-$(MAKE) --no-print-directory config-verify

@@ -1,0 +1,71 @@
+# A second destination for everything this collector receives — your SIEM, a datalake, another
+# collector. Merged **on top of** `collector-config.yaml`, never instead of it.
+#
+# ## Why this is a fragment and not a second copy
+#
+# It used to be a copy: `collector-config.lab.yaml` was `collector-config.yaml` plus one exporter,
+# eighty duplicated lines, under a header saying *"Not an overlay: the Collector merges nothing, a
+# `--config` is the whole configuration"*. That was measured again on 2026-09-02 against
+# collector-contrib 0.157 and is **no longer true** — repeated `--config` flags merge, and the
+# merge is deep enough to keep each pipeline's receivers and processors while replacing its
+# exporter list. So the duplication went, and with it the two files drifting apart.
+#
+# The exporter lists below are therefore **complete**, not additions: a merged list replaces. Add
+# a new exporter to `collector-config.yaml` and it has to be repeated here, which is the one cost
+# of this shape and is what `test_the_collector_says_what_arrives.py` checks.
+#
+# ## Turning it on
+#
+#     AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+#     AIRA_OTEL_FORWARD_ENDPOINT=https://siem.internal:4318
+#
+# Both, or neither. The first is what makes this file part of the configuration at all; the second
+# is where it sends. Off, the collector is handed an empty fragment and behaves exactly as before.
+
+exporters:
+  otlphttp/forward:
+    endpoint: ${env:AIRA_OTEL_FORWARD_ENDPOINT}
+    # OTLP/JSON rather than protobuf. Whether your receiver parses it is the question to answer
+    # **before** wiring this up: it is the protobuf-JSON mapping, one nested document per batch,
+    # and not one flat event per line. `docs/features/FRD-616-…` says what the content is.
+    encoding: json
+    tls:
+      insecure_skip_verify: ${env:AIRA_OTEL_FORWARD_INSECURE}
+    headers:
+      authorization: ${env:AIRA_OTEL_FORWARD_AUTHORIZATION}
+    # **How hard this pushes.** A receiver answering `429` is asking for fewer requests, and the
+    # exporter's own defaults push the other way: ten concurrent POSTs, and a `429` is *retryable*,
+    # so every refusal comes back and the loop tightens under load. Measured on this stack: 40
+    # gateway requests became 8 HTTP requests carrying 696 spans with these settings, against 27
+    # carrying 1399 on the defaults.
+    sending_queue:
+      enabled: true
+      num_consumers: ${env:AIRA_OTEL_FORWARD_CONSUMERS}
+      # Held rather than dropped while a receiver says no; `memory_limiter` keeps it bounded.
+      queue_size: ${env:AIRA_OTEL_FORWARD_QUEUE}
+    retry_on_failure:
+      enabled: true
+      # Further out than the default second: against a quota, retrying quickly is asking the same
+      # question before the window has moved.
+      initial_interval: ${env:AIRA_OTEL_FORWARD_RETRY_INITIAL}
+      max_interval: 60s
+      max_elapsed_time: 300s
+
+processors:
+  # Fewer, larger requests. The base leaves `batch` at its defaults, which send every 200ms — the
+  # worst available shape for a destination that counts requests.
+  batch:
+    timeout: ${env:AIRA_OTEL_FORWARD_BATCH_SECONDS}
+    send_batch_size: ${env:AIRA_OTEL_FORWARD_BATCH_SIZE}
+    send_batch_max_size: ${env:AIRA_OTEL_FORWARD_BATCH_SIZE}
+
+service:
+  pipelines:
+    # **Fan-out, not replacement.** Grafana and the inspection exporters stay, so a destination
+    # that is unreachable costs you nothing you already had.
+    traces:
+      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]
+    metrics:
+      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]
+    logs:
+      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]

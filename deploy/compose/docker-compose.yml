@@ -226,9 +226,16 @@ services:
     image: otel/opentelemetry-collector-contrib:0.157.0
     container_name: ${AIRA_STACK:-aira}-otel-collector
     profiles: ["observability"]
-    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    # **Two `--config` flags, always.** The collector merges them, and the second is an empty
+    # fragment until `AIRA_OTEL_FORWARD_CONFIG` names the forwarding one — so a second destination
+    # is a variable rather than a fourth compose file, and the base configuration is never copied.
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+      - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/noforward.yaml}
     volumes:
       - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./otel/collector-forward.yaml:/etc/otelcol-contrib/forward.yaml:ro
+      - ./otel/collector-noforward.yaml:/etc/otelcol-contrib/noforward.yaml:ro
       # Writable, for `AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json`. Git-ignored, and nothing is
       # written here unless that variable names a path inside it.
       - ./payload:/payload
@@ -239,6 +246,36 @@ services:
       # And the same thing as OTLP/JSON, for parsing rather than reading. `/dev/null` is off;
       # `/payload/arrived.json` writes to `deploy/compose/payload/` on the host.
       AIRA_OTEL_ARRIVED_FILE: ${AIRA_OTEL_ARRIVED_FILE:-/dev/null}
+      # ---- A second destination beside Grafana (off unless the two above are set) ----------
+      #
+      # Read only when AIRA_OTEL_FORWARD_CONFIG selects `forward.yaml`; harmless otherwise, which
+      # is why they can carry defaults rather than being required.
+      AIRA_OTEL_FORWARD_ENDPOINT: ${AIRA_OTEL_FORWARD_ENDPOINT:-}
+      AIRA_OTEL_FORWARD_AUTHORIZATION: ${AIRA_OTEL_FORWARD_AUTHORIZATION:-}
+      AIRA_OTEL_FORWARD_INSECURE: ${AIRA_OTEL_FORWARD_INSECURE:-false}
+      # Polite rather than fast, because the destination is usually one somebody is trying for the
+      # first time — see `collector-forward.yaml` for what each is measured to do.
+      AIRA_OTEL_FORWARD_BATCH_SECONDS: ${AIRA_OTEL_FORWARD_BATCH_SECONDS:-10s}
+      AIRA_OTEL_FORWARD_BATCH_SIZE: ${AIRA_OTEL_FORWARD_BATCH_SIZE:-8192}
+      AIRA_OTEL_FORWARD_CONSUMERS: ${AIRA_OTEL_FORWARD_CONSUMERS:-1}
+      AIRA_OTEL_FORWARD_QUEUE: ${AIRA_OTEL_FORWARD_QUEUE:-5000}
+      AIRA_OTEL_FORWARD_RETRY_INITIAL: ${AIRA_OTEL_FORWARD_RETRY_INITIAL:-5s}
+    extra_hosts:
+      # **A destination outside this network needs a name this container can resolve**, and the
+      # two entries below are how, without touching DNS.
+      #
+      # `host.docker.internal` for an endpoint port-forwarded to the machine this stack runs on.
+      # Measured on 2026-09-02: without this line the embedded resolver answers `fe80::1` — an
+      # IPv6 link-local address the collector cannot reach — and every forward failed with `EOF`
+      # after the connection appeared to open. `host-gateway` pins it to the address that works.
+      - "host.docker.internal:host-gateway"
+      # One machine on your network, by name, straight into `/etc/hosts` — no DNS involved, so
+      # nothing it can break. The defaults are deliberately nowhere: `.invalid` never resolves
+      # (RFC 2606) and `192.0.2.0/24` is unroutable test space (RFC 5737), so the entry is inert
+      # until you mean it:
+      #
+      #   AIRA_OTEL_FORWARD_HOST_ALIAS=siem.intern  AIRA_OTEL_FORWARD_HOST_IP=10.20.30.40
+      - "${AIRA_OTEL_FORWARD_HOST_ALIAS:-unset.invalid}:${AIRA_OTEL_FORWARD_HOST_IP:-192.0.2.1}"
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC

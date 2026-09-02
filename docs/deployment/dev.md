@@ -169,50 +169,51 @@ make destroy            # stop and delete the volumes
 
 ---
 
-## Trying something alongside, without changing the stack
+## Sending telemetry somewhere else as well
 
-A fourth Compose file exists for experiments: reaching a machine on your network, sending telemetry
-somewhere else, adding an exporter. `make up-lab` is the only thing that adds it.
+A second destination beside Grafana — your SIEM, a datalake, another collector — is two variables
+in `deploy/compose/.env` and no extra Compose file:
 
 ```bash
-make up-lab LAB_SIEM_ENDPOINT=http://t-siem-otel:4318 \
-            LAB_HOST_ALIAS=t-siem-otel LAB_HOST_IP=10.20.30.40
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_ENDPOINT=http://t-siem-otel:4318
+# a machine on your network Docker cannot otherwise find:
+AIRA_OTEL_FORWARD_HOST_ALIAS=t-siem-otel
+AIRA_OTEL_FORWARD_HOST_IP=10.20.30.40
 ```
 
-That starts the ordinary stack with `deploy/compose/docker-compose.lab.yml` layered on: the
-collector runs a second configuration that fans out to your endpoint **beside** Grafana, and
-`extra_hosts` gives it the name. Undoing the experiment is leaving the file out.
+Then recreate the collector. It merges `otel/collector-forward.yaml` on top of its own
+configuration — **fan-out, not replacement**, so Grafana keeps working and an unreachable endpoint
+costs you nothing you already had. What arrives there is OTLP/JSON; `docs/INTEGRATIONS.md` §6 says
+what that shape actually is before you plan a parser around it.
+
+This used to be a fourth Compose file called the *laboratory overlay*, on the argument that the
+Collector merges nothing so a second destination needed a whole second configuration. Measured
+against collector-contrib 0.157 on 2026-09-02, that is no longer true: repeated `--config` flags
+merge deeply enough to keep each pipeline's receivers and processors. The copy went, and with it
+the two configurations drifting apart.
 
 ### Did it arrive?
 
 ```bash
-make lab-status     # counts per exporter, and the reason when something failed
-make lab-logs       # follow the collector
+make otel-status     # accepted / refused / forwarded / undelivered, and the reason when it failed
+make otel-arrivals   # follow what the collector receives
 ```
 
 **"No errors" and "it arrived" are different statements**, and only one of them can be read off a
 log: the collector logs a delivery failure and says nothing at all about a success, at any level.
-`lab-status` therefore reads its own counters — `delivered` against `failed`, per exporter — and
-prints the reason underneath. Measured against a name that does not resolve:
+`otel-status` therefore reads its own counters and prints the reason underneath. Measured against
+a name that does not resolve:
 
 ```
-otlphttp/lab has delivered nothing.
-It is still retrying — `send_failed` counts a give-up, not an attempt.
-
 Why, in the collector's own words:
   … Post "http://t-siem-otel:4318/v1/traces":
   dial tcp: lookup t-siem-otel on 127.0.0.11:53: no such host
 ```
 
-That an exporter which has delivered nothing is **missing from the table** rather than zero in it
-is not a display quirk: `send_failed` counts a *give-up*, and the retry sender does not give up
-until `max_elapsed_time`. For the first five minutes an unreachable endpoint produces no row at
-all, so the absence is stated in words.
-
-Every knob is a `LAB_*` variable — set it in `deploy/compose/.env` or on the command line, both
-work. `deploy/compose/.env.example` lists them with what each decides. They are deliberately not
-`AIRA_*`: they configure Compose, not the product, and a laboratory knob in the settings contract
-would be a setting the code does not have.
+`undelivered` counts a *give-up*, not an attempt, and the retry sender does not give up until
+`max_elapsed_time` — so for the first five minutes an unreachable endpoint reads as zero rather
+than as a failure. That is stated here because a zero is the one thing a table cannot explain.
 
 Three things worth knowing, all of them measured rather than assumed:
 
@@ -220,14 +221,14 @@ Three things worth knowing, all of them measured rather than assumed:
   container resolves through Docker's embedded server at `127.0.0.11`, and `dns:` / `dns_search:`
   set what *it* forwards to and appends — they do not replace it. With `--dns 9.9.9.9` a container
   on this stack still resolved `postgres` and `otel-collector` by name.
-- **`LAB_SIEM_ENDPOINT` has no default and Compose refuses without it.** An exporter with nowhere
-  to send does not fail, it retries with growing backoff while holding telemetry in memory, and
-  the only symptom is a line in a log nobody reads.
-- **The overlay configures; it never adds a service.** A component that exists only under
-  `make up-lab` is invisible to every check that reads the three stack files, which is a fork of
-  the stack wearing an overlay's name. `tools/tests/test_the_lab_is_never_part_of_the_stack.py`
-  holds all three rules, and `tools/compose_files.py` records why the file is in none of the
-  stack's lists.
+- **`host.docker.internal` needs `extra_hosts` to be usable.** Without it the embedded resolver
+  answered `fe80::1` here — an IPv6 link-local address the collector cannot reach — and every
+  forward failed with `EOF` *after* the connection appeared to open, which is the diagnosis that
+  starts at the wrong end. The collector service carries the `host-gateway` mapping for that
+  reason.
+- **An endpoint that does not exist fails quietly.** An exporter with nowhere to send does not
+  stop; it retries with growing backoff while holding telemetry in memory, and the only symptom is
+  a line in a log nobody reads. `make otel-status` is how you find out.
 
 What the telemetry actually contains — and why a SIEM wants something else — is
 [`FRD-615`](../features/FRD-615-a-trace-crosses-the-bus.md) §9 and

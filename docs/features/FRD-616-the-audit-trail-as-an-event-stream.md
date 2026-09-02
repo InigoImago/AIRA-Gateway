@@ -112,7 +112,7 @@ installation that wants a flat event shape puts a `transform` processor in front
 and this document's §1 is the list of what those events would have to contain.
 
 (b) can be tried today without touching the reference stack:
-`make up-lab LAB_SIEM_ENDPOINT=…` layers a collector configuration that fans out to your endpoint
+`AIRA_OTEL_FORWARD_CONFIG` merges a collector fragment that fans out to your endpoint
 in OTLP/JSON beside Grafana (`docs/deployment/dev.md`). What arrives is what §1 describes, which is
 the point of being able to look before building anything.
 

@@ -30,7 +30,7 @@ either: it only prints when a record finds *no* handler, and this one found the 
 
 That is not a metaphor for the problem the user hit; it is the mechanism. A collector pointed at
 the wrong port produced perfectly ordinary-looking output on both sides and no diagnosis anywhere.
-`make lab-status` (`tools/lab_status.py`) answers the *second* leg — collector to a SIEM, out of
+`make otel-status` (`tools/otel_status.py`) answers the *second* leg — collector onward, out of
 `otelcol_exporter_sent_*` against `send_failed_*` — and there was no equivalent, of any kind, for
 the first leg from a service to the collector.
 
@@ -149,7 +149,7 @@ It is **not the bytes on that leg**: the applications post `application/x-protob
 made to post JSON (§3 of `INTEGRATIONS.md`). Printing JSON beside a protobuf request invites the
 conclusion that the encoding is switchable, so the setting's own documentation says it is not.
 
-**`LAB_PAYLOAD_PATH`** gives the exact bytes the receiver gets, because the collector is already
+**`AIRA_OTEL_ARRIVED_FILE`** gives the exact bytes the receiver gets, because the collector is already
 sending JSON. And it is a path rather than a flag for a measured reason: `/dev/stdout` mangles a
 large payload — Docker's json-file driver cuts at a 16 KiB boundary, and a 49 692-character
 document came back truncated at 48 KiB and would not parse, while everything under ~8 KiB was
@@ -199,7 +199,7 @@ Three changes:
   reported beside each other rather than one standing in for the other.
 - **`make otel-status`** answers the hops a service cannot see, out of the collector's own
   counters: `receiver_accepted` against `receiver_refused`, then `exporter_sent` against
-  `send_failed`. Those counters existed only under `make up-lab` — the reference stack's collector
+  `send_failed`. Those counters existed only under the laboratory overlay — the reference collector
   published nothing at all, so *did it arrive* had no answer anywhere. The reference config now
   carries the `metrics:` reader and the port is published.
 
