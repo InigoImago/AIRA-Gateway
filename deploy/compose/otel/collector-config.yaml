@@ -47,3 +47,22 @@ service:
   telemetry:
     logs:
       level: info
+    metrics:
+      # **The collector's own figures, and the only thing in this stack that says a batch was
+      # accepted rather than merely answered.**
+      #
+      # `otelcol_receiver_accepted_spans` against `otelcol_receiver_refused_spans` is the hop the
+      # applications cannot see: their exporter returns `SUCCESS` on any 2xx, and an OTLP 200 can
+      # carry a `partial_success` body saying half the batch was dropped. `otelcol_exporter_sent_*`
+      # against `otelcol_exporter_send_failed_*` is the hop after that.
+      #
+      # This lived only in `collector-config.lab.yaml` until 2026-09-02, so on the reference stack
+      # there was no way at all to answer *did it arrive* — which is what somebody watching
+      # `AIRA_DEBUG_INTEGRATIONS=otel` asks the moment they see their first line. `make otel-status`
+      # reads these; the port is published so you can too.
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8889

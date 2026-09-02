@@ -623,6 +623,33 @@ If a flat shape is what you need, the collector is where to produce it: this bui
 `file`, `kafka`, `elasticsearch`, `opensearch`, `splunk_hec` and `syslog` exporters alongside
 `otlphttp`, and those speak their destinations' own formats rather than OTLP.
 
+### Did it arrive? Three hops, three answers
+
+A service can only report what its own exporter saw, and that is less than it looks: OTLP defines
+a **partial success** — the collector answers `200` with a body saying it dropped part of the batch
+— and the Python exporter reads the status and throws the body away. So a green line can be about
+telemetry that was discarded.
+
+```
+  application ──▶ collector ──▶ Grafana / your SIEM
+     │               │                  │
+     │               │                  └── make otel-status   forwarded / undelivered
+     │               └── make otel-status   accepted / refused
+     └── AIRA_DEBUG_INTEGRATIONS=otel      left, took Nms, answered 200, N rejected
+```
+
+```console
+$ make otel-status
+signal           accepted   refused  forwarded  undelivered
+log_records            19         0         38            0
+spans                  65         0        130            0
+```
+
+`forwarded` is summed across exporters, so a stack fanning out to two destinations counts each
+batch twice — that is why the reference stack shows double. `undelivered` counts a *give-up*, not
+an attempt, so an exporter still retrying a dead endpoint reads `0` for as long as its backoff
+lasts; `make lab-status` prints the collector's own words about why.
+
 ### Not the same switch
 
 `AIRA_LOG_JSON` is unrelated: it is whether **the service's own log lines on stdout** are JSON or

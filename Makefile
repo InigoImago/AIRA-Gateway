@@ -100,7 +100,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        purge-e2e-use-cases config-verify config-check up-apps \
+        purge-e2e-use-cases config-verify config-check up-apps otel-status \
         verify-up verify-down test-verify \
         run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
@@ -173,6 +173,14 @@ up-lab: env ## Start the stack with the laboratory overlay (LAB_SIEM_ENDPOINT=..
 	@echo ""
 	@echo "  Laboratory overlay active. The reference stack is unchanged; drop $(LAB_F) to leave."
 	@echo "  Sending to: $${LAB_SIEM_ENDPOINT:-(unset — Compose will have refused)}"
+
+otel-status: ## Did telemetry reach the collector, and did the collector pass it on?
+	@# **The hop `AIRA_DEBUG_INTEGRATIONS=otel` cannot see.** That channel says the export left and
+	@# what the next hop answered — and an OTLP 200 can carry a body saying half the batch was
+	@# dropped, which the Python exporter reads as `SUCCESS`. This reads the collector's own
+	@# `receiver_accepted` / `receiver_refused` against `exporter_sent` / `send_failed`, which is
+	@# the difference between "we sent it" and "it arrived".
+	@uv run python tools/otel_status.py
 
 lab-status: ## Did the laboratory endpoint receive anything? (counts + the last failures)
 	@# **"No errors" and "it arrived" are different statements**, and only one of them can be read

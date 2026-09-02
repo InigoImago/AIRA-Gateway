@@ -133,6 +133,46 @@ answer one `__cause__` down — so every identity-provider failure read as `fail
 that exists to separate those two separated nothing on the one system where the question is asked
 per request.
 
+### 3.8 What a `SUCCESS` from an exporter is worth, and the two hops after it
+
+*Reported after the first day of use: the channel shows a line for OTel and you still cannot see
+that anything **arrived**.* Correct, and the reason is worth stating precisely.
+
+`SpanExportResult.SUCCESS` means `resp.ok` — the next hop answered 2xx. It does not mean the batch
+was kept. OTLP defines a **partial success**: the collector answers `200` with a body carrying
+`rejected_spans` and an `error_message` when it took some of a batch and dropped the rest (a full
+queue, an attribute limit, a timestamp it will not accept). `opentelemetry-exporter-otlp-proto-http`
+reads `resp.ok` and throws the body away, so every one of those came back `SUCCESS` — and the
+channel printed a clean green line about telemetry that had been discarded. That is this project's
+own sentence turned back on it: *"no errors" and "it arrived" are different statements.*
+
+Three changes:
+
+- **The response is read.** `WatchedExport` wraps the exporter's `_export` on the *instance* — the
+  seam where the `requests.Response` still exists — records it, and parses `partial_success` per
+  signal. A rejected count makes the line `failed`, with the collector's own reason.
+- **`http_status` is its own field.** The enum says "2xx"; the code says which, and the two are
+  reported beside each other rather than one standing in for the other.
+- **`make otel-status`** answers the hops a service cannot see, out of the collector's own
+  counters: `receiver_accepted` against `receiver_refused`, then `exporter_sent` against
+  `send_failed`. Those counters existed only under `make up-lab` — the reference stack's collector
+  published nothing at all, so *did it arrive* had no answer anywhere. The reference config now
+  carries the `metrics:` reader and the port is published.
+
+```
+  application ──▶ collector ──▶ Grafana / your SIEM
+     │               │                  │
+     │               │                  └── make otel-status  (forwarded / undelivered)
+     │               └── make otel-status  (accepted / refused)
+     └── AIRA_DEBUG_INTEGRATIONS=otel     (left, took Nms, answered 200, N rejected)
+```
+
+Reaching for `_export` is a private-API cost taken deliberately: the alternatives are a `requests`
+adapter that would see every call the process makes, or reimplementing the exporter.
+`test_the_exporter_still_has_the_seam_we_reach_through` asks the **real** exporter whether the
+method is still there, so the upgrade that renames it turns something red rather than making the
+partial-success reading quietly vacuous (`LESSONS.md` §7).
+
 ### 3.7 The one system that runs before the switch is read
 
 `VaultSource` is a settings *source*, so `load_secrets` runs **inside** `GatewaySettings()` — and
@@ -203,6 +243,10 @@ round if the operators of an installation want it.
   definition the access log and both span redactions read (`ADR-0007`).
 - **FR-8** Lines about `otel` are written to stdout only and never enter the OTLP log pipeline.
 - **FR-9** The OpenTelemetry SDK's own diagnostics are printed rather than exported.
+- **FR-9a** An export the collector **partly rejected** is reported as a failure, with the count
+  and the collector's reason — not as the `SUCCESS` its exporter returns.
+- **FR-9b** The collector's own accepted/refused and sent/failed counters are readable on the
+  reference stack, not only under the laboratory overlay.
 - **FR-10** A JWKS fetch failure is reported apart from a token rejection.
 - **FR-11** Token validation does not block the event loop, and the JWKS fetch has a bounded
   timeout.

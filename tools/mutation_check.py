@@ -6317,6 +6317,22 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID19",
+        "a batch the collector partly threw away is not reported as a success",
+        "libs/src/aira_common/observability.py",
+        "            if rejected:",
+        "            if False:",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
+        "ID20",
+        "the OTLP response body is read, not just its status",
+        "libs/src/aira_common/observability.py",
+        "            self._last = response\n            return response",
+        "            return response",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
         "OT8",
         "a line about OTel does not travel by OTel",
         "libs/src/aira_common/logging.py",

@@ -304,3 +304,113 @@ def test_an_export_line_for_otel_is_held_back_but_one_for_kafka_is_not(
     bodies = _bodies(exported)
     assert any("aira.usecases" in body for body in bodies)
     assert not any('"signal": "traces"' in body for body in bodies)
+
+
+# --- what "SUCCESS" actually attests ------------------------------------------------------------
+
+
+class Response:
+    """The `requests.Response` the exporter throws away."""
+
+    def __init__(self, status: int = 200, content: bytes = b"") -> None:
+        self.status_code = status
+        self.content = content
+        self.ok = 200 <= status < 300
+
+
+def _partial_body(rejected: int, message: str) -> bytes:
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceResponse,
+    )
+
+    response = ExportTraceServiceResponse()
+    response.partial_success.rejected_spans = rejected
+    response.partial_success.error_message = message
+    return response.SerializeToString()
+
+
+class RespondingExporter(FakeSpanExporter):
+    """An exporter shaped like the real one: `_export` posts, `export` reads `resp.ok`."""
+
+    def __init__(self, response: Response) -> None:
+        super().__init__()
+        self.response = response
+
+    def _export(self, serialized: bytes, timeout_sec: float | None = None) -> Response:
+        return self.response
+
+    def export(self, spans: Any) -> SpanExportResult:
+        resp = self._export(b"")
+        return SpanExportResult.SUCCESS if resp.ok else SpanExportResult.FAILURE
+
+
+def test_a_batch_the_collector_partly_threw_away_is_not_reported_as_a_success(
+    capsys: Any,
+) -> None:
+    """**The green line that was not true.** OTLP answers 200 with a `partial_success` body when it
+    takes some of a batch and drops the rest — a full queue, an attribute limit — and the Python
+    exporter reads `resp.ok` and nothing else, so it comes back `SUCCESS`. Before this the channel
+    printed a clean `outcome: ok` for telemetry that had been thrown away.
+    """
+    exporter = RespondingExporter(Response(200, _partial_body(3, "queue is full")))
+    _one_span(watched_export(exporter, "traces", "http://collector:4318/v1/traces"))
+
+    (line,) = [c for c in calls(capsys) if c["operation"] == "export"]
+    assert line["outcome"] == "failed"
+    assert line["rejected"] == 3
+    assert "queue is full" in line["detail"]
+    # The exporter's own word is still reported, beside the truth rather than instead of it.
+    assert line["result"] == "SUCCESS"
+    assert line["http_status"] == 200
+
+
+def test_a_batch_the_collector_took_whole_stays_a_success(capsys: Any) -> None:
+    """An empty body is the ordinary full-success answer; it must not read as a rejection."""
+    _one_span(
+        watched_export(RespondingExporter(Response(200, b"")), "traces", "http://collector:4318")
+    )
+
+    (line,) = [c for c in calls(capsys) if c["operation"] == "export"]
+    assert line["outcome"] == "ok"
+    assert "rejected" not in line
+    assert line["http_status"] == 200
+
+
+def test_the_status_the_success_is_about_is_reported(capsys: Any) -> None:
+    """`export()` returns SUCCESS for any 2xx, so the code is the only thing that says *which*."""
+    _one_span(
+        watched_export(RespondingExporter(Response(202, b"")), "traces", "http://collector:4318")
+    )
+    assert calls(capsys)[0]["http_status"] == 202
+
+
+def test_an_unparseable_body_is_not_turned_into_a_failure(capsys: Any) -> None:
+    """This reads a response the caller already treated as a success. A diagnostic that turned an
+    unfamiliar body into an error would break the export it exists to watch."""
+    exporter = RespondingExporter(Response(200, b"\xff\xfe not protobuf at all"))
+    _one_span(watched_export(exporter, "traces", "http://collector:4318"))
+
+    assert calls(capsys)[0]["outcome"] == "ok"
+
+
+def test_the_exporter_still_has_the_seam_we_reach_through() -> None:
+    """`_export` is private, and reaching for it is a real cost taken deliberately.
+
+    It has to fail **loudly** on the upgrade that renames it, or the partial-success reading goes
+    vacuous with nothing turning red — `LESSONS.md` §7. Asked of the real exporter, not a stand-in.
+    """
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    exporter = OTLPSpanExporter(endpoint="http://127.0.0.1:1/v1/traces")
+    assert callable(getattr(exporter, "_export", None)), (
+        "OTLPSpanExporter._export is gone; WatchedExport can no longer see the HTTP response, so "
+        "a partially-rejected batch would silently read as a clean success again"
+    )
+
+
+def test_wrapping_the_seam_does_not_change_what_the_exporter_returns() -> None:
+    """`FR-6` at the seam: the wrapper records the response and hands back exactly it."""
+    exporter = RespondingExporter(Response(200, b""))
+    original = exporter.response
+    watched_export(exporter, "traces", "http://collector:4318")
+    assert exporter._export(b"") is original

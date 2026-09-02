@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A green line about telemetry that was thrown away (2026-09-02)
+
+Reported after the first day with `AIRA_DEBUG_INTEGRATIONS=otel`: *you see a line, but not that it
+arrived — just that a request happened.* Correct, and for a sharper reason than it first sounds.
+
+### What `SUCCESS` was actually attesting
+
+`SpanExportResult.SUCCESS` means `resp.ok`. That is all. OTLP defines a **partial success** — the
+collector answers `200` with a body carrying `rejected_spans` and an `error_message` when it keeps
+part of a batch and drops the rest — and `opentelemetry-exporter-otlp-proto-http` reads `resp.ok`
+and discards the body (`if resp.ok: return SpanExportResult.SUCCESS`, verified in the installed
+source). So the channel printed `outcome: ok, result: SUCCESS` for telemetry the collector had
+thrown away.
+
+The feature written around *"no errors" and "it arrived" are different statements* had made exactly
+that mistake one layer in. `tools/lab_status.py` exists because a collector log cannot report a
+success; the new channel then reported a success that was not one.
+
+### And the reference stack could not answer the question at all
+
+The collector's own counters — `receiver_accepted` / `receiver_refused`, `exporter_sent` /
+`send_failed` — were configured **only in `collector-config.lab.yaml`**. On the reference stack the
+collector published nothing, so *did it arrive* had no answer anywhere, by any means. Someone
+watching their first `otel` line had nowhere to go.
+
+### Three changes
+
+- **The response body is read.** `WatchedExport` wraps the exporter's `_export` **on the instance**
+  — the seam where the `requests.Response` still exists — and parses `partial_success` per signal.
+  A rejected count makes the line `failed`, carrying the collector's own reason. Measured against
+  a collector that answers 200 and rejects 3 of 4: `outcome: failed, result: SUCCESS,
+  http_status: 200, rejected: 3, detail: "the collector rejected 3 of them: queue is full"`. The
+  exporter's word is kept beside the truth rather than replaced by it.
+- **`http_status` is its own field**, because the enum says "2xx" and only the code says which.
+- **`make otel-status`** reads the collector's counters for the two hops a service cannot see. The
+  reference config now carries the `metrics:` reader and `AIRA_PUBLISH_OTLP_METRICS_PORT` publishes
+  it.
+
+Reaching for `_export` is a private-API cost taken deliberately — the alternatives are a `requests`
+adapter that would see every call the process makes, or reimplementing the exporter.
+`test_the_exporter_still_has_the_seam_we_reach_through` asks the **real** exporter whether the
+method is still there, so the upgrade that renames it turns something red instead of making the
+reading quietly vacuous.
+
+### What the guards did
+
+Adding `AIRA_PUBLISH_OTLP_METRICS_PORT` failed three of them at once — the compose phantom check,
+the published-address owner, and yesterday's `.env.example` check — because a published port has
+one owner (`tools/stack_addresses.py`) and I had registered it in none of them. That is the rule
+working, on a variable added by the person who wrote the rule down.
+
+Two new mutations; the harness defends **694** properties.
+
+---
+
 ## Both live suites, and the file you copy named 15 of 90 settings (2026-09-02)
 
 Asked to run the integration and browser suites against the stack, and whether `.env.example`

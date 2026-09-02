@@ -8,6 +8,7 @@ without a collector.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -108,6 +109,53 @@ def configure_observability(
     return True
 
 
+#: The response body's `partial_success` field, per signal. The collector answers **200 with a
+#: body** when it took some of a batch and dropped the rest — a full queue, an attribute limit, a
+#: bad timestamp — and the Python exporter reads `resp.ok` and nothing else, so every one of those
+#: is a clean `SpanExportResult.SUCCESS`.
+#:
+#: That is this project's own sentence turned back on it: *"no errors" and "it arrived" are
+#: different statements*. `tools/lab_status.py` was written because a collector log cannot say a
+#: delivery succeeded; the channel then reported `result: SUCCESS` for a batch the collector had
+#: partly thrown away, which is worse than silence because somebody reads it.
+_REJECTED_FIELD = {
+    "traces": "rejected_spans",
+    "metrics": "rejected_data_points",
+    "logs": "rejected_log_records",
+}
+
+
+def _partial_success(signal: str, body: bytes) -> tuple[int, str]:
+    """``(rejected, reason)`` from an OTLP response body. ``(0, "")`` when it took everything.
+
+    An empty body is the ordinary full-success answer and parses to zeros, so the common path
+    costs one protobuf parse of nothing. Anything unparseable is reported as *no rejection* rather
+    than as a failure: this reads a response the caller already treated as a success, and a
+    diagnostic that turned an unfamiliar body into an error would break the export it is watching.
+    """
+    if not body:
+        return 0, ""
+    try:
+        if signal == "traces":
+            from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+                ExportTraceServiceResponse as Response,
+            )
+        elif signal == "logs":
+            from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import (
+                ExportLogsServiceResponse as Response,
+            )
+        else:
+            from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
+                ExportMetricsServiceResponse as Response,
+            )
+        parsed = Response()
+        parsed.ParseFromString(body)
+        rejected = int(getattr(parsed.partial_success, _REJECTED_FIELD[signal], 0))
+        return rejected, str(parsed.partial_success.error_message)
+    except Exception:  # noqa: BLE001 — see the docstring: never fail the export being watched
+        return 0, ""
+
+
 class WatchedExport:
     """An OTLP exporter that says what each export attempt did (`FRD-617` §3.1).
 
@@ -130,12 +178,42 @@ class WatchedExport:
     test when nobody is watching, and an export happens on a timer, not per request.
     """
 
-    __slots__ = ("_endpoint", "_exporter", "_signal")
+    __slots__ = ("_endpoint", "_exporter", "_last", "_signal")
 
     def __init__(self, exporter: Any, signal: str, endpoint: str) -> None:
         self._exporter = exporter
         self._signal = signal
         self._endpoint = endpoint
+        #: The last HTTP response the wrapped exporter received, captured by `_watch_transport`.
+        self._last: Any = None
+        self._watch_transport()
+
+    def _watch_transport(self) -> None:
+        """Keep the HTTP response the exporter is about to throw away.
+
+        `export()` reduces the whole exchange to a three-valued enum: `_export` posts and returns a
+        `requests.Response`, and the caller reads `resp.ok`. The status code and the
+        `partial_success` body are gone by the time anything outside can look, so this replaces
+        `_export` **on the instance** — not on the class, which every exporter in the process
+        shares — with a wrapper that records the response and returns it unchanged.
+
+        Reaching for a private method is a real cost and is taken deliberately: the alternatives
+        are a `requests` adapter (which would see every call the process makes, not this one) or
+        reimplementing the exporter. `test_the_exporter_still_has_the_seam_we_reach_through` fails
+        on the upgrade that renames it, so this degrades **loudly** rather than going quiet — the
+        `LESSONS.md` §7 shape, a control that goes vacuous on an upgrade with nothing failing.
+        """
+        inner = getattr(self._exporter, "_export", None)
+        if not callable(inner):
+            return
+
+        def capture(*args: Any, **kwargs: Any) -> Any:
+            response = inner(*args, **kwargs)
+            self._last = response
+            return response
+
+        with contextlib.suppress(AttributeError, TypeError):
+            self._exporter._export = capture  # noqa: SLF001 — the seam, see the docstring
 
     def __getattr__(self, name: str) -> Any:
         # `_exporter` itself is a slot, so it is found by normal lookup and never arrives here —
@@ -147,6 +225,7 @@ class WatchedExport:
     def export(self, *args: Any, **kwargs: Any) -> Any:
         from aira_common.integration_debug import watch
 
+        self._last = None
         with watch(
             "otel", "export", signal=self._signal, target=self._endpoint, items=_batch_size(args)
         ) as call:
@@ -157,7 +236,21 @@ class WatchedExport:
             # exact reassurance this feature exists to stop giving.
             name = getattr(result, "name", str(result))
             call.note(result=name)
-            if name != "SUCCESS":
+            # **The status this `SUCCESS` is actually about.** `export()` returns SUCCESS on any
+            # 2xx, so the enum attests one thing: the next hop answered. Reported as its own field
+            # rather than folded into the word, because "the collector took it" and "the collector
+            # answered" are the two statements this whole feature exists to keep apart.
+            status = getattr(self._last, "status_code", None)
+            if status is not None:
+                call.note(http_status=status)
+            rejected, reason = _partial_success(
+                self._signal, getattr(self._last, "content", b"") or b""
+            )
+            if rejected:
+                # A batch the collector partly threw away is not a success, whatever the enum says.
+                call.note(rejected=rejected)
+                call.failed(f"the collector rejected {rejected} of them: {reason or 'no reason'}")
+            elif name != "SUCCESS":
                 call.failed(f"exporter returned {name}")
             return result
 

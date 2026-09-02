@@ -22,6 +22,15 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **A success returned by a client library is a claim about the client's own call, not about the
+  far end.** `SpanExportResult.SUCCESS` means `resp.ok` and nothing more — and OTLP answers `200`
+  with a body saying it dropped half the batch, which the Python exporter discards unread. So the
+  channel built around *"no errors" and "it arrived" are different statements* printed a clean
+  green line for telemetry that had been thrown away, one layer inside the very distinction it
+  exists to draw. Ask of any wrapped client: **what does its success value actually attest** — the
+  socket, the status, or the work? — and report that thing by name rather than folding it into a
+  word the reader will take for the strongest of the three.
+
 - **A recipe in a document is a claim; ask the product.** The `.env.example` rewrite offered four
   ready-made configurations, and one of them did not start — found by running each through both
   planes' own `unsafe_settings` in a subprocess rather than by reading them back. Underneath was a

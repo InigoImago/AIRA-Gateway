@@ -59,6 +59,8 @@ PUBLISHED = {
     "grafana": "AIRA_PUBLISH_GRAFANA_PORT",
     "otlp_grpc": "AIRA_PUBLISH_OTLP_GRPC_PORT",
     "otlp_http": "AIRA_PUBLISH_OTLP_HTTP_PORT",
+    #: The collector's own Prometheus endpoint — what it accepted, and what it forwarded.
+    "otlp_metrics": "AIRA_PUBLISH_OTLP_METRICS_PORT",
     "ollama": "AIRA_PUBLISH_OLLAMA_PORT",
 }
 

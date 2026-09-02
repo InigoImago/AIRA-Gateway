@@ -228,6 +228,12 @@ services:
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_HTTP_PORT:-4318}:4318"   # OTLP HTTP
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_HTTP_PORT:-4318}:4318"   # OTLP HTTP
+      # The collector's own counters — what it **accepted**, and what it delivered onward. The one
+      # hop `AIRA_DEBUG_INTEGRATIONS=otel` cannot see from inside a service, because an exporter
+      # reads `resp.ok` and an OTLP 200 can still say half the batch was dropped. `make otel-status`
+      # reads this; published like everything else so you can curl it yourself.
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_METRICS_PORT:-8889}:8889"   # collector metrics
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_METRICS_PORT:-8889}:8889"   # collector metrics
     depends_on:
       otel-lgtm:
         condition: service_started
