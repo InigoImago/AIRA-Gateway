@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, Fixture
 from .test_config_distribution import (
     _management_engine,
     _queue_outbox_event,
@@ -67,42 +67,64 @@ async def _cleanup(engine: AsyncEngine, name: str) -> None:
         await management.dispose()
 
 
-async def test_a_thinking_declaration_authored_in_management_bounds_a_real_request(
-    engine: AsyncEngine,
+async def test_a_thinking_declaration_bounds_a_real_request_on_a_deployed_gateway(
+    engine: AsyncEngine, governed
 ) -> None:
     """The declaration is what refuses an over-budget request. If the transport is broken the
     gateway decides from an empty declaration — and refuses *everything*, which looks like a
-    gateway bug rather than a missing event."""
-    name = f"itest-think-{uuid.uuid4().hex[:8]}"
-    await _declare(
-        engine,
-        name,
-        {
-            "capabilities": ["generate", "thinking"],
-            "max_output_tokens": 64000,
-            "thinking": {"modes": ["limited"], "min_tokens": 128, "max_tokens": 24576},
-        },
-    )
-    try:
-        async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
-            response = await client.post(
-                f"/v1beta/models/{name}:generateContent",
-                json={
-                    "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
-                    "generationConfig": {"thinkingConfig": {"thinkingBudget": 99_999}},
-                },
+    gateway bug rather than a missing event.
+
+    **The precondition is asked before the request, not read out of the answer.** This test used to
+    declare a model no provider serves and assert that the *thinking bound* refused it. Two things
+    were wrong with that and neither could be seen, because the test also sent no credentials and
+    therefore skipped on every stack with `AIRA_AUTH_REQUIRED` — which is the default:
+
+    - a model nothing serves is a `404` at routing, and `FRD-126` says so on purpose —
+      *"declaration after routing, or a cap is checked against a model that never serves it"*. The
+      gateway was right and the assertion was written from the opposite order.
+    - so the bound has to be asserted against a model that is actually **served** and whose
+      declaration carries a numeric `max_tokens`. Which one that is is installation state, so it is
+      looked up here rather than named, and its absence is a skip stating what is missing — the
+      rule `test_agent_round.py` records: ask the precondition, never interpret the answer.
+    """
+    async with engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text(
+                    "SELECT model, (thinking->>'max_tokens')::int AS cap FROM model_catalog"
+                    " WHERE approved IS true AND thinking->>'max_tokens' IS NOT NULL"
+                    " AND (thinking->'modes')::jsonb @> '[\"limited\"]'::jsonb"
+                    " ORDER BY model LIMIT 1"
+                )
             )
-        if response.status_code in (401, 403):
-            pytest.skip("the gateway requires authentication for this route")
-        # No provider serves this model, so the request cannot succeed either way. What is being
-        # pinned is *which* refusal: the declared bound, named, rather than "model not found".
-        assert response.status_code == 400, response.text
-        assert "THINKING_TOKEN_COUNT_TOO_HIGH" in response.text
-    finally:
-        await _cleanup(engine, name)
+        ).first()
+    if row is None:
+        pytest.skip(
+            "no approved model in this catalogue offers a bounded 'limited' thinking mode, so "
+            "there is nothing here whose declared cap a request can exceed. A numeric "
+            "thinkingBudget selects that mode; a model without it is refused by name "
+            "(INVALID_THINKING_MODE) before any cap is consulted."
+        )
+    model, cap = row[0], int(row[1])
+
+    await governed.release(model)
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+        response = await client.post(
+            f"/v1beta/models/{model}:generateContent",
+            json={
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+                "generationConfig": {"thinkingConfig": {"thinkingBudget": cap * 10}},
+            },
+            headers=governed.headers(),
+        )
+
+    # Refused **before dispatch**, so no upstream is called and nothing is spent — which is what
+    # makes it safe to point this at a model that costs money.
+    assert response.status_code == 400, response.text
+    assert "THINKING_TOKEN_COUNT_TOO_HIGH" in response.text
 
 
-async def test_the_schema_bounds_hold_on_a_deployed_gateway() -> None:
+async def test_the_schema_bounds_hold_on_a_deployed_gateway(fixture: Fixture) -> None:
     """The bounds come from settings, so a deployment that shipped them unset would accept a
     schema of any depth — and nothing in-process reads the container's environment."""
     deep: dict = {"type": "STRING"}
@@ -116,15 +138,16 @@ async def test_the_schema_bounds_hold_on_a_deployed_gateway() -> None:
                 "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
                 "generationConfig": {"responseSchema": deep},
             },
+            headers=fixture.headers(),
         )
-    if response.status_code in (401, 403):
-        pytest.skip("the gateway requires authentication for this route")
 
     assert response.status_code == 400, response.text
     assert "nests deeper" in response.text
 
 
-async def test_a_batch_is_recorded_under_the_verb_that_ran(engine: AsyncEngine) -> None:
+async def test_a_batch_is_recorded_under_the_verb_that_ran(
+    engine: AsyncEngine, fixture: Fixture
+) -> None:
     """Both embedding verbs write to one audit table and reporting has to tell them apart. A batch
     recorded as `embedContent` makes "how much of our embedding traffic is batched" unanswerable —
     and the difference is invisible to every hermetic test, which shares one in-process writer."""
@@ -140,9 +163,8 @@ async def test_a_batch_is_recorded_under_the_verb_that_ran(engine: AsyncEngine) 
                         {"content": {"parts": [{"text": "two"}]}},
                     ]
                 },
+                headers=fixture.headers(),
             )
-        if response.status_code in (401, 403):
-            pytest.skip("the gateway requires authentication for this route")
         assert response.status_code in (200, 400), response.text
         if response.status_code == 200:
             assert len(response.json()["embeddings"]) == 2
