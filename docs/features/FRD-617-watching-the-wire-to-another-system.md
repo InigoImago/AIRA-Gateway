@@ -133,6 +133,25 @@ answer one `__cause__` down — so every identity-provider failure read as `fail
 that exists to separate those two separated nothing on the one system where the question is asked
 per request.
 
+### 3.7 The one system that runs before the switch is read
+
+`VaultSource` is a settings *source*, so `load_secrets` runs **inside** `GatewaySettings()` — and
+every entry point calls `configure_logging` and `configure_integration_debug` with the *finished*
+settings, one step later. So the single system whose entire life is start-up was the one the
+channel could not describe. Found on the running stack, not in review: a gateway pointed at
+`vault:8299` failed closed exactly as `FRD-116` requires, with `AIRA_DEBUG_INTEGRATIONS=all`, and
+said nothing at all — while its two Vault log lines came out in structlog's *unconfigured* console
+format rather than the JSON every other line in that container uses.
+
+`load_secrets` therefore configures both itself, after the `configured` check and before the first
+remote call, reading the switch from the **environment** because settings are what is being built.
+A value this build cannot parse is left off rather than raised on: the settings validator refuses
+the process a moment later with the better message, and a secret loader is the wrong place to
+report a typo in a debug switch.
+
+The general shape is worth carrying past this feature: **a wire configured from settings cannot
+cover what runs while the settings are being built.**
+
 ### 3.6 `report`, not `emit`
 
 The function that writes a line is `report`. `emit` is this codebase's word for *publishing a
@@ -224,6 +243,8 @@ redaction, the local-only hold-back and the JWKS split.
 
 ## 7. Demonstrated, not asserted
 
+### 7a. Against fakes, in the harness
+
 Every line below was produced by pointing a real client at a wrong port, a dead host or a socket
 that accepts and never answers — the check the owner asked for, and the one that found the `500`
 in §3.4 and the mis-classified timeout in §3.5.
@@ -239,6 +260,46 @@ in §3.4 and the mis-classified timeout in §3.5.
 | Redis on `:6399` with a password in the URL | `redis script failed 36ms`, `target=redis://aira:REDACTED@127.0.0.1:6399/0` |
 | Postgres on port 1 with a password in the URL | `postgres error failed`, the driver's own *"Is the server running on that host"*, `target=postgresql+psycopg://aira:REDACTED@…` |
 | The same run with `AIRA_DEBUG_INTEGRATIONS=` | **nothing**. The feature's own fallback lines still appear; the channel says not one word. |
+
+### 7b. Against the running Compose stack
+
+Repeated on `make up` + `make up-apps`, with `AIRA_DEBUG_INTEGRATIONS=all` reaching all three
+processes. This is where §3.7 was found — the feature was silent for Vault, and no test could have
+said so, because every test constructs its settings before it looks.
+
+| What was done to the stack | What the channel said |
+| --- | --- |
+| Nothing; normal operation | `otel export ok 2.9ms signal=traces items=7 result=SUCCESS`, `kafka consumer.start ok target=kafka:9092 group=aira-gateway`, `postgres connect ok target=postgresql+psycopg://aira:REDACTED@postgres:5432/aira_gateway` |
+| A config change through the outbox | producer `send ok topic=aira.usecases partition=0 offset=4897` and, in the other container, `consumer.receive ok offset=4897 event_type=usecase.upserted applied=True` — **the same offset at both ends** |
+| A JWT with an unknown `kid`, Keycloak up | `auth jwks.fetch failed 209ms PyJWKClientError: Unable to find a signing key that matches: "nosuchkid"` → `oidc_token_rejected` at `INFO`. The provider answered; the token is wrong. |
+| `docker stop aira-keycloak`, same request | `auth jwks.fetch failed 33ms PyJWKClientConnectionError: No address associated with hostname` → `oidc_jwks_unavailable` at **`WARNING`**, saying in words that this is not the callers' credentials. Both are `401` to the caller; only the log tells them apart. |
+| `AIRA_OTEL_ENDPOINT=…:4319` | `otel export failed 7738ms items=7 result=FAILURE`, and above it the SDK's own `Connection refused … retrying in 4.61s` — the sentence that used to have nowhere to go |
+| `docker stop aira-kafka`, then the relay | `kafka producer.start failed 33ms KafkaConnectionError: Unable to bootstrap from [('kafka', 9092, …)]` |
+| `docker stop aira-redis`, then a request | `redis script failed 0.3ms ConnectionError: Connection closed by server`, beside the existing `counters_unavailable` fallback line |
+| `VAULT_ADDR=http://vault:8299` | `vault read failed 1.4ms target=http://vault:8299/v1/secret/data/aira ConnectError: [Errno 111] Connection refused` — **after §3.7; before it, nothing** |
+| `AIRA_DEBUG_INTEGRATIONS=` and restart | 0 channel lines out of 10 in the whole start-up; the gateway healthy |
+
+Two properties fell out of the run that are worth knowing before switching this on:
+
+**Every line carries `trace_id` and `span_id`** where a span is active, because the channel logs
+through the same structlog chain as everything else. A `redis script` line and the request that
+caused it are one click apart in the trace backend; no design went into that, and it should not be
+removed by accident.
+
+**Volume, measured.** Ten requests produced eleven channel lines: **ten `redis/script`**, one
+`postgres/connect` — the pool reuses connections, so that is per *connection*, not per request —
+and `otel/export` on its own timer. `redis` is the only per-request system, which is the practical
+argument for naming systems rather than only having an on switch: `kafka,auth,vault,otel` is the
+quiet set for a busy gateway.
+
+**And the mechanism behind §1, confirmed in the shipped image**, through the same startup path the
+app takes:
+
+```
+root handlers          : ['LoggingHandler']     <- the OTLP exporter, and nothing else
+opentelemetry handlers : ['SdkDiagnostics']
+opentelemetry propagate: False
+```
 
 ## 8. Rollout
 

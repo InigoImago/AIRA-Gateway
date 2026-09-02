@@ -6333,6 +6333,22 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID17",
+        "Vault is watched even though it is read before the settings exist",
+        "libs/src/aira_common/secrets.py",
+        "    _say_something_before_the_settings_exist()\n    vault = VaultClient(config, client)",
+        "    vault = VaultClient(config, client)",
+        "libs/tests/test_the_state_stores_say_what_they_answered.py",
+    ),
+    Mutation(
+        "ID18",
+        "reading secrets does not reconfigure logging a process already set up",
+        "libs/src/aira_common/secrets.py",
+        "    if not structlog.is_configured():\n        configure_logging()",
+        "    if True:\n        configure_logging()",
+        "libs/tests/test_the_state_stores_say_what_they_answered.py",
+    ),
+    Mutation(
         "ID7",
         "an unreachable identity provider is not reported as a rejected token",
         "libs/src/aira_common/oidc.py",

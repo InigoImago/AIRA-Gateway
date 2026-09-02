@@ -87,6 +87,36 @@ Nine scenarios, each producing the line it should (`FRD-617` §7). Two of them c
 And the property the owner asked for last: the same run with `AIRA_DEBUG_INTEGRATIONS=` produces
 not one line from the channel.
 
+### Then run on the stack, which found the one thing tests could not
+
+`make up` + `make up-apps`, `AIRA_DEBUG_INTEGRATIONS=all` in all three processes, then the same
+provocations against real containers: a collector on `:4319`, `docker stop` on Keycloak, Kafka and
+Redis, and `VAULT_ADDR` at a dead port. Every one produced the line it should (`FRD-617` §7b), and
+the Keycloak pair is the one worth reading twice — an unknown `kid` with Keycloak up gives
+`oidc_token_rejected` at `INFO`, and the *same request* with Keycloak stopped gives
+`oidc_jwks_unavailable` at `WARNING`. Both are `401` to the caller; only the log tells them apart.
+
+**And Vault produced nothing.** `VaultSource` is a settings *source*, so `load_secrets` runs inside
+`GatewaySettings()` — and every entry point configures logging and the channel with the *finished*
+settings, one step later. The single system whose entire life is start-up was the one the channel
+could not describe, and its two log lines came out in structlog's unconfigured console format
+rather than the JSON everything else in that container emits. No test could have caught it: every
+test constructs its settings before it looks. `load_secrets` now configures both itself, after the
+`configured` check and before the first remote call, reading the switch from the environment
+because settings are what is being built. **A wire configured from settings cannot cover what runs
+while the settings are being built.**
+
+Two things the run established that were not designed: every channel line carries `trace_id` and
+`span_id`, because it goes through the same structlog chain as everything else — so a `redis
+script` line and its request are one click apart in Tempo. And the volume: ten requests, eleven
+channel lines — ten `redis/script`, one `postgres/connect` (per pooled connection, not per
+request), `otel/export` on its own timer. `redis` is the only per-request system, which is the
+practical argument for naming systems rather than only having an on switch.
+
+The mechanism from the top of this entry, confirmed inside the shipped image: the only handler on
+the root logger is `LoggingHandler` — the OTLP exporter — with `opentelemetry` now carrying
+`SdkDiagnostics` and `propagate = False`.
+
 ### What the guards caught
 
 The channel's writer was called `emit`, and `emit("…")` is this codebase's word for publishing a
@@ -95,7 +125,7 @@ configuration event — two guards read the source for it, and both failed on `p
 `issuer=self._issuer,` gained a second home at the same indentation, and four compose anchors that
 my new environment line sat inside. Each of those is a check doing exactly what it was written for.
 
-Seventeen new mutations (`ID1`–`ID16`, `OT7`–`OT9`); the harness now defends **690** properties.
+Seventeen new mutations (`ID1`–`ID16`, `OT7`–`OT9`); the harness now defends **692** properties.
 One survived on the first run — the gate inside `report`, which `watch` refuses in front of, so
 nothing had ever reached it — and one more after that, the no-op handle while a *different* system
 is watched. Both now have tests written for the case rather than for the happy path.

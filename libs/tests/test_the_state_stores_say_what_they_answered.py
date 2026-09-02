@@ -18,7 +18,12 @@ import pytest
 from aira_common.counters import CountersUnavailable, RedisRunner
 from aira_common.integration_debug import configure_integration_debug
 from aira_common.logging import configure_logging
-from aira_common.secrets import VaultClient, VaultConfig, VaultUnavailable
+from aira_common.secrets import (
+    VaultClient,
+    VaultConfig,
+    VaultUnavailable,
+    load_secrets,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -137,3 +142,76 @@ async def test_a_counter_store_that_is_not_there_is_reported_with_its_address(
     # The password lives in the authority of a Redis URL, where `redact_url_query` cannot see it.
     assert "s3cret" not in json.dumps(line)
     assert line["target"] == "redis://aira:REDACTED@127.0.0.1:6390/0"
+
+
+def test_vault_is_watched_even_though_it_runs_before_the_settings_exist(
+    capsys: Any, monkeypatch: Any
+) -> None:
+    """The gap the live stack found (`FRD-617` §3.7).
+
+    `VaultSource` is a settings *source*, so `load_secrets` runs inside `GatewaySettings()` — and
+    every entry point configures the channel with the *finished* settings, one step later. So the
+    one system whose entire life is start-up was the one the channel could not describe: a gateway
+    pointed at a dead Vault port failed closed exactly as designed, with `AIRA_DEBUG_INTEGRATIONS=
+    all`, and said nothing.
+
+    Driven through `load_secrets` with the channel **off** and only the environment set, which is
+    the state a real process is in at that moment.
+    """
+    monkeypatch.setenv("AIRA_DEBUG_INTEGRATIONS", "vault")
+    monkeypatch.setenv("VAULT_TOKEN", "dev-root")
+    configure_integration_debug("")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"data": {"AIRA_CURRENCY": "EUR"}}})
+
+    load_secrets(
+        VaultConfig(address="http://vault:8200", mount="secret", path="aira"), _client(handler)
+    )
+
+    operations = [line["operation"] for line in calls(capsys) if line["system"] == "vault"]
+    assert "read" in operations, (
+        "Vault is read while the settings are being built, so the channel has to configure itself "
+        "there — nothing else has run yet"
+    )
+
+
+def test_a_misspelled_switch_does_not_take_the_secret_loader_down(
+    capsys: Any, monkeypatch: Any
+) -> None:
+    """A typo in a debug switch must not be reported by the secret loader. The settings validator
+    refuses the process a moment later, with the message that names the valid systems."""
+    monkeypatch.setenv("AIRA_DEBUG_INTEGRATIONS", "valut")
+    monkeypatch.setenv("VAULT_TOKEN", "dev-root")
+    configure_integration_debug("")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"data": {"AIRA_CURRENCY": "EUR"}}})
+
+    secrets = load_secrets(
+        VaultConfig(address="http://vault:8200", mount="secret", path="aira"), _client(handler)
+    )
+    assert secrets == {"AIRA_CURRENCY": "EUR"}
+    assert [line for line in calls(capsys) if line["system"] == "vault"] == []
+
+
+def test_reading_secrets_does_not_reconfigure_logging_a_process_already_set_up(
+    monkeypatch: Any,
+) -> None:
+    """Defaults for a process that has not got to its own `configure_logging` yet, and never an
+    override of one that has. Without the guard this reconfigures structlog underneath whatever is
+    already running — which is how it first showed up: two `test_secrets.py` cases that read their
+    lines through `structlog.testing.capture_logs` stopped seeing any.
+    """
+    import structlog
+
+    monkeypatch.setenv("VAULT_TOKEN", "dev-root")
+    configure_logging("WARNING", json_output=False)
+    before = structlog.get_config()["processors"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"data": {"AIRA_CURRENCY": "EUR"}}})
+
+    load_secrets(VaultConfig(address="http://vault:8200"), _client(handler))
+
+    assert structlog.get_config()["processors"] == before

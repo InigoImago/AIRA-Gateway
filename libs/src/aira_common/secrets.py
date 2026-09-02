@@ -27,15 +27,21 @@ without ever answering "what is it?".
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
+import structlog
 
-from aira_common.integration_debug import watch
-from aira_common.logging import get_logger
+from aira_common.integration_debug import (
+    UnknownIntegration,
+    configure_integration_debug,
+    watch,
+)
+from aira_common.logging import configure_logging, get_logger
 
 _log = get_logger("aira_common.secrets")
 
@@ -258,6 +264,39 @@ class VaultClient:
         return {str(key): str(value) for key, value in data.items() if value is not None}
 
 
+def _say_something_before_the_settings_exist() -> None:
+    """Configure logging and the `FRD-617` channel, here, because nothing else can have.
+
+    **Vault is read while the settings object is being built.** `VaultSource` is a settings
+    *source*, so `load_secrets` runs inside `GatewaySettings()` — and every entry point calls
+    `configure_logging` and `configure_integration_debug` with the *finished* settings, a step
+    later. So the one system whose entire life is start-up was the one system neither could
+    describe.
+
+    Measured on the running stack rather than reasoned about: a gateway pointed at a dead Vault
+    port failed closed exactly as `FRD-116` says it must, and with `AIRA_DEBUG_INTEGRATIONS=all`
+    the channel said **nothing at all**, while `vault_dev_token_used` came out in structlog's
+    unconfigured console format instead of the JSON everything else in that container emits. Two
+    correct halves and no wire (`LESSONS.md` §1), in the feature written to find exactly that.
+
+    Only on the path where Vault is genuinely configured — after the `configured` check above — so
+    a laptop, the hermetic suite and every settings object built without a Vault are untouched.
+
+    The channel's setting is read from the **environment**, because settings are what is being
+    built. A value this build cannot parse is left off rather than raised on: the settings
+    validator refuses the process a moment later, with the better message, and a secret loader is
+    the wrong place to report a typo in a debug switch.
+    """
+    # **Only if nobody has**, which is the whole intent: defaults for a process that has not got
+    # to its own `configure_logging` yet, and never an override of one that has. Without the guard
+    # this reconfigures structlog underneath whatever is already running — `structlog.testing.
+    # capture_logs` in the suite, and in principle any caller that reads secrets after start-up.
+    if not structlog.is_configured():
+        configure_logging()
+    with contextlib.suppress(UnknownIntegration):
+        configure_integration_debug(os.environ.get("AIRA_DEBUG_INTEGRATIONS", ""))
+
+
 def load_secrets(
     config: VaultConfig | None = None, client: httpx.Client | None = None
 ) -> dict[str, str]:
@@ -272,6 +311,7 @@ def load_secrets(
     if not config.configured:
         return {}
 
+    _say_something_before_the_settings_exist()
     vault = VaultClient(config, client)
     try:
         secrets = vault.read(vault.login())

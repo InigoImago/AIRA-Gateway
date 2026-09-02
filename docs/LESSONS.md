@@ -74,6 +74,16 @@ reading code.
   logging, an alert about the alert pipeline, a health check that writes to the database it is
   checking — which path it takes when the subject is broken.
 
+  *A tenth, and the wire was fine — it was **when** it ran.* `FRD-617`'s channel is switched on
+  from settings, and `VaultSource` is a settings *source*: `load_secrets` runs **inside**
+  `GatewaySettings()`, one step before every entry point configures anything. So the one system
+  whose entire life is start-up was the one system the feature could not describe — a gateway
+  pointed at a dead Vault port failed closed correctly, with the switch set to `all`, and said
+  nothing. No test could have found it, because every test constructs its settings before it looks;
+  the running stack found it in one restart. **A wire configured from settings cannot cover what
+  runs while the settings are being built.** Ask of anything switched on at start-up: what runs
+  *before* the switch is read — a settings source, a module import, a `ready()` hook, a migration.
+
   *A constant is an end too.* `pipeline/config.MAX_MODEL_LENGTH` — *"the same ceiling Management's
   serializer applies"* — sat beside a comment naming three ways into that parser which bypass
   Management, and was read by nothing; `foundry.DEFAULT_API_VERSION` documented the pinned Azure
