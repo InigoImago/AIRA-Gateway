@@ -5,6 +5,66 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The probes stopped being requests, and a silent write (2026-09-02)
+
+*Can we send healthz less often — I cannot see what it sends otherwise. And are you sure it is
+properly encoded?*
+
+### They should not be traced at all
+
+Docker asks every 15 seconds per container, and each ask is **three** spans through the ASGI
+instrumentation plus the database reads underneath. Measured over 65 seconds *with three real
+requests in the window*: **20 of 86 spans, 23 %** — in a quiet minute, nearly all of them.
+
+Lengthening the interval would trade health monitoring for legibility. A probe simply is not a
+request: no caller, no use case, no outcome worth attributing, and `/readyz` already reports its
+own verdict in a form built for reading (`FRD-117`). So they are excluded from tracing —
+`OTEL_PYTHON_EXCLUDED_URLS`, set in `configure_observability` before anything is instrumented,
+because `opentelemetry.util.http` reads that one variable for FastAPI, for Django and for whatever
+is added next. `setdefault`, so an installation that has named its own exclusions keeps them.
+
+After: **0 health spans, 65 in the window instead of 86**. Three costs went with them — a trace
+backend full of probes, constant OTLP volume against whatever quota the far end has, and a debug
+payload whose first *n* items were always health checks, which is what was reported.
+
+### And a file that was never written, reported as delivered
+
+Found while measuring. `AIRA_OTEL_ARRIVED_FILE=/payload/measure.json` produced **nothing**, and
+`otelcol_exporter_sent_spans{exporter="file/arrived"}` read **116**. The collector runs as uid
+10001; the bind-mounted directory belonged to the checkout's owner at mode 755, so the file could
+not be created — and the `file` exporter counted every batch as sent regardless.
+
+That is the shape this repository keeps naming, in something I had shipped two hours earlier and
+demonstrated working: it worked because *that* run happened to write a file that already existed.
+`make env` now creates the directory 0777, which is where it belongs because every `up*` target
+depends on it and git cannot carry a directory mode.
+
+A second trap found the same way, and worth a line because it costs twenty minutes: **deleting the
+file while the collector is running** leaves the exporter writing to an unlinked inode. Recreate
+the collector, do not `rm` underneath it.
+
+### Am I sure about the encoding
+
+Checked at all three places JSON is produced, rather than cited:
+
+| | |
+|---|---|
+| the wire to the collector | `application/x-protobuf`, 286 bytes for one span — unchanged |
+| what `AIRA_DEBUG_OTEL_PAYLOAD` prints | hex ids, integer enums, non-ASCII intact, and **accepted by a real collector** (`HTTP 200`, nothing rejected) |
+| what the collector writes and forwards | 65 spans checked: every `traceId` 32 hex, every `spanId` 16 hex, every `kind` an integer |
+
+The prompt never reaches a span (`ADR-0016`), so a request carrying `Grüße — „Anführung" ✓ 日本語`
+produces no non-ASCII attribute — that path was verified separately, through `payload_as_json` and
+through a collector, where the text round-trips unchanged.
+
+Two new mutations. One survived first: the test called `exclude_health_probes` directly, so
+removing the call from `configure_observability` changed nothing it could see — `LESSONS.md` §1's
+*a test that builds the object under test is a test of the reader*, for the third time in this
+repository and the second time in this session. Rewritten to drive the function every process
+actually calls. The harness defends **706** properties.
+
+---
+
 ## The forwarding came into the stack, and the fourth file went (2026-09-02)
 
 The owner: *I am not doing it through the LAB points, I will just put the elements into the

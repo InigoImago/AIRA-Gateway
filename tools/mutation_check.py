@@ -6325,6 +6325,22 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID31",
+        "the health probes produce no spans",
+        "libs/src/aira_common/observability.py",
+        "    exclude_health_probes()",
+        "    pass  # probes traced like requests",
+        "libs/tests/test_observability.py",
+    ),
+    Mutation(
+        "ID32",
+        "excluding the probes does not swallow real traffic",
+        "libs/src/aira_common/observability.py",
+        'HEALTH_PATHS = "healthz,readyz"',
+        'HEALTH_PATHS = ".*"',
+        "libs/tests/test_observability.py",
+    ),
+    Mutation(
         "ID30",
         "the collector says what arrives on every signal, metrics included",
         "deploy/compose/otel/collector-config.yaml",

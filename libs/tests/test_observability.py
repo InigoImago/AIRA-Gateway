@@ -89,3 +89,63 @@ def test_set_span_attributes_sets_non_none() -> None:
     assert attributes["aira.subject"] == "u"
     assert attributes["n"] == 3
     assert "aira.use_case" not in attributes
+
+
+# --- health probes are not requests -------------------------------------------------------------
+
+
+def test_the_health_probes_are_excluded_from_tracing(monkeypatch) -> None:
+    """Docker asks every 15 seconds per container and each ask is three spans plus its database
+    reads. Measured over 65 seconds *with three real requests in the window*: 20 of 86 spans.
+
+    Set in the environment rather than per instrumentor, because there are three of those and
+    `opentelemetry.util.http` reads this one variable for all of them.
+    """
+    from aira_common.observability import EXCLUDED_URLS_ENV, HEALTH_PATHS, exclude_health_probes
+
+    monkeypatch.delenv(EXCLUDED_URLS_ENV, raising=False)
+    assert exclude_health_probes() == HEALTH_PATHS
+
+    from opentelemetry.util.http import parse_excluded_urls
+
+    excluded = parse_excluded_urls(HEALTH_PATHS)
+    assert excluded.url_disabled("http://gateway:8001/healthz")
+    assert excluded.url_disabled("http://gateway:8001/readyz")
+    # And nothing else — a pattern that also swallowed real traffic would be the worse mistake.
+    assert not excluded.url_disabled("http://gateway:8001/v1beta/models/x:generateContent")
+    assert not excluded.url_disabled("http://gateway:8001/kira/api/external/chat")
+
+
+def test_an_installation_that_already_decided_keeps_its_decision(monkeypatch) -> None:
+    """`setdefault`, not assignment: somebody who has named their own exclusions has named them
+    for a reason, and a library that overwrites them is one they have to work around."""
+    from aira_common.observability import EXCLUDED_URLS_ENV, exclude_health_probes
+
+    monkeypatch.setenv(EXCLUDED_URLS_ENV, "metrics")
+    assert exclude_health_probes() == "metrics"
+
+
+def test_configure_observability_is_what_excludes_them(monkeypatch) -> None:
+    """**Upstream of the wire.** The test above calls `exclude_health_probes` directly, so removing
+    the call from `configure_observability` left it green — the mutation said so. A test that
+    builds the object under test is a test of the reader (`LESSONS.md` §1); this one drives the
+    function every process actually calls.
+
+    Asserted on the environment rather than on a span, because that is where the instrumentations
+    read it and because no instrumentor is constructed here.
+    """
+    import aira_common.observability as observability
+    from aira_common.observability import EXCLUDED_URLS_ENV, HEALTH_PATHS
+
+    monkeypatch.delenv(EXCLUDED_URLS_ENV, raising=False)
+    # `configure_observability` is idempotent by design and returns early once configured, so the
+    # module-level latch is cleared — otherwise this asserts about a previous test's call.
+    monkeypatch.setattr(observability, "_configured", False)
+
+    observability.configure_observability(
+        service_name="probe", endpoint="http://127.0.0.1:1", enabled=True
+    )
+
+    import os
+
+    assert os.environ.get(EXCLUDED_URLS_ENV) == HEALTH_PATHS

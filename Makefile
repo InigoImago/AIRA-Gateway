@@ -107,6 +107,15 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 env: ## Create deploy/compose/.env from the example if missing
+	@# **And make the payload directory writable by the collector**, which runs as uid 10001 while
+	@# this checkout belongs to whoever cloned it. Without this, `AIRA_OTEL_ARRIVED_FILE` pointing
+	@# into it produces *nothing at all* — and the collector counts every batch as **sent**, so
+	@# `make otel-status` reports delivery for a file that was never created. Measured on
+	@# 2026-09-02: `otelcol_exporter_sent_spans{exporter="file/arrived"} 116`, and no file.
+	@#
+	@# Git cannot carry a directory mode, so it is set here rather than committed — and here
+	@# because every `up*` target depends on `env`.
+	@mkdir -p $(COMPOSE_DIR)/payload && chmod 777 $(COMPOSE_DIR)/payload
 	@if [ ! -f "$(ENV_FILE)" ]; then \
 		cp "$(ENV_EXAMPLE)" "$(ENV_FILE)"; \
 		echo "Created $(ENV_FILE) from example."; \

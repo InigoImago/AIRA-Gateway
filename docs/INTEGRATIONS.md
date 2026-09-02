@@ -728,6 +728,19 @@ a metric that never arrives looks exactly like one whose value did not change.
 `/dev/stdout` works for a quick look and mangles anything large — Docker's json-file driver cuts at
 a 16 KiB boundary. A file under `deploy/compose/payload/` comes out whole.
 
+**The health probes are not in there.** Docker asks every 15 seconds per container and each ask
+was three spans plus its database reads — measured at 23 % of everything in a window that also held
+three real requests. They are excluded from tracing (`OTEL_PYTHON_EXCLUDED_URLS`, set before
+anything is instrumented), so a trace backend, an OTLP quota and a debug payload all stop being
+mostly probes. An installation that sets that variable itself keeps its own list.
+
+**A file the collector cannot write is reported as delivered.** It runs as uid 10001 and your
+checkout does not, so `deploy/compose/payload/` has to be writable by it — `make env` sets that,
+and every `up*` target depends on `env`. If you point `AIRA_OTEL_ARRIVED_FILE` somewhere else,
+check that the collector can create it: nothing will say otherwise, and `otel-status` will count
+the batches as sent. And do not `rm` the file while the collector runs — it keeps writing to an
+inode nobody can see any more.
+
 **This is what arrived, not what was forwarded.** The two are different questions and a green log
 cannot tell them apart; `make otel-status` answers the second.
 

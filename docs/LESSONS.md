@@ -22,6 +22,16 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **An exporter that counts a batch as sent has not necessarily written it anywhere.**
+  `AIRA_OTEL_ARRIVED_FILE` pointing into a bind-mounted directory the collector cannot write
+  produced no file at all, while `otelcol_exporter_sent_spans{exporter="file/arrived"}` read 116 —
+  the collector runs as uid 10001 and a checkout belongs to whoever cloned it. Found two hours
+  after shipping the feature, in a demonstration that had *worked* because that run happened to
+  write a file which already existed. The container's uid and the host's are not the same uid, and
+  a success counter one layer up is not evidence that the layer below did anything. (Second trap,
+  same afternoon: `rm` the file while the collector runs and it writes to an unlinked inode for
+  ever. Recreate; do not delete underneath.)
+
 - **A design decision is only as good as the constraint it was made under, and constraints in
   other people's software expire silently.** The laboratory overlay was a fourth Compose file with
   a duplicated eighty-line collector configuration, because *"the Collector merges nothing, a

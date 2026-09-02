@@ -40,6 +40,41 @@ KafkaHeaders = list[tuple[str, bytes]]
 _configured = False
 
 
+#: Paths that produce a span nobody wants: the health probes.
+#:
+#: Docker asks every 15 seconds per container and each ask produces **three** spans through the
+#: ASGI instrumentation, plus the database reads underneath. Measured on 2026-09-02 over 65
+#: seconds *with three real requests in the window*: 20 of 86 spans, 23 %. In a quiet minute it is
+#: nearly all of them.
+#:
+#: That is three costs, not one: a trace backend full of probes, constant OTLP volume against
+#: whatever quota the far end has, and — the one that was reported — a debug payload whose first
+#: `n` items are always health checks, so the request you came to look at is never in it.
+#:
+#: A probe is not a request. It has no caller, no use case and no outcome worth attributing, and
+#: `/readyz` already reports its own verdict in a form built for reading (`FRD-117`).
+HEALTH_PATHS = "healthz,readyz"
+
+#: The environment variable both instrumentations read, in the absence of a per-library one.
+EXCLUDED_URLS_ENV = "OTEL_PYTHON_EXCLUDED_URLS"
+
+
+def exclude_health_probes(paths: str = HEALTH_PATHS) -> str:
+    """Keep the health probes out of the traces, for every instrumentation at once.
+
+    Set in the **environment** rather than passed to each instrumentor, because there are three of
+    them — FastAPI, Django, and whatever is added next — and `opentelemetry.util.http` reads this
+    variable for all of them. A per-instrumentor argument is a fourth place to forget.
+
+    An installation that has already decided otherwise keeps its decision: this never overwrites a
+    value somebody set. Returns what is in force, so a caller can say so and a test can assert it
+    without reading the environment back.
+    """
+    import os
+
+    return os.environ.setdefault(EXCLUDED_URLS_ENV, paths)
+
+
 def configure_observability(
     *,
     service_name: str,
@@ -68,6 +103,10 @@ def configure_observability(
         }
     )
     base = endpoint.rstrip("/")
+
+    # **Before anything is instrumented.** `opentelemetry.util.http` reads the exclusion list when
+    # an instrumentor is constructed, so setting it afterwards excludes nothing.
+    exclude_health_probes()
 
     # **Before the first exporter exists.** What the SDK says about a failed export must stop
     # propagating to the root logger, because the handler installed there a few lines below is the
