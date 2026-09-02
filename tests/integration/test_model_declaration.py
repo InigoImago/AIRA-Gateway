@@ -168,15 +168,18 @@ async def test_management_refuses_a_declaration_that_cannot_work(governance_toke
     assert "max_output_tokens" in response.text
 
 
-async def test_the_gateway_reports_what_it_believes_about_each_model() -> None:
+async def test_the_gateway_reports_what_it_believes_about_each_model(fixture) -> None:
     """`GET /v1beta/models` is what makes a wrong declaration inspectable rather than a mystery —
-    it says what *this gateway* thinks, which is the thing enforcement actually reads."""
+    it says what *this gateway* thinks, which is the thing enforcement actually reads.
+
+    **Sent with a credential.** It used to be sent without one and to skip on `401` — so on every
+    deployment that requires authentication, which is the Compose default and what CI runs, this
+    asserted nothing at all.
+    """
     from .conftest import GATEWAY_URL
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
-        response = await client.get("/v1beta/models")
-    if response.status_code == 401:
-        pytest.skip("the model list is authenticated in this deployment")
+        response = await client.get("/v1beta/models", headers=fixture.headers())
     assert response.status_code == 200, response.text
 
     models = response.json()["models"]

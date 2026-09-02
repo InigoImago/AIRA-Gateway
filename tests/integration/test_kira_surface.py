@@ -77,18 +77,22 @@ async def test_the_chat_endpoint_is_mounted_and_authenticated() -> None:
 
 
 async def test_a_kira_request_is_recorded_under_its_own_api_name(
-    engine: AsyncEngine, governance_token: str
+    engine: AsyncEngine, fixture
 ) -> None:
     """Both surfaces write to one audit table, and reporting can tell them apart — which is what
-    makes "how much traffic still uses the old contract" a number rather than an argument."""
+    makes "how much traffic still uses the old contract" a number rather than an argument.
+
+    **Sent with a use-case credential.** It used to carry a governance bearer, which attributes to
+    no use case and is refused before the surface records anything — so this skipped on every
+    deployment with the message below, and the claim it exists to check was never checked.
+    """
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         response = await client.post(
             f"{BASE}/chat",
-            headers={"authorization": f"Bearer {governance_token}"},
+            headers=fixture.headers(),
             json={"request": {"parts": [{"text": "hi"}]}, "model_id": 999_999},
         )
-    if response.status_code in (401, 403):
-        pytest.skip("attribution refused this caller before the surface could record anything")
+    assert response.status_code not in (401, 403), response.text
 
     async with engine.connect() as connection:
         row = (

@@ -52,7 +52,9 @@ async def test_the_provenance_columns_exist_and_are_indexed(engine: AsyncEngine)
     assert "region" in indexes
 
 
-async def test_a_served_request_records_which_upstream_answered(engine: AsyncEngine) -> None:
+async def test_a_served_request_records_which_upstream_answered(
+    engine: AsyncEngine, fixture
+) -> None:
     """The demo stack runs the mock, which declares no provenance — so the columns stay NULL, and
     that is the correct answer rather than a guess. What this pins is that the *path* works: the
     lookup runs, the row is written, and nothing invents a region nobody configured."""
@@ -60,9 +62,9 @@ async def test_a_served_request_records_which_upstream_answered(engine: AsyncEng
         response = await client.post(
             "/v1beta/models/nowhere-at-all:generateContent",
             json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+            headers=fixture.headers(),
         )
-    if response.status_code == 401:
-        pytest.skip("the gateway requires authentication in this deployment")
+    assert response.status_code != 401, "the credential was refused"
 
     async with engine.connect() as connection:
         row = (
@@ -96,15 +98,14 @@ async def test_reporting_still_answers_with_the_new_columns(governance_token: st
 
 
 async def test_an_unconfigured_gateway_serves_the_mock_and_nothing_vertex(
-    engine: AsyncEngine,
+    engine: AsyncEngine, fixture
 ) -> None:
     """Vertex registers only when configured. A deployment without a project must behave exactly
     as it did before this FRD — the laptop path is a supported configuration, not an oversight."""
     del engine
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
-        response = await client.get("/v1beta/models")
-    if response.status_code == 401:
-        pytest.skip("the model list is authenticated in this deployment")
+        response = await client.get("/v1beta/models", headers=fixture.headers())
+    assert response.status_code == 200, response.text
 
     names = {model["name"].removeprefix("models/") for model in response.json()["models"]}
     assert any(name.startswith("mock-") for name in names)

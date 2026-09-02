@@ -70,27 +70,28 @@ async def test_outcome_and_credential_are_indexed(engine: AsyncEngine) -> None:
     assert "credential" in definitions
 
 
-async def test_a_refused_request_reaches_the_real_request_log(
-    engine: AsyncEngine, governance_token: str
-) -> None:
+async def test_a_refused_request_reaches_the_real_request_log(engine: AsyncEngine, fixture) -> None:
     """End to end: an unknown model is refused, and the refusal is in the table afterwards.
 
-    ``model_not_found`` is chosen because it needs no fixture — no budget to exhaust, no limit to
-    configure — and it exercises exactly the path that produced no row at all before: a request
+    ``model_not_found`` exercises exactly the path that produced no row at all before: a request
     that never reached an upstream.
+
+    **It is sent with a use-case credential, and it used to be sent with a governance bearer.** A
+    governance token attributes to no use case, so the request was refused at attribution with a
+    `403` and the test skipped — on every deployment, saying "nothing for this test to assert".
+    The guarantee it exists for (`FRD-128`: a request is recorded however it ended) was therefore
+    unverified end to end for as long as the skip has been there. An API key resolves to a use
+    case, the ghost model is refused at *routing*, and the row is written.
     """
     model = f"ghost-{uuid.uuid4().hex[:8]}"
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         response = await client.post(
             f"/v1beta/models/{model}:generateContent",
-            headers={"authorization": f"Bearer {governance_token}"},
+            headers=fixture.headers(),
             json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
         )
-    assert response.status_code in (400, 403, 404), response.text
-
-    if response.status_code != 404:
-        pytest.skip("attribution refused before the route ran; nothing for this test to assert")
+    assert response.status_code == 404, response.text
 
     async with engine.connect() as connection:
         row = (
@@ -109,7 +110,7 @@ async def test_a_refused_request_reaches_the_real_request_log(
     assert row[2] == 404
 
 
-async def test_a_refusal_becomes_a_figure_in_the_report(governance_token: str) -> None:
+async def test_a_refusal_becomes_a_figure_in_the_report(governance_token: str, fixture) -> None:
     """The refusals have to be *countable*, not merely stored — a use case hitting a wall should
     be a number on a screen rather than a log search.
 
@@ -120,13 +121,15 @@ async def test_a_refusal_becomes_a_figure_in_the_report(governance_token: str) -
     now = datetime.now(UTC)
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+        # The refusal is made with a **use-case credential** — a governance bearer attributes to no
+        # use case and is refused at attribution, which is what made this skip everywhere. The
+        # report is then read with the governance token, which is who may read one.
         refused = await client.post(
             f"/v1beta/models/{model}:generateContent",
-            headers={"authorization": f"Bearer {governance_token}"},
+            headers=fixture.headers(),
             json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
         )
-        if refused.status_code != 404:
-            pytest.skip("attribution refused before the route ran; nothing to count")
+        assert refused.status_code == 404, refused.text
 
         response = await client.get(
             "/v1beta/reporting",
