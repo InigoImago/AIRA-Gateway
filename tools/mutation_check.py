@@ -6317,6 +6317,22 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID23",
+        "an export line says how many requests are in the batch",
+        "libs/src/aira_common/observability.py",
+        '            fields["traces"] = _distinct_traces(args)',
+        '            fields["traces"] = None',
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
+        "ID24",
+        "a content policy that does not name the issuer is a mismatch, and an absent one is not a pass",
+        "tools/showcase_doctor.py",
+        '    for part in policy.split(";"):',
+        "    for part in ['connect-src ' + name]:",
+        "tools/tests/test_the_doctor_does_not_cry_wolf.py",
+    ),
+    Mutation(
         "ID21",
         "a key set twice in the env file is reported, whatever the file's provenance",
         "tools/config_render.py",

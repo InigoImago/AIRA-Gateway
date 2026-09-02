@@ -133,6 +133,23 @@ answer one `__cause__` down — so every identity-provider failure read as `fail
 that exists to separate those two separated nothing on the one system where the question is asked
 per request.
 
+### 3.9 An export is a timer, not a step in a request
+
+*Reported from use: I watch a request go through the pipeline and I do not see it go through
+OTel.* The lines were there; they were **illegible**, and for a reason worth naming.
+
+`redis/script` and `postgres/connect` happen inside the request, so they carry its `trace_id`. An
+OTLP export happens on the SDK's own thread every few seconds carrying whatever accumulated — so
+it has no `trace_id`, and beside lines that name a trace, one that names nothing reads as belonging
+to nothing at all. `items=26` does not help: it is spans, and nobody thinks in spans.
+
+The line now carries `traces=N` — **how many requests are in the batch**, counted from the span
+contexts already in memory. `items=26 traces=2` says the thing a person actually wants to know.
+Added only for the `traces` signal, because a `traces: null` beside a metrics export is noise.
+
+It still cannot say *whether yours* is in there, and that is honest: a batch is a batch. The
+answer to that question is the `x-trace-id` on the response and a lookup in the trace backend.
+
 ### 3.8 What a `SUCCESS` from an exporter is worth, and the two hops after it
 
 *Reported after the first day of use: the channel shows a line for OTel and you still cannot see

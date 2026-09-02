@@ -22,6 +22,18 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **A diagnostic that is present, correct and unreadable is worse than an absent one**, because
+  its presence is taken for coverage. Two in one day, both reported by a user of the thing: the
+  `otel` export line was in the log and carried no `trace_id` — an export is a timer, not a step in
+  a request — so beside `redis/script` and `postgres/connect`, which do carry one, it read as
+  belonging to nothing and was reported as *"I don't see it go through OTel"*. And
+  `showcase_doctor` walked Keycloak, the realm, the accounts, the database and Kafka container to
+  container, reported everything green, and said nothing about the login — which a **browser**
+  walks, on a machine the doctor cannot see. Both were read as findings: "nothing happened", and
+  "the login is fine". Ask of a diagnostic not only whether it fires but **what a reader will
+  conclude from its shape** — and, for anything reporting on a chain, whether the reader can tell
+  which links it walked.
+
 - **An address handed to a browser is not an address, it is an address *from where the browser
   is*.** `localhost` is correct in `runtime-config.js`, in the realm's redirect URIs, in
   `AIRA_OIDC_ISSUER` and in everything `make` prints — and every one of them is correct only for a

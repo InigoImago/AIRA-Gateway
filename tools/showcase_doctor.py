@@ -31,6 +31,7 @@ ADMIN = os.environ.get("KEYCLOAK_ADMIN", "admin")
 ADMIN_PASSWORD = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin")
 REALM = os.environ.get("KEYCLOAK_REALM", "aira")
 COMPOSE = ["docker", "compose", "-f", "deploy/compose/docker-compose.yml"]
+STACK = os.environ.get("AIRA_STACK", "aira")
 
 #: What the showcase seeds. Named here rather than imported, because this has to run when the
 #: Python environment is the *one thing* that is fine and everything else is not.
@@ -248,11 +249,130 @@ def check_gateway() -> None:
         )
 
 
+def check_the_browsers_login_chain() -> None:
+    """The half of the chain this file did not walk: what the **browser** is told to reach.
+
+    Every other check here runs from inside the network and asks *can this container reach that
+    one*. The login does not work that way. `runtime-config.js` hands the browser an issuer, the
+    console's content policy names one origin, and Keycloak compares the redirect against a pinned
+    list — three addresses that are resolved **on the reader's machine**, not on this one.
+
+    So a stack can be green on every line above and still refuse every login, and the report a
+    person brings is `keycloak not reachable`. That happened; this is the counterpart.
+
+    Deliberately reports rather than judges the last part: this program cannot know where the
+    browser is, and a check that assumed `localhost` would call a correctly-configured remote
+    deployment broken. What it can do is print the three addresses together and say what they have
+    to be true *of*, which is the sentence nobody had.
+    """
+    print("\nThe login, as the browser sees it")
+    console = stack_addresses.url("console")
+
+    try:
+        config = _get_text(f"{console}/runtime-config.js")
+    except OSError as error:
+        say(False, "runtime-config.js", str(error))
+        blame(
+            "The console does not serve its runtime configuration, so the SPA has no issuer at "
+            "all and cannot start a login.",
+            f"Check that the frontend container is up: docker logs {STACK}-frontend",
+        )
+        return
+
+    issuer = _between(config, "issuer: '", "'")
+    say(bool(issuer), "issuer handed to the browser", issuer or "none found in runtime-config.js")
+
+    policy = _header(console, "content-security-policy")
+    connect = _directive(policy, "connect-src")
+    origin = _origin(issuer)
+    allowed = bool(origin) and origin in connect
+    say(allowed, "content policy allows that origin", connect or "no connect-src")
+    if issuer and not allowed:
+        blame(
+            f"The console may not call {origin}: its content policy allows '{connect}'. The token "
+            "request is blocked by the browser, and by nothing that leaves a trace on this side.",
+            "Set AIRA_CSP_CONNECT_SRC together with AIRA_OIDC_ISSUER — they are one decision.",
+        )
+
+    # Reachable **from here**, which is a different machine from the browser's. Said as such.
+    if issuer:
+        try:
+            _get_text(f"{issuer}/.well-known/openid-configuration")
+            say(True, "that issuer answers from this machine", issuer)
+        except OSError as error:
+            say(False, "that issuer answers from this machine", str(error))
+            blame(
+                f"Nothing answers at {issuer}, so no browser can either.",
+                "Check the Keycloak container and AIRA_OIDC_ISSUER.",
+            )
+
+    redirects = _redirect_uris()
+    say(bool(redirects), "redirect URIs the realm accepts", ", ".join(redirects) or "none")
+    console_allowed = any(uri.rstrip("/*").rstrip("/") == console for uri in redirects)
+    say(console_allowed, f"…includes {console}", "" if console_allowed else "it does not")
+
+    # **The sentence the whole check exists for.** Everything above is true of *this* machine, and
+    # the browser is somewhere else — which is the one fact none of the green marks carries.
+    print(
+        "\n  These three addresses are resolved by the BROWSER, not by this machine. If you open"
+        f"\n  the console from anywhere but here, {origin or 'the issuer'} and the redirect URIs"
+        "\n  above must be reachable and correct FROM THERE — see the section 'REACHING THIS"
+        "\n  STACK FROM ANOTHER MACHINE' in deploy/compose/.env.example."
+    )
+
+
+def _get_text(url: str, timeout: float = 5.0) -> str:
+    with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
+        return response.read().decode("utf-8", errors="replace")
+
+
+def _header(url: str, name: str) -> str:
+    try:
+        request = urllib.request.Request(url, method="HEAD")  # noqa: S310
+        with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310
+            return str(response.headers.get(name, ""))
+    except OSError:
+        return ""
+
+
+def _between(text: str, start: str, end: str) -> str:
+    if start not in text:
+        return ""
+    rest = text.split(start, 1)[1]
+    return rest.split(end, 1)[0] if end in rest else ""
+
+
+def _directive(policy: str, name: str) -> str:
+    for part in policy.split(";"):
+        if part.strip().startswith(name):
+            return part.strip()
+    return ""
+
+
+def _origin(url: str) -> str:
+    """`scheme://host:port` of ``url``, which is what a content policy names."""
+    parsed = urllib.parse.urlsplit(url)
+    return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+
+
+def _redirect_uris() -> list[str]:
+    """What the realm's console client will actually redirect to. Empty if it cannot be asked."""
+    try:
+        # `keycloak()` and `token()` are this file's own, so the admin exchange is written once.
+        clients = keycloak(f"/admin/realms/{REALM}/clients?clientId=aira-gateway", token())
+        if isinstance(clients, list) and clients:
+            return [str(uri) for uri in clients[0].get("redirectUris", [])]
+        return []
+    except OSError, ValueError, IndexError, KeyError, AttributeError:
+        return []
+
+
 def main() -> int:
     print("Checking the showcase, link by link. Nothing here changes anything.")
     check_identity()
     check_management()
     check_gateway()
+    check_the_browsers_login_chain()
 
     print()
     if not problems:

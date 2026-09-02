@@ -5,6 +5,52 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two lines that were there and could not be read (2026-09-02)
+
+Both reported from actually using the thing, which is the only way either would have surfaced.
+
+### "I see it go through the pipeline, not through OTel"
+
+The `otel` lines were in the log — 58 in the last 200. They were illegible. `redis/script` and
+`postgres/connect` happen **inside** the request and carry its `trace_id`; an OTLP export happens
+on the SDK's own thread on a timer, so it carries none. Beside lines that name a trace, one that
+names nothing reads as belonging to nothing, and `items=26` does not help because that is spans and
+nobody thinks in spans.
+
+The line now carries `traces=N`, counted from the span contexts already in the batch:
+`items=26 traces=2` is *two requests' worth went out*. Measured on the running stack after the
+rebuild. It still cannot say whether **yours** is in there — a batch is a batch, and the answer to
+that is the `x-trace-id` on the response.
+
+### "Keycloak not reachable" while every check was green
+
+And correctly green. `showcase_doctor.py` walks Keycloak, the realm, the accounts, the database and
+Kafka — **container to container**. The login is walked by a *browser*: `runtime-config.js` hands
+it an issuer, the console's content policy names one origin, and Keycloak compares the redirect
+against a pinned list, and all three are resolved on the reader's machine. So the doctor could
+report a perfect stack while every login failed, which is the report that arrived.
+
+A fourth section walks that chain and prints the three addresses together — and then says the thing
+none of the green marks can: *these are resolved by the browser, not by this machine.* It does not
+judge the last part, because this program cannot know where the browser is and a check that assumed
+`localhost` would call a correctly-configured remote deployment broken.
+
+On this stack it reports the whole chain green and ends with that sentence, which is exactly the
+state that produced the question.
+
+### The shape both share
+
+Neither was a wire that was missing; both were wires that were **there and unreadable**. A
+diagnostic that is present, correct and unreadable is worse than an absent one, because its
+presence is taken for coverage: the `otel` line was read as "nothing happened", and the doctor's
+green board was read as "the login is fine". **Ask of a diagnostic not only whether it fires, but
+what a reader will conclude from the shape of it** — and, for anything that reports on a chain,
+whether the reader can tell which links it walked.
+
+Four new mutations; the harness defends **698** properties.
+
+---
+
 ## `server could not be reached`, and the four walls behind it (2026-09-02)
 
 Reported: *why is the showcase suddenly talking to localhost, and when I rebuild `.env` I get

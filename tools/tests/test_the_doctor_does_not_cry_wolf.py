@@ -30,6 +30,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(ROOT / "tools"))
 
+import showcase_doctor  # noqa: E402
 from showcase_doctor import is_duplicated_username  # noqa: E402
 
 REALM = ROOT / "deploy" / "compose" / "keycloak" / "realms" / "aira-realm.json"
@@ -83,3 +84,71 @@ def test_the_name_management_invents_for_a_changed_subject_is_still_reported(use
     """The other half. Narrowing a check that cried wolf must not silence it — `authentication.py`
     appends `subject[:8]`, and that is what a real rebinding leaves behind."""
     assert is_duplicated_username(username)
+
+
+# --- the login chain, which is read on somebody else's machine ----------------------------------
+#
+# Reported from use, twice in one session: `keycloak not reachable` on the console while every
+# server-side check the doctor made was green. It was green *and correct* — the doctor walked
+# container to container, and the login is walked by a browser. These cover the parsing the new
+# section does; the sentence it prints is what the section is actually for.
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        (
+            "window.__AIRA_CONFIG__ = {\n  issuer: 'http://kc:8080/realms/aira',\n};",
+            "http://kc:8080/realms/aira",
+        ),
+        ("issuer: 'https://sso.example.com/realms/aira',", "https://sso.example.com/realms/aira"),
+        ("window.__AIRA_CONFIG__ = {};", ""),
+    ],
+)
+def test_the_issuer_is_read_out_of_the_served_runtime_config(config: str, expected: str) -> None:
+    assert showcase_doctor._between(config, "issuer: '", "'") == expected
+
+
+@pytest.mark.parametrize(
+    ("issuer", "origin"),
+    [
+        ("http://localhost:8080/realms/aira", "http://localhost:8080"),
+        ("https://sso.example.com/realms/aira", "https://sso.example.com"),
+        ("", ""),
+        ("not-a-url", ""),
+    ],
+)
+def test_the_origin_is_what_a_content_policy_would_name(issuer: str, origin: str) -> None:
+    """A policy names `scheme://host:port` and never a path, so comparing the issuer itself would
+    never match and the check would report a mismatch on every healthy stack."""
+    assert showcase_doctor._origin(issuer) == origin
+
+
+def test_the_connect_directive_is_picked_out_of_the_whole_policy() -> None:
+    policy = "default-src 'self'; connect-src 'self' http://localhost:8080; img-src 'self' data:"
+    assert (
+        showcase_doctor._directive(policy, "connect-src")
+        == "connect-src 'self' http://localhost:8080"
+    )
+    assert showcase_doctor._directive(policy, "frame-src") == ""
+
+
+def test_a_policy_that_does_not_name_the_issuer_is_a_mismatch() -> None:
+    """The failure with no trace on the server side at all: the browser refuses the token request,
+    and Keycloak never sees one. It is the case `AIRA_CSP_CONNECT_SRC` exists for."""
+    issuer = "http://sso.example.com:8080/realms/aira"
+    policy = "connect-src 'self' http://localhost:8080"
+    assert showcase_doctor._origin(issuer) not in showcase_doctor._directive(policy, "connect-src")
+
+
+def test_a_policy_that_names_it_is_not() -> None:
+    issuer = "http://localhost:8080/realms/aira"
+    policy = "connect-src 'self' http://localhost:8080"
+    assert showcase_doctor._origin(issuer) in showcase_doctor._directive(policy, "connect-src")
+
+
+def test_a_missing_header_is_not_read_as_an_allowed_origin() -> None:
+    """An absent policy must not pass the check by accident: `"" in ""` is True in Python, and a
+    stack serving no CSP at all would then be reported as allowing whatever it was asked about."""
+    assert showcase_doctor._directive("", "connect-src") == ""
+    assert not (showcase_doctor._origin("") and showcase_doctor._origin("") in "")

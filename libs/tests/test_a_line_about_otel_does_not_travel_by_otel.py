@@ -414,3 +414,59 @@ def test_wrapping_the_seam_does_not_change_what_the_exporter_returns() -> None:
     original = exporter.response
     watched_export(exporter, "traces", "http://collector:4318")
     assert exporter._export(b"") is original
+
+
+def test_the_export_line_says_how_many_requests_are_in_the_batch(capsys: Any) -> None:
+    """The field that makes the line legible (`FRD-617` §3.9).
+
+    Reported from use: a request goes through the pipeline, `redis/script` and `postgres/connect`
+    carry its `trace_id`, and the `otel` line carries none — because an export is a **timer**, not
+    a step in a request. Beside lines that name a trace, one that names nothing reads as belonging
+    to nothing. `traces=1` is the answer to *did mine get out*.
+    """
+    provider = TracerProvider()
+    exporter = FakeSpanExporter()
+    provider.add_span_processor(BatchSpanProcessor(watched_export(exporter, "traces", "http://c")))
+    tracer = provider.get_tracer("t")
+    # One request: a parent and two children share a trace id.
+    with tracer.start_as_current_span("request"):
+        tracer.start_span("upstream").end()
+        tracer.start_span("database").end()
+    provider.force_flush()
+    provider.shutdown()
+
+    (line,) = [c for c in calls(capsys) if c["operation"] == "export"]
+    assert line["items"] == 3, "three spans"
+    assert line["traces"] == 1, "from one request"
+
+
+def test_two_requests_in_one_batch_are_counted_as_two(capsys: Any) -> None:
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(watched_export(FakeSpanExporter(), "traces", "http://c"))
+    )
+    tracer = provider.get_tracer("t")
+    for _ in range(2):
+        with tracer.start_as_current_span("request"):
+            tracer.start_span("upstream").end()
+    provider.force_flush()
+    provider.shutdown()
+
+    (line,) = [c for c in calls(capsys) if c["operation"] == "export"]
+    assert (line["items"], line["traces"]) == (4, 2)
+
+
+def test_a_signal_with_no_traces_in_it_does_not_claim_a_count(capsys: Any) -> None:
+    """ "We did not count" and "there were none" are different statements — the distinction
+    `FRD-117`'s prober draws between unprobed and healthy, on a smaller thing."""
+    reader = PeriodicExportingMetricReader(
+        watched_export(FakeMetricExporter(), "metrics", "http://c"),
+        export_interval_millis=60_000,
+    )
+    provider = MeterProvider(metric_readers=[reader])
+    provider.get_meter("t").create_counter("requests").add(1)
+    provider.force_flush()
+    provider.shutdown()
+
+    line = next(c for c in calls(capsys) if c["operation"] == "export")
+    assert "traces" not in line

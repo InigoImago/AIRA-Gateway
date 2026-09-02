@@ -226,9 +226,18 @@ class WatchedExport:
         from aira_common.integration_debug import watch
 
         self._last = None
-        with watch(
-            "otel", "export", signal=self._signal, target=self._endpoint, items=_batch_size(args)
-        ) as call:
+        fields: dict[str, Any] = {
+            "signal": self._signal,
+            "target": self._endpoint,
+            "items": _batch_size(args),
+        }
+        if self._signal == "traces":
+            # **Not the batch size — the number of requests in it.** See `_distinct_traces`: this
+            # is the field that answers "did mine get out", which the batch size cannot. Added
+            # only for the signal where it is a question: a `traces: null` beside a metrics export
+            # is noise, and `items` already carries the "we did not count" case for that batch.
+            fields["traces"] = _distinct_traces(args)
+        with watch("otel", "export", **fields) as call:
             result = self._exporter.export(*args, **kwargs)
             # **The failure that raises nothing.** An OTLP exporter answers `FAILURE` as a *value*
             # after it has exhausted its own retries, so a channel watching only for exceptions
@@ -267,6 +276,28 @@ def watched_export[Exporter](exporter: Exporter, signal: str, endpoint: str) -> 
     time around something that is *not* a stand-in.
     """
     return cast(Exporter, WatchedExport(exporter, signal, endpoint))
+
+
+def _distinct_traces(args: tuple[Any, ...]) -> int | None:
+    """How many **requests** this batch of spans came from. `None` where that is not a question.
+
+    The field that makes the line legible, reported after somebody watched a request go through
+    the pipeline and could not tell whether its telemetry had left. It cannot: an OTLP export is a
+    **timer**, not a step in a request. `BatchSpanProcessor` flushes every few seconds carrying
+    whatever accumulated, on the SDK's own thread — so the line has no `trace_id`, and beside
+    `redis/script` and `postgres/connect`, which do, it reads as belonging to nothing at all.
+
+    `items=8 traces=1` says the thing a person actually wants: *one request's worth went out.*
+    Counted from spans already in memory, so it costs a set of the batch and no I/O.
+    """
+    if not args:
+        return None
+    try:
+        return len({span.context.trace_id for span in args[0] if span.context is not None})
+    except AttributeError, TypeError:
+        # Metrics arrive as a tree with no spans in it, and a log batch carries records rather
+        # than spans. Both are "not a question here", which is `None` and never `0`.
+        return None
 
 
 def _batch_size(args: tuple[Any, ...]) -> int | None:
