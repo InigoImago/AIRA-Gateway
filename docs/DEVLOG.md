@@ -5,6 +5,46 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Printing the payload, in the two places it means different things (2026-09-02)
+
+Asked for directly: *print the JSON that goes over.* There are two answers and they are not
+interchangeable, which turned out to be most of the work.
+
+**What this gateway produces** — `AIRA_DEBUG_OTEL_PAYLOAD=3`, rendered through the exporter's own
+encoder so it cannot drift from what is sent. A number rather than a flag: the useful request is
+"three spans", never "the 512 this batch holds". And it is *not* the bytes on that leg — the
+applications post protobuf and cannot be made to post JSON, so the setting says so, because
+printing JSON beside a protobuf request invites exactly the wrong conclusion.
+
+**The exact bytes the receiver gets** — the collector, which already sends JSON. A `file` exporter
+whose **path is the switch**, because a collector pipeline is a static list and there is no way to
+add an exporter conditionally: it is always in the traces and logs pipelines and writes to
+`/dev/null` until `LAB_PAYLOAD_PATH` says otherwise.
+
+### What testing it found
+
+`/dev/stdout` seemed obvious and is wrong for anything large. Measured: Docker's json-file driver
+cuts at a 16 KiB boundary, and a 49 692-character payload came back truncated at exactly 48 KiB and
+would not parse, while everything under ~8 KiB was intact. So the overlay now mounts
+`deploy/compose/payload/` and the documentation says which of the two to use for what. Verified
+end to end: seven JSON lines, none broken, carrying real `aira.*` attributes.
+
+### Three guards, again
+
+Adding one setting failed the configuration reference, both config-example checks, the compose
+mutation anchors, and — the useful one — `test_declared_dependencies`: `aira_common` had begun
+importing `google.protobuf` while `libs/pyproject.toml` declared no `protobuf`. It resolves today
+only because the OTLP exporter pulls it in, and a transitive dependency is one an upgrade may drop.
+That file's docstring already records two images that failed to import at start-up for exactly this
+reason; this is the third, caught before it shipped.
+
+Two new mutations. One of them survived first: it pointed at an early `return` in `_show_payload`
+that is an optimisation rather than a property — `payload_as_json` refuses the same case a frame
+later, so removing the guard changes nothing observable. Re-aimed at the gate that actually
+decides, rather than writing a test to defend a redundancy. The harness defends **700** properties.
+
+---
+
 ## How much do we actually send over OTel (2026-09-02)
 
 Asked because an **external** OTLP receiver was answering `429`. Measured on the running stack

@@ -9,6 +9,11 @@ dependencies = [
     "structlog>=24.4",
     "opentelemetry-sdk>=1.29",
     "opentelemetry-exporter-otlp-proto-http>=1.29",
+    # `aira_common.observability` renders an OTLP batch as JSON for `AIRA_DEBUG_OTEL_PAYLOAD`,
+    # which needs `google.protobuf.json_format`. It resolves today because the OTLP exporter above
+    # pulls protobuf in — and a transitive dependency is one an upgrade may drop. The third time
+    # this guard has caught the same shape; the two before it are named below.
+    "protobuf>=5.28",
     "aiokafka>=0.12",
     # aira_common.oidc verifies JWTs and fetches JWKS; it was only ever resolvable because the
     # gateway happened to declare pyjwt and the dev environment installs the whole workspace.

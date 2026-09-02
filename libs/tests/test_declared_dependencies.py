@@ -57,6 +57,9 @@ IMPORT_NAMES = {
     "opentelemetry_sdk": "opentelemetry",
     "opentelemetry_exporter_otlp_proto_http": "opentelemetry",
     "pydantic_settings": "pydantic_settings",
+    # `protobuf` installs as the `google` namespace package — the one case here where the
+    # distribution name shares nothing with what you type after `import`.
+    "protobuf": "google",
 }
 
 

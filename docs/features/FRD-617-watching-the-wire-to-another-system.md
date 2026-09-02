@@ -133,6 +133,33 @@ answer one `__cause__` down — so every identity-provider failure read as `fail
 that exists to separate those two separated nothing on the one system where the question is asked
 per request.
 
+### 3.10 The payload itself
+
+Asked for directly: *print the JSON that goes over.* Two places, and they answer different
+questions — which is the whole of the design here.
+
+**`AIRA_DEBUG_OTEL_PAYLOAD=3`** prints three items of every batch as OTLP/JSON on the service's own
+stdout, rendered through the **exporter's own encoder** so it cannot drift from what is sent. A
+number rather than a flag, because the useful request is "show me three spans" and never "show me
+the 512 this batch holds"; what is printed is a real OTLP/JSON document of that many, truncated in
+content and faithful in shape. Metrics go whole — they arrive as a tree, and a truncated tree is
+not a document.
+
+It is **not the bytes on that leg**: the applications post `application/x-protobuf` and cannot be
+made to post JSON (§3 of `INTEGRATIONS.md`). Printing JSON beside a protobuf request invites the
+conclusion that the encoding is switchable, so the setting's own documentation says it is not.
+
+**`LAB_PAYLOAD_PATH`** gives the exact bytes the receiver gets, because the collector is already
+sending JSON. And it is a path rather than a flag for a measured reason: `/dev/stdout` mangles a
+large payload — Docker's json-file driver cuts at a 16 KiB boundary, and a 49 692-character
+document came back truncated at 48 KiB and would not parse, while everything under ~8 KiB was
+intact. A file in `deploy/compose/payload/` comes out whole. A collector pipeline is a static list,
+so the exporter is always in it and writes to `/dev/null` until the path says otherwise.
+
+Held back from the OTLP log pipeline like every `otel` line (§3.2), and for a sharper reason here:
+a rendering of a *log* batch, logged, joins the next log batch — a doubling per export rather than
+a slow leak.
+
 ### 3.9 An export is a timer, not a step in a request
 
 *Reported from use: I watch a request go through the pipeline and I do not see it go through
