@@ -299,7 +299,24 @@ The full worked explanation, with what each is measured to do, is
 | `AIRA_OTEL_ARRIVED_FILE` | `/dev/null` | Write those arrivals as OTLP/JSON, one document per line, all three signals. `/payload/arrived.json` lands in `deploy/compose/payload/`. `/dev/stdout` works for a look and **mangles anything large** — Docker's log driver cuts at 16 KiB. |
 | `AIRA_PUBLISH_OTLP_METRICS_PORT` | `8889` | Where the collector's own counters are published — accepted/refused against sent/failed. `make otel-status` reads them. |
 
-### A second destination beside Grafana
+### Channel 1 — observability, to your trace backend
+
+Every span, metric and log. On by default, and the bundled Grafana is only the default destination:
+this was a literal in `collector-config.yaml` until `FRD-618`, so an installation with its own
+Tempo or Jaeger had to edit a shipped file while the *other* channel had seven variables.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `AIRA_OTEL_BACKEND_ENDPOINT` | `otel-lgtm:4317` | Where the observability channel sends. `host:port`, **no scheme** — OTLP/gRPC. |
+| `AIRA_OTEL_BACKEND_PLAINTEXT` | `true` | No TLS at all (h2c). Right for the bundled backend on this network, wrong for anything across a boundary. |
+| `AIRA_OTEL_BACKEND_INSECURE` | `false` | Keep TLS, stop checking the certificate. A reachability test, not a deployment. |
+| `AIRA_OTEL_BACKEND_CA_FILE` | _(empty)_ | A private CA, from `deploy/compose/otel/ca/`. Empty means the system trust store. |
+
+**No credential yet.** A backend wanting a bearer token or basic auth needs the exporter edited by
+hand; the delivery channel's auth fragments are written against its own exporters. Named rather
+than hidden — see `INTEGRATIONS.md` §6.
+
+### Channel 2 — delivery, a second destination beside it
 
 Off unless **both** of the first two are set. `AIRA_OTEL_FORWARD_CONFIG` is the switch; the rest are
 read only once it is.

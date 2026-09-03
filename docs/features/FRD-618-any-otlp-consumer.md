@@ -172,6 +172,33 @@ The two share a receiver, `memory_limiter` and `resource` — deliberately, and 
 the first guards the *process* rather than a stream, and the second stamps the same collector name
 on everything that arrived. Sharing what cannot drift is not subordination.
 
+### 3.1c And then the configuration surface said otherwise
+
+Separating the pipelines was half of it. Asked whether the documentation showed **how to set up
+both channels**, the answer was no — and the reason was worse than a missing chapter: one of them
+could not be set up at all.
+
+`otlp_grpc/lgtm: endpoint: otel-lgtm:4317` was a **literal**. The delivery channel had seven axes,
+a table and three worked examples; the observability channel had a hard-coded address pointing at
+the bundled demo Grafana. An installation with its own Tempo or Jaeger had to edit a file this
+repository ships. So even after the pipelines were independent, the configuration still said one
+channel was the product and the other an addition to it.
+
+`AIRA_OTEL_BACKEND_ENDPOINT` / `_PLAINTEXT` / `_INSECURE` / `_CA_FILE` now, defaulting to the
+bundled backend so the demo stack is unchanged. The exporter is `otlp/backend`: the old name said
+which product was on the other end, which stopped being true the moment it became a variable.
+
+**One asymmetry is left and is named rather than hidden**: the observability channel has no
+credential. A backend wanting a bearer token or basic auth still needs the exporter edited by hand,
+because the four auth fragments are written against the delivery exporters. Giving channel 1 the
+same would be a second family of fragments and no installation has asked for one — but if yours
+does, that is the shape it should take, and not a `headers:` block, for the reason
+`collector-forward-auth-header.yaml` records.
+
+Demonstrated with both channels pointed at different receivers at once: **356 spans to one, 21 to
+the other**, 48 log records and 63 metric points to each, `batch` and `batch/siem` side by side,
+nothing failed.
+
 ### 3.2 One URL per signal, defaulted to the ordinary one
 
 `traces_endpoint`, `logs_endpoint` and `metrics_endpoint` are named separately, and Compose

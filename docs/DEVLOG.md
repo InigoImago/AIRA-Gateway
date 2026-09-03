@@ -5,6 +5,35 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two channels, and only one of them was configurable (2026-09-03)
+
+Asked straight after the split: *is it documented how I set up both separate channels?* No — and
+the reason was not a missing chapter. **One of them could not be set up at all.**
+
+`otlp_grpc/lgtm: endpoint: otel-lgtm:4317` was a literal in `collector-config.yaml`. The delivery
+channel had seven axes, a variable table and three worked examples; the observability channel had a
+hard-coded address pointing at the bundled demo Grafana, and no document anywhere said how to point
+it elsewhere. So the pipelines were independent and the *configuration surface* still said one
+channel was the product and the other an addition to it — the same subordination, one layer up.
+
+`AIRA_OTEL_BACKEND_ENDPOINT` / `_PLAINTEXT` / `_INSECURE` / `_CA_FILE`, defaulting to the bundled
+backend so the demo is unchanged. The exporter is `otlp/backend` now: the old name said which
+product was on the other end, and that stopped being true the moment it became a variable.
+
+`INTEGRATIONS.md` §6 opens with the two channels side by side — what each carries, the question
+each answers, the measured volumes, where each goes, and which knobs are whose — and
+`CONFIGURATION.md` has a table per channel rather than one channel and its exception.
+
+Demonstrated with both pointed at different receivers at the same time: **356 spans to one and 21
+to the other**, 48 log records and 63 metric points to each, `batch` and `batch/siem` side by side,
+nothing failed. Then restored: the default is the bundled backend and no delivery channel.
+
+Left open and named: the observability channel has no credential. A backend wanting a bearer token
+needs the exporter edited by hand, because the four auth fragments are written against the delivery
+exporters. Nobody has asked for the second family yet.
+
+---
+
 ## Delivery is not a branch of observability (2026-09-03)
 
 The owner, on the two rounds below: *the delivery of API accesses and model accesses had been

@@ -50,7 +50,7 @@ def test_every_signal_can_be_seen_arriving(signal: str, exporter: str) -> None:
 def test_every_signal_still_reaches_the_backend(signal: str) -> None:
     """The inspection exporters are additions. A pipeline that lost its real destination while
     gaining a debug one would look fine in a log and store nothing."""
-    assert "otlp_grpc/lgtm" in _pipelines()[signal]["exporters"]
+    assert "otlp/backend" in _pipelines()[signal]["exporters"]
 
 
 def test_the_inspection_exporters_are_configured_by_variable() -> None:

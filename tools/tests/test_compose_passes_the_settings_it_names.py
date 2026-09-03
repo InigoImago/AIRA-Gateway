@@ -88,6 +88,10 @@ COMPOSE_ONLY = {
     # how much it says about what arrives, and where to write the same thing as OTLP/JSON.
     "AIRA_OTEL_DEBUG_VERBOSITY",
     "AIRA_OTEL_ARRIVED_FILE",
+    "AIRA_OTEL_BACKEND_ENDPOINT",
+    "AIRA_OTEL_BACKEND_PLAINTEXT",
+    "AIRA_OTEL_BACKEND_INSECURE",
+    "AIRA_OTEL_BACKEND_CA_FILE",
     # And the second destination, which is the collector's configuration and not the product's:
     # which fragment to merge, where to send, how hard to push, and the two `extra_hosts` entries
     # that let a container reach a machine outside its network.

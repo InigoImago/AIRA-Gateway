@@ -578,6 +578,58 @@ probes are deliberately untraced (they were 20 of 86 spans in a measured minute)
 `/readyz` carry no id — an id that correlates with nothing is worse than none, because somebody
 searches for it.
 
+### Two channels, each configured on its own
+
+This collector feeds **two independent channels**. They share a receiver and nothing else — not a
+pipeline, not a batch window, not a destination — so each is configured without touching the other
+(`FRD-618`).
+
+| | **observability** | **delivery** |
+|---|---|---|
+| what it carries | every span, metric and log | one record per API access, and per model access |
+| the question it answers | *was the gateway slow, or the model* | *who called what, and how did it end* |
+| volume, measured | 354 spans on a demo run | **21** of those |
+| where it goes | `AIRA_OTEL_BACKEND_ENDPOINT` | `AIRA_OTEL_FORWARD_ENDPOINT` (+ per-signal URLs) |
+| transport | OTLP/gRPC | OTLP/HTTP or gRPC — `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` |
+| encoding | protobuf | `AIRA_OTEL_FORWARD_ENCODING` — `json` or `proto` |
+| credential | *(see the gap below)* | `AIRA_OTEL_FORWARD_AUTH_CONFIG` — header · basic · OAuth2 · platform identity |
+| TLS | `_BACKEND_PLAINTEXT` · `_BACKEND_INSECURE` · `_BACKEND_CA_FILE` | `_FORWARD_INSECURE` · `_FORWARD_CA_FILE` · client certificate |
+| batching | the collector's defaults | `AIRA_OTEL_FORWARD_BATCH_*`, its own |
+| filtered | no | yes — requests and the calls made inside them |
+| on by default | yes | no |
+
+**Setting one up does not disturb the other.** The delivery fragment adds `traces/siem`,
+`metrics/siem` and `logs/siem` and names no observability pipeline, so the first channel is
+byte-for-byte the same whether forwarding is merged or not. And each has its own batch processor:
+`AIRA_OTEL_FORWARD_BATCH_SECONDS` used to redefine the shared one and retime the trace backend as
+well — measured, and fixed.
+
+**Channel 1, to your own trace backend** — one variable, and the bundled Grafana is only the
+default:
+
+```bash
+AIRA_OTEL_BACKEND_ENDPOINT=tempo.internal:4317
+AIRA_OTEL_BACKEND_PLAINTEXT=false        # it is not on this machine's network
+AIRA_OTEL_BACKEND_CA_FILE=/etc/otelcol-contrib/ca/your-ca.crt   # if it is behind a private CA
+```
+
+**Channel 2, to whoever consumes the access records** — the switch, then wherever it goes:
+
+```bash
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_ENDPOINT=https://receiver.internal:4318
+```
+
+Everything else about channel 2 — transport, encoding, per-signal URLs, credential, client
+certificate, compression — is the seven axes below. Recreate the collector after either.
+
+**One asymmetry is left, and it is named rather than hidden: the observability channel has no
+credential.** A backend that wants a bearer token or basic auth still needs the exporter edited by
+hand. Channel 2's four auth fragments are written against its exporters; giving channel 1 the same
+would be a second family of fragments, and no installation has asked for one yet. If yours does,
+that is the shape it should take — not a `headers:` block, for the reason
+`collector-forward-auth-header.yaml` records.
+
 ### The two legs, and which one you can change
 
 ```

@@ -262,6 +262,20 @@ services:
       # And the same thing as OTLP/JSON, for parsing rather than reading. `/dev/null` is off;
       # `/payload/arrived.json` writes to `deploy/compose/payload/` on the host.
       AIRA_OTEL_ARRIVED_FILE: ${AIRA_OTEL_ARRIVED_FILE:-/dev/null}
+      # ---- Channel 1: observability — every span, for "was the gateway slow or the model" -----
+      #
+      # `host:port`, no scheme (OTLP/gRPC). The default is the bundled Grafana; point it at your
+      # own Tempo, Jaeger or vendor endpoint and nothing else about the stack changes. It was a
+      # literal in `collector-config.yaml` until `FRD-618` — the delivery channel had seven
+      # variables and this one had none, which is the asymmetry that made "two channels" untrue in
+      # the configuration even after the pipelines were separated.
+      AIRA_OTEL_BACKEND_ENDPOINT: ${AIRA_OTEL_BACKEND_ENDPOINT:-otel-lgtm:4317}
+      # No TLS at all (plaintext h2c) — right on this network, wrong across a boundary. Set to
+      # `false` for anything remote, and give it a CA below if it is behind a private one.
+      AIRA_OTEL_BACKEND_PLAINTEXT: ${AIRA_OTEL_BACKEND_PLAINTEXT:-true}
+      AIRA_OTEL_BACKEND_INSECURE: ${AIRA_OTEL_BACKEND_INSECURE:-false}
+      AIRA_OTEL_BACKEND_CA_FILE: ${AIRA_OTEL_BACKEND_CA_FILE:-}
+      # ---- Channel 2: delivery — one record per API access and per model access --------------
       # ---- A second destination beside Grafana (off unless the two above are set) ----------
       #
       # Read only when AIRA_OTEL_FORWARD_CONFIG selects `forward.yaml`; harmless otherwise, which

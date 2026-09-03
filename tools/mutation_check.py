@@ -6361,7 +6361,7 @@ MUTATIONS = [
         "the delivery fragment never reaches into the observability stream's pipelines",
         "deploy/compose/otel/collector-forward.yaml",
         "    traces/siem:\n      receivers: [otlp]\n      processors: [memory_limiter, resource, filter/siem, batch/siem]",
-        "    traces:\n      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]\n    traces/siem:\n      receivers: [otlp]\n      processors: [memory_limiter, resource, filter/siem, batch/siem]",
+        "    traces:\n      exporters: [otlp/backend, debug, file/arrived, otlphttp/forward]\n    traces/siem:\n      receivers: [otlp]\n      processors: [memory_limiter, resource, filter/siem, batch/siem]",
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
     ),
     Mutation(
@@ -6369,7 +6369,7 @@ MUTATIONS = [
         "metrics and logs reach the second destination on pipelines of their own",
         "deploy/compose/otel/collector-forward.yaml",
         "    logs/siem:\n      receivers: [otlp]\n      processors: [memory_limiter, resource, batch/siem]\n      exporters: [otlphttp/forward]",
-        "    logs:\n      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]",
+        "    logs:\n      exporters: [otlp/backend, debug, file/arrived, otlphttp/forward]",
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
     ),
     Mutation(
@@ -6496,8 +6496,8 @@ MUTATIONS = [
         "ID30",
         "the collector says what arrives on every signal, metrics included",
         "deploy/compose/otel/collector-config.yaml",
-        "      exporters: [otlp_grpc/lgtm, debug, file/arrived]\n    metrics:",
-        "      exporters: [otlp_grpc/lgtm]\n    metrics:",
+        "      exporters: [otlp/backend, debug, file/arrived]\n    metrics:",
+        "      exporters: [otlp/backend]\n    metrics:",
         "tools/tests/test_the_collector_says_what_arrives.py",
     ),
     Mutation(

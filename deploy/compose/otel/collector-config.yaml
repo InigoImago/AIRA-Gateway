@@ -1,6 +1,15 @@
 # OpenTelemetry Collector config (FRD-001).
-# Apps export OTLP here; the collector forwards to Grafana otel-lgtm. Swapping the
-# backend is a change to the exporter below only — app code is unaffected (ADR-0004).
+#
+# Apps export OTLP here, and this collector feeds **two independent channels** (`FRD-618`):
+#
+#   observability  every span, metric and log — "was the gateway slow or was the model slow"
+#                  configured here, by AIRA_OTEL_BACKEND_*
+#   delivery       one record per API access and per model access, for whoever consumes that
+#                  elsewhere — configured by AIRA_OTEL_FORWARD_*, in `collector-forward.yaml`
+#
+# Neither is a branch of the other: the delivery fragment adds pipelines of its own and names
+# nothing in this file, so what is below is what runs whether forwarding is on or off. Swapping
+# either backend is configuration; app code is unaffected either way (ADR-0004).
 
 receivers:
   otlp:
@@ -23,10 +32,30 @@ processors:
   batch: {}
 
 exporters:
-  otlp_grpc/lgtm:
-    endpoint: otel-lgtm:4317
+  # **The observability channel's destination.** `host:port`, no scheme — OTLP/gRPC.
+  #
+  # It was the literal `otel-lgtm:4317` until `FRD-618`, which is the bundled Grafana and nobody
+  # else's. So an installation with its own Tempo, Jaeger or vendor endpoint had to edit a file
+  # this repository ships, while the *other* channel had seven variables and a chapter of
+  # documentation. That asymmetry was the last of the subordination: one channel was the product's,
+  # the other was an addition to it.
+  #
+  # The default is still the bundled backend, so the demo stack is unchanged.
+  #
+  # **Named `backend`, not `lgtm`.** The old name said which product was on the other end, which
+  # stopped being true the moment this became a variable — and a name that lies about a
+  # configurable thing is worse than a vague one. Earlier DEVLOG entries quote the old name; that
+  # is what they measured.
+  otlp/backend:
+    endpoint: ${env:AIRA_OTEL_BACKEND_ENDPOINT:-otel-lgtm:4317}
     tls:
-      insecure: true
+      # **`insecure` is no TLS at all** — plaintext h2c — which is right for a backend on this
+      # private network and wrong for anything across a boundary. `insecure_skip_verify` is the
+      # other thing: TLS kept, certificate unchecked. The bundled Grafana is the first case.
+      insecure: ${env:AIRA_OTEL_BACKEND_PLAINTEXT:-true}
+      insecure_skip_verify: ${env:AIRA_OTEL_BACKEND_INSECURE:-false}
+      # A private CA, from the same mount as the delivery channel's: `deploy/compose/otel/ca/`.
+      ca_file: ${env:AIRA_OTEL_BACKEND_CA_FILE}
   # **What arrives, in the collector's own words.** `docker logs <stack>-otel-collector`, or
   # `make otel-arrivals`. Three levels, and the difference matters:
   #
@@ -56,18 +85,18 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [otlp_grpc/lgtm, debug, file/arrived]
+      exporters: [otlp/backend, debug, file/arrived]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
       # `debug` here too. Metrics were the one signal nothing could be seen arriving on, which is
       # an asymmetry rather than a decision — and the signal whose absence is hardest to notice,
       # because a metric that never arrives looks exactly like a metric whose value did not change.
-      exporters: [otlp_grpc/lgtm, debug, file/arrived]
+      exporters: [otlp/backend, debug, file/arrived]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [otlp_grpc/lgtm, debug, file/arrived]
+      exporters: [otlp/backend, debug, file/arrived]
   telemetry:
     logs:
       level: info

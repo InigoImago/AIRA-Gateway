@@ -30,7 +30,7 @@
 # back while you are looking at content; for gRPC, `make otel-status` answers delivery out of the
 # collector's own `exporter_sent` against `send_failed`.
 #
-# **The trace backend keeps its own transport either way.** `otlp_grpc/lgtm` is the observability
+# **The trace backend keeps its own transport either way.** `otlp/backend` is the observability
 # stream's and is untouched by this file — the two are independent, and this variable moves one.
 
 service:
