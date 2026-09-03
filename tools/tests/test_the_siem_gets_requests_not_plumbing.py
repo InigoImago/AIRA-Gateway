@@ -34,50 +34,76 @@ def _pipelines(path: Path) -> dict:
 
 def test_the_forwarding_fragment_still_describes_its_pipelines() -> None:
     """A guard on the guard: a renamed key makes every assertion below vacuous."""
-    assert {"traces", "traces/siem", "metrics", "logs"} <= set(_pipelines(FORWARD))
+    assert set(_pipelines(FORWARD)) == {"traces/siem", "metrics/siem", "logs/siem"}
 
 
-def test_the_second_destination_has_its_own_trace_pipeline() -> None:
-    """Its own, because it selects. A shared one could only send both destinations the same
-    thing — the design that made this a volume problem."""
-    siem = _pipelines(FORWARD)["traces/siem"]
-
-    assert siem["exporters"] == [FORWARD_EXPORTER]
-    assert "filter/siem" in siem["processors"]
+#: The observability stream's pipelines. The delivery fragment must not name one.
+BASE_PIPELINES = {"traces", "metrics", "logs"}
 
 
-def test_the_grafana_trace_pipeline_does_not_carry_the_filter() -> None:
-    """The whole point: everything still reaches the backend a person reads traces in."""
-    traces = _pipelines(FORWARD)["traces"]
+def test_the_delivery_stream_never_names_the_observability_stream() -> None:
+    """**They are two independent streams, not a branch and its parent.**
 
-    assert FORWARD_EXPORTER not in traces["exporters"], (
-        "the unfiltered pipeline forwards as well, so the SIEM gets every SQL span after all"
-    )
-    assert "otlp_grpc/lgtm" in traces["exporters"]
+    One is observability — every span, for *was the gateway slow or was the model slow*. The other
+    is delivery: one record per API access and per model access, for whoever consumes that
+    elsewhere. Different contents, volumes, tuning and failure consequences.
 
-
-@pytest.mark.parametrize("signal", ["metrics", "logs"])
-def test_the_other_signals_still_reach_both(signal: str) -> None:
-    """Only traces are selective. Metrics and logs are small and were asked for whole."""
-    exporters = _pipelines(FORWARD)[signal]["exporters"]
-
-    assert FORWARD_EXPORTER in exporters
-    assert "otlp_grpc/lgtm" in exporters
-
-
-def test_every_base_exporter_is_repeated_in_the_fragment() -> None:
-    """**A merged exporter list replaces, it does not extend.** Leaving one out silently unhooks
-    it — Grafana, or the arrivals file — and nothing says so, because a pipeline with fewer
-    exporters is a valid pipeline.
+    This fragment used to reach into the base pipelines to append its exporter, which made the
+    second stream a branch of the first in three ways at once — shared batching, no pipelines of
+    its own for metrics and logs, and a restated exporter list that silently unhooked Grafana if
+    anybody forgot an entry. Naming nothing from the base is what makes the base byte-for-byte the
+    same whether this fragment is merged or not.
     """
-    base, forward = _pipelines(BASE), _pipelines(FORWARD)
+    named = set(_pipelines(FORWARD)) | set(_pipelines(GRPC))
 
-    for signal in ("traces", "metrics", "logs"):
-        missing = set(base[signal]["exporters"]) - set(forward[signal]["exporters"])
-        assert not missing, (
-            f"the {signal} pipeline in the fragment drops {sorted(missing)} from the base — a "
-            "merged list replaces, so anything not repeated here stops receiving."
-        )
+    assert not (named & BASE_PIPELINES), (
+        f"the delivery fragment names {sorted(named & BASE_PIPELINES)} — a merged pipeline "
+        "replaces, so touching the observability stream at all is how it gets retuned or unhooked "
+        "by a change that was about somewhere else entirely."
+    )
+
+
+def test_the_two_streams_batch_independently() -> None:
+    """`AIRA_OTEL_FORWARD_BATCH_*` must reach the stream it names and no other.
+
+    It used to redefine the **shared** `batch`, and the base pipelines use `batch` — so setting the
+    forwarding batch window retimed the trace backend's delivery too. Measured on 2026-09-03 with
+    `AIRA_OTEL_FORWARD_BATCH_SECONDS=30s`: the collector reported exactly one
+    `processor="batch"`, and Grafana was batching on the second destination's clock. After the
+    split it reports `batch` **and** `batch/siem`.
+    """
+    processors = yaml.safe_load(FORWARD.read_text(encoding="utf-8"))["processors"]
+
+    assert "batch/siem" in processors
+    assert "batch" not in processors, (
+        "redefining the shared `batch` reaches the observability stream, which this fragment does "
+        "not own — name the delivery stream's own processor instead"
+    )
+    for pipeline in _pipelines(FORWARD).values():
+        assert "batch" not in pipeline["processors"]
+        assert "batch/siem" in pipeline["processors"]
+
+
+@pytest.mark.parametrize("signal", ["traces", "metrics", "logs"])
+def test_each_signal_reaches_the_second_destination_on_a_pipeline_of_its_own(signal: str) -> None:
+    """Metrics and logs used to have none — the forward exporter was appended to the base
+    pipelines, so those two signals *were* a branch: no filter of their own, no batching of their
+    own, and nothing that could be tuned or fail independently. Whether they are filtered stays a
+    decision now, rather than a consequence of where they happened to be attached."""
+    pipeline = _pipelines(FORWARD)[f"{signal}/siem"]
+
+    assert pipeline["exporters"] == [FORWARD_EXPORTER]
+    assert pipeline["receivers"] == ["otlp"]
+
+
+def test_only_the_trace_pipeline_selects() -> None:
+    """The filter is the traces question. Metrics and logs go over whole — they are small, and an
+    `oidc_jwks_unavailable` is exactly what a second destination is for."""
+    pipelines = _pipelines(FORWARD)
+
+    assert "filter/siem" in pipelines["traces/siem"]["processors"]
+    for signal in ("metrics", "logs"):
+        assert "filter/siem" not in pipelines[f"{signal}/siem"]["processors"]
 
 
 def test_the_filter_names_the_two_things_a_siem_needs() -> None:
@@ -327,17 +353,16 @@ def test_the_grpc_fragment_only_moves_the_pipelines() -> None:
     assert set(document["service"]) == {"pipelines"}
 
 
-def test_the_grpc_fragment_moves_every_pipeline_and_keeps_grafana() -> None:
+def test_the_grpc_fragment_moves_every_delivery_pipeline_and_no_other() -> None:
     """A merged exporter list replaces, so a pipeline this fragment forgets keeps sending over
-    HTTP — half the signals on one transport and half on the other, which is the kind of state
-    that reads as *the receiver is dropping things*."""
+    HTTP — half the signals on one transport and half on the other, which reads as *the receiver is
+    dropping things*. And a base pipeline it named would move the **trace backend** onto a
+    transport chosen for somewhere else."""
     pipelines = _pipelines(GRPC)
 
-    assert set(pipelines) == {"traces", "traces/siem", "metrics", "logs"}
-    assert pipelines["traces/siem"]["exporters"] == ["otlp/forward"]
-    for signal in ("traces", "metrics", "logs"):
-        assert "otlp_grpc/lgtm" in pipelines[signal]["exporters"]
-        assert FORWARD_EXPORTER not in pipelines[signal]["exporters"]
+    assert set(pipelines) == {"traces/siem", "metrics/siem", "logs/siem"}
+    for pipeline in pipelines.values():
+        assert pipeline["exporters"] == ["otlp/forward"]
 
 
 def test_the_leg_can_be_compressed_or_not_on_either_transport() -> None:

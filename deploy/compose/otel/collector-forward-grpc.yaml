@@ -6,9 +6,10 @@
 #
 # Merged **on top of** `collector-forward.yaml`, which is where both exporters are defined and
 # where the filter and the batching are described. This file changes exactly one thing: which of
-# the two the pipelines hand their telemetry to. That is the whole fragment — everything else
-# about the leg is the same, deliberately, because the transport is not supposed to change what
-# the second destination receives.
+# the two exporters the delivery stream's three pipelines hand their telemetry to. That is the
+# whole fragment — everything else about the leg is the same, deliberately, because the transport
+# is not supposed to change what the second destination receives, and it must not reach the
+# observability stream at all.
 #
 # ## What is different once you switch
 #
@@ -28,18 +29,19 @@
 # no dependencies — so *what leaves* is legible over HTTP and not over gRPC. Switch the protocol
 # back while you are looking at content; for gRPC, `make otel-status` answers delivery out of the
 # collector's own `exporter_sent` against `send_failed`.
+#
+# **The trace backend keeps its own transport either way.** `otlp_grpc/lgtm` is the observability
+# stream's and is untouched by this file — the two are independent, and this variable moves one.
 
 service:
   pipelines:
-    # Every list here **replaces** the one `collector-forward.yaml` set — that replacing is the
-    # property this fragment is built on. Which is also why all four are named and the base
-    # exporters repeated: leaving one out silently unhooks Grafana or the arrivals file, and a
-    # pipeline with fewer exporters is a perfectly valid pipeline.
-    traces:
-      exporters: [otlp_grpc/lgtm, debug, file/arrived]
-    metrics:
-      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlp/forward]
-    logs:
-      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlp/forward]
+    # Only the delivery stream's own three. The base `traces`, `metrics` and `logs` are not named
+    # here for the same reason they are not named in `collector-forward.yaml`: they are the other
+    # stream, and switching this one's transport must not reach them. A merged exporter list
+    # replaces, so naming them at all is how a fragment silently unhooks Grafana.
     traces/siem:
+      exporters: [otlp/forward]
+    metrics/siem:
+      exporters: [otlp/forward]
+    logs/siem:
       exporters: [otlp/forward]

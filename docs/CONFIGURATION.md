@@ -346,6 +346,11 @@ request and the calls made inside one — measured, 6 spans of 184, and again on
 full demo run: **347 spans to Grafana, 20 to the second destination** — because a SIEM wants one
 record per request and Grafana wants the SQL underneath it. Metrics and logs go over whole.
 
+**And they are two independent streams.** The forwarding fragment adds `traces/siem`,
+`metrics/siem` and `logs/siem` with their own batching, and names none of the base pipelines — so
+`AIRA_OTEL_FORWARD_*` cannot reach the trace backend's delivery, which it once did: `_BATCH_SECONDS`
+redefined the shared `batch` and retimed both.
+
 **And you can look at it before a SIEM exists.** `make otlp-inspector` starts a receiver in the
 `debug` profile that keeps the last few hundred batches and renders them — the spans, their
 `aira.*` attributes, the content type, and whether a credential was on the request. Point the

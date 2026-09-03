@@ -668,27 +668,32 @@ how *"was the gateway slow or was the model slow"* gets answered. **A SIEM wants
 request**, and the calls that carried data outside this installation. Measured on the shipped
 stack: three requests produced **184 spans**, of which **6** are those two things.
 
-So the forwarding fragment gives the second destination its **own trace pipeline** over the same
-receiver:
+**They are two independent streams that share a receiver**, not a branch and its parent. The
+forwarding fragment adds three pipelines of its own and names none of the base three:
 
 ```
-                      ┌─ traces      → Grafana + the inspection exporters   (184 spans)
+                      ┌─ traces  · metrics  · logs       → Grafana + the inspection exporters
   applications ─▶ collector
-                      └─ traces/siem → filter → your endpoint               (6 spans)
+                      └─ traces/siem · metrics/siem · logs/siem → your endpoint
+                           └ filter      (whole)   (whole)
 ```
 
-What the SIEM pipeline keeps: a span with `aira.use_case` (the request), or an HTTP call made
+Each has its own batching (`batch/siem`), so `AIRA_OTEL_FORWARD_BATCH_*` reaches the stream it
+names and no other — it used to redefine the *shared* `batch`, and setting it retimed the trace
+backend's delivery as well. And because the fragment never names a base pipeline, **the
+observability stream is byte-for-byte the same whether forwarding is on or off**; the old shape had
+to restate the base exporter lists, because a merged list replaces, and forgetting one silently
+unhooked Grafana.
+
+What the traces pipeline keeps: a span with `aira.use_case` (the request), or an HTTP call made
 *inside* one (the model the prompt actually went to). What it drops: SQL, pool connections, ASGI
 send/receive halves, and the reachability prober — which asks every configured model every 60
 seconds whether it is there and, in a first draft of this filter, was **32 of the 35 spans it
 selected**, without one of them being a request.
 
-Metrics and logs go over whole; they are small, and a `oidc_jwks_unavailable` is exactly what a
-SIEM is for.
-
-One thing to know before editing the fragment: **a merged exporter list replaces, it does not
-extend.** Every exporter the base configuration names has to be repeated there, or it silently
-stops receiving — `test_the_siem_gets_requests_not_plumbing.py` checks that.
+Metrics and logs go over **whole** — they are small, and an `oidc_jwks_unavailable` is exactly what
+a second destination is for. That is now a decision on their own pipelines rather than a
+consequence of having been attached to somebody else's.
 
 ### It is off until you say so, and off means absent
 

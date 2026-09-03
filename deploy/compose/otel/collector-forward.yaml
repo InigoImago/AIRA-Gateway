@@ -218,31 +218,58 @@ processors:
       span:
         - 'attributes["aira.use_case"] == nil and ((attributes["http.url"] == nil and attributes["url.full"] == nil) or parent_span_id.string == "0000000000000000")'
 
-  # Fewer, larger requests. The base leaves `batch` at its defaults, which send every 200ms — the
-  # worst available shape for a destination that counts requests.
-  batch:
+  # Fewer, larger requests. The collector's own default sends every 200ms, which is the worst
+  # available shape for a destination that counts requests.
+  #
+  # **`batch/siem`, not `batch`.** This used to redefine the *shared* processor — and the base
+  # pipelines use `batch`, so switching forwarding on silently retimed the trace backend's delivery
+  # as well. Measured on 2026-09-03: with `AIRA_OTEL_FORWARD_BATCH_SECONDS=30s` the collector
+  # reported exactly one `processor="batch"`, and Grafana was batching on the second destination's
+  # clock. A variable named `_FORWARD_` reached a stream it does not name.
+  batch/siem:
     timeout: ${env:AIRA_OTEL_FORWARD_BATCH_SECONDS}
     send_batch_size: ${env:AIRA_OTEL_FORWARD_BATCH_SIZE}
     send_batch_max_size: ${env:AIRA_OTEL_FORWARD_BATCH_SIZE}
 
 service:
   pipelines:
-    # **Two pipelines over one receiver, not one pipeline with a filter at the end.** They want
-    # different things, so they are different pipelines: the base keeps every span for Grafana,
-    # and `traces/siem` selects. A shared pipeline could only ever send both destinations the same
-    # thing, which is the design that made this a volume problem in the first place.
+    # **Three pipelines of its own, and the base three are not mentioned at all.**
     #
-    # The base three are named again here because a merged exporter list **replaces**; leaving
-    # them out would silently unhook Grafana.
-    traces:
-      exporters: [otlp_grpc/lgtm, debug, file/arrived]
-    metrics:
-      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]
-    logs:
-      exporters: [otlp_grpc/lgtm, debug, file/arrived, otlphttp/forward]
-
-    # The second destination's own trace pipeline. Same receiver, its own filter, its own batching.
+    # These are two independent streams that happen to share a receiver. One is *observability* —
+    # every span, for the question "was the gateway slow or was the model slow". The other is
+    # *delivery*: one record per API access and per model access, for whoever consumes that
+    # elsewhere. They have different contents, different volumes, different tuning and different
+    # consequences when they fail, and neither is a branch of the other.
+    #
+    # This file used to say otherwise, in three ways, and each was a real coupling:
+    #
+    #   - it redefined the shared `batch`, so the delivery stream's tuning retimed observability;
+    #   - `metrics` and `logs` had no pipeline of their own — the forward exporter was appended to
+    #     the base pipelines, so those two signals *were* a branch: no filter of their own, no
+    #     batching of their own, nothing that could be changed or fail independently;
+    #   - and because it reached into the base pipelines, it had to restate their exporter lists,
+    #     since a merged list replaces. Forgetting one silently unhooked Grafana or the arrivals
+    #     file — a footgun that existed only because of the subordination.
+    #
+    # Nothing here names `traces`, `metrics` or `logs`. The base stream is byte-for-byte the same
+    # whether this fragment is merged or not, and the footgun is gone with the reason for it.
+    #
+    # `memory_limiter` and `resource` *are* shared, deliberately: the first is a guard on the
+    # process rather than on a stream, and the second stamps the same collector name on everything
+    # this collector received. Neither is redefined here, so neither can drift.
     traces/siem:
       receivers: [otlp]
-      processors: [memory_limiter, resource, filter/siem, batch]
+      processors: [memory_limiter, resource, filter/siem, batch/siem]
+      exporters: [otlphttp/forward]
+
+    # **Whole, not filtered** — they are small, and an `oidc_jwks_unavailable` is exactly what the
+    # second destination is for. Their own pipelines all the same, so that stays a decision rather
+    # than a consequence of where they happened to be attached.
+    metrics/siem:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch/siem]
+      exporters: [otlphttp/forward]
+    logs/siem:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch/siem]
       exporters: [otlphttp/forward]

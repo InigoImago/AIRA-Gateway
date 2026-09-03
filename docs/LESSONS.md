@@ -959,6 +959,22 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **Two things that share a receiver are not thereby one stream, and a shared *name* is how they
+  get merged by accident.** A second destination for API and model accesses was built as an overlay
+  on the observability pipelines: it redefined the shared `batch` processor, so a variable called
+  `AIRA_OTEL_FORWARD_BATCH_SECONDS` retimed the trace backend's delivery; and for two of three
+  signals it simply appended its exporter to the base pipeline, so those signals had no filter,
+  batching or failure mode of their own. Every test was green, because none of it was a wrong
+  *value* — it was a wrong *shape*, and shapes are what tests written from the same mental model
+  cannot see.
+
+  The tell was in the naming all along: a knob named for one leg that reaches another. **Ask of any
+  shared component: if I retune this for one consumer, who else moves?** Sharing what cannot drift
+  — a process-wide memory guard, a constant resource attribute — is fine; redefining what somebody
+  else references is not. And the overlay's own footgun (restating the base exporter lists, because
+  a merged list replaces) existed *only* because of the subordination: independence deleted the
+  hazard and the guard test for it together.
+
 - **A vendor fragment earns its place only by doing something the generic one cannot say.** Asked
   whether a named SIEM could be attached, a first round answered that SIEM: four of its
   requirements, two files with its vendor's name on them. The owner's correction — *the example

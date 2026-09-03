@@ -5,6 +5,48 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Delivery is not a branch of observability (2026-09-03)
+
+The owner, on the two rounds below: *the delivery of API accesses and model accesses had been
+subordinated to the main stream; they are two independent streams.*
+
+Right, and it was true in three places at once — none of them visible to a test, because each was a
+coupling rather than a wrong value. Every check was green.
+
+**The delivery stream's tuning retimed observability.** The fragment redefined the **shared**
+`batch` processor, and the base `traces`, `metrics` and `logs` pipelines all use `batch`. So
+`AIRA_OTEL_FORWARD_BATCH_SECONDS` set the trace backend's batch window as well — a variable that
+names one leg, reaching another. Measured with `=30s`: one `processor="batch"` in the collector's
+own metrics, Grafana batching on the second destination's clock. After the split: `batch` **and**
+`batch/siem`.
+
+**Two of the three signals had no pipeline at all.** `otlphttp/forward` was appended to the base
+`metrics` and `logs` pipelines, so for those signals the second destination *was* a branch — no
+filter of its own, no batching of its own, nothing that could be tuned or fail independently.
+"Metrics and logs go over whole" had stopped being a decision and become a consequence of where the
+exporter happened to be attached.
+
+**And the reaching-in created a footgun that existed only because of it.** A merged exporter list
+replaces, so the fragment restated `[otlp_grpc/lgtm, debug, file/arrived]` three times; forgetting
+one silently unhooked Grafana or the arrivals file. There was a guard test for exactly that. Both
+are gone: the fragment now names no base pipeline, so the observability stream is byte-for-byte the
+same whether forwarding is merged or not.
+
+`traces/siem`, `metrics/siem`, `logs/siem`, each with `batch/siem`. `memory_limiter` and `resource`
+stay shared and are not redefined — the first guards the process rather than a stream, the second
+stamps one collector name on everything that arrived. **Sharing what cannot drift is not
+subordination; redefining what somebody else uses is.**
+
+Verified on the running stack: two batch processors where there was one, and the second destination
+still receiving all three signals — 13 spans of 232, 10 log records, 12 metric points, nothing
+failed. Eleven merged configurations still validate.
+
+Four new or re-anchored mutations (`ID33`, `ID34`, `ID46`, `ID47`); the harness defends **725**
+properties. The guard that checked the base exporter lists were repeated is replaced by the
+stronger one: **the delivery fragment must not name an observability pipeline at all.**
+
+---
+
 ## Sentinel was the example, not the target (2026-09-02)
 
 The owner, after the round below: *I only named Sentinel as an example; generic compatibility with

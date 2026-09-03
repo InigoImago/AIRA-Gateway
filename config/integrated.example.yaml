@@ -246,6 +246,9 @@ otel:
   # What it receives is **not** what your trace backend receives: traces are filtered to a request
   # and the calls made inside one — measured at 6 spans of 184 — because a SIEM wants one record
   # per request and a trace backend wants the SQL underneath it. Metrics and logs go over whole.
+  #
+  # The two are **independent streams** sharing a receiver: the forwarding pipelines and their
+  # batching are the second destination's own, so these knobs cannot reach your trace backend.
   forward_config: ''
   forward_endpoint: ''
 

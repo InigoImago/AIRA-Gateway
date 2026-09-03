@@ -141,6 +141,37 @@ pipelines decide.
 The fragment is deliberately **only** pipelines: same filter, same batching, same credential. The
 transport is not supposed to change what the second destination receives.
 
+### 3.1b Two streams, not a branch and its parent
+
+*Reported by the owner after the first two rounds: the delivery of API accesses and model accesses
+had been subordinated to the main stream, and they are two independent streams.* Correct, and it
+was true in three places at once — none of which the tests could see, because every one of them was
+a coupling rather than a wrong value.
+
+**The delivery stream's tuning retimed observability.** The fragment redefined the *shared* `batch`
+processor, and the base `traces`, `metrics` and `logs` pipelines all use `batch`. So
+`AIRA_OTEL_FORWARD_BATCH_SECONDS` — a variable whose name promises one leg — set the trace
+backend's batch window too. Measured on 2026-09-03 with `=30s`: the collector reported exactly one
+`processor="batch"`, and Grafana was batching on the second destination's clock. After the split it
+reports `batch` **and** `batch/siem`.
+
+**Metrics and logs had no pipeline of their own.** `otlphttp/forward` was *appended to the base
+pipelines*, so for two of the three signals the second destination was literally a branch of the
+first: no filter of its own, no batching of its own, nothing that could be tuned or fail
+independently. Whether those signals go over whole is a decision; it had become a consequence of
+where the exporter happened to be attached.
+
+**And reaching into the base pipelines created a footgun that existed only because of it.** A
+merged exporter list replaces, so the fragment had to restate `[otlp_grpc/lgtm, debug,
+file/arrived]` in three places; forgetting one silently unhooked Grafana or the arrivals file. There
+was a guard test for exactly that. It is gone now, along with the hazard: the fragment names no base
+pipeline at all, so **the observability stream is byte-for-byte the same whether forwarding is on or
+off**.
+
+The two share a receiver, `memory_limiter` and `resource` — deliberately, and neither is redefined:
+the first guards the *process* rather than a stream, and the second stamps the same collector name
+on everything that arrived. Sharing what cannot drift is not subordination.
+
 ### 3.2 One URL per signal, defaulted to the ordinary one
 
 `traces_endpoint`, `logs_endpoint` and `metrics_endpoint` are named separately, and Compose
@@ -275,6 +306,9 @@ dependency, and the page says which variable makes them readable instead.
 - **FR-8** Compression is configurable, including off.
 - **FR-9** Every state above leaves the *other* destination working: Grafana, the arrivals file and
   the debug exporter keep receiving.
+- **FR-9a** The two are **independent streams**. The delivery fragment names no pipeline of the
+  observability stream and redefines none of its processors, so no `AIRA_OTEL_FORWARD_*` variable
+  can change what the trace backend receives or when it receives it.
 - **FR-10** The `traces/siem` filter selects the same spans under either spelling of the HTTP URL
   attribute.
 - **FR-11** What the forwarding leg sends can be read on a page, without a receiver of one's own,
