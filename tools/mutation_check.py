@@ -6445,6 +6445,14 @@ MUTATIONS = [
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
     ),
     Mutation(
+        "OI5",
+        "the tree shows the document as it is, rather than a tidied-up version of it",
+        "tools/otlp_inspector.py",
+        '        kids = "".join(json_tree(v, name=k, depth=depth + 1) for k, v in value.items())',
+        '        kids = "".join(json_tree(v, depth=depth + 1) for k, v in value.items())',
+        "tools/tests/test_the_inspector_shows_what_was_forwarded.py",
+    ),
+    Mutation(
         "OI4",
         "a credential under any header name is found, not only under Authorization",
         "tools/otlp_inspector.py",

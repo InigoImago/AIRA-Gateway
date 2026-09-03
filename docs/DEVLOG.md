@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The page shows the document, and the matrix has a cell that was impossible (2026-09-03)
+
+Two asks, and the second found a hole the first would not have.
+
+**"So raw wie möglich."** The inspector rendered three tables — one flattened row per span, per log
+record, per metric. Readable, and the wrong shape: a table is this file's opinion about which
+fields matter, and somebody checking what a receiver will be handed needs *what a receiver will be
+handed*. Each batch is now a collapsible JSON tree over the real document — nothing reordered,
+renamed, filtered or unwrapped, so `{"key": "aira.model", "value": {"stringValue": "…"}}` stays two
+nodes rather than being tidied into one — with the exact decoded bytes one click away and at
+`/batch/<n>/raw`.
+
+No JavaScript: `<details>` collapses on its own, so the page survives a content policy that blocks
+inline script, which is the kind of browser this payload gets read in. The arrival keeps the body as
+**text** rather than a parsed structure, because the text is the record — a `dict` has already lost
+key order and formatting, and is the larger of the two besides. Measured on the running stack: 20
+collapsible batches, 2 920 tree nodes, 20 raw sections, **0 tables**, and `/batch/n/raw` byte-identical
+to what the collector sent, compact and unreformatted.
+
+The meta-refresh went from 5s to 15s and says so on the page: a reload collapses every `<details>`
+somebody has just opened, which makes a tree useless.
+
+**And the matrix.** Nine cases over both channels, each driven with real traffic against the live
+stack — all `running`, no restarts:
+
+| | observability | delivery | exporters running |
+|---|---|---|---|
+| 1 | default | off | `otlp/backend` + the two inspection ones |
+| 2 | default | HTTP | + `otlphttp/forward`, and `batch` + `batch/siem` |
+| 3 | default | gRPC | + `otlp/forward` — the HTTP one is not in a pipeline |
+| 4 | elsewhere | off | backend only, pointed at my own receiver |
+| 5 | elsewhere | HTTP | both, two destinations, two batchers |
+| 6 | **off** | HTTP | `otlp/backend` **absent**; delivery unaffected |
+| 7 | off | off | only `debug` and `file/arrived` |
+| 8 | default | endpoint set, switch unset | forwarding absent — the endpoint alone does nothing |
+| 9 | default | switch set, endpoint forgotten | collector **runs**; that one exporter fails by name |
+
+**Case 6 could not be expressed before this round.** The observability channel had no off:
+`otlp/backend` was in all three base pipelines unconditionally, so the only way to stop exporting
+spans was `AIRA_OTEL_ENABLED=false` in the applications — which stops the applications exporting and
+therefore stops *both* channels. An installation that wants the access records and has no trace
+backend had no configuration. `AIRA_OTEL_BACKEND_CONFIG` selects `nobackend.yaml` now, symmetrical
+with the delivery channel's switch, which had one from the day it existed.
+
+That was the last corner of the same asymmetry: the delivery channel was configured like a channel
+and the observability channel like a fact.
+
+Case 6 verified end to end rather than by exporter list: `otlp/backend` gone, and the receiver still
+handed 21 spans, 49 log records and 63 metric points. Case 9 confirms the `.invalid` restart guard
+still holds after all of this.
+
+Two new mutations (`OI5`, and `ID34` re-aimed); **726** properties.
+
+---
+
 ## Two channels, and only one of them was configurable (2026-09-03)
 
 Asked straight after the split: *is it documented how I set up both separate channels?* No — and

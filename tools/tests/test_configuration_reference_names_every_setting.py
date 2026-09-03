@@ -56,6 +56,7 @@ NOT_SETTINGS = {
     # looking for a knob does not care which process reads it.
     "AIRA_OTEL_DEBUG_VERBOSITY",
     "AIRA_OTEL_ARRIVED_FILE",
+    "AIRA_OTEL_BACKEND_CONFIG",
     "AIRA_OTEL_BACKEND_ENDPOINT",
     "AIRA_OTEL_BACKEND_PLAINTEXT",
     "AIRA_OTEL_BACKEND_INSECURE",

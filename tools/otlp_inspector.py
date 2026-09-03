@@ -12,6 +12,13 @@ This is that: an ordinary OTLP/HTTP receiver, with a page in front of it.
 
     make otlp-inspector          # start it, and print where to look
 
+**The page shows the document, not a summary of it.** It began as three tables — one flattened row
+per span, per log record, per metric — which is a readable shape and the wrong one for the job: a
+table is this file's opinion about what matters, and somebody checking what a receiver will be
+handed needs *what a receiver will be handed*. So each batch is a collapsible JSON tree over the
+real document, with the exact decoded bytes one click away and at `/batch/<n>/raw`. Nothing is
+reordered, renamed or dropped on the way to the screen.
+
 **It is a debugging tool and it is shaped like one.** Everything is in memory and capped; a restart
 loses it. It is in the `debug` Compose profile, so `make up` does not start it. There is no
 authentication, and there is a reason it needs none *and* must never be published anywhere but a
@@ -37,7 +44,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -149,94 +156,47 @@ class Arrival:
     bytes_decoded: int
     credentials: dict[str, str]
     headers: dict[str, str]
-    document: dict[str, Any] | None = None
+    #: The decoded payload **as text**, kept verbatim — this is what `/batch/<n>/raw` returns and
+    #: what the tree is parsed from on demand. Text rather than a parsed structure because the
+    #: point of this page is the bytes: a `dict` has already lost key order, duplicate keys and
+    #: whatever the sender's formatting was, and it is the larger of the two in memory besides.
+    body: str = ""
     undecoded: str = ""
-    records: list[dict[str, Any]] = field(default_factory=list)
+    records: int = 0
 
     @property
     def readable(self) -> bool:
-        return self.document is not None
+        return bool(self.body)
+
+    def document(self) -> Any:
+        """The body parsed, for rendering. Never cached: the text is the record."""
+        return json.loads(self.body)
 
 
-def _flatten_traces(document: dict[str, Any]) -> list[dict[str, Any]]:
-    """One row per span, with the resource and scope folded in.
+#: Where each signal keeps its records, in the protobuf-JSON mapping: the resource list, the scope
+#: list inside it, and the leaf list inside that. Counting is all this file does with the shape —
+#: the page renders the document itself.
+SIGNAL_SHAPE = {
+    "traces": ("resourceSpans", "scopeSpans", "spans"),
+    "logs": ("resourceLogs", "scopeLogs", "logRecords"),
+    "metrics": ("resourceMetrics", "scopeMetrics", "metrics"),
+}
 
-    The row is what the SIEM question is asked in — *who called which model and how did it end* —
-    so `aira.*` sits beside the span's own name rather than three levels down from it.
+
+def count_records(signal: str, document: dict[str, Any]) -> int:
+    """How many spans / log records / metrics one batch carried.
+
+    The one number worth deriving. *"21 records in 6 batches"* answers **is anything going out**
+    without deciding for the reader which of a record's fields matter — which is what the three
+    flattening tables this replaced were doing, and why they were the wrong shape for a page whose
+    whole job is showing what a receiver receives.
     """
-    rows: list[dict[str, Any]] = []
-    for resource_spans in document.get("resourceSpans") or []:
-        resource = _attributes((resource_spans.get("resource") or {}).get("attributes"))
-        for scope_spans in resource_spans.get("scopeSpans") or []:
-            scope = (scope_spans.get("scope") or {}).get("name", "")
-            for span in scope_spans.get("spans") or []:
-                start, end = (
-                    _nanos(span.get("startTimeUnixNano")),
-                    _nanos(span.get("endTimeUnixNano")),
-                )
-                rows.append(
-                    {
-                        "service": resource.get("service.name", ""),
-                        "scope": scope,
-                        "name": span.get("name", ""),
-                        "trace_id": span.get("traceId", ""),
-                        "span_id": span.get("spanId", ""),
-                        "parent": span.get("parentSpanId", ""),
-                        "ms": round((end - start) * 1000, 1) if start and end else None,
-                        "attributes": _attributes(span.get("attributes")),
-                    }
-                )
-    return rows
-
-
-def _flatten_logs(document: dict[str, Any]) -> list[dict[str, Any]]:
-    """One row per log record. The body is a string for everything this system emits — structlog
-    renders JSON and hands the rendered line over — so it is shown as it is rather than parsed."""
-    rows: list[dict[str, Any]] = []
-    for resource_logs in document.get("resourceLogs") or []:
-        resource = _attributes((resource_logs.get("resource") or {}).get("attributes"))
-        for scope_logs in resource_logs.get("scopeLogs") or []:
-            for record in scope_logs.get("logRecords") or []:
-                body = record.get("body") or {}
-                rows.append(
-                    {
-                        "service": resource.get("service.name", ""),
-                        "severity": record.get("severityText", ""),
-                        "body": body.get("stringValue", json.dumps(body, ensure_ascii=False)),
-                        "trace_id": record.get("traceId", ""),
-                        "attributes": _attributes(record.get("attributes")),
-                    }
-                )
-    return rows
-
-
-def _flatten_metrics(document: dict[str, Any]) -> list[dict[str, Any]]:
-    """One row per metric, with how many points it carried.
-
-    Not one row per point: a histogram arrives with a bucket list, and a page listing those is a
-    page nobody reads. The count is what answers *is this signal moving at all*.
-    """
-    rows: list[dict[str, Any]] = []
-    for resource_metrics in document.get("resourceMetrics") or []:
-        resource = _attributes((resource_metrics.get("resource") or {}).get("attributes"))
-        for scope_metrics in resource_metrics.get("scopeMetrics") or []:
-            for metric in scope_metrics.get("metrics") or []:
-                kinds = ("sum", "gauge", "histogram", "exponentialHistogram")
-                kind = next((k for k in kinds if k in metric), "")
-                points = (metric.get(kind) or {}).get("dataPoints") or [] if kind else []
-                rows.append(
-                    {
-                        "service": resource.get("service.name", ""),
-                        "name": metric.get("name", ""),
-                        "kind": kind,
-                        "unit": metric.get("unit", ""),
-                        "points": len(points),
-                    }
-                )
-    return rows
-
-
-FLATTEN = {"traces": _flatten_traces, "logs": _flatten_logs, "metrics": _flatten_metrics}
+    resources, scopes, leaves = SIGNAL_SHAPE[signal]
+    return sum(
+        len(scope.get(leaves) or [])
+        for resource in document.get(resources) or []
+        for scope in resource.get(scopes) or []
+    )
 
 
 class Inspector:
@@ -286,13 +246,14 @@ class Inspector:
             arrival.undecoded = f"{len(body)} bytes, over the {self.max_body}-byte keep limit"
         elif "json" in content_type:
             try:
-                document = json.loads(body)
+                text = body.decode()
+                document = json.loads(text)
             except (ValueError, UnicodeDecodeError) as exc:
                 arrival.undecoded = f"{type(exc).__name__}: {exc}"
             else:
                 if isinstance(document, dict):
-                    arrival.document = document
-                    arrival.records = FLATTEN[signal](document)
+                    arrival.body = text
+                    arrival.records = count_records(signal, document)
                 else:
                     arrival.undecoded = f"not an OTLP document: {type(document).__name__}"
         else:
@@ -305,7 +266,7 @@ class Inspector:
             arrival.number = self._next
             self._next += 1
             self.totals[signal] += 1
-            self.records[signal] += len(arrival.records)
+            self.records[signal] += arrival.records
             self._arrivals.append(arrival)
         return arrival
 
@@ -334,26 +295,51 @@ class Inspector:
 # --- the page ------------------------------------------------------------------------------------
 
 STYLE = """
-:root { color-scheme: light dark; --line: #8883; --dim: #7b7b8b; --accent: #2f6feb; }
+:root { color-scheme: light dark; --line: #8883; --dim: #7b7b8b; --accent: #2f6feb;
+        --key: #8250df; --str: #0a7c3e; --num: #b3541e; --lit: #0550ae; }
+@media (prefers-color-scheme: dark) {
+  :root { --key: #d2a8ff; --str: #7ee787; --num: #ffa657; --lit: #79c0ff; }
+}
 * { box-sizing: border-box; }
-body { margin: 0; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-header { padding: 14px 18px; border-bottom: 1px solid var(--line); }
+body { margin: 0; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+header { padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+         background: Canvas; z-index: 1; }
 h1 { font: 600 15px/1.3 system-ui, sans-serif; margin: 0 0 4px; }
 .sub { color: var(--dim); font: 12px/1.5 system-ui, sans-serif; }
-main { padding: 14px 18px 40px; }
-table { border-collapse: collapse; width: 100%; margin-bottom: 22px; }
-th, td { text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line);
-         vertical-align: top; }
-th { font: 600 11px/1.5 system-ui, sans-serif; text-transform: uppercase; color: var(--dim); }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.tag { display: inline-block; padding: 0 6px; border: 1px solid var(--line); border-radius: 3px;
-       font-size: 11px; }
-.dim { color: var(--dim); }
-.wrap { max-width: 62ch; overflow-wrap: anywhere; }
+main { padding: 12px 18px 60px; }
 a { color: var(--accent); }
-.empty { color: var(--dim); padding: 30px 0; max-width: 70ch;
+
+/* one batch */
+.batch { border: 1px solid var(--line); border-radius: 5px; margin-bottom: 8px; }
+.batch > summary { padding: 7px 10px; cursor: pointer; list-style: none; }
+.batch > summary::-webkit-details-marker { display: none; }
+.batch > summary::before { content: "▸ "; color: var(--dim); }
+.batch[open] > summary::before { content: "▾ "; }
+.batch[open] > summary { border-bottom: 1px solid var(--line); }
+.body { padding: 8px 10px 10px; }
+.tag { display: inline-block; padding: 0 6px; margin-right: 4px; border: 1px solid var(--line);
+       border-radius: 3px; font-size: 11px; }
+.dim { color: var(--dim); }
+
+/* the json tree */
+details.node { margin: 0; }
+details.node > summary { cursor: pointer; list-style: none; }
+details.node > summary::-webkit-details-marker { display: none; }
+details.node > summary::before { content: "▸ "; color: var(--dim); }
+details.node[open] > summary::before { content: "▾ "; }
+.tree, .tree ul { list-style: none; margin: 0; padding-left: 1.35em; }
+.tree { padding-left: 0; overflow-x: auto; }
+.tree li { border-left: 1px solid var(--line); padding-left: .6em; margin-left: .15em; }
+.k { color: var(--key); }
+.s { color: var(--str); }
+.n { color: var(--num); }
+.l { color: var(--lit); }
+.count { color: var(--dim); font-size: 11px; }
+
+pre { background: #8881; padding: 10px; overflow-x: auto; border-radius: 4px; margin: 6px 0 0;
+      white-space: pre-wrap; word-break: break-all; }
+.empty { color: var(--dim); padding: 24px 0; max-width: 72ch;
          font: 13px/1.6 system-ui, sans-serif; }
-pre { background: #8881; padding: 12px; overflow-x: auto; border-radius: 4px; }
 """
 
 
@@ -368,45 +354,109 @@ def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
-def _attribute_cell(attributes: dict[str, str], prefix: str = "aira.") -> str:
-    """The `aira.*` attributes, which are the ones this system put there, then the rest.
+#: How deep the tree is expanded when a batch is opened. Deep enough to reach a span
+#: (`resourceSpans` → `[0]` → `scopeSpans` → `[0]` → `spans`), shallow enough that opening a batch
+#: of 512 does not paint 512 open subtrees.
+OPEN_DEPTH = 5
 
-    Ordered rather than filtered: the point of the page is to check what a SIEM receives, and
-    hiding the framework's attributes would answer a different question than the one being asked.
+
+def _scalar(value: Any) -> str:
+    """One JSON scalar, coloured by type and escaped. `None`/`True` keep their JSON spelling."""
+    if isinstance(value, str):
+        return f"<span class=s>{_esc(json.dumps(value))}</span>"
+    if isinstance(value, bool) or value is None:
+        return f"<span class=l>{'null' if value is None else str(value).lower()}</span>"
+    if isinstance(value, int | float):
+        return f"<span class=n>{_esc(value)}</span>"
+    return _esc(value)  # pragma: no cover - json has no other scalar
+
+
+def json_tree(value: Any, *, name: str | None = None, depth: int = 0) -> str:
+    """A JSON value as nested `<details>`, expanded to :data:`OPEN_DEPTH`.
+
+    **No JavaScript, and that is not a limitation being worked around.** `<details>` collapses in
+    every browser without a script, so this page keeps working under a content policy that blocks
+    inline script — and the collector's payloads are read by people whose job is being careful
+    about what runs in their browser.
+
+    Nothing is reordered, renamed, filtered or unwrapped. A tree that tidied
+    `{"key": "aira.model", "value": {"stringValue": "…"}}` into `aira.model: …` would be showing
+    what this file thinks OTLP means rather than what the receiver is handed — which is the whole
+    reason the flattened tables this replaced were the wrong shape.
     """
-    ours = {k: v for k, v in attributes.items() if k.startswith(prefix)}
-    rest = {k: v for k, v in attributes.items() if not k.startswith(prefix)}
-    parts = [f"<b>{_esc(k)}</b>={_esc(v)}" for k, v in sorted(ours.items())]
-    parts += [f"<span class=dim>{_esc(k)}={_esc(v)}</span>" for k, v in sorted(rest.items())]
-    return " ".join(parts)
+    label = f"<span class=k>{_esc(name)}</span>: " if name is not None else ""
+
+    if isinstance(value, dict):
+        if not value:
+            return f"<li>{label}<span class=l>{{}}</span>"
+        kids = "".join(json_tree(v, name=k, depth=depth + 1) for k, v in value.items())
+        count = f"<span class=count> {len(value)} key{'s' if len(value) != 1 else ''}</span>"
+        opened = " open" if depth < OPEN_DEPTH else ""
+        return (
+            f"<li><details class=node{opened}><summary>{label}<span class=l>{{…}}</span>{count}"
+            f"</summary><ul>{kids}</ul></details>"
+        )
+
+    if isinstance(value, list):
+        if not value:
+            return f"<li>{label}<span class=l>[]</span>"
+        kids = "".join(json_tree(v, name=str(i), depth=depth + 1) for i, v in enumerate(value))
+        count = f"<span class=count> {len(value)} item{'s' if len(value) != 1 else ''}</span>"
+        opened = " open" if depth < OPEN_DEPTH else ""
+        return (
+            f"<li><details class=node{opened}><summary>{label}<span class=l>[…]</span>{count}"
+            f"</summary><ul>{kids}</ul></details>"
+        )
+
+    return f"<li>{label}{_scalar(value)}"
 
 
-def _rows_html(arrival: Arrival) -> str:
-    if arrival.signal == "traces":
-        head = "<tr><th>service<th>span<th>ms<th>attributes"
-        body = "".join(
-            f"<tr><td>{_esc(r['service'])}<td class=wrap>{_esc(r['name'])}"
-            f"<td class=num>{'' if r['ms'] is None else r['ms']}"
-            f"<td class=wrap>{_attribute_cell(r['attributes'])}"
-            for r in arrival.records
+def _batch_html(arrival: Arrival) -> str:
+    """One arrival: a collapsed header, then the tree and the exact bytes beneath it."""
+    credentials = (
+        " ".join(
+            f"<span class=tag>{_esc(n)}: {_esc(d)}</span>"
+            for n, d in sorted(arrival.credentials.items())
         )
-    elif arrival.signal == "logs":
-        head = "<tr><th>service<th>severity<th>body"
-        body = "".join(
-            f"<tr><td>{_esc(r['service'])}<td>{_esc(r['severity'])}<td class=wrap>{_esc(r['body'])}"
-            for r in arrival.records
-        )
+        or "<span class='tag dim'>no credential header</span>"
+    )
+    summary = (
+        f"<span class=tag>#{arrival.number}</span>"
+        f"<span class=tag>{_esc(arrival.signal)}</span>"
+        f"<span class=tag>{arrival.records} record{'s' if arrival.records != 1 else ''}</span>"
+        f"<span class=tag>{_esc(arrival.content_type)}</span>"
+        f"<span class=tag>{_esc(arrival.content_encoding)}</span>"
+        f"<span class=tag>{arrival.bytes_on_wire}&rarr;{arrival.bytes_decoded} B</span>"
+        f"{credentials}"
+        f"<span class=dim>{_ago(arrival.at)}</span>"
+    )
+
+    if not arrival.readable:
+        inner = f"<p class=empty>{_esc(arrival.undecoded)}</p>"
     else:
-        head = "<tr><th>service<th>metric<th>kind<th>points"
-        body = "".join(
-            f"<tr><td>{_esc(r['service'])}<td>{_esc(r['name'])}<td>{_esc(r['kind'])}"
-            f"<td class=num>{r['points']}"
-            for r in arrival.records
+        tree = f"<ul class=tree>{json_tree(arrival.document())}</ul>"
+        raw = (
+            "<details><summary class=dim>raw — the exact decoded bytes</summary>"
+            f"<pre>{_esc(arrival.body)}</pre></details>"
         )
-    return f"<table>{head}{body}</table>"
+        inner = (
+            f"{tree}<p class=dim style='margin:10px 0 0'>"
+            f"<a href='/batch/{arrival.number}'>document</a> · "
+            f"<a href='/batch/{arrival.number}/raw'>raw</a></p>{raw}"
+        )
+    return (
+        f"<details class=batch><summary>{summary}</summary><div class=body>{inner}</div></details>"
+    )
 
 
-def render_page(inspector: Inspector, *, refresh: int = 5) -> str:
+def render_page(inspector: Inspector, *, refresh: int = 15) -> str:
+    """The whole page.
+
+    **The refresh is slower than it was, because the page is now something you open.** A five-second
+    meta-refresh collapses every `<details>` a reader has just expanded, which makes a tree useless
+    — the browser reloads the document, not the DOM state. Fifteen seconds is a compromise; the
+    honest fix is a reader who reloads when they want to, and the header says how stale the view is.
+    """
     summary = inspector.summary()
     arrivals = inspector.arrivals()
 
@@ -424,34 +474,10 @@ def render_page(inspector: Inspector, *, refresh: int = 5) -> str:
             "switch. Then recreate the collector and send a request through the gateway.</p>"
         )
     else:
-        sections = []
-        for arrival in arrivals[:40]:
-            auth = (
-                " ".join(
-                    f"<span class=tag>{_esc(name)}: {_esc(description)}</span>"
-                    for name, description in sorted(arrival.credentials.items())
-                )
-                if arrival.credentials
-                else "<span class='tag dim'>no credential header</span>"
-            )
-            meta = (
-                f"<span class=tag>#{arrival.number}</span> "
-                f"<span class=tag>{_esc(arrival.signal)}</span> "
-                f"<span class=tag>{_esc(arrival.content_type)}</span> "
-                f"<span class=tag>{_esc(arrival.content_encoding)}</span> "
-                f"<span class=tag>{arrival.bytes_on_wire}&rarr;{arrival.bytes_decoded} B</span> "
-                f"{auth} "
-                f"<span class=dim>{_ago(arrival.at)}</span>"
-            )
-            if arrival.readable:
-                detail = _rows_html(arrival) + (
-                    f"<p class=dim><a href='/batch/{arrival.number}'>the document as it "
-                    "arrived</a></p>"
-                )
-            else:
-                detail = f"<p class=empty>{_esc(arrival.undecoded)}</p>"
-            sections.append(f"<p>{meta}</p>{detail}")
-        body = "".join(sections)
+        # **Newest first, and a bounded number of them.** Forty collapsed batches is a page; forty
+        # expanded documents is a megabyte of HTML nobody scrolls. The rest are still counted in
+        # the header and still readable at `/batch/<n>`.
+        body = "".join(_batch_html(arrival) for arrival in arrivals[:40])
 
     return f"""<!doctype html><html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -461,7 +487,8 @@ def render_page(inspector: Inspector, *, refresh: int = 5) -> str:
 <header>
   <h1>What the second destination receives</h1>
   <div class=sub>{_esc(counts)} · last {_esc(_ago(summary["last_arrival"]))} ·
-    keeping {summary["kept"]} of {summary["keep_limit"]} batches · refreshes every {refresh}s ·
+    keeping {summary["kept"]} of {summary["keep_limit"]} batches ·
+    <span class=dim>reloads every {refresh}s, which closes what you have opened</span> ·
     <a href="/api/summary">/api/summary</a></div>
 </header>
 <main>{body}</main>
@@ -514,12 +541,26 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/healthz":
             self._send(200, b'{"status":"ok"}', "application/json")
         elif path.startswith("/batch/"):
-            arrival = self.inspector.find(int(path.rsplit("/", 1)[-1] or 0))
+            # `/batch/12` pretty-prints the document; `/batch/12/raw` is the **exact decoded
+            # bytes** — what the receiver was handed, byte for byte, after gunzip and nothing else.
+            # Two routes because they answer different questions: one is for reading, the other is
+            # for `curl … | jq` and for diffing against whatever your receiver logged.
+            parts = [segment for segment in path.split("/") if segment]
+            raw = len(parts) == 3 and parts[2] == "raw"
+            try:
+                number = int(parts[1])
+            except IndexError, ValueError:
+                self._send(404, b'{"error":"no such batch"}', "application/json")
+                return
+            arrival = self.inspector.find(number)
             if arrival is None or not arrival.readable:
                 self._send(404, b'{"error":"no such readable batch"}', "application/json")
                 return
-            payload = json.dumps(arrival.document, indent=2).encode()
-            self._send(200, payload, "application/json")
+            if raw:
+                self._send(200, arrival.body.encode(), "text/plain; charset=utf-8")
+            else:
+                payload = json.dumps(arrival.document(), indent=2).encode()
+                self._send(200, payload, "application/json")
         else:
             self._send(404, b'{"error":"no such page"}', "application/json")
 

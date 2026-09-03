@@ -124,20 +124,29 @@ def _post(
     )
 
 
-def test_a_span_is_flattened_into_the_row_a_siem_asks_for() -> None:
-    """*Who called which model and how did it end* is one row, not a walk down four levels."""
+def test_the_body_is_kept_verbatim_and_counted() -> None:
+    """*What a receiver was handed*, byte for byte — not a parsed structure and not a summary.
+
+    The page began as three flattening tables; they were a readable shape and the wrong one,
+    because a table is this file's opinion about which fields matter. Text rather than a `dict`
+    because the text is the record: a parsed object has already lost key order and formatting.
+    """
     arrival = _post(Inspector(), TRACES)
 
     assert arrival.readable
-    (row,) = arrival.records
-    assert row["service"] == "aira-gateway"
-    assert row["name"] == "POST /v1beta/models/{resource}"
-    assert row["attributes"]["aira.use_case"] == "kundenservice"
-    assert row["attributes"]["aira.outcome"] == "served"
-    # An `intValue` arrives as a **string** in protobuf-JSON, because JSON has no 64-bit integer.
-    # Rendered as text rather than coerced: a page that printed `150.0` would be inventing a type.
-    assert row["attributes"]["aira.total_tokens"] == "150"
-    assert row["ms"] == 250.0
+    assert arrival.body == json.dumps(TRACES)
+    assert arrival.document() == TRACES
+    assert arrival.records == 1
+
+
+def test_records_are_counted_per_signal_shape() -> None:
+    """The one number worth deriving: *is anything going out*. Each signal keeps its records in a
+    differently named triple of lists, and a count that only understood traces would report zero
+    for the other two — which reads as nothing arriving."""
+    assert otlp_inspector.count_records("traces", TRACES) == 1
+    assert otlp_inspector.count_records("logs", LOGS) == 1
+    assert otlp_inspector.count_records("metrics", METRICS) == 1
+    assert otlp_inspector.count_records("traces", {}) == 0
 
 
 def test_gzip_is_unwrapped_and_both_sizes_are_kept() -> None:
@@ -216,7 +225,8 @@ def test_protobuf_is_reported_rather_than_mangled() -> None:
     )
 
     assert not arrival.readable
-    assert arrival.records == []
+    assert arrival.records == 0
+    assert arrival.body == ""
     assert "AIRA_OTEL_FORWARD_ENCODING=json" in arrival.undecoded
 
 
@@ -260,30 +270,81 @@ def test_the_ring_buffer_forgets_the_oldest_and_keeps_counting() -> None:
     assert [a.number for a in inspector.arrivals()] == [5, 4]
 
 
-def test_logs_and_metrics_are_flattened_as_their_own_shapes() -> None:
-    """Three signals, three questions. A metric row counts its points rather than listing them —
-    a histogram's buckets are a page nobody reads."""
-    inspector = Inspector()
-    (log_row,) = _post(inspector, LOGS, signal="logs").records
-    (metric_row,) = _post(inspector, METRICS, signal="metrics").records
+def test_the_tree_shows_the_document_without_reshaping_it() -> None:
+    """Nothing reordered, renamed, filtered or unwrapped.
 
-    assert log_row["severity"] == "WARNING"
-    assert "oidc_jwks_unavailable" in log_row["body"]
-    assert metric_row["name"] == "http.server.duration"
-    assert metric_row["kind"] == "histogram"
-    assert metric_row["points"] == 3
+    A tree that tidied `{"key": "aira.model", "value": {"stringValue": "…"}}` into
+    `aira.model: …` would be showing what this file thinks OTLP means rather than what the
+    receiver is handed — the exact failing of the tables it replaced.
+    """
+    html_out = otlp_inspector.json_tree(TRACES)
+
+    for literal in ("resourceSpans", "scopeSpans", "spans", "key", "value", "stringValue"):
+        assert literal in html_out, literal
+    assert "aira.use_case" in html_out and "kundenservice" in html_out
+    # The protobuf-JSON pair is still two nodes, not one collapsed convenience.
+    assert html_out.count("aira.use_case") == 1
 
 
-def test_the_page_shows_the_aira_attributes_and_not_the_credential() -> None:
-    """The rendered page, because that is the artefact — a flattener that is right and a template
-    that drops the column is a screen saying nothing happened."""
+def test_the_tree_collapses_below_a_depth() -> None:
+    """Forty batches of 512 spans, all expanded, is a megabyte of open subtrees nobody scrolls.
+    Deep enough to reach a span; closed under that."""
+    deep = {"a": {"b": {"c": {"d": {"e": {"f": {"g": "leaf"}}}}}}}
+    rendered = otlp_inspector.json_tree(deep)
+
+    assert rendered.count("<details class=node open>") == otlp_inspector.OPEN_DEPTH
+    assert "<details class=node>" in rendered
+
+
+def test_a_scalar_keeps_its_json_spelling() -> None:
+    """`null`, `true`, a quoted string — the tree is a view of JSON, so it says what JSON says."""
+    rendered = otlp_inspector.json_tree({"a": None, "b": True, "c": "x", "d": 7})
+
+    assert ">null<" in rendered
+    assert ">true<" in rendered
+    assert ">7<" in rendered
+    # A string keeps its JSON quotes, and they arrive HTML-escaped — the values come from a
+    # caller, so escaping is the point (`OI2`) and the quoting is what says "this is a string".
+    assert "&quot;x&quot;" in rendered
+
+
+def test_an_empty_object_or_array_is_not_a_collapsible_nothing() -> None:
+    """`{}` under a disclosure triangle is a click that reveals nothing."""
+    for empty, spelling in (({}, "{}"), ([], "[]")):
+        rendered = otlp_inspector.json_tree(empty, name="a")
+
+        assert spelling in rendered
+        assert "<details" not in rendered, rendered
+
+
+def test_the_page_offers_the_tree_and_the_raw_bytes_and_not_the_credential() -> None:
+    """The rendered page, because that is the artefact — a renderer that is right and a template
+    that never calls it is a screen saying nothing happened."""
     inspector = Inspector()
     _post(inspector, TRACES, headers={"x-api-key": "super-secret-siem-token"})
     page = render_page(inspector)
 
     assert "aira.use_case" in page and "kundenservice" in page
+    assert "<details class=batch>" in page
+    assert "raw — the exact decoded bytes" in page
+    assert "/batch/1/raw" in page
     assert "x-api-key" in page and "(opaque, 23 chars)" in page
     assert "super-secret-siem-token" not in page
+
+
+def test_a_batch_that_could_not_be_read_says_so_instead_of_offering_a_tree() -> None:
+    """A protobuf batch has no tree and no raw text — and the page must not imply otherwise."""
+    inspector = Inspector()
+    inspector.record(
+        signal="traces",
+        raw=b"\x0a\xf8\x05",
+        content_type="application/x-protobuf",
+        content_encoding="",
+    )
+    page = render_page(inspector)
+
+    assert "AIRA_OTEL_FORWARD_ENCODING=json" in page
+    assert "/batch/1/raw" not in page
 
 
 def test_an_empty_page_says_what_is_missing_rather_than_nothing() -> None:

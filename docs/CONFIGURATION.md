@@ -307,6 +307,7 @@ Tempo or Jaeger had to edit a shipped file while the *other* channel had seven v
 
 | Variable | Default | What it does |
 | --- | --- | --- |
+| `AIRA_OTEL_BACKEND_CONFIG` | _(the empty fragment)_ | **Off is a switch of its own.** `/etc/otelcol-contrib/nobackend.yaml` leaves the base pipelines with only the two inspection exporters — for an installation that wants the access records and has no trace backend. Until `FRD-618` that combination could not be expressed: the only way to stop exporting spans was `AIRA_OTEL_ENABLED=false`, which stops **both** channels. |
 | `AIRA_OTEL_BACKEND_ENDPOINT` | `otel-lgtm:4317` | Where the observability channel sends. `host:port`, **no scheme** — OTLP/gRPC. |
 | `AIRA_OTEL_BACKEND_PLAINTEXT` | `true` | No TLS at all (h2c). Right for the bundled backend on this network, wrong for anything across a boundary. |
 | `AIRA_OTEL_BACKEND_INSECURE` | `false` | Keep TLS, stop checking the certificate. A reachability test, not a deployment. |

@@ -88,6 +88,7 @@ COMPOSE_ONLY = {
     # how much it says about what arrives, and where to write the same thing as OTLP/JSON.
     "AIRA_OTEL_DEBUG_VERBOSITY",
     "AIRA_OTEL_ARRIVED_FILE",
+    "AIRA_OTEL_BACKEND_CONFIG",
     "AIRA_OTEL_BACKEND_ENDPOINT",
     "AIRA_OTEL_BACKEND_PLAINTEXT",
     "AIRA_OTEL_BACKEND_INSECURE",

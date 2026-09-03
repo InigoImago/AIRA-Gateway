@@ -1,0 +1,39 @@
+# Turn the **observability channel** off, and keep the delivery channel running.
+#
+#     AIRA_OTEL_BACKEND_CONFIG=/etc/otelcol-contrib/nobackend.yaml
+#
+# For an installation that wants the access records — one per API call and per model call — and has
+# no trace backend to send the rest to. Until `FRD-618` that combination could not be expressed:
+# `otlp/backend` was in all three base pipelines unconditionally, so the only way to stop exporting
+# spans was `AIRA_OTEL_ENABLED=false` in the applications, which stops **both** channels because it
+# stops the applications exporting at all.
+#
+# That was the asymmetry's last corner. The delivery channel had an on/off switch
+# (`AIRA_OTEL_FORWARD_CONFIG`) from the day it existed; the observability channel had none, because
+# it was not thought of as a channel.
+#
+# ## What stays
+#
+# `debug` and `file/arrived` — the two ways of looking at what **arrived**, which are about this
+# collector rather than about a destination (`make otel-arrivals`, `AIRA_OTEL_ARRIVED_FILE`). They
+# cost nothing when they are not being read: `debug` writes to the container log and the arrivals
+# file is `/dev/null` unless a path says otherwise.
+#
+# A pipeline needs at least one exporter, so removing all three would be a configuration the
+# collector refuses — which is the other reason these stay rather than a preference about logging.
+#
+# ## What this does not do
+#
+# It does not stop the applications exporting. They still send everything to this collector; what
+# changes is where the collector sends it onward. That is the right layer for the decision — the
+# alternative, sampling or disabling at the source, changes what the *delivery* channel can see,
+# and these two are supposed to be independent.
+
+service:
+  pipelines:
+    traces:
+      exporters: [debug, file/arrived]
+    metrics:
+      exporters: [debug, file/arrived]
+    logs:
+      exporters: [debug, file/arrived]

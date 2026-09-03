@@ -597,6 +597,7 @@ pipeline, not a batch window, not a destination — so each is configured withou
 | batching | the collector's defaults | `AIRA_OTEL_FORWARD_BATCH_*`, its own |
 | filtered | no | yes — requests and the calls made inside them |
 | on by default | yes | no |
+| switched off by | `AIRA_OTEL_BACKEND_CONFIG` | leaving `AIRA_OTEL_FORWARD_CONFIG` unset |
 
 **Setting one up does not disturb the other.** The delivery fragment adds `traces/siem`,
 `metrics/siem` and `logs/siem` and names no observability pipeline, so the first channel is

@@ -226,22 +226,25 @@ services:
     image: otel/opentelemetry-collector-contrib:0.157.0
     container_name: ${AIRA_STACK:-aira}-otel-collector
     profiles: ["observability"]
-    # **Four `--config` flags, always.** The collector merges them, and the last three are the empty
-    # fragment until a variable names a real one — so a second destination is configuration rather
-    # than a fourth compose file, and the base configuration is never copied.
+    # **Five `--config` flags, always.** The collector merges them, and the last four are the empty
+    # fragment until a variable names a real one — so a channel is configuration rather than a
+    # compose file of its own, and the base configuration is never copied.
     #
-    # Three slots because a destination varies in three ways that do not depend on each other:
-    # **where** it is, **how** it is reached (OTLP/HTTP or OTLP/gRPC), and **who** we say we are.
+    # One slot switches the **observability** channel off; three configure the **delivery** channel,
+    # which varies in ways that do not depend on each other: **where** it is, **how** it is reached
+    # (OTLP/HTTP or OTLP/gRPC), and **who** we say we are.
     # A branch would be the alternative and YAML has none — and the last time two of these shared
     # a file, the result was a `headers:` block that was always present, so with no credential
     # configured the collector sent `authorization: ''` on every request. Measured 2026-09-02.
     command:
       - --config=/etc/otelcol-contrib/config.yaml
+      - --config=${AIRA_OTEL_BACKEND_CONFIG:-/etc/otelcol-contrib/noforward.yaml}
       - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/noforward.yaml}
       - --config=${AIRA_OTEL_FORWARD_PROTOCOL_CONFIG:-/etc/otelcol-contrib/noforward.yaml}
       - --config=${AIRA_OTEL_FORWARD_AUTH_CONFIG:-/etc/otelcol-contrib/noforward.yaml}
     volumes:
       - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./otel/collector-nobackend.yaml:/etc/otelcol-contrib/nobackend.yaml:ro
       - ./otel/collector-forward.yaml:/etc/otelcol-contrib/forward.yaml:ro
       - ./otel/collector-forward-grpc.yaml:/etc/otelcol-contrib/forward-grpc.yaml:ro
       - ./otel/collector-forward-auth-header.yaml:/etc/otelcol-contrib/forward-auth-header.yaml:ro
@@ -269,6 +272,11 @@ services:
       # literal in `collector-config.yaml` until `FRD-618` — the delivery channel had seven
       # variables and this one had none, which is the asymmetry that made "two channels" untrue in
       # the configuration even after the pipelines were separated.
+      # Off is a switch of its own, symmetrical with the delivery channel's: name
+      # `/etc/otelcol-contrib/nobackend.yaml` and the base pipelines keep only the two inspection
+      # exporters. For an installation that wants the access records and has no trace backend —
+      # a combination that could not be expressed at all while this channel had no off.
+      AIRA_OTEL_BACKEND_CONFIG: ${AIRA_OTEL_BACKEND_CONFIG:-}
       AIRA_OTEL_BACKEND_ENDPOINT: ${AIRA_OTEL_BACKEND_ENDPOINT:-otel-lgtm:4317}
       # No TLS at all (plaintext h2c) — right on this network, wrong across a boundary. Set to
       # `false` for anything remote, and give it a CA below if it is behind a private one.
