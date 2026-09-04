@@ -205,7 +205,14 @@ otlp-inspector: env ## Stand in for a SIEM: show what the forwarding leg actuall
 	$(COMPOSE_CORE) --profile debug up -d otlp-inspector
 	@echo
 	@echo "  what the second destination receives: $(INSPECTOR_URL)"
-	@echo "  point the collector at it:            AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318"
+	@# **Whether anything is actually pointed here**, rather than only where to look.
+	@#
+	@# Starting the receiver and configuring the collector are two steps, and the second is the one
+	@# that gets forgotten — including by me, repeatedly, while restoring a stack between
+	@# experiments. The symptom is an empty page, which is also what a wrong endpoint looks like,
+	@# and what a stack with no traffic looks like. Reading the collector's own arguments answers
+	@# it in the only way that cannot be wrong.
+	@if docker inspect $${AIRA_STACK:-aira}-otel-collector 	     --format '{{range .Args}}{{println .}}{{end}}' 2>/dev/null | grep -q 'forward.yaml'; then 	  echo "  the collector IS forwarding             (--config=…/forward.yaml is merged)"; 	else 	  echo "  the collector is NOT forwarding yet — nothing will arrive until it is:"; 	  echo "      AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml"; 	  echo "      AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318"; 	  echo "    in deploy/compose/.env, then recreate the collector. The endpoint alone does"; 	  echo "    nothing — the fragment is the switch."; 	fi
 	@echo
 
 otlp-inspector-down: ## Stop the standing-in SIEM and forget what it held

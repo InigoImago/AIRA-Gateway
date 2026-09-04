@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Still no data — because I kept taking it away (2026-09-04)
+
+Reported again after the alias fix: *still nothing arrives in the inspector.* This one was not a
+defect. The stack said so in three lines:
+
+```
+.env                        AIRA_OTEL_ENABLED=true      (and no AIRA_OTEL_FORWARD_* at all)
+collector args              four × noforward.yaml
+inspector container         not present
+```
+
+**I had removed it.** Every round in this session ended with *restore the stack to how I found it* —
+`.env` back to the session-start copy, `make otlp-inspector-down` — which is the right instinct for
+somebody else's machine and exactly wrong once the owner has started using the thing being built.
+Restoring an environment and dismantling a working configuration are the same command, and which
+one it is depends on whose configuration it is.
+
+Set up properly and **left running**: three lines in `.env`, the collector recreated, and a demo run
+through it — 21 spans, 43 log records, 6 metric points on the page, 16 collapsible batches, 21
+distinct `aira.*` attributes.
+
+### And the target now says whether anything is pointed at it
+
+Starting the receiver and configuring the collector are two steps, and the second is the one that
+gets forgotten — by me, repeatedly, in this session. The symptom is an empty page, which is also
+what a wrong endpoint looks like and what a stack with no traffic looks like.
+
+`make otlp-inspector` reads the collector's own arguments now and says which state it is in, with
+the two lines to add when the answer is *not forwarding*. That is the only form of the answer that
+cannot be stale: not what `.env` says, not what somebody remembers setting — what the running
+process was actually started with.
+
+---
+
 ## One letter, and a status line that said the opposite (2026-09-04)
 
 Reported: *the normal otel points at `otel-collector`, the restricted one at `otel-inspector`, and

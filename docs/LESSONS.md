@@ -959,6 +959,20 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **Restoring an environment and dismantling somebody's working configuration are the same
+  command.** Every round of one session ended by putting `.env` back to how it was found and
+  stopping the debug receiver — correct while the owner is watching, and wrong the moment they
+  start using the thing being built. The bug report that followed was *"still no data"*, and the
+  cause was that the configuration had been tidied away between the fix and the retry. **Ask whose
+  configuration it is before restoring it**, and when the answer is *theirs, and they are using
+  it*, leave it and say so.
+
+  The mechanical half is worth having too: **a tool that needs two steps should say which one is
+  missing.** `make otlp-inspector` starts a receiver; something else has to point the collector at
+  it, and an empty page looks identical whether that was done, done wrongly, or not done. It reads
+  the collector's own arguments now — not `.env`, not memory, the arguments the running process was
+  started with, which is the only form of the answer that cannot be stale.
+
 - **A summary sentence overrides the footnote that corrects it.** `make otel-status` printed
   *"undelivered — a give-up, not an attempt: a retrying exporter shows 0 for now"*, and then
   *"Nothing is being lost between the applications and the collector's exporters."* Both were
