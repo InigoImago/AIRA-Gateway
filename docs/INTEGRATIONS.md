@@ -939,6 +939,27 @@ credential was on the request** — its scheme and length, never its value. Prot
 counted and labelled rather than decoded, which is enough to answer *is it going out and is it
 authenticated*; flip `AIRA_OTEL_FORWARD_ENCODING=json` to read the contents.
 
+**Two addresses, and confusing them is the commonest way this ends in an empty page.** Inside the
+stack's network the receiver is `otlp-inspector:4318` — a Docker name and the *container's* port,
+both of which exist only on the machine running the stack. From anywhere else it is that host on
+the **published** port, and the same port serves the page and OTLP:
+
+| the collector is… | `AIRA_OTEL_FORWARD_ENDPOINT` |
+|---|---|
+| on the same machine as the inspector | `http://otlp-inspector:4318` |
+| anywhere else | `http://<the-inspector's-host>:4319` |
+
+So a browser on another machine and a collector on another machine want the *same* URL — the page
+and `/v1/{traces,logs,metrics}` share it. Reaching it from elsewhere at all needs
+`AIRA_BIND_HOST=0.0.0.0` **and** `AIRA_BIND_HOST6=::`, for the reason
+[`.env.example`](../deploy/compose/.env.example) gives under *reaching this stack from another
+machine*: Docker opens one socket per published entry, so setting only the first leaves every IPv6
+caller reaching a machine with nothing listening.
+
+`make otlp-inspector` prints both addresses and then reads the collector's own arguments to say
+whether anything is currently pointed at it — an empty page looks identical whether the collector
+was configured, configured wrongly, or not configured at all.
+
 It is a debugging tool: in memory, capped, lost on restart, unauthenticated, and it holds
 attribution — a developer's machine, and nowhere else. `make otlp-inspector-down` stops it and
 forgets what it held.

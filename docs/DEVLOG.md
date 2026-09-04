@@ -5,6 +5,41 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The receiver was on another machine, and every instruction assumed one (2026-09-04)
+
+*"otel-collector as the full receiver, otlp-inspector as the partial one, build `.env`, `make
+showcase`, then `make otlp-inspector` **on another machine** — and no data in the web interface."*
+
+The last three words were the whole thing, and they had not been in the earlier reports.
+
+**`otlp-inspector:4318` is a Docker name and a container port.** Both exist only inside one stack's
+network. A collector on another machine cannot resolve the name and would not reach that port if it
+could — and every instruction this repository gives said exactly that string: the `make` target's
+output, `INTEGRATIONS.md`, the config examples, and the sentence handed over in this session.
+
+From anywhere else it is the host on the **published** port, and — verified rather than assumed —
+the same port serves the page *and* OTLP: `POST /v1/traces` to `:4319` answers `200`. So a browser
+somewhere else and a collector somewhere else want the *same* URL.
+
+| the collector is… | `AIRA_OTEL_FORWARD_ENDPOINT` |
+|---|---|
+| on the machine running the inspector | `http://otlp-inspector:4318` |
+| anywhere else | `http://<that-host>:4319` |
+
+`make otlp-inspector` prints both now, and names the prerequisite for the second: `AIRA_BIND_HOST`
+*and* `AIRA_BIND_HOST6`, because Docker opens one socket per published entry and setting only the
+first leaves every IPv6 caller reaching a machine with nothing listening. `INTEGRATIONS.md` and
+`.env.example` carry the table.
+
+The guard is on the **publication** rather than on the prose: the published port must map to the
+container's 4318, or "the page and the endpoint are one address" quietly stops being true.
+
+A pattern across the last four reports, worth naming once: each was a **place** — the wrong hop, the
+wrong hostname, the wrong file, and now the wrong machine — and in each the code was right and an
+instruction was written from where the author happened to be standing. `ADDR1`; **735** properties.
+
+---
+
 ## The line I dictated was not in the file I had just fixed (2026-09-04)
 
 Asked where `AIRA_OTEL_FORWARD_BATCH_SECONDS=3s` lives in the configuration, and why it is not

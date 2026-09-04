@@ -414,3 +414,34 @@ def test_the_status_tool_reads_what_an_exporter_is_holding() -> None:
     # And the verdict must be reached *after* it: a summary that returns before looking is the
     # defect this replaced.
     assert status.index("_queued(body)") < status.index("Nothing is being lost")
+
+
+def test_the_inspector_is_reachable_from_off_the_machine_and_says_so() -> None:
+    """**The container name is not an address anywhere else, and the ports differ.**
+
+    Reported: the receiver was started, the collector was on another machine, and nothing arrived.
+    Every instruction this repository gave said `http://otlp-inspector:4318` — a Docker name and
+    the *container's* port, both of which exist only inside one stack's network. From elsewhere it
+    is the host on the **published** port, and the same port serves the page and OTLP, so a browser
+    somewhere else and a collector somewhere else want the same URL.
+
+    Asserted on the publication rather than on prose: the page port and the OTLP port have to be
+    one, or the sentence above stops being true and nothing says so.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    published = compose["services"]["otlp-inspector"]["ports"]
+
+    assert all(str(entry).endswith(":4318") for entry in published), (
+        "the published port must map to the container's 4318 — the page and "
+        "/v1/{traces,logs,metrics} are one server, and the documentation says so"
+    )
+    assert any("AIRA_PUBLISH_OTLP_INSPECTOR_PORT" in str(entry) for entry in published)
+
+
+def test_the_documentation_gives_the_address_for_a_collector_elsewhere() -> None:
+    """One address is not enough, and the missing one is the one that fails silently: a name the
+    other machine cannot resolve leaves the collector running and the page empty."""
+    integrations = (ROOT / "docs" / "INTEGRATIONS.md").read_text(encoding="utf-8")
+
+    assert "otlp-inspector:4318" in integrations, "the in-network address"
+    assert "anywhere else" in integrations, "and the one for a collector that is not on this host"

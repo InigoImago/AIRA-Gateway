@@ -84,6 +84,9 @@ OLLAMA_URL     := $(call stack_url,ollama)
 VAULT_URL      := $(call stack_url,vault)
 GRAFANA_URL    := $(call stack_url,grafana)
 INSPECTOR_URL  := $(call stack_url,otlp_inspector)
+# The bare port, for the sentence that tells somebody on **another machine** where to point:
+# the container name and its 4318 exist only inside this stack's network.
+INSPECTOR_PORT := $(lastword $(subst :, ,$(INSPECTOR_URL)))
 KAFKA_ADDR     := $(call stack_url,kafka.netloc)
 
 # The bare ports, for the two dev targets that **bind** rather than connect: `ng serve` and Django's
@@ -195,24 +198,36 @@ otlp-inspector: env ## Stand in for a SIEM: show what the forwarding leg actuall
 	@# destination's own pipeline — the eleven request spans rather than the three hundred, with
 	@# whatever credential the auth fragment put on the request.
 	@#
-	@# It only receives once the collector is pointed at it, which is two variables and a recreate:
-	@#
-	@#   AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
-	@#   AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318
-	@#
 	@# A debugging tool: in memory, capped, unauthenticated, and holding attribution — start it
 	@# while you are wiring a destination up, and `make otlp-inspector-down` when you are done.
 	$(COMPOSE_CORE) --profile debug up -d otlp-inspector
 	@echo
-	@echo "  what the second destination receives: $(INSPECTOR_URL)"
-	@# **Whether anything is actually pointed here**, rather than only where to look.
+	@# **Two addresses, and confusing them is a reported failure.**
 	@#
-	@# Starting the receiver and configuring the collector are two steps, and the second is the one
-	@# that gets forgotten — including by me, repeatedly, while restoring a stack between
-	@# experiments. The symptom is an empty page, which is also what a wrong endpoint looks like,
-	@# and what a stack with no traffic looks like. Reading the collector's own arguments answers
-	@# it in the only way that cannot be wrong.
-	@if docker inspect $${AIRA_STACK:-aira}-otel-collector 	     --format '{{range .Args}}{{println .}}{{end}}' 2>/dev/null | grep -q 'forward.yaml'; then 	  echo "  the collector IS forwarding             (--config=…/forward.yaml is merged)"; 	else 	  echo "  the collector is NOT forwarding yet — nothing will arrive until it is:"; 	  echo "      AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml"; 	  echo "      AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318"; 	  echo "    in deploy/compose/.env, then recreate the collector. The endpoint alone does"; 	  echo "    nothing — the fragment is the switch."; 	fi
+	@# Inside this stack's network the receiver is `otlp-inspector:4318` — a Docker name and the
+	@# *container's* port, both of which exist only on this machine. From anywhere else it is this
+	@# host on the **published** port, and the same port serves the page and OTLP: one address is
+	@# both the browser URL and the endpoint. Printing only the first sent somebody to configure a
+	@# collector on another machine with a name that machine cannot resolve.
+	@echo "  the page, and the OTLP endpoint, are the same address:"
+	@echo "      $(INSPECTOR_URL)          from this machine"
+	@echo "      http://<this-host>:$(INSPECTOR_PORT)     from anywhere else (needs AIRA_BIND_HOST=0.0.0.0)"
+	@echo
+	@# **Whether anything is actually pointed here**, rather than only where to look. Starting the
+	@# receiver and configuring the collector are two steps, and the second is the one that gets
+	@# forgotten. An empty page looks the same whether it was done, done wrongly, or not done — and
+	@# the collector's own arguments are the one answer that cannot be stale.
+	@if docker inspect $${AIRA_STACK:-aira}-otel-collector \
+	     --format '{{range .Args}}{{println .}}{{end}}' 2>/dev/null | grep -q 'forward.yaml'; then \
+	  echo "  the collector IS forwarding   (--config=…/forward.yaml is merged)"; \
+	else \
+	  echo "  the collector is NOT forwarding yet — nothing will arrive until it is:"; \
+	  echo "      AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml"; \
+	  echo "      AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318   (collector on THIS machine)"; \
+	  echo "      AIRA_OTEL_FORWARD_ENDPOINT=http://<host>:$(INSPECTOR_PORT)         (collector elsewhere)"; \
+	  echo "    in deploy/compose/.env, then recreate the collector. The endpoint alone does"; \
+	  echo "    nothing — the fragment is the switch."; \
+	fi
 	@echo
 
 otlp-inspector-down: ## Stop the standing-in SIEM and forget what it held

@@ -6485,6 +6485,14 @@ MUTATIONS = [
         "tools/tests/test_the_config_outranks_the_deployment.py",
     ),
     Mutation(
+        "ADDR1",
+        "the page and the OTLP endpoint are one address, so a collector elsewhere can use it",
+        "deploy/compose/docker-compose.yml",
+        '      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_INSPECTOR_PORT:-4319}:4318"',
+        '      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_INSPECTOR_PORT:-4319}:8080"',
+        "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
+    ),
+    Mutation(
         "NAME1",
         "the inspector answers to the name the rest of the stack is spelled with",
         "deploy/compose/docker-compose.yml",

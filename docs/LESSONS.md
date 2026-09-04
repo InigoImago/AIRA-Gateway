@@ -959,6 +959,20 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **An address written from inside the network is an instruction that only works where it was
+  written.** `http://otlp-inspector:4318` is a Docker name and a container port; both exist only
+  inside one stack. Every instruction this repository gave used it — the `make` output, the
+  integration guide, the config examples — and the first person to run the receiver on **another
+  machine** got a collector that could not resolve it, a process that kept running, and an empty
+  page. The published address (`<host>:4319`) is the one that works from both places, and the same
+  port serves the page and OTLP, so it is also the browser URL.
+
+  **Ask of every address you print: where is the reader standing?** A container name answers only
+  for somebody inside the network; a `localhost` only for somebody on the host. Print both, and
+  name what the second one needs — here, that Docker opens one socket per published entry, so
+  `AIRA_BIND_HOST` without `AIRA_BIND_HOST6` leaves every IPv6 caller at a machine with nothing
+  listening.
+
 - **Restoring an environment and dismantling somebody's working configuration are the same
   command.** Every round of one session ended by putting `.env` back to how it was found and
   stopping the debug receiver — correct while the owner is watching, and wrong the moment they
