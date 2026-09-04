@@ -103,6 +103,73 @@ test.describe('Authentication', () => {
     await expect(page.locator('#kc-login')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('body')).not.toContainText('invalid credentials');
   });
+
+  /**
+   * **The loop, in a real browser against real Keycloak.**
+   *
+   * Reported from use: you can authenticate perfectly well, this installation refuses the token
+   * Keycloak issues, and the page flickers through the login round trip — throwing an error each
+   * time — until the account is locked out.
+   *
+   * The condition is reproduced rather than simulated: a **real** authorization-code flow, a
+   * **real** SSO session that stays alive, and only the first-party API forced to refuse. That is
+   * what a mismatched audience or issuer, a clock too far apart (`FRD-134`) or a session this
+   * deployment no longer recognises actually looks like from the browser — Keycloak keeps saying
+   * yes, and a new token is refused exactly like the last one.
+   *
+   * Forcing the refusal at the network layer rather than by breaking the realm is deliberate:
+   * `AIRA_OIDC_AUDIENCE` or the realm's mappers are shared by every other spec and by the stack
+   * itself, and a test that mutates them leaves the deployment broken when it fails halfway. What
+   * is under test is the **console's** behaviour when the API refuses a session, and that needs no
+   * deployment to be broken.
+   *
+   * Before the fix this test does not fail — it never finishes: the count below climbs until
+   * Keycloak's brute-force limit stops it.
+   */
+  test('stops signing in again when the API refuses a session Keycloak keeps accepting', async ({
+    page,
+  }) => {
+    await login(page, USERS.useCaseAdmin);
+
+    // The thing that was happening over and over. Counted rather than timed, because "it settled
+    // down" is not a property — "it stopped after a bounded number of round trips" is.
+    let authorizations = 0;
+    page.on('request', (request) => {
+      if (request.url().includes('/protocol/openid-connect/auth')) authorizations += 1;
+    });
+
+    await page.route(/\/(api|gw)\//, (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'this installation does not accept that token' }),
+      }),
+    );
+
+    await page.goto('/use-cases');
+
+    // It stops, and says why, instead of going round.
+    await expect(page.getByTestId('login-loop')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('login-loop')).toContainText('did not help');
+    // Three attempts are allowed inside the window; the fourth is the one that stops. Anything
+    // above that is the loop this test exists to prevent, and the number is what makes the
+    // assertion about the *loop* rather than about a screen appearing eventually.
+    expect(authorizations).toBeLessThanOrEqual(4);
+
+    // And the routes are not rendered behind it: every screen there needs the token being refused,
+    // so showing them would fill the page with failures that share one cause and name none of it.
+    await expect(page.locator('.aira-use-case-list')).toHaveCount(0);
+
+    // **The way out has to end the session at Keycloak.** With the refusal lifted, a local-only
+    // logout would be signed straight back in by the SSO session — the loop with an extra step.
+    // Landing on the login form is what proves the provider session is gone.
+    await page.unroute(/\/(api|gw)\//);
+    await page.getByRole('button', { name: /sign out completely/i }).click();
+
+    await expect(page.locator('#kc-login').or(page.locator('#username')).first()).toBeVisible({
+      timeout: 30_000,
+    });
+  });
 });
 
 /** Keep the token's shape and destroy its signature — what the server sees when one expires. */

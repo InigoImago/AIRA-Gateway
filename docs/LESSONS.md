@@ -968,6 +968,13 @@ reading code.
   for a reason a new token does not change, redirect, be signed straight back in by the SSO
   session, be refused again — flickering until the account locked out.
 
+  **And test the way out, not only the way in.** The browser case written for this found the fix
+  half-built: the loop stopped correctly and the escape landed on a provider error page, because
+  every pass through the loop had cleared the `id_token` that RP-initiated logout wants as a hint —
+  so the one state the button exists for was the one state it did not work in. Neither the unit tier
+  nor the source-shape tier could see it; both stub the provider. **A guard whose escape does not
+  work is a guard that traps somebody**, and the escape runs only in the state the guard creates.
+
   **Ask where the counter lives relative to what it counts.** Counting page loads needs storage
   that outlives a page load; counting requests needs something that outlives a request. And the
   reset matters as much as the count: only a first-party call that *answered* is evidence the loop

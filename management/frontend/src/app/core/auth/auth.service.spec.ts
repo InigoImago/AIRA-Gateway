@@ -17,7 +17,12 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
     },
     hasValidAccessToken: () => true,
     initCodeFlow: (state?: string) => calls.push(`initCodeFlow:${state ?? ''}`),
-    logOut: (noRedirect?: boolean) => calls.push(`logOut:${noRedirect ?? false}`),
+    // Recorded as JSON rather than coerced to a boolean: the escape passes an **object**
+    // (`{ client_id }`), and a stub that flattened it to `logOut:[object Object]` would make the
+    // difference between the local-only logout and the provider-side one unassertable — which is
+    // the difference the loop escape turns on.
+    logOut: (options?: boolean | Record<string, string>) =>
+      calls.push(`logOut:${JSON.stringify(options ?? false)}`),
     /** Where the login was started from, handed back after the redirect. */
     state: '',
     getAccessToken: () => 'token-abc',
@@ -309,7 +314,13 @@ describe('AuthService — signing in again when signing in is not the problem', 
     // `logOut(true)` is the local-only form and is what `reauthenticate` uses. The escape needs
     // the other one: Keycloak is the half that keeps saying yes, and a local clear sends the
     // reader back to an SSO session that signs them straight in again.
-    expect(calls).toContain('logOut:false');
+    //
+    // And it carries `client_id`, because by then the loop has removed the `id_token` the provider
+    // would otherwise accept as the hint — the browser test found that one, on a Keycloak error
+    // page, while every other tier was green.
+    const escape = calls.filter((call) => call.startsWith('logOut:')).at(-1);
+    expect(escape).not.toBe('logOut:true');
+    expect(escape).toContain('client_id');
     expect(service.loginLoop()).toBeNull();
     expect(window.sessionStorage.getItem('aira.reauth-attempts')).toBeNull();
   });

@@ -6456,8 +6456,8 @@ MUTATIONS = [
         "LOOP2",
         "the way out of the loop ends the session at the provider, not only locally",
         "management/frontend/src/app/core/auth/auth.service.ts",
-        "    this.oauth.logOut();\n  }\n\n  /** How many logins have been started",
-        "    this.oauth.logOut(true);\n  }\n\n  /** How many logins have been started",
+        "    this.oauth.logOut({ client_id: authConfig.clientId ?? '' });",
+        "    this.oauth.logOut(true);",
         "tools/tests/test_the_console_cannot_loop_through_the_login.py",
     ),
     Mutation(

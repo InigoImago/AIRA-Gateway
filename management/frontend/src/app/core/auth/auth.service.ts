@@ -183,7 +183,17 @@ export class AuthService {
   signOutCompletely(): void {
     this.clearReauthAttempts();
     this.loginLoop.set(null);
-    this.oauth.logOut();
+    // **`client_id`, because by this point there is no `id_token` left to identify us with.**
+    //
+    // RP-initiated logout wants either an `id_token_hint` or a `client_id` alongside a
+    // `post_logout_redirect_uri`, and the library only sends the hint when an id token is in
+    // storage. Every pass through the loop called `logOut(true)`, which removes it — so the one
+    // state this button exists for is exactly the state where the hint is gone, and Keycloak
+    // answers `Invalid parameter: post_logout_redirect_uri` instead of ending the session.
+    //
+    // Found by the browser test rather than by reading: the loop stopped correctly and the way out
+    // led to an error page. A guard whose escape does not work is a guard that traps somebody.
+    this.oauth.logOut({ client_id: authConfig.clientId ?? '' });
   }
 
   /** How many logins have been started in the current window, this one included. */

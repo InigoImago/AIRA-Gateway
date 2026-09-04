@@ -103,6 +103,29 @@ more in `tools/tests/test_the_console_cannot_loop_through_the_login.py` assert t
 `tools/mutation_check.py` runs pytest and nothing else: a mutation reintroducing the defect would
 otherwise be reported as caught by no test the harness can run. Mutations `LOOP1` and `LOOP2`.
 
+**And one in a real browser** (`e2e/tests/auth.spec.ts`), because the two above share a premise
+they cannot check: that a fresh token really is refused the same way, and that Keycloak really does
+sign the reader straight back in. It performs the actual authorization-code flow, leaves the SSO
+session alive, and forces only the first-party API to answer `401` — which is what a mismatched
+audience or a session this deployment no longer knows looks like from the browser. Then it counts
+requests to Keycloak's authorization endpoint and requires the console to have stopped inside four.
+
+The refusal is forced at the network layer rather than by breaking the realm on purpose:
+`AIRA_OIDC_AUDIENCE` and the realm's mappers are shared by every other spec and by the stack, and a
+test that mutates them leaves the deployment broken when it fails halfway. What is under test is the
+console's behaviour when the API refuses, and that needs no deployment to be broken.
+
+**It earned its place immediately, by failing.** Run against the console bundle without the fix it
+timed out waiting for the panel — the loop, as reported. Run against the fixed bundle it got past
+that and failed on the *way out*: `signOutCompletely` landed on a Keycloak error page rather than
+ending the session. RP-initiated logout wants an `id_token_hint` **or** a `client_id` beside a
+`post_logout_redirect_uri`, the library only sends the hint when an id token is in storage, and
+every pass through the loop had called `logOut(true)`, which removes it. So the one state the button
+exists for was exactly the state where it did not work. It sends `client_id` now.
+
+A guard whose escape does not work is a guard that traps somebody, and only the browser could say
+so: both other tiers stub the provider.
+
 **What this does not do.** It does not diagnose *why* the token is refused — the console cannot see
 the server's reason, and guessing would be worse than the sentence it prints. The gateway's own
 `AIRA_MAX_AUTH_FAILURES_PER_MINUTE` (60) bounds the other side of the same event; what had no brake

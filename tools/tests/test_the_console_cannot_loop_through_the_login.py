@@ -40,6 +40,23 @@ INTERCEPTOR = (
 SHELL = ROOT / "management" / "frontend" / "src" / "app" / "app.html"
 
 
+def _code_of(source: str, signature: str) -> str:
+    """The body of one method with its comments removed.
+
+    **Prose has to be excluded, and this file is why.** The first version of the assertion below
+    read the raw slice — and the method it checks carries a paragraph explaining that it must
+    *not* use `logOut(true)`. The explanation tripped the check that the explanation is about.
+    `test_one_owner_for_the_stack_addresses.py` learned the same thing about addresses quoted in
+    comments; the rule generalises: **a check that reads source has to read the code, or the
+    reasons written beside it become findings.**
+    """
+    body = source[source.index(signature) :]
+    body = body[: body.index("\n  }")]
+    return "\n".join(
+        line for line in body.splitlines() if not line.strip().startswith(("//", "*", "/*"))
+    )
+
+
 @pytest.fixture(scope="module")
 def service() -> str:
     return SERVICE.read_text(encoding="utf-8")
@@ -67,8 +84,7 @@ def test_there_is_a_limit_and_a_window(service: str) -> None:
 def test_the_limit_is_consulted_before_the_redirect(service: str) -> None:
     """The order is the whole property. Counting after `initCodeFlow` would count nothing: the
     navigation has already happened, and the page that would read the counter is gone."""
-    body = service[service.index("reauthenticate(): void {") :]
-    body = body[: body.index("\n  }")]
+    body = _code_of(service, "reauthenticate(): void {")
 
     assert body.index("LOOP_LIMIT") < body.index("initCodeFlow"), (
         "the attempt count must be checked before the redirect, or the redirect always wins"
@@ -76,19 +92,28 @@ def test_the_limit_is_consulted_before_the_redirect(service: str) -> None:
 
 
 def test_the_way_out_ends_the_session_at_the_provider(service: str) -> None:
-    """**`logOut()`, not `logOut(true)`.**
+    """**Not `logOut(true)`, and it has to say who is asking.**
 
     The local-only form clears the tokens here and leaves the Keycloak SSO session standing — so
     the next navigation is signed straight back in, and that is the loop with an extra step.
     Keycloak is the half that keeps saying yes, and the escape has to reach it.
-    """
-    escape = service[service.index("signOutCompletely(): void {") :]
-    escape = escape[: escape.index("\n  }")]
 
-    assert "this.oauth.logOut()" in escape, (
+    And it must carry `client_id`. RP-initiated logout wants an `id_token_hint` **or** a `client_id`
+    beside a `post_logout_redirect_uri`; `angular-oauth2-oidc` only sends the hint when an id token
+    is in storage; and every pass through the loop calls `logOut(true)`, which removes it. So the
+    one state this button exists for is exactly the state with no hint — found in a real browser,
+    where the escape landed on a provider error page while every other tier was green.
+    """
+    escape = _code_of(service, "signOutCompletely(): void {")
+
+    assert "this.oauth.logOut(" in escape, (
         "a local-only logout leaves the SSO session that causes the loop"
     )
     assert "logOut(true)" not in escape
+    assert "client_id" in escape, (
+        "without an id_token_hint the provider needs client_id, and the loop has already "
+        "removed the id token by the time anybody presses this"
+    )
 
 
 def test_a_call_that_answers_clears_the_count() -> None:

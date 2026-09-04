@@ -56,6 +56,38 @@ six more in Python, because `mutation_check.py` runs pytest and nothing else: a 
 reintroducing the defect would otherwise be *caught by no test the harness can run*. Mutations
 `LOOP1` and `LOOP2`; **729** properties.
 
+### And then the browser test found the fix was half-built
+
+Asked for the case in a real browser. It does the actual code flow, leaves the SSO session alive,
+forces only the first-party API to `401`, and counts requests to Keycloak's authorization endpoint —
+requiring the console to have stopped inside four. The refusal is forced at the network layer rather
+than by breaking the realm: the audience and the mappers are shared by every other spec and by the
+stack itself, and a test that mutates them leaves the deployment broken when it fails halfway.
+
+Two runs, two findings.
+
+**The first failed against the running console** — and the console was the point: the container held
+a bundle built four hours before the fix. An e2e test of a console change says nothing until the
+image is rebuilt, which is obvious in retrospect and was not while reading a red assertion.
+
+**The second failed on the way out.** The loop stopped correctly and `signOutCompletely` landed on a
+Keycloak error page. RP-initiated logout wants an `id_token_hint` **or** a `client_id` beside a
+`post_logout_redirect_uri`; the library only sends the hint when an id token is in storage; and
+every pass through the loop had called `logOut(true)`, which removes it. **The one state the button
+exists for was exactly the state where it did not work.** It sends `client_id` now.
+
+A guard whose escape does not work is a guard that traps somebody — and neither the unit tier nor
+the Python tier could have said so, because both stub the provider. Browser suite: 162 passed, 1
+skipped.
+
+The fix then broke both of those tiers, which is them working: the Python guard read the raw method
+body and tripped over the paragraph explaining that it must *not* use `logOut(true)` — a check that
+reads source has to read the **code**, or the reasons written beside it become findings, which
+`test_one_owner_for_the_stack_addresses.py` learned about addresses in comments. And the Vitest stub
+recorded `logOut` as a boolean, so an object argument flattened to `[object Object]` and made the
+difference between the two logouts unassertable. Both now assert the property rather than the
+spelling.
+
 ---
 
 ## The matrix, but through `make showcase` and the config files (2026-09-04)
