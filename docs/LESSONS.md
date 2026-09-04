@@ -959,6 +959,21 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A guard that lives in the thing being destroyed is not a guard.** The console had a flag so
+  that five panels each getting a `401` would not start five logins — correct, and held in a
+  service whose very next act is a full-page navigation to Keycloak that destroys it. Its own
+  comment said so: *"the flag is never cleared, because the only thing that follows is a full-page
+  navigation."* So it prevented the loop within one page and was structurally blind to the loop
+  across pages, which is the one somebody actually met: authenticate fine, get refused by the API
+  for a reason a new token does not change, redirect, be signed straight back in by the SSO
+  session, be refused again — flickering until the account locked out.
+
+  **Ask where the counter lives relative to what it counts.** Counting page loads needs storage
+  that outlives a page load; counting requests needs something that outlives a request. And the
+  reset matters as much as the count: only a first-party call that *answered* is evidence the loop
+  is over, because everything the client can check about itself — a token that parses, an expiry
+  in the future — was just as true on every pass.
+
 - **Two things that share a receiver are not thereby one stream, and a shared *name* is how they
   get merged by accident.** A second destination for API and model accesses was built as an overlay
   on the observability pipelines: it redefined the shared `batch` processor, so a variable called

@@ -45,6 +45,15 @@ export class App implements OnInit {
   protected readonly startupError = this.auth.startupError;
 
   /**
+   * Why signing in again stopped being worth trying, or `null` when it is.
+   *
+   * The identity provider is accepting the reader and this installation is refusing the token it
+   * issues — so the console had been redirecting to Keycloak, being sent straight back with a
+   * fresh token, being refused again, and going round. See `AuthService.reauthenticate`.
+   */
+  protected readonly loginLoop = this.auth.loginLoop;
+
+  /**
    * Why the console could not load your account, or `null` when it could.
    *
    * `/me` had no error branch, and everything role-shaped in the shell is derived from it: the
@@ -164,5 +173,15 @@ export class App implements OnInit {
 
   protected logout(): void {
     this.auth.logout();
+  }
+
+  /**
+   * Leave properly — the only way out of a login loop.
+   *
+   * Keycloak is the half that keeps saying yes, so clearing tokens here would send the reader back
+   * to an SSO session that signs them straight in again. This ends the session at the provider.
+   */
+  protected signOutCompletely(): void {
+    this.auth.signOutCompletely();
   }
 }

@@ -31,6 +31,7 @@ function configure(authenticated: boolean, roles: string[] = []): void {
           // The shell reads this to decide whether to render the routes at all. A stub without
           // it is a stub of a different service — the trap `Live`'s teardown case recorded.
           startupError: signal<string | null>(null),
+          loginLoop: signal<string | null>(null),
           logout: () => {
             loggedOut = true;
           },
@@ -158,6 +159,7 @@ describe('App when the identity provider cannot be reached', () => {
           useValue: {
             isAuthenticated: () => false,
             startupError: signal<string | null>(issuer),
+            loginLoop: signal<string | null>(null),
             logout: () => {},
           },
         },
@@ -222,6 +224,7 @@ describe('App when the console cannot find out who you are', () => {
           useValue: {
             isAuthenticated: () => true,
             startupError: signal<string | null>(null),
+            loginLoop: signal<string | null>(null),
             logout: () => {
               loggedOut = true;
             },

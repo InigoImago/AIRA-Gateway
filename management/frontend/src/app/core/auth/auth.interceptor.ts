@@ -1,6 +1,6 @@
-import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
+import { HttpErrorResponse, HttpInterceptorFn, HttpResponse } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { catchError, throwError } from 'rxjs';
+import { catchError, tap, throwError } from 'rxjs';
 import { AIRA_PREFIXES } from '../api/prefixes';
 import { AuthService } from './auth.service';
 
@@ -29,6 +29,14 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   }
 
   return next(req).pipe(
+    // A first-party call that answered is the end of any login loop that was running — and the
+    // only evidence worth trusting for it. Everything the console can check about *itself* was
+    // just as true on every pass through the loop (`AuthService.reauthenticate`).
+    tap((event) => {
+      if (event instanceof HttpResponse) {
+        auth.noteFirstPartySuccess();
+      }
+    }),
     catchError((error: unknown) => {
       // A 401 on a first-party call means one thing: this session is over. The token expired
       // while the tab sat open, or Keycloak was restarted and the session went with it.

@@ -5,6 +5,59 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Signing in again, until the account locks out (2026-09-04)
+
+Reported from use: *you can authenticate against Keycloak, but with leftovers of old sessions
+around, the page signs in over and over, throws errors and refreshes until the login limit is
+reached.* Two of those words are the diagnosis — **over and over**.
+
+`authInterceptor` treats every `401` on a first-party call as *this session is over* and redirects
+to the login. Keycloak still holds a valid SSO session, so it answers without asking anybody
+anything and redirects straight back; the console exchanges the code, calls the API, is refused for
+the same reason, and goes round at page-navigation speed. Nothing in that chain is wrong on its own.
+What was missing is that **a login cannot fix a refusal that is not about the login** — a mismatched
+audience or issuer, a clock too far apart (`FRD-134`), a session this deployment no longer knows.
+
+### The guard that could not see it
+
+`reauthenticate` already had a `reauthenticating` flag, so five panels each getting a `401` would
+not start five logins. Real guard, real case — and it lives *in the service*, while the thing it
+would have to survive is a full-page navigation that destroys the service. Its own comment said so:
+*"the flag is never cleared, because the only thing that follows is a full-page navigation to
+Keycloak."* Correct about the case it was written for, structurally blind to the one that hurts.
+
+Attempts are counted in `sessionStorage` now — outside the object, because that is what survives the
+redirect — and past three within two minutes the console stops and says so. Three, because one is an
+ordinary expiry, two is that plus a race between panels, and a third inside two minutes is the same
+refusal coming back. Keycloak's brute-force default trips at thirty; this is meant to be reached
+long before an account is locked.
+
+The counter is cleared by the first first-party call that **answers**, which is the only evidence
+worth trusting: everything the console can check about itself was just as true on every pass.
+
+### And the way out has to reach Keycloak
+
+`oauth.logOut()` rather than `logOut(true)`. The local-only form clears the tokens here and leaves
+the SSO session standing, so the next navigation signs the reader straight back in — the loop with
+an extra step. There are no server-side sessions to clear: checked, `aira_mgmt` has no
+`django_session` table, so the "leftovers in the database and cache" are the browser's token store
+and Keycloak's own session, and the escape reaches both.
+
+### Two consequences of the fix, both mine
+
+The existing `auth.service.spec.ts` began failing: its tests share one `sessionStorage`, so the
+third one to sign in again tripped the new breaker. That is the counter working — it is supposed to
+outlive things — and the spec now clears it between tests, with the reason written where the next
+reader will meet it. And three `AuthService` stubs in `app.spec.ts` needed the new signal, because
+the shell renders it.
+
+Six Vitest cases across freshly built services — the closest a test gets to four page loads — and
+six more in Python, because `mutation_check.py` runs pytest and nothing else: a mutation
+reintroducing the defect would otherwise be *caught by no test the harness can run*. Mutations
+`LOOP1` and `LOOP2`; **729** properties.
+
+---
+
 ## The matrix, but through `make showcase` and the config files (2026-09-04)
 
 Asked whether the combinations had also been tried through `make showcase` and the showcase

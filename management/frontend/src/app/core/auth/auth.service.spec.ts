@@ -47,6 +47,12 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
   return { service: TestBed.inject(AuthService), calls, fire: (event: OAuthEvent) => emit(event) };
 }
 
+// **The login counter lives in `sessionStorage`**, which is shared by every test in this file —
+// that is the whole point of it (`AuthService.reauthenticate`: it has to survive a full-page
+// navigation, so it cannot live in the service). Without this, the third test to sign in again
+// trips the loop breaker and the ones after it fail for a reason that has nothing to do with them.
+beforeEach(() => window.sessionStorage.clear());
+
 describe('AuthService', () => {
   it('configures the client and picks up an existing session on init', async () => {
     const { service, calls } = setup();
@@ -240,5 +246,99 @@ describe('AuthService — a console that does not know its issuer', () => {
 
     expect(calls).toEqual([]);
     expect(service.startupError()).toContain('no identity provider is configured');
+  });
+});
+
+/**
+ * The loop the guard above could not see.
+ *
+ * `reauthenticating` prevents five panels starting five logins **in one page**. It cannot prevent
+ * the same refusal coming back **after** the redirect, because the redirect destroys the object
+ * holding it — and that is the loop somebody actually meets: Keycloak still has a valid SSO
+ * session, answers the authorization request without asking anything, and sends a fresh token that
+ * is refused for the same reason as the last one. Reported from use: the page flickers through the
+ * round trip as fast as the browser can navigate, until the account is locked out.
+ */
+describe('AuthService — signing in again when signing in is not the problem', () => {
+  /** A fresh service each time, which is what a full-page navigation actually produces. */
+  const afterRedirect = () => setup();
+
+  it('redirects while there is reason to think a login would help', () => {
+    const first = afterRedirect();
+    first.service.reauthenticate();
+
+    expect(first.calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
+    expect(first.service.loginLoop()).toBeNull();
+  });
+
+  it('stops redirecting once signing in again has demonstrably not helped', () => {
+    // Three round trips, each a new page and therefore a new service — the in-memory guard is
+    // `false` every time, which is precisely why it never saw this.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      afterRedirect().service.reauthenticate();
+    }
+
+    const fourth = afterRedirect();
+    fourth.service.reauthenticate();
+
+    expect(fourth.calls.some((c) => c.startsWith('initCodeFlow'))).toBe(false);
+    expect(fourth.service.loginLoop()).toContain('did not help');
+    expect(fourth.service.authenticated()).toBe(false);
+  });
+
+  it('a first-party call that answers ends it', () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      afterRedirect().service.reauthenticate();
+    }
+
+    // The only evidence worth trusting: everything the console can check about itself was just as
+    // true on every pass through the loop.
+    afterRedirect().service.noteFirstPartySuccess();
+
+    const next = afterRedirect();
+    next.service.reauthenticate();
+    expect(next.calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
+    expect(next.service.loginLoop()).toBeNull();
+  });
+
+  it('signing out completely ends the session at the provider, not only here', () => {
+    const { service, calls } = afterRedirect();
+    service.reauthenticate();
+    service.signOutCompletely();
+
+    // `logOut(true)` is the local-only form and is what `reauthenticate` uses. The escape needs
+    // the other one: Keycloak is the half that keeps saying yes, and a local clear sends the
+    // reader back to an SSO session that signs them straight in again.
+    expect(calls).toContain('logOut:false');
+    expect(service.loginLoop()).toBeNull();
+    expect(window.sessionStorage.getItem('aira.reauth-attempts')).toBeNull();
+  });
+
+  it('counts a window rather than a lifetime', () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      afterRedirect().service.reauthenticate();
+    }
+    // Two minutes later this is a new session ending, not the same one repeating.
+    const stale = JSON.parse(window.sessionStorage.getItem('aira.reauth-attempts') ?? '{}');
+    window.sessionStorage.setItem(
+      'aira.reauth-attempts',
+      JSON.stringify({ ...stale, first: Date.now() - 3 * 60 * 1000 }),
+    );
+
+    const later = afterRedirect();
+    later.service.reauthenticate();
+    expect(later.calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
+  });
+
+  it('survives storage it cannot read', () => {
+    window.sessionStorage.setItem('aira.reauth-attempts', 'not json');
+
+    const { service, calls } = afterRedirect();
+    service.reauthenticate();
+
+    // Errs towards letting a login happen: the failure this guard prevents is a storm, not one
+    // redirect, and a console that refused to sign anybody in because of a stray string would be
+    // a worse bug than the one being fixed.
+    expect(calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
   });
 });

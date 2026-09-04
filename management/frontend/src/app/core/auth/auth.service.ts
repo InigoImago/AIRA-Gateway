@@ -2,6 +2,25 @@ import { Injectable, inject, signal } from '@angular/core';
 import { OAuthService } from 'angular-oauth2-oidc';
 import { authConfig } from './auth.config';
 
+/**
+ * Where the login attempts are counted. `sessionStorage` and not a field, because the thing being
+ * counted is a **full-page navigation to Keycloak and back** — which destroys every field this
+ * application has. Per tab, and gone when the tab closes, which is the right lifetime for
+ * "am I going round in circles right now".
+ */
+const LOOP_KEY = 'aira.reauth-attempts';
+
+/**
+ * How many logins may be started in {@link LOOP_WINDOW_MS} before the console stops trying.
+ *
+ * Three, because one is an ordinary expiry, two is that plus a race between panels, and a third
+ * inside two minutes is not a session ending — it is the same refusal coming back. Keycloak's own
+ * brute-force default trips at thirty, and the point of this number is to be reached long before
+ * an account is locked.
+ */
+const LOOP_LIMIT = 3;
+const LOOP_WINDOW_MS = 2 * 60 * 1000;
+
 /** Facade over angular-oauth2-oidc so components/guards depend on a small surface. */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
@@ -25,6 +44,15 @@ export class AuthService {
   readonly startupError = signal<string | null>(null);
   /** Set once a re-login has been started, so concurrent 401s do not each start their own. */
   private reauthenticating = false;
+
+  /**
+   * Set when signing in again has demonstrably stopped helping — see {@link reauthenticate}.
+   *
+   * Rendered instead of the routes, like {@link startupError}: every screen behind it needs a
+   * token the API is refusing, so showing them would fill the page with failures that have one
+   * cause and name none of it.
+   */
+  readonly loginLoop = signal<string | null>(null);
 
   async init(): Promise<void> {
     if (!authConfig.issuer) {
@@ -88,19 +116,119 @@ export class AuthService {
   /**
    * The session is over — send them to the login rather than to an error message.
    *
-   * Guarded, because a screen makes several requests at once: five panels each getting a 401
-   * would otherwise start five logins, and the last one wins the `state` while the others leave
-   * stale entries behind. The flag is never cleared, because the only thing that follows is a
-   * full-page navigation to Keycloak.
+   * Guarded twice, against two different loops, and the second guard is the one that matters.
+   *
+   * **Within one page**, five panels each getting a 401 would otherwise start five logins, and the
+   * last one wins the `state` while the others leave stale entries behind. `reauthenticating` is
+   * that guard, and it is never cleared because the only thing that follows is a full-page
+   * navigation to Keycloak.
+   *
+   * **Across pages**, that flag is worse than useless: the navigation it describes destroys the
+   * service holding it, so on the way back it is `false` again. And there is a real case where the
+   * way back leads straight here — the API refusing a token for a reason a **fresh token does not
+   * change**. Keycloak still has a valid SSO session, so it answers the authorization request
+   * without asking anybody anything and redirects back at once; the console exchanges the code,
+   * calls the API, is refused again, and redirects again. Reported from use: the page flickers
+   * through the round trip as fast as the browser can navigate, throwing an error each time, until
+   * Keycloak's brute-force limit locks the account out.
+   *
+   * A login cannot fix a refusal that is not about the login. So the attempts are counted in
+   * `sessionStorage` — which survives the redirect precisely because it is not in this object —
+   * and past {@link LOOP_LIMIT} within {@link LOOP_WINDOW_MS} this stops and says so instead.
+   * The counter is cleared by the first first-party call that succeeds, which is the only honest
+   * evidence that the loop is over.
    */
   reauthenticate(): void {
     if (this.reauthenticating) return;
+
+    const attempts = this.recordReauthAttempt();
+    if (attempts > LOOP_LIMIT) {
+      // Deliberately not another redirect, and deliberately not a silent stop: a console that
+      // simply gave up would look like the one that was flickering, minus the explanation.
+      this.authenticated.set(false);
+      this.loginLoop.set(
+        `signing in again did not help ${attempts - 1} times in a row. The identity provider is ` +
+          'accepting you and this installation is refusing the token it issues, so another login ' +
+          'would be the same round trip.',
+      );
+      return;
+    }
+
     this.reauthenticating = true;
     this.authenticated.set(false);
     // Drop the dead token first: without this the guard on the way back can still see a stored
     // one and the login round-trips for nothing.
     this.oauth.logOut(true);
     this.oauth.initCodeFlow(this.currentPath());
+  }
+
+  /**
+   * A first-party call answered — so whatever the last refusal was, it is over.
+   *
+   * The one signal worth trusting. Anything the console could check about *itself* — a token that
+   * parses, an expiry in the future — is exactly what was true on every pass through the loop.
+   */
+  noteFirstPartySuccess(): void {
+    this.clearReauthAttempts();
+  }
+
+  /**
+   * Leave properly: end the session at the identity provider, not just here.
+   *
+   * The escape from the loop above, and the only one that works. Keycloak is the half that keeps
+   * saying yes — clearing tokens locally sends the reader back to an SSO session that signs them
+   * straight in again, which is the loop with an extra step. `logOut()` without an argument is the
+   * RP-initiated logout, which ends the session at the provider.
+   */
+  signOutCompletely(): void {
+    this.clearReauthAttempts();
+    this.loginLoop.set(null);
+    this.oauth.logOut();
+  }
+
+  /** How many logins have been started in the current window, this one included. */
+  private recordReauthAttempt(): number {
+    const now = Date.now();
+    const previous = this.readReauthAttempts();
+    const within = previous !== null && now - previous.first < LOOP_WINDOW_MS;
+    const record = within
+      ? { count: previous.count + 1, first: previous.first }
+      : { count: 1, first: now };
+    try {
+      window.sessionStorage?.setItem(LOOP_KEY, JSON.stringify(record));
+    } catch {
+      // Storage can be unavailable — a private window, a policy. The loop guard is then only as
+      // good as the in-memory one, which is the behaviour this replaced rather than a regression.
+    }
+    return record.count;
+  }
+
+  private readReauthAttempts(): { count: number; first: number } | null {
+    try {
+      const raw = window.sessionStorage?.getItem(LOOP_KEY);
+      if (!raw) return null;
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        typeof (parsed as { count?: unknown }).count === 'number' &&
+        typeof (parsed as { first?: unknown }).first === 'number'
+      ) {
+        return parsed as { count: number; first: number };
+      }
+    } catch {
+      // Unreadable or not ours. Treated as no attempts, which errs towards letting a login
+      // happen — the failure this guard prevents is a storm, not a single redirect.
+    }
+    return null;
+  }
+
+  private clearReauthAttempts(): void {
+    try {
+      window.sessionStorage?.removeItem(LOOP_KEY);
+    } catch {
+      // See above.
+    }
   }
 
   /**

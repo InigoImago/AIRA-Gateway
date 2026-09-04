@@ -6445,6 +6445,22 @@ MUTATIONS = [
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
     ),
     Mutation(
+        "LOOP1",
+        "the console stops signing in again when signing in is not the problem",
+        "management/frontend/src/app/core/auth/auth.service.ts",
+        "    if (attempts > LOOP_LIMIT) {",
+        "    if (false) {",
+        "tools/tests/test_the_console_cannot_loop_through_the_login.py",
+    ),
+    Mutation(
+        "LOOP2",
+        "the way out of the loop ends the session at the provider, not only locally",
+        "management/frontend/src/app/core/auth/auth.service.ts",
+        "    this.oauth.logOut();\n  }\n\n  /** How many logins have been started",
+        "    this.oauth.logOut(true);\n  }\n\n  /** How many logins have been started",
+        "tools/tests/test_the_console_cannot_loop_through_the_login.py",
+    ),
+    Mutation(
         "RENDER1",
         "a variable appended to a rendered .env is reported, not silently carried",
         "tools/config_render.py",

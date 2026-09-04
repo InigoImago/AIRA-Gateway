@@ -137,7 +137,31 @@
     It names the issuer, because a *misdirected* console fails identically to an unreachable one
     and the two need different people to fix them.
   -->
-  @if (startupError(); as issuer) {
+  <!--
+    Signing in again stopped helping (`AuthService.reauthenticate`).
+
+    Instead of the routes, for the same reason as `startupError` below: every screen behind this
+    needs a token the API is refusing, so they would fill the page with failures that share one
+    cause and name none of it.
+
+    The button ends the session **at Keycloak**, which is the only exit. Keycloak is the half that
+    keeps saying yes — clearing tokens here sends the reader back to an SSO session that signs them
+    straight in again, which is the loop with an extra step.
+  -->
+  @if (loginLoop(); as reason) {
+    <section class="panel" data-testid="login-loop">
+      <h2>Signing you in is not the problem</h2>
+      <p>AIRA stopped redirecting you to the login, because {{ reason }}</p>
+      <p class="muted">
+        This usually means the token is refused for a reason a new one does not change — a
+        mismatched audience or issuer, a clock too far apart, or a session this installation no
+        longer recognises. Signing out completely ends the session at the identity provider as well,
+        which is what lets the next sign-in start from nothing. If it comes back, the address and
+        realm the console was given are the first thing to check with whoever runs the deployment.
+      </p>
+      <button type="button" class="btn" (click)="signOutCompletely()">Sign out completely</button>
+    </section>
+  } @else if (startupError(); as issuer) {
     <section class="panel" data-testid="startup-error">
       <h2>The console cannot sign you in</h2>
       <p>
