@@ -42,6 +42,7 @@ from aira_gateway.core.canonical import (
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.state import pricing_of, sessionmaker_of, suspensions_of
+from aira_gateway.telemetry import model_call_span
 from aira_gateway.upstreams.base import DialectUnsupported, ProviderRegistry, UpstreamError
 
 #: A check must be quick enough that somebody presses the button and waits for it.
@@ -727,9 +728,10 @@ async def _accepts(
         addressing={"regions": [region]} if region else {},
     )
     try:
-        answer = await asyncio.wait_for(
-            upstream.generate(probe), timeout=MODEL_CHECK_TIMEOUT_SECONDS
-        )
+        with model_call_span(model, purpose="probe"):
+            answer = await asyncio.wait_for(
+                upstream.generate(probe), timeout=MODEL_CHECK_TIMEOUT_SECONDS
+            )
     except TimeoutError:
         return {
             "accepted": False,

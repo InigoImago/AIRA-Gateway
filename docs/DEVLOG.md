@@ -5,6 +5,64 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The model access was in the feed, and it was anonymous (2026-09-04)
+
+*"I have just looked at the raw data of the partial interface — where in it are the model accesses,
+and generally the description and metadata about who accessed what, when?"*
+
+Both halves of that question had an answer and they were not the same answer.
+
+**Measured, from the live feed, 40 raw batches:**
+
+| | scope | attributes |
+| --- | --- | --- |
+| API access | `…instrumentation.fastapi` | **29**, including subject, use case, credential, model, surface, outcome, tokens, cost |
+| model access | `…instrumentation.httpx` | **3** — `http.method`, `http.status_code`, `http.url` |
+
+The model accesses were there — the forwarding filter keeps them on purpose, and
+`collector-nobackend.yaml` promises *"one per API call and per model call"*. What they said was:
+*somebody POSTed to a host and got a 200.* The URL did not even name the model: an
+OpenAI-compatible upstream carries it in the request body.
+
+**Why nobody had noticed.** The two spans share a trace, so a tracing backend joins them by
+`parentSpanId` and shows every one of those 29 attributes one click above the model call. Nothing
+was missing from the *trace*. A SIEM does not join; it filters by field. `LESSONS.md` §1 from a new
+angle: **a guarantee that holds on one consumer and not another was stated without its consumer.**
+It also took the raw view to see it — the tabular rendering this UI had a week ago would have shown
+three tidy columns and looked complete.
+
+**The fix** (`FRD-619`): the caller's identity is carried in a context variable, set by
+`set_attribution` — the one place that already owns *who is calling* — and stamped onto the client
+span by the httpx hook, together with the model and a declared purpose (`serve` · `pipeline` ·
+`embed` · `probe`). A second variable, set only around an actual model call, is what keeps a JWKS
+refresh or a Vault read out of it: outside a marked block nothing is stamped. That is not tidiness
+— a housekeeping call labelled with a subject is a record a SIEM would count as a model access.
+
+Marked **per attempt**, so a fallback chain that tried three models leaves three records naming
+three models; in an incident the interesting one is the attempt that failed. Streams are wrapped
+rather than enclosed, because a streaming upstream issues its request on the first `__anext__` and
+not when the iterator is built.
+
+**Seven call sites, and they could not be made one** — dispatch needs it per attempt, a stream
+around the iteration, a classifier has another purpose, and the adapters know the model but never
+the reason. So `test_every_model_call_says_what_it_is.py` fails on an eighth that is unmarked, and
+`MC1`–`MC8` were each verified to be caught. `MC5` — *the identity is carried from the one place
+that knows it* — **survived** its first aim, because the test called the carrier directly and would
+have passed with the feeding line deleted; re-aimed at a real request through the app.
+
+**Before / after, same endpoint, live:**
+
+```
+before   http.method=POST  http.status_code=200  http.url=http://ollama:11434/v1/chat/completions
+after    + aira.subject=admin  aira.use_case=personalwesen  aira.credential=888a5742
+           aira.auth_method=api_key  aira.model=qwen3:0.6b  aira.model_call.purpose=serve
+```
+
+Content is unchanged and stays out: `FRD-615`'s *names, never arguments* is what makes five
+identifiers the right amount to add.
+
+---
+
 ## The receiver was on another machine, and every instruction assumed one (2026-09-04)
 
 *"otel-collector as the full receiver, otlp-inspector as the partial one, build `.env`, `make

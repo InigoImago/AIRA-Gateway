@@ -32,6 +32,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from aira_common.observability import model_call_attributes
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import create_all
@@ -156,4 +157,48 @@ def test_only_one_place_attributes_a_request() -> None:
         f"{strays} assign `request.state.attribution` directly, so the request is attributed for "
         "the audit row and not for the trace. Call `auth.attribution.attribute(request, …)`, "
         "which does both — that split is what left three of four surfaces off the dashboard."
+    )
+
+
+async def test_the_caller_reaches_the_model_call_as_well(
+    served: tuple[httpx.AsyncClient, InMemorySpanExporter, Any],
+) -> None:
+    """`FRD-619`. The same four facts, on the span of the **upstream call**.
+
+    Everything above asserts the *request* span, which is the record of an API access. The delivery
+    channel forwards a second record per request — the model access — and until this it arrived
+    with a method, a status and a URL: anonymous, and on an OpenAI-compatible upstream not even
+    naming the model. A tracing backend joins the two by `parentSpanId`; a SIEM filters flat events
+    and cannot.
+
+    Asked from inside the provider, which is where the httpx hook reads the mark, and driven
+    through a real request so that what is under test is the **wiring** — that `set_attribution`,
+    the one place that knows who is calling, hands the identity on. Asserting it by calling
+    `attribute_model_calls_to` directly would pass with that line deleted.
+    """
+    client, _exporter, _provider = served
+    seen: list[dict[str, Any]] = []
+    upstream = client._transport.app.state.providers.each()[0]  # type: ignore[attr-defined]
+    original = upstream.generate
+
+    async def recording(request: Any) -> Any:
+        seen.append(dict(model_call_attributes() or ()))
+        return await original(request)
+
+    upstream.generate = recording  # type: ignore[method-assign]
+    try:
+        response = await client.post(
+            f"/v1beta/models/{MODEL}:generateContent",
+            json={"contents": [{"role": "user", "parts": [{"text": "hallo"}]}]},
+        )
+    finally:
+        upstream.generate = original  # type: ignore[method-assign]
+
+    assert response.status_code == 200, response.text
+    assert seen, "the provider was never reached"
+    assert seen[0].get("aira.model") == MODEL
+    assert seen[0].get("aira.model_call.purpose") == "serve"
+    assert all(name in seen[0] for name in ATTRIBUTED), (
+        f"the model call was made anonymously: {sorted(seen[0])} — `set_attribution` is the one "
+        "place that knows who is calling, and it has to hand that on (FRD-619)"
     )

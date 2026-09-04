@@ -27,6 +27,7 @@ from typing import Any
 
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
 from aira_gateway.residency import RegionNotAllowed
+from aira_gateway.telemetry import model_call_span
 from aira_gateway.upstreams.base import AmbiguousModel, ProviderRegistry, UpstreamError
 
 #: Given a model name, why it may not serve this request — or ``None`` if it may.
@@ -128,7 +129,10 @@ async def dispatch_with_fallback(
             update: dict[str, Any] = {"model": model}
             if routing_of is not None:
                 update["addressing"] = routing.addressing
-            response = await provider.generate(request.model_copy(update=update))
+            # Per attempt, so a chain that tries three models leaves three model-access records
+            # naming three models (`FRD-619`).
+            with model_call_span(model, purpose="serve"):
+                response = await provider.generate(request.model_copy(update=update))
         except UpstreamError as exc:
             last_error = exc
         except (AmbiguousModel, RegionNotAllowed) as exc:

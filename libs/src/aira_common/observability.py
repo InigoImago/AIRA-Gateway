@@ -14,6 +14,7 @@ import json
 import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -33,7 +34,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 from opentelemetry.trace import Status, StatusCode
-from opentelemetry.util.types import Attributes
+from opentelemetry.util.types import Attributes, AttributeValue
 
 KafkaHeaders = list[tuple[str, bytes]]
 
@@ -560,6 +561,96 @@ def set_span_attributes(attributes: Mapping[str, object]) -> None:
     for key, value in attributes.items():
         if isinstance(value, str | int | float | bool):
             span.set_attribute(key, value)
+
+
+# ---------------------------------------------------------------------------
+# Who a **model call** was made for (`FRD-619`)
+# ---------------------------------------------------------------------------
+#
+# The gateway's outgoing calls are traced by `opentelemetry-instrumentation-httpx`, which knows
+# what any HTTP client library knows: a method, a URL, a status. Measured on 2026-09-04 against a
+# live delivery feed, an upstream model call carried exactly three attributes —
+#
+#     http.method=POST  http.status_code=200  http.url=http://ollama:11434/v1/chat/completions
+#
+# — while the request span above it carried twenty-nine, including every fact anybody asks a model
+# access about: `aira.subject`, `aira.use_case`, `aira.credential`, `aira.model`. The two are the
+# same trace, so a **tracing** backend joins them by `parentSpanId` and shows one picture.
+#
+# A SIEM is not a tracing backend. It ingests flat events and correlates by field, and the delivery
+# channel (`FRD-618`) exists to feed exactly that: `collector-forward.yaml` keeps the child spans
+# that have a URL precisely so that *"one record per API call and per model call"* holds. The
+# record was there and it did not say who made it, which model it went to, or on whose behalf —
+# and the join that answers those is a join a flat consumer cannot perform.
+#
+# So the identifying half of a request is carried here, in a context variable, and stamped onto the
+# client span by the gateway's httpx hook. Two variables rather than one, because they have
+# different lifetimes and different truth:
+#
+#   * `_caller` is set once, when the request is attributed, and holds for everything that follows.
+#   * `_model_call` is set only around an actual upstream model call, and is what tells the hook
+#     that *this* outgoing request is a model access rather than a JWKS refresh or a Vault read.
+#
+# The consequence of that split is the property worth having: a call the gateway makes for its own
+# reasons keeps the three HTTP attributes it had and gains nothing, so no span outside a model call
+# is labelled with a caller who did not cause it.
+_caller: ContextVar[tuple[tuple[str, AttributeValue], ...]] = ContextVar(
+    "aira_model_call_caller", default=()
+)
+_model_call: ContextVar[tuple[tuple[str, AttributeValue], ...] | None] = ContextVar(
+    "aira_model_call", default=None
+)
+
+
+def _primitives(attributes: Mapping[str, object]) -> tuple[tuple[str, AttributeValue], ...]:
+    """The same filter `set_span_attributes` applies: primitives only, no ``None``."""
+    return tuple(
+        (key, value)
+        for key, value in attributes.items()
+        if isinstance(value, str | int | float | bool)
+    )
+
+
+def attribute_model_calls_to(attributes: Mapping[str, object]) -> None:
+    """Remember who this request is for, so a model call it makes can say so.
+
+    Called from **one** place — `gateway.auth.attribution.set_attribution`, the function that
+    already owns *"a fact about who is calling reaches the span"* and is already guarded by
+    `test_every_attribution_reaches_the_span.py`. That is deliberate: the same fact recorded at a
+    second site is the fact that differs at one of them (`LESSONS.md` §1).
+
+    Not reset afterwards. The context variable is per-task and a request is a task, so the value
+    dies with the request that set it; a `reset` would need a token threaded through the middleware
+    to buy nothing.
+    """
+    _caller.set(_primitives(attributes))
+
+
+@contextmanager
+def model_call(attributes: Mapping[str, object]) -> Iterator[None]:
+    """Mark the block that talks to a model, and say which model.
+
+    Everything inside gets the caller's identity plus ``attributes`` stamped onto its client span.
+    Entered per **attempt**, not per request: a fallback chain that tries three models must produce
+    three records naming three models, and the model that answered is not the model that timed out.
+
+    Nested calls replace rather than merge — a classifier call made *inside* a serving request is
+    its own model access with its own model, and reporting the outer model on it would be a lie in
+    the one field a reader trusts.
+    """
+    token = _model_call.set(_primitives(attributes))
+    try:
+        yield
+    finally:
+        _model_call.reset(token)
+
+
+def model_call_attributes() -> tuple[tuple[str, AttributeValue], ...] | None:
+    """What to stamp on the current outgoing span, or ``None`` if it is not a model call."""
+    call = _model_call.get()
+    if call is None:
+        return None
+    return (*_caller.get(), *call)
 
 
 # Query parameters that may carry a credential (the Gemini wire protocol passes API keys as

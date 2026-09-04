@@ -18,7 +18,7 @@ this layer needing a server. `LESSONS.md` §7 — the test has to make the data 
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import httpx
@@ -31,8 +31,10 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from sqlalchemy import text
 
 import aira_gateway.app as app_module
+from aira_common.observability import attribute_model_calls_to
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
+from aira_gateway.telemetry import model_call_chunks, model_call_span
 
 #: Shaped like the credential `upstreams/gemini.py` puts in `?key=` on every Google AI Studio
 #: call. A literal rather than a fixture, so a failure prints the thing that leaked.
@@ -191,3 +193,131 @@ async def test_a_database_read_appears_as_a_span_carrying_no_bound_value(
     assert not any(secret in str(statement) for statement in statements), (
         f"a bound value reached a span attribute: {statements}"
     )
+
+
+# ═══ who the call was for ════════════════════════════════════════════════════════════════════════
+#
+# `FRD-619`. The three assertions below are the three halves of one property, and each of them was
+# false in a live delivery feed on 2026-09-04 — measured, not imagined: the model-access record the
+# second destination receives carried `http.method`, `http.status_code` and `http.url`, and nothing
+# else. In a tracing backend that is fine, because the request span above it carries twenty-nine
+# attributes and the backend joins them by `parentSpanId`. A SIEM does not join; it filters. So the
+# record has to be able to answer *who*, *what* and *why* on its own.
+
+
+async def test_a_model_call_says_who_it_was_for(
+    traced: tuple[FastAPI, InMemorySpanExporter],
+) -> None:
+    """The identity is the caller's, and it comes from where the caller was identified."""
+    _app, exporter = traced
+    attribute_model_calls_to(
+        {
+            "aira.subject": "ucadmin",
+            "aira.use_case": "kundenservice",
+            "aira.credential": "dd533902",
+            "aira.auth_method": "api_key",
+        }
+    )
+    with model_call_span("qwen3:0.6b", purpose="serve"):
+        await _call_a_closed_upstream()
+
+    attributes = dict(_client_spans(exporter)[0].attributes or {})
+    assert attributes.get("aira.subject") == "ucadmin"
+    assert attributes.get("aira.use_case") == "kundenservice"
+    assert attributes.get("aira.credential") == "dd533902"
+    assert attributes.get("aira.model") == "qwen3:0.6b", (
+        "an OpenAI-compatible upstream carries the model in the request body, so a record that "
+        "does not name it cannot be told apart from any other call to the same endpoint"
+    )
+    assert attributes.get("aira.model_call.purpose") == "serve"
+
+
+async def test_a_call_the_gateway_makes_for_itself_gains_no_caller(
+    traced: tuple[FastAPI, InMemorySpanExporter],
+) -> None:
+    """**The reason the mark is a block and not a flag on the request.**
+
+    A JWKS refresh, a Vault read, a reachability probe — the gateway makes plenty of outgoing calls
+    while serving somebody, and labelling those with that somebody's subject would put a caller on
+    a record they did not cause. Which is worse than saying nothing: it is a record a SIEM would
+    count as a model access.
+    """
+    _app, exporter = traced
+    attribute_model_calls_to({"aira.subject": "ucadmin", "aira.use_case": "kundenservice"})
+    await _call_a_closed_upstream()
+
+    attributes = dict(_client_spans(exporter)[0].attributes or {})
+    assert not [key for key in attributes if key.startswith("aira.")], (
+        f"a call made outside `model_call_span` was labelled as a model access: {attributes}"
+    )
+
+
+async def test_each_attempt_of_a_chain_names_the_model_it_tried(
+    traced: tuple[FastAPI, InMemorySpanExporter],
+) -> None:
+    """A fallback chain that tried three models produced three model accesses, and the interesting
+    one is usually the one that failed. Marking the request rather than the attempt would report
+    the model that eventually answered on all three."""
+    _app, exporter = traced
+    for model in ("gemini-2.5-flash", "qwen3:0.6b"):
+        with model_call_span(model, purpose="serve"):
+            await _call_a_closed_upstream()
+
+    named = [(span.attributes or {}).get("aira.model") for span in _client_spans(exporter)]
+    assert named == ["gemini-2.5-flash", "qwen3:0.6b"]
+
+
+async def test_a_streamed_answer_is_marked_for_as_long_as_it_streams(
+    traced: tuple[FastAPI, InMemorySpanExporter],
+) -> None:
+    """**The case that does not work with a context manager around the expression.**
+
+    A streaming upstream issues its HTTP request on the first `__anext__`, not when the iterator is
+    built. `model_call_chunks` therefore wraps the iterator rather than the call, and this asserts
+    the wrapping is what makes the span carry the model — with the request deliberately made from
+    *inside* the iteration, which is where a real adapter makes it.
+    """
+    _app, exporter = traced
+    attribute_model_calls_to({"aira.subject": "ucadmin"})
+
+    async def chunks() -> AsyncIterator[str]:
+        await _call_a_closed_upstream()
+        yield "delta"
+
+    received = [chunk async for chunk in model_call_chunks("qwen3:0.6b", chunks(), purpose="serve")]
+
+    assert received == ["delta"]
+    attributes = dict(_client_spans(exporter)[0].attributes or {})
+    assert attributes.get("aira.model") == "qwen3:0.6b"
+    assert attributes.get("aira.subject") == "ucadmin"
+
+
+async def test_the_stream_stops_marking_when_it_ends(
+    traced: tuple[FastAPI, InMemorySpanExporter],
+) -> None:
+    """An async generator does not get a context of its own, so what it sets is set in the caller's
+    — which is what makes the wrapper work at all, and what would leave every later call in the
+    request labelled as a model access if the mark were never reset."""
+    _app, exporter = traced
+
+    async def chunks() -> AsyncIterator[str]:
+        yield "delta"
+
+    async for _chunk in model_call_chunks("qwen3:0.6b", chunks()):
+        pass
+    await _call_a_closed_upstream()
+
+    attributes = dict(_client_spans(exporter)[-1].attributes or {})
+    assert "aira.model" not in attributes, (
+        "the mark outlived the stream, so an unrelated call was recorded as a model access"
+    )
+
+
+def test_a_purpose_nobody_declared_is_refused() -> None:
+    """`aira.model_call.purpose` is the field a reader groups by — *what share of my spend is the
+    pipeline* — and it stops answering the moment two call sites spell a purpose differently."""
+    with (
+        pytest.raises(ValueError, match="unknown model call purpose"),
+        model_call_span("qwen3:0.6b", purpose="classification"),
+    ):
+        pass

@@ -55,13 +55,15 @@ the mechanism was not accurate; §5.3 now says what is recorded instead of what 
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aira_common.logging import get_logger
-from aira_common.observability import redact_url_query
+from aira_common.observability import model_call, model_call_attributes, redact_url_query
 
 _log = get_logger("aira_gateway.telemetry")
 
@@ -97,9 +99,97 @@ def redact_client_span_url(span: Any, _info: Any = None) -> None:
             span.set_attribute(key, safe)
 
 
-async def redact_client_span_url_async(span: Any, info: Any = None) -> None:
-    """The same hook, as a coroutine — see the module docstring for why both are needed."""
+def describe_model_call(span: Any, _info: Any = None) -> None:
+    """Say who a **model call** was made for, on the span of the call itself (`FRD-619`).
+
+    The httpx instrumentation writes what an HTTP client knows: a method, a status, a URL. For an
+    outgoing call to a model that is three attributes, and none of them answers *who asked*, *for
+    which use case*, or — on an OpenAI-compatible upstream, where the model travels in the request
+    body — *which model*. Measured on 2026-09-04 against a live delivery feed: 3 attributes on the
+    model call, 29 on the request span above it.
+
+    In a **tracing** backend that costs nothing, because the two spans share a trace and the
+    backend joins them. The second destination (`FRD-618`) is not a tracing backend: a SIEM ingests
+    flat events and correlates by field, the forwarding filter keeps these child spans on purpose
+    so that *"one record per API call and per model call"* holds, and the model-call record was
+    arriving anonymous. A join a consumer cannot perform is a field it does not have.
+
+    **Only inside `model_call`.** `model_call_attributes` returns ``None`` for every other outgoing
+    request this process makes — a JWKS refresh, a Vault read, a Kafka health probe — so those keep
+    the three attributes they had and gain no caller who did not cause them.
+
+    Names, never content (`FRD-615`): a subject, a use case, a credential's identifier, a model, a
+    provider. The prompt is not here and must not be.
+    """
+    if span is None or not span.is_recording():
+        return
+    carried = model_call_attributes()
+    if carried is None:
+        return
+    for key, value in carried:
+        span.set_attribute(key, value)
+
+
+def prepare_client_span(span: Any, info: Any = None) -> None:
+    """Both halves of what this gateway does to an outgoing span: redact, then identify."""
     redact_client_span_url(span, info)
+    describe_model_call(span, info)
+
+
+async def prepare_client_span_async(span: Any, info: Any = None) -> None:
+    """The same hook, as a coroutine — see the module docstring for why both are needed."""
+    prepare_client_span(span, info)
+
+
+async def redact_client_span_url_async(span: Any, info: Any = None) -> None:
+    """The redaction alone, as a coroutine. Kept because it is the narrower guarantee and the
+    test that proves the credential never reaches a span asks for exactly that."""
+    redact_client_span_url(span, info)
+
+
+#: Why the gateway is talking to a model. Declared as a closed set rather than passed as free
+#: text, because this is the field a reader groups by: *"what share of my spend is the pipeline"*
+#: is a question about `pipeline` vs `serve`, and it stops being answerable the moment two call
+#: sites spell the same purpose differently.
+MODEL_CALL_PURPOSES = frozenset({"serve", "pipeline", "embed", "probe"})
+
+
+@contextmanager
+def model_call_span(model: str, *, purpose: str) -> Iterator[None]:
+    """Mark a block that calls a model, so its client span says which model and why (`FRD-619`).
+
+    Wraps the **call**, not the request: a fallback chain enters this once per attempt, so three
+    tried models produce three records naming three models rather than three records naming the
+    one that eventually answered.
+
+    `test_every_model_call_says_what_it_is.py` fails on an upstream invocation that is not inside
+    one of these — the same shape as `test_surface_layering.py`, and for the same reason. There are
+    seven such call sites across dispatch, two streaming surfaces, two embedding surfaces, the
+    pipeline classifiers and the incident probe; a rule that seven sites must remember is a rule
+    six of them keep.
+    """
+    if purpose not in MODEL_CALL_PURPOSES:
+        raise ValueError(f"unknown model call purpose: {purpose!r}")
+    with model_call({"aira.model": model, "aira.model_call.purpose": purpose}):
+        yield
+
+
+async def model_call_chunks[Chunk](
+    model: str, chunks: AsyncIterator[Chunk], *, purpose: str = "serve"
+) -> AsyncIterator[Chunk]:
+    """The same mark around a **stream**, without re-indenting the loop that reads it.
+
+    A streaming upstream issues its HTTP request on the first ``__anext__``, not when the iterator
+    is built, so the mark has to be in force for the iteration rather than for the expression that
+    starts it. Wrapping the iterator puts it there and leaves the surface's loop body — which is
+    long, and is about accumulating the audit row — exactly as it was.
+
+    An async generator does not get a context of its own in CPython, so the value set here is the
+    value the surface's loop sees, and it is reset when the stream is exhausted or closed.
+    """
+    with model_call_span(model, purpose=purpose):
+        async for chunk in chunks:
+            yield chunk
 
 
 def instrument_outgoing_calls(engine: AsyncEngine | None = None) -> OutgoingCallsTraced:
@@ -121,8 +211,8 @@ def instrument_outgoing_calls(engine: AsyncEngine | None = None) -> OutgoingCall
     http = not httpx_instrumentor.is_instrumented_by_opentelemetry
     if http:
         httpx_instrumentor.instrument(
-            request_hook=redact_client_span_url,
-            async_request_hook=redact_client_span_url_async,
+            request_hook=prepare_client_span,
+            async_request_hook=prepare_client_span_async,
         )
 
     sqlalchemy_instrumentor = SQLAlchemyInstrumentor()

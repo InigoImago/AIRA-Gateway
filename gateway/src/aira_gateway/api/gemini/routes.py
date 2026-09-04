@@ -62,6 +62,7 @@ from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.telemetry import model_call_chunks, model_call_span
 from aira_gateway.thinking import ThinkingRejected
 from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError
 
@@ -453,7 +454,8 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     async with accounting(
         request, trail, prepared, api="gemini", operation=method, started=started
     ) as acct:
-        vectors = await provider.embed(embed_request)
+        with model_call_span(str(embed_request.model), purpose="embed"):
+            vectors = await provider.embed(embed_request)
         payload = (
             schemas.BatchEmbedContentsResponse(
                 embeddings=[schemas.ContentEmbedding(values=values) for values in vectors]
@@ -573,7 +575,9 @@ async def _stream_response(
                 if not sse:
                     yield "["
                 try:
-                    async for chunk in provider.stream_generate(canonical):
+                    async for chunk in model_call_chunks(
+                        canonical.model, provider.stream_generate(canonical)
+                    ):
                         if chunk.usage is not None:
                             final_usage = chunk.usage
                         streamed_calls.extend(call.name for call in chunk.tool_calls)

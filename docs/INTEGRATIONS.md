@@ -990,6 +990,31 @@ POST /v1beta/models/{resource}
 row and read through the console, where every read is recorded. The `trace_id` is the same in both,
 so a span in Tempo and its stored payload are one lookup apart.
 
+**The model call underneath it says the same things about itself** (`FRD-619`). A served request
+produces two records the delivery channel forwards — the API access above and the model access
+below — and the second one is a record in its own right rather than a detail of the first:
+
+```
+POST                                       (scope: instrumentation.httpx)
+  aira.subject = admin            aira.model              = qwen3:0.6b
+  aira.use_case = personalwesen   aira.model_call.purpose = serve
+  aira.credential = 888a5742      http.status_code        = 200
+  aira.auth_method = api_key      http.url = http://ollama:11434/v1/chat/completions
+```
+
+That matters to a **consumer that does not join spans**. A tracing backend would show the API
+access one click above and needs none of this; a SIEM filters flat events by field, and until this
+existed the model access said only *somebody POSTed to a host and got a 200* — not even which
+model, since an OpenAI-compatible upstream carries that in the request body.
+
+`aira.model_call.purpose` is one of four: `serve` (answering a caller), `pipeline` (a classifier or
+redactor the pipeline ran), `embed`, `probe` (an operator's model check). A fallback chain marks
+**each attempt**, so a chain that tried three models leaves three records naming three models.
+
+Outgoing calls the gateway makes for its own reasons — a JWKS refresh, a Vault read, a reachability
+check — carry **none** of these attributes, deliberately: they are not model accesses and a
+consumer must not count them as such.
+
 The two ways below are for when you need the bytes rather than a view of them — a receiver that
 will not parse something, or a question about the wire itself.
 

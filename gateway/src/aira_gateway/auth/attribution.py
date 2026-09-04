@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
-from aira_common.observability import set_span_attributes
+from aira_common.observability import attribute_model_calls_to, set_span_attributes
 from aira_gateway.scopes import person as person_key
 
 USE_CASE_HEADER = "x-aira-use-case"
@@ -113,14 +113,19 @@ def attribute(request: Request, attribution: Attribution) -> Attribution:
     `test_every_attribution_reaches_the_span.py` fails on a site that assigns the state directly.
     """
     request.state.attribution = attribution
-    set_span_attributes(
-        {
-            "aira.subject": attribution.subject,
-            "aira.auth_method": attribution.method,
-            "aira.use_case": attribution.use_case,
-            "aira.credential": attribution.credential,
-        }
-    )
+    identity = {
+        "aira.subject": attribution.subject,
+        "aira.auth_method": attribution.method,
+        "aira.use_case": attribution.use_case,
+        "aira.credential": attribution.credential,
+    }
+    set_span_attributes(identity)
+    # **And onto the model call this request is about to make** (`FRD-619`). The same four facts,
+    # carried to the child span that the delivery channel forwards as a model-access record — which
+    # arrived with a method, a status and a URL and nothing about who caused it. Here rather than at
+    # the call site for the reason this function exists: it is the one place that knows who is
+    # calling, and a fact re-derived downstream is a fact that differs downstream.
+    attribute_model_calls_to(identity)
     return attribution
 
 

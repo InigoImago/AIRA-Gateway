@@ -69,6 +69,17 @@ reading code.
   confirm the SIEM sees model calls found none — because every test request had died on
   `budget_exceeded` and never reached a model. The filter was right and the traffic was wrong.
 
+  *And a record can be present, correct, and useless.* The filter did keep the model calls, and
+  each one carried a method, a status and a URL — **and nothing else**. In a tracing backend that
+  is complete, because the request span one `parentSpanId` above it carries all twenty-nine
+  identifying attributes and the backend joins them. A SIEM ingests flat events and correlates by
+  field; it performs no such join. So *"one record per model call"* was true and *"a record you can
+  use"* was not, and the URL did not even name the model — an OpenAI-compatible upstream carries
+  that in the request body. **A guarantee about a feed is a guarantee about a consumer; state which
+  one, or it holds for the consumer you happened to test with.** Found only by reading the *raw*
+  payload — the tabular view this inspector had a week earlier would have shown three tidy columns
+  and looked finished.
+
 - **An exporter that counts a batch as sent has not necessarily written it anywhere.**
   `AIRA_OTEL_ARRIVED_FILE` pointing into a bind-mounted directory the collector cannot write
   produced no file at all, while `otelcol_exporter_sent_spans{exporter="file/arrived"}` read 116 —

@@ -78,6 +78,7 @@ from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallbac
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.reporting.service import ReportingService
+from aira_gateway.telemetry import model_call_chunks, model_call_span
 from aira_gateway.thinking import ThinkingRejected
 from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError
 
@@ -506,7 +507,9 @@ async def streaming_chat(
                 prepared.notices, structured=canonical.response_schema is not None
             )
             try:
-                async for chunk in provider.stream_generate(canonical):
+                async for chunk in model_call_chunks(
+                    canonical.model, provider.stream_generate(canonical)
+                ):
                     if chunk.usage is not None:
                         usage = chunk.usage
                     if chunk.finish_reason:
@@ -618,7 +621,8 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
             # on the Gemini surface. One function, both surfaces, for the reason `FRD-126` states:
             # a rule restated on a second surface is a rule that differs on one of them.
             provider = await resolve_direct_target(request, model)
-            vectors = await provider.embed(embed_request)
+            with model_call_span(str(embed_request.model), purpose="embed"):
+                vectors = await provider.embed(embed_request)
             # **One vector, whatever the input shape** — the predecessor's documented `vector`,
             # confirmed against its source on 2026-08-12 (`mapping.to_embedding` has the
             # measurement). A list is joined into one text before it gets here, so there is

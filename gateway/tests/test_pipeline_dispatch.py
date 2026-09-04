@@ -1,5 +1,6 @@
 import pytest
 
+from aira_common.observability import model_call_attributes
 from aira_gateway.core.canonical import (
     CanonicalMessage,
     CanonicalRequest,
@@ -162,3 +163,37 @@ async def test_a_chain_told_nothing_about_routing_keeps_the_address_it_was_given
     await dispatch_with_fallback(registry, request, ("b",))
 
     assert spare.addressed_as == [{"regions": ["europe-west1"]}]
+
+
+async def test_each_attempt_is_marked_with_the_model_it_actually_tried() -> None:
+    """`FRD-619`. The chain's records must name three models, not the one that answered.
+
+    A fallback chain produces one model-access record per attempt, and in an incident the
+    interesting one is usually an attempt that failed — *which model was down at 14:02*. Marking
+    the request rather than the attempt would put the model that eventually answered on all three,
+    which is the one reading nobody could contradict from the record itself.
+
+    Asked from **inside** the provider, which is where an upstream's HTTP call is made and
+    therefore where the httpx hook reads the mark. No OpenTelemetry here on purpose: what is under
+    test is which model the mark names, not that spans exist — `test_outgoing_calls_are_traced.py`
+    asks the spans.
+    """
+
+    class _Marked(_Provider):
+        def __init__(self, name: str, *, fail: bool = False) -> None:
+            super().__init__(name, fail=fail)
+            self.marked: list[dict[str, object]] = []
+
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            self.marked.append(dict(model_call_attributes() or ()))
+            return await super().generate(request)
+
+    primary = _Marked("a", fail=True)
+    fallback = _Marked("b")
+    await dispatch_with_fallback(ProviderRegistry([primary, fallback]), _request("a"), ("b",))
+
+    assert primary.marked == [{"aira.model": "a", "aira.model_call.purpose": "serve"}]
+    assert fallback.marked == [{"aira.model": "b", "aira.model_call.purpose": "serve"}], (
+        "the fallback attempt was marked with the model that was asked for rather than the one "
+        "it tried, so its access record names a model it never called"
+    )

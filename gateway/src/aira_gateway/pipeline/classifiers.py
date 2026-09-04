@@ -27,6 +27,7 @@ from aira_common.models import ThinkingMode
 from aira_common.patterns import is_catastrophic
 from aira_gateway.audit import ModelCall
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
+from aira_gateway.telemetry import model_call_span
 from aira_gateway.upstreams.base import Upstream, UpstreamError
 
 # Built-in patterns, exposed so the UI can show operators exactly what the heuristic catches.
@@ -198,9 +199,10 @@ class LlmInjectionClassifier:
 
     async def classify_text(self, text: str) -> Classification:
         try:
-            response = await self._provider.generate(
-                classifier_request(self._model, self._instruction, text, self._thinking)
-            )
+            with model_call_span(self._model, purpose="pipeline"):
+                response = await self._provider.generate(
+                    classifier_request(self._model, self._instruction, text, self._thinking)
+                )
         except UpstreamError:
             # No call to report: nothing was served, so nothing was spent. A failed call that
             # *did* consume tokens is a provider that charged for an error, and neither vendor
@@ -317,7 +319,8 @@ class LlmCategoryRouter:
             self._thinking,
         )
         try:
-            response = await self._provider.generate(request)
+            with model_call_span(self._model, purpose="pipeline"):
+                response = await self._provider.generate(request)
         except UpstreamError:
             return Routing(None)
         call = ModelCall(step="model_route", model=self._model, usage=response.usage)
@@ -472,21 +475,22 @@ class LlmRedactor:
             # cost with no possible finding.
             return Redaction(text)
         try:
-            response = await self._provider.generate(
-                CanonicalRequest(
-                    model=self._model,
-                    messages=[
-                        CanonicalMessage(role=Role.SYSTEM, text=self._instruction),
-                        CanonicalMessage(
-                            role=Role.USER,
-                            text=f"{REDACTION_OPEN}\n{text}\n{REDACTION_CLOSE}",
-                        ),
-                    ],
-                    max_output_tokens=_redaction_allowance(text),
-                    temperature=0.0,
-                    thinking=self._thinking,
+            with model_call_span(self._model, purpose="pipeline"):
+                response = await self._provider.generate(
+                    CanonicalRequest(
+                        model=self._model,
+                        messages=[
+                            CanonicalMessage(role=Role.SYSTEM, text=self._instruction),
+                            CanonicalMessage(
+                                role=Role.USER,
+                                text=f"{REDACTION_OPEN}\n{text}\n{REDACTION_CLOSE}",
+                            ),
+                        ],
+                        max_output_tokens=_redaction_allowance(text),
+                        temperature=0.0,
+                        thinking=self._thinking,
+                    )
                 )
-            )
         except UpstreamError as exc:
             return Redaction(None, failure=f"the redactor could not be reached ({exc.message})")
 

@@ -6213,7 +6213,7 @@ MUTATIONS = [
         "OT2",
         "this installation's upstream key never reaches a client span",
         "gateway/src/aira_gateway/telemetry.py",
-        "            async_request_hook=redact_client_span_url_async,",
+        "            async_request_hook=prepare_client_span_async,",
         "            async_request_hook=None,",
         "gateway/tests/test_outgoing_calls_are_traced.py",
     ),
@@ -6238,10 +6238,89 @@ MUTATIONS = [
         "every path that attributes a request says so on the span, not only on the row",
         "gateway/src/aira_gateway/auth/attribution.py",
         """    request.state.attribution = attribution
-    set_span_attributes(""",
+    identity = {""",
         """    request.state.attribution = attribution
-    _unused = (""",
+    _unused = {""",
         "gateway/tests/test_every_attribution_reaches_the_span.py",
+    ),
+    # `FRD-619` — a model access that says who it was for. Measured on 2026-09-04 against a live
+    # delivery feed: the model call carried three HTTP attributes and nothing else, while the
+    # request span above it carried twenty-nine. A tracing backend joins the two; a SIEM does not.
+    Mutation(
+        "MC1",
+        "a model call names the model, which an OpenAI-compatible URL never does",
+        "gateway/src/aira_gateway/telemetry.py",
+        '    with model_call({"aira.model": model, "aira.model_call.purpose": purpose}):',
+        '    with model_call({"aira.model_call.purpose": purpose}):',
+        "gateway/tests/test_outgoing_calls_are_traced.py",
+    ),
+    Mutation(
+        "MC2",
+        "the caller's identity reaches the span of the call, not only the request above it",
+        "gateway/src/aira_gateway/telemetry.py",
+        """    for key, value in carried:
+        span.set_attribute(key, value)""",
+        """    for _key, _value in carried:
+        pass""",
+        "gateway/tests/test_outgoing_calls_are_traced.py",
+    ),
+    Mutation(
+        "MC3",
+        "a call the gateway makes for itself is not labelled with a caller who did not cause it",
+        "libs/src/aira_common/observability.py",
+        """    if call is None:
+        return None
+    return (*_caller.get(), *call)""",
+        """    return (*_caller.get(), *(call or ()))""",
+        "gateway/tests/test_outgoing_calls_are_traced.py",
+    ),
+    Mutation(
+        "MC4",
+        "the mark ends with the model call, so the next outgoing request is not one",
+        "libs/src/aira_common/observability.py",
+        """    token = _model_call.set(_primitives(attributes))
+    try:
+        yield
+    finally:
+        _model_call.reset(token)""",
+        """    _model_call.set(_primitives(attributes))
+    yield""",
+        "gateway/tests/test_outgoing_calls_are_traced.py",
+    ),
+    Mutation(
+        "MC5",
+        "who is calling is carried from the one place that knows it",
+        "gateway/src/aira_gateway/auth/attribution.py",
+        "    attribute_model_calls_to(identity)",
+        "    pass  # identity not carried to the model call",
+        "gateway/tests/test_every_attribution_reaches_the_span.py",
+    ),
+    Mutation(
+        "MC6",
+        "a fallback chain marks each attempt, so three tried models leave three named records",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        '            with model_call_span(model, purpose="serve"):',
+        '            with model_call_span(request.model, purpose="serve"):',
+        "gateway/tests/test_pipeline_dispatch.py",
+    ),
+    Mutation(
+        "MC7",
+        "an unmarked upstream call is a test failure rather than a silent anonymous record",
+        "gateway/tests/test_every_model_call_says_what_it_is.py",
+        '        if INVOCATION.search(code) and "def " not in code:',
+        "        if False:",
+        "gateway/tests/test_every_model_call_says_what_it_is.py",
+    ),
+    Mutation(
+        "MC8",
+        "a stream is marked for as long as it streams, not only while it is built",
+        "gateway/src/aira_gateway/telemetry.py",
+        """    with model_call_span(model, purpose=purpose):
+        async for chunk in chunks:
+            yield chunk""",
+        """    async for chunk in chunks:
+        yield chunk""",
+        "gateway/tests/test_outgoing_calls_are_traced.py",
     ),
     Mutation(
         "OT5",
