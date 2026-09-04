@@ -6461,6 +6461,22 @@ MUTATIONS = [
         "tools/tests/test_the_console_cannot_loop_through_the_login.py",
     ),
     Mutation(
+        "CFGCH1",
+        "the file somebody copies shows how to switch the observability channel off",
+        "config/showcase.example.yaml",
+        "  #   backend_config: /etc/otelcol-contrib/nobackend.yaml",
+        "  #   (ask somebody how to turn this one off)",
+        "tools/tests/test_the_config_examples_are_real.py",
+    ),
+    Mutation(
+        "CFGCH2",
+        "a channel switch is commented out, never rendered empty",
+        "config/showcase.example.yaml",
+        "  sample_ratio: 1.0",
+        "  sample_ratio: 1.0\n  forward_config: ''",
+        "tools/tests/test_the_config_examples_are_real.py",
+    ),
+    Mutation(
         "RENDER1",
         "a variable appended to a rendered .env is reported, not silently carried",
         "tools/config_render.py",

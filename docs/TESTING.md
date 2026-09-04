@@ -38,7 +38,7 @@ refused a request that should have been served. **Give a test its own slug**; th
 
 ## Tier 1b — Mutation checks (hermetic, on demand)
 `make mutants` (`tools/mutation_check.py`) breaks one property at a time and requires a named test
-to notice. **729 properties**; the figure is stated in `CLAUDE.md` and a test
+to notice. **731 properties**; the figure is stated in `CLAUDE.md` and a test
 fails when the two disagree, because a claim about how much of a system is checked is exactly the
 sort that rots quietly. It is the answer to *"a green test proves only that the code and the test agree"*: a
 property nothing would notice losing is reported as a **survivor**, and a mutation whose anchor has

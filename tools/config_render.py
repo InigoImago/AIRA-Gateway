@@ -241,6 +241,46 @@ def _effective_environment(compose_files: list[Path]) -> dict[str, set[str]] | N
     return seen
 
 
+def _rendered_commands(compose_files: list[Path]) -> str:
+    """Every service's rendered `command`, as one blob, or `""` when Docker is not available.
+
+    **A variable can reach the deployment without reaching a container's environment.** The
+    collector's five `--config` paths are substituted by Compose *into the command line* and are
+    deliberately not passed as environment as well — the process never reads them, and passing them
+    would claim it does. `_effective_environment` reads `environment:` and nothing else, so those
+    variables looked like settings that "no service receives", and a config file that named one was
+    reported as doing nothing.
+
+    Measured: `integrated.example.yaml` produced ten such findings the day the channel switches
+    were added to it. The file was right and the check could not see the half of Compose that was
+    carrying the value.
+
+    Rendered rather than reasoned about, for the same reason as the environment: Compose's own
+    output is the answer, and a re-implementation would agree with itself.
+    """
+    try:
+        argv = ["docker", "compose"]
+        for path in compose_files:
+            argv += ["-f", str(path)]
+        argv += ["--profile", "observability", "--profile", "demo", "config"]
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+    except OSError, subprocess.SubprocessError:
+        return ""
+    if result.returncode != 0:
+        return ""
+    import yaml as _yaml
+
+    doc = _yaml.safe_load(result.stdout) or {}
+    parts: list[str] = []
+    for service in (doc.get("services") or {}).values():
+        command = service.get("command")
+        if isinstance(command, str):
+            parts.append(command)
+        elif isinstance(command, list):
+            parts.extend(str(item) for item in command)
+    return "\n".join(parts)
+
+
 def duplicated_keys(text: str) -> list[str]:
     """Keys the file defines more than once, with both line numbers.
 
@@ -354,14 +394,24 @@ def verify(env_file: Path, compose_files: list[Path]) -> list[str]:
             "checked — only the file against its source."
         )
         return problems
+    commands: str | None = None
     for name, want in rendered.items():
         if name in COMPOSE_DECIDES:
             continue
         values = effective.get(name)
         if values is None:
+            # Before calling this a finding: a variable can reach the deployment through a
+            # **command line** rather than through an environment. Compose substitutes the
+            # collector's `--config` paths there, and the process never reads the variable itself.
+            if want:
+                if commands is None:
+                    commands = _rendered_commands(compose_files)
+                if want in commands:
+                    continue
             problems.append(
-                f"{name}: {source.name} sets it and no service receives it. The compose files do "
-                "not take it from the environment, so the value in the file does nothing."
+                f"{name}: {source.name} sets it and no service receives it. The compose files "
+                "take it neither from the environment nor into a command, so the value in the "
+                "file does nothing."
             )
         elif not any(v.strip().strip('"').lower() == want.strip().lower() for v in values):
             problems.append(

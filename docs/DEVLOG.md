@@ -5,6 +5,55 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The file you copy did not show the two channels (2026-09-04)
+
+Reported: *the showcase configuration does not show how to attach forwarding, or how to switch one
+of the two off.* Correct — and my own change the round before had made it matter more than it
+looked.
+
+`--verify` now reports a variable **appended** to a rendered `.env`. So the config file is the only
+clean place to switch a channel: doing it in `.env` is now a finding, and the next `config_render`
+drops it anyway. An example that does not name the switches sends a reader exactly there.
+
+### And the file I had added them to did not verify
+
+`integrated.example.yaml` got the channel knobs two rounds ago as empty values. Rendered and
+checked for the first time: **ten findings.** Two different mistakes, both mine.
+
+**`forward_config: ''` is not "off".** It renders `AIRA_OTEL_FORWARD_CONFIG=""`, Compose fills it
+from its own default, and the verifier correctly reports that the file says one thing and the stack
+uses another. Off is the line *not being there* — so every switch is commented out now, with a
+sentence each, and a guard fails on any example that renders one empty.
+
+**And four of the ten were the checker's fault.** *"sets it and no service receives it"* for the
+`--config` switches — which Compose substitutes into the collector's **command line**, deliberately
+not into its environment, because the process never reads the variable. `_effective_environment`
+reads `environment:` and nothing else, so a variable carried by the other half of Compose looked
+like a value doing nothing. It reads the rendered commands too now.
+
+That is the same shape as the round before it: the verifier's paragraph claims to catch *"a value
+left empty, a variable the file does not name, a `.env` edited afterwards"*, and each time it is
+held against a real case it turns out to have been checking one direction of one half.
+
+### Both other examples now carry the block
+
+`showcase.example.yaml` and `standalone.example.yaml` show both channels — what each carries, the
+measured volumes, how to point channel 1 at your own Tempo, how to switch it off entirely, how to
+turn channel 2 on, and `make otlp-inspector` for looking at what it sends before a receiver exists.
+
+Driven the documented way rather than asserted: copy the showcase example, **uncomment two lines**,
+render into `.env`, `config-verify` clean, `make showcase` rc=0 with `served 10, refused 1`, and the
+collector carrying `otlphttp/forward` beside `otlp/backend` — 25 spans, 6 log records and 6 metric
+points at the receiver. Nothing was edited in `.env` at any point.
+
+Four mutations (`CFGCH1`, `CFGCH2`, and `RENDER1` from the round before still holding); **731**
+properties. `CFGCH1` survived its first run for a good reason and is recorded here: it removed one
+of *two* mentions of `forward_config`, and the property — *the example shows how to point each
+channel somewhere* — was still true afterwards. The mutation was wrong, not the test; it is aimed at
+`backend_config`, which the file names once.
+
+---
+
 ## Signing in again, until the account locks out (2026-09-04)
 
 Reported from use: *you can authenticate against Keycloak, but with leftovers of old sessions

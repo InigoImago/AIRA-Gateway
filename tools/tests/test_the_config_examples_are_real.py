@@ -448,3 +448,65 @@ def test_every_variable_an_example_renders_reaches_a_container(example: Path) ->
         "hard-codes.\n\nPass each through the service that reads it — the settings class's own "
         "default is the right fallback — or add it to NOT_TAKEN_BY_COMPOSE with the reason."
     )
+
+
+#: The two switches that turn a channel on and off, and the endpoint each one needs. An example
+#: that shows neither leaves a reader with no way to find them but the reference.
+CHANNEL_SWITCHES = (
+    "backend_config",
+    "backend_endpoint",
+    "forward_config",
+    "forward_endpoint",
+)
+
+
+@pytest.mark.parametrize("example", EXAMPLES, ids=lambda p: p.name)
+def test_every_example_shows_how_to_point_each_channel_somewhere(example: Path) -> None:
+    """**The file somebody copies has to show both channels — commented is fine, absent is not.**
+
+    Reported: *the showcase configuration does not show how to attach forwarding, or how to turn
+    one of the two off.* It did not, and the reason it mattered had just got sharper: `--verify`
+    now reports a variable appended to a rendered `.env` by hand, so **the config file is the only
+    clean place to switch a channel**. An example that does not name the switches sends a reader
+    to do it in `.env`, where the next `config_render` drops it and the verifier now complains.
+
+    Asserted against the whole text rather than the rendered variables, on purpose: these are
+    commented out in every shipped example and *should* be. An empty value is not "off" — it
+    renders as an empty string and `--verify` then reports the Compose default taking over, which
+    is how `integrated.example.yaml` came to produce ten findings the day the switches were added
+    to it as `''`. Off is the line not being there; visible is the line being there, commented.
+    """
+    text = example.read_text(encoding="utf-8")
+    if "\notel:" not in text:
+        pytest.skip(f"{example.name} configures no telemetry at all")
+
+    missing = [switch for switch in CHANNEL_SWITCHES if switch not in text]
+
+    assert missing == [], (
+        f"{example.name} never mentions {missing}, so a reader copying it cannot see that there "
+        "are two channels, let alone point one somewhere or switch one off. Commented-out lines "
+        "with a sentence each are what the other examples carry — not empty values, which render "
+        "and then disagree with the stack."
+    )
+
+
+@pytest.mark.parametrize("example", EXAMPLES, ids=lambda p: p.name)
+def test_no_example_renders_an_empty_channel_switch(example: Path) -> None:
+    """The other half, and the one that was actually broken.
+
+    `forward_config: ''` looks like *off* and renders `AIRA_OTEL_FORWARD_CONFIG=""`, which Compose
+    replaces with its own default — so the file says one thing, the stack uses another, and
+    `make config-verify` says so. Measured: ten findings from one file.
+    """
+    rendered = _rendered(example)
+    empty = sorted(
+        name
+        for name, value in rendered.items()
+        if name.startswith(("AIRA_OTEL_FORWARD_", "AIRA_OTEL_BACKEND_")) and value.strip('"') == ""
+    )
+
+    assert empty == [], (
+        f"{example.name} renders {empty} as empty strings. An empty value is not off — Compose "
+        "fills it from its own default and `--verify` reports the disagreement. Comment the line "
+        "out instead."
+    )

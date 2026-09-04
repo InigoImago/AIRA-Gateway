@@ -249,6 +249,48 @@ otel:
   enabled: true
   endpoint: http://otel-collector:4318
   sample_ratio: 0.25
+  # ---- Two channels, and how to point each one somewhere -------------------------------------
+  #
+  # This collector feeds two **independent** channels (`FRD-618`). They share a receiver and
+  # nothing else — not a pipeline, not a batch window, not a destination — so each is configured
+  # without touching the other, and neither can retune the other.
+  #
+  #   observability  every span, metric and log — "was the gateway slow, or the model"
+  #   delivery       one record per API access and per model access, for whoever consumes that
+  #
+  # Measured on a demo run: 354 spans on the first, **21** on the second — the eleven requests and
+  # the ten upstream calls they made. Metrics and logs go over whole.
+  #
+  # **Channel 1 — observability.** Commented out means the bundled Grafana at `otel-lgtm:4317`.
+  # `host:port`, no scheme; it is OTLP/gRPC:
+  #
+  #   backend_endpoint: tempo.internal:4317
+  #   backend_plaintext: false        # no TLS at all — `true` only on a private container network
+  #
+  # …or off entirely, keeping channel 2. Not the same as `enabled: false` above, which stops the
+  # applications exporting and so stops **both**:
+  #
+  #   backend_config: /etc/otelcol-contrib/nobackend.yaml
+  #
+  # **Channel 2 — delivery.** Off unless `forward_config` names the fragment; the endpoint alone
+  # does nothing, because the fragment is what makes it part of the configuration at all:
+  #
+  #   forward_config: /etc/otelcol-contrib/forward.yaml
+  #   forward_endpoint: https://receiver.internal:4318
+  #
+  # To look at what it sends before you have a receiver, `make otlp-inspector` starts one with a
+  # page in front of it and prints the address:
+  #
+  #   forward_config: /etc/otelcol-contrib/forward.yaml
+  #   forward_endpoint: http://otlp-inspector:4318
+  #
+  # Transport, encoding, per-signal URLs, a credential, client certificates and the batching are
+  # the remaining axes — `config/integrated.example.yaml` lists all of them with their reasons, and
+  # `docs/INTEGRATIONS.md` §6 has the table and three worked shapes.
+  #
+  # **Commented out rather than empty.** An empty value here is not "off": it renders into `.env`
+  # as an empty string, and `make config-verify` then reports the Compose default taking over,
+  # because the file said one thing and the stack uses another. Off is the line not being there.
 
 log:
   level: INFO
