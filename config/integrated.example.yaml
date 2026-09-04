@@ -226,9 +226,34 @@ allowed:
 # Observability — OTLP to a collector, and from there wherever you send it (`ADR-0004`).
 # ---------------------------------------------------------------------------------------------
 otel:
+  # Where **the applications** export to — the collector. Everything below is what the collector
+  # does with it, and that is two independent channels (`FRD-618`):
+  #
+  #   observability  every span, metric and log — `backend_*` here
+  #   delivery       one record per API access and per model access — `forward_*` below
+  #
+  # Neither is a branch of the other, and neither can retune the other.
   enabled: true
   endpoint: http://otel-collector.internal:4318
   sample_ratio: 0.1
+
+  # ---- Channel 1: observability, to your trace backend ---------------------------------------
+  #
+  # `host:port`, **no scheme** — OTLP/gRPC. Empty means the bundled Grafana, which is the demo's
+  # backend and not yours. This was a literal in `collector-config.yaml` until `FRD-618`: the
+  # delivery channel had seven variables and this one had none.
+  backend_endpoint: ''
+  # No TLS at all (h2c). `true` is right for a backend on the container network and wrong for
+  # anything across a boundary — which yours almost certainly is.
+  backend_plaintext: false
+  # Keep TLS, stop checking the certificate. A reachability test, not a deployment.
+  backend_insecure: false
+  # A private CA, from `deploy/compose/otel/ca/`. Empty means the system trust store.
+  backend_ca_file: ''
+  # **Off entirely**, keeping the delivery channel: `/etc/otelcol-contrib/nobackend.yaml`. For an
+  # installation that wants the access records and has no trace backend. Not the same as
+  # `enabled: false` above, which stops the applications exporting and so stops *both* channels.
+  backend_config: ''
 
   # ---- What the collector says about what arrives (`FRD-617`) --------------------------------
   # `basic` counts · `normal` a line per span · `detailed` every attribute, event and link.
@@ -237,7 +262,7 @@ otel:
   # The same arrivals as OTLP/JSON, to parse rather than read. `/dev/null` is off.
   arrived_file: /dev/null
 
-  # ---- A second destination beside your trace backend -----------------------------------------
+  # ---- Channel 2: delivery — a second destination beside it ----------------------------------
   #
   # Off unless **both** `forward_config` and `forward_endpoint` are set. The first is the switch:
   # anything but the fragment path merges an empty file and nothing exists — no exporter, no

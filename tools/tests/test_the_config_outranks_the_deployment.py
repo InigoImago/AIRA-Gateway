@@ -144,6 +144,37 @@ def test_deleting_a_line_from_the_rendered_file_is_caught(rendered, monkeypatch)
     assert any("AIRA_CURRENCY" in p and "missing" in p for p in config_render.verify(env, COMPOSE))
 
 
+def test_appending_a_variable_the_source_does_not_name_is_caught(rendered, monkeypatch):
+    """**The likeliest hand edit of all, and the one this check did not have.**
+
+    A changed value, a deleted line and an edited source were each caught; a line *appended* was
+    invisible — and appending is what configuring something feels like. Switch a channel on in
+    `.env`, watch it work, and the config file that is supposed to describe the installation says
+    nothing about it. The next render silently drops it, which is when somebody discovers the file
+    was authoritative after all.
+
+    Found by doing exactly that: turning the delivery channel on by hand in a `.env` rendered from
+    `showcase.example.yaml`, and being told it matched its source.
+    """
+    _source, env = rendered
+    _no_docker(monkeypatch)
+    appended = "AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml\n"
+    env.write_text(env.read_text(encoding="utf-8") + appended, encoding="utf-8")
+
+    problems = config_render.verify(env, COMPOSE)
+
+    assert any("AIRA_OTEL_FORWARD_CONFIG" in p and "named nowhere" in p for p in problems)
+
+
+def test_a_freshly_rendered_file_has_no_variable_the_source_does_not_name(rendered, monkeypatch):
+    """The guard on the guard: if a render wrote keys of its own, the check above would fail on
+    every clean file and be switched off within the week."""
+    _source, env = rendered
+    _no_docker(monkeypatch)
+
+    assert not [p for p in config_render.verify(env, COMPOSE) if "named nowhere" in p]
+
+
 def test_changing_the_source_without_re_rendering_is_caught(rendered, monkeypatch):
     """The stale render: both files are internally consistent, and one of them is a lie."""
     source, env = rendered

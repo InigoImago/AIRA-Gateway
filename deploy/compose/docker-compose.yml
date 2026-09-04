@@ -267,16 +267,17 @@ services:
       AIRA_OTEL_ARRIVED_FILE: ${AIRA_OTEL_ARRIVED_FILE:-/dev/null}
       # ---- Channel 1: observability — every span, for "was the gateway slow or the model" -----
       #
+      # `AIRA_OTEL_BACKEND_CONFIG` is **not** here on purpose, and neither is its delivery
+      # counterpart: a `--config` path is substituted by Compose into the command line above, and
+      # the collector never reads the variable. Passing it into the container as well would claim
+      # the process reads something it does not — which is exactly what
+      # `test_compose_passes_the_settings_it_names.py` exists to keep honest.
+      #
       # `host:port`, no scheme (OTLP/gRPC). The default is the bundled Grafana; point it at your
       # own Tempo, Jaeger or vendor endpoint and nothing else about the stack changes. It was a
       # literal in `collector-config.yaml` until `FRD-618` — the delivery channel had seven
       # variables and this one had none, which is the asymmetry that made "two channels" untrue in
       # the configuration even after the pipelines were separated.
-      # Off is a switch of its own, symmetrical with the delivery channel's: name
-      # `/etc/otelcol-contrib/nobackend.yaml` and the base pipelines keep only the two inspection
-      # exporters. For an installation that wants the access records and has no trace backend —
-      # a combination that could not be expressed at all while this channel had no off.
-      AIRA_OTEL_BACKEND_CONFIG: ${AIRA_OTEL_BACKEND_CONFIG:-}
       AIRA_OTEL_BACKEND_ENDPOINT: ${AIRA_OTEL_BACKEND_ENDPOINT:-otel-lgtm:4317}
       # No TLS at all (plaintext h2c) — right on this network, wrong across a boundary. Set to
       # `false` for anything remote, and give it a CA below if it is behind a private one.

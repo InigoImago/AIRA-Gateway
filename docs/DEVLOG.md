@@ -5,6 +5,60 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The matrix, but through `make showcase` and the config files (2026-09-04)
+
+Asked whether the combinations had also been tried through `make showcase` and the showcase
+config. They had not — the matrix recreated the collector against a running stack, which is a
+narrower thing than the demo's own one-command path.
+
+**Four `make showcase` runs, one per channel combination**, each the whole path — build, wait
+healthy, wait for the pull, seed, wait until the gateway accepts the demo's credentials, reset
+usage, drive traffic with `--assert-controls`:
+
+| | observability | delivery | rc | traffic | exporters |
+|---|---|---|---|---|---|
+| A | default | off | 0 | served 10, refused 1, failed 0 | `otlp/backend` + inspection |
+| B | default | HTTP | 0 | same | + `otlphttp/forward` |
+| C | **off** | off | 0 | same | inspection only |
+| D | **off** | HTTP | 0 | same | `otlphttp/forward` + inspection |
+
+Then the **config** half, which is a different question: `config/showcase.example.yaml` rendered the
+documented way into `.env`, `config-verify`, `config-check`, and `make showcase` from that — rc=0,
+the same traffic, `showcase-doctor` clean.
+
+`integrated.example.yaml` was missing all five `backend_*` knobs, which is my omission from the two
+rounds before: the file carried 29 `AIRA_OTEL_*` and none of them was the observability channel's
+destination. It carries 34 now. The showcase and standalone examples keep the three basic ones on
+purpose — the demo uses the bundled backend and no delivery channel, and empty knobs in an example
+are noise.
+
+**And a dead line in Compose**, found by rendering: `AIRA_OTEL_BACKEND_CONFIG` was passed into the
+container *and* substituted into the command line. The collector never reads it — a `--config` path
+is Compose's business — so passing it claimed the process reads something it does not. Its delivery
+counterpart never did. Removed.
+
+### The check that could not see the likeliest hand edit
+
+Configuring a channel by hand in a rendered `.env` — appending two lines and watching it work — and
+`make config-verify` answered *"matches its source"*.
+
+It compared in one direction only: every variable the source names must be present, correct, and
+reach a container. A changed value was caught, a deleted line was caught, an edited source was
+caught, a duplicate key was caught. A line **appended** was invisible — and appending is what
+configuring something feels like. The paragraph above `COMPOSE_DECIDES` has claimed *"a variable the
+file does not name"* since it was written; thirteen guard tests covered every other direction.
+
+So the deployment forwards telemetry, the config file that is supposed to describe the installation
+says nothing about it, and the next `config_render` silently drops it — which is when somebody
+learns the file was authoritative after all. Both directions now, with two tests: one that the
+append is reported, and one that a *freshly rendered* file reports nothing, because a check that
+fired on every clean file would be switched off within the week.
+
+One mutation (`RENDER1`) — and it needed renaming from `CR1`, which the harness refused as a
+duplicate id before it would report anything about it. **727** properties.
+
+---
+
 ## The page shows the document, and the matrix has a cell that was impossible (2026-09-03)
 
 Two asks, and the second found a hole the first would not have.

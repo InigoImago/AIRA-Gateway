@@ -326,6 +326,26 @@ def verify(env_file: Path, compose_files: list[Path]) -> list[str]:
                 "somebody edited the rendered file."
             )
 
+    # 1b. **The other direction**, which this check did not have and the paragraph above the
+    # `COMPOSE_DECIDES` table has always claimed: *a variable the file does not name*.
+    #
+    # A changed value is caught, a deleted line is caught, an edited source is caught — and a line
+    # **appended** to a rendered file was invisible. That is the likeliest hand edit of all, because
+    # it is what configuring something feels like: switch a channel on in `.env`, watch it work, and
+    # the config file that is supposed to describe the installation says nothing about it. The next
+    # `config_render` silently removes it, which is the moment somebody discovers the file was
+    # authoritative after all.
+    #
+    # A freshly rendered file has no keys beyond what `render()` produced — verified — so anything
+    # extra here was added afterwards. Hand-made files never reach this branch: they return above,
+    # at the `note:` for a file no config claims.
+    for name in sorted(set(present) - set(rendered)):
+        problems.append(
+            f"{name}: set in {env_file} and named nowhere in {source.name}. It was added after "
+            "rendering, so the config file does not describe this deployment — and re-rendering "
+            "will drop it."
+        )
+
     # 2. Compose filling a gap of its own, which is the silent case
     effective = _effective_environment(compose_files)
     if effective is None:

@@ -6445,6 +6445,14 @@ MUTATIONS = [
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
     ),
     Mutation(
+        "RENDER1",
+        "a variable appended to a rendered .env is reported, not silently carried",
+        "tools/config_render.py",
+        "    for name in sorted(set(present) - set(rendered)):",
+        "    for name in sorted(set()):",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
         "OI5",
         "the tree shows the document as it is, rather than a tidied-up version of it",
         "tools/otlp_inspector.py",
