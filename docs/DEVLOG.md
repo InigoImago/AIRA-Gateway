@@ -5,6 +5,53 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two channels, one hop before both of them (2026-09-04)
+
+Reported: *the observability endpoint points at a non-existent address, the SIEM one at a real one,
+and still nothing arrives.*
+
+Reproduced both readings rather than guessing which was meant.
+
+**The destinations are independent, as claimed.** With `AIRA_OTEL_BACKEND_ENDPOINT` pointing at a
+name that does not resolve, the delivery channel still received 21 spans, 4 log records and 6 metric
+points. With it pointing at a **blackhole** — an address that accepts nothing and never answers, so
+the exporter's queue fills instead of failing fast — 18 spans, and `receiver_refused` stayed at
+zero, so the shared `memory_limiter` never turned anything away either. That is the half the last
+two rounds were about, and it holds.
+
+**The reading that reproduces the report is the other address.** `AIRA_OTEL_ENDPOINT` is where the
+**applications** export — the hop *into* the collector, upstream of both channels. Pointed at
+nothing: `{traces: 0, logs: 0, metrics: 0}` at the receiver, exactly as described. Correct
+behaviour; there is nothing to forward.
+
+### The defect is the diagnosis, not the behaviour
+
+The answer existed in three places the whole time. The gateway logged
+`{"system": "otel", "operation": "export", "outcome": "failed", "target":
+"http://nowhere-at-all.invalid:4318/v1/logs"}`. `make otel-status` said *"The collector has received
+nothing yet."* `AIRA_DEBUG_INTEGRATIONS=otel` is the channel built for precisely this.
+
+And the screen somebody is actually looking at — the standing-in receiver — said *nothing has
+arrived*, and then explained `AIRA_OTEL_FORWARD_CONFIG` and `AIRA_OTEL_FORWARD_ENDPOINT`: **the half
+that was correctly configured.** Telemetry crosses applications → collector → here, an empty page is
+equally consistent with all three, and the page named only the hop it owns. So it sent the reader to
+check the far end twice.
+
+It now names all three in the order worth checking, cheapest first, with `make otel-status` in the
+first sentence — and a test asserts that order, because naming the upstream hop *after* the
+forwarding switches would be the same mistake with more words.
+
+**And the documentation was overstated.** *"They share a receiver and nothing else"* is true of the
+collector's internals and false of the picture: both are downstream of `AIRA_OTEL_ENDPOINT`, and if
+that hop is wrong neither channel receives anything however well the second is configured. The table
+in `INTEGRATIONS.md` §6 now has a row for what they share.
+
+One mutation (`OI6`); **732** properties. It survived its first aim — the edit hit a sentence next
+to the one carrying the property rather than the property itself, which is the second time this
+round that a green result would have been about nothing.
+
+---
+
 ## The file you copy did not show the two channels (2026-09-04)
 
 Reported: *the showcase configuration does not show how to attach forwarding, or how to switch one

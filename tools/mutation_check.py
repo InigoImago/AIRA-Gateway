@@ -6485,6 +6485,14 @@ MUTATIONS = [
         "tools/tests/test_the_config_outranks_the_deployment.py",
     ),
     Mutation(
+        "OI6",
+        "an empty page names the hop before this one, not only its own configuration",
+        "tools/otlp_inspector.py",
+        '            "before this one: <code>AIRA_OTEL_ENABLED</code> and <code>AIRA_OTEL_ENDPOINT</code> "',
+        '            "before this one. "',
+        "tools/tests/test_the_inspector_shows_what_was_forwarded.py",
+    ),
+    Mutation(
         "OI5",
         "the tree shows the document as it is, rather than a tidied-up version of it",
         "tools/otlp_inspector.py",

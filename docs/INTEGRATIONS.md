@@ -580,9 +580,16 @@ searches for it.
 
 ### Two channels, each configured on its own
 
-This collector feeds **two independent channels**. They share a receiver and nothing else — not a
-pipeline, not a batch window, not a destination — so each is configured without touching the other
-(`FRD-618`).
+This collector feeds **two independent channels**. Inside the collector they share a receiver and
+nothing else — not a pipeline, not a batch window, not a destination — so each is configured without
+touching the other (`FRD-618`).
+
+**Both are downstream of one thing, and it is worth knowing which.** The applications export to
+`AIRA_OTEL_ENDPOINT`; everything below is what the collector does with what arrives. If that hop is
+wrong, *neither* channel receives anything, however well the second one is configured — reported
+from use, with the delivery endpoint correct and the page showing nothing. `make otel-status`
+answers that hop in one line, and `AIRA_DEBUG_INTEGRATIONS=otel` makes each export say where it
+went and what answered.
 
 | | **observability** | **delivery** |
 |---|---|---|
@@ -598,6 +605,7 @@ pipeline, not a batch window, not a destination — so each is configured withou
 | filtered | no | yes — requests and the calls made inside them |
 | on by default | yes | no |
 | switched off by | `AIRA_OTEL_BACKEND_CONFIG` | leaving `AIRA_OTEL_FORWARD_CONFIG` unset |
+| shared by both | `AIRA_OTEL_ENABLED` and `AIRA_OTEL_ENDPOINT` — the hop *into* the collector | |
 
 **Setting one up does not disturb the other.** The delivery fragment adds `traces/siem`,
 `metrics/siem` and `logs/siem` and names no observability pipeline, so the first channel is

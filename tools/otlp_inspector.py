@@ -466,12 +466,30 @@ def render_page(inspector: Inspector, *, refresh: int = 15) -> str:
     )
 
     if not arrivals:
+        # **Three hops, and this page can only see the last one.**
+        #
+        # Reported from use: the delivery channel pointed at a real receiver, the *observability*
+        # endpoint pointed at nothing, and nothing arrived here — with this page explaining the
+        # forwarding configuration, which was the half that was fine. Telemetry crosses
+        # applications → collector → here, and an empty page is equally consistent with all three,
+        # so naming only its own configuration sends the reader to the wrong end of the wire.
+        #
+        # Ordered by what is cheapest to rule out, and the first is a single command.
         body = (
-            "<p class=empty>Nothing has arrived yet.<br><br>"
-            "The collector forwards here only when <code>AIRA_OTEL_FORWARD_CONFIG</code> names the "
-            "forwarding fragment <em>and</em> <code>AIRA_OTEL_FORWARD_ENDPOINT</code> points at "
-            "this container. Setting the endpoint alone changes nothing — the fragment is the "
-            "switch. Then recreate the collector and send a request through the gateway.</p>"
+            "<p class=empty>Nothing has arrived yet — which is three different things, in the "
+            "order worth checking:<br><br>"
+            "<b>1. Nothing reached the collector.</b> <code>make otel-status</code> answers this "
+            "in one line, and says so plainly when the answer is nothing. Then it is the hop "
+            "before this one: <code>AIRA_OTEL_ENABLED</code> and <code>AIRA_OTEL_ENDPOINT</code> "
+            "in the applications, not anything on this page. "
+            "<code>AIRA_DEBUG_INTEGRATIONS=otel</code> makes each export say where it went and "
+            "what answered.<br><br>"
+            "<b>2. The collector is not forwarding.</b> It sends here only when "
+            "<code>AIRA_OTEL_FORWARD_CONFIG</code> names the forwarding fragment <em>and</em> "
+            "<code>AIRA_OTEL_FORWARD_ENDPOINT</code> points at this container. The endpoint alone "
+            "changes nothing — the fragment is the switch — and both need the collector "
+            "recreated.<br><br>"
+            "<b>3. Nothing has happened yet.</b> Send a request through the gateway.</p>"
         )
     else:
         # **Newest first, and a bounded number of them.** Forty collapsed batches is a page; forty

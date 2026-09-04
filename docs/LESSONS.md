@@ -959,6 +959,20 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **An empty screen has to name the hop before it, not only its own configuration.** The
+  standing-in receiver's *nothing has arrived* explained the forwarding switch and the forwarding
+  endpoint — and was read by somebody whose forwarding was correct and whose **applications** were
+  exporting to a dead address. Telemetry crosses applications → collector → here, an empty page is
+  equally consistent with all three, and the page named only the hop it owns. So the reader checked
+  the half that was fine, twice.
+
+  The diagnosis existed the whole time, in three places: the gateway's `integration_call` line
+  named the dead target, `make otel-status` said *"the collector has received nothing yet"*, and
+  `AIRA_DEBUG_INTEGRATIONS=otel` is the channel for it. **Having the answer somewhere is not the
+  same as putting it where the question is asked** — and the question is asked at the empty screen.
+  Order the causes by what is cheapest to rule out, and put the command that rules out the first
+  one in the sentence.
+
 - **A guard that lives in the thing being destroyed is not a guard.** The console had a flag so
   that five panels each getting a `401` would not start five logins — correct, and held in a
   service whose very next act is a full-page navigation to Keycloak that destroys it. Its own

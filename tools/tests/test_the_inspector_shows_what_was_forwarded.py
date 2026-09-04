@@ -347,12 +347,25 @@ def test_a_batch_that_could_not_be_read_says_so_instead_of_offering_a_tree() -> 
     assert "/batch/1/raw" not in page
 
 
-def test_an_empty_page_says_what_is_missing_rather_than_nothing() -> None:
-    """*Nothing arrived* has two causes — the fragment is off, or the endpoint is wrong — and the
-    screen is where somebody is standing when they need to know which. `AIRA_OTEL_FORWARD_ENDPOINT`
-    alone changes nothing, which is the half people get wrong."""
+def test_an_empty_page_names_the_hop_before_this_one_first() -> None:
+    """**An empty page is equally consistent with all three hops, and this one can only see the
+    last.**
+
+    Reported from use: the delivery channel pointed at a real receiver, the *observability*
+    endpoint pointed at nothing, and nothing arrived — while this page explained the forwarding
+    configuration, which was the half that was fine. Telemetry crosses
+    applications → collector → here; a screen that names only its own configuration sends the
+    reader to the wrong end of the wire.
+
+    So the upstream hop comes first, and with the one command that answers it.
+    """
     page = render_page(Inspector())
 
+    assert "make otel-status" in page, "the one command that says whether anything arrived at all"
+    assert "AIRA_OTEL_ENDPOINT" in page, "the hop before this one, which this page cannot see"
+    assert page.index("AIRA_OTEL_ENDPOINT") < page.index("AIRA_OTEL_FORWARD_CONFIG"), (
+        "the cheapest thing to rule out is named first, or the reader checks the far end twice"
+    )
     assert "AIRA_OTEL_FORWARD_CONFIG" in page
     assert "AIRA_OTEL_FORWARD_ENDPOINT" in page
 
