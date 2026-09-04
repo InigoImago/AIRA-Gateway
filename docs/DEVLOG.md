@@ -5,6 +5,27 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The line I dictated was not in the file I had just fixed (2026-09-04)
+
+Asked where `AIRA_OTEL_FORWARD_BATCH_SECONDS=3s` lives in the configuration, and why it is not
+there. Both halves of the question were fair.
+
+**It was in one example of three** — `integrated.example.yaml`, commented, among the batching knobs
+— and in neither `showcase.example.yaml` nor `standalone.example.yaml`, which is where somebody
+running the demo reads. The round before had been entirely about the config file being the only
+clean place to switch a channel, and then I dictated a variable straight into `.env`. Both examples
+name the batching now, with the default beside each.
+
+**And it is not needed.** Measured: with the line removed, Compose supplies `10s`, and the same run
+delivered 21 spans, 43 log records and 6 metric points — one batch window later rather than not at
+all. `3s` was a convenience for watching a page during my own test runs, and saying so is the part
+that was missing: a number handed over without its default reads as a requirement.
+
+`.env` carries the two lines that matter now, and a sentence saying the third is optional and why a
+request can take ten seconds to appear.
+
+---
+
 ## Still no data — because I kept taking it away (2026-09-04)
 
 Reported again after the alias fix: *still nothing arrives in the inspector.* This one was not a

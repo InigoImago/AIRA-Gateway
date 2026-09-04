@@ -284,8 +284,18 @@ otel:
   #   forward_config: /etc/otelcol-contrib/forward.yaml
   #   forward_endpoint: http://otlp-inspector:4318
   #
-  # Transport, encoding, per-signal URLs, a credential, client certificates and the batching are
-  # the remaining axes — `config/integrated.example.yaml` lists all of them with their reasons, and
+  # **How hard it pushes**, and every one of these has a working default — the leg needs none of
+  # them. Ten seconds is the batch window, which is why a request can take that long to appear at
+  # the receiver; shorten it while you are watching a page, and leave it alone otherwise:
+  #
+  #   forward_batch_seconds: 3s       # default 10s — a smaller window is for reading, not running
+  #   forward_batch_size: 8192
+  #   forward_consumers: 1
+  #   forward_queue: 5000
+  #   forward_retry_initial: 5s
+  #
+  # Transport, encoding, per-signal URLs, a credential and client certificates are the remaining
+  # axes — `config/integrated.example.yaml` lists all of them with their reasons, and
   # `docs/INTEGRATIONS.md` §6 has the table and three worked shapes.
   #
   # **Commented out rather than empty.** An empty value here is not "off": it renders into `.env`
