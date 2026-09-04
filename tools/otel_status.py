@@ -48,6 +48,23 @@ FAILED = re.compile(r"^otelcol_exporter_send_failed_(\w+)\{([^}]*)\}\s+([0-9.e+]
 #: one side and not the other is exactly the finding, so the union is what gets printed.
 SIGNALS = ("spans", "log_records", "metric_points")
 
+#: Telemetry an exporter is holding because the far end will not take it.
+#:
+#: **The counter that says "stuck" rather than "lost".** `send_failed` is a *give-up*, and an
+#: exporter retrying a host that does not resolve never gives up inside a five-minute window — so
+#: the table below read `undelivered 0` and this tool said *"nothing is being lost"* while nothing
+#: at all was arriving. Reported from use, with one letter wrong in a hostname
+#: (`otel-inspector` for `otlp-inspector`): the collector ran, the counters looked clean, and the
+#: page stayed empty.
+#:
+#: A queue that is not draining is the earliest honest signal there is, and it is per exporter, so
+#: it names *which* destination rather than only that something is wrong.
+QUEUED = re.compile(
+    r'^otelcol_exporter_queue_size\{[^}]*data_type="(?P<signal>[^"]+)"[^}]*'
+    r'exporter="(?P<exporter>[^"]+)"[^}]*\}\s+(?P<value>[0-9.e+]+)',
+    re.MULTILINE,
+)
+
 
 def _totals(body: str, pattern: re.Pattern[str]) -> dict[str, float]:
     """Summed per signal, across receivers/exporters.
@@ -109,6 +126,16 @@ def _fetch(url: str) -> str | None:
         return None
 
 
+def _queued(body: str) -> dict[str, float]:
+    """How much each exporter is holding, summed over its signals."""
+    held: dict[str, float] = {}
+    for match in QUEUED.finditer(body):
+        value = float(match.group("value"))
+        if value:
+            held[match.group("exporter")] = held.get(match.group("exporter"), 0.0) + value
+    return held
+
+
 def main() -> int:
     base = stack_addresses.url("otlp_metrics")
     body = _fetch(f"{base}/metrics")
@@ -147,6 +174,26 @@ def main() -> int:
     print("accepted vs refused  — what reached the collector, and what it turned away.")
     print("forwarded            — summed across exporters, so fan-out counts more than once.")
     print("undelivered          — a give-up, not an attempt: a retrying exporter shows 0 for now.")
+
+    # **The state the four columns above cannot show.** An exporter whose far end does not resolve
+    # retries rather than gives up, so `undelivered` stays 0 — and this tool used to conclude
+    # "nothing is being lost" while nothing was arriving anywhere. What it is holding says so.
+    held = _queued(body)
+    if held:
+        print()
+        for exporter, amount in sorted(held.items()):
+            print(
+                f"{exporter} is holding {amount:.0f} batch(es) it has not been able to deliver. "
+                "That is a destination refusing, unreachable, or named wrongly — not a give-up, "
+                "so the column above still reads 0."
+            )
+        failures = _recent_failures()
+        if failures:
+            print("\nThe collector's own words:")
+            for line in failures:
+                print(f"  {line}")
+        return 1
+
     if not losing:
         print("\nNothing is being lost between the applications and the collector's exporters.")
         return 0

@@ -414,7 +414,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    networks: [aira]
+    networks:
+      aira:
+        # **Both spellings resolve, and the second one is the trap this repository built.**
+        #
+        # Every other observability service here is `otel-…` — `otel-collector`, `otel-lgtm` — and
+        # this one is `otlp-`, because it inspects OTLP. Somebody configuring the forwarding
+        # endpoint from memory in a stack full of `otel-` writes `otel-inspector`, the name does
+        # not resolve, the collector keeps running, and the page stays empty. Reported from use,
+        # and it cost a diagnosis that ended at `no such host` in a container log.
+        #
+        # An alias is cheaper than being right about which name is better: one letter should not
+        # be the difference between a working configuration and an empty screen.
+        aliases: [otel-inspector]
     restart: unless-stopped
 
   # --- A real model, locally (opt-in via the "verify" profile) ---

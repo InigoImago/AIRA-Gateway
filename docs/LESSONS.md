@@ -959,6 +959,23 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A summary sentence overrides the footnote that corrects it.** `make otel-status` printed
+  *"undelivered — a give-up, not an attempt: a retrying exporter shows 0 for now"*, and then
+  *"Nothing is being lost between the applications and the collector's exporters."* Both were
+  written by the same person on the same day; only the second one is read. In the state that
+  actually gets somebody to run the tool — a destination that does not resolve, so the exporter
+  retries for ever and never gives up — the footnote was the true half and the verdict was false.
+
+  **A tool that qualifies its own conclusion has two conclusions, and the reader keeps the
+  confident one.** Either the verdict accounts for the case, or the case is not a footnote. Here
+  it meant reading a different counter: `queue_size` says *stuck*, `send_failed` says *gave up*,
+  and only the first is true early enough to help.
+
+  The neighbouring lesson is cheaper still: **a name one letter away from every other name in the
+  stack is a defect waiting for a tired reader.** `otlp-inspector` beside `otel-collector` and
+  `otel-lgtm` — being right about OTLP versus OTel was worth less than the alias that makes both
+  spellings work.
+
 - **An empty screen has to name the hop before it, not only its own configuration.** The
   standing-in receiver's *nothing has arrived* explained the forwarding switch and the forwarding
   endpoint — and was read by somebody whose forwarding was correct and whose **applications** were

@@ -5,6 +5,55 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## One letter, and a status line that said the opposite (2026-09-04)
+
+Reported: *the normal otel points at `otel-collector`, the restricted one at `otel-inspector`, and
+no data arrives in the browser.*
+
+Both names in that sentence are the finding.
+
+**`otel-inspector` does not exist.** Every other observability service here is `otel-…` —
+`otel-collector`, `otel-lgtm` — and the one this repository added is `otlp-inspector`, because it
+inspects OTLP. Somebody writing the forwarding endpoint from memory in a stack full of `otel-`
+writes `otel-inspector`. Measured on the network: `otel-inspector` → *could not resolve host*,
+`otlp-inspector` → `200`. The collector keeps running, the page stays empty, and the reason is in a
+container log nobody is watching.
+
+Precision about which name is better is worth less than the letter costing somebody an afternoon,
+so both resolve now: the service carries `otel-inspector` as a network alias. The reported
+configuration was then re-run **unchanged** — 25 spans, 47 log records, 12 metric points.
+
+### And `make otel-status` said "nothing is being lost"
+
+That is the sentence somebody reads when the page is empty, and in this state it was wrong.
+
+`send_failed` counts a **give-up**. An exporter retrying a host that does not resolve does not give
+up inside a five-minute window, so `undelivered` read `0` for every signal, and the tool concluded
+that nothing was being lost while nothing at all was arriving. Its own footnote said *"a retrying
+exporter shows 0 for now"* — and a footnote does not survive a summary line that contradicts it.
+
+`otelcol_exporter_queue_size` is the counter that says **stuck** rather than **lost**, it is per
+exporter, and it was sitting at 3 logs, 2 traces and 1 metric on `otlphttp/forward` while
+`otlp/backend` held nothing. `make otel-status` reads it now, names the exporter, and prints the
+collector's own words underneath:
+
+```
+otlphttp/forward is holding 8 batch(es) it has not been able to deliver…
+  Post "http://otel-inspector:4318/v1/traces":
+  dial tcp: lookup otel-inspector on 127.0.0.11:53: no such host
+```
+
+(The collector's line begins "failed to …" — trimmed here because the words in between are, by
+coincidence, the shape `test_documentation_links.py` reads as a `make` target. The checker is right
+to be strict: a command that does not exist sits at the end of a setup guide, after the long part.)
+
+That is the diagnosis the reporter needed, in the one command built to give it, and it exits
+non-zero now rather than reassuring.
+
+Two mutations (`NAME1`, `STUCK1`); **734** properties.
+
+---
+
 ## Two channels, one hop before both of them (2026-09-04)
 
 Reported: *the observability endpoint points at a non-existent address, the SIEM one at a real one,

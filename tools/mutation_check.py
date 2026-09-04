@@ -6485,6 +6485,22 @@ MUTATIONS = [
         "tools/tests/test_the_config_outranks_the_deployment.py",
     ),
     Mutation(
+        "NAME1",
+        "the inspector answers to the name the rest of the stack is spelled with",
+        "deploy/compose/docker-compose.yml",
+        "        aliases: [otel-inspector]",
+        "        aliases: []",
+        "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
+    ),
+    Mutation(
+        "STUCK1",
+        "a status that says nothing is lost has looked at what the exporters are holding",
+        "tools/otel_status.py",
+        "    held = _queued(body)",
+        "    held = {}",
+        "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
+    ),
+    Mutation(
         "OI6",
         "an empty page names the hop before this one, not only its own configuration",
         "tools/otlp_inspector.py",

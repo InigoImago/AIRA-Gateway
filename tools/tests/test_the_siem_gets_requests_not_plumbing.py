@@ -381,3 +381,36 @@ def test_mutual_tls_is_available_on_either_transport() -> None:
 
     for name in BOTH_EXPORTERS:
         assert {"cert_file", "key_file"} <= set(forward[name]["tls"])
+
+
+# --- the two ways this was reported as "nothing arrives" -----------------------------------------
+
+
+def test_the_inspector_answers_to_the_name_the_rest_of_the_stack_is_spelled_with() -> None:
+    """**One letter should not be the difference between a working leg and an empty screen.**
+
+    Every other observability service is `otel-…` — `otel-collector`, `otel-lgtm` — and this one is
+    `otlp-`, because it inspects OTLP. Reported from use: the forwarding endpoint was written
+    `http://otel-inspector:4318` from memory, the name did not resolve, the collector kept running,
+    and the page stayed empty. An alias is cheaper than being right about which name is better.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    service = compose["services"]["otlp-inspector"]
+
+    assert "otel-inspector" in service["networks"]["aira"]["aliases"]
+
+
+def test_the_status_tool_reads_what_an_exporter_is_holding() -> None:
+    """`send_failed` is a **give-up**, and an exporter retrying a host that does not resolve never
+    gives up inside the window — so the table read `undelivered 0` and `make otel-status` said
+    *"nothing is being lost"* while nothing at all was arriving.
+
+    A queue that is not draining is the earliest honest signal, and it is per exporter, so it names
+    which destination rather than only that something is wrong.
+    """
+    status = (ROOT / "tools" / "otel_status.py").read_text(encoding="utf-8")
+
+    assert "otelcol_exporter_queue_size" in status
+    # And the verdict must be reached *after* it: a summary that returns before looking is the
+    # defect this replaced.
+    assert status.index("_queued(body)") < status.index("Nothing is being lost")
