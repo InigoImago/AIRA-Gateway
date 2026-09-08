@@ -267,6 +267,22 @@ otel:
   #   backend_endpoint: tempo.internal:4317
   #   backend_plaintext: false        # no TLS at all — `true` only on a private container network
   #
+  # …or over OTLP/HTTP instead, which is also what makes the **encoding** a choice: OTLP/gRPC is
+  # protobuf by definition, so this channel had one encoding while it had one transport
+  # (`FRD-620`). `json` sends OTLP/JSON — the readable, parseable half of the wire:
+  #
+  #   backend_protocol_config: /etc/otelcol-contrib/backend-http.yaml
+  #   backend_http_endpoint: https://tempo.internal:4318
+  #   backend_encoding: json          # or `proto`, which several managed endpoints require
+  #   backend_compression: none       # gzip | none | zstd | snappy
+  #
+  # …with a credential, which this channel had no way to send at all until `FRD-620` — so a hosted
+  # trace backend was out of reach. Four shapes, the same four the delivery channel has:
+  #
+  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-basic.yaml
+  #   backend_basic_username: "123456"
+  #   backend_basic_password: <token>
+  #
   # …or off entirely, keeping channel 2. Not the same as `enabled: false` above, which stops the
   # applications exporting and so stops **both**:
   #

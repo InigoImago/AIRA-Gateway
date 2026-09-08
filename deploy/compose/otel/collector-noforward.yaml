@@ -1,3 +1,0 @@
-# Merged when no second destination is configured. Empty on purpose: the collector takes
-# repeated `--config` flags and merging nothing changes nothing.
-{}

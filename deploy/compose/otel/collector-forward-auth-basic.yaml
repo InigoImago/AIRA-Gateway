@@ -17,12 +17,10 @@
 #
 # Both exporters carry it, so the fragment works on either transport
 # (`forward-grpc.yaml` or not) without being edited.
-
-extensions:
-  basicauth/forward:
-    client_auth:
-      username: ${env:AIRA_OTEL_FORWARD_BASIC_USERNAME}
-      password: ${env:AIRA_OTEL_FORWARD_BASIC_PASSWORD}
+#
+# The extension is in `collector-config.yaml` with placeholder defaults naming the variables it
+# needs, for the reason `collector-forward-auth-header.yaml` records: a merged `service::extensions`
+# replaces, and since `FRD-620` both channels may have a credential selected at once.
 
 exporters:
   otlphttp/forward:
@@ -31,9 +29,3 @@ exporters:
   otlp/forward:
     auth:
       authenticator: basicauth/forward
-
-service:
-  # A merged list **replaces**, and the base configuration names no extensions — so this is the
-  # whole list, and it is one entry. Anything added to `collector-config.yaml` later has to be
-  # repeated here, the same rule the exporter lists live under.
-  extensions: [basicauth/forward]

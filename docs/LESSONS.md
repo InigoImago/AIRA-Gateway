@@ -1228,6 +1228,37 @@ reading code.
   vocabulary is still closed. And the same audit turns up the mirror mistake — a field refused only
   because it was **missing from the list**: `additionalProperties` means the same thing on both
   sides of the translation, and "not a field of the supported vocabulary" was simply untrue.
+- **A merged list is a slot, and the last fragment to name it is the only one that owns it.** The
+  collector's `--config` flags merge, deeply, and that is what makes a channel a fragment rather
+  than a copied file — but a **list** does not merge, it replaces. Every credential fragment
+  carried `service::extensions: [its-own-extension]`, with a comment explaining that the base names
+  none so one entry is the whole list. Correct, and correct only while the stack had one credential
+  slot. The moment a second channel got one, selecting a credential on each started **only the
+  second**: no error, no warning, and `otelcol validate` answering `rc=0`, because a
+  configured-but-unstarted extension is a valid configuration. The symptom would have been a `401`
+  from one of two receivers, which reads as a *wrong* credential rather than an absent one.
+  **Ask of every list in a merged configuration: how many owners can it have?** The answer is one,
+  so it belongs in the base and not in the things being merged. Exporter and pipeline lists are the
+  same hazard and were already known; the extension list was the one nobody had counted.
+
+  *And the empty-string trap was paid for a second time in the same round.* The placeholder
+  defaults went into the collector fragment, where the values are, and **220 of 220 merged
+  configurations failed validation** — because Compose passes an empty string for an unset variable
+  and an empty string overrides a `${env:…:-default}`. That is written down, in this file and in
+  `collector-forward.yaml`'s own paragraph about the endpoint, and it still cost a round. **A
+  lesson that only lives in prose is a lesson you get to learn twice**: what stopped it being three
+  times is a test asserting the fallback is spelled at the Compose end.
+
+- **Documentation of a defect outlives the fix, and then describes behaviour nothing has.**
+  `collector-forward-auth-header.yaml` promised that selecting it without a credential *"sends an
+  empty header"* and that the inspector would show `(empty)`. Both had been true of the defect the
+  fragment was created to fix — an always-present `headers:` block. After the fix the real
+  behaviour was that the collector **refused to start**, taking every other exporter with it, and
+  the paragraph a person reads while wiring the thing up said the opposite. Same shape as the FRD
+  §10a entry in §7 below, in the file with the shortest distance to a reader: **when you fix a
+  defect, the sentence describing it becomes a claim about the new behaviour, and nobody re-reads
+  it as one.**
+
 - **A value your enum has is not a value the wire has.** `minimal` is a thinking level here and on
   exactly one vendor's newest family; every other OpenAI-compatible server answers `400 invalid
   value`, so the least-thinking mode was unreachable everywhere. Sending the adjacent level that
@@ -1525,6 +1556,14 @@ reading code.
   *"what was built"* section is a claim like any other and rots the same way, and the same
   paragraph named a mechanism the library does not have (*"statement text hidden"* is not an
   option) — **when a document describes how a third-party tool is configured, read the tool.**
+- **When two things are meant to be alike, the test is the comparison — not two tests, one each.**
+  Two OTLP channels were reported as unlike twice, fixed twice, and were still unlike: one had
+  seventeen variables and the other four. Every file was correct on its own, and that is exactly
+  why three rounds of review missed it — an asymmetry between two families lives in no single file,
+  so nothing a reviewer opens contains it. The test that holds now subtracts one family of variable
+  names from the other and requires the remainder to be a named, justified pair. **A property about
+  a relationship needs an assertion that mentions both sides**; checking each side against its own
+  expectations is how both sides stay individually right and jointly wrong.
 - **A guard that asserts an *absence* goes vacuous the moment the spelling changes**, and passes
   louder than ever. Three were found in one afternoon: `assert "curl -fsS http://localhost:8001/
   readyz" not in showcase` and `assert "4200" in target` both stopped checking anything when the

@@ -24,24 +24,19 @@
 # Everything else — the endpoints, the encoding, the DCR and its **Monitoring Metrics Publisher**
 # role assignment — is in `INTEGRATIONS.md` §6, as a worked example of the generic mechanisms
 # rather than as a supported product.
-
-extensions:
-  azure_auth:
-    managed_identity:
-      client_id: ${env:AIRA_OTEL_FORWARD_AZURE_CLIENT_ID}
-    # **The audience, not the host.** A data collection endpoint's hostname is specific to your
-    # instance; the token Azure Monitor accepts is issued for `monitor.azure.com`. Left to default,
-    # the extension asks for a token for the host it is calling and Azure refuses it.
-    scopes:
-      - ${env:AIRA_OTEL_FORWARD_AZURE_SCOPE:-https://monitor.azure.com/.default}
+#
+# The extension is in `collector-config.yaml` — including the **audience, not the host**: a data
+# collection endpoint's hostname is specific to your instance, while the token Azure Monitor
+# accepts is issued for `monitor.azure.com`, and left to default the extension asks for a token for
+# the host it is calling and Azure refuses it. It builds no credential until an exporter asks for
+# one, so declaring it costs nothing outside Azure. It is there rather than here because
+# `service::extensions` is a list that replaces on merge and both channels may be authenticated at
+# once — `collector-forward-auth-header.yaml` has the measurement.
 
 exporters:
   otlphttp/forward:
     auth:
-      authenticator: azure_auth
+      authenticator: azure_auth/forward
   otlp/forward:
     auth:
-      authenticator: azure_auth
-
-service:
-  extensions: [azure_auth]
+      authenticator: azure_auth/forward

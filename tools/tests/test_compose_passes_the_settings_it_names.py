@@ -93,6 +93,37 @@ COMPOSE_ONLY = {
     "AIRA_OTEL_BACKEND_PLAINTEXT",
     "AIRA_OTEL_BACKEND_INSECURE",
     "AIRA_OTEL_BACKEND_CA_FILE",
+    # The observability channel's remaining sixteen, added by `FRD-620`. It had four variables and
+    # no credential while the delivery channel had seventeen and four authenticators, so the two
+    # were one channel and one afterthought everywhere a person configures them. Same names, one
+    # prefix along — the only two that differ name the transport each channel does *not* default
+    # to (`_HTTP_ENDPOINT` here, `_GRPC_ENDPOINT` there).
+    "AIRA_OTEL_BACKEND_PROTOCOL_CONFIG",
+    "AIRA_OTEL_BACKEND_AUTH_CONFIG",
+    "AIRA_OTEL_BACKEND_HTTP_ENDPOINT",
+    "AIRA_OTEL_BACKEND_TRACES_ENDPOINT",
+    "AIRA_OTEL_BACKEND_LOGS_ENDPOINT",
+    "AIRA_OTEL_BACKEND_METRICS_ENDPOINT",
+    "AIRA_OTEL_BACKEND_ENCODING",
+    "AIRA_OTEL_BACKEND_COMPRESSION",
+    "AIRA_OTEL_BACKEND_AUTH_HEADER",
+    "AIRA_OTEL_BACKEND_AUTHORIZATION",
+    "AIRA_OTEL_BACKEND_BASIC_USERNAME",
+    "AIRA_OTEL_BACKEND_BASIC_PASSWORD",
+    "AIRA_OTEL_BACKEND_OAUTH_TOKEN_URL",
+    "AIRA_OTEL_BACKEND_OAUTH_CLIENT_ID",
+    "AIRA_OTEL_BACKEND_OAUTH_CLIENT_SECRET",
+    "AIRA_OTEL_BACKEND_OAUTH_SCOPES",
+    "AIRA_OTEL_BACKEND_OAUTH_CA_FILE",
+    "AIRA_OTEL_BACKEND_AZURE_CLIENT_ID",
+    "AIRA_OTEL_BACKEND_AZURE_SCOPE",
+    "AIRA_OTEL_BACKEND_CLIENT_CERT_FILE",
+    "AIRA_OTEL_BACKEND_CLIENT_KEY_FILE",
+    "AIRA_OTEL_BACKEND_BATCH_SECONDS",
+    "AIRA_OTEL_BACKEND_BATCH_SIZE",
+    "AIRA_OTEL_BACKEND_CONSUMERS",
+    "AIRA_OTEL_BACKEND_QUEUE",
+    "AIRA_OTEL_BACKEND_RETRY_INITIAL",
     # And the second destination, which is the collector's configuration and not the product's:
     # which fragment to merge, where to send, how hard to push, and the two `extra_hosts` entries
     # that let a container reach a machine outside its network.

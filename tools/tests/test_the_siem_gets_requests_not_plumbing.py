@@ -147,20 +147,20 @@ def test_the_filter_names_both_spellings_of_the_url_attribute() -> None:
 
 
 COMPOSE = ROOT / "deploy" / "compose" / "docker-compose.yml"
-NOFORWARD = ROOT / "deploy" / "compose" / "otel" / "collector-noforward.yaml"
+EMPTY = ROOT / "deploy" / "compose" / "otel" / "collector-empty.yaml"
 
 
 def test_the_off_state_is_an_empty_fragment() -> None:
     """One collector, two `--config` flags, and the second is `{}` until somebody selects the
     forwarding one. Off, the merge is a no-op — there is no second container, no second exporter
     and no filter pipeline."""
-    assert yaml.safe_load(NOFORWARD.read_text(encoding="utf-8")) == {}
+    assert yaml.safe_load(EMPTY.read_text(encoding="utf-8")) == {}
 
 
 def test_compose_defaults_to_the_empty_fragment() -> None:
     compose = COMPOSE.read_text(encoding="utf-8")
 
-    assert "--config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/noforward.yaml}" in compose
+    assert "--config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/empty.yaml}" in compose
 
 
 def test_the_endpoint_has_a_fallback_that_lets_the_collector_start() -> None:
@@ -281,15 +281,23 @@ def test_an_auth_fragment_covers_both_transports(path: Path) -> None:
 
 @pytest.mark.parametrize("path", AUTH_FRAGMENTS, ids=lambda p: p.stem)
 def test_an_auth_fragment_registers_the_extension_it_points_at(path: Path) -> None:
-    """An `auth.authenticator` naming an extension that `service.extensions` does not list is a
+    """An `auth.authenticator` naming an extension that `service::extensions` does not list is a
     configuration the collector refuses at start-up — which is the good outcome, and still a
-    restart loop that takes Grafana with it, because one container carries every exporter."""
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    restart loop that takes Grafana with it, because one container carries every exporter.
 
-    for exporter in document["exporters"].values():
+    **The registration is in the base configuration, not here**, since `FRD-620`:
+    `service::extensions` is a list, a merged list replaces, and the observability channel now has
+    credential fragments of its own. Measured on 2026-09-07 with an extension in each of two
+    fragments — only the last one started, silently, `validate` clean throughout. So the list is
+    owned in one place and the cross-channel guard lives in
+    `test_both_channels_are_configured_the_same_way.py`.
+    """
+    base = yaml.safe_load(BASE.read_text(encoding="utf-8"))
+
+    for exporter in yaml.safe_load(path.read_text(encoding="utf-8"))["exporters"].values():
         named = exporter["auth"]["authenticator"]
-        assert named in document["extensions"]
-        assert named in document["service"]["extensions"]
+        assert named in base["extensions"]
+        assert named in base["service"]["extensions"]
 
 
 @pytest.mark.parametrize("path", AUTH_FRAGMENTS, ids=lambda p: p.stem)
@@ -318,7 +326,7 @@ def test_compose_defaults_both_overlay_fragments_to_the_empty_one() -> None:
     compose = COMPOSE.read_text(encoding="utf-8")
 
     for variable in ("AIRA_OTEL_FORWARD_PROTOCOL_CONFIG", "AIRA_OTEL_FORWARD_AUTH_CONFIG"):
-        assert f"--config=${{{variable}:-/etc/otelcol-contrib/noforward.yaml}}" in compose
+        assert f"--config=${{{variable}:-/etc/otelcol-contrib/empty.yaml}}" in compose
 
 
 @pytest.mark.parametrize("path", [*AUTH_FRAGMENTS, GRPC], ids=lambda p: p.stem)

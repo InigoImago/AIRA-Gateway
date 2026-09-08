@@ -1,0 +1,10 @@
+# Merged when a slot is not in use. Empty on purpose: the collector takes repeated `--config`
+# flags and merging nothing changes nothing.
+#
+# **Seven slots default to this one file**, which is why it is not called `noforward.yaml` any
+# more: four of them have nothing to do with forwarding. `AIRA_OTEL_BACKEND_CONFIG`,
+# `_BACKEND_PROTOCOL_CONFIG` and `_BACKEND_AUTH_CONFIG` configure the observability channel;
+# `AIRA_OTEL_FORWARD_CONFIG`, `_FORWARD_PROTOCOL_CONFIG` and `_FORWARD_AUTH_CONFIG` the delivery
+# channel. A default whose name describes one of the two channels made the other one look like an
+# afterthought in the place a reader meets it first (`FRD-620`).
+{}

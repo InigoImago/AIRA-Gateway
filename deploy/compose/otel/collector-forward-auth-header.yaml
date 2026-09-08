@@ -34,33 +34,41 @@
 # set at start-up stops working later with a `401` in a container log. `forward-auth-oauth2.yaml`
 # is that case; it fetches and refreshes.
 #
-# **Selecting this fragment and leaving the value empty sends an empty header.** That is the defect
-# this whole area began with, and it is survivable only because it now takes a deliberate act: the
-# default path selects no auth fragment at all and sends no header. Nothing here can tell an
-# empty credential from an unset one — `make otlp-inspector` can, and shows it as `(empty)`.
+# ## Selecting this and leaving the value empty
+#
+# This file used to say it *"sends an empty header"* and that `make otlp-inspector` would show it
+# as `(empty)`. Neither was true. Measured on 2026-09-07 against collector-contrib 0.157 with
+# `AIRA_OTEL_FORWARD_AUTHORIZATION=`:
+#
+#     Error: invalid configuration: extensions::headers_setter: missing header source,
+#            must be 'from_context', 'from_attribute', 'value', or 'value_file'
+#
+# — the collector **refused to start**, and one container carries every exporter, so Grafana went
+# with it. Nothing here could send an empty header, because nothing here got as far as sending.
+# The documentation had described the *previous* defect's behaviour and outlived it, which is the
+# shape `LESSONS.md` §5 lists: a rule the project states and does not have.
+#
+# What happens now is neither. The extension carries a placeholder default of
+# `AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set`, so the collector starts, the far end rejects a
+# credential that **names the variable you forgot**, and the inspector prints it. `FRD-620`.
 #
 # An authenticator applies to whichever exporter is in play, so this works over OTLP/HTTP and
 # OTLP/gRPC — on gRPC the header becomes call metadata — without being edited.
 #
 # It is a secret: `.env` (git-ignored) or the deployment's secret store, never a committed file.
-
-extensions:
-  headers_setter:
-    headers:
-      - action: upsert
-        key: ${env:AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}
-        value: ${env:AIRA_OTEL_FORWARD_AUTHORIZATION}
+#
+# **The extension itself lives in `collector-config.yaml`**, not here, and that is not tidiness.
+# `service::extensions` is a list and a merged list replaces, so while this fragment owned that
+# list there was room for exactly one credential in the whole stack. Measured on 2026-09-07 with
+# an extension in each of two fragments: only the last one started — no error, no warning, and
+# `validate` clean, because a configured-but-unstarted extension is a valid configuration. The
+# observability channel gained credentials of its own in `FRD-620`, so no fragment owns the list
+# any more and both channels can be authenticated at once.
 
 exporters:
   otlphttp/forward:
     auth:
-      authenticator: headers_setter
+      authenticator: headers_setter/forward
   otlp/forward:
     auth:
-      authenticator: headers_setter
-
-service:
-  # A merged list **replaces**, and the base configuration names no extensions — so this is the
-  # whole list, and it is one entry. Anything added to `collector-config.yaml` later has to be
-  # repeated here, the same rule the exporter lists live under.
-  extensions: [headers_setter]
+      authenticator: headers_setter/forward
