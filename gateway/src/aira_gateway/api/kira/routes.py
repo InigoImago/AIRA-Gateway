@@ -50,6 +50,7 @@ from aira_gateway.api.serving import (
     declared_routing,
     elapsed_ms,
     ensure_body_is_encodable,
+    json_body,
     prepare_for_dispatch,
     provenance,
     refusal_outcome,
@@ -64,7 +65,7 @@ from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summa
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
-from aira_gateway.catalog import AmbiguousModelId, ModelDeclaration
+from aira_gateway.catalog import MAX_ACCOUNTABLE_TOKENS, AmbiguousModelId, ModelDeclaration
 from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
 from aira_gateway.core.schema import SchemaRejected
 from aira_gateway.diagnostics import UpstreamProbe
@@ -351,6 +352,22 @@ async def _prepare(
             422,
             errors.MAX_TOKENS_EXCEEDS_CAP,
             f"maxTokens {parsed.max_tokens} exceeds the {cap} this model accepts.",
+        )
+    if parsed.max_tokens is not None and parsed.max_tokens > MAX_ACCOUNTABLE_TOKENS:
+        # **The gateway's own ceiling, said in this surface's words.** `check_declaration` applies
+        # it to both surfaces and would refuse this request anyway — as a `GeminiHTTPError`, which
+        # this surface renders as `400 VALIDATION_ERROR`. That would give one mistake two codes
+        # depending on whether somebody had catalogued a cap, and *the code is this surface's
+        # contract*: a migrating client switches on `MAX_TOKENS_EXCEEDS_CAP`.
+        #
+        # Restated here on purpose, then, and the reason it is safe to restate is that neither copy
+        # can quietly become the only one: the shared check is what actually protects the
+        # reservation, this one only chooses the words, and both read `MAX_ACCOUNTABLE_TOKENS`.
+        raise errors.KiraError(
+            422,
+            errors.MAX_TOKENS_EXCEEDS_CAP,
+            f"maxTokens {parsed.max_tokens} exceeds the {MAX_ACCOUNTABLE_TOKENS} this gateway "
+            "can account for.",
         )
 
     canonical = to_canonical(parsed, model, bounds=schema_bounds(request))
@@ -866,7 +883,7 @@ async def _json(request: Request) -> dict[str, Any]:
     code nothing raises is what this project has just finished removing twice.
     """
     try:
-        body = await request.json()
+        body = await json_body(request)
     except ValueError as exc:
         raise errors.KiraError(
             422, errors.VALIDATION_ERROR, "Request body is not valid JSON."

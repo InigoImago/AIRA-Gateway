@@ -264,6 +264,29 @@ class ModelDeclaration:
 #: both `String(128)`. A name longer than this cannot name a declared model, by construction.
 MAX_MODEL_NAME = 128
 
+#: The largest token figure this gateway can **account for**, and therefore the largest one a
+#: caller may ask for.
+#:
+#: Derived, not chosen: `budget_usage.tokens` and `budgets.limit_tokens` are `Integer`, so this is
+#: the largest number a token budget could ever be set to. A request asking for more is asking for
+#: more than any limit could permit — and, before this bound existed, it did not merely fail to
+#: fit, it **switched the limit off**.
+#:
+#: Measured on 2026-09-08. The pre-dispatch reservation moves the shared counter with `HINCRBY`,
+#: which is 64-bit integer arithmetic in Redis, so an estimate at or above 2⁶³ answers *"increment
+#: would overflow"*. `RedisRunner` turns every such error into `CountersUnavailable` — which is
+#: what a Redis that is genuinely away looks like — so `BudgetService.guard` released, logged
+#: `counters_unavailable`, marked **budget enforcement degraded** and fell back to the racy
+#: read-then-book path, and the request was served. One number in one field, and `FRD-405` §4.2's
+#: whole reason for existing was off for that request, with `/readyz` blaming the counter store.
+#:
+#: Both caller-named figures reach that arithmetic and **both were bounded only where the model
+#: declared a bound** (`serving.check_declaration` for `maxOutputTokens`, `thinking._limited_budget`
+#: for a `limited` budget) — the *"a value nobody wrote is a value nothing checks"* shape, applied
+#: to a bound rather than to a value. `max_output_tokens` and `thinking_bounds` are both nullable
+#: and both default to `None`, so an ordinary catalogue row declares neither.
+MAX_ACCOUNTABLE_TOKENS = 2**31 - 1
+
 
 def is_lookupable(model: str) -> bool:
     """Whether ``model`` is a name this catalog could possibly hold.

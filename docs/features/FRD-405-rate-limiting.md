@@ -211,3 +211,43 @@ exactly the ones from the incident someone will later investigate.
 - **Follow-ups**: per-caller concurrency caps; caching pipeline config and model prices (the
   larger remaining latency win, deliberately out of scope here); using the same primitive for the
   `throttle` incident-response action in `FRD-503`.
+
+## 7. The reservation's own arithmetic (2026-09-08)
+
+§4.2's reservation is what makes requests in flight visible to each other's check, and it makes
+them visible **in Redis**, with `HINCRBY` — 64-bit integer arithmetic. An estimate at or above 2⁶³
+answers *"increment would overflow"*; `RedisRunner` reports every exception as
+`CountersUnavailable`, which is exactly what a counter store that is away looks like from there;
+and `guard` then does what §4.3 says to do about that — release, log, mark the feature degraded,
+fall back to read-then-book, serve the request.
+
+Every step is right. What was wrong is that a **caller** could reach it:
+
+```
+tokens = 2⁶²   atomic=True   degraded=False
+tokens = 2⁶³   atomic=False  degraded=True
+```
+
+Two caller-named figures feed the estimate — `maxOutputTokens` and a `limited` thinking budget —
+and both were bounded **only where the model declared a bound** (`cap is not None`,
+`maximum is not None`). Both declarations are nullable and default to `None`, so an ordinary
+catalogue row bounded neither. So one number in one field chose which of the two enforcement paths
+applied to that request, and left `/readyz` reporting the counter store as the reason.
+
+`catalog.MAX_ACCOUNTABLE_TOKENS` is the ceiling, derived from `budget_usage.tokens` and
+`budgets.limit_tokens` being `Integer`: the largest figure a token budget could ever be set to. A
+request above it is refused **by name**, at the door, on both fields. The assembled *total* — which
+also carries the model's own per-attachment estimate, written by an operator rather than by the
+caller — has nobody to refuse, so it is clamped instead: an estimate is deliberately approximate
+and `settle` replaces it with the real figure the moment the answer arrives, while handing the
+counter a number it cannot hold costs the atomicity this section is about.
+
+The KIRA surface states the ceiling in **its own words** as well. `check_declaration` would refuse
+the request either way — as a `GeminiHTTPError`, which that surface renders as
+`400 VALIDATION_ERROR` — and the model-cap version of the same mistake answers
+`422 MAX_TOKENS_EXCEEDS_CAP`. The code is that surface's contract (`FRD-107`), so one mistake with
+two codes depending on whether somebody had catalogued a cap is a wrinkle the fix would otherwise
+have introduced. Both copies read the same constant, and the shared one is the one that actually
+protects the reservation.
+
+Mutations `AT1`–`AT6`.

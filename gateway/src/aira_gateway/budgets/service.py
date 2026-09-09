@@ -134,9 +134,12 @@ class Reservation:
     #: Who the request is from. Carried because a `each_member` budget's counter key **is** the
     #: caller, and settle/release run long after the subject was resolved.
     subject: str | None = None
-    #: The name that subject is known by, where the credential carries one. Carried for the same
-    #: reason as `subject`: a member row may have matched on it, and settle/release run long
-    #: after the caller was resolved.
+    #: What this request set aside, so `settle` can correct it and `release` can hand it back.
+    #:
+    #: (A `username` field stood above this line until the `member` scope was removed — it existed
+    #: so a rule naming a person could match either alphabet. Its comment outlived it by three
+    #: weeks and read as documentation for `reserved`, which is a smaller version of the dead
+    #: definition `LESSONS.md` §1 keeps finding: a reader takes a stray comment for a contract.)
     reserved: Amounts = Amounts()
     period_keys: dict[int, str] = field(default_factory=dict)
     atomic: bool = False

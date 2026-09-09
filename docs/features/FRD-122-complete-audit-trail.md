@@ -292,3 +292,61 @@ appear in spend reports as a refusal attributed to nobody. Recorded here so that
 those features finds the question already asked.
 
 Mutations `Y9`–`Y11`.
+
+## 13. Extension (2026-09-08) — the refusal the *writer* could not record
+
+The section above closed the last route by which a request could avoid the recording site. This one
+is different in kind: the request reached the site, the site was called, and **the write itself
+failed** — so `FR-1` was lost with every check in this document green.
+
+`RequestLogWriter._write` runs three walks over the payload (`strip_attachments`, the redactor,
+`storable`), each recursive and none bounded. The interpreter's recursion limit is therefore a
+place a **caller** can reach, and a body nesting about a thousand levels — 12 kB — put it there:
+
+| | |
+| --- | --- |
+| refused for an unrelated reason | `400` to the caller, `RecursionError` inside `strip_attachments`, **no row**, and `audit_refusal_not_recorded` in a log nobody reads during an incident |
+| the same depth inside a valid `functionResponse.response` | **served** — the model answered, then the write raised: `500`, no answer, no row, and on a real provider the spend already made |
+| ~70 000 levels | `RecursionError` out of `json.loads`, so a `500` before any of this — and the same on the control plane at ~200 000, inside Django's own upload ceiling |
+
+This is `ensure_body_is_encodable`'s defect one property along. That check exists because *"a caller
+could choose not to be logged, with six characters"* — an `Infinity`, an unpaired surrogate — and it
+closes the door for a **value** the row cannot hold. Nothing closed the door for a **structure**
+nothing on the path can walk, and it costs the same row for the same reason.
+
+**Two bounds, at the two ends, because they answer to different parties.**
+
+- `aira_common.nesting.MAX_JSON_DEPTH` (64) is measured on the raw bytes before anything parses, and
+  refused as a named `400`. A bound rather than an `except RecursionError:`, because the depth the
+  interpreter fails at is a property of the **stack left**: the same document that survived 30 000
+  levels inside a test process raised at 10 000 in a bare script, so catching the error would give
+  every deployment a different limit. One constant, read by the gateway and by Management, because a body one
+  plane accepts is one the other may be sent. Every hand-written body on this gateway is read
+  through `serving.json_body`; a test fails on an `api/` module that calls `request.json()` itself,
+  since the defect arrived on five routes at once precisely because each was written correctly by
+  its own lights.
+- `persistence.writer.MAX_STORED_DEPTH` (100) bounds what the **writer** will walk, replacing
+  anything deeper with a named marker. This is the upstream's door, which no request-side check can
+  close: a response payload is a provider's output, and a model answering with a thousand nested
+  objects must not be able to erase the record of its own answer. The same trade `storable` already
+  makes for `NaN` — losing the value is smaller than losing the row, and naming it is smaller still.
+
+The order between them is asserted, not assumed: the writer's bound is the looser one, so a request
+this gateway **accepted** is never clipped by the recorder — stored evidence that disagreed with
+what was served would be worse than none.
+
+### The same door, two characters wide
+
+A body of `[1, 2]` is valid JSON and not an object. The Gemini surface assigned it to the trail and
+refused it correctly with a `400`; the write then failed on `dict(...)` — the payload columns hold
+an object — and the row was lost the same way. Both of the other body readers in this gateway
+already refused a non-object (`api/kira/routes.py`, `incidents._body_of`); the surface a real
+client posts to did not.
+
+The surface now refuses it **before** the trail is set, so the row carries no payload and matches
+what KIRA already did; and `writer.as_object` wraps a non-mapping rather than coercing it, because
+the same transform runs over a **response** payload whose shape nobody here chose.
+`test_surfaces_record_refusals_alike.py` asserts both the row and the absent payload, since a
+property guarded twice is one a single assertion cannot see losing half of itself.
+
+Mutations `ND1`–`ND8`.

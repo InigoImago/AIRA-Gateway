@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from aira_common.logging import get_logger
 from aira_common.models import Capability
 from aira_common.money import cost_nanos
+from aira_common.nesting import MAX_JSON_DEPTH, nests_deeper_than
 from aira_common.observability import set_span_attributes
 from aira_gateway.anomalies.suspensions import Suspended, SuspensionService
 from aira_gateway.api.gemini.errors import GeminiHTTPError
@@ -46,7 +47,7 @@ from aira_gateway.audit import (
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import BudgetService, Reservation
-from aira_gateway.catalog import ModelCatalog, ModelDeclaration
+from aira_gateway.catalog import MAX_ACCOUNTABLE_TOKENS, ModelCatalog, ModelDeclaration
 from aira_gateway.core.canonical import (
     CanonicalEmbeddingRequest,
     CanonicalRequest,
@@ -321,6 +322,15 @@ async def estimate(
     # as output. Reserving without it would leave the most expensive knob on the request invisible
     # to the limit that exists to bound spend.
     tokens += extra_tokens
+    # **The backstop, and a clamp is the right shape only here.** Both caller-named figures are
+    # refused above `MAX_ACCOUNTABLE_TOKENS` by name, where the caller can act on it. What is left
+    # is the *sum* — a default, an operator's per-attachment estimate, a thinking budget — which no
+    # single caller wrote, so there is nobody to refuse and nothing to name. An estimate is already
+    # deliberately approximate and `settle` replaces it with the real figure the moment the answer
+    # arrives, so reserving the largest figure that can be accounted for is a smaller error than
+    # handing the counter a number it cannot hold: that reads as the counter store being away and
+    # takes budget enforcement to its racy path for the request.
+    tokens = min(tokens, MAX_ACCOUNTABLE_TOKENS)
     price = await pricing_of(request).price_for(model)
     cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
     return Amounts(tokens=tokens, requests=units, cost_nanos=cost)
@@ -389,6 +399,45 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     if canonical is not None and canonical.tools:
         checks.append(ToolsSupported(catalog_of(request)))
     return permits(checks)
+
+
+async def json_body(request: Request) -> Any:
+    """The caller's body, parsed — **bounded**, so that no body can be made to blow a stack.
+
+    The sibling of :func:`ensure_body_is_encodable`, and it exists for the same reason one door
+    along. That one closes the door for a *value* the audit row cannot hold; this one closes it
+    for a **structure** nothing on the path can walk. Every walk over a body recurses — the
+    decoder, `json.dumps` inside the check below, `strip_attachments`, the redactor, `storable` —
+    and a caller picks the depth.
+
+    Measured on 2026-09-08: ~1 000 levels (12 kB) refused correctly and **recorded nowhere**,
+    because `strip_attachments` raised `RecursionError` inside the writer; the same body on a
+    request that was *served* answered `500` after the model had already been called; ~50 000
+    levels answered `500` straight out of `json.loads`, on both surfaces and on `:dryRun`,
+    `:checkThinking` and `/v1beta/suspensions`. `aira_common.nesting` carries the measurements
+    and the bound.
+
+    **One reader, not a rule restated at four call sites.** Every route that takes a hand-written
+    body reads it through here, and `test_a_body_cannot_be_nested_out_of_the_audit_trail.py`
+    fails on a route that calls `request.json()` itself — the same argument as
+    `prepare_for_dispatch` (`FRD-126`): a control every surface has to remember is a control the
+    next surface will not have.
+
+    Raises `GeminiHTTPError` for a body that is too deep — which both surfaces render, since the
+    KIRA surface maps this type into its own envelope — and `ValueError`, exactly as
+    `request.json()` does, for one that is not JSON at all, because each surface words *that*
+    refusal itself (`400 INVALID_ARGUMENT` on one, `422 VALIDATION_ERROR` on the other).
+    """
+    raw = await request.body()
+    if nests_deeper_than(raw, MAX_JSON_DEPTH):
+        raise GeminiHTTPError(
+            400,
+            f"The request body nests deeper than {MAX_JSON_DEPTH} levels. Nothing on this path "
+            "can walk a structure that deep — including the writer that records the request — so "
+            "it is refused here rather than half-processed.",
+            "INVALID_ARGUMENT",
+        )
+    return json.loads(raw)
 
 
 def ensure_body_is_encodable(body: Any) -> None:
@@ -816,6 +865,23 @@ async def check_declaration(
         raise GeminiHTTPError(
             400,
             f"maxOutputTokens {requested} exceeds the {cap} this model accepts.",
+            "INVALID_ARGUMENT",
+        )
+    if requested is not None and requested > MAX_ACCOUNTABLE_TOKENS:
+        # **Unconditional, unlike the check above it.** That one asks what the *model* declared,
+        # and `max_output_tokens` is nullable — so an ordinary catalogue row bounded this field by
+        # nothing at all. The pre-dispatch reservation then moved the shared counter by the
+        # caller's number: at 2⁶³ Redis answers "increment would overflow", `RedisRunner` reports
+        # that as `CountersUnavailable`, and budget enforcement quietly fell back to its racy path
+        # for that request while `/readyz` blamed the counter store (`MAX_ACCOUNTABLE_TOKENS`).
+        #
+        # A named refusal rather than a clamp: the caller wrote the number, so the caller is who
+        # can fix it, and silently serving a different request than the one asked for is the defect
+        # `FRD-124` is about.
+        raise GeminiHTTPError(
+            400,
+            f"maxOutputTokens {requested} exceeds the {MAX_ACCOUNTABLE_TOKENS} this gateway can "
+            "account for.",
             "INVALID_ARGUMENT",
         )
     return declaration

@@ -430,3 +430,44 @@ def test_a_key_is_as_unstorable_as_a_value_and_was_copied_through() -> None:
     assert cleaned["ok"] == "plain"
     assert "unrepresentable" in "".join(cleaned)
     json.dumps(cleaned, ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+async def test_a_payload_that_is_not_an_object_is_written_rather_than_lost(sessionmaker) -> None:
+    """The writer is defensive about what it is handed, rather than trusting a distant annotation.
+
+    `_maybe` ended in `dict(payload)` — a coercion, not a check. `PendingLog.request_payload` is
+    annotated `dict[str, Any] | None` and nothing enforces that at run time, so when the Gemini
+    surface assigned a caller's `[1, 2]` to the audit trail the write died on
+    `TypeError: cannot convert dictionary update sequence element #0 to a sequence`: a correct
+    `400` to the caller and **no row** (2026-09-08).
+
+    The surface refuses that body by name now. This is the other half, and it is not redundant:
+    the same `_maybe` runs over a **response** payload, which nobody here chose the shape of, and
+    `storable`'s whole argument is that losing the row is the worst outcome available.
+
+    Driven through `submit` rather than by calling the helper, because a test that calls the helper
+    passes with the call site deleted (`LESSONS.md` §1).
+    """
+    import dataclasses
+
+    entry = dataclasses.replace(
+        _entry(),
+        request_payload=[1, 2, {"a": "b"}],  # type: ignore[arg-type]
+        response_payload="a bare string",  # type: ignore[arg-type]
+    )
+
+    await _writer(sessionmaker, max_queue=0).submit(entry)
+    rows = await _rows(sessionmaker)
+
+    assert len(rows) == 1, "a payload shape must not be able to cost the row"
+    assert rows[0].request_payload == {"payload": [1, 2, {"a": "b"}]}
+    assert rows[0].response_payload == {"payload": "a bare string"}
+
+
+async def test_an_object_payload_is_not_wrapped(sessionmaker) -> None:
+    """The comparison. A writer that wrapped everything would change the shape of every stored
+    payload and break every reader that indexes into one."""
+    await _writer(sessionmaker, max_queue=0).submit(_entry())
+    rows = await _rows(sessionmaker)
+
+    assert rows[0].request_payload == {"contents": [{"parts": [{"text": "personnel number 4711"}]}]}

@@ -36,7 +36,7 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol, runtime_checkable
 
-from aira_common.patterns import is_catastrophic
+from aira_common.patterns import catastrophic_reason
 
 #: What replaces a match. Fixed-length and obviously not data, so a reader can tell "this was
 #: removed" from "the caller wrote that" — and so a redacted value cannot be confused for a short
@@ -98,10 +98,11 @@ class PatternRedactor:
     def __init__(self, patterns: tuple[str, ...] = BUILTIN_PATTERNS) -> None:
         compiled: list[re.Pattern[str]] = []
         for pattern in patterns:
-            if is_catastrophic(pattern):
+            reason = catastrophic_reason(pattern)
+            if reason is not None:
                 raise RedactionMisconfigured(
-                    f"Redaction pattern {pattern!r} nests a quantifier inside a quantified group; "
-                    "that backtracks exponentially on caller-supplied text."
+                    f"Redaction pattern {pattern!r} backtracks catastrophically on "
+                    f"caller-supplied text: {reason}."
                 )
             try:
                 compiled.append(re.compile(pattern))

@@ -38,6 +38,7 @@ from aira_gateway.api.serving import (
     catalog_of,
     declared_model,
     guard_before_work,
+    json_body,
     record_pipeline_calls,
     released_for,
 )
@@ -201,7 +202,7 @@ async def dry_run(
     request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
     try:
-        body = await request.json()
+        body = await json_body(request)
     except ValueError:
         return _error(400, "Request body is not valid JSON.", "INVALID_ARGUMENT")
     try:

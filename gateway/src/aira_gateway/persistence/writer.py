@@ -90,6 +90,77 @@ class PendingLog:
     request_bytes: int | None = None
 
 
+#: How deep a payload may be before the writer flattens it.
+#:
+#: Above `MAX_JSON_DEPTH`, so a request body this gateway *accepted* is never truncated here —
+#: the two bounds are one rule seen from two ends, and a stored request that had been clipped by
+#: the recorder would be evidence that quietly disagreed with what was served. Below the
+#: interpreter's 1000-frame limit by an order of magnitude, because three walks run one after
+#: another (`strip_attachments`, the redactor, `storable`) from inside a request that already
+#: holds a stack.
+MAX_STORED_DEPTH = 100
+
+#: What stands in for a subtree too deep to walk. The same idiom as `storable`'s
+#: `<unrepresentable: …>`: a reader sees that something was there and what was wrong with it.
+TOO_DEEP = f"<unrepresentable: nested deeper than {MAX_STORED_DEPTH} levels>"
+
+
+def within_depth(value: Any, limit: int = MAX_STORED_DEPTH) -> Any:
+    """``value`` with anything below ``limit`` levels replaced by :data:`TOO_DEEP`.
+
+    **First of the three walks, because the other two cannot survive what this one is for.**
+    `strip_attachments`, the redactor and `storable` each recurse over a payload with no bound,
+    and the interpreter's recursion limit is a thing a *caller* can reach: measured on
+    2026-09-08, a body nesting ~1 000 levels — 12 kB — raised `RecursionError` inside
+    `strip_attachments` and cost the whole audit row, on a request that had been correctly
+    refused. The same body on a served request answered `500` **after** the model had been
+    called: spend, no answer, no record.
+
+    `aira_common.nesting` closes the caller's door (`FRD-124`'s rule, applied to structure rather
+    than to values). This closes the **upstream's**: a response payload is a provider's output,
+    nobody here chose its shape, and a model that answers with a thousand nested objects must not
+    be able to erase the record of its own answer. Exactly the argument `storable` makes about
+    `NaN`, one property along — *losing the value is a smaller failure than losing the row, and
+    replacing it with its name is smaller still*.
+
+    Recursion here is safe because it is the thing being bounded: at most ``limit`` frames.
+    """
+    if limit <= 0:
+        return TOO_DEEP
+    if isinstance(value, dict):
+        return {key: within_depth(item, limit - 1) for key, item in value.items()}
+    if isinstance(value, list):
+        return [within_depth(item, limit - 1) for item in value]
+    return value
+
+
+#: Where a payload that is not a JSON object is kept, so that the row can still be written.
+#:
+#: Every reader of these columns indexes into a mapping — the trace detail, `payloads.py`, the
+#: redactor — and the column is typed as one. A caller who sends `[1, 2]` or `"text"` is refused,
+#: and the refusal is recorded; what they sent goes here rather than being dropped or costing the
+#: row.
+NOT_AN_OBJECT_KEY = "payload"
+
+
+def as_object(value: Any) -> dict[str, Any]:
+    """``value`` as something a payload column can hold, wrapping it if it is not a mapping.
+
+    **This was `dict(value)`, and that is a coercion rather than a check.** The annotation said
+    `dict[str, Any]`, nothing enforced it at run time, and the Gemini surface assigned the caller's
+    body to the audit trail before validating its shape — so `POST … :generateContent` with a body
+    of `[1, 2]` was refused with a correct `400` and then lost its audit row to
+    `TypeError: cannot convert dictionary update sequence element #0 to a sequence`. Two characters,
+    and a request that left no trace (`FRD-122`).
+
+    The surface refuses that body by name now, and this stays for the reason `storable` states one
+    function down: **losing the row is the worst outcome available**, so the writer is defensive
+    about what it is handed rather than trusting a type annotation four modules away. A wrapper
+    keeps the shape every reader expects while keeping the evidence.
+    """
+    return value if isinstance(value, dict) else {NOT_AN_OBJECT_KEY: value}
+
+
 def storable(value: Any) -> Any:
     """A payload the database can actually take, with the awkward values named rather than dropped.
 
@@ -271,14 +342,19 @@ class RequestLogWriter:
             def _maybe(payload: dict[str, Any] | None) -> dict[str, Any] | None:
                 if not store or payload is None:
                     return None
+                # Bound the *structure* first: the three walks below each recurse, and the
+                # interpreter's recursion limit is somewhere a caller — or an upstream — can
+                # reach. Before this, a payload nesting a thousand levels raised `RecursionError`
+                # inside `strip_attachments` and cost the row it was written to save.
+                bounded: dict[str, Any] = within_depth(payload)
                 # Strip first, then redact. A base64 PDF in a JSONB column would make each row
                 # megabytes, put binary the gateway never inspected inside the retention boundary,
                 # and hand redaction something it cannot process (FRD-110 §5.4). Unconditional,
                 # because a deployment that swaps the redactor must not be able to turn it off.
-                stripped: dict[str, Any] = strip_attachments(payload)
+                stripped: dict[str, Any] = strip_attachments(bounded)
                 # `storable` last, so it also covers whatever a redactor substitutes in.
                 redacted: dict[str, Any] = self._redactor.redact(stripped)
-                return dict(storable(redacted))
+                return as_object(storable(redacted))
 
             await RequestLogService(session).record(
                 subject=entry.subject,

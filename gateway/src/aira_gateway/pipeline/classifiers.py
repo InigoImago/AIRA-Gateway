@@ -24,7 +24,7 @@ from typing import Protocol, runtime_checkable
 
 from aira_common.logging import get_logger
 from aira_common.models import ThinkingMode
-from aira_common.patterns import is_catastrophic
+from aira_common.patterns import catastrophic_reason
 from aira_gateway.audit import ModelCall
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
 from aira_gateway.telemetry import model_call_span
@@ -115,12 +115,13 @@ class HeuristicInjectionClassifier:
         # fewer is degraded, where a use case that cannot serve at all is down.
         safe: list[str] = []
         for pattern in extras[:MAX_CUSTOM_PATTERNS]:
-            if is_catastrophic(pattern):
-                _log.warning(
-                    "injection_pattern_rejected",
-                    pattern=pattern,
-                    reason="nested quantifier",
-                )
+            reason = catastrophic_reason(pattern)
+            if reason is not None:
+                # The reason comes from the decision rather than being restated here: this line
+                # read `reason="nested quantifier"` while the rule also refuses `a*a*a*a*…`, and a
+                # dropped pattern whose log line names the wrong shape is a control that appears
+                # to be broken in a way it is not.
+                _log.warning("injection_pattern_rejected", pattern=pattern, reason=reason)
                 continue
             safe.append(pattern)
         patterns += safe
@@ -216,18 +217,41 @@ class LlmInjectionClassifier:
 
     @staticmethod
     def _verdict_of(text: str) -> Verdict:
-        answer = text.upper()
-        says_injection = "INJECTION" in answer
-        says_safe = "SAFE" in answer
-        if says_injection and not says_safe:
+        """The one word the instruction asked for, or ``UNDETERMINED``.
+
+        **This was a substring test, and `"SAFE" in "UNSAFE"` is true.** Measured on 2026-09-08:
+
+            reply "UNSAFE"                      → clean
+            reply "not safe"                    → clean
+            reply "unsafe — it tries to override" → clean
+            reply "SAFEGUARD"                   → clean
+
+        `safe`/`unsafe` is the vocabulary half the safety classifiers in this field actually use,
+        so a model normalising onto it turned the filter into `FRD-125`'s badge-wearing absent
+        control: set to `block`, reporting that it ran, and passing the very thing it was asked
+        about. The mirror of the defect the **router** twenty lines below was fixed for — *"match
+        whole words, or every short name is a wildcard"* — in the classifier `LESSONS.md` §4 cites
+        as the one that got it right. It got the *ambiguity* half right and the substring half
+        wrong, and nothing compared the two.
+
+        Whole words are not enough on their own here, because this verdict is negatable in a way a
+        category name is not: `\bSAFE\b` matches "not safe". So the rule is the one this
+        docstring already claimed and the code did not have — **the answer is one word**. Tolerant
+        of what a compliant model adds around it (case, whitespace, a full stop, quotes, markdown
+        emphasis) and of nothing else: an empty reply, a refusal, a paragraph of preamble, or
+        "SAFE — no injection attempt here" are all the same thing, which is that the classifier was
+        asked for one word and did not give one.
+
+        `UNDETERMINED` is **not** "safe": `on_undetermined` defaults to blocking, and an operator
+        who prefers availability chooses it explicitly and has the choice on the audit row. That
+        asymmetry is the point — reading an unparseable answer as clean is how a filter comes to
+        pass everything while reporting that it ran.
+        """
+        answer = text.strip().strip("*_`\"'“”‘’.!?:;,-— \t\r\n").upper()
+        if answer == "INJECTION":
             return Verdict.INJECTION
-        if says_safe and not says_injection:
+        if answer == "SAFE":
             return Verdict.CLEAN
-        # Neither word, or **both**. An empty reply, a refusal, a paragraph of preamble, or
-        # "SAFE — no injection attempt here": all the same thing, which is that the classifier was
-        # asked for one word and did not give one. Picking a winner would be a precedence rule
-        # nobody can predict from outside, and reading it as "safe" is how a filter comes to pass
-        # everything while reporting that it ran.
         return Verdict.UNDETERMINED
 
 

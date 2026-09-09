@@ -5,6 +5,280 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A number in one field, and budget enforcement was on its racy path (2026-09-08)
+
+`FRD-405` §4.2 exists because reading usage and booking it afterwards left every request in flight
+invisible to every other one's check. The reservation closes that window — and it closes it in
+Redis, with `HINCRBY`, which is **64-bit integer arithmetic**.
+
+Measured through the production runner:
+
+```
+tokens = 1 000     atomic=True   degraded=False
+tokens = 2⁶²       atomic=True   degraded=False
+tokens = 2⁶³       atomic=False  degraded=True
+tokens = 10³⁰      atomic=False  degraded=True
+```
+
+At 2⁶³ Redis answers *"increment would overflow"*. `RedisRunner` turns every exception into
+`CountersUnavailable` — correctly, because that is what a Redis that is away looks like from
+there — so `guard` released, logged `counters_unavailable`, marked **budget enforcement degraded**,
+fell back to read-then-book and served the request. Nothing is broken and nothing is wrong with any
+of those steps: a **caller** simply chose, per request, which of two enforcement paths applied to
+them, and left `/readyz` blaming the counter store for it.
+
+**Two fields reach that arithmetic, and both were bounded only where the model declared a bound.**
+
+```python
+cap = declaration.max_output_tokens
+if requested is not None and cap is not None and requested > cap:   # ← `cap is not None`
+maximum = declaration.thinking_bounds[1]
+if maximum is not None and tokens > maximum:                        # ← and again
+```
+
+`max_output_tokens` and `thinking` are nullable and default to `None`, so an ordinary catalogue row
+declares neither — the check reads as present and is conditional on something nobody has to write.
+`LESSONS.md` §1's *a value nobody wrote is a value nothing checks*, applied to a **bound** rather
+than to a value.
+
+**One ceiling, derived rather than chosen.** `budget_usage.tokens` and `budgets.limit_tokens` are
+`Integer`, so `MAX_ACCOUNTABLE_TOKENS` is the largest figure a token budget could ever be set to: a
+request asking for more is asking for more than any limit could permit. Asserted against the
+columns rather than against `2**31 - 1`, so widening one of them asks the question here instead of
+leaving a comment that no longer means what it says.
+
+**And a third door with nobody to refuse.** The *sum* — a caller's cap, plus what the model's own
+declaration says an attachment costs, plus a thinking budget — is written by no single party, so
+there is no field to name in a refusal. That one is clamped, which is safe exactly there and
+nowhere else: an estimate is deliberately approximate and `settle` replaces it with the real figure
+the moment the answer arrives. The clamp is `min`, and a test observes what actually reaches the
+ledger — a clamp that flattened every reservation would pass the overflow test and switch off the
+control the fix exists to protect.
+
+**And the fix had a wrinkle of its own, one surface over.** `check_declaration` is shared, so the
+KIRA surface would have refused the request as a `GeminiHTTPError` — rendered there as
+`400 VALIDATION_ERROR` — while the *model-cap* version of the same mistake answers
+`422 MAX_TOKENS_EXCEEDS_CAP`. One mistake, two codes, decided by whether somebody had catalogued a
+cap; and the code is that surface's whole contract. It says the ceiling in its own words now, from
+the same constant.
+
+Six mutations (`AT1`–`AT6`). The ledger test drives `RedisRunner` itself over `fakeredis` rather
+than a stand-in: the mapping under test — *every* exception becomes `CountersUnavailable` — lives
+in that class, and a double raising the Redis error directly would have shown a `500` where
+production shows a silent degradation, which is the wrong defect.
+
+---
+
+## `"SAFE" in "UNSAFE"` — the injection filter read a verdict as its opposite (2026-09-08)
+
+`LESSONS.md` §4 opens with *"asking a model for one word means reading one word, not searching for
+it"*, and cites this classifier as the one that gets it right. It got half of it right.
+
+The ambiguity half was real: a reply carrying **both** words, or neither, is `UNDETERMINED` rather
+than a guess. The words themselves were matched as **substrings**. Measured:
+
+```
+reply "UNSAFE"                        → clean
+reply "not safe"                      → clean
+reply "unsafe — it tries to override" → clean
+reply "SAFEGUARD" / "safety"          → clean
+```
+
+`safe`/`unsafe` is the vocabulary the safety classifiers in this field actually use, so a model
+normalising onto it had its verdict read as **the opposite of what it said** — on a filter set to
+`block`, reporting that it ran, passing the thing it was asked about. `FRD-125`'s badge-wearing
+absent control, in the control `FRD-125` is about.
+
+The **router** twenty lines below had been fixed for exactly this a fortnight earlier, with a
+docstring explaining it. Nothing compared the two, because each was internally consistent — the
+same shape as the surface parity defect found the same day, one file down instead of one plane
+over.
+
+**And the router's fix is not this one.** Whole words are enough for a category name and not for a
+binary safety verdict: `\bSAFE\b` matches "not safe". A verdict that can be negated has to be read
+as *the whole answer*. So the rule is the one this method's own docstring already claimed and the
+code did not have — the answer is one word — with tolerance for what a compliant model puts around
+it (case, whitespace, a full stop, quotes, markdown emphasis, a code span) and for nothing else.
+`UNDETERMINED` is not "safe": `on_undetermined` defaults to blocking, and an operator who prefers
+availability chooses it and has the choice on the audit row.
+
+Two mutations (`IV1`, `IV2`). The one existing test that changed was a fixture whose reply was a
+*sentence* beginning `INJECTION —`; its subject is that a classifier's prose reaches the dry-run
+trace and never the audit row, which is unchanged — under the corrected rule a reply with prose in
+it is exactly the kind that carries no verdict, which is what makes it the right fixture.
+
+**And a compile warning that only a cache miss could show.** Editing the file beside it
+invalidated a `.pyc` and Python printed *"`\+` is an invalid escape sequence … such sequences will
+not work in the future"* — from a **docstring**, present since August, in a paragraph explaining a
+regex. A compile-time warning is emitted once per compile, so a cached module never prints it, and
+`ruff`'s selected families did not include `W`. One file was affected; the family is otherwise
+clean, so `W` is in the gate now rather than the one rule somebody would have to know about.
+
+---
+
+## The backtracking check knew one of the two classic shapes (2026-09-08)
+
+`is_catastrophic` exists because *"one of them against a long prompt takes exponential time and
+stalls a gateway worker for as long as it runs. Python's `re` has no timeout, so the only defence
+is not compiling them."* It asks one question: **is there a repeated group whose body repeats?**
+
+There are two families, and the other one has no group in it at all. Measured:
+
+| pattern | flagged | 20 chars | 26 | 32 |
+| --- | --- | --- | --- | --- |
+| `a*a*a*a*a*a*a*a*b` | **no** | 62 ms | 363 ms | 1 532 ms |
+| `\s*\s*\s*\s*\s*\s*\s*\s*\s*x` | **no** | 229 ms | 1 733 ms | **over 5 s** |
+
+`_groups` returns nothing for those, so every check the detector makes was skipped and the answer
+was `False` by falling off the end — the same failure mode as the two holes the previous round
+found in this module, which is *a question asked about the wrong structure*. The author of such a
+pattern is a use-case administrator typing into the pipeline builder; the stall is on an event loop
+every use case shares; and `\s*\s*` is as easy to write by accident, concatenating optional
+fragments, as on purpose.
+
+**Thirty characters is the wrong scale to decide at, and that is the sharper half.** The check runs
+against up to `MAX_SCANNED_CHARS` — twenty thousand characters of prompt. A *pair* of unbounded
+repeats costs 0.1 ms on thirty characters and **over ten seconds on five thousand**, so the first
+draft of the threshold, written from the thirty-character table, called it harmless.
+
+Every bound is now derived from a measurement at that scale rather than chosen:
+
+| run | ways to divide the text | 20 000 characters |
+| --- | --- | --- |
+| two unbounded (`a*a*`) | grows with the input | did not finish |
+| `[0-9]{2,4}` × 3 | 27 | 8 ms |
+| `a{0,3}` × 5 | 1 024 | 108 ms |
+| `a{0,10}` × 3 | 1 331 | 57 ms |
+| `a{0,10}` × 4 | 14 641 | **637 ms** |
+| `a{0,10}` × 6 | 1 771 561 | did not finish |
+
+— so `MAX_AMBIGUITY` sits between the largest comfortable figure and the first that is not. **The
+precision is the point, not fussiness**: the redactor *raises* on a refusal, so a false positive
+there is a gateway that will not start, and an earlier draft refused `\+?[0-9]{2,4}[ -]?[0-9]{3,}`
+— a phone number, 2.5 ms against a thousand digits.
+
+Four things had to be got right that reading the pattern does not show, each found by breaking the
+check on purpose and watching it not fail:
+
+- **an optional atom is not a separator.** `\s*x?\s*x?…` reads as a sequence and is not one: `x?`
+  can match nothing, so the `\s*` either side are adjacent. 125 ms · 709 ms · 3 021 ms.
+- **nor is a zero-width one.** `\s*\B\s*\B…` — 137 ms · 785 ms · 3 366 ms. The first attempt at
+  this case used `\b`, which *fails* between two spaces and prunes the search: it timed at 0.1 ms
+  flat and would have argued the opposite. **A predicate about production data is only tested
+  against data the predicate is true of.**
+- **lazy backtracks and possessive does not.** `a*?a*?…` is 130 ms · 937 ms · 4 264 ms; the same
+  chain with `*+` is 0.1 ms flat. The second is also the rewrite the refusal advises, so refusing
+  it would have made the advice useless.
+- **`a{3}a{3}` is `a{6}`.** A rule that counted *repeats* rather than *ways* refuses it; there is
+  nothing to redistribute.
+
+And the refusal now names which of the two shapes it found. All three call sites said *"nests a
+quantifier inside a quantified group"* — one sentence for what is now two rules, and the wrong one
+would have sent an operator looking for a group `a*a*a*` does not have. `catastrophic_reason`
+returns the sentence; `is_catastrophic` is the boolean over it, so the two cannot disagree.
+
+`ADR-0007`'s trade-off is amended in place rather than rewritten: it said the check *"rejects the
+classic catastrophic-backtracking shapes"*, and it rejected one of them. Seven mutations
+(`RR1`–`RR7`); `P5`, `W5` and `TC33` re-anchored.
+
+---
+
+## A caller could still choose not to be logged — this time with a shape, not a value (2026-09-08)
+
+`ensure_body_is_encodable` was written on 2026-08-19 because *"a caller could choose not to be
+logged, with six characters"*: `1e309` parses, `Infinity` is not JSON, and the audit row failed to
+write. It closed the door for a **value** the row cannot hold. The door beside it — a **structure**
+nothing on the path can walk — was open, and it costs the same row for the same reason.
+
+Every walk over a body recurses: Python's decoder, `json.dumps` inside that very check,
+`strip_attachments`, the redactor, `storable`. How far they recurse is a number the caller writes.
+
+**Measured, against a gateway whose body ceiling is 8 MB:**
+
+| what was sent | what happened |
+| --- | --- |
+| ~1 000 levels · 12 kB · refused for an unrelated reason | `400` to the caller and **no audit row** — `RecursionError` inside `strip_attachments`, `audit_refusal_not_recorded` in a log nobody reads during an incident |
+| the same depth inside a valid `functionResponse.response` | **served**: the model answered, the write raised, and the caller got `500` — spend, no answer, no row |
+| ~70 000 levels · 420 kB | `RecursionError` out of `json.loads` → `500` on both surfaces and on `:dryRun`, `:checkThinking` and `/v1beta/suspensions` (the KIRA surface from ~50 000) |
+| ~200 000 levels · 1.2 MB | the same, on **every endpoint of the control plane** — well inside Django's own 2.5 MB upload ceiling |
+
+`RecursionError` is not a `ValueError`, so every one of the carefully guarded `except ValueError:`
+forms this repository already had walked straight past it.
+
+**And those depths are properties of this machine, not of the product** — which is the argument for
+a bound of our own rather than for catching the error. Python 3.14 raises when the C stack runs
+out, so the threshold depends on how deep the request already is: the same document that survived
+30 000 levels inside the test process raised at 10 000 in a bare script. A limit that moves with
+the deployment is not a limit.
+
+**How it was found, which is the part worth keeping.** Not by asking about a field. The gateway has
+had `test_a_callers_value_is_never_a_server_error.py` since August, and its own docstring explains
+that a sweep sees what a per-field test cannot — so the first move was to write the same sweep for
+the **control plane**, which never got one. *A lesson is applied where it was learned unless
+somebody carries it.* Two traps on the way, both of them the shape this project calls *a test whose
+setup never reaches the path it is named after*: the throttle answered `429` to 4 112 of 5 000
+requests, and `DELETE /use-cases/<slug>/` retired the fixture so that everything swept afterwards
+was a `404`. Both were found by printing the status distribution rather than by reading a green run.
+
+And the gateway's own sweep had the hole in the shape of its own two headings: `WEIRD` is wrong
+*values*, `UNPARSEABLE` is documents that are not JSON, and a body that is well-formed JSON and
+wrong in its **structure** is neither. **A list of the kinds of wrong value is itself a
+hand-written list.**
+
+**The fix is two bounds, one at each end, and they are different rules.**
+
+`aira_common.nesting` measures the depth **before** anything parses — one constant both planes
+read, because a body the gateway accepts is one the control plane may be sent. Counted without
+recursing and without decoding: escaped backslashes and quotes are resolved, the document is split
+on `"` so a *string* full of brackets counts for nothing, and the running sum is `accumulate` in C.
+3.5 ms for a 4 MB body of ordinary text. **Brackets inside a string are text** is not a nicety — a
+scanner without it refuses a prompt carrying source code, which is exactly the traffic `FRD-132`
+measured a real coding assistant sending.
+
+`persistence/writer.within_depth` closes the **upstream's** door, which no request-side bound can:
+a response payload is a provider's output, and a model that answers with a thousand nested objects
+must not be able to erase the record of its own answer. Same idiom as `storable` — *losing the
+value is a smaller failure than losing the row, and replacing it with its name is smaller still*.
+The two bounds are ordered (100 > 64) and the order is asserted, so a request that was **accepted**
+is never clipped by the recorder.
+
+**One reader, not a rule at four call sites.** `serving.json_body` is where every hand-written body
+is read, and a test fails on any `api/` module that calls `request.json()` itself — the argument
+`FRD-126` makes about `prepare_for_dispatch`, one door along. The defect arrived on five routes at
+once precisely because each was written correctly by its own lights.
+
+**And the same door was open two characters wide.** Written as a cross-surface matrix — eighteen
+conditions, both surfaces, comparing *served / recorded / outcome* rather than each surface against
+its own expectations — because *"a property that holds on one of them is not the property"*. Two
+rows disagreed:
+
+```
+body is a list      gemini=400 rows=0            | kira=422 rows=1 outcome=invalid_request
+body is a string    gemini=400 rows=0            | kira=422 rows=1 outcome=invalid_request
+```
+
+`[1, 2]` is valid JSON, so it walked past the parse; the Gemini surface assigned it to the audit
+trail and refused it correctly a few lines later. The **write** then failed —
+`TypeError: cannot convert dictionary update sequence element #0 to a sequence`, because `_maybe`
+ended in `dict(...)` and a list is not a mapping. `dict(payload)` is a coercion where the reader
+sees a type annotation: `PendingLog.request_payload` says `dict[str, Any] | None`, nothing enforces
+it at run time, and mypy was satisfied four modules away. Both of the other body readers here
+already refuse a non-object — the KIRA surface and `incidents._body_of` — **two of three, and the
+third is the one a real client posts to.**
+
+Fixed at both ends for different reasons: the surface refuses by name *before* the trail is set
+(so no payload is stored for a body nobody accepted), and `writer.as_object` wraps rather than
+coerces, because the same `_maybe` runs over a **response** payload whose shape nobody here chose.
+The parity test asserts `request_payload is None` as well as the row's existence — without that
+line the surface's own check could be deleted and the writer would quietly cover for it, which is
+what a property guarded twice does to a test.
+
+Eight mutations (`ND1`–`ND8`), all caught; `F7` and `RB5` re-anchored. The Management plane now has
+the sweep, and it is derived from the URL configuration so the endpoint written tomorrow is covered
+on the day it is added.
+
+---
+
 ## The two channels were one product and one afterthought, and the encoding proved it (2026-09-07)
 
 *"There are two separate OTel channels — check they are set up correctly, that they work properly

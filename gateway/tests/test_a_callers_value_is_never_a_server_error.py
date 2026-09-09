@@ -13,6 +13,16 @@ numbers with a bare `int(...)`, while every other route in the gateway already s
 guarded form. The rule was stated in three places and held in three places, and the routes written
 afterwards did not inherit it. That is the shape a per-field test cannot see and a sweep can.
 
+*"Both API surfaces came through it clean"* was true on the day and stopped being true on
+2026-09-08, so it is corrected here rather than deleted — the reader who needs the correction is
+the one reading this paragraph. They came through clean **against the values this file listed**,
+and the list had a hole shaped like its own two headings: `WEIRD` is wrong *values*, `UNPARSEABLE`
+is documents that are not JSON, and a body that is well-formed JSON and wrong in its **structure**
+is neither. One nesting 100 000 levels was a `500` on five routes, including both surfaces. It is
+`TOO_DEEP` below now. **A list of the kinds of wrong value is itself a hand-written list**, and
+this repository's answer to those is always the same: give it a counterpart, or expect the next
+kind to be the one nobody thought of.
+
 **A sweep is a floor, not a specification.** What each field *should* answer is pinned where that
 field lives — `test_suspensions.py`, `test_model_check.py`, `test_traces.py`. This only says that
 nothing here answers `500` to a value somebody typed, and it is deliberately cheap so that the next
@@ -130,6 +140,17 @@ BODIES: dict[str, tuple[str, list[Any]]] = {
 #: Not JSON at all. `await request.json()` raises a `ValueError`, which is a 400 everywhere it is
 #: caught and a 500 everywhere it is not.
 UNPARSEABLE: list[bytes] = [b"{", b"not json", b"\xff\xfe", b'{"a": Infinity}']
+
+#: **The kind this list was missing**, found on 2026-09-08. Perfectly well-formed JSON, and the
+#: `WEIRD` list above is a list of wrong *values* — so a body that is wrong in its **structure**
+#: fell between the two, on the file whose whole argument is that a sweep sees what a per-field
+#: test cannot. It answered `500` on `:dryRun`, `/v1beta/suspensions`, `:checkThinking` and both
+#: generation surfaces: `RecursionError` out of `json.loads`, which is not a `ValueError` and was
+#: therefore caught by none of the guarded forms above.
+#:
+#: The property itself is pinned in `test_a_body_cannot_be_nested_out_of_the_audit_trail.py` —
+#: this is the floor, and it is here so that the *next* route inherits the case.
+TOO_DEEP: bytes = (b'{"a":' * 100_000) + b"1" + (b"}" * 100_000)
 
 
 #: Methods a sweep may send blind. A `POST` carries a body whose vocabulary decides what is wrong,
@@ -284,7 +305,7 @@ async def test_no_hand_written_body_answers_with_a_server_error() -> None:
     assert not failures, failures
 
 
-@pytest.mark.parametrize("raw", UNPARSEABLE)
+@pytest.mark.parametrize("raw", [*UNPARSEABLE, TOO_DEEP])
 async def test_a_body_that_is_not_json_answers_with_a_refusal(raw: bytes) -> None:
     failures: list[tuple[str, int, str]] = []
     with _client() as client:

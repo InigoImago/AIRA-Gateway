@@ -348,6 +348,28 @@ reading code.
   shapes it accepted were timed at 35–159 seconds on a thirty-character input. A pattern language
   cannot describe its own nesting — use a scanner. And check the widening in **both** directions:
   a detector that refuses one of the built-ins is not a fix, it is a gateway that will not start.
+
+  *And then the scanner was asked one question when there are two.* Catastrophic backtracking has
+  two textbook families and this module knew the first: a repeated group whose body repeats. The
+  second — repeated quantifiers **in a row** over the same characters, `a*a*a*…`, `\s*\s*\s*…` —
+  has no group in it, so `_groups` returned nothing, every check was skipped and the answer was
+  `False` by falling off the end. Measured at 1 532 ms and over five seconds on thirty-two
+  characters, on a control whose whole purpose is that. **A check that walks a structure answers
+  `False` for input with no such structure, and that is indistinguishable from `safe`** — ask what
+  the guard returns for something it cannot see at all.
+
+  *And the scale a bound is decided at is part of the bound.* A *pair* of unbounded repeats costs
+  0.1 ms on thirty characters and over ten seconds on five thousand — so a threshold written from
+  the thirty-character table called it harmless. The filter is handed twenty thousand characters of
+  prompt. **Measure at the size production supplies**, and where a threshold has to be picked, pick
+  it between the largest measured figure that is comfortable and the first that is not, with both
+  in the comment: a ceiling nobody can account for is a number somebody raises.
+
+  *And the counter-example has to be one the predicate is true of.* The zero-width case was first
+  tested with `\b` between two `\s*` — which **fails** between two spaces, prunes the search and
+  times at 0.1 ms flat, arguing convincingly that the case did not exist. `\B` succeeds there:
+  137 ms, 785 ms, 3 366 ms. A measurement that exercises the *failing* branch of the thing under
+  test measures the failing branch.
 - **A number is not a defect until it moves.** `(.*a){20}` cost 30 ms and looked like a fifth
   finding; measured against inputs from 20 to 800 characters it stayed flat at 30 ms, so it is a
   fixed cost, not a backtracker. Growth is the property, never the first reading.
@@ -386,6 +408,59 @@ reading code.
   longer is*. The cheap counterpart: when the value under test is one a caller supplies, one of the
   cases has to be malformed — a suite that only ever presents well-formed input is a suite that
   agrees with its author about what the input looks like.
+
+  *A ninth, and it is the **shape** of the value rather than the value.* The same door, one
+  property along: `ensure_body_is_encodable` refuses an `Infinity` or a lone surrogate because the
+  audit row cannot hold one — and nothing refused a body that nothing on the path could **walk**.
+  Every walk over a caller's body recurses (the decoder, `json.dumps` inside that very check,
+  `strip_attachments`, the redactor, `storable`), and how far they recurse is a number the caller
+  writes. Measured: ~1 000 levels — 12 kB — cost the audit row of a refused request; the same depth
+  inside a valid `functionResponse.response` was **served**, the model answered, and then the write
+  raised, so the caller got a `500` with the spend already made and no row; ~70 000 levels was a
+  `500` out of `json.loads` on five gateway routes, and ~200 000 the same on every endpoint of the
+  control plane — 1.2 MB, well inside Django's own 2.5 MB upload ceiling.
+  `RecursionError` is not a `ValueError`, so every carefully guarded `except ValueError:` in the
+  repository walked past it.
+
+  Three things generalise. **A guard against bad values does not cover bad structure**, and the two
+  read identically from the call site. **A bound belongs where the depth is measured, not where the
+  stack runs out** — the depth at which `RecursionError` fires depends on how deep the request
+  already is, so catching it would make the limit different in every deployment. And the sweep that
+  should have found it had the hole in the shape of its own two headings: `WEIRD` is wrong *values*,
+  `UNPARSEABLE` is documents that are not JSON, and a well-formed document that is wrong in its
+  *structure* is neither — **a list of the kinds of wrong value is itself a hand-written list**, and
+  gets the same counterpart as every other one.
+
+  *And the sweep existed on one plane only.* It was written for the gateway in August, with a
+  docstring explaining exactly what a sweep sees that a per-field test cannot, and the control
+  plane — more endpoints, every one of them driven by a console form — never got one. Writing it
+  is what found all of the above. **A lesson is applied where it was learned unless somebody
+  carries it**, which this file already says about `/readyz`; the carrying has to be a file, not a
+  paragraph.
+
+  *A tenth, two characters wide, and it shows what a type annotation is worth at run time.*
+  `[1, 2]` is valid JSON and is not an object. The Gemini surface put it on the audit trail and
+  refused it correctly a moment later; the **write** then died on
+  `TypeError: cannot convert dictionary update sequence element #0 to a sequence`, because `_maybe`
+  ended in `dict(payload)` and `PendingLog.request_payload` is annotated `dict[str, Any] | None`
+  by a module four steps away that nothing checks at run time. `dict(x)` where the reader sees a
+  cast is **a coercion standing in for a check** — it reads as belt-and-braces and is the thing
+  that raises. Both of the other body readers in the same gateway already refused a non-object;
+  two of three, and the third was the one a real client posts to.
+
+  *And the way it was found is the point.* Not by reading either surface — each was internally
+  consistent — but by driving eighteen conditions through **both** and comparing *served /
+  recorded / outcome*. **A comparison is the only thing that can see an asymmetry**, because an
+  asymmetry between two files is in neither of them (§7, *when two things are meant to be alike,
+  the test is the comparison*), and the two surfaces here had been compared on a served request
+  and on malformed JSON — the two cases most likely to agree.
+
+  *Then the fix made the test unable to fail.* Refusing at the surface **and** wrapping at the
+  writer are both right — the writer's transform also runs over a *response* payload, whose shape
+  nobody here chose — and with both in place, deleting either one left the parity test green. A
+  property guarded twice is a property no single assertion sees losing half of itself: the repair
+  is a second assertion that distinguishes the halves (here, that the row's payload is `None`,
+  which is only true when the *surface* refused), not a weaker guard.
 
 - **An export is not read, it is executed.** A CSV cell beginning with `=`, `+`, `-` or `@` is a
   formula to Excel, LibreOffice and Sheets, and both exports here hand one straight through: the
@@ -468,6 +543,28 @@ reading code.
   failure to notice, because the assertion looked like every other role assertion beside it. When
   a predicate's answer depends on state any other actor can change, assert only the ends that
   cannot move and say in the test why the middle is not asserted.
+
+- **A bound nobody wrote is a bound nothing applies.** The entry below is about a *value* that
+  arrives without being written down; this is the same sentence about the **limit** on one.
+  `maxOutputTokens` is checked against `declaration.max_output_tokens` and a thinking budget
+  against `declaration.thinking_bounds` — both guarded by `is not None`, both nullable, both
+  `None` on an ordinary catalogue row. So each check reads as present and is conditional on
+  something nobody has to declare.
+
+  What it cost is worth stating because it is not a crash. The pre-dispatch reservation moves the
+  shared counter with `HINCRBY`, which is 64-bit integer arithmetic: at 2⁶³ Redis answers
+  *"increment would overflow"*, the runner reports that as `CountersUnavailable` — which is
+  precisely what a Redis that is away looks like — and budget enforcement fell back to its racy
+  read-then-book path for that request, with `/readyz` blaming the counter store. **A caller chose
+  which of two enforcement paths applied to them.** Every step in that chain is individually
+  correct, which is why nothing said anything.
+
+  Two things generalise. **Ask of every `if declared is not None and …`: what is true when it is
+  `None`** — the answer is usually "no limit at all", and that is rarely what the sentence above it
+  claims. And where a figure crosses into somebody else's arithmetic, **derive the ceiling from the
+  narrowest thing it has to fit in** and assert the derivation, not the number: here
+  `budget_usage.tokens` is an `Integer`, so the ceiling is what a token budget could be set to, and
+  widening that column now fails a test instead of leaving a comment that has stopped being true.
 
 - **A value nobody wrote is a value nothing checks.** Every governance rule in this system reads
   what somebody *typed*: Management's serializer validates the models a pipeline **names**, the
@@ -1270,11 +1367,25 @@ reading code.
 ## 4. Models, providers and dispatch
 
 - **Asking a model for one word means reading one word, not searching for it.** The injection
-  classifier gets this right and says why: *"neither word, or **both** … picking a winner would be
-  a precedence rule nobody can predict from outside"* — so an ambiguous reply is `UNDETERMINED`
-  and the step decides what to do about it. The router in the same file did the opposite, matching
-  a category by `name.upper() in answer` — a substring, anywhere, first entry in the operator's
-  list wins. Measured: `NONE`, the instruction's **own** word for *no category fits*, selected a
+  classifier gets *half* of this right and says why: *"neither word, or **both** … picking a winner
+  would be a precedence rule nobody can predict from outside"* — so an ambiguous reply is
+  `UNDETERMINED` and the step decides what to do about it. The router in the same file did the
+  opposite, matching a category by `name.upper() in answer` — a substring, anywhere, first entry in
+  the operator's list wins.
+
+  ~~The injection classifier gets this right.~~ **It searched too**, and the correction belongs
+  here because this entry was the evidence that it did not — a paragraph citing a control as an
+  existing fact is not a check that it exists (§7). `"SAFE" in "UNSAFE"` is true, so a reply of
+  `UNSAFE` — and `safe`/`unsafe` is the vocabulary this field's safety classifiers actually use —
+  was read as **clean**, on a filter configured to block, reporting that it ran. So were `not
+  safe`, `SAFEGUARD` and `safety`. The ambiguity rule this entry quotes was real and covered a
+  reply carrying *both* words; nothing covered a reply carrying a word that *contains* one.
+
+  And the fix is not the router's. Whole words are enough for a category name and not for a binary
+  safety verdict, because `\bSAFE\b` matches "not safe": **a verdict that can be negated has to be
+  read as the whole answer**, not found inside one. Tolerance for what a compliant model puts
+  around its one word — case, a full stop, quotes, markdown emphasis — is worth having; tolerance
+  for a sentence is what let the negation in. Measured: `NONE`, the instruction's **own** word for *no category fits*, selected a
   category named `one`; *"not code — use general"* selected `code`, the one the model rejected;
   *"general or code"* selected `code` again. Not a security hole — the release and the approval
   still bound where a routed request lands — and the feature defeated, since a `model_route` exists
