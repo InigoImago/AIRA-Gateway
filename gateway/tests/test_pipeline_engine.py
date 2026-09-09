@@ -608,8 +608,14 @@ async def test_what_a_model_said_is_shown_and_never_stored() -> None:
     outcome = await engine.run(pipeline, _request("hi", model="mock-1"))
 
     assert "the user asked me" in result.trace[0].detail["output"]
+    # `undetermined`, and that is the reply's fault rather than this test's: a classifier asked for
+    # one word and answering a sentence has not answered (`LlmInjectionClassifier._verdict_of`,
+    # corrected 2026-09-08). It is the right fixture here for exactly that reason — a reply with
+    # prose in it is the only kind that can show prose reaching the trace, and under the corrected
+    # rule such a reply never carries a verdict. The subject is unchanged: the sentence is on the
+    # screen and not in the record.
     assert outcome.decisions == [
-        {"step": "injection_filter", "flagged": True, "action": "flag", "why": "injection"}
+        {"step": "injection_filter", "flagged": True, "action": "flag", "why": "undetermined"}
     ]
     assert not any("asked me" in str(value) for value in outcome.decisions[0].values())
 

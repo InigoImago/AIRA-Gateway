@@ -48,7 +48,9 @@ A review of the whole codebase surfaced defects across three categories.
   read-model lookups, and span attributes.
 - Operator-supplied injection-filter patterns were compiled and run, unbounded, against the
   full prompt on the gateway's hot path and in the browser's UI thread. A nested quantifier
-  (`(a+)+`) backtracks exponentially: one saved pipeline could stall a shared gateway worker.
+  (`(a+)+`) backtracks exponentially: one saved pipeline could stall a shared gateway worker. (So
+  does a *sequence* of them — `a*a*` — which this document did not say and the check did not catch
+  until 2026-09-08; see the amended trade-off below.)
 
 ## Options considered
 
@@ -102,8 +104,9 @@ who may invoke them, what they may submit, and what the system does by default.
   buffering, whether or not `Content-Length` is declared.
 - The use-case selector must match the Management slug charset (`^[a-z0-9-]{1,64}$`).
 - Pipeline configs are bounded at authoring time (step, pattern, model, and category counts and
-  lengths) and patterns with nested quantifiers are rejected with an explanation. The gateway
-  independently bounds what it will execute, and the browser preview bounds what it will match.
+  lengths) and patterns that backtrack catastrophically are rejected with an explanation naming
+  which shape they are. The gateway independently bounds what it will execute, and the browser
+  preview bounds what it will match.
 
 ## Consequences
 
@@ -116,9 +119,20 @@ who may invoke them, what they may submit, and what the system does by default.
   (`AIRA_OIDC_ENABLED`/`AIRA_OIDC_ISSUER`, see `.env.example`). With OIDC off, the two views
   degrade: the budget tab still renders limits without consumption, and the dry-run reports
   that the gateway did not accept the login. Everything else is unaffected.
-- **Trade-off — the nested-quantifier check is a heuristic.** It rejects the classic
+- **Trade-off — the backtracking check is a heuristic.** It rejects the classic
   catastrophic-backtracking shapes, not every possible one; the execution bounds are the
   backstop. Patterns that fail to compile are still matched literally, as before.
+
+  *Amended 2026-09-08: it rejected **one** of the classic shapes.* "Nested quantifiers" was the
+  whole of the rule, and the other textbook family — repeated quantifiers **in a row** over the
+  same characters, `a*a*a*…`, `\s*\s*\s*…` — contains no group, so every check the detector made
+  was skipped and the answer was `False` by falling off the end. Measured: `a*a*b` costs 152 ms
+  against a thousand characters and does not finish against five thousand, and the filter is handed
+  twenty thousand. Both families are refused now, and the two bounds the second one needs are
+  derived from measurement rather than chosen (`aira_common.patterns.MAX_AMBIGUITY`) — a pattern
+  whose ambiguity is a *constant*, such as a phone number written as bounded digit groups, stays
+  allowed, because the redactor **raises** on a refusal and a false positive there is a gateway
+  that will not start.
 - **Trade-off — `directAccessGrantsEnabled: false`** removes the password grant from the dev
   realm, so scripts that fetched a token with username/password must use the code flow (or
   re-enable it locally).

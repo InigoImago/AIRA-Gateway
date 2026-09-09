@@ -34,7 +34,13 @@ src = ["gateway/src", "libs/src"]
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "C4", "ASYNC"]
+# `W` was added on 2026-09-08, after a `SyntaxWarning` surfaced from a *docstring* — `\b` and `\+`
+# in a paragraph explaining a regex — and only because an edit invalidated the `.pyc` beside it.
+# Python emits that warning at **compile** time, so a cached module never prints it: the one file
+# in this repository carrying an invalid escape had been there since August, said "such sequences
+# will not work in the future", and no gate could see it. `W605` is the rule; the family is clean
+# and comes with it, so the gate is the family rather than one rule somebody has to know about.
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "ASYNC", "W"]
 # ASYNC109: exposing an explicit `timeout` parameter is a deliberate API choice here.
 ignore = ["ASYNC109"]
 

@@ -21,7 +21,7 @@ as invisible (`FRD-405` closed exactly this window for ordinary output).
 from __future__ import annotations
 
 from aira_common.models import Capability, ThinkingMode
-from aira_gateway.catalog import ModelDeclaration
+from aira_gateway.catalog import MAX_ACCOUNTABLE_TOKENS, ModelDeclaration
 from aira_gateway.core.canonical import Thinking
 
 #: The predecessor's codes, plus one for a case it has no code for.
@@ -207,6 +207,22 @@ def _limited_budget(tokens: int | None, declaration: ModelDeclaration) -> int:
         raise ThinkingRejected(
             THINKING_TOKEN_COUNT_TOO_HIGH,
             f"A thinking budget of {tokens} is above the {maximum} this model accepts.",
+        )
+    if tokens > MAX_ACCOUNTABLE_TOKENS:
+        # **The same door as `maxOutputTokens`, and it was open for the same reason.** Both checks
+        # above ask what the *model* declared, and `thinking_bounds` is nullable — so a model that
+        # declares none bounded this field by nothing, and `reserved_tokens` hands the caller's
+        # figure straight to the pre-dispatch reservation. At 2⁶³ that overflows the shared
+        # counter, is reported as the counter store being away, and switches budget enforcement
+        # to its racy path for the request (`catalog.MAX_ACCOUNTABLE_TOKENS`).
+        #
+        # `TOO_HIGH` rather than a new code: a migrating client already switches on it, and "your
+        # budget is above what will be accepted" is the same fact whether the ceiling is the
+        # model's or this gateway's — the *message* is what says which.
+        raise ThinkingRejected(
+            THINKING_TOKEN_COUNT_TOO_HIGH,
+            f"A thinking budget of {tokens} is above the {MAX_ACCOUNTABLE_TOKENS} this gateway "
+            "can account for.",
         )
     return tokens
 

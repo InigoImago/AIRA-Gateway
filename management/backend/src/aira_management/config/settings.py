@@ -115,7 +115,16 @@ USE_TZ = True
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
-    "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
+    # **`BoundedJSONParser`, not DRF's own** (2026-09-08). `JSONParser` hands the document to
+    # `json.load`, whose decoder recurses as far as the *caller* asks — so a body nesting
+    # 200 000 levels, well inside Django's 2.5 MB upload ceiling, answered `500` on every
+    # endpoint this plane publishes. `RecursionError` is not a `ValueError`, so nothing caught
+    # it. The bound lives in `aira_common.nesting` and the gateway reads the same constant, so
+    # the two planes cannot come to disagree about what a body may be.
+    #
+    # Still a list of one: JSON only was a deliberate decision before this and stays one — a
+    # control plane whose API is a console's has no reason to accept a form post.
+    "DEFAULT_PARSER_CLASSES": ["aira_management.apps.api.parsers.BoundedJSONParser"],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "aira_management.apps.api.authentication.KeycloakJWTAuthentication"
     ],

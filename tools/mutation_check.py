@@ -116,6 +116,13 @@ MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
 VERTEX = "gateway/tests/test_vertex.py"
 REQUIREMENTS = "gateway/tests/test_dispatch_requirements.py"
 ATTACHMENTS = "gateway/tests/test_attachments.py"
+NESTING = (
+    "gateway/tests/test_a_body_cannot_be_nested_out_of_the_audit_trail.py "
+    "libs/tests/test_nesting.py"
+)
+MGMT_SWEEP = "management/backend/tests/test_a_callers_value_is_never_a_server_error.py"
+PATTERNS = "libs/tests/test_patterns.py"
+ACCOUNTABLE = "gateway/tests/test_a_number_cannot_switch_the_budget_off.py"
 KIRA = "gateway/tests/test_kira_surface.py"
 TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
@@ -549,8 +556,8 @@ MUTATIONS = [
         "TC33",
         "the detector sees a group inside a group, which a regex cannot",
         "libs/src/aira_common/patterns.py",
-        '        elif char == "(":',
-        '        elif char == "(" and not stack:',
+        '        elif char == ")" and stack:\n            spans.append((stack.pop(), index))',
+        '        elif char == ")" and stack and not stack[-1]:\n            spans.append((stack.pop(), index))',
         "libs/tests/test_patterns.py",
     ),
     Mutation(
@@ -1069,8 +1076,8 @@ MUTATIONS = [
         "P5",
         "a regex with a nested quantifier is refused at authoring time (ReDoS)",
         "management/backend/src/aira_management/apps/pipelines/serializers.py",
-        "    if is_catastrophic(pattern):",
-        "    if is_catastrophic(pattern) and False:",
+        "    reason = catastrophic_reason(pattern)\n    if reason is not None:",
+        "    reason = catastrophic_reason(pattern)\n    if reason is None:",
         "management/backend/tests/test_pipelines.py",
     ),
     Mutation(
@@ -1658,8 +1665,8 @@ MUTATIONS = [
         "F7",
         "attachment bytes never reach the audit table",
         "gateway/src/aira_gateway/persistence/writer.py",
-        "                stripped: dict[str, Any] = strip_attachments(payload)",
-        "                stripped: dict[str, Any] = payload",
+        "                stripped: dict[str, Any] = strip_attachments(bounded)",
+        "                stripped: dict[str, Any] = bounded",
         ATTACHMENTS,
     ),
     Mutation(
@@ -3752,8 +3759,8 @@ MUTATIONS = [
         "W5",
         "a pattern that could hang a worker is not compiled, wherever it came from",
         "gateway/src/aira_gateway/pipeline/classifiers.py",
-        "            if is_catastrophic(pattern):",
-        "            if False:",
+        "            reason = catastrophic_reason(pattern)\n            if reason is not None:",
+        "            reason = catastrophic_reason(pattern)\n            if False:",
         "gateway/tests/test_pipeline_classifiers.py libs/tests/test_patterns.py",
     ),
     # ---- a role is held through a group, and only through a group (ADR-0017) ----------------
@@ -5444,8 +5451,8 @@ MUTATIONS = [
         "RB5",
         "a body that is not JSON is a refusal on the incident endpoints too, never a 500",
         "gateway/src/aira_gateway/api/incidents.py",
-        "    try:\n        body = await request.json()\n    except ValueError as exc:",
-        "    if True:\n        body = await request.json()\n    elif False:",
+        "    try:\n        body = await json_body(request)\n    except ValueError as exc:",
+        "    if True:\n        body = await json_body(request)\n    elif False:",
         SUSPENSIONS + " gateway/tests/test_model_check.py",
     ),
     Mutation(
@@ -5503,6 +5510,239 @@ MUTATIONS = [
         "                    safe_cell(row.response),",
         "                    row.response,",
         "management/backend/tests/test_smoketests.py",
+    ),
+    # ------------------------------------------------------------------------------------------
+    # How deep a caller's body may nest (`aira_common.nesting`, 2026-09-08). The rule
+    # `ensure_body_is_encodable` states about a **value** the audit row cannot hold, applied to a
+    # **structure** nothing on the path can walk: every walk over a body recurses, and before this
+    # the caller chose where the stack ran out. Measured — ~1 000 levels lost the audit row on a
+    # refused request; the same depth inside a valid `functionResponse` answered 500 *after* the
+    # model had been called; ~50 000 was a 500 out of `json.loads` on five routes and on every
+    # endpoint of the control plane.
+    # ------------------------------------------------------------------------------------------
+    Mutation(
+        "ND1",
+        "a body deeper than the bound is refused at the door, not nine steps later",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if nests_deeper_than(raw, MAX_JSON_DEPTH):",
+        "    if False:",
+        NESTING,
+    ),
+    Mutation(
+        "ND2",
+        "the writer's clamp is wired into the payload transform, not merely defined",
+        "gateway/src/aira_gateway/persistence/writer.py",
+        "                bounded: dict[str, Any] = within_depth(payload)",
+        "                bounded: dict[str, Any] = payload",
+        NESTING,
+    ),
+    Mutation(
+        "ND3",
+        "a subtree too deep to walk is named, so a provider cannot erase the row about its answer",
+        "gateway/src/aira_gateway/persistence/writer.py",
+        "    if limit <= 0:\n        return TOO_DEEP",
+        "    if False:\n        return TOO_DEEP",
+        NESTING,
+    ),
+    Mutation(
+        "ND4",
+        "brackets inside a string are text, so a prompt carrying source code is not refused",
+        "libs/src/aira_common/nesting.py",
+        '    outside = b"".join(cleaned.split(b\'"\')[0::2])',
+        "    outside = cleaned",
+        "libs/tests/test_nesting.py",
+    ),
+    Mutation(
+        "ND5",
+        "an escaped backslash before a closing quote does not swallow the rest of the document",
+        "libs/src/aira_common/nesting.py",
+        '    cleaned = raw.replace(b"\\\\\\\\", b"").replace(b\'\\\\"\', b"")',
+        '    cleaned = raw.replace(b\'\\\\"\', b"").replace(b"\\\\\\\\", b"")',
+        "libs/tests/test_nesting.py",
+    ),
+    # ------------------------------------------------------------------------------------------
+    # The second shape of catastrophic backtracking (`aira_common.patterns`, 2026-09-08): repeated
+    # quantifiers **in a row** over the same characters. `a*a*a*…` and `\s*\s*\s*…` have no group
+    # in them at all, so every check the nesting rule makes was skipped and the answer was False by
+    # falling off the end. Measured at prompt scale — `a*a*b` costs over ten seconds against five
+    # thousand characters, and this filter reads twenty thousand.
+    # ------------------------------------------------------------------------------------------
+    # A number a caller writes must not switch off the control that reads it (2026-09-08). The
+    # reservation moves the shared counter with `HINCRBY` — 64-bit integer arithmetic — so an
+    # estimate at 2⁶³ answers "increment would overflow", `RedisRunner` reports that as
+    # `CountersUnavailable`, and budget enforcement fell back to its racy path for that request
+    # while `/readyz` blamed the counter store. Both caller-named figures that reach it were
+    # bounded *only where the model declared a bound*, and both declarations are nullable.
+    # ------------------------------------------------------------------------------------------
+    Mutation(
+        "AT1",
+        "a caller's maxOutputTokens is bounded even where the model declares no cap",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if requested is not None and requested > MAX_ACCOUNTABLE_TOKENS:",
+        "    if False:",
+        ACCOUNTABLE,
+    ),
+    Mutation(
+        "AT2",
+        "a thinking budget is bounded even where the model declares no bounds",
+        "gateway/src/aira_gateway/thinking.py",
+        "    if tokens > MAX_ACCOUNTABLE_TOKENS:",
+        "    if False:",
+        ACCOUNTABLE,
+    ),
+    Mutation(
+        "AT3",
+        "an estimated total nobody wrote is clamped rather than handed to the counter",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    tokens = min(tokens, MAX_ACCOUNTABLE_TOKENS)",
+        "    tokens = tokens",
+        ACCOUNTABLE,
+    ),
+    Mutation(
+        "AT4",
+        "the clamp keeps the figure it is for, rather than flattening every reservation",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    tokens = min(tokens, MAX_ACCOUNTABLE_TOKENS)",
+        "    tokens = min(tokens, 1)",
+        ACCOUNTABLE,
+    ),
+    Mutation(
+        "AT6",
+        "the KIRA surface names the ceiling in its own vocabulary, not the shared layer's",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "    if parsed.max_tokens is not None and parsed.max_tokens > MAX_ACCOUNTABLE_TOKENS:",
+        "    if False:",
+        ACCOUNTABLE,
+    ),
+    Mutation(
+        "AT5",
+        "the ceiling is the width of the column it is derived from",
+        "gateway/src/aira_gateway/catalog.py",
+        "MAX_ACCOUNTABLE_TOKENS = 2**31 - 1",
+        "MAX_ACCOUNTABLE_TOKENS = 2**62",
+        ACCOUNTABLE,
+    ),
+    # ------------------------------------------------------------------------------------------
+    # The injection classifier reads its reply rather than searching it (2026-09-08). `"SAFE" in
+    # "UNSAFE"` is true, and `safe`/`unsafe` is the vocabulary this field's safety classifiers use
+    # — so a model normalising onto it had its verdict read as the **opposite** of what it said, on
+    # a filter set to `block` and reporting that it ran. The router twenty lines below had been
+    # fixed for the same substring defect a fortnight earlier.
+    # ------------------------------------------------------------------------------------------
+    # The injection classifier reads its reply rather than searching it (2026-09-08). `"SAFE" in
+    # "UNSAFE"` is true, and `safe`/`unsafe` is the vocabulary this field's safety classifiers use
+    # — so a model normalising onto it had its verdict read as the **opposite** of what it said, on
+    # a filter set to `block` and reporting that it ran. The router twenty lines below had been
+    # fixed for the same substring defect a fortnight earlier.
+    # ------------------------------------------------------------------------------------------
+    # The second shape of catastrophic backtracking (`aira_common.patterns`, 2026-09-08): repeated
+    # quantifiers **in a row** over the same characters. `a*a*a*…` and `\s*\s*\s*…` have no group
+    # in them at all, so every check the nesting rule makes was skipped and the answer was False by
+    # falling off the end. Measured at prompt scale — `a*a*b` costs over ten seconds against five
+    # thousand characters, and this filter reads twenty thousand.
+    # ------------------------------------------------------------------------------------------
+    # The injection classifier reads its reply rather than searching it (2026-09-08). `"SAFE" in
+    # "UNSAFE"` is true, and `safe`/`unsafe` is the vocabulary this field's safety classifiers use
+    # — so a model normalising onto it had its verdict read as the **opposite** of what it said, on
+    # a filter set to `block` and reporting that it ran. The router twenty lines below had been
+    # fixed for the same substring defect a fortnight earlier.
+    # ------------------------------------------------------------------------------------------
+    Mutation(
+        "IV1",
+        "a classifier's verdict is the word it said, not a substring of it",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        '        answer = text.strip().strip("*_`\\"\'“”‘’.!?:;,-— \\t\\r\\n").upper()\n        if answer == "INJECTION":\n            return Verdict.INJECTION\n        if answer == "SAFE":\n            return Verdict.CLEAN\n        return Verdict.UNDETERMINED',
+        "        answer = text.upper()\n        if 'INJECTION' in answer:",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "IV2",
+        "a reply the classifier cannot read is undetermined, never clean",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "        return Verdict.UNDETERMINED\n\n\n_ROUTER_INSTRUCTION",
+        "        return Verdict.CLEAN\n\n\n_ROUTER_INSTRUCTION",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "RR1",
+        "two unbounded repeats over the same characters are refused",
+        "libs/src/aira_common/patterns.py",
+        "            if atom.unbounded and any(earlier.unbounded for earlier in overlapping):",
+        "            if False:",
+        PATTERNS,
+    ),
+    Mutation(
+        "RR2",
+        "a run of bounded repeats is refused once it can divide the text too many ways",
+        "libs/src/aira_common/patterns.py",
+        "            if ambiguity >= MAX_AMBIGUITY:",
+        "            if False:",
+        PATTERNS,
+    ),
+    Mutation(
+        "RR3",
+        "an atom that can match nothing does not separate the two repeats around it",
+        "libs/src/aira_common/patterns.py",
+        "            run = [*run, atom] if atom.optional else [atom]",
+        "            run = [atom]",
+        PATTERNS,
+    ),
+    Mutation(
+        "RR4",
+        "an atom that must consume a character does separate them",
+        "libs/src/aira_common/patterns.py",
+        "        elif not atom.optional:",
+        "        elif False:",
+        PATTERNS,
+    ),
+    Mutation(
+        "RR5",
+        "a bounded quantifier is told apart from one that grows with the prompt",
+        "libs/src/aira_common/patterns.py",
+        '    return len(parts) == 2 and parts[1].strip() == ""',
+        "    return False",
+        PATTERNS,
+    ),
+    Mutation(
+        "RR6",
+        "a possessive quantifier cannot backtrack and is not refused for looking like one",
+        "libs/src/aira_common/patterns.py",
+        "        return (repeats and not possessive), optional, unbounded, choices, after + 1",
+        "        return repeats, optional, unbounded, choices, after + 1",
+        PATTERNS,
+    ),
+    Mutation(
+        "RR7",
+        "the refusal names which of the two shapes it found",
+        "libs/src/aira_common/patterns.py",
+        '        return "it repeats the same characters twice in a row, '
+        'which the engine can split many ways"',
+        '        return "it repeats a group whose contents already repeat"',
+        PATTERNS,
+    ),
+    Mutation(
+        "ND7",
+        "a body that is valid JSON and not an object is refused before it reaches the audit trail",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    if not isinstance(body, dict):",
+        "    if False:",
+        "gateway/tests/test_surfaces_record_refusals_alike.py",
+    ),
+    Mutation(
+        "ND8",
+        "a payload the writer cannot read as an object costs its shape, never the row",
+        "gateway/src/aira_gateway/persistence/writer.py",
+        "    return value if isinstance(value, dict) else {NOT_AN_OBJECT_KEY: value}",
+        "    return dict(value)",
+        LOG_WRITER,
+    ),
+    Mutation(
+        "ND6",
+        "the control plane parses a body through the bound too, not only the gateway",
+        "management/backend/src/aira_management/apps/api/parsers.py",
+        "        if nests_deeper_than(measurable, MAX_JSON_DEPTH):",
+        "        if False:",
+        MGMT_SWEEP,
     ),
     # ------------------------------------------------------------------------------------------
     # The config file ranking above the deployment (`config/README.md`). Every one of these is a

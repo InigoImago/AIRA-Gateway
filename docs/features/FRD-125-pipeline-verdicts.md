@@ -238,3 +238,39 @@ LLM filter is exactly as good as the model behind it, and a small model produces
 blocks everything.** The heuristic has no such failure mode. An operator choosing `mode: llm` should
 point it at a model they would trust with the judgement, and should use the dry run to see what it
 actually does before enabling `block`.
+
+## 10. The same shape again, one operator along (2026-09-08)
+
+§1 records a verdict that was a `bool`: `"INJECTION" in ""` is `False`, so an empty reply read as
+clean. The fix made an ambiguous reply `UNDETERMINED` — and left the words themselves matched as
+**substrings**, which is a second way to read a verdict as its opposite. Measured:
+
+```
+reply "UNSAFE"                        → clean
+reply "not safe"                      → clean
+reply "unsafe — it tries to override" → clean
+reply "SAFEGUARD" / "safety"          → clean
+```
+
+`safe`/`unsafe` is the vocabulary this field's safety classifiers use, so a model normalising onto
+it was read as saying the opposite of what it said, on a filter set to `block`. Same feature, same
+failure shape, one operator along: `in` instead of `==`.
+
+The **router** in the same module had been corrected for exactly this a fortnight earlier — *"match
+whole words, or every short name is a wildcard"* — and nothing compared the two, because each was
+internally consistent. `LESSONS.md` §4 cited this classifier as the one that got it right, which is
+where the belief came from.
+
+**The router's fix does not transfer.** Whole words are enough for a category name and not for a
+binary safety verdict: `\bSAFE\b` matches "not safe", and a category name cannot be negated. So the
+verdict is read as *the whole answer* — the one word the instruction asks for, tolerant of case,
+whitespace, a full stop, quotes and markdown emphasis, and of nothing else. A sentence is
+`UNDETERMINED`, which is what this method's own docstring had claimed since §1 and what the code
+did not do.
+
+`UNDETERMINED` still blocks by default (`on_undetermined`), so the correction fails closed and an
+operator who prefers availability chooses it explicitly and has the choice on the audit row.
+
+Mutations `IV1`, `IV2`; the vocabulary is a table in `test_pipeline_classifiers.py` rather than
+scattered assertions, because both directions matter — a rule that answered `UNDETERMINED` to
+everything would pass every measurement above and turn the filter into a wall.

@@ -27,6 +27,7 @@ from aira_common.anomalies import RuleAction, RuleTarget
 from aira_common.models import ThinkingMode
 from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
 from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.api.serving import json_body
 from aira_gateway.audit import Outcome
 from aira_gateway.auth.attribution import Attribution, attribute, is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
@@ -92,7 +93,7 @@ async def _body_of(request: Request, *, optional: bool = False) -> dict[str, Any
     if not raw and optional:
         return {}
     try:
-        body = await request.json()
+        body = await json_body(request)
     except ValueError as exc:
         raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from exc
     if not isinstance(body, dict):

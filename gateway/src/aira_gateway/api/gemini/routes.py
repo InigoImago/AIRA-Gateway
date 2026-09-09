@@ -38,6 +38,7 @@ from aira_gateway.api.serving import (
     deprecation_headers,
     elapsed_ms,
     ensure_body_is_encodable,
+    json_body,
     prepare_for_dispatch,
     provenance,
     refusal_outcome,
@@ -306,10 +307,25 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
 
     try:
-        body = await request.json()
+        body = await json_body(request)
         ensure_body_is_encodable(body)
     except ValueError:
         raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from None
+    if not isinstance(body, dict):
+        # **Before `trail.body`, and that is the whole of it.** `[1, 2]` and `"text"` are valid
+        # JSON, so they got past the parse, were assigned to the trail, and were refused a few
+        # lines below by pydantic — correctly, with a `400`. The audit row then failed to write:
+        # the payload columns hold an object, `_maybe` ends in `dict(...)`, and a list is not a
+        # mapping. `TypeError`, `audit_refusal_not_recorded`, **no row** — a caller could leave no
+        # trace by sending two characters (`FRD-122`; the same door `ensure_body_is_encodable`
+        # closes for a value and `json_body` for a shape).
+        #
+        # Both of the other body readers in this gateway already refuse this — the KIRA surface
+        # ("Request body must be an object.") and `incidents._body_of` ("Send one JSON object.").
+        # Two of three, and the third is the one a real client posts to.
+        # `test_surfaces_record_refusals_alike.py` compares them now, because a rule stated per
+        # surface is a rule one surface will be missing.
+        raise GeminiHTTPError(400, "Send one JSON object.", "INVALID_ARGUMENT")
     trail.body = body
 
     # Before the branch, so **every** verb takes it: the controls that need no model. Below the

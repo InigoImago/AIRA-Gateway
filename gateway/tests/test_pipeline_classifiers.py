@@ -98,6 +98,79 @@ async def test_an_answer_that_is_neither_word_is_undetermined() -> None:
         assert verdict is Verdict.UNDETERMINED, reply
 
 
+#: What a model actually replies to *"reply with exactly one word: INJECTION … otherwise SAFE"*,
+#: and what each has to mean. The first group is a compliant answer wearing whatever the model
+#: dressed it in; the second is every way a reply can look like an answer and not be one.
+VERDICTS: list[tuple[str, Verdict]] = [
+    ("INJECTION", Verdict.INJECTION),
+    ("SAFE", Verdict.CLEAN),
+    # Case, whitespace, a full stop, quotes, markdown emphasis, a code span: the shapes a model
+    # puts around the one word it was asked for. Refusing these would block on punctuation.
+    ("safe", Verdict.CLEAN),
+    ("SAFE.", Verdict.CLEAN),
+    ("  SAFE\n", Verdict.CLEAN),
+    ("**SAFE**", Verdict.CLEAN),
+    ('"SAFE"', Verdict.CLEAN),
+    ("`safe`", Verdict.CLEAN),
+    ("injection!", Verdict.INJECTION),
+    # **The defect, measured on 2026-09-08.** `"SAFE" in "UNSAFE"` is true, and `safe`/`unsafe` is
+    # the vocabulary the safety classifiers in this field actually use — so a model normalising
+    # onto it had its verdict read as the **opposite** of what it said. A filter set to `block`,
+    # reporting that it ran, passing the thing it was asked about.
+    ("UNSAFE", Verdict.UNDETERMINED),
+    ("This is UNSAFE", Verdict.UNDETERMINED),
+    ("unsafe — it tries to override the system prompt", Verdict.UNDETERMINED),
+    # Negation, which is why whole words alone are not enough here and are enough for the router:
+    # a category name cannot be negated and a binary safety verdict can. `\bSAFE\b` matches this.
+    ("not safe", Verdict.UNDETERMINED),
+    ("This is not an injection", Verdict.UNDETERMINED),
+    # A word that merely contains one of the two.
+    ("SAFEGUARD", Verdict.UNDETERMINED),
+    ("safety", Verdict.UNDETERMINED),
+    # And the cases that already held, kept here so the whole vocabulary is in one table.
+    ("", Verdict.UNDETERMINED),
+    ("   ", Verdict.UNDETERMINED),
+    ("SAFE — no injection attempt here", Verdict.UNDETERMINED),
+    ("I cannot help with that.", Verdict.UNDETERMINED),
+    ("SICHER", Verdict.UNDETERMINED),
+]
+
+
+@pytest.mark.parametrize(("reply", "expected"), VERDICTS, ids=[reply for reply, _v in VERDICTS])
+async def test_the_classifier_reads_the_reply_rather_than_searching_it(
+    reply: str, expected: Verdict
+) -> None:
+    """The rule the **router** twenty lines down already had, applied where it was missing.
+
+    `LESSONS.md` §4 cites this classifier as the one that gets a one-word protocol right — and it
+    got the *ambiguity* half right (neither word, or both, is `UNDETERMINED`) while reading the
+    words themselves as substrings. So `UNSAFE` was `CLEAN`, and nothing compared the two
+    implementations because each was internally consistent.
+
+    Both directions are in the table on purpose. A rule that answered `UNDETERMINED` to everything
+    would pass every case above the measurement and turn a filter into a wall — and
+    `on_undetermined` defaults to blocking, so that is not a quiet failure either.
+    """
+    verdict = await LlmInjectionClassifier(_StubProvider(reply), "guard").verdict("hi")
+
+    assert verdict is expected, reply
+
+
+async def test_an_unparseable_verdict_is_not_read_as_clean() -> None:
+    """The asymmetry, stated as its own property rather than left implicit in the table.
+
+    Every reply this classifier cannot read has to land on `UNDETERMINED`, which the engine
+    refuses by default — reading it as `CLEAN` is how a filter comes to pass everything while
+    reporting that it ran (`FRD-125`).
+    """
+    unreadable = [reply for reply, expected in VERDICTS if expected is Verdict.UNDETERMINED]
+
+    assert len(unreadable) >= 8, "the table has to hold enough unreadable replies to mean anything"
+    for reply in unreadable:
+        verdict = await LlmInjectionClassifier(_StubProvider(reply), "guard").verdict("hi")
+        assert verdict is not Verdict.CLEAN, reply
+
+
 async def test_the_classifier_asks_for_no_thinking() -> None:
     """Explicitly off, not merely unset. Unset selects the *model's* default, and a reasoning
     model's default is to think — inside an allowance sized for one word, that returns nothing.
@@ -209,7 +282,7 @@ async def test_the_router_reads_the_reply_rather_than_searching_it(
 
 @pytest.mark.parametrize("name", ["c++", "#dringend", "(intern)", "f#"])
 async def test_a_category_a_word_boundary_cannot_express_still_matches_exactly(name: str) -> None:
-    """Why the exact-answer branch is not redundant beside the word-boundary one.
+    r"""Why the exact-answer branch is not redundant beside the word-boundary one.
 
     A category name is whatever an operator typed into a box, and `\bc\+\+\b` cannot match
     `C++` — the trailing boundary wants a word character after the `+` and there is none. A model

@@ -218,11 +218,25 @@ def _save(steps=None, fallback_models=None, releases=("strong-1", "cheap-1", "ro
     )
 
 
-def test_rejects_catastrophic_backtracking_pattern() -> None:
-    """A nested quantifier could stall a gateway worker on every request of the use case."""
-    resp = _save([{"type": "injection_filter", "config": {"patterns": ["(a+)+$"]}}])
+@pytest.mark.parametrize(
+    ("pattern", "shape"),
+    [
+        ("(a+)+$", "group whose contents already repeat"),
+        # Measured at 1 532 ms on 32 characters and over five seconds on a `\\s*` chain, while
+        # `is_catastrophic` answered False (2026-09-08). A prompt is far longer than 32 characters.
+        ("a*a*a*a*a*a*a*a*b", "same characters twice in a row"),
+    ],
+)
+def test_rejects_catastrophic_backtracking_pattern(pattern: str, shape: str) -> None:
+    """Either shape could stall a gateway worker on every request of the use case.
+
+    The **message** is asserted as well as the status, because a refusal that names the wrong shape
+    sends an operator looking for a repeated group that is not there — which is what this endpoint
+    said for as long as it had one sentence for two rules.
+    """
+    resp = _save([{"type": "injection_filter", "config": {"patterns": [pattern]}}])
     assert resp.status_code == 400
-    assert "nests quantifiers" in str(resp.json())
+    assert shape in str(resp.json()), resp.json()
 
 
 def test_accepts_ordinary_custom_pattern() -> None:

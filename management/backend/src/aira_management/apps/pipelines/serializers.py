@@ -11,7 +11,7 @@ from typing import Any
 
 from rest_framework import serializers
 
-from aira_common.patterns import is_catastrophic
+from aira_common.patterns import catastrophic_reason
 from aira_management.apps.pipelines.models import PipelineConfig
 
 #: `allow_check` left on 2026-08-11: which models a use case may call is a property of the
@@ -47,10 +47,15 @@ def _check_regex(pattern: str) -> None:
     trust at the other (`ADR-0018`). Refusing here is what makes the operator hear about it at the
     moment they can still rewrite the pattern.
     """
-    if is_catastrophic(pattern):
+    reason = catastrophic_reason(pattern)
+    if reason is not None:
+        # **The reason, not a guess at it.** This said "nests quantifiers" for as long as that was
+        # the only shape the rule knew; `a*a*a*a*…` is the other one, and an operator told to
+        # "rewrite it without a repeated group" would have gone looking for a group that is not
+        # there. The refusal comes from the same function that made the decision.
         raise serializers.ValidationError(
-            f"Pattern '{pattern}' nests quantifiers, which can hang the gateway. "
-            "Rewrite it without a repeated group."
+            f"Pattern '{pattern}' can hang the gateway: {reason}. Rewrite it so the engine has "
+            "only one way to match."
         )
 
 
