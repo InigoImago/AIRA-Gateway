@@ -195,6 +195,17 @@ same would be a second family of fragments and no installation has asked for one
 does, that is the shape it should take, and not a `headers:` block, for the reason
 `collector-forward-auth-header.yaml` records.
 
+> **Superseded by [`FRD-620`](FRD-620-both-channels-configured-the-same-way.md) (2026-09-07.)** The
+> owner asked for one, and the paragraph above under-counted what was left: not only the credential
+> but the transport, and therefore the **encoding**, and with it the compression, the per-signal
+> endpoints, the client certificate and every tuning figure — four variables against seventeen.
+> The second family of fragments is the shape it took. Building it also found that the guess about
+> cost was wrong in an interesting way: each credential fragment owned its own
+> `service::extensions` list, and a merged list **replaces**, so the stack had room for exactly one
+> credential in total and nothing said so.
+
+
+
 Demonstrated with both channels pointed at different receivers at once: **356 spans to one, 21 to
 the other**, 48 log records and 63 metric points to each, `batch` and `batch/siem` side by side,
 nothing failed.

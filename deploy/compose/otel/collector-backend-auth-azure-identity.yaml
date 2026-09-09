@@ -1,0 +1,37 @@
+# The one credential shape OAuth2 client credentials cannot express, on the observability channel:
+# **no secret anywhere.**
+#
+# For a collector running *inside* Azure — a VM, a scale set, an Arc-enabled server, AKS — where
+# the platform holds the identity and nothing has to be configured with it.
+#
+#     AIRA_OTEL_BACKEND_AUTH_CONFIG=/etc/otelcol-contrib/backend-auth-azure-identity.yaml
+#     AIRA_OTEL_BACKEND_AZURE_CLIENT_ID=          # empty → the system-assigned identity
+#     AIRA_OTEL_BACKEND_AZURE_CLIENT_ID=<guid>    # a user-assigned one
+#
+# ## Why this is the only vendor fragment here
+#
+# Everything else about reaching a managed OTLP endpoint is generic and is configured generically:
+# the protocol, the per-signal URLs, the encoding, the CA, and — for a collector with a client
+# secret — `backend-auth-oauth2.yaml`, which authenticates against Microsoft Entra exactly as it
+# does against Keycloak or Okta, because they all implement RFC 6749 §4.4.
+#
+# What is left is genuinely not expressible any other way. A managed identity has no secret to put
+# in a variable; the token comes from the instance metadata endpoint, and *which* identity is a
+# platform fact rather than a configuration one. **A vendor fragment earns its place only by doing
+# something the generic one cannot say** — and this one does exactly that and nothing else.
+#
+# It exists on this channel because Azure Monitor is a trace backend as readily as it is a delivery
+# destination, and a collector that is inside Azure for one is inside Azure for both.
+#
+# The extension is in `collector-config.yaml`; it builds no credential until an exporter asks for
+# one, so declaring it costs nothing outside Azure. Verified on 2026-09-07.
+#
+# Both exporters carry it, so this works over either transport without being edited.
+
+exporters:
+  otlp/backend:
+    auth:
+      authenticator: azure_auth/backend
+  otlphttp/backend:
+    auth:
+      authenticator: azure_auth/backend

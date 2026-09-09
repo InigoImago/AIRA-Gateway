@@ -43,25 +43,24 @@
 # checks twice.
 #
 # Both exporters carry it, so this works on either transport without being edited.
-
-extensions:
-  oauth2client:
-    token_url: ${env:AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL}
-    client_id: ${env:AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID}
-    client_secret: ${env:AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET}
-    scopes: ${env:AIRA_OTEL_FORWARD_OAUTH_SCOPES:-[]}
-    tls:
-      # The identity provider's own certificate, which is a different trust decision from the
-      # receiver's — an internal IdP behind a private CA is ordinary. Empty is the system store.
-      ca_file: ${env:AIRA_OTEL_FORWARD_OAUTH_CA_FILE}
+#
+# ## Selecting this without its values
+#
+# Measured on 2026-09-07 with the client id empty: `Error: invalid configuration:
+# extensions::oauth2client: no ClientID provided in the OAuth2 exporter configuration` — the
+# collector **refused to start**, taking Grafana with it, the same undocumented outcome the header
+# fragment had. The extension now lives in `collector-config.yaml` with placeholder defaults that
+# name the missing variable, so the collector starts and the token endpoint rejects something
+# legible. It fetches lazily, so an unselected one never calls its token URL. `FRD-620`.
+#
+# **And the extension is there rather than here** because `service::extensions` is a list, a merged
+# list replaces, and both channels may have a credential selected at once — see
+# `collector-forward-auth-header.yaml` for the measurement.
 
 exporters:
   otlphttp/forward:
     auth:
-      authenticator: oauth2client
+      authenticator: oauth2client/forward
   otlp/forward:
     auth:
-      authenticator: oauth2client
-
-service:
-  extensions: [oauth2client]
+      authenticator: oauth2client/forward

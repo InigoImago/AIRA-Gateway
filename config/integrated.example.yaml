@@ -248,17 +248,76 @@ otel:
 
   # ---- Channel 1: observability, to your trace backend ---------------------------------------
   #
-  # `host:port`, **no scheme** — OTLP/gRPC. Commented out means the bundled Grafana, which is the
-  # demo's backend and not yours. Uncomment and it is yours; nothing else about the stack changes.
+  # **Every axis below has the same name on the other channel, one prefix along** (`FRD-620`).
+  # That was not true until then: this channel had four knobs and no credential while the delivery
+  # channel had seventeen and four authenticators, so a trace backend behind any authentication —
+  # or one wanting OTLP/JSON, or reachable only over HTTP — meant editing a shipped file.
+  #
+  # `host:port`, **no scheme** — OTLP/gRPC, this channel's default transport. Commented out means
+  # the bundled Grafana, which is the demo's backend and not yours. Uncomment and it is yours;
+  # nothing else about the stack changes.
   #
   #   backend_endpoint: tempo.internal:4317
   #   backend_plaintext: false      # no TLS at all — true only on a private container network
   #   backend_insecure: false       # keep TLS, stop checking the certificate: a reachability test
   #   backend_ca_file: /etc/otelcol-contrib/ca/your-ca.crt
+  #   backend_client_cert_file: /etc/otelcol-contrib/ca/client.crt    # mutual TLS: who *we* are
+  #   backend_client_key_file: /etc/otelcol-contrib/ca/client.key
+  #
+  # **How it is reached, and therefore what is on the wire.** OTLP defines HTTP as well as gRPC.
+  # The transport is the reason the encoding is a choice at all: OTLP/gRPC is protobuf by
+  # definition — the specification defines no JSON over gRPC — so while this channel had one
+  # transport it had one encoding and there was nothing for a variable to set. Over HTTP, `json`
+  # is OTLP/JSON, the readable and parseable half of the wire:
+  #
+  #   backend_protocol_config: /etc/otelcol-contrib/backend-http.yaml
+  #   backend_http_endpoint: https://tempo.internal:4318
+  #   backend_encoding: json        # or `proto`. Any other value stops the collector at validation
+  #   backend_compression: gzip     # or none · zstd · snappy
+  #
+  # **One URL per signal**, for a backend that puts a route in front of OTLP. Otherwise these are
+  # `backend_http_endpoint` plus /v1/traces, /v1/logs, /v1/metrics:
+  #
+  #   backend_traces_endpoint: https://…/otlp/v1/traces
+  #   backend_logs_endpoint: https://…/otlp/v1/logs
+  #   backend_metrics_endpoint: https://…/otlp/v1/metrics
+  #
+  # **Who we say we are.** Four shapes, generic first — a vendor fragment earns its place only by
+  # doing something the generic one cannot say. Pick one; unset sends no credential of any kind:
+  #
+  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-header.yaml
+  #   backend_auth_header: x-api-key          # `Authorization` is what a *minority* ask for
+  #   backend_authorization: <key>            # sent verbatim, scheme and all
+  #
+  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-basic.yaml
+  #   backend_basic_username: "123456"        # Grafana Cloud is an instance id and a token
+  #   backend_basic_password: <token>
+  #
+  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-oauth2.yaml
+  #   backend_oauth_token_url: https://idp.internal/oauth2/token
+  #   backend_oauth_client_id: aira-collector
+  #   backend_oauth_client_secret: <secret>   # → Vault in a real deployment
+  #   backend_oauth_scopes: '["telemetry.write"]'
+  #   backend_oauth_ca_file: /etc/otelcol-contrib/ca/idp-ca.crt
+  #
+  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-azure-identity.yaml
+  #   backend_azure_client_id: ""             # empty → the system-assigned managed identity
+  #   backend_azure_scope: https://monitor.azure.com/.default
+  #
+  # **How hard it pushes.** The defaults are the collector's own, so leaving these out changes
+  # nothing. This channel's batching was unreachable until `FRD-620` while the other channel's had
+  # two variables:
+  #
+  #   backend_batch_seconds: 200ms
+  #   backend_batch_size: 8192
+  #   backend_consumers: 10
+  #   backend_queue: 1000
+  #   backend_retry_initial: 5s
   #
   # **Off entirely**, keeping the delivery channel below — for an installation that wants the
   # access records and has no trace backend. Not the same as `enabled: false` above, which stops
-  # the applications exporting and so stops *both* channels:
+  # the applications exporting and so stops *both* channels. It outranks `backend_protocol_config`,
+  # so a channel that is off stays off however its transport is set:
   #
   #   backend_config: /etc/otelcol-contrib/nobackend.yaml
 

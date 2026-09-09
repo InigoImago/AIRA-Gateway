@@ -5,6 +5,81 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The two channels were one product and one afterthought, and the encoding proved it (2026-09-07)
+
+*"There are two separate OTel channels — check they are set up correctly, that they work properly
+and are adjustable. I also notice that setting up the partial channel differs from the normal
+channel. I want the encoding of both channels to be adjustable — I want to be able to send raw JSON
+over, for example."*
+
+Both halves were true, and the second one turned out to explain the first.
+
+**Held side by side, which is the comparison nobody had made:**
+
+| | observability | delivery |
+| --- | --- | --- |
+| `--config` slots | 1 (off) | 3 (off · transport · credential) |
+| variables | **4** | **17** |
+| encoding | **not expressible** | `json` · `proto` |
+| credential | **none at all** | four fragments |
+| batching, queue, retry | unreachable | five variables |
+
+`FRD-618` had already been reported for this twice — once about the shared batch processor, once
+about the endpoint being a literal — and fixed both. It stopped short both times for the same
+reason: **each fix was checked against the file it changed, and the asymmetry is not in any single
+file.** Every half was correct on its own.
+
+**The encoding is the load-bearing item and could not have been a variable.** OTLP/gRPC is protobuf
+by definition — the specification defines no JSON over gRPC — so a channel with one transport has
+one encoding. The missing transport *was* the missing encoding, and the other twelve knobs followed
+from giving that channel a second exporter. `FRD-620` §1.1.
+
+**Two defects found on the way, both in the half that was supposed to be finished.**
+
+*Selecting a credential fragment without its values did not send an empty header.* It stopped the
+collector at validation — `headers_setter: missing header source` — and one container carries every
+exporter, so Grafana went down with it. The fragment's own comment promised the opposite and said
+`make otlp-inspector` would show `(empty)`. It had described `FRD-618`'s *previous* defect and
+outlived the fix. `forward-auth-oauth2.yaml` did the same with an empty client id and documented
+nothing.
+
+*And `service::extensions` is a list, so a merged list replaces.* Every credential fragment carried
+its own, which was correct while the stack had one credential slot. Measured with an extension in
+each of two fragments: only the second started. No error, no warning, `otelcol validate` clean —
+a configured-but-unstarted extension is a valid configuration. So the moment the observability
+channel got a credential, authenticating both channels would have left one anonymous, and the
+symptom is a `401` that reads as a wrong credential rather than an absent one. The base
+configuration owns the list now and no fragment may name it.
+
+**And the trap this project had already written down, twice.** The placeholder defaults went into
+`collector-config.yaml`, where the values are: **220 of 220 merged configurations failed
+validation.** Compose passes an empty string for an unset variable and an empty string overrides a
+`${env:…:-default}`, which `collector-forward.yaml` says in a paragraph of its own about the
+endpoint. Moved to the Compose end: 220 of 220 pass. There is a test for it now, because reading
+more carefully next time is not a mechanism.
+
+**Driven end to end against two receivers at once**, which is the only evidence worth having here
+after `validate` answered `rc=0` while one of two extensions was starting:
+
+```
+channel 1  (observability)   application/json        identity   x-backend-key: (opaque, 26 chars)
+channel 2  (delivery)        application/x-protobuf  gzip       x-delivery-key: (opaque, 27 chars)
+```
+
+— real OTLP/JSON in the body, `resourceMetrics`/`stringValue`; both channels' authenticators
+started; `batch` and `batch/siem` side by side; then channel 1 flipped to `proto` + `zstd` + basic
+auth without touching channel 2. And with the off switch *and* a transport fragment both selected,
+no `*/backend` exporter ran at all — the off switch is merged last on purpose, or a stale transport
+variable quietly turns a disabled channel back on.
+
+Twenty-six variables each now, and the only two that differ name the transport each channel does
+not default to. A test subtracts one family from the other and fails on anything else — because the
+comparison that was never made is the thing worth automating.
+
+`FRD-620` · ten mutations (`CHAN1`–`CHAN10`), all caught; `ID41` re-aimed rather than deleted.
+
+---
+
 ## The model access was in the feed, and it was anonymous (2026-09-04)
 
 *"I have just looked at the raw data of the partial interface — where in it are the model accesses,

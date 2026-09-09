@@ -6415,7 +6415,7 @@ MUTATIONS = [
         "ID36",
         "the second destination is off unless a variable selects it",
         "deploy/compose/docker-compose.yml",
-        "      - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/noforward.yaml}",
+        "      - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/empty.yaml}",
         "      - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/forward.yaml}",
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
     ),
@@ -6463,7 +6463,7 @@ MUTATIONS = [
         "ID38",
         "how the leg authenticates is off until a variable selects it",
         "deploy/compose/docker-compose.yml",
-        "      - --config=${AIRA_OTEL_FORWARD_AUTH_CONFIG:-/etc/otelcol-contrib/noforward.yaml}",
+        "      - --config=${AIRA_OTEL_FORWARD_AUTH_CONFIG:-/etc/otelcol-contrib/empty.yaml}",
         "      - --config=${AIRA_OTEL_FORWARD_AUTH_CONFIG:-/etc/otelcol-contrib/forward-auth-header.yaml}",
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
     ),
@@ -6486,9 +6486,14 @@ MUTATIONS = [
     Mutation(
         "ID41",
         "a credential fragment registers the extension its exporter names",
-        "deploy/compose/otel/collector-forward-auth-oauth2.yaml",
-        "  extensions: [oauth2client]",
-        "  extensions: []",
+        # **Re-anchored by `FRD-620`, not weakened.** The property is unchanged — an
+        # `auth.authenticator` the service list does not start is refused at start-up — but the
+        # registration moved: `service::extensions` is a list, a merged list replaces, and while
+        # each fragment owned its own there was room for exactly one credential in the stack.
+        # So the base configuration declares and starts them all, and this breaks that instead.
+        "deploy/compose/otel/collector-config.yaml",
+        "    - oauth2client/forward\n",
+        "",
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
     ),
     Mutation(
@@ -6522,6 +6527,91 @@ MUTATIONS = [
         "    logs/siem:\n      exporters: [otlp/forward]",
         "    logs/siem:\n      exporters: [otlphttp/forward]",
         "tools/tests/test_the_siem_gets_requests_not_plumbing.py",
+    ),
+    # --- FRD-620: the two channels are configured the same way ---------------------------------
+    Mutation(
+        "CHAN1",
+        "the two channels take the same settings, held side by side",
+        "deploy/compose/docker-compose.yml",
+        "      AIRA_OTEL_BACKEND_ENCODING: ${AIRA_OTEL_BACKEND_ENCODING:-json}",
+        "",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN2",
+        "the observability channel can choose its encoding at all",
+        "deploy/compose/otel/collector-config.yaml",
+        "    encoding: ${env:AIRA_OTEL_BACKEND_ENCODING:-json}",
+        "    encoding: json",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN3",
+        "no fragment owns `service::extensions`, which replaces on merge",
+        "deploy/compose/otel/collector-backend-auth-header.yaml",
+        "exporters:\n  otlp/backend:",
+        "service:\n  extensions: [headers_setter/backend]\n\nexporters:\n  otlp/backend:",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN4",
+        "an auth fragment authenticates its own channel and only its own",
+        "deploy/compose/otel/collector-backend-auth-basic.yaml",
+        "  otlphttp/backend:\n    auth:\n      authenticator: basicauth/backend",
+        "  otlphttp/forward:\n    auth:\n      authenticator: basicauth/backend",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN5",
+        "switching the observability channel off outranks its transport fragment",
+        "deploy/compose/docker-compose.yml",
+        "      - --config=${AIRA_OTEL_BACKEND_PROTOCOL_CONFIG:-/etc/otelcol-contrib/empty.yaml}\n"
+        "      - --config=${AIRA_OTEL_BACKEND_AUTH_CONFIG:-/etc/otelcol-contrib/empty.yaml}\n"
+        "      - --config=${AIRA_OTEL_BACKEND_CONFIG:-/etc/otelcol-contrib/empty.yaml}",
+        "      - --config=${AIRA_OTEL_BACKEND_CONFIG:-/etc/otelcol-contrib/empty.yaml}\n"
+        "      - --config=${AIRA_OTEL_BACKEND_PROTOCOL_CONFIG:-/etc/otelcol-contrib/empty.yaml}\n"
+        "      - --config=${AIRA_OTEL_BACKEND_AUTH_CONFIG:-/etc/otelcol-contrib/empty.yaml}",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN6",
+        "a credential fallback is spelled where an empty string cannot override it",
+        "deploy/compose/docker-compose.yml",
+        "      AIRA_OTEL_BACKEND_AUTHORIZATION: ${AIRA_OTEL_BACKEND_AUTHORIZATION:-AIRA_OTEL_BACKEND_AUTHORIZATION-is-not-set}",
+        "      AIRA_OTEL_BACKEND_AUTHORIZATION: ${AIRA_OTEL_BACKEND_AUTHORIZATION:-}",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN7",
+        "the transport fragment moves the pipelines and keeps the arrivals exporters",
+        "deploy/compose/otel/collector-backend-http.yaml",
+        "    logs:\n      exporters: [otlphttp/backend, debug, file/arrived]",
+        "    logs:\n      exporters: [otlphttp/backend]",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN8",
+        "each channel batches on its own clock, and the observability one is reachable",
+        "deploy/compose/otel/collector-config.yaml",
+        "    timeout: ${env:AIRA_OTEL_BACKEND_BATCH_SECONDS:-200ms}\n",
+        "    timeout: 200ms\n",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN9",
+        "every authenticator a fragment names is declared and started in the base",
+        "deploy/compose/otel/collector-config.yaml",
+        "    - oauth2client/backend\n",
+        "",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
+    ),
+    Mutation(
+        "CHAN10",
+        "the observability channel can present a client certificate and hold a queue",
+        "deploy/compose/otel/collector-config.yaml",
+        "      cert_file: ${env:AIRA_OTEL_BACKEND_CLIENT_CERT_FILE}\n      key_file: ${env:AIRA_OTEL_BACKEND_CLIENT_KEY_FILE}\n    compression: ${env:AIRA_OTEL_BACKEND_COMPRESSION:-gzip}\n    sending_queue:",
+        "    compression: ${env:AIRA_OTEL_BACKEND_COMPRESSION:-gzip}\n    sending_queue:",
+        "tools/tests/test_both_channels_are_configured_the_same_way.py",
     ),
     Mutation(
         "LOOP1",

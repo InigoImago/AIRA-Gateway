@@ -299,38 +299,89 @@ The full worked explanation, with what each is measured to do, is
 | `AIRA_OTEL_ARRIVED_FILE` | `/dev/null` | Write those arrivals as OTLP/JSON, one document per line, all three signals. `/payload/arrived.json` lands in `deploy/compose/payload/`. `/dev/stdout` works for a look and **mangles anything large** — Docker's log driver cuts at 16 KiB. |
 | `AIRA_PUBLISH_OTLP_METRICS_PORT` | `8889` | Where the collector's own counters are published — accepted/refused against sent/failed. `make otel-status` reads them. |
 
+### The two channels take the same settings
+
+Everything below is stated once and applies to both tables: the two families differ only in their
+prefix. That is `FRD-620`, and it was not true before it — the observability channel had **four**
+variables and no credential while the delivery channel had **seventeen** and four authenticators, so
+a trace backend behind any authentication, or one wanting OTLP/JSON, or one reachable only over
+HTTP, meant editing a file this repository ships.
+
+Each channel has **three `--config` slots**, and they answer three questions that do not depend on
+each other, because a `.yaml` has no conditional:
+
+| slot | question | choices |
+| --- | --- | --- |
+| `…_CONFIG` | **whether**, and where | the channel's on/off switch |
+| `…_PROTOCOL_CONFIG` | **how it is reached** | OTLP/HTTP · OTLP/gRPC |
+| `…_AUTH_CONFIG` | **who we say we are** | nothing · header · basic · OAuth2 · a platform identity |
+
+**`…_ENDPOINT` is the channel's default transport, and the other transport has its own name.** The
+rule reads backwards between the two, so it is worth stating: the observability channel defaults to
+gRPC, so its `_ENDPOINT` is `host:port` and `_HTTP_ENDPOINT` is the extra; the delivery channel
+defaults to HTTP, so its `_ENDPOINT` is a URL and `_GRPC_ENDPOINT` is the extra. `_PLAINTEXT`
+follows its `_ENDPOINT` — it is the gRPC leg's switch, and over HTTP the scheme already says it.
+Those two names are the *only* difference between the families, and a test fails on any other.
+
+**The encoding is reachable only over HTTP, on either channel.** OTLP/gRPC is protobuf by
+definition — the specification defines no JSON over gRPC — so a channel that speaks gRPC has one
+encoding and `…_ENCODING` does not reach it. Over HTTP, `json` sends OTLP/JSON: the protobuf-JSON
+mapping, one nested document per batch, which is what to send a receiver that parses documents
+rather than an OTLP product. `proto` is what a conformant receiver may insist on, since the
+specification makes protobuf required and JSON optional, and several managed endpoints do.
+
+**A credential fragment selected without its values does not fail silently or loudly.** It sends the
+**name of the variable you forgot** — `AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set` — which
+`make otlp-inspector` shows and the destination's own rejection quotes. Before `FRD-620` the same
+mistake stopped the collector dead, taking Grafana with it, while the documentation said it sent an
+empty header.
+
 ### Channel 1 — observability, to your trace backend
 
-Every span, metric and log. On by default, and the bundled Grafana is only the default destination:
-this was a literal in `collector-config.yaml` until `FRD-618`, so an installation with its own
-Tempo or Jaeger had to edit a shipped file while the *other* channel had seven variables.
+Every span, metric and log. On by default, and the bundled Grafana is only the default destination.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `AIRA_OTEL_BACKEND_CONFIG` | _(the empty fragment)_ | **Off is a switch of its own.** `/etc/otelcol-contrib/nobackend.yaml` leaves the base pipelines with only the two inspection exporters — for an installation that wants the access records and has no trace backend. Until `FRD-618` that combination could not be expressed: the only way to stop exporting spans was `AIRA_OTEL_ENABLED=false`, which stops **both** channels. |
-| `AIRA_OTEL_BACKEND_ENDPOINT` | `otel-lgtm:4317` | Where the observability channel sends. `host:port`, **no scheme** — OTLP/gRPC. |
-| `AIRA_OTEL_BACKEND_PLAINTEXT` | `true` | No TLS at all (h2c). Right for the bundled backend on this network, wrong for anything across a boundary. |
-| `AIRA_OTEL_BACKEND_INSECURE` | `false` | Keep TLS, stop checking the certificate. A reachability test, not a deployment. |
-| `AIRA_OTEL_BACKEND_CA_FILE` | _(empty)_ | A private CA, from `deploy/compose/otel/ca/`. Empty means the system trust store. |
-
-**No credential yet.** A backend wanting a bearer token or basic auth needs the exporter edited by
-hand; the delivery channel's auth fragments are written against its own exporters. Named rather
-than hidden — see `INTEGRATIONS.md` §6.
+| `AIRA_OTEL_BACKEND_CONFIG` | _(the empty fragment)_ | **Off is a switch of its own.** `/etc/otelcol-contrib/nobackend.yaml` leaves the base pipelines with only the two inspection exporters — for an installation that wants the access records and has no trace backend. Until `FRD-618` that combination could not be expressed: the only way to stop exporting spans was `AIRA_OTEL_ENABLED=false`, which stops **both** channels. It **outranks** `_PROTOCOL_CONFIG`, so a channel that is off stays off however its transport is set. |
+| `AIRA_OTEL_BACKEND_ENDPOINT` | `otel-lgtm:4317` | Where this channel sends over its default transport. `host:port`, **no scheme** — OTLP/gRPC. |
+| `AIRA_OTEL_BACKEND_PLAINTEXT` | `true` | No TLS at all (h2c) on the gRPC leg. Right for the bundled backend on this network, wrong for anything across a boundary. |
+| `AIRA_OTEL_BACKEND_PROTOCOL_CONFIG` | _(the empty fragment)_ | **Which OTLP transport.** Unset is gRPC; `/etc/otelcol-contrib/backend-http.yaml` is HTTP — and is what makes the encoding below a choice at all. Same batching, same credential, same TLS; only the exporter the pipelines use changes. |
+| `AIRA_OTEL_BACKEND_HTTP_ENDPOINT` | `http://otel-lgtm:4318` | The HTTP leg's address, a URL. Compose turns it into the three per-signal URLs below. Read only when the transport fragment is selected. |
+| `AIRA_OTEL_BACKEND_TRACES_ENDPOINT` | `<http endpoint>/v1/traces` | One URL per signal, for a backend that puts a route in front of OTLP. Set verbatim — nothing is appended. |
+| `AIRA_OTEL_BACKEND_LOGS_ENDPOINT` | `<http endpoint>/v1/logs` | The same, for logs. |
+| `AIRA_OTEL_BACKEND_METRICS_ENDPOINT` | `<http endpoint>/v1/metrics` | And for metrics, which some destinations put on a different host. |
+| `AIRA_OTEL_BACKEND_ENCODING` | `json` | `json` or `proto`, on the HTTP leg. Any other value stops the collector at validation — deliberately: an endpoint can be *forgotten*, an encoding is one of two words typed on purpose. |
+| `AIRA_OTEL_BACKEND_COMPRESSION` | `gzip` | `gzip` · `none` · `zstd` · `snappy`, on either transport. `none` is for a receiver that does not unwrap gzip; otherwise the symptom is a `400` about a malformed payload, which reads as *our telemetry is wrong*. |
+| `AIRA_OTEL_BACKEND_AUTH_CONFIG` | _(the empty fragment)_ | **Who we say we are.** Unset sends no credential of any kind. `…/backend-auth-header.yaml` (any header name) · `…/backend-auth-basic.yaml` · `…/backend-auth-oauth2.yaml` (fetched and refreshed) · `…/backend-auth-azure-identity.yaml` (a platform identity, no secret). Whichever is chosen applies on both transports. |
+| `AIRA_OTEL_BACKEND_AUTH_HEADER` | `authorization` | **The header name.** `Authorization` is what a minority of OTLP receivers ask for: `x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, `X-Seq-ApiKey` are all in the field. |
+| `AIRA_OTEL_BACKEND_AUTHORIZATION` | _(names itself)_ | Its value, sent verbatim, scheme included. Read only by the header fragment. |
+| `AIRA_OTEL_BACKEND_BASIC_USERNAME` / `_PASSWORD` | _(names itself)_ | HTTP basic — which is how **Grafana Cloud** takes OTLP: an instance id and an access policy token. Only ever over TLS. |
+| `AIRA_OTEL_BACKEND_OAUTH_TOKEN_URL` | _(names itself)_ | OAuth2 client credentials (RFC 6749 §4.4) — Keycloak, Okta, Auth0, Ping, Entra, and anything behind one. |
+| `AIRA_OTEL_BACKEND_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` | _(names itself)_ | The client. The secret is long-lived and belongs in Vault; the token it buys is not, which is why this is an extension rather than a header. |
+| `AIRA_OTEL_BACKEND_OAUTH_SCOPES` | `[]` | A YAML list in one variable: `["a","b"]`. A bare word works too. |
+| `AIRA_OTEL_BACKEND_OAUTH_CA_FILE` | _(empty)_ | The identity provider's own CA, which is a different trust decision from the backend's. |
+| `AIRA_OTEL_BACKEND_AZURE_CLIENT_ID` | _(empty)_ | For the platform-identity fragment only. Empty means the **system-assigned** managed identity; a guid means a user-assigned one. |
+| `AIRA_OTEL_BACKEND_AZURE_SCOPE` | `https://monitor.azure.com/.default` | The audience the token is minted for. Not the host. |
+| `AIRA_OTEL_BACKEND_CA_FILE` | _(empty)_ | A private CA, from `deploy/compose/otel/ca/`. Empty means the system trust store. **This** is the answer to a backend behind an internal CA. |
+| `AIRA_OTEL_BACKEND_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | _(empty)_ | Mutual TLS: the backend authenticates **us** by certificate, instead of or as well as a credential. |
+| `AIRA_OTEL_BACKEND_INSECURE` | `false` | Keep TLS, stop checking the certificate. A reachability test, not a deployment — and not a substitute for the CA file above. |
+| `AIRA_OTEL_BACKEND_BATCH_SECONDS` | `200ms` | How long the collector holds telemetry for this channel. The default is the collector's own, so leaving it alone changes nothing; it was unreachable until `FRD-620` while the delivery channel had two variables for it. |
+| `AIRA_OTEL_BACKEND_BATCH_SIZE` | `8192` | And how much fits in one request. |
+| `AIRA_OTEL_BACKEND_CONSUMERS` | `10` | Concurrent senders. |
+| `AIRA_OTEL_BACKEND_QUEUE` | `1000` | How much may wait while the backend says no. Held rather than dropped. |
+| `AIRA_OTEL_BACKEND_RETRY_INITIAL` | `5s` | How long before asking again. |
 
 ### Channel 2 — delivery, a second destination beside it
 
 Off unless **both** of the first two are set. `AIRA_OTEL_FORWARD_CONFIG` is the switch; the rest are
 read only once it is.
 
-A destination varies in three ways that do not depend on each other, so there are three switches:
-**where** it is (`_CONFIG` plus an endpoint), **how it is reached** (`_PROTOCOL_CONFIG`: OTLP/HTTP
-or OTLP/gRPC), and **who we say we are** (`_AUTH_CONFIG`). Each is a fragment the collector merges,
-because a `.yaml` has no conditional — and the last time two of them shared a file, the result was
-a header that was always present and sometimes empty.
+The same three slots and the same knobs as channel 1 above, one prefix along — the only two names
+that differ are the ones that name the transport this channel does *not* default to.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `AIRA_OTEL_FORWARD_CONFIG` | _(the empty fragment)_ | `/etc/otelcol-contrib/forward.yaml` turns forwarding on. Anything else, including unset, merges `noforward.yaml` — an empty `{}` — and nothing exists: no exporter, no filter pipeline, no second container. |
+| `AIRA_OTEL_FORWARD_CONFIG` | _(the empty fragment)_ | `/etc/otelcol-contrib/forward.yaml` turns forwarding on. Anything else, including unset, merges `empty.yaml` — an empty `{}` — and nothing exists: no exporter, no filter pipeline, no second container. |
 | `AIRA_OTEL_FORWARD_ENDPOINT` | `…not-set.invalid:4318` | Where to send, for a receiver that speaks plain OTLP — Compose turns it into the three per-signal URLs below by appending `/v1/traces`, `/v1/logs`, `/v1/metrics`. The default never resolves (RFC 2606) **on purpose**: switching the fragment on without an endpoint used to fail validation and restart the collector for ever, taking Grafana with it. Now that one exporter fails by name and everything else keeps working. |
 | `AIRA_OTEL_FORWARD_TRACES_ENDPOINT` | `<endpoint>/v1/traces` | One URL per signal, for a destination that puts a route in front of OTLP. Set verbatim — nothing is appended. |
 | `AIRA_OTEL_FORWARD_LOGS_ENDPOINT` | `<endpoint>/v1/logs` | The same, for logs. |
