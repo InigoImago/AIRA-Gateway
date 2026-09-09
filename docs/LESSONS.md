@@ -1805,6 +1805,19 @@ reading code.
   model and flakes.
 - **A test whose verdict turns on how fast something answered is measuring the machine.** A refill
   rate half a second wide is a coin toss under load.
+
+  *And the fix is a handshake, not a bigger number.* `test_streams_actually_stream.py` asserted
+  that a stream's handovers spanned more than half the time the model took — the right property,
+  decided by stopwatch. It failed about one full-suite run in five and passed six times out of six
+  in isolation, **including under a saturated eight-core load**: that last measurement is what
+  named the problem, because it ruled out the busy machine and left something that only happens
+  inside a long process. Every threshold is wrong here — raising it weakens the property, lowering
+  it keeps the coin toss.
+  What replaced it has no clock in the verdict: the double **blocks until the piece it just
+  produced has left the application**, so a surface that assembles the answer first deadlocks
+  instead of merely being fast. Where a timing assertion is really an assertion about **order**,
+  make the double refuse to go on until the order has happened — the only clock left is then a
+  liveness bound, which a slow machine makes *less* likely to fire rather than more.
 - **A comparison that answers the same for both sides proves neither.** A test written as *"the
   administrator may, the plain member may not"* read "may not" for both — twice, and for two
   different reasons: `option[value=…]` asks about the attribute where Angular's `[value]` binding

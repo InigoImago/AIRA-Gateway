@@ -5,6 +5,49 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The stopwatch in the streaming test was a coin toss (2026-09-09)
+
+Reported as *"tests don't pass"*. One case, `test_streams_actually_stream.py`, intermittently:
+**three failures in about fifteen full-suite runs**, and six passes out of six in isolation —
+including under a saturated eight-core load, which is the measurement that decides what this is.
+A busy machine did not cause it; something that only happens inside a long-lived process was
+eating the margin.
+
+The case asserted the right property by the wrong means. It paced a provider double with
+`asyncio.sleep` and required the handovers to span *more than half* of the time the model took —
+a verdict decided by stopwatch, which `LESSONS.md` §7 already names: *a test whose verdict turns
+on how fast something answered is measuring the machine.* No threshold fixes that. Raising it
+weakens the property; lowering it keeps the coin toss.
+
+**The double waits for a handshake now.** It produces a piece, then blocks until that piece has
+left the application; only then does it produce the next. Streaming walks through that unchanged.
+An implementation that assembles the answer first *cannot*: it must read every chunk before it
+sends one, so it stalls on the first and the run ends at `STALL_SECONDS` with a message saying how
+far it got. That is the causal version of the old assertion rather than a weaker one, and the only
+clock left is a liveness bound that a slow machine makes **less** likely to fire.
+
+Also gone with it: `arrivals`, `GAP_SECONDS`, and eight sleeps. The case runs in 0.18 s instead of
+1.09 s.
+
+Broken on purpose on **both** surfaces, since a property asserted for one of them is how the other
+came to lack it in the first place: `QA15` reintroduces the buffering loop on the KIRA side; the
+Gemini side was buffered by hand, draining `model_call_chunks` into a list before the loop. Both
+caught, both with the stall message. A third — a surface that stops consuming half way — is caught
+by the piece count.
+
+One assertion was **removed rather than kept**: that the model was asked for piece *n* only after
+*n* handovers. The double enforces that itself, so it could never have failed — the
+guard-that-cannot-fail `LESSONS.md` §7 lists five instances of. The list it was built from is kept
+for the failure message, where it says how far a stalled surface got.
+
+And the docstring named a live counterpart, `tests/integration/test_streams_actually_stream.py`,
+that has never existed — an instruction with no destination, in the paragraph explaining what the
+hermetic layer cannot see. Corrected to what the live layer actually covers.
+
+Verified: five consecutive full-suite runs, 3 771 passed each.
+
+---
+
 ## A number in one field, and budget enforcement was on its racy path (2026-09-08)
 
 `FRD-405` §4.2 exists because reading usage and booking it afterwards left every request in flight
@@ -7631,6 +7674,10 @@ the count (wrong).
 
 **The regression test is the artefact.** `test_streams_actually_stream.py` asserts the *spread of
 arrival times* against a provider double that yields on a clock, parametrised over both surfaces.
+*(Corrected 2026-09-09: it no longer does. The spread was a stopwatch and failed about one full-suite
+run in five; the double waits for a **handshake** now — it will not produce a piece until the last
+one has left the application — which is the same property asserted causally and with no clock in
+the verdict. The paragraph stands as what was built on the day; see the entry of 2026-09-09.)*
 Proved by reverting the loop to the assemble-then-send shape, keeping the **event count
 identical**: the new case fails, and **157 existing kira/stream tests stay green**. That number is
 the finding.
