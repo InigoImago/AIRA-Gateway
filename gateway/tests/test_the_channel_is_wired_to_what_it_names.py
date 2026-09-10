@@ -13,13 +13,14 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.exc import OperationalError
 
 from aira_common.integration_debug import configure_integration_debug
 from aira_common.logging import configure_logging
 from aira_gateway.config import GatewaySettings
 from aira_gateway.consumer.worker import GROUP_ID, consume_forever
-from aira_gateway.db.base import build_engine, build_sessionmaker
+from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 
 
 @pytest.fixture(autouse=True)
@@ -67,19 +68,36 @@ class FakeConsumer:
             yield message
 
 
-async def _sessionmaker() -> Any:
+@pytest_asyncio.fixture
+async def sessions() -> AsyncIterator[Any]:
+    """A session factory whose engine is **disposed** when the test ends.
+
+    It was a helper that built an engine per call and dropped it. `aiosqlite` runs each connection
+    on a background thread, and a thread whose loop has been closed under it reports
+    `RuntimeError: Event loop is closed` through pytest's `threadexception` plugin — a full
+    traceback in the warnings summary of a **green** run, four of them here, varying run to run
+    because whether the thread gets scheduled before the loop closes is a race.
+
+    Nothing about it was ever a product defect: `build_engine`'s five production callers all
+    dispose (`app.py`, `cli.py`, `retention.py`, `consumer/worker.py`), and so does every other
+    fixture in this suite. These tests simply did not, and the cost was 167 lines of traceback in
+    a passing run — which teaches a reader that tracebacks here are normal, and that is how a real
+    one goes unread (`LESSONS.md` §1: *a diagnostic that is present, correct and unreadable is
+    worse than an absent one*).
+    """
     engine = build_engine("sqlite+aiosqlite:///:memory:")
-    from aira_gateway.db.base import create_all
-
     await create_all(engine)
-    return build_sessionmaker(engine)
+    yield build_sessionmaker(engine)
+    await engine.dispose()
 
 
-async def test_the_consumer_says_it_connected_and_to_which_group(capsys: Any) -> None:
+async def test_the_consumer_says_it_connected_and_to_which_group(
+    capsys: Any, sessions: Any
+) -> None:
     """`consumer.start()` is where a SASL mechanism, a trust store and a broker address are first
     proven against a real broker, and it said nothing at all."""
     consumer = FakeConsumer([])
-    await consume_forever(consumer, await _sessionmaker(), "broker:9093")
+    await consume_forever(consumer, sessions, "broker:9093")
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "consumer.start"]
     assert line["outcome"] == "ok"
@@ -88,10 +106,10 @@ async def test_the_consumer_says_it_connected_and_to_which_group(capsys: Any) ->
     assert consumer.started and consumer.stopped
 
 
-async def test_an_arriving_event_is_reported_with_its_offset(capsys: Any) -> None:
+async def test_an_arriving_event_is_reported_with_its_offset(capsys: Any, sessions: Any) -> None:
     """The only line that says *an event arrived at all*. `apply_one_message` speaks up when it
     cannot apply one; nothing spoke when it could."""
-    seen = await consume_forever(FakeConsumer([Message(17)]), await _sessionmaker())
+    seen = await consume_forever(FakeConsumer([Message(17)]), sessions)
     assert seen == 1
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "consumer.receive"]
@@ -100,24 +118,26 @@ async def test_an_arriving_event_is_reported_with_its_offset(capsys: Any) -> Non
     assert line["event_type"] == "use_case.upserted"
 
 
-async def test_an_event_that_could_not_be_applied_is_reported_as_not_applied(capsys: Any) -> None:
+async def test_an_event_that_could_not_be_applied_is_reported_as_not_applied(
+    capsys: Any, sessions: Any
+) -> None:
     """`apply_one_message` swallows its own failures on purpose — one bad event must not take the
     consumer down — so `applied` is what carries the difference, not an exception."""
-    await consume_forever(FakeConsumer([Message(18, event_type=None)]), await _sessionmaker())
+    await consume_forever(FakeConsumer([Message(18, event_type=None)]), sessions)
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "consumer.receive"]
     assert line["applied"] is False
 
 
 async def test_a_broker_that_will_not_accept_us_is_reported_and_the_error_propagates(
-    capsys: Any,
+    capsys: Any, sessions: Any
 ) -> None:
     class Refusing(FakeConsumer):
         async def start(self) -> None:
             raise ConnectionError("KafkaConnectionError: Unable to bootstrap from [('b', 9093)]")
 
     with pytest.raises(ConnectionError):
-        await consume_forever(Refusing([]), await _sessionmaker(), "b:9093")
+        await consume_forever(Refusing([]), sessions, "b:9093")
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "consumer.start"]
     assert line["outcome"] == "failed"
@@ -129,8 +149,11 @@ async def test_a_broker_that_will_not_accept_us_is_reported_and_the_error_propag
 
 async def test_opening_a_database_connection_says_where_to(capsys: Any) -> None:
     engine = build_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as connection:
-        await connection.exec_driver_sql("select 1")
+    try:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql("select 1")
+    finally:
+        await engine.dispose()
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "connect"]
     assert line["system"] == "postgres"
@@ -146,9 +169,12 @@ async def test_a_closed_port_is_reported_with_the_drivers_own_words(capsys: Any)
     not prove that a driver's connection failure reaches SQLAlchemy's `handle_error` at all.
     """
     engine = build_engine("postgresql+psycopg://aira:s3cret@127.0.0.1:1/aira_gateway")
-    with pytest.raises(OperationalError):
-        async with engine.begin() as connection:
-            await connection.exec_driver_sql("select 1")
+    try:
+        with pytest.raises(OperationalError):
+            async with engine.begin() as connection:
+                await connection.exec_driver_sql("select 1")
+    finally:
+        await engine.dispose()
 
     failures = [c for c in calls(capsys) if c["operation"] == "error"]
     assert failures, "a connection that cannot be established must reach the channel"
@@ -165,9 +191,12 @@ async def test_a_database_file_that_cannot_be_opened_is_reported(capsys: Any) ->
     """The other branch: SQLAlchemy reports it with no connection in hand rather than as a
     disconnect, so a filter written on `is_disconnect` alone would miss it."""
     engine = build_engine("sqlite+aiosqlite:////nonexistent-dir/aira.db")
-    with pytest.raises(OperationalError):
-        async with engine.begin() as connection:
-            await connection.exec_driver_sql("select 1")
+    try:
+        with pytest.raises(OperationalError):
+            async with engine.begin() as connection:
+                await connection.exec_driver_sql("select 1")
+    finally:
+        await engine.dispose()
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "error"]
     assert line["is_disconnect"] is False
@@ -178,9 +207,12 @@ async def test_an_ordinary_query_error_is_not_reported_as_an_outage(capsys: Any)
     """A wrong table on a working database is a correct answer from a reachable one. Reporting it
     here would bury the four lines that matter under thousands that do not."""
     engine = build_engine("sqlite+aiosqlite:///:memory:")
-    with pytest.raises(OperationalError):
-        async with engine.begin() as connection:
-            await connection.exec_driver_sql("select * from no_such_table")
+    try:
+        with pytest.raises(OperationalError):
+            async with engine.begin() as connection:
+                await connection.exec_driver_sql("select * from no_such_table")
+    finally:
+        await engine.dispose()
 
     assert [c for c in calls(capsys) if c["operation"] == "error"] == []
 
