@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import json
 import re
+import socket
+import threading
 from collections import Counter
 from collections.abc import Iterator
 from typing import Any
@@ -158,6 +160,79 @@ def _unthrottled(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     cache.clear()
     yield
     cache.clear()
+
+
+class _Dependencies:
+    """Postgres and Kafka as far as `/readyz` can tell: one socket this test opens, and accepts on.
+
+    Accepting is not optional. The probe completes a real handshake and hangs up, and a socket that
+    only listens holds each of those in its backlog until it is full — after which every probe
+    waits out its one-second timeout and reports the dependency down. The sweep asks `/readyz` a
+    few hundred times.
+    """
+
+    def __init__(self) -> None:
+        self._listener = socket.create_server(("127.0.0.1", 0))
+        self._listener.settimeout(0.05)
+        self.host, self.port = self._listener.getsockname()[:2]
+        self._stopped = threading.Event()
+        self._thread = threading.Thread(target=self._accept, daemon=True)
+        self._thread.start()
+
+    def _accept(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                connection, _ = self._listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            connection.close()
+
+    def stop(self) -> None:
+        """Stop accepting and close the port, so the next probe of it is refused."""
+        self._stopped.set()
+        self._thread.join()
+        self._listener.close()
+
+
+@pytest.fixture(autouse=True)
+def dependencies(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Dependencies]:
+    """`/readyz` asks Postgres and Kafka, and a unit test must not ask the developer's.
+
+    **The first version asked them.** The readiness view opens a TCP connection to each, so the
+    query sweep answered `200` on a machine with the Compose stack running and `503` to every one of
+    189 requests where it was not — reported as *"a caller's value is a server error"*, which it
+    was not: the view was right, and the value never reached a line that reads it. `LESSONS.md`'s
+    *a unit test that reads the developer's machine is a test about that machine*, in the file
+    written to find somebody else's defects.
+
+    The fix is the one `gateway/tests/test_diagnostics.py` settled on for the same view one plane
+    over: the dependencies are pointed at a socket **this test opens**, so the probe stays real and
+    only its answer is held up by construction. Two alternatives, both worse. Exempting `/readyz`
+    is a hand-written list that stops sweeping the route that does the most work. Comparing each
+    answer against a bare request's would excuse a view that answers `500` to everything — the
+    first thing a sweep should catch. What `/readyz` says when a dependency is down is
+    `test_health.py`'s question.
+    """
+    from aira_management.apps.health import views as health_views
+    from aira_management.config.runtime import get_settings
+
+    held_up = _Dependencies()
+    pointed = get_settings().model_copy(
+        update={
+            "postgres_host": held_up.host,
+            "postgres_port": held_up.port,
+            "kafka_bootstrap_servers": f"{held_up.host}:{held_up.port}",
+        }
+    )
+    # The view's own name for the accessor, not the cached function: `settings.py` has already
+    # built the database configuration from the real one, and that must not move under a test.
+    monkeypatch.setattr(health_views, "get_settings", lambda: pointed)
+    try:
+        yield held_up
+    finally:
+        held_up.stop()
 
 
 def _routes() -> list[tuple[str, list[str]]]:
@@ -315,6 +390,24 @@ def test_the_sweep_actually_reaches_the_views() -> None:
     assert statuses[200] >= 10, dict(statuses)
 
 
+def test_the_sweep_asks_the_socket_it_opened_and_not_the_machine(
+    dependencies: _Dependencies,
+) -> None:
+    """The guard on the `dependencies` fixture, which otherwise does nothing visible.
+
+    Asserting only `/readyz == 200` would pass on exactly the machines that hid the defect — the
+    ones with the stack running. So the socket is closed as well, and `/readyz` has to notice: on a
+    machine with the stack up that fails if the view is asking anything but this socket, and on one
+    with the stack down the first assertion does.
+    """
+    fixture = Fixture()
+
+    assert fixture.client.get("/readyz").status_code == 200
+
+    dependencies.stop()
+    assert fixture.client.get("/readyz").status_code == 503
+
+
 def test_no_path_parameter_answers_with_a_server_error() -> None:
     """One parameter at a time, the rest addressing something that exists — or a wrong value in
     the *first* segment would 404 before the one under test was ever read."""
@@ -376,8 +469,6 @@ def test_no_body_answers_with_a_server_error() -> None:
     fixture = Fixture()
     failures: list[tuple[str, str, Any, int, bytes]] = []
     for path, _names in fixture.paths():
-        if path in ("/healthz", "/readyz"):
-            continue
         for method in ("post", "patch", "put"):
             for body in BAD_BODIES:
                 fixture.ensure()

@@ -1799,7 +1799,12 @@ reading code.
   on a machine with the stack down — so it took the mutation harness's **red baseline** to report
   it, which is the report that says nothing at all. **Make the hermetic layer hermetic by
   construction**, in a fixture, and guard the fixture with a test: one that does nothing visible is
-  the kind that gets tidied away.
+  the kind that gets tidied away. *And make the guard fail on both kinds of machine:* a Management
+  sweep reported `/readyz`'s `503` for a stopped stack as a caller's value causing a server error,
+  189 times. A guard asserting `/readyz == 200` passes exactly where the stack is up — where the
+  defect hid — so it closes the test's own socket and requires `503` too. The same file's other
+  sweep had met the symptom first and **skipped the route by hand**; an exemption that makes a
+  machine-dependent answer go away is the finding, silenced.
 - **A harness that configures a service differently from production tests a different service.**
 - **Assert behaviour, not wire bodies**, and never assert the *model's* answer — that tests the
   model and flakes.

@@ -5,6 +5,43 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The sweep that reported a stopped stack as a server error (2026-09-11)
+
+`test_no_query_parameter_answers_with_a_server_error` — written on 2026-09-08 to sweep every
+Management endpoint with values a caller can send — failed on a machine where the Compose stack
+was not running: **189 failures, every one of them `/readyz` answering `503`**, whatever the value.
+The view was right. `/readyz` opens a TCP connection to Postgres and to Kafka, and `503` is what
+it is for; the query value never reached a line that reads it. The test counted an answer about
+the machine as an answer about the caller.
+
+It had passed every run before the report, because the machine it was written on had the stack
+up — `LESSONS.md`'s *a unit test that reads the developer's machine is a test about that machine*,
+in the file written to find other people's defects. The body sweep in the same file had already
+met it and **skipped** `/healthz` and `/readyz` by hand, which is why only the query sweep showed
+it: the symptom had been silenced once rather than understood.
+
+**Fixed the way `gateway/tests/test_diagnostics.py` fixed the same view one plane over**: the
+dependencies are pointed at a socket the test opens and accepts on, so the probe stays real and only
+its answer is held up by construction. The accepting matters — the probe completes a handshake,
+and a socket that only listens fills its backlog within a few hundred probes, after which each one
+waits out its timeout and reports the dependency down. The hand-written skip is gone, so `/readyz`
+is swept by both sweeps now. Two alternatives were rejected: exempting the route stops sweeping
+the one that does the most work, and comparing each answer against a bare request's would excuse
+a view that answers `500` to everything, which is the first thing a sweep is for.
+
+The fixture does nothing visible, so it has a guard, and a guard that only asserted `/readyz ==
+200` would pass on exactly the machines that hid this. It closes the socket as well and requires
+`503`, so it fails **on either kind of machine** if the view asks anything but that socket.
+
+Measured in a fresh network namespace, where nothing listens on `localhost` — the reporter's
+situation, reproduced rather than simulated. The committed test failed there as reported; the new
+one passes there and on a machine with the stack up. Broken on purpose: the fixture made
+ineffective is caught on both kinds of machine (`200 == 503` with the stack up, `503 == 200`
+without), and `/readyz` answering `500` to `q=abc` is caught by the sweep. Full Python suite, both
+environments: 3 772 passed.
+
+---
+
 ## The stopwatch in the streaming test was a coin toss (2026-09-09)
 
 Reported as *"tests don't pass"*. One case, `test_streams_actually_stream.py`, intermittently:
