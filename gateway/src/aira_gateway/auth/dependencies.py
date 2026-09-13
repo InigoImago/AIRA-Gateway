@@ -12,14 +12,18 @@ from dataclasses import replace
 
 from fastapi import Depends, Request
 
+from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.attempts import record_failed_authentication
 from aira_gateway.auth.attribution import (
+    FORBIDDEN,
+    UNAUTHENTICATED,
     USE_CASE_HEADER_NAME,
     USE_CASE_PATH_FORM,
     Attribution,
     attribute,
     is_valid_use_case,
+    mark_refused,
     resolve_use_case,
 )
 from aira_gateway.auth.credentials import extract_token
@@ -28,6 +32,7 @@ from aira_gateway.auth.keys import is_aira_key
 from aira_gateway.auth.oidc import OidcValidator
 from aira_gateway.auth.principal import Principal
 from aira_gateway.auth.service import ApiKeyService
+from aira_gateway.persistence.recorder import client_ip
 from aira_gateway.state import sessionmaker_of
 
 _DEMO_PRINCIPAL = Principal(subject="demo", method="demo")
@@ -93,11 +98,14 @@ async def require_principal(request: Request) -> Principal:
     # `NOT_AUTHENTICATED` from `INVALID_TOKEN`, and keeping the bit on the request keeps KIRA's
     # vocabulary out of the shared refusal type. Only meaningful when authentication is on.
     request.state.credential_presented = extract_token(request) is not None
+    # Where the attempt came from, on its span before the verdict, so a refusal carries it too.
+    set_span_attributes({"aira.source_ip": client_ip(request)})
     principal = await resolve_principal(request)
     if principal is None:
         # Before the 401: every `FRD-405` limit is keyed by a verified identity, so none of them
         # bounds a caller who has none.
         await record_failed_authentication(request)
+        mark_refused(UNAUTHENTICATED, 401)
         raise _unauthenticated("Missing or invalid credentials.")
     request.state.principal = principal
     return principal
@@ -113,12 +121,27 @@ def use_case_refusal(principal: Principal, use_case: str) -> str | None:
     - **An unbound API key** — the CLI break-glass key, minted by an operator with database access
       for when the control plane is unavailable. Deliberately unrestricted (`ADR-0015`).
     - **A bound API key** — issued by Management for exactly one use case, and may touch only that.
+
+    A refusal is also marked on the request span, because it writes no audit row and the span is
+    the only record the delivery channel can carry (`FRD-616`).
     """
+    reason = None
     if principal.method == "oidc" and use_case not in principal.use_cases:
-        return f"Not a member of use case '{use_case}'."
-    if principal.method == "api_key" and principal.use_cases and use_case != principal.use_cases[0]:
-        return f"API key is bound to use case '{principal.use_cases[0]}'."
-    return None
+        reason = f"Not a member of use case '{use_case}'."
+    elif (
+        principal.method == "api_key" and principal.use_cases and use_case != principal.use_cases[0]
+    ):
+        reason = f"API key is bound to use case '{principal.use_cases[0]}'."
+    if reason:
+        mark_refused(
+            FORBIDDEN,
+            403,
+            subject=principal.subject,
+            method=principal.method,
+            credential=principal.credential,
+            use_case=use_case,
+        )
+    return reason
 
 
 def authorize_use_case(principal: Principal, use_case: str) -> None:

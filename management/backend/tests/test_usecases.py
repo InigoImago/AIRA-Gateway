@@ -359,6 +359,17 @@ def test_change_hook_fires(captured_events) -> None:
     assert "membership.upserted" in types
 
 
+def test_the_creator_is_announced_as_its_administrator(captured_events) -> None:
+    """Creating a use case makes the creator its administrator (`ADR-0017`), and the gateway learns
+    memberships only from these events. Stored and not announced, the creator is refused at the
+    gateway as not a member of the use case they were just given."""
+    admin = _user("a", "global-admin")
+    _create(_client(admin), "made-here")
+
+    announced = [p for t, p in captured_events if t == "membership.upserted"]
+    assert announced == [{"slug": "made-here", "username": "a", "role": UseCaseMembership.ADMIN}]
+
+
 def test_unsubscribe_not_present_is_noop() -> None:
     def never_subscribed(event_type: str, payload: dict) -> None:  # pragma: no cover
         return None

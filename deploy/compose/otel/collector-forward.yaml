@@ -69,15 +69,16 @@ exporters:
 processors:
   # A SIEM wants one record per request and the calls made inside one, not the SQL and pool spans
   # Grafana wants. `filter` drops what the expression makes true, so it reads as a negation: drop a
-  # span unless it carries `aira.use_case` (a request) or is an HTTP call with a parent (a model
-  # call inside a request). A parent of sixteen zeroes is the reachability prober (FRD-117). Both
-  # spellings of the URL attribute are named, so the semantic-conventions rename cannot empty the
-  # feed silently.
+  # span unless it carries `aira.use_case` (a request), `aira.outcome` (a request, including one
+  # refused before it could be attributed — a 401 or a 403 is exactly what a SIEM watches for), or
+  # is an HTTP call with a parent (a model call inside a request). A parent of sixteen zeroes is the
+  # reachability prober (FRD-117). Both spellings of the URL attribute are named, so the
+  # semantic-conventions rename cannot empty the feed silently.
   filter/siem:
     error_mode: ignore
     traces:
       span:
-        - 'attributes["aira.use_case"] == nil and ((attributes["http.url"] == nil and attributes["url.full"] == nil) or parent_span_id.string == "0000000000000000")'
+        - 'attributes["aira.use_case"] == nil and attributes["aira.outcome"] == nil and ((attributes["http.url"] == nil and attributes["url.full"] == nil) or parent_span_id.string == "0000000000000000")'
 
   # The delivery channel's own batching: redefining the shared `batch` would retime Grafana too.
   batch/siem:

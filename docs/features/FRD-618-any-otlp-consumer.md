@@ -19,6 +19,12 @@
 > - HTTP basic is a header value.
 >
 > The variables and fragments this document names for those two axes no longer exist.
+>
+> **Refused access attempts now reach the delivery channel.** A 401 or a 403 is refused before the
+> request is attributed, so its span has no `aira.use_case`, and the filter dropped it. The gateway
+> now marks such a span with `aira.outcome` (`unauthenticated` or `forbidden`), `aira.status` and
+> `aira.source_ip`. A 403 also carries the caller's identity and `aira.use_case.requested`. The
+> filter keeps a span that carries either attribute.
 
 ## 1. Problem
 

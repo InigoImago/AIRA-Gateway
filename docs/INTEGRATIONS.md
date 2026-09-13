@@ -796,8 +796,13 @@ observability stream is byte-for-byte the same whether forwarding is on or off**
 to restate the base exporter lists, because a merged list replaces, and forgetting one silently
 unhooked Grafana.
 
-What the traces pipeline keeps: a span with `aira.use_case` (the request), or an HTTP call made
-*inside* one (the model the prompt actually went to). What it drops: SQL, pool connections, ASGI
+What the traces pipeline keeps: a span with `aira.use_case` (the request), a span with
+`aira.outcome` (a request, including one refused before it could be attributed), or an HTTP call
+made *inside* one (the model the prompt actually went to). A refused attempt carries what is
+known: `aira.outcome` `unauthenticated` (401) or `forbidden` (403), `aira.status`,
+`aira.source_ip`, and for a 403 the caller's `aira.subject` and `aira.auth_method` and the use case
+it asked for as `aira.use_case.requested` — never `aira.use_case`, because it was not attributed to
+it. What it drops: SQL, pool connections, ASGI
 send/receive halves, and the reachability prober — which asks every configured model every 60
 seconds whether it is there and, in a first draft of this filter, was **32 of the 35 spans it
 selected**, without one of them being a request.

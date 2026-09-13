@@ -90,6 +90,16 @@ class UseCaseViewSet(
                 use_case=usecase, user=user, role=UseCaseMembership.ADMIN
             )
             emit("usecase.upserted", _snapshot(usecase))
+            # The creator's membership travels like any other, or the gateway refuses the person
+            # this use case was just given to administer.
+            emit(
+                "membership.upserted",
+                {
+                    "slug": usecase.slug,
+                    "username": user.get_username(),
+                    "role": UseCaseMembership.ADMIN,
+                },
+            )
 
     def perform_update(self, serializer: Any) -> None:
         if not self._may_admin(serializer.instance):

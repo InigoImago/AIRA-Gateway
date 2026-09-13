@@ -126,6 +126,22 @@ def test_the_filter_names_the_two_things_a_siem_needs() -> None:
     assert 'parent_span_id.string == "0000000000000000"' in expression
 
 
+def test_a_refused_access_attempt_reaches_the_siem() -> None:
+    """**A 401 or a 403 is what a SIEM watches for**, and neither carries `aira.use_case`: the
+    request is refused before it is attributed. The gateway marks such a span with `aira.outcome`,
+    and a filter keyed on the use case alone dropped every one of them — the delivery channel
+    carried every served request and no refused attempt."""
+    expression = yaml.safe_load(FORWARD.read_text(encoding="utf-8"))["processors"]["filter/siem"][
+        "traces"
+    ]["span"][0]
+
+    assert 'attributes["aira.outcome"] == nil' in expression
+    # A conjunction: the span is dropped only when it carries *neither*.
+    assert (
+        expression.index('attributes["aira.use_case"] == nil and attributes["aira.outcome"]') == 0
+    )
+
+
 def test_the_filter_names_both_spellings_of_the_url_attribute() -> None:
     """`http.url` is what this build's clients write — verified on the running stack — and the
     semantic conventions have since renamed it `url.full`.

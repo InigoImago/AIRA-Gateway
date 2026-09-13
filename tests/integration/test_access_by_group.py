@@ -111,6 +111,28 @@ async def slug(admin_token: str):
     await _delete_use_case(admin_token, name)
 
 
+async def test_the_creator_reaches_the_gateway(slug: str, admin_token: str) -> None:
+    """The creator is the use case's first administrator (`ADR-0017`), and that membership has to
+    reach the gateway like any other membership — not only Management's own list. Polled, because
+    it travels over Kafka."""
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": "Say OK."}]}],
+        "generationConfig": {"maxOutputTokens": 8},
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for _ in range(40):
+            response = await client.post(
+                f"{GATEWAY_URL}/uc/{slug}/v1beta/models/{MODEL}:generateContent",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                json=body,
+            )
+            if response.status_code == 200:
+                break
+            await asyncio.sleep(1.5)
+
+    assert response.status_code == 200, response.text
+
+
 # ---- the control ---------------------------------------------------------------------------
 
 

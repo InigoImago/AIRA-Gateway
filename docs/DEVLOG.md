@@ -14523,3 +14523,57 @@ fragment for the observability channel existed only because the symmetry test de
 
 **Measured after.** Hermetic suite 3799 passed, coverage 96.59 %; ruff and mypy clean; all
 62 mutations that touch the collector, its guards or the inspector caught.
+
+## 2026-09-13 — the showcase end to end, and two defects it found
+
+**What was run.** This came before merging `ADR-0024`. First, `make showcase` rebuilt the stack from
+the branch. Then traffic went through it:
+- an API key on both surfaces, with streaming;
+- embeddings on both surfaces;
+- tool calling with a round trip, on the local model and on Gemini;
+- Keycloak client credentials: a global administrator created a throwaway use case, and a member
+  reached it through a department group;
+- refused attempts.
+
+Each response's `x-trace-id` was then looked up in two places: in Tempo, for the observability
+channel, and in the inspector, for the delivery channel.
+
+**Two defects, both older than the branch:**
+
+1. **The creator of a use case was refused at the gateway.** `perform_create` stored the creator's
+   administrator membership (`ADR-0017`) but announced only `usecase.upserted`. The gateway learns
+   memberships only from `membership.upserted`. So the person who had just been given the use case
+   was answered *Not a member*, and kept getting that answer. The integration suite checked the
+   creator's membership in Management and never at the gateway.
+   - **Fix:** `perform_create` now emits `membership.upserted` for the creator too.
+   - **Tests:** a hermetic test, an integration test that the creator's token is served, and
+     mutation FX1.
+2. **Refused access attempts never reached the delivery channel.** A 401 or a 403 is refused before
+   the request is attributed, so it writes no audit row and its span carries no `aira.use_case`.
+   The SIEM filter keeps a span only by that attribute, so it dropped every one. A SIEM received
+   every served request and not one failed login.
+   - **Fix, gateway side:** at the two places both surfaces refuse through, the gateway now marks
+     the span with `aira.outcome` (`unauthenticated` or `forbidden`), `aira.status` and
+     `aira.source_ip`. A 403 also carries the caller's identity and `aira.use_case.requested`.
+     `aira.use_case` is never set on a refused request, because it was not attributed.
+   - **Fix, collector side:** the filter now keeps a span that carries either attribute.
+   - **Tests:** both surfaces' 401 over ASGI, both 403 rules, and mutations SR1–SR5.
+
+The probe also had one error of its own: `toolConfig` mode `ANY`. The gateway refuses that value by
+design, so the probe now sends `AUTO`.
+
+**Measured after the fixes.**
+- **Showcase:** up; `demo_traffic --assert-controls` passed.
+- **Probe:** 38/38.
+  - Each of the 14 served requests showed up twice: in Tempo with 17–37 spans, and on the delivery
+    channel as its request span and its model-call span, with `aira.auth_method` `api_key` or
+    `oidc`.
+  - The creator was served.
+  - Each refused attempt reached the delivery channel with its outcome, status and source address:
+    a 401 on either surface, a 403 for a key bound elsewhere, and a 403 for an OIDC non-member. The
+    two 403s also named the use case asked for.
+- **Integration:** 1053 passed, 15 skipped.
+- **e2e:** 162 passed.
+- **Mutations:** FX1, SR1–SR5 and A6 (re-anchored onto the reformatted condition) all caught; 813
+  properties.
+- **Clean-up:** the probe's use cases were purged.

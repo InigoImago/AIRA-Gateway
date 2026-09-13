@@ -24,6 +24,11 @@ USE_CASE_PATH_FORM = "/uc/<use-case>"
 #: The ASGI scope key `UseCasePathMiddleware` stores the path slug under.
 USE_CASE_PATH_KEY = "aira_use_case_path"
 
+#: How a request refused before attribution is marked on its span. Not audit outcomes: such a
+#: request writes no audit row, so its span is its only record (`FRD-616`).
+UNAUTHENTICATED = "unauthenticated"
+FORBIDDEN = "forbidden"
+
 #: A client-supplied selector must look like a Management use-case slug, keeping unvalidated input
 #: out of the audit log, the read-model lookups and the trace attributes (`ADR-0007`). **`\Z`, not
 #: `$`**: `$` also matches before a trailing newline, which would let a newline into a log line.
@@ -76,6 +81,35 @@ def attribute(request: Request, attribution: Attribution) -> Attribution:
     # model-access record says who caused it.
     attribute_model_calls_to(identity)
     return attribution
+
+
+def mark_refused(
+    outcome: str,
+    status: int,
+    *,
+    subject: str | None = None,
+    method: str | None = None,
+    credential: str | None = None,
+    use_case: str | None = None,
+) -> None:
+    """Put an access attempt refused before attribution on its span (`FRD-616`).
+
+    `aira.outcome` is what the delivery channel keeps a request by when it has no `aira.use_case`,
+    so a 401 or a 403 reaches the SIEM. The use case asked for is `aira.use_case.requested`, never
+    `aira.use_case` — the request was not attributed to it — and only a well-formed slug is
+    written (`ADR-0007`).
+    """
+    requested = use_case if use_case and is_valid_use_case(use_case) else None
+    set_span_attributes(
+        {
+            "aira.outcome": outcome,
+            "aira.status": status,
+            "aira.subject": subject,
+            "aira.auth_method": method,
+            "aira.credential": credential,
+            "aira.use_case.requested": requested,
+        }
+    )
 
 
 def resolve_use_case(request: Request) -> str | None:
