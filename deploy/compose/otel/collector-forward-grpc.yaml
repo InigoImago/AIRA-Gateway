@@ -1,44 +1,14 @@
-# The second destination over **OTLP/gRPC** instead of OTLP/HTTP.
+# The delivery channel over OTLP/gRPC instead of OTLP/HTTP.
 #
-#     AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
 #     AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/forward-grpc.yaml
 #     AIRA_OTEL_FORWARD_GRPC_ENDPOINT=siem.internal:4317
 #
-# Merged **on top of** `collector-forward.yaml`, which is where both exporters are defined and
-# where the filter and the batching are described. This file changes exactly one thing: which of
-# the two exporters the delivery stream's three pipelines hand their telemetry to. That is the
-# whole fragment — everything else about the leg is the same, deliberately, because the transport
-# is not supposed to change what the second destination receives, and it must not reach the
-# observability stream at all.
-#
-# ## What is different once you switch
-#
-# **One address, not three.** OTLP/gRPC has no per-signal paths — the three signals are three
-# services on one connection — so `AIRA_OTEL_FORWARD_TRACES_ENDPOINT` and its siblings are ignored
-# and `AIRA_OTEL_FORWARD_GRPC_ENDPOINT` is `host:port` with **no scheme**. TLS is
-# `AIRA_OTEL_FORWARD_GRPC_PLAINTEXT`, not an `https://`.
-#
-# **`AIRA_OTEL_FORWARD_ENCODING` has no effect.** OTLP/gRPC is protobuf; the specification defines
-# no JSON over gRPC. The variable stays legible in `.env` and simply does not reach this leg, which
-# is worth knowing before you set it and conclude the leg is ignoring you.
-#
-# **Everything else carries over**: the credential fragment, the CA and client certificate, the
-# compression, the queue and retry figures, and the `filter/siem` selection.
-#
-# **The inspector cannot read this leg.** `make otlp-inspector` is an HTTP receiver — a page with
-# no dependencies — so *what leaves* is legible over HTTP and not over gRPC. Switch the protocol
-# back while you are looking at content; for gRPC, `make otel-status` answers delivery out of the
-# collector's own `exporter_sent` against `send_failed`.
-#
-# **The trace backend keeps its own transport either way.** `otlp/backend` is the observability
-# stream's and is untouched by this file — the two are independent, and this variable moves one.
+# It only moves the three delivery pipelines onto `otlp/forward`; filter, batching and credential
+# stay. `_ENCODING` does not reach this leg (gRPC is protobuf), and `make otlp-inspector` cannot read
+# it (it is an HTTP receiver). No base pipeline is named, so Grafana is untouched.
 
 service:
   pipelines:
-    # Only the delivery stream's own three. The base `traces`, `metrics` and `logs` are not named
-    # here for the same reason they are not named in `collector-forward.yaml`: they are the other
-    # stream, and switching this one's transport must not reach them. A merged exporter list
-    # replaces, so naming them at all is how a fragment silently unhooks Grafana.
     traces/siem:
       exporters: [otlp/forward]
     metrics/siem:

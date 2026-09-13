@@ -170,7 +170,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | Where to look | For |
 | --- | --- |
 | [`docs/features/README.md`](docs/features/README.md) | every feature, its status, its document |
-| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (23 ADRs) |
+| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (24 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
 | [`docs/PRD.md`](docs/PRD.md) §1.1 | the owner's canonical feature list |

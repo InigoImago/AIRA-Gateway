@@ -1,22 +1,14 @@
-# OpenTelemetry Collector config (FRD-001).
+# OpenTelemetry Collector, base configuration (FRD-001, ADR-0004).
 #
-# Apps export OTLP here, and this collector feeds **two independent channels** (`FRD-618`):
+# The applications export OTLP here. This file is the observability channel (AIRA_OTEL_BACKEND_*):
+# every span, metric and log to a trace backend. The delivery channel (AIRA_OTEL_FORWARD_*) is
+# `collector-forward.yaml`, merged on top; it adds pipelines of its own and names nothing in this
+# file, so this runs the same whether it is merged or not (FRD-618).
 #
-#   observability  every span, metric and log — "was the gateway slow or was the model slow"
-#                  configured by AIRA_OTEL_BACKEND_*
-#   delivery       one record per API access and per model access, for whoever consumes that
-#                  elsewhere — configured by AIRA_OTEL_FORWARD_*, in `collector-forward.yaml`
-#
-# Neither is a branch of the other: the delivery fragment adds pipelines of its own and names
-# nothing in this file, so what is below is what runs whether forwarding is on or off. Swapping
-# either backend is configuration; app code is unaffected either way (ADR-0004).
-#
-# **And neither is configured more richly than the other** (`FRD-620`). Both are reached over the
-# transport, in the encoding, with the compression, under the credential and behind the TLS that a
-# variable names; the two families of variables differ only in their prefix. That was not true
-# until `FRD-620`: the observability channel had four knobs and no credential while the delivery
-# channel had seventeen and four authenticators, so "two channels" was true of the pipelines and
-# false of everything a person actually sets.
+# Fragments are merged in the order of the `--config` flags in docker-compose.yml: a map merges, a
+# list replaces. The variables are a closed core with the same names on both channels (FRD-620);
+# anything beyond it is a recipe in `recipes/` or an installation's fragment in `custom/`
+# (ADR-0024).
 
 receivers:
   otlp:
@@ -26,47 +18,13 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
-# **Every authenticator this stack can use, defined here and started always.**
-#
-# ## Why they are not in the fragments that select them
-#
-# They were, until `FRD-620`, and that arrangement had exactly one slot: **`service::extensions` is
-# a list, and a merged list replaces.** Measured on 2026-09-07 against collector-contrib 0.157 with
-# two fragments each naming one extension — only the *last* one started, no error, no warning, and
-# `validate` answered `rc=0` because a configured-but-unstarted extension is a perfectly valid
-# configuration. So the moment the observability channel gained a credential of its own, selecting
-# one on each channel would have silently left the first channel anonymous, and the symptom would
-# have been a `401` from one destination that reads as a wrong credential rather than an absent one.
-#
-# Defining them here and listing them once takes the list away from the fragments altogether. A
-# credential fragment is now three lines that attach `auth:` to two exporters, it cannot collide
-# with the other channel's, and `test_both_channels_are_configured_the_same_way.py` fails on any
-# fragment that names `service::extensions` at all.
-#
-# ## Why the placeholder defaults, and why they are shaped like that
-#
-# An extension is validated whether or not an exporter references it, and three of these refuse to
-# be built empty — measured: `headers_setter: missing header source`, `oauth2client: no ClientID
-# provided`, `no ClientSecret provided`. With a bare `${env:…}` the collector would therefore
-# **refuse to start on every deployment**, not just one that selected the fragment. (That is not
-# hypothetical: before `FRD-620` selecting `forward-auth-header.yaml` and leaving
-# `AIRA_OTEL_FORWARD_AUTHORIZATION` empty stopped the collector dead, taking Grafana with it,
-# while the fragment's own comment promised it would send an empty header instead.)
-#
-# So each default is the **name of the variable that is missing**, which is the same trick as
-# `forward-endpoint-not-set.invalid` one section down: nothing is configured, everything starts,
-# and if a fragment is selected without its values the receiver is handed a credential that says
-# `AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set` — legible in `make otlp-inspector` and in the far
-# end's own rejection log. A wrong credential that names the variable beats a `401` that does not.
-#
-# An unreferenced authenticator does nothing: `oauth2client` fetches lazily, so a token URL that
-# never resolves is never called, and `azure_auth` builds no credential until an exporter asks for
-# one. Verified on 2026-09-07: all eight start outside Azure with nothing configured.
+# The header credential of each channel, defined here and started below so that no fragment owns
+# `service::extensions`: a merged list replaces, and a second fragment naming it silently leaves
+# only its own extensions running. `headers_setter` because the header name is a variable, and
+# `${env:…}` is substituted in values, not in keys. It refuses an empty value, so the fallback is
+# the name of the missing variable — a fragment selected without a value sends that, and the
+# receiver quotes it back.
 extensions:
-  # A credential in a header — whichever header the destination wants. `headers_setter` rather than
-  # a `headers:` map because the **name** is a variable, and `${env:…}` is substituted in a value
-  # and not in a key: the map version validates `rc=0` and sends a header literally named
-  # `${env:…}`. See `collector-backend-auth-header.yaml` for the measurement.
   headers_setter/backend:
     headers:
       - action: upsert
@@ -78,53 +36,6 @@ extensions:
         key: ${env:AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}
         value: ${env:AIRA_OTEL_FORWARD_AUTHORIZATION:-AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set}
 
-  # HTTP basic. Unglamorous and common — an on-premises collector behind nginx, an Elastic or
-  # OpenSearch cluster, Grafana Cloud's OTLP endpoint. Only ever over TLS: it is the credential in
-  # clear text on every request.
-  basicauth/backend:
-    client_auth:
-      username: ${env:AIRA_OTEL_BACKEND_BASIC_USERNAME:-AIRA_OTEL_BACKEND_BASIC_USERNAME-is-not-set}
-      password: ${env:AIRA_OTEL_BACKEND_BASIC_PASSWORD:-AIRA_OTEL_BACKEND_BASIC_PASSWORD-is-not-set}
-  basicauth/forward:
-    client_auth:
-      username: ${env:AIRA_OTEL_FORWARD_BASIC_USERNAME:-AIRA_OTEL_FORWARD_BASIC_USERNAME-is-not-set}
-      password: ${env:AIRA_OTEL_FORWARD_BASIC_PASSWORD:-AIRA_OTEL_FORWARD_BASIC_PASSWORD-is-not-set}
-
-  # OAuth2 client credentials (RFC 6749 §4.4) — the vendor-neutral answer to a credential that
-  # expires. Keycloak, Okta, Auth0, Ping, Entra and everything behind one implement it, so this is
-  # one component rather than one per vendor. The collector fetches the token and refreshes it.
-  oauth2client/backend:
-    token_url: ${env:AIRA_OTEL_BACKEND_OAUTH_TOKEN_URL:-https://backend-oauth-token-url-is-not-set.invalid/token}
-    client_id: ${env:AIRA_OTEL_BACKEND_OAUTH_CLIENT_ID:-AIRA_OTEL_BACKEND_OAUTH_CLIENT_ID-is-not-set}
-    client_secret: ${env:AIRA_OTEL_BACKEND_OAUTH_CLIENT_SECRET:-AIRA_OTEL_BACKEND_OAUTH_CLIENT_SECRET-is-not-set}
-    scopes: ${env:AIRA_OTEL_BACKEND_OAUTH_SCOPES:-[]}
-    tls:
-      # The identity provider's own certificate, which is a different trust decision from the
-      # destination's — an internal IdP behind a private CA is ordinary. Empty is the system store.
-      ca_file: ${env:AIRA_OTEL_BACKEND_OAUTH_CA_FILE}
-  oauth2client/forward:
-    token_url: ${env:AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL:-https://forward-oauth-token-url-is-not-set.invalid/token}
-    client_id: ${env:AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID:-AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID-is-not-set}
-    client_secret: ${env:AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET:-AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET-is-not-set}
-    scopes: ${env:AIRA_OTEL_FORWARD_OAUTH_SCOPES:-[]}
-    tls:
-      ca_file: ${env:AIRA_OTEL_FORWARD_OAUTH_CA_FILE}
-
-  # The one credential shape OAuth2 cannot express: **no secret anywhere**. For a collector running
-  # inside Azure, where the platform holds the identity. Empty client id is the system-assigned one.
-  azure_auth/backend:
-    managed_identity:
-      client_id: ${env:AIRA_OTEL_BACKEND_AZURE_CLIENT_ID}
-    # **The audience, not the host.** A data collection endpoint's hostname is specific to your
-    # instance; the token Azure Monitor accepts is issued for `monitor.azure.com`.
-    scopes:
-      - ${env:AIRA_OTEL_BACKEND_AZURE_SCOPE:-https://monitor.azure.com/.default}
-  azure_auth/forward:
-    managed_identity:
-      client_id: ${env:AIRA_OTEL_FORWARD_AZURE_CLIENT_ID}
-    scopes:
-      - ${env:AIRA_OTEL_FORWARD_AZURE_SCOPE:-https://monitor.azure.com/.default}
-
 processors:
   memory_limiter:
     check_interval: 1s
@@ -135,50 +46,27 @@ processors:
       - key: collector
         value: aira-otel-collector
         action: insert
-  # **The observability channel's batching**, and only its own: the delivery pipelines use
-  # `batch/siem`. This was `batch: {}` — the collector's defaults, unreachable — while the delivery
-  # channel had `AIRA_OTEL_FORWARD_BATCH_SECONDS` and `_SIZE`. The defaults below *are* the
-  # collector's own (200ms, 8192), so nothing about the shipped stack changes; what changes is that
-  # a trace backend that wants fewer, larger requests can now be given them.
+  # The observability channel's own batching; the delivery pipelines use `batch/siem`. The defaults
+  # are the collector's. One variable sets both sizes: when to flush, and where to split a batch
+  # that arrives larger.
   batch:
     timeout: ${env:AIRA_OTEL_BACKEND_BATCH_SECONDS:-200ms}
-    # Both, from one variable, exactly as `batch/siem` takes `AIRA_OTEL_FORWARD_BATCH_SIZE`: the
-    # first is when to flush, the second splits an arriving batch that is already larger. One name
-    # doing two slightly different things on the two channels is the asymmetry in miniature.
     send_batch_size: ${env:AIRA_OTEL_BACKEND_BATCH_SIZE:-8192}
     send_batch_max_size: ${env:AIRA_OTEL_BACKEND_BATCH_SIZE:-8192}
 
 exporters:
-  # **The observability channel's destination, over OTLP/gRPC.** `host:port`, no scheme.
+  # Both transports are defined always and the pipelines choose one: an exporter is validated even
+  # when no pipeline uses it, so a fragment never introduces one, and a credential fragment attaches
+  # to both because it cannot know which is in play.
   #
-  # It was the literal `otel-lgtm:4317` until `FRD-618`, which is the bundled Grafana and nobody
-  # else's. So an installation with its own Tempo or Jaeger had to edit a file this repository
-  # ships, while the *other* channel had seven variables and a chapter of documentation.
-  #
-  # The default is still the bundled backend, so the demo stack is unchanged.
-  #
-  # **Named `backend`, not `lgtm`.** The old name said which product was on the other end, which
-  # stopped being true the moment this became a variable — and a name that lies about a
-  # configurable thing is worse than a vague one. Earlier DEVLOG entries quote the old name; that
-  # is what they measured.
-  #
-  # **Both transports are defined, always, and the pipelines decide** — the same arrangement the
-  # delivery channel uses and for the same measured reason: an exporter is validated whether or not
-  # a pipeline references it, so a fragment that *introduced* one would stop the collector on every
-  # deployment that had not selected it, and a credential fragment has to attach `auth:` to both
-  # because it cannot know which transport is in play.
+  # OTLP/gRPC, the default: `host:port`, no scheme. `insecure` is no TLS at all — right for the
+  # bundled Grafana on this network — and `insecure_skip_verify` keeps TLS but skips the check.
   otlp/backend:
     endpoint: ${env:AIRA_OTEL_BACKEND_ENDPOINT:-otel-lgtm:4317}
     tls:
-      # **`insecure` is no TLS at all** — plaintext h2c — which is right for a backend on this
-      # private network and wrong for anything across a boundary. `insecure_skip_verify` is the
-      # other thing: TLS kept, certificate unchecked. The bundled Grafana is the first case.
       insecure: ${env:AIRA_OTEL_BACKEND_PLAINTEXT:-true}
       insecure_skip_verify: ${env:AIRA_OTEL_BACKEND_INSECURE:-false}
-      # A private CA, from the same mount as the delivery channel's: `deploy/compose/otel/ca/`.
       ca_file: ${env:AIRA_OTEL_BACKEND_CA_FILE}
-      # And the other direction: mutual TLS, where the backend authenticates **us** by certificate
-      # instead of, or as well as, a credential. Both empty is ordinary one-way TLS.
       cert_file: ${env:AIRA_OTEL_BACKEND_CLIENT_CERT_FILE}
       key_file: ${env:AIRA_OTEL_BACKEND_CLIENT_KEY_FILE}
     compression: ${env:AIRA_OTEL_BACKEND_COMPRESSION:-gzip}
@@ -192,52 +80,20 @@ exporters:
       max_interval: 60s
       max_elapsed_time: 300s
 
-  # **The same destination over OTLP/HTTP**, used by nothing until
-  # `AIRA_OTEL_BACKEND_PROTOCOL_CONFIG` selects `backend-http.yaml`, which swaps the pipelines
-  # onto it.
-  #
-  # This exporter is the reason the observability channel can now choose an **encoding at all**.
-  # OTLP/gRPC is protobuf by definition — the specification defines no JSON over gRPC — so while
-  # this channel had one transport it had one encoding, and `AIRA_OTEL_BACKEND_ENCODING` would
-  # have been a variable with nothing to set. A trace backend, a datalake or an internal receiver
-  # that wants OTLP/JSON is reachable here and was not reachable at all before `FRD-620`.
+  # OTLP/HTTP, selected by `backend-http.yaml`. The collector appends `/v1/<signal>` to the
+  # endpoint; a receiver with another route is a recipe that sets `traces_endpoint` and its
+  # siblings. Only this transport has an encoding (OTLP/gRPC is protobuf), and an invalid value
+  # stops the collector at validation — deliberately, since it is typed on purpose, unlike an
+  # endpoint, which gets forgotten. Over HTTP the scheme is the TLS switch.
   otlphttp/backend:
-    # **One URL per signal, and they are not `endpoint` plus a suffix**, for the reason the
-    # delivery channel's are not: `otlphttp` given a single `endpoint` appends `/v1/traces`, which
-    # is right for a plain receiver and wrong for one with a route in front of it — a per-tenant
-    # path, a stream name, an API version in the query, a different host for one signal. Compose
-    # computes `<AIRA_OTEL_BACKEND_HTTP_ENDPOINT>/v1/<signal>` when nothing overrides them, so a
-    # plain receiver is still one variable.
-    #
-    # The default is the **bundled Grafana's** HTTP port, so switching this channel's transport
-    # against the demo stack needs no second variable — the same property `otlp/backend` has.
-    traces_endpoint: ${env:AIRA_OTEL_BACKEND_TRACES_ENDPOINT:-http://otel-lgtm:4318/v1/traces}
-    logs_endpoint: ${env:AIRA_OTEL_BACKEND_LOGS_ENDPOINT:-http://otel-lgtm:4318/v1/logs}
-    metrics_endpoint: ${env:AIRA_OTEL_BACKEND_METRICS_ENDPOINT:-http://otel-lgtm:4318/v1/metrics}
-
-    # **`json` or `proto`.** OTLP/JSON is the readable half of the wire — the protobuf-JSON
-    # mapping, one nested document per batch — and it is what to reach for when the receiver is
-    # something that parses documents rather than an OTLP product. The specification makes protobuf
-    # **required** and JSON optional, so a conformant receiver may refuse JSON and several managed
-    # endpoints do; `proto` is the answer there.
-    #
-    # Unlike the endpoints above, a typo here **stops the collector**: `protobuf` instead of `proto`
-    # fails validation and the container restarts, taking every other exporter with it. That is
-    # deliberate and is the delivery channel's reasoning applied unchanged — an endpoint can be
-    # *forgotten* while somebody is configuring something else, and an encoding is one of two words
-    # typed on purpose in the same minute as the endpoint it belongs to. `make otel-status` is what
-    # says the collector is not running.
+    endpoint: ${env:AIRA_OTEL_BACKEND_HTTP_ENDPOINT:-http://otel-lgtm:4318}
     encoding: ${env:AIRA_OTEL_BACKEND_ENCODING:-json}
-
+    compression: ${env:AIRA_OTEL_BACKEND_COMPRESSION:-gzip}
     tls:
-      # No `insecure` here: over HTTP the scheme is the switch — `http://` is plaintext.
       insecure_skip_verify: ${env:AIRA_OTEL_BACKEND_INSECURE:-false}
       ca_file: ${env:AIRA_OTEL_BACKEND_CA_FILE}
       cert_file: ${env:AIRA_OTEL_BACKEND_CLIENT_CERT_FILE}
       key_file: ${env:AIRA_OTEL_BACKEND_CLIENT_KEY_FILE}
-    # gzip | none | zstd | snappy. `none` is for a receiver that does not unwrap gzip — the symptom
-    # otherwise is a `400` about a malformed payload, which reads as *our telemetry is wrong*.
-    compression: ${env:AIRA_OTEL_BACKEND_COMPRESSION:-gzip}
     sending_queue:
       enabled: true
       num_consumers: ${env:AIRA_OTEL_BACKEND_CONSUMERS:-10}
@@ -248,44 +104,24 @@ exporters:
       max_interval: 60s
       max_elapsed_time: 300s
 
-  # **What arrives, in the collector's own words.** `docker logs <stack>-otel-collector`, or
-  # `make otel-arrivals`. Three levels, and the difference matters:
-  #
-  #   basic     counts only — "3 spans" and nothing about them
-  #   normal    one line per span: name, trace id, span id, attributes  (the default)
-  #   detailed  every attribute, event, link and resource field, indented
-  #
-  # This is what **arrived**, after the processors above and before anything is forwarded. It is
-  # not what was delivered onward — that is `make otel-status`, and the two are different
-  # questions that a green log cannot tell apart.
+  # What arrived, in the collector's own words (`make otel-arrivals`): basic · normal · detailed.
+  # After the processors and before anything is forwarded; delivery is `make otel-status`.
   debug:
     verbosity: ${env:AIRA_OTEL_DEBUG_VERBOSITY}
 
-  # **The same thing as OTLP/JSON**, for handing to whoever has to parse it rather than read it.
-  #
-  # The path is the switch: a collector pipeline is a static list, so this is always present and
-  # writes to `/dev/null` until `AIRA_OTEL_ARRIVED_FILE` names somewhere else. `/dev/stdout` works
-  # for a look, and **mangles anything large** — Docker's json-file driver cuts at a 16 KiB
-  # boundary, measured: a 49 692-character document came back truncated at 48 KiB and would not
-  # parse. A file under `deploy/compose/payload/` comes out whole, however big.
+  # The same as OTLP/JSON, to parse rather than read. The path is the switch: `/dev/null` until
+  # AIRA_OTEL_ARRIVED_FILE names a file. `/dev/stdout` truncates large documents at Docker's 16 KiB
+  # log-line limit.
   file/arrived:
     path: ${env:AIRA_OTEL_ARRIVED_FILE}
     format: json
 
 service:
-  # **The whole list, in the one place that owns it.** No fragment may name `service::extensions`:
-  # a merged list replaces, so the second fragment to name it silently unregisters whatever the
-  # first one registered — measured on 2026-09-07, with `validate` answering `rc=0` throughout.
-  # A guard test fails on any fragment that does.
+  # The one list of extensions. No fragment names it; a recipe that brings an extension restates it
+  # in full, keeping these (ADR-0024).
   extensions:
     - headers_setter/backend
     - headers_setter/forward
-    - basicauth/backend
-    - basicauth/forward
-    - oauth2client/backend
-    - oauth2client/forward
-    - azure_auth/backend
-    - azure_auth/forward
   pipelines:
     traces:
       receivers: [otlp]
@@ -294,9 +130,6 @@ service:
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      # `debug` here too. Metrics were the one signal nothing could be seen arriving on, which is
-      # an asymmetry rather than a decision — and the signal whose absence is hardest to notice,
-      # because a metric that never arrives looks exactly like a metric whose value did not change.
       exporters: [otlp/backend, debug, file/arrived]
     logs:
       receivers: [otlp]
@@ -306,18 +139,9 @@ service:
     logs:
       level: info
     metrics:
-      # **The collector's own figures, and the only thing in this stack that says a batch was
-      # accepted rather than merely answered.**
-      #
-      # `otelcol_receiver_accepted_spans` against `otelcol_receiver_refused_spans` is the hop the
-      # applications cannot see: their exporter returns `SUCCESS` on any 2xx, and an OTLP 200 can
-      # carry a `partial_success` body saying half the batch was dropped. `otelcol_exporter_sent_*`
-      # against `otelcol_exporter_send_failed_*` is the hop after that.
-      #
-      # This lived only in `collector-config.lab.yaml` until 2026-09-02, so on the reference stack
-      # there was no way at all to answer *did it arrive* — which is what somebody watching
-      # `AIRA_DEBUG_INTEGRATIONS=otel` asks the moment they see their first line. `make otel-status`
-      # reads these; the port is published so you can too.
+      # The collector's own counters: accepted against refused, sent against failed. The only place
+      # a partial success shows, since an application's exporter reads the status and drops the
+      # body. `make otel-status` reads them; the port is published.
       readers:
         - pull:
             exporter:

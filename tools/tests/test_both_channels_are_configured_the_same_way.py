@@ -70,9 +70,10 @@ def test_the_two_channels_take_the_same_settings() -> None:
     """**The test this file exists for.** Held side by side rather than read one at a time.
 
     Every knob one channel has, the other has under the same name one prefix along: the transport,
-    the per-signal endpoints, the encoding, the compression, the credential, the CA, the client
-    certificate, the batching, the queue and the retry. Twenty-six each on 2026-09-07, plus the two
-    transport-specific names above.
+    the encoding, the compression, the credential header, the CA, the client certificate, the
+    batching, the queue and the retry — plus the two transport-specific names above. Which knobs
+    exist at all is `ADR-0024`'s closed core, listed in
+    `test_the_collector_has_a_core_and_recipes.py`.
     """
     backend, forward = _suffixes(BACKEND), _suffixes(FORWARD)
 
@@ -208,22 +209,10 @@ def test_no_auth_fragment_puts_a_variable_in_a_header_name(path: Path) -> None:
 # --- the fallback that has to be spelled at the Compose end ---------------------------------------
 
 
-#: The credential fields the collector **refuses to build empty** — measured on 2026-09-07 against
-#: collector-contrib 0.157, one at a time:
-#:
-#:     headers_setter   missing header source, must be 'from_context', 'from_attribute', …
-#:     oauth2client     no TokenURL / no ClientID / no ClientSecret provided
-#:
-#: `basicauth` takes an empty username and password, so it is not here — its username still carries
-#: a placeholder, because a credential fragment selected with nothing set otherwise sends
-#: `Basic Og==` and the receiver's `401` says nothing about which variable is missing.
-MUST_NOT_BE_EMPTY = [
-    "AUTHORIZATION",
-    "BASIC_USERNAME",
-    "OAUTH_TOKEN_URL",
-    "OAUTH_CLIENT_ID",
-    "OAUTH_CLIENT_SECRET",
-]
+#: The credential field the collector **refuses to build empty**: `headers_setter` answers *missing
+#: header source*. The extension is declared on every deployment, so its fallback must exist on
+#: every one. Other credentials are recipes, whose fallbacks are inline (`ADR-0024`).
+MUST_NOT_BE_EMPTY = ["AUTHORIZATION"]
 
 
 @pytest.mark.parametrize("prefix", [BACKEND, FORWARD])
@@ -234,7 +223,7 @@ def test_the_credential_fallbacks_are_spelled_where_they_apply(prefix: str, suff
     applies — which is the trap `collector-forward.yaml` already records about the endpoint, and
     which this round walked straight into: with the placeholders only in `collector-config.yaml`,
     **all 220 merged configurations failed validation** on 2026-09-07, because the authenticators
-    are now declared on every deployment and three of them refuse to be built empty.
+    are declared on every deployment and `headers_setter` refuses to be built empty.
 
     The value is deliberately the **name of the variable that is missing**. A credential fragment
     selected without its values then reaches the destination as
@@ -291,9 +280,9 @@ def test_the_observability_channel_can_choose_its_encoding() -> None:
     http = _document(BASE)["exporters"]["otlphttp/backend"]
 
     assert "${env:AIRA_OTEL_BACKEND_ENCODING" in str(http["encoding"])
-    assert set(http) >= {"traces_endpoint", "logs_endpoint", "metrics_endpoint"}
-    assert "endpoint" not in http, (
-        "a bare `endpoint` beside the per-signal ones is a second answer to the same question"
+    assert "${env:AIRA_OTEL_BACKEND_HTTP_ENDPOINT" in str(http["endpoint"])
+    assert not {"traces_endpoint", "logs_endpoint", "metrics_endpoint"} & set(http), (
+        "per-signal paths are a recipe's (ADR-0024); the core has one endpoint per transport"
     )
 
 

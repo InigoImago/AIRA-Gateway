@@ -11,6 +11,14 @@
 > [`FRD-617`](FRD-617-watching-the-wire-to-another-system.md) (watching the wire),
 > [`FRD-615`](FRD-615-a-trace-crosses-the-bus.md) (what telemetry carries),
 > [`ADR-0004`](../adr/ADR-0004-observability-grafana-otel-lgtm.md).
+>
+> **Amended by [`ADR-0024`](../adr/ADR-0024-the-collector-has-a-core-and-recipes.md).** The axes
+> below still hold, but two of them are no longer set through variables:
+> - The per-signal endpoints and the OAuth2 and platform-identity credentials are now recipes:
+>   `recipes/forward-azure-monitor.yaml` and `recipes/forward-oauth2.yaml`.
+> - HTTP basic is a header value.
+>
+> The variables and fragments this document names for those two axes no longer exist.
 
 ## 1. Problem
 

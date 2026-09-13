@@ -69,3 +69,8 @@ matrix-result.json
 # README are tracked so the mount point exists; whose certificate it holds is the installation's.
 deploy/compose/otel/ca/*
 !deploy/compose/otel/ca/README.md
+
+# An installation's own collector fragments and the values its recipes read (ADR-0024). The README
+# is tracked so the mount point exists.
+deploy/compose/otel/custom/*
+!deploy/compose/otel/custom/README.md

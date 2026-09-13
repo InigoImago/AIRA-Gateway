@@ -189,10 +189,19 @@ what that shape actually is before you plan a parser around it.
 every batch that leaves: the spans with their `aira.*` attributes, the content type, and whether a
 credential was on the request (`FRD-618`). `make otlp-inspector-down` when you are done.
 
-**A destination that is not a plain OTLP receiver** varies on seven axes — transport (HTTP or
-gRPC), encoding, per-signal URLs, the credential's header name, its kind (header · basic · OAuth2),
-a client certificate, and compression. Each is a variable or a fragment;
-[`INTEGRATIONS.md` §6](../INTEGRATIONS.md#6-observability) has the table and three worked shapes.
+**A destination that is not a plain OTLP receiver** varies on seven axes. Five are variables:
+- the transport (HTTP or gRPC);
+- the encoding;
+- the credential header and its name;
+- a client certificate;
+- compression.
+
+The other two are recipes in `deploy/compose/otel/recipes/` (`ADR-0024`):
+- a path for each signal;
+- a credential other than a header.
+
+Splunk HEC is a recipe too. [`INTEGRATIONS.md` §6](../INTEGRATIONS.md#6-observability) has the
+table and the worked shapes.
 
 **Sending telemetry *to* this stack needs nothing at all.** The collector takes OTLP on 4317 (gRPC)
 and 4318 (HTTP), protobuf or JSON — any conformant producer can point at it.

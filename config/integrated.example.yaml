@@ -275,34 +275,14 @@ otel:
   #   backend_encoding: json        # or `proto`. Any other value stops the collector at validation
   #   backend_compression: gzip     # or none · zstd · snappy
   #
-  # **One URL per signal**, for a backend that puts a route in front of OTLP. Otherwise these are
-  # `backend_http_endpoint` plus /v1/traces, /v1/logs, /v1/metrics:
-  #
-  #   backend_traces_endpoint: https://…/otlp/v1/traces
-  #   backend_logs_endpoint: https://…/otlp/v1/logs
-  #   backend_metrics_endpoint: https://…/otlp/v1/metrics
-  #
-  # **Who we say we are.** Four shapes, generic first — a vendor fragment earns its place only by
-  # doing something the generic one cannot say. Pick one; unset sends no credential of any kind:
+  # **Who we say we are.** A header, under whichever name the backend wants; unset sends no
+  # credential of any kind. Grafana Cloud's HTTP basic is `Basic <base64 of instance-id:token>` as
+  # the value. A credential that expires, or a backend with its own route per signal, is a recipe
+  # in `deploy/compose/otel/recipes/` (ADR-0024):
   #
   #   backend_auth_config: /etc/otelcol-contrib/backend-auth-header.yaml
   #   backend_auth_header: x-api-key          # `Authorization` is what a *minority* ask for
   #   backend_authorization: <key>            # sent verbatim, scheme and all
-  #
-  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-basic.yaml
-  #   backend_basic_username: "123456"        # Grafana Cloud is an instance id and a token
-  #   backend_basic_password: <token>
-  #
-  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-oauth2.yaml
-  #   backend_oauth_token_url: https://idp.internal/oauth2/token
-  #   backend_oauth_client_id: aira-collector
-  #   backend_oauth_client_secret: <secret>   # → Vault in a real deployment
-  #   backend_oauth_scopes: '["telemetry.write"]'
-  #   backend_oauth_ca_file: /etc/otelcol-contrib/ca/idp-ca.crt
-  #
-  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-azure-identity.yaml
-  #   backend_azure_client_id: ""             # empty → the system-assigned managed identity
-  #   backend_azure_scope: https://monitor.azure.com/.default
   #
   # **How hard it pushes.** The defaults are the collector's own, so leaving these out changes
   # nothing. This channel's batching was unreachable until `FRD-620` while the other channel's had
@@ -349,31 +329,18 @@ otel:
   #   forward_encoding: json        # or `proto`. Any other value stops the collector at validation
   #   forward_compression: gzip     # or none · zstd · snappy
   #
-  # **One URL per signal**, for a receiver that puts a route in front of OTLP — a per-tenant path,
-  # a stream name, an API version in the query, or a different host for one signal. Otherwise these
-  # are `forward_endpoint` plus /v1/traces, /v1/logs, /v1/metrics:
-  #
-  #   forward_traces_endpoint: https://…/streams/…/otlp/v1/traces
-  #   forward_logs_endpoint: https://…/streams/…/otlp/v1/logs
-  #   forward_metrics_endpoint: https://…/streams/…/otlp/v1/metrics
-  #
-  # **Who we say we are.** Nothing selected means no credential header at all. One of four:
+  # **Who we say we are.** Nothing selected means no credential header at all. A header, under
+  # whichever name the receiver wants; HTTP basic is `Basic <base64 of user:password>` as its value:
   #
   #   forward_auth_config: /etc/otelcol-contrib/forward-auth-header.yaml
   #   forward_auth_header: x-api-key     # `Authorization` is what a minority of receivers ask for
   #   # forward_authorization:           → Vault. It authenticates, so it is not in this file.
   #
-  #   forward_auth_config: /etc/otelcol-contrib/forward-auth-basic.yaml
-  #   forward_basic_username: aira
-  #   # forward_basic_password:          → Vault.
+  # **Beyond the core** — a receiver with its own route per signal, an OAuth2 token, Splunk HEC,
+  # Azure Monitor — is a recipe in `deploy/compose/otel/recipes/`, selected through the two slots
+  # above, with its own values in `deploy/compose/otel/custom/collector.env` (ADR-0024):
   #
-  #   forward_auth_config: /etc/otelcol-contrib/forward-auth-oauth2.yaml
-  #   forward_oauth_token_url: https://idp.internal/oauth2/token
-  #   forward_oauth_client_id: aira-gateway
-  #   forward_oauth_scopes: '["telemetry.write"]'
-  #   # forward_oauth_client_secret:     → Vault.
-  #
-  #   forward_auth_config: /etc/otelcol-contrib/forward-auth-azure-identity.yaml   # no secret at all
+  #   forward_protocol_config: /etc/otelcol-contrib/recipes/forward-splunk-hec.yaml
   #
   # **TLS.** A private CA is the answer to a receiver behind an internal one; `forward_insecure` is
   # not — that stops verifying every certificate on the leg. And the other direction, where the

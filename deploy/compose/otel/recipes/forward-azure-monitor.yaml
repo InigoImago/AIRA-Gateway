@@ -1,0 +1,38 @@
+# Recipe: the delivery channel to Azure Monitor's OTLP ingestion, which is how telemetry reaches a
+# Log Analytics workspace and so Microsoft Sentinel (FRD-618, ADR-0024).
+#
+#     AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+#     AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/recipes/forward-azure-monitor.yaml
+#     # and in deploy/compose/otel/custom/collector.env: AZURE_MONITOR_TRACES_ENDPOINT,
+#     # AZURE_MONITOR_LOGS_ENDPOINT, AZURE_MONITOR_METRICS_ENDPOINT, and AZURE_MONITOR_CLIENT_ID
+#     # for a user-assigned identity
+#
+# Azure routes OTLP through a Data Collection Endpoint and Rule, so each signal has its own URL and
+# metrics are on another host; it accepts protobuf only; and a collector running in Azure
+# authenticates with a managed identity, without a secret. Outside Azure, select
+# `forward-oauth2.yaml` in AIRA_OTEL_FORWARD_AUTH_CONFIG as well: it is merged later and replaces
+# the identity and the extension list. The DCE, the DCR and the Monitoring Metrics Publisher role
+# are set up on the Azure side.
+#
+# It brings an extension, so it restates the whole `service::extensions` list.
+
+extensions:
+  azure_auth/forward:
+    managed_identity:
+      # Empty means the system-assigned identity.
+      client_id: ${env:AZURE_MONITOR_CLIENT_ID:-}
+    # The audience, not the host: Azure Monitor accepts tokens issued for monitor.azure.com.
+    scopes:
+      - https://monitor.azure.com/.default
+
+exporters:
+  otlphttp/forward:
+    traces_endpoint: ${env:AZURE_MONITOR_TRACES_ENDPOINT:-https://azure-monitor-endpoint-not-set.invalid/v1/traces}
+    logs_endpoint: ${env:AZURE_MONITOR_LOGS_ENDPOINT:-https://azure-monitor-endpoint-not-set.invalid/v1/logs}
+    metrics_endpoint: ${env:AZURE_MONITOR_METRICS_ENDPOINT:-https://azure-monitor-endpoint-not-set.invalid/v1/metrics}
+    encoding: proto
+    auth:
+      authenticator: azure_auth/forward
+
+service:
+  extensions: [headers_setter/backend, headers_setter/forward, azure_auth/forward]

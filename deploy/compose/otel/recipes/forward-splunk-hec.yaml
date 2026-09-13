@@ -1,0 +1,52 @@
+# Recipe: the delivery channel to Splunk over its HTTP Event Collector (FRD-621, ADR-0024).
+#
+#     AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+#     AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/recipes/forward-splunk-hec.yaml
+#     # and in deploy/compose/otel/custom/collector.env:
+#     SPLUNK_HEC_ENDPOINT=https://splunk.internal:8088/services/collector
+#     SPLUNK_HEC_TOKEN=…
+#
+# One HEC event per span, log record or metric data point, with the span attributes as a flat
+# object, instead of OTLP's nested document per batch. Only the exporters of the three delivery
+# pipelines change, so the filter and batching stay. Metrics have their own exporter because they
+# need a metrics index; the two differ in the index only. The token is the credential, so no auth
+# fragment applies; HEC is always JSON, and the exporter gzips. TLS, queue and retry use the
+# channel's core variables.
+
+exporters:
+  splunk_hec/forward: &hec
+    # The whole URL, path included.
+    endpoint: ${env:SPLUNK_HEC_ENDPOINT:-https://splunk-hec-endpoint-not-set.invalid:8088/services/collector}
+    token: ${env:SPLUNK_HEC_TOKEN:-SPLUNK_HEC_TOKEN-is-not-set}
+    # Empty means the token's default index.
+    index: ${env:SPLUNK_HEC_INDEX:-}
+    # With `KV_MODE = json` for it in props.conf, the span attributes are search-time fields.
+    sourcetype: ${env:SPLUNK_HEC_SOURCETYPE:-aira:otel}
+    source: aira
+    tls:
+      insecure_skip_verify: ${env:AIRA_OTEL_FORWARD_INSECURE}
+      ca_file: ${env:AIRA_OTEL_FORWARD_CA_FILE}
+      cert_file: ${env:AIRA_OTEL_FORWARD_CLIENT_CERT_FILE}
+      key_file: ${env:AIRA_OTEL_FORWARD_CLIENT_KEY_FILE}
+    sending_queue:
+      enabled: true
+      num_consumers: ${env:AIRA_OTEL_FORWARD_CONSUMERS}
+      queue_size: ${env:AIRA_OTEL_FORWARD_QUEUE}
+    retry_on_failure:
+      enabled: true
+      initial_interval: ${env:AIRA_OTEL_FORWARD_RETRY_INITIAL}
+      max_interval: 60s
+      max_elapsed_time: 300s
+  # `mstats` reads a metrics index and nothing else.
+  splunk_hec/forward_metrics:
+    <<: *hec
+    index: ${env:SPLUNK_HEC_METRICS_INDEX:-}
+
+service:
+  pipelines:
+    traces/siem:
+      exporters: [splunk_hec/forward]
+    logs/siem:
+      exporters: [splunk_hec/forward]
+    metrics/siem:
+      exporters: [splunk_hec/forward_metrics]

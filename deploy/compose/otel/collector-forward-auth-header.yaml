@@ -1,69 +1,14 @@
-# A credential in a header — whichever header your receiver wants.
+# A credential in a header on the delivery channel, under whichever name the receiver wants:
+# `authorization`, `x-api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, …
 #
 #     AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-header.yaml
 #     AIRA_OTEL_FORWARD_AUTH_HEADER=x-api-key           # default: authorization
 #     AIRA_OTEL_FORWARD_AUTHORIZATION=…                 # sent verbatim, scheme and all
 #
-# **The header name is a variable, because `Authorization` is not what most of them use.** What
-# OTLP-accepting products actually ask for: `x-api-key`, `api-key`, `DD-API-KEY`,
-# `X-Honeycomb-Team`, `X-Seq-ApiKey`, `Authorization: Bearer …`, `Authorization: Splunk …`. Pinning
-# the name would make this fragment useful to a minority of them and leave everybody else editing
-# a file the repository ships.
-#
-# ## Why an extension rather than three lines of `headers:`
-#
-# The obvious version is `headers: {${env:AIRA_OTEL_FORWARD_AUTH_HEADER}: ${env:…}}`, and it
-# **validates and does not work**. Measured on 2026-09-02 against the running stack: the collector
-# substitutes `${env:…}` in a *value* and not in a **key**, so the request went out with the header
-# literally named
-#
-#     net/http: invalid header field name "${env:AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}"
-#
-# — every export failing, in a container log, while `otelcol validate` had answered `rc=0` because
-# a key is a string and that string is a perfectly good one. This project's own sentence, one layer
-# down: **"no errors" and "it worked" are different statements**, and a configuration validator
-# only ever answers the first.
-#
-# `headers_setter` takes the name in a *value* position (`key:` inside a list item), where
-# substitution does happen. Verified end to end: `x-api-key: (opaque, 13 chars)` on the receiver.
-#
-# ## Which credential fragment
-#
-# This one for a **long-lived key** — the kind a console shows you once and you paste into a secret
-# store. It is the wrong shape for anything an identity provider mints: those expire, and a header
-# set at start-up stops working later with a `401` in a container log. `forward-auth-oauth2.yaml`
-# is that case; it fetches and refreshes.
-#
-# ## Selecting this and leaving the value empty
-#
-# This file used to say it *"sends an empty header"* and that `make otlp-inspector` would show it
-# as `(empty)`. Neither was true. Measured on 2026-09-07 against collector-contrib 0.157 with
-# `AIRA_OTEL_FORWARD_AUTHORIZATION=`:
-#
-#     Error: invalid configuration: extensions::headers_setter: missing header source,
-#            must be 'from_context', 'from_attribute', 'value', or 'value_file'
-#
-# — the collector **refused to start**, and one container carries every exporter, so Grafana went
-# with it. Nothing here could send an empty header, because nothing here got as far as sending.
-# The documentation had described the *previous* defect's behaviour and outlived it, which is the
-# shape `LESSONS.md` §5 lists: a rule the project states and does not have.
-#
-# What happens now is neither. The extension carries a placeholder default of
-# `AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set`, so the collector starts, the far end rejects a
-# credential that **names the variable you forgot**, and the inspector prints it. `FRD-620`.
-#
-# An authenticator applies to whichever exporter is in play, so this works over OTLP/HTTP and
-# OTLP/gRPC — on gRPC the header becomes call metadata — without being edited.
-#
-# It is a secret: `.env` (git-ignored) or the deployment's secret store, never a committed file.
-#
-# **The extension itself lives in `collector-config.yaml`**, not here, and that is not tidiness.
-# `service::extensions` is a list and a merged list replaces, so while this fragment owned that
-# list there was room for exactly one credential in the whole stack. Measured on 2026-09-07 with
-# an extension in each of two fragments: only the last one started — no error, no warning, and
-# `validate` clean, because a configured-but-unstarted extension is a valid configuration. The
-# observability channel gained credentials of its own in `FRD-620`, so no fragment owns the list
-# any more and both channels can be authenticated at once.
+# HTTP basic is this fragment with `Basic <base64 of user:password>` as the value. A credential that
+# expires is the OAuth2 recipe (ADR-0024). The extension is defined in `collector-config.yaml`, so
+# this file only attaches it, to both transports; on gRPC the header becomes call metadata.
+# Selected without a value, it sends the name of the missing variable.
 
 exporters:
   otlphttp/forward:

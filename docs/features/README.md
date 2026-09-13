@@ -98,4 +98,4 @@ status that goes stale in the copy nobody opens.
 | [618](FRD-618-any-otlp-consumer.md) | Any OTLP consumer, not one of them | 1 (observability) | ✅ Built |
 | [619](FRD-619-a-model-access-says-who.md) | A model access that says who it was for | 1 (observability) | ✅ Built |
 | [620](FRD-620-both-channels-configured-the-same-way.md) | Both channels configured the same way | 1 (observability) | ✅ Built |
-| [621](FRD-621-splunk-hec-on-either-channel.md) | Splunk HEC on either channel | 1 (observability) | ✅ Built |
+| [621](FRD-621-splunk-hec-as-a-recipe.md) | Splunk HEC, as a recipe | 1 (observability) | ✅ Built |

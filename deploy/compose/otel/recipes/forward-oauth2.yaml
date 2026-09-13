@@ -1,0 +1,32 @@
+# Recipe: an OAuth2 client-credentials token (RFC 6749 §4.4) on the delivery channel — Keycloak,
+# Okta, Auth0, Ping, Entra (ADR-0024). The collector fetches and refreshes the token, so what is
+# configured is a long-lived secret rather than a token that expires.
+#
+#     AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/recipes/forward-oauth2.yaml
+#     # and in deploy/compose/otel/custom/collector.env: OAUTH_TOKEN_URL, OAUTH_CLIENT_ID,
+#     # OAUTH_CLIENT_SECRET, and OAUTH_SCOPES or OAUTH_CA_FILE where needed
+#
+# It brings an extension, so it restates the whole `service::extensions` list: a merged list
+# replaces, and leaving out the base's entries would stop the header credentials.
+
+extensions:
+  oauth2client/forward:
+    token_url: ${env:OAUTH_TOKEN_URL:-https://oauth-token-url-not-set.invalid/token}
+    client_id: ${env:OAUTH_CLIENT_ID:-OAUTH_CLIENT_ID-is-not-set}
+    client_secret: ${env:OAUTH_CLIENT_SECRET:-OAUTH_CLIENT_SECRET-is-not-set}
+    # A YAML list in one value: ["a","b"].
+    scopes: ${env:OAUTH_SCOPES:-[]}
+    tls:
+      # The identity provider's own CA, a different trust decision from the receiver's.
+      ca_file: ${env:OAUTH_CA_FILE:-}
+
+exporters:
+  otlphttp/forward:
+    auth:
+      authenticator: oauth2client/forward
+  otlp/forward:
+    auth:
+      authenticator: oauth2client/forward
+
+service:
+  extensions: [headers_setter/backend, headers_setter/forward, oauth2client/forward]

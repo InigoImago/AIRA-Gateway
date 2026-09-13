@@ -188,19 +188,9 @@ def test_the_endpoint_has_a_fallback_that_lets_the_collector_start() -> None:
 OTEL = ROOT / "deploy" / "compose" / "otel"
 GRPC = OTEL / "collector-forward-grpc.yaml"
 
-#: Every credential fragment, and the transport-neutral property each must have.
-#:
-#: **Generic first, and the ordering is the design.** A vendor fragment earns its place only by
-#: doing something the generic ones cannot say — which is why there is no Azure service-principal
-#: file: it was `forward-auth-oauth2.yaml` with three values filled in, and Entra implements
-#: RFC 6749 §4.4 like everybody else. What is left of Azure is a managed identity, which has no
-#: secret to configure anywhere and therefore no generic spelling.
-AUTH_FRAGMENTS = [
-    OTEL / "collector-forward-auth-header.yaml",
-    OTEL / "collector-forward-auth-basic.yaml",
-    OTEL / "collector-forward-auth-oauth2.yaml",
-    OTEL / "collector-forward-auth-azure-identity.yaml",
-]
+#: The core's credential fragment. Credentials beyond a header are recipes, checked in
+#: `test_the_collector_has_a_core_and_recipes.py` (`ADR-0024`).
+AUTH_FRAGMENTS = [OTEL / "collector-forward-auth-header.yaml"]
 
 #: The two transports OTLP defines, as the two exporters that speak them.
 BOTH_EXPORTERS = {"otlphttp/forward", "otlp/forward"}
@@ -228,17 +218,15 @@ def test_the_forwarding_fragment_carries_no_authorization_header() -> None:
     )
 
 
-def test_each_signal_has_its_own_endpoint() -> None:
-    """A single `endpoint` makes the collector append `/v1/traces`, which is right for a plain
-    receiver and unreachable for one with a route in front of it — Azure Monitor's OTLP ingestion
-    puts a data-collection-rule id and a stream name mid-path and uses a different host for
-    metrics. Compose computes the ordinary suffixes when nothing overrides them."""
+def test_the_core_leg_has_one_endpoint_and_a_routed_receiver_is_a_recipe() -> None:
+    """The collector appends `/v1/<signal>` to one `endpoint`, which is what a plain receiver
+    expects. A receiver with a route in front of OTLP — Azure Monitor puts a collection rule and a
+    stream in the path, and metrics on another host — sets per-signal URLs in a recipe
+    (`ADR-0024`)."""
     exporter = _exporter(FORWARD)
 
-    assert set(exporter) >= {"traces_endpoint", "logs_endpoint", "metrics_endpoint"}
-    assert "endpoint" not in exporter, (
-        "a bare `endpoint` beside the per-signal ones is a second answer to the same question"
-    )
+    assert "${env:AIRA_OTEL_FORWARD_ENDPOINT" in str(exporter["endpoint"])
+    assert not {"traces_endpoint", "logs_endpoint", "metrics_endpoint"} & set(exporter)
 
 
 def test_the_encoding_is_a_variable_and_not_a_literal() -> None:

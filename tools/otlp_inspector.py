@@ -34,7 +34,7 @@ page says which variable to flip to read it. Answering *did it leave, and was it
 the job; answering *what does field 4 say* is what `json` is for.
 
 **Splunk's HTTP Event Collector is accepted too** (`FRD-621`), at `/services/collector`, so the
-`…-splunk-hec.yaml` transport can be pointed here before a Splunk exists. HEC is not OTLP: a body
+Splunk HEC recipe can be pointed here before a Splunk exists. HEC is not OTLP: a body
 is JSON events one after another with no enclosing array, one per span, log record or metric data
 point. They are counted as events, shown as the list they are, and answered with HEC's own success
 body.
@@ -533,8 +533,8 @@ def render_page(inspector: Inspector, *, refresh: int = 15) -> str:
             "<code>AIRA_OTEL_FORWARD_CONFIG</code> names the forwarding fragment <em>and</em> "
             "<code>AIRA_OTEL_FORWARD_ENDPOINT</code> points at this container. The endpoint alone "
             "changes nothing — the fragment is the switch — and both need the collector "
-            "recreated. Over Splunk HEC the address is "
-            "<code>AIRA_OTEL_FORWARD_HEC_ENDPOINT</code>, ending in "
+            "recreated. With the Splunk HEC recipe the address is "
+            "<code>SPLUNK_HEC_ENDPOINT</code>, ending in "
             "<code>/services/collector</code>.<br><br>"
             "<b>3. Nothing has happened yet.</b> Send a request through the gateway.</p>"
         )

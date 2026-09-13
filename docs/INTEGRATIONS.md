@@ -602,15 +602,16 @@ went and what answered.
 | shared by both | `AIRA_OTEL_ENABLED` and `AIRA_OTEL_ENDPOINT` — the hop *into* the collector | |
 
 **Everything else is the same on both, one prefix along** (`FRD-620`). The transport, the
-per-signal endpoints, the encoding, the compression, the credential, the CA, the client
-certificate, the batching, the queue and the retry: twenty-six names each, and a test fails when
-one channel grows a knob the other has not got.
+encoding, the compression, the credential header, the CA, the client certificate, the batching,
+the queue and the retry — a closed core (`ADR-0024`). A test fails when one channel grows a knob
+the other has not got, or when either grows one outside the core; a destination that needs more is
+a recipe (*Recipes* below).
 
 | | |
 |---|---|
 | `…_CONFIG` | **whether**, and where — the channel's on/off switch |
-| `…_PROTOCOL_CONFIG` | **how it is reached** — OTLP/HTTP or OTLP/gRPC |
-| `…_AUTH_CONFIG` | **who we say we are** — nothing · header · basic · OAuth2 · platform identity |
+| `…_PROTOCOL_CONFIG` | **how it is reached** — OTLP/HTTP, OTLP/gRPC, or a recipe |
+| `…_AUTH_CONFIG` | **who we say we are** — nothing, a header, or a recipe |
 
 Two rules make the two families readable together:
 
@@ -648,14 +649,12 @@ AIRA_OTEL_BACKEND_ENCODING=json          # or `proto`, which several managed end
 AIRA_OTEL_BACKEND_COMPRESSION=none       # gzip | none | zstd | snappy
 ```
 
-…with a credential, which this channel had no way to send at all until `FRD-620` — so a hosted
-trace backend was out of reach. Grafana Cloud, for one, is basic auth: an instance id and an
-access policy token.
+…with a credential in a header. Grafana Cloud, for one, takes HTTP basic — an instance id and an
+access policy token — which is the header fragment with `Basic` and their base64 as the value:
 
 ```bash
-AIRA_OTEL_BACKEND_AUTH_CONFIG=/etc/otelcol-contrib/backend-auth-basic.yaml
-AIRA_OTEL_BACKEND_BASIC_USERNAME=123456
-AIRA_OTEL_BACKEND_BASIC_PASSWORD=<token>
+AIRA_OTEL_BACKEND_AUTH_CONFIG=/etc/otelcol-contrib/backend-auth-header.yaml
+AIRA_OTEL_BACKEND_AUTHORIZATION=Basic <base64 of 123456:token>
 ```
 
 **Channel 2, to whoever consumes the access records** — the switch, then wherever it goes:
@@ -835,19 +834,20 @@ choice: Compose passes an **empty string** for an unset variable, and an empty s
 
 **Written with the delivery channel's prefix, and true of both.** These seven axes were found by
 holding one vendor's requirements against the shipped fragment (`FRD-618`); `FRD-620` gave the
-observability channel every one of them under the same names, so read `AIRA_OTEL_BACKEND_` for
-`AIRA_OTEL_FORWARD_` throughout if the destination you are attaching is your trace backend.
+observability channel the same names, so read `AIRA_OTEL_BACKEND_` for `AIRA_OTEL_FORWARD_`
+throughout if the destination you are attaching is your trace backend. Two of the axes — a path per
+signal, and a credential other than a header — are recipes rather than variables (`ADR-0024`).
 
 **The protocol is standard, which is not the same as "one variable reaches everything".** A
 destination varies on seven axes, and each is a variable or a fragment (`FRD-618`):
 
 | | variable | |
 |---|---|---|
-| **transport** | `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | HTTP (default) or `…/forward-grpc.yaml` for gRPC — and `…/forward-splunk-hec.yaml` for Splunk, which is not OTLP ([below](#splunk-over-its-http-event-collector)) |
+| **transport** | `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | HTTP (default) or `…/forward-grpc.yaml` for gRPC — and a recipe for a destination that is not OTLP, such as Splunk ([below](#splunk-over-its-http-event-collector)) |
 | **encoding** | `AIRA_OTEL_FORWARD_ENCODING` | `json` · `proto`. The spec makes protobuf **required** and JSON optional, so a conformant receiver may refuse JSON |
-| **path** | `_TRACES_ENDPOINT` / `_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` | full URLs, for a receiver with a route in front of OTLP; default `<endpoint>/v1/<signal>` |
+| **path** | a recipe | the collector appends `/v1/<signal>` to the endpoint; a receiver with a route in front of OTLP sets per-signal URLs in a recipe, as `recipes/forward-azure-monitor.yaml` does |
 | **credential name** | `AIRA_OTEL_FORWARD_AUTH_HEADER` | `Authorization` is what a *minority* ask for |
-| **credential kind** | `AIRA_OTEL_FORWARD_AUTH_CONFIG` | none · header · basic · OAuth2 · a platform identity |
+| **credential kind** | `AIRA_OTEL_FORWARD_AUTH_CONFIG` | none · a header (HTTP basic is `Basic …` in it) · a recipe: OAuth2, a platform identity |
 | **who we are** | `_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | mutual TLS |
 | **compression** | `AIRA_OTEL_FORWARD_COMPRESSION` | `gzip` · `none` · `zstd` · `snappy` |
 
@@ -872,15 +872,16 @@ AIRA_OTEL_FORWARD_AUTHORIZATION=…
 ```
 
 **One behind your identity provider** — Keycloak, Okta, Auth0, Ping, Entra, or anything that
-implements RFC 6749 §4.4. The collector fetches the token and refreshes it, so what is in `.env` is
-a long-lived secret rather than a token that stops working during the afternoon:
+implements RFC 6749 §4.4. The collector fetches the token and refreshes it, so what is configured is
+a long-lived secret rather than a token that stops working during the afternoon. That is a recipe:
 
 ```bash
-AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-oauth2.yaml
-AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL=https://kc.internal/realms/ops/protocol/openid-connect/token
-AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID=aira-gateway
-AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET=…            # → Vault
-AIRA_OTEL_FORWARD_OAUTH_SCOPES=["telemetry.write"]
+AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/recipes/forward-oauth2.yaml
+# in deploy/compose/otel/custom/collector.env:
+OAUTH_TOKEN_URL=https://kc.internal/realms/ops/protocol/openid-connect/token
+OAUTH_CLIENT_ID=aira-gateway
+OAUTH_CLIENT_SECRET=…            # → Vault
+OAUTH_SCOPES=["telemetry.write"]
 ```
 
 **With no auth fragment selected, no credential header is sent at all.** Worth stating because it
@@ -903,17 +904,19 @@ sends the **name of the variable you forgot**: `AIRA_OTEL_FORWARD_AUTHORIZATION-
 
 Splunk Enterprise and Splunk Cloud Platform take events over HEC, which is not OTLP: one JSON event
 per span, log record or metric data point, rather than one nested document per batch with the
-attributes three levels down. `…/forward-splunk-hec.yaml` is a third transport for that
-(`FRD-621`), selected the way gRPC is and behind the same filter and batching — so Splunk receives
-what the OTLP leg would have sent, one record per request and per model call:
+attributes three levels down. `recipes/forward-splunk-hec.yaml` does that (`FRD-621`,
+`ADR-0024`): it is selected in the transport slot the way gRPC is and sits behind the same filter
+and batching, so Splunk receives what the OTLP leg would have sent, one record per request and per
+model call:
 
 ```bash
 AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
-AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/forward-splunk-hec.yaml
-AIRA_OTEL_FORWARD_HEC_ENDPOINT=https://splunk.internal:8088/services/collector
-AIRA_OTEL_FORWARD_HEC_TOKEN=…                      # → Vault
-AIRA_OTEL_FORWARD_HEC_INDEX=aira                   # the request records and logs
-AIRA_OTEL_FORWARD_HEC_METRICS_INDEX=aira_metrics   # a metrics index
+AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/recipes/forward-splunk-hec.yaml
+# in deploy/compose/otel/custom/collector.env:
+SPLUNK_HEC_ENDPOINT=https://splunk.internal:8088/services/collector
+SPLUNK_HEC_TOKEN=…                      # → Vault
+SPLUNK_HEC_INDEX=aira                   # the request records and logs
+SPLUNK_HEC_METRICS_INDEX=aira_metrics   # a metrics index
 ```
 
 What arrives is one event per span, log record or metric data point. A model call, as
@@ -937,16 +940,16 @@ What Splunk has to provide:
 - **A HEC token** whose allowed indexes include both of those. It is the credential on this leg,
   sent as `Authorization: Splunk …`, so no `…_AUTH_CONFIG` fragment applies.
 - **A metrics index for the metrics.** `mstats` reads nothing else, and one index cannot be both
-  kinds — which is why the fragment has two exporters that differ in the index and in nothing else.
-- **`KV_MODE = json` for the sourcetype** (`aira:otel` unless `…_HEC_SOURCETYPE` says otherwise).
+  kinds — which is why the recipe has two exporters that differ in the index and in nothing else.
+- **`KV_MODE = json` for the sourcetype** (`aira:otel` unless `SPLUNK_HEC_SOURCETYPE` says otherwise).
   The span attributes are then search-time fields — `attributes.aira.use_case`; without it,
   `spath` extracts them per search.
 
 `_ENCODING` and `_COMPRESSION` do not reach this leg: HEC is JSON, and the exporter gzips, which HEC
 accepts. `make otlp-inspector` accepts HEC too, at `http://otlp-inspector:4318/services/collector`,
-so the leg can be checked before a Splunk exists. The observability channel has the same fragment,
-`…/backend-splunk-hec.yaml`, under the `AIRA_OTEL_BACKEND_HEC_*` names, for an installation whose
-trace backend is Splunk.
+so the leg can be checked before a Splunk exists. For an installation whose trace backend is
+Splunk, copy the recipe to `custom/`, rename its exporters to `…/backend` and name the base
+pipelines, keeping `debug` and `file/arrived` in each (`recipes/README.md`).
 
 #### And the other direction: sending **to** this installation
 
@@ -958,29 +961,27 @@ join the same pipelines, filters and destinations as AIRA's own.
 
 #### A worked routed destination: Azure Monitor, and therefore Microsoft Sentinel
 
-An example of the mechanisms above rather than a supported product, and the one that needs four of
-them at once. Sentinel reads a Log Analytics workspace; telemetry gets in through Azure Monitor's
-OTLP ingestion — an endpoint on a Data Collection Endpoint, routed by a Data Collection Rule.
+An example of what a recipe is for rather than a supported product. Sentinel reads a Log Analytics
+workspace; telemetry gets in through Azure Monitor's OTLP ingestion — an endpoint on a Data
+Collection Endpoint, routed by a Data Collection Rule, with one URL per signal, metrics on another
+host, and protobuf only. `recipes/forward-azure-monitor.yaml` sets all of that and authenticates
+with the collector's managed identity, which needs no secret:
 
 ```bash
 AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
-AIRA_OTEL_FORWARD_ENCODING=proto                   # Microsoft: "JSON payloads … aren't supported"
-AIRA_OTEL_FORWARD_TRACES_ENDPOINT=https://<dce>.<region>-1.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Microsoft-OTLP-Traces/otlp/v1/traces
-AIRA_OTEL_FORWARD_LOGS_ENDPOINT=https://<dce>.<region>-1.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Microsoft-OTLP-Logs/otlp/v1/logs
-AIRA_OTEL_FORWARD_METRICS_ENDPOINT=https://<dce>.<region>-1.metrics.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Custom-Metrics-Otel/otlp/v1/metrics
-# and the credential — Entra is an OAuth2 provider like any other:
-AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/forward-auth-oauth2.yaml
-AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL=https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token
-AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID=<app-id>
-AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET=…            # → Vault
-AIRA_OTEL_FORWARD_OAUTH_SCOPES=["https://monitor.azure.com/.default"]
+AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/recipes/forward-azure-monitor.yaml
+# in deploy/compose/otel/custom/collector.env:
+AZURE_MONITOR_TRACES_ENDPOINT=https://<dce>.<region>-1.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Microsoft-OTLP-Traces/otlp/v1/traces
+AZURE_MONITOR_LOGS_ENDPOINT=https://<dce>.<region>-1.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Microsoft-OTLP-Logs/otlp/v1/logs
+AZURE_MONITOR_METRICS_ENDPOINT=https://<dce>.<region>-1.metrics.ingest.monitor.azure.com/dataCollectionRules/<dcr>/streams/Custom-Metrics-Otel/otlp/v1/metrics
 ```
 
-Azure-side work this repository cannot do: the DCE, the DCR pointing at the workspace, and
-**Monitoring Metrics Publisher** granted on that rule to the collector's identity. A collector
-running *inside* Azure uses `…/forward-auth-azure-identity.yaml` instead and needs no secret at all
-— that fragment exists because a platform identity is the one credential shape OAuth2 cannot
-express.
+A collector outside Azure has no managed identity: select `recipes/forward-oauth2.yaml` in
+`AIRA_OTEL_FORWARD_AUTH_CONFIG` as well, against Entra
+(`OAUTH_TOKEN_URL=https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token`,
+`OAUTH_SCOPES=["https://monitor.azure.com/.default"]`); it is merged later and replaces the
+identity. Azure-side work this repository cannot do: the DCE, the DCR pointing at the workspace, and
+**Monitoring Metrics Publisher** granted on that rule to the collector's identity.
 
 **Metrics will want one more step.** Application Insights expects delta temporality and exponential
 histograms; `opentelemetry-python` produces cumulative with explicit buckets. The

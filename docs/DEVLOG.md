@@ -14459,3 +14459,67 @@ designed. It is noted here because it is the first thing somebody pointing the i
 will see.
 
 Mutations HEC1–HEC8; 807 properties.
+
+## 2026-09-13 — the collector: a closed core, and recipes for the rest
+
+**Why.** The owner asked why the collector configuration kept getting more complex.
+
+**What was measured.** Within a week:
+- the channel variables Compose declared went from 32 to 66;
+- the fragments went from 9 to 16;
+- every variable was spelled in six places.
+
+**Why it grew.** Every step had a real destination behind it: a receiver with its own route per
+signal, basic, OAuth2 and platform identities, the same again on the second channel for symmetry,
+and Splunk HEC. None of those steps asked whether the thing should be a variable at all. The HEC
+fragment for the observability channel existed only because the symmetry test demanded it.
+`ADR-0024` records the decision.
+
+**What changed.**
+- **The core.** Each channel now has the same 16 variables in Compose, plus its three slots: 32
+  channel variables in Compose, down from 66. `test_the_collector_has_a_core_and_recipes.py` lists
+  the core, so adding a name to it is a decision someone sees.
+- **Removed:**
+  - 34 variables: the per-signal endpoints and the basic, OAuth2, Azure-identity and HEC variables,
+    on both channels;
+  - eight fragments.
+  - HTTP basic is now a header value.
+- **Recipes** in `deploy/compose/otel/recipes/`: Splunk HEC, OAuth2 and Azure Monitor.
+  - **Where their values come from.** They read their values from
+    `deploy/compose/otel/custom/collector.env`, which is optional and git-ignored, under names
+    without `AIRA_`.
+  - **Why the fallbacks work.** Compose passes that file with `env_file` and `required: false`, and
+    does not declare the names. So an unset value is absent inside the collector, and the recipe's
+    inline fallback applies. That avoids the empty-string problem that had forced every fallback
+    into Compose.
+  - **Extensions.** A recipe that brings an extension restates the whole extension list. Azure
+    Monitor plus OAuth2 works, because the later recipe replaces both the authenticator and the
+    list.
+  - **Own fragments.** `custom/` also holds an installation's own fragments.
+- **Comments.** They are cut to the rule and its reason (`ADR-0023`). The eight fragments now
+  carry 126 comment lines on 201 lines of configuration, against 871 on 349 across the sixteen.
+  The Compose collector block went from 252 lines to 104.
+- **Mutations.** Nine retired with the files they guarded: ID41, ID42, CHAN4, CHAN9, HEC1–HEC5.
+  Nine added for the core and the recipes: REC1–REC9. Still 807 properties.
+
+**Measured.**
+- **Validation.** `otelcol validate` returned `rc=0` on 15 combinations. They ran through the
+  `docker compose run` command that `recipes/README.md` gives. The combinations:
+  - the default;
+  - each core fragment, and combinations of them;
+  - each recipe, both without values and with the example values;
+  - a recipe beside a header credential;
+  - Azure Monitor with OAuth2. Here `print-config` shows OAuth2 as the authenticator, the `proto`
+    encoding kept, and the extension list whole.
+- **Live, the core as `deploy/compose/.env` configures it.** The collector ran with no restarts and
+  no errors, and OTLP/JSON arrived at the inspector.
+- **Live, the HEC recipe with its values in the env file.**
+  - Exactly those three values reached the container.
+  - The generation round of the live probe sent 20 requests; all 17 checks passed.
+  - It produced 34 spans: 20 request spans and 14 model calls. It also produced 2422 metric events,
+    all carrying the metrics index.
+  - The token showed on the inspector page as `Splunk (30 chars)`, and its value appeared nowhere.
+- **Clean-up.** The collector went back to the OTLP leg, and the probe left no rows.
+
+**Measured after.** Hermetic suite 3799 passed, coverage 96.59 %; ruff and mypy clean; all
+62 mutations that touch the collector, its guards or the inspector caught.

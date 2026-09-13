@@ -12,6 +12,14 @@
 > [`FRD-617`](FRD-617-watching-the-wire-to-another-system.md) (the inspector every claim below was
 > driven against), [`FRD-001`](FRD-001-observability-baseline.md),
 > [`ADR-0004`](../adr/ADR-0004-observability-grafana-otel-lgtm.md).
+>
+> **Amended by [`ADR-0024`](../adr/ADR-0024-the-collector-has-a-core-and-recipes.md).** The
+> symmetry this document built still holds, now over a closed core of variables.
+>
+> Two things moved out of it:
+> - **Credentials beyond a header.** Basic, OAuth2 and a platform identity no longer exist per
+>   channel. HTTP basic is a header value, and OAuth2 is a recipe.
+> - **Per-signal endpoints.** These are now set in a recipe.
 
 ## 1. Problem
 

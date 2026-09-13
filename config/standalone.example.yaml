@@ -276,12 +276,12 @@ otel:
   #   backend_encoding: json          # or `proto`, which several managed endpoints require
   #   backend_compression: none       # gzip | none | zstd | snappy
   #
-  # …with a credential, which this channel had no way to send at all until `FRD-620` — so a hosted
-  # trace backend was out of reach. Four shapes, the same four the delivery channel has:
+  # …with a credential in a header. Grafana Cloud takes HTTP basic, which is this header with
+  # `Basic <base64 of instance-id:token>` as its value; a credential that expires is a recipe in
+  # `deploy/compose/otel/recipes/` (ADR-0024):
   #
-  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-basic.yaml
-  #   backend_basic_username: "123456"
-  #   backend_basic_password: <token>
+  #   backend_auth_config: /etc/otelcol-contrib/backend-auth-header.yaml
+  #   backend_authorization: Basic <base64 of instance-id:token>
   #
   # …or off entirely, keeping channel 2. Not the same as `enabled: false` above, which stops the
   # applications exporting and so stops **both**:
@@ -310,9 +310,9 @@ otel:
   #   forward_queue: 5000
   #   forward_retry_initial: 5s
   #
-  # Transport, encoding, per-signal URLs, a credential and client certificates are the remaining
-  # axes — `config/integrated.example.yaml` lists all of them with their reasons, and
-  # `docs/INTEGRATIONS.md` §6 has the table and three worked shapes.
+  # Transport, encoding, a credential header and client certificates are the remaining core axes —
+  # `config/integrated.example.yaml` lists them. A destination beyond them is a recipe in
+  # `deploy/compose/otel/recipes/`; `docs/INTEGRATIONS.md` §6 has both.
   #
   # **Commented out rather than empty.** An empty value here is not "off": it renders into `.env`
   # as an empty string, and `make config-verify` then reports the Compose default taking over,

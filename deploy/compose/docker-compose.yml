@@ -226,34 +226,13 @@ services:
     image: otel/opentelemetry-collector-contrib:0.157.0
     container_name: ${AIRA_STACK:-aira}-otel-collector
     profiles: ["observability"]
-    # **Seven `--config` flags, always.** The collector merges them, and the last six are the empty
-    # fragment until a variable names a real one — so a channel is configuration rather than a
-    # compose file of its own, and the base configuration is never copied.
-    #
-    # **Three slots per channel, and the same three.** A destination varies in ways that do not
-    # depend on each other, so each gets its own fragment rather than a branch in a shared file —
-    # YAML has no branch, and the last time two of these shared a file the result was a `headers:`
-    # block that was always present, so with no credential configured the collector sent
-    # `authorization: ''` on every request. Measured 2026-09-02.
-    #
-    #   _CONFIG           whether, and where          (the channel's on/off switch)
-    #   _PROTOCOL_CONFIG  how it is reached           (OTLP/HTTP or OTLP/gRPC)
-    #   _AUTH_CONFIG      who we say we are           (nothing · header · basic · OAuth2 · platform)
-    #
-    # The observability channel had only the first of those until `FRD-620`, and no credential at
-    # all: seventeen variables on one channel and four on the other, which is what made "two
-    # channels" true of the pipelines and false of everything a person sets.
-    #
-    # **Order matters twice, and both are deliberate.**
-    #
-    # `_BACKEND_CONFIG` comes *after* `_BACKEND_PROTOCOL_CONFIG` so that switching the channel off
-    # outranks its transport: a merged pipeline replaces, and with the other ordering a stale
-    # `_PROTOCOL_CONFIG` quietly turns a disabled channel back on — a defect only ever found by
-    # wondering why a backend is still receiving.
-    #
-    # `_FORWARD_PROTOCOL_CONFIG` comes *after* `_FORWARD_CONFIG` because it moves pipelines that
-    # file defines. Selecting it alone stops the collector by naming an exporter that does not
-    # exist, which is loud and therefore fine.
+    # Seven `--config` slots, merged in order; an unused slot is the empty fragment. Per channel:
+    # `_CONFIG` whether (on or off), `_PROTOCOL_CONFIG` how (OTLP/HTTP, OTLP/gRPC or a recipe),
+    # `_AUTH_CONFIG` who (a header, or a recipe). A merged pipeline replaces, so the order matters:
+    # `_BACKEND_CONFIG` comes after its transport, so that off outranks it, and
+    # `_FORWARD_PROTOCOL_CONFIG` after `_FORWARD_CONFIG`, whose pipelines it moves. The `*_CONFIG`
+    # paths are substituted here and not passed into the container, because the collector never
+    # reads them.
     command:
       - --config=/etc/otelcol-contrib/config.yaml
       - --config=${AIRA_OTEL_BACKEND_PROTOCOL_CONFIG:-/etc/otelcol-contrib/empty.yaml}
@@ -262,217 +241,90 @@ services:
       - --config=${AIRA_OTEL_FORWARD_CONFIG:-/etc/otelcol-contrib/empty.yaml}
       - --config=${AIRA_OTEL_FORWARD_PROTOCOL_CONFIG:-/etc/otelcol-contrib/empty.yaml}
       - --config=${AIRA_OTEL_FORWARD_AUTH_CONFIG:-/etc/otelcol-contrib/empty.yaml}
+    # The values the recipes read (ADR-0024): optional, git-ignored, and not declared under
+    # `environment`, so an unset one is absent and the recipe's own fallback applies.
+    env_file:
+      - path: ./otel/custom/collector.env
+        required: false
     volumes:
       - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
       - ./otel/collector-nobackend.yaml:/etc/otelcol-contrib/nobackend.yaml:ro
       - ./otel/collector-backend-http.yaml:/etc/otelcol-contrib/backend-http.yaml:ro
       - ./otel/collector-backend-auth-header.yaml:/etc/otelcol-contrib/backend-auth-header.yaml:ro
-      - ./otel/collector-backend-auth-basic.yaml:/etc/otelcol-contrib/backend-auth-basic.yaml:ro
-      - ./otel/collector-backend-auth-oauth2.yaml:/etc/otelcol-contrib/backend-auth-oauth2.yaml:ro
-      - ./otel/collector-backend-auth-azure-identity.yaml:/etc/otelcol-contrib/backend-auth-azure-identity.yaml:ro
       - ./otel/collector-forward.yaml:/etc/otelcol-contrib/forward.yaml:ro
       - ./otel/collector-forward-grpc.yaml:/etc/otelcol-contrib/forward-grpc.yaml:ro
       - ./otel/collector-forward-auth-header.yaml:/etc/otelcol-contrib/forward-auth-header.yaml:ro
-      - ./otel/collector-forward-auth-basic.yaml:/etc/otelcol-contrib/forward-auth-basic.yaml:ro
-      - ./otel/collector-forward-auth-oauth2.yaml:/etc/otelcol-contrib/forward-auth-oauth2.yaml:ro
-      - ./otel/collector-forward-auth-azure-identity.yaml:/etc/otelcol-contrib/forward-auth-azure-identity.yaml:ro
-      - ./otel/collector-backend-splunk-hec.yaml:/etc/otelcol-contrib/backend-splunk-hec.yaml:ro
-      - ./otel/collector-forward-splunk-hec.yaml:/etc/otelcol-contrib/forward-splunk-hec.yaml:ro
       - ./otel/collector-empty.yaml:/etc/otelcol-contrib/empty.yaml:ro
-      # Writable, for `AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json`. Git-ignored, and nothing is
-      # written here unless that variable names a path inside it.
+      # Recipes for destinations beyond the core, and an installation's own fragments (ADR-0024).
+      - ./otel/recipes:/etc/otelcol-contrib/recipes:ro
+      - ./otel/custom:/etc/otelcol-contrib/custom:ro
+      # Writable, for `AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json`; git-ignored.
       - ./payload:/payload
-      # Where a private CA's certificate goes, for `AIRA_OTEL_*_CA_FILE` on either channel.
-      # Git-ignored except
-      # for its README; empty until somebody puts a `.crt` in it, and the mount costs nothing then.
+      # A private CA or a client certificate, for either channel; git-ignored except its README.
       - ./otel/ca:/etc/otelcol-contrib/ca:ro
     environment:
-      # How much the collector says about what **arrives**: basic | normal | detailed.
-      # `normal` is one line per span and is what this stack has always printed.
+      # What the collector says about what arrives: basic | normal | detailed.
       AIRA_OTEL_DEBUG_VERBOSITY: ${AIRA_OTEL_DEBUG_VERBOSITY:-normal}
-      # And the same thing as OTLP/JSON, for parsing rather than reading. `/dev/null` is off;
-      # `/payload/arrived.json` writes to `deploy/compose/payload/` on the host.
+      # The same arrivals as OTLP/JSON; `/dev/null` is off.
       AIRA_OTEL_ARRIVED_FILE: ${AIRA_OTEL_ARRIVED_FILE:-/dev/null}
-      # ---- Channel 1: observability — every span, for "was the gateway slow or the model" -----
       #
-      # The three `*_CONFIG` variables are **not** here on purpose — neither this channel's nor
-      # the delivery channel's: a `--config` path is substituted by Compose into the command line above, and
-      # the collector never reads the variable. Passing it into the container as well would claim
-      # the process reads something it does not — which is exactly what
-      # `test_compose_passes_the_settings_it_names.py` exists to keep honest.
+      # ---- The core: the same names on both channels, one prefix apart (FRD-620, ADR-0024) ------
+      # Every fallback is spelled here and not in the fragments: Compose passes an empty string for
+      # an unset variable, and that overrides a `${env:…:-default}` in the collector.
       #
-      # **`_ENDPOINT` is the channel's default transport, and the other one has its own name.**
-      # That rule holds on both channels and reads backwards between them, so it is worth saying
-      # once: this channel defaults to gRPC, so `_ENDPOINT` is `host:port` with no scheme and
-      # `_HTTP_ENDPOINT` is the extra; the delivery channel defaults to HTTP, so its `_ENDPOINT`
-      # is a URL and `_GRPC_ENDPOINT` is the extra.
+      # `_ENDPOINT` is the channel's default transport, and the other one has its own name: the
+      # observability channel defaults to gRPC (`host:port`; `_HTTP_ENDPOINT` is the extra), the
+      # delivery channel to HTTP (a URL; `_GRPC_ENDPOINT` is the extra). `_PLAINTEXT` switches TLS
+      # off on the gRPC leg; over HTTP the scheme does.
       #
-      # The default is the bundled Grafana; point it at your own Tempo, Jaeger or vendor endpoint
-      # and nothing else about the stack changes. It was a literal in `collector-config.yaml` until
-      # `FRD-618`.
+      # `_ENCODING` is `json` or `proto`, over HTTP only; any other value stops the collector at
+      # validation. `_COMPRESSION` is gzip | none | zstd | snappy. `_AUTHORIZATION` falls back to the
+      # name of the variable, so a header fragment selected without a value sends something the
+      # receiver quotes back instead of stopping the collector.
+      #
+      # ---- Channel 1: observability — every span, metric and log -------------------------------
       AIRA_OTEL_BACKEND_ENDPOINT: ${AIRA_OTEL_BACKEND_ENDPOINT:-otel-lgtm:4317}
-      # No TLS at all (plaintext h2c) — right on this network, wrong across a boundary. Set to
-      # `false` for anything remote, and give it a CA below if it is behind a private one. This is
-      # the **gRPC** leg's switch; over HTTP the scheme says it.
       AIRA_OTEL_BACKEND_PLAINTEXT: ${AIRA_OTEL_BACKEND_PLAINTEXT:-true}
-      # The OTLP/HTTP leg, read only when `AIRA_OTEL_BACKEND_PROTOCOL_CONFIG` selects it. A URL,
-      # scheme and all. Compose turns it into the three per-signal URLs below, the same way the
-      # delivery channel's is turned into its three — a destination that puts a route in front of
-      # OTLP needs the whole path spelled out, and sometimes a different host for one signal.
-      #
-      # The default is the bundled Grafana's HTTP port, so switching this channel's transport
-      # against the demo stack needs no second variable.
       AIRA_OTEL_BACKEND_HTTP_ENDPOINT: ${AIRA_OTEL_BACKEND_HTTP_ENDPOINT:-http://otel-lgtm:4318}
-      AIRA_OTEL_BACKEND_TRACES_ENDPOINT: ${AIRA_OTEL_BACKEND_TRACES_ENDPOINT:-${AIRA_OTEL_BACKEND_HTTP_ENDPOINT:-http://otel-lgtm:4318}/v1/traces}
-      AIRA_OTEL_BACKEND_LOGS_ENDPOINT: ${AIRA_OTEL_BACKEND_LOGS_ENDPOINT:-${AIRA_OTEL_BACKEND_HTTP_ENDPOINT:-http://otel-lgtm:4318}/v1/logs}
-      AIRA_OTEL_BACKEND_METRICS_ENDPOINT: ${AIRA_OTEL_BACKEND_METRICS_ENDPOINT:-${AIRA_OTEL_BACKEND_HTTP_ENDPOINT:-http://otel-lgtm:4318}/v1/metrics}
-      # **`json` to send OTLP/JSON, `proto` where the receiver insists.** Reachable only over HTTP:
-      # OTLP/gRPC is protobuf by definition, so until this channel had a second transport there was
-      # nothing for this variable to set — which is why it did not exist before `FRD-620`. A third
-      # value stops the collector at validation, deliberately.
       AIRA_OTEL_BACKEND_ENCODING: ${AIRA_OTEL_BACKEND_ENCODING:-json}
-      # gzip | none | zstd | snappy, on either transport. `none` is for a receiver that does not
-      # unwrap gzip — the symptom otherwise is a 400 about a malformed payload.
       AIRA_OTEL_BACKEND_COMPRESSION: ${AIRA_OTEL_BACKEND_COMPRESSION:-gzip}
-      # ---- Channel 1's credential, read only by the auth fragment that is selected ------------
-      #
-      # This channel had none at all until `FRD-620`: a trace backend behind any authentication —
-      # Grafana Cloud, Honeycomb, Datadog, a Tempo behind an nginx — meant editing a shipped file.
-      #
-      # **The `…-is-not-set` fallbacks are spelled here rather than in the collector**, for the
-      # reason the forwarding endpoint's is: Compose passes an *empty string* for an unset
-      # variable, and an empty string overrides a `${env:…:-default}` inside the collector, so a
-      # default written only at that end never applies. Measured on 2026-09-07 — with the
-      # placeholders only in `collector-config.yaml`, **all 220 merged configurations failed
-      # validation**, because three of these authenticators refuse to be built empty and they are
-      # now declared on every deployment.
-      #
-      # A value naming the variable you forgot is what reaches the destination if a credential
-      # fragment is selected without its values: the collector starts, `make otlp-inspector` shows
-      # it, and the far end's rejection says which variable to set. Before `FRD-620` the same
-      # mistake stopped the collector, and the documentation said it sent an empty header.
       AIRA_OTEL_BACKEND_AUTH_HEADER: ${AIRA_OTEL_BACKEND_AUTH_HEADER:-authorization}
       AIRA_OTEL_BACKEND_AUTHORIZATION: ${AIRA_OTEL_BACKEND_AUTHORIZATION:-AIRA_OTEL_BACKEND_AUTHORIZATION-is-not-set}
-      AIRA_OTEL_BACKEND_BASIC_USERNAME: ${AIRA_OTEL_BACKEND_BASIC_USERNAME:-AIRA_OTEL_BACKEND_BASIC_USERNAME-is-not-set}
-      AIRA_OTEL_BACKEND_BASIC_PASSWORD: ${AIRA_OTEL_BACKEND_BASIC_PASSWORD:-}
-      AIRA_OTEL_BACKEND_OAUTH_TOKEN_URL: ${AIRA_OTEL_BACKEND_OAUTH_TOKEN_URL:-https://backend-oauth-token-url-is-not-set.invalid/token}
-      AIRA_OTEL_BACKEND_OAUTH_CLIENT_ID: ${AIRA_OTEL_BACKEND_OAUTH_CLIENT_ID:-AIRA_OTEL_BACKEND_OAUTH_CLIENT_ID-is-not-set}
-      AIRA_OTEL_BACKEND_OAUTH_CLIENT_SECRET: ${AIRA_OTEL_BACKEND_OAUTH_CLIENT_SECRET:-AIRA_OTEL_BACKEND_OAUTH_CLIENT_SECRET-is-not-set}
-      AIRA_OTEL_BACKEND_OAUTH_SCOPES: ${AIRA_OTEL_BACKEND_OAUTH_SCOPES:-[]}
-      AIRA_OTEL_BACKEND_OAUTH_CA_FILE: ${AIRA_OTEL_BACKEND_OAUTH_CA_FILE:-}
-      AIRA_OTEL_BACKEND_AZURE_CLIENT_ID: ${AIRA_OTEL_BACKEND_AZURE_CLIENT_ID:-}
-      AIRA_OTEL_BACKEND_AZURE_SCOPE: ${AIRA_OTEL_BACKEND_AZURE_SCOPE:-https://monitor.azure.com/.default}
-      # ---- Channel 1's TLS and tuning --------------------------------------------------------
       AIRA_OTEL_BACKEND_INSECURE: ${AIRA_OTEL_BACKEND_INSECURE:-false}
       AIRA_OTEL_BACKEND_CA_FILE: ${AIRA_OTEL_BACKEND_CA_FILE:-}
-      # Mutual TLS, where the backend authenticates **us** by certificate rather than by a header.
       AIRA_OTEL_BACKEND_CLIENT_CERT_FILE: ${AIRA_OTEL_BACKEND_CLIENT_CERT_FILE:-}
       AIRA_OTEL_BACKEND_CLIENT_KEY_FILE: ${AIRA_OTEL_BACKEND_CLIENT_KEY_FILE:-}
-      # **The defaults below are the collector's own**, so the shipped stack is unchanged: this
-      # channel's batching was `batch: {}` — unreachable — while the delivery channel had two
-      # variables for it. A trace backend that wants fewer, larger requests can now be given them.
+      # The collector's own defaults.
       AIRA_OTEL_BACKEND_BATCH_SECONDS: ${AIRA_OTEL_BACKEND_BATCH_SECONDS:-200ms}
       AIRA_OTEL_BACKEND_BATCH_SIZE: ${AIRA_OTEL_BACKEND_BATCH_SIZE:-8192}
       AIRA_OTEL_BACKEND_CONSUMERS: ${AIRA_OTEL_BACKEND_CONSUMERS:-10}
       AIRA_OTEL_BACKEND_QUEUE: ${AIRA_OTEL_BACKEND_QUEUE:-1000}
       AIRA_OTEL_BACKEND_RETRY_INITIAL: ${AIRA_OTEL_BACKEND_RETRY_INITIAL:-5s}
-      # ---- Channel 1 over Splunk HEC, read only by `backend-splunk-hec.yaml` (`FRD-621`) -------
-      # The full URL, path included. HEC's own token is the credential, so no auth fragment applies.
-      AIRA_OTEL_BACKEND_HEC_ENDPOINT: ${AIRA_OTEL_BACKEND_HEC_ENDPOINT:-https://backend-hec-endpoint-not-set.invalid:8088/services/collector}
-      AIRA_OTEL_BACKEND_HEC_TOKEN: ${AIRA_OTEL_BACKEND_HEC_TOKEN:-AIRA_OTEL_BACKEND_HEC_TOKEN-is-not-set}
-      # Empty means the token's default index. Metrics go to their own, because `mstats` reads a
-      # metrics index and nothing else.
-      AIRA_OTEL_BACKEND_HEC_INDEX: ${AIRA_OTEL_BACKEND_HEC_INDEX:-}
-      AIRA_OTEL_BACKEND_HEC_METRICS_INDEX: ${AIRA_OTEL_BACKEND_HEC_METRICS_INDEX:-}
-      AIRA_OTEL_BACKEND_HEC_SOURCETYPE: ${AIRA_OTEL_BACKEND_HEC_SOURCETYPE:-aira:otel}
-      # ---- Channel 2: delivery — one record per API access and per model access --------------
-      # ---- A second destination beside Grafana (off unless the two above are set) ----------
       #
-      # Read only when AIRA_OTEL_FORWARD_CONFIG selects `forward.yaml`; harmless otherwise, which
-      # is why they can carry defaults rather than being required.
-      # **The fallback is here, not in the fragment.** Compose passes an *empty string* for an
-      # unset variable, and an empty string overrides a `${env:…:-default}` in the collector — so
-      # the default has to be spelled at this end or it never applies. Measured on 2026-09-02:
-      # with the fallback only in `collector-forward.yaml`, switching forwarding on without an
-      # endpoint put the collector in `Restarting (1)` for ever, taking Grafana down with it,
-      # because one container carries every exporter.
-      #
-      # `.invalid` never resolves (RFC 2606), so the collector starts, this one exporter fails
-      # loudly, and `make otel-status` names it while everything else keeps working.
+      # ---- Channel 2: delivery — one record per API access and per model access ----------------
+      # A forgotten endpoint falls back to a name that never resolves (RFC 2606): the collector
+      # starts, and only this exporter fails, by name, in `make otel-status`.
       AIRA_OTEL_FORWARD_ENDPOINT: ${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}
-      # **One URL per signal, computed here from the one above.** `otlphttp` given a single
-      # `endpoint` appends `/v1/traces`; a destination that puts a route in front of OTLP needs the
-      # whole path spelled out, and a different host for metrics than for logs. Azure Monitor —
-      # the way telemetry reaches Microsoft Sentinel — is exactly that, so the three are nameable
-      # and default to what a plain receiver expects. `FRD-618`.
-      AIRA_OTEL_FORWARD_TRACES_ENDPOINT: ${AIRA_OTEL_FORWARD_TRACES_ENDPOINT:-${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}/v1/traces}
-      AIRA_OTEL_FORWARD_LOGS_ENDPOINT: ${AIRA_OTEL_FORWARD_LOGS_ENDPOINT:-${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}/v1/logs}
-      AIRA_OTEL_FORWARD_METRICS_ENDPOINT: ${AIRA_OTEL_FORWARD_METRICS_ENDPOINT:-${AIRA_OTEL_FORWARD_ENDPOINT:-http://forward-endpoint-not-set.invalid:4318}/v1/metrics}
-      # `json` to read it, `proto` where the receiver insists. The OTLP specification makes protobuf
-      # required and JSON optional, so a conformant receiver may take protobuf only — several
-      # managed endpoints do. A third value stops the collector at validation.
-      AIRA_OTEL_FORWARD_ENCODING: ${AIRA_OTEL_FORWARD_ENCODING:-json}
-      # `host:port`, no scheme — the OTLP/gRPC leg, used only when the protocol fragment is
-      # selected. gRPC has no per-signal paths, so there is one address rather than three.
       AIRA_OTEL_FORWARD_GRPC_ENDPOINT: ${AIRA_OTEL_FORWARD_GRPC_ENDPOINT:-forward-endpoint-not-set.invalid:4317}
-      # No TLS at all (plaintext h2c) — not the same as `_INSECURE`, which keeps the encryption and
-      # stops checking the certificate. For a receiver on this network, not across a boundary.
       AIRA_OTEL_FORWARD_GRPC_PLAINTEXT: ${AIRA_OTEL_FORWARD_GRPC_PLAINTEXT:-false}
-      # gzip | none | zstd | snappy. `none` is for a receiver that does not unwrap gzip — the
-      # symptom otherwise is a 400 about a malformed payload, which reads as *our telemetry is wrong*.
+      AIRA_OTEL_FORWARD_ENCODING: ${AIRA_OTEL_FORWARD_ENCODING:-json}
       AIRA_OTEL_FORWARD_COMPRESSION: ${AIRA_OTEL_FORWARD_COMPRESSION:-gzip}
-      # ---- Credentials, read only by the auth fragment that is selected ---------------------
-      #
-      # The header **name** is a variable because `Authorization` is what a minority of receivers
-      # use: `x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team` are all in the field.
       AIRA_OTEL_FORWARD_AUTH_HEADER: ${AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}
       AIRA_OTEL_FORWARD_AUTHORIZATION: ${AIRA_OTEL_FORWARD_AUTHORIZATION:-AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set}
-      AIRA_OTEL_FORWARD_BASIC_USERNAME: ${AIRA_OTEL_FORWARD_BASIC_USERNAME:-AIRA_OTEL_FORWARD_BASIC_USERNAME-is-not-set}
-      AIRA_OTEL_FORWARD_BASIC_PASSWORD: ${AIRA_OTEL_FORWARD_BASIC_PASSWORD:-}
-      # OAuth2 client credentials (RFC 6749 §4.4) — Keycloak, Okta, Auth0, Ping, Entra. One
-      # fragment for every identity provider an installation already runs, rather than one per
-      # vendor. The secret is long-lived; the token it buys is not, which is the point.
-      AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL: ${AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL:-https://forward-oauth-token-url-is-not-set.invalid/token}
-      AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID: ${AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID:-AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID-is-not-set}
-      AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET: ${AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET:-AIRA_OTEL_FORWARD_OAUTH_CLIENT_SECRET-is-not-set}
-      AIRA_OTEL_FORWARD_OAUTH_SCOPES: ${AIRA_OTEL_FORWARD_OAUTH_SCOPES:-[]}
-      AIRA_OTEL_FORWARD_OAUTH_CA_FILE: ${AIRA_OTEL_FORWARD_OAUTH_CA_FILE:-}
-      # The one credential shape OAuth2 cannot express: a platform identity with no secret.
-      AIRA_OTEL_FORWARD_AZURE_CLIENT_ID: ${AIRA_OTEL_FORWARD_AZURE_CLIENT_ID:-}
-      AIRA_OTEL_FORWARD_AZURE_SCOPE: ${AIRA_OTEL_FORWARD_AZURE_SCOPE:-https://monitor.azure.com/.default}
-      # ---- TLS ------------------------------------------------------------------------------
       AIRA_OTEL_FORWARD_INSECURE: ${AIRA_OTEL_FORWARD_INSECURE:-false}
-      # A private CA's certificate, inside the container: `/etc/otelcol-contrib/ca/<file>.crt`.
-      # Empty means the system trust store. The alternative was `_INSECURE=true`, which answers a
-      # missing root by not checking any of them.
       AIRA_OTEL_FORWARD_CA_FILE: ${AIRA_OTEL_FORWARD_CA_FILE:-}
-      # And the other direction: mutual TLS, where the receiver authenticates *us* by certificate
-      # instead of — or as well as — a credential in a header.
       AIRA_OTEL_FORWARD_CLIENT_CERT_FILE: ${AIRA_OTEL_FORWARD_CLIENT_CERT_FILE:-}
       AIRA_OTEL_FORWARD_CLIENT_KEY_FILE: ${AIRA_OTEL_FORWARD_CLIENT_KEY_FILE:-}
-      # Polite rather than fast, because the destination is usually one somebody is trying for the
-      # first time — see `collector-forward.yaml` for what each is measured to do.
+      # Polite rather than fast: a receiver tried for the first time is the one that answers 429.
       AIRA_OTEL_FORWARD_BATCH_SECONDS: ${AIRA_OTEL_FORWARD_BATCH_SECONDS:-10s}
       AIRA_OTEL_FORWARD_BATCH_SIZE: ${AIRA_OTEL_FORWARD_BATCH_SIZE:-8192}
       AIRA_OTEL_FORWARD_CONSUMERS: ${AIRA_OTEL_FORWARD_CONSUMERS:-1}
       AIRA_OTEL_FORWARD_QUEUE: ${AIRA_OTEL_FORWARD_QUEUE:-5000}
       AIRA_OTEL_FORWARD_RETRY_INITIAL: ${AIRA_OTEL_FORWARD_RETRY_INITIAL:-5s}
-      # ---- Channel 2 over Splunk HEC, read only by `forward-splunk-hec.yaml` (`FRD-621`) -------
-      # The same four names as channel 1's, and the same fallbacks: a fragment selected without an
-      # endpoint fails by name in `make otel-status` rather than stopping the collector.
-      AIRA_OTEL_FORWARD_HEC_ENDPOINT: ${AIRA_OTEL_FORWARD_HEC_ENDPOINT:-https://forward-hec-endpoint-not-set.invalid:8088/services/collector}
-      AIRA_OTEL_FORWARD_HEC_TOKEN: ${AIRA_OTEL_FORWARD_HEC_TOKEN:-AIRA_OTEL_FORWARD_HEC_TOKEN-is-not-set}
-      AIRA_OTEL_FORWARD_HEC_INDEX: ${AIRA_OTEL_FORWARD_HEC_INDEX:-}
-      AIRA_OTEL_FORWARD_HEC_METRICS_INDEX: ${AIRA_OTEL_FORWARD_HEC_METRICS_INDEX:-}
-      AIRA_OTEL_FORWARD_HEC_SOURCETYPE: ${AIRA_OTEL_FORWARD_HEC_SOURCETYPE:-aira:otel}
     extra_hosts:
-      # **A destination outside this network needs a name this container can resolve**, and the
-      # two entries below are how, without touching DNS.
-      #
-      # `host.docker.internal` for an endpoint port-forwarded to the machine this stack runs on.
-      # Measured on 2026-09-02: without this line the embedded resolver answers `fe80::1` — an
-      # IPv6 link-local address the collector cannot reach — and every forward failed with `EOF`
-      # after the connection appeared to open. `host-gateway` pins it to the address that works.
+      # A receiver port-forwarded to the machine this stack runs on. Pinned to the host gateway,
+      # because the embedded resolver otherwise answers an IPv6 link-local address the collector
+      # cannot reach.
       - "host.docker.internal:host-gateway"
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC

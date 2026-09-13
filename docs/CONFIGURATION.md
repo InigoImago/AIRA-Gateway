@@ -313,8 +313,8 @@ each other, because a `.yaml` has no conditional:
 | slot | question | choices |
 | --- | --- | --- |
 | `…_CONFIG` | **whether**, and where | the channel's on/off switch |
-| `…_PROTOCOL_CONFIG` | **how it is reached** | OTLP/HTTP · OTLP/gRPC |
-| `…_AUTH_CONFIG` | **who we say we are** | nothing · header · basic · OAuth2 · a platform identity |
+| `…_PROTOCOL_CONFIG` | **how it is reached** | OTLP/HTTP · OTLP/gRPC · a recipe |
+| `…_AUTH_CONFIG` | **who we say we are** | nothing · a header · a recipe |
 
 **`…_ENDPOINT` is the channel's default transport, and the other transport has its own name.** The
 rule reads backwards between the two, so it is worth stating: the observability channel defaults to
@@ -345,28 +345,13 @@ Every span, metric and log. On by default, and the bundled Grafana is only the d
 | `AIRA_OTEL_BACKEND_CONFIG` | _(the empty fragment)_ | **Off is a switch of its own.** `/etc/otelcol-contrib/nobackend.yaml` leaves the base pipelines with only the two inspection exporters — for an installation that wants the access records and has no trace backend. Until `FRD-618` that combination could not be expressed: the only way to stop exporting spans was `AIRA_OTEL_ENABLED=false`, which stops **both** channels. It **outranks** `_PROTOCOL_CONFIG`, so a channel that is off stays off however its transport is set. |
 | `AIRA_OTEL_BACKEND_ENDPOINT` | `otel-lgtm:4317` | Where this channel sends over its default transport. `host:port`, **no scheme** — OTLP/gRPC. |
 | `AIRA_OTEL_BACKEND_PLAINTEXT` | `true` | No TLS at all (h2c) on the gRPC leg. Right for the bundled backend on this network, wrong for anything across a boundary. |
-| `AIRA_OTEL_BACKEND_PROTOCOL_CONFIG` | _(the empty fragment)_ | **Which transport.** Unset is OTLP/gRPC; `/etc/otelcol-contrib/backend-http.yaml` is OTLP/HTTP — and is what makes the encoding below a choice at all; `/etc/otelcol-contrib/backend-splunk-hec.yaml` is Splunk's HTTP Event Collector (`FRD-621`, the `_HEC_*` rows below). Same batching, same TLS, same queue; only the exporters the pipelines use change. |
-| `AIRA_OTEL_BACKEND_HTTP_ENDPOINT` | `http://otel-lgtm:4318` | The HTTP leg's address, a URL. Compose turns it into the three per-signal URLs below. Read only when the transport fragment is selected. |
-| `AIRA_OTEL_BACKEND_TRACES_ENDPOINT` | `<http endpoint>/v1/traces` | One URL per signal, for a backend that puts a route in front of OTLP. Set verbatim — nothing is appended. |
-| `AIRA_OTEL_BACKEND_LOGS_ENDPOINT` | `<http endpoint>/v1/logs` | The same, for logs. |
-| `AIRA_OTEL_BACKEND_METRICS_ENDPOINT` | `<http endpoint>/v1/metrics` | And for metrics, which some destinations put on a different host. |
+| `AIRA_OTEL_BACKEND_PROTOCOL_CONFIG` | _(the empty fragment)_ | **Which transport.** Unset is OTLP/gRPC; `/etc/otelcol-contrib/backend-http.yaml` is OTLP/HTTP — and is what makes the encoding below a choice at all. Same batching, same credential, same TLS; only the exporter the pipelines use changes. A destination that is not OTLP is a recipe (below). |
+| `AIRA_OTEL_BACKEND_HTTP_ENDPOINT` | `http://otel-lgtm:4318` | The HTTP leg's address, a URL; the collector appends `/v1/traces`, `/v1/logs`, `/v1/metrics`. Read only when the transport fragment is selected. |
 | `AIRA_OTEL_BACKEND_ENCODING` | `json` | `json` or `proto`, on the HTTP leg. Any other value stops the collector at validation — deliberately: an endpoint can be *forgotten*, an encoding is one of two words typed on purpose. |
 | `AIRA_OTEL_BACKEND_COMPRESSION` | `gzip` | `gzip` · `none` · `zstd` · `snappy`, on either transport. `none` is for a receiver that does not unwrap gzip; otherwise the symptom is a `400` about a malformed payload, which reads as *our telemetry is wrong*. |
-| `AIRA_OTEL_BACKEND_HEC_ENDPOINT` | `…not-set.invalid:8088/services/collector` | Splunk HEC, **the whole URL, path included** — nothing is appended. Read only when `_PROTOCOL_CONFIG` selects `backend-splunk-hec.yaml`. `_ENCODING` and `_COMPRESSION` do not reach that leg: HEC is JSON, and the exporter gzips. |
-| `AIRA_OTEL_BACKEND_HEC_TOKEN` | _(names itself)_ | The HEC token, sent as `Authorization: Splunk …`. It is this leg's credential, so no `_AUTH_CONFIG` fragment applies to it. |
-| `AIRA_OTEL_BACKEND_HEC_INDEX` | _(empty)_ | Where spans and logs go. Empty means the token's default index. |
-| `AIRA_OTEL_BACKEND_HEC_METRICS_INDEX` | _(empty)_ | Where metrics go — a **metrics** index, because `mstats` reads nothing else and one index cannot be both kinds. Empty means the token's default. |
-| `AIRA_OTEL_BACKEND_HEC_SOURCETYPE` | `aira:otel` | The sourcetype on every event. With `KV_MODE = json` for it in `props.conf` the span attributes are search-time fields; without, the `spath` command extracts them per search. |
-| `AIRA_OTEL_BACKEND_AUTH_CONFIG` | _(the empty fragment)_ | **Who we say we are.** Unset sends no credential of any kind. `…/backend-auth-header.yaml` (any header name) · `…/backend-auth-basic.yaml` · `…/backend-auth-oauth2.yaml` (fetched and refreshed) · `…/backend-auth-azure-identity.yaml` (a platform identity, no secret). Whichever is chosen applies on both transports. |
+| `AIRA_OTEL_BACKEND_AUTH_CONFIG` | _(the empty fragment)_ | **Who we say we are.** Unset sends no credential of any kind. `…/backend-auth-header.yaml` sends one header, under any name, on both transports. A credential that expires is a recipe (below). |
 | `AIRA_OTEL_BACKEND_AUTH_HEADER` | `authorization` | **The header name.** `Authorization` is what a minority of OTLP receivers ask for: `x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, `X-Seq-ApiKey` are all in the field. |
-| `AIRA_OTEL_BACKEND_AUTHORIZATION` | _(names itself)_ | Its value, sent verbatim, scheme included. Read only by the header fragment. |
-| `AIRA_OTEL_BACKEND_BASIC_USERNAME` / `_PASSWORD` | _(names itself)_ | HTTP basic — which is how **Grafana Cloud** takes OTLP: an instance id and an access policy token. Only ever over TLS. |
-| `AIRA_OTEL_BACKEND_OAUTH_TOKEN_URL` | _(names itself)_ | OAuth2 client credentials (RFC 6749 §4.4) — Keycloak, Okta, Auth0, Ping, Entra, and anything behind one. |
-| `AIRA_OTEL_BACKEND_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` | _(names itself)_ | The client. The secret is long-lived and belongs in Vault; the token it buys is not, which is why this is an extension rather than a header. |
-| `AIRA_OTEL_BACKEND_OAUTH_SCOPES` | `[]` | A YAML list in one variable: `["a","b"]`. A bare word works too. |
-| `AIRA_OTEL_BACKEND_OAUTH_CA_FILE` | _(empty)_ | The identity provider's own CA, which is a different trust decision from the backend's. |
-| `AIRA_OTEL_BACKEND_AZURE_CLIENT_ID` | _(empty)_ | For the platform-identity fragment only. Empty means the **system-assigned** managed identity; a guid means a user-assigned one. |
-| `AIRA_OTEL_BACKEND_AZURE_SCOPE` | `https://monitor.azure.com/.default` | The audience the token is minted for. Not the host. |
+| `AIRA_OTEL_BACKEND_AUTHORIZATION` | _(names itself)_ | Its value, sent verbatim, scheme included. Read only by the header fragment. HTTP basic — Grafana Cloud's OTLP endpoint — is `Basic <base64 of user:password>`. |
 | `AIRA_OTEL_BACKEND_CA_FILE` | _(empty)_ | A private CA, from `deploy/compose/otel/ca/`. Empty means the system trust store. **This** is the answer to a backend behind an internal CA. |
 | `AIRA_OTEL_BACKEND_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | _(empty)_ | Mutual TLS: the backend authenticates **us** by certificate, instead of or as well as a credential. |
 | `AIRA_OTEL_BACKEND_INSECURE` | `false` | Keep TLS, stop checking the certificate. A reachability test, not a deployment — and not a substitute for the CA file above. |
@@ -387,30 +372,15 @@ that differ are the ones that name the transport this channel does *not* default
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `AIRA_OTEL_FORWARD_CONFIG` | _(the empty fragment)_ | `/etc/otelcol-contrib/forward.yaml` turns forwarding on. Anything else, including unset, merges `empty.yaml` — an empty `{}` — and nothing exists: no exporter, no filter pipeline, no second container. |
-| `AIRA_OTEL_FORWARD_ENDPOINT` | `…not-set.invalid:4318` | Where to send, for a receiver that speaks plain OTLP — Compose turns it into the three per-signal URLs below by appending `/v1/traces`, `/v1/logs`, `/v1/metrics`. The default never resolves (RFC 2606) **on purpose**: switching the fragment on without an endpoint used to fail validation and restart the collector for ever, taking Grafana with it. Now that one exporter fails by name and everything else keeps working. |
-| `AIRA_OTEL_FORWARD_TRACES_ENDPOINT` | `<endpoint>/v1/traces` | One URL per signal, for a destination that puts a route in front of OTLP. Set verbatim — nothing is appended. |
-| `AIRA_OTEL_FORWARD_LOGS_ENDPOINT` | `<endpoint>/v1/logs` | The same, for logs. |
-| `AIRA_OTEL_FORWARD_METRICS_ENDPOINT` | `<endpoint>/v1/metrics` | And for metrics, which for Azure Monitor is a **different host** than the other two. |
+| `AIRA_OTEL_FORWARD_ENDPOINT` | `…not-set.invalid:4318` | Where to send, for a receiver that speaks plain OTLP — the collector appends `/v1/traces`, `/v1/logs`, `/v1/metrics`; a receiver with another route is a recipe. The default never resolves (RFC 2606) **on purpose**: switching the fragment on without an endpoint used to fail validation and restart the collector for ever, taking Grafana with it. Now that one exporter fails by name and everything else keeps working. |
 | `AIRA_OTEL_FORWARD_ENCODING` | `json` | `json` or `proto`. The OTLP specification makes protobuf **required** and JSON optional, so a conformant receiver may refuse JSON — several managed endpoints do. Any other value stops the collector at validation. Has no effect on the gRPC leg, which is protobuf by definition. |
 | `AIRA_OTEL_FORWARD_COMPRESSION` | `gzip` | `gzip` · `none` · `zstd` · `snappy`. `none` is for a receiver that does not unwrap gzip; otherwise the symptom is a `400` about a malformed payload, which reads as *our telemetry is wrong*. **Plain, uncompressed JSON** is `_ENCODING=json` with this set to `none` — there is no encoding called `none`. |
-| `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | _(the empty fragment)_ | **Which transport.** Unset is OTLP/HTTP; `/etc/otelcol-contrib/forward-grpc.yaml` is OTLP/gRPC; `/etc/otelcol-contrib/forward-splunk-hec.yaml` is Splunk's HTTP Event Collector (`FRD-621`, the `_HEC_*` rows below). Same filter, same batching — only the exporters the pipelines use change. |
+| `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | _(the empty fragment)_ | **Which transport.** Unset is OTLP/HTTP; `/etc/otelcol-contrib/forward-grpc.yaml` is OTLP/gRPC. Same filter, same batching, same credential — only the exporter the pipelines use changes. Splunk HEC and Azure Monitor are recipes (below). |
 | `AIRA_OTEL_FORWARD_GRPC_ENDPOINT` | `…not-set.invalid:4317` | `host:port`, **no scheme**. gRPC has no per-signal paths, so this is one address rather than three. Read only on the gRPC leg. |
 | `AIRA_OTEL_FORWARD_GRPC_PLAINTEXT` | `false` | No TLS at all (h2c). **Not** `_INSECURE`, which keeps the encryption and stops checking the certificate. For a receiver on the same private network. |
-| `AIRA_OTEL_FORWARD_HEC_ENDPOINT` | `…not-set.invalid:8088/services/collector` | Splunk HEC, **the whole URL, path included** — nothing is appended. Read only when `_PROTOCOL_CONFIG` selects `forward-splunk-hec.yaml`. `_ENCODING` and `_COMPRESSION` do not reach that leg: HEC is JSON, and the exporter gzips. |
-| `AIRA_OTEL_FORWARD_HEC_TOKEN` | _(names itself)_ | The HEC token, sent as `Authorization: Splunk …`. It is this leg's credential, so no `_AUTH_CONFIG` fragment applies to it. |
-| `AIRA_OTEL_FORWARD_HEC_INDEX` | _(empty)_ | Where the request records and logs go. Empty means the token's default index. |
-| `AIRA_OTEL_FORWARD_HEC_METRICS_INDEX` | _(empty)_ | Where metrics go — a **metrics** index, because `mstats` reads nothing else and one index cannot be both kinds. Empty means the token's default. |
-| `AIRA_OTEL_FORWARD_HEC_SOURCETYPE` | `aira:otel` | The sourcetype on every event. With `KV_MODE = json` for it in `props.conf` the span attributes are search-time fields; without, the `spath` command extracts them per search. |
-| `AIRA_OTEL_FORWARD_AUTH_CONFIG` | _(the empty fragment)_ | **Who we say we are, as its own fragment.** Unset sends no credential header of any kind. `…/forward-auth-header.yaml` (any header name) · `…/forward-auth-basic.yaml` · `…/forward-auth-oauth2.yaml` (fetched and refreshed) · `…/forward-auth-azure-identity.yaml` (a platform identity, no secret). Whichever is chosen applies on both transports. |
+| `AIRA_OTEL_FORWARD_AUTH_CONFIG` | _(the empty fragment)_ | **Who we say we are, as its own fragment.** Unset sends no credential header of any kind. `…/forward-auth-header.yaml` sends one header, under any name, on both transports. OAuth2 and a platform identity are recipes (below). |
 | `AIRA_OTEL_FORWARD_AUTH_HEADER` | `authorization` | **The header name.** `Authorization` is what a minority of OTLP receivers ask for: `x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, `X-Seq-ApiKey` are all in the field. |
-| `AIRA_OTEL_FORWARD_AUTHORIZATION` | _(empty)_ | Its value, sent verbatim, scheme included. Read only by the header fragment — set alone it does nothing, the same shape as the endpoint and the switch. |
-| `AIRA_OTEL_FORWARD_BASIC_USERNAME` / `_PASSWORD` | _(empty)_ | HTTP basic, for the basic fragment. Only ever over TLS: it is the credential in clear text on every request. |
-| `AIRA_OTEL_FORWARD_OAUTH_TOKEN_URL` | _(empty)_ | OAuth2 client credentials (RFC 6749 §4.4) — Keycloak, Okta, Auth0, Ping, Entra, and anything behind one. **One fragment for every identity provider**, rather than one per vendor. |
-| `AIRA_OTEL_FORWARD_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` | _(empty)_ | The client. The secret is long-lived and belongs in Vault; the token it buys is not, which is why this is an extension rather than a header. |
-| `AIRA_OTEL_FORWARD_OAUTH_SCOPES` | `[]` | A YAML list in one variable: `["a","b"]`. A bare word works too. Empty is right for a provider that decides scope from the client. |
-| `AIRA_OTEL_FORWARD_OAUTH_CA_FILE` | _(empty)_ | The identity provider's own CA, which is a different trust decision from the receiver's. |
-| `AIRA_OTEL_FORWARD_AZURE_CLIENT_ID` | _(empty)_ | For the platform-identity fragment only. Empty means the **system-assigned** managed identity; a guid means a user-assigned one. |
-| `AIRA_OTEL_FORWARD_AZURE_SCOPE` | `https://monitor.azure.com/.default` | The audience the token is minted for. Not the host: a per-instance hostname is not what the token is issued for. |
+| `AIRA_OTEL_FORWARD_AUTHORIZATION` | _(names itself)_ | Its value, sent verbatim, scheme included. HTTP basic is `Basic <base64 of user:password>`. Read only by the header fragment — set alone it does nothing, the same shape as the endpoint and the switch. |
 | `AIRA_OTEL_FORWARD_CA_FILE` | _(empty)_ | A private CA's certificate, inside the collector — put the file in `deploy/compose/otel/ca/` and name it `/etc/otelcol-contrib/ca/<file>.crt`. Empty means the system trust store. **This** is the answer to a receiver behind an internal CA. |
 | `AIRA_OTEL_FORWARD_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | _(empty)_ | Mutual TLS: the receiver authenticates **us** by certificate, instead of or as well as a header. |
 | `AIRA_OTEL_FORWARD_INSECURE` | `false` | Skip certificate verification altogether. For a first reachability test, not for a deployment — and not a substitute for the CA file above, which answers a missing root without abandoning the check. |
@@ -441,6 +411,25 @@ developer's machine and nowhere else (`FRD-618`).
 | --- | --- | --- |
 | `AIRA_PUBLISH_OTLP_INSPECTOR_PORT` | `4319` | Where the inspector's page is published. Deliberately not `4318`: the collector has that one, and two receivers at the same address is how a measurement gets taken from the wrong end of the wire. |
 | `AIRA_OTLP_INSPECTOR_KEEP` | `200` | How many **batches** it keeps. A batch carries up to `AIRA_OTEL_FORWARD_BATCH_SIZE` records, so this bounds arrivals rather than records. |
+
+### Beyond the core: recipes
+
+The variables above are a closed core (`ADR-0024`): what nearly every destination needs, the same on
+both channels. A destination with other needs is a **recipe** — a fragment in
+`deploy/compose/otel/recipes/`, selected through a slot that already exists. Its own values go in
+`deploy/compose/otel/custom/collector.env`, which is optional, git-ignored and passed to the
+collector only, under names without the `AIRA_` prefix because they are not settings of this
+product. An unset one is absent, and the recipe's own fallback lets the collector start.
+
+| recipe | slot | values it reads |
+| --- | --- | --- |
+| `recipes/forward-splunk-hec.yaml` | `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | `SPLUNK_HEC_ENDPOINT` · `SPLUNK_HEC_TOKEN` · `SPLUNK_HEC_INDEX` · `SPLUNK_HEC_METRICS_INDEX` · `SPLUNK_HEC_SOURCETYPE` |
+| `recipes/forward-azure-monitor.yaml` | `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | `AZURE_MONITOR_TRACES_ENDPOINT` · `AZURE_MONITOR_LOGS_ENDPOINT` · `AZURE_MONITOR_METRICS_ENDPOINT` · `AZURE_MONITOR_CLIENT_ID` |
+| `recipes/forward-oauth2.yaml` | `AIRA_OTEL_FORWARD_AUTH_CONFIG` | `OAUTH_TOKEN_URL` · `OAUTH_CLIENT_ID` · `OAUTH_CLIENT_SECRET` · `OAUTH_SCOPES` · `OAUTH_CA_FILE` |
+
+An installation's own fragment goes in `deploy/compose/otel/custom/` and is selected as
+`/etc/otelcol-contrib/custom/<file>.yaml`. `deploy/compose/otel/recipes/README.md` has the rules a
+recipe keeps and the command that validates a combination before it is used.
 
 ### And one that is neither
 

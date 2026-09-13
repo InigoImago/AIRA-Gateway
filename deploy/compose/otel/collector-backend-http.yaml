@@ -1,52 +1,15 @@
-# The **observability channel** over OTLP/HTTP instead of OTLP/gRPC.
+# The observability channel over OTLP/HTTP instead of OTLP/gRPC — which is what makes
+# AIRA_OTEL_BACKEND_ENCODING reachable, since OTLP/gRPC is protobuf by definition.
 #
 #     AIRA_OTEL_BACKEND_PROTOCOL_CONFIG=/etc/otelcol-contrib/backend-http.yaml
 #     AIRA_OTEL_BACKEND_HTTP_ENDPOINT=https://tempo.internal:4318
 #
-# Merged **on top of** `collector-config.yaml`, where both exporters are defined and where the
-# encoding, the compression, the TLS and the queue are described. This file changes exactly one
-# thing: which of the two exporters the three base pipelines hand their telemetry to. That is the
-# whole fragment — the mirror image of `collector-forward-grpc.yaml`, which does the same for the
-# other channel, and deliberately as small.
-#
-# ## What this makes possible, and what it costs
-#
-# **The encoding becomes a choice.** OTLP/gRPC is protobuf by definition — the specification
-# defines no JSON over gRPC — so while this channel had one transport it had one encoding, and
-# there was nothing for `AIRA_OTEL_BACKEND_ENCODING` to set. Over HTTP it is `json` or `proto`, and
-# `json` is the readable half of the wire: the protobuf-JSON mapping, one nested document per
-# batch, which is what to send a receiver that parses documents rather than an OTLP product.
-#
-# **One address becomes three.** OTLP/HTTP puts the signal in the path, so `_TRACES_ENDPOINT`,
-# `_LOGS_ENDPOINT` and `_METRICS_ENDPOINT` are nameable in full and Compose computes
-# `<AIRA_OTEL_BACKEND_HTTP_ENDPOINT>/v1/<signal>` when they are not. The scheme is the plaintext
-# switch here — `http://` — so `AIRA_OTEL_BACKEND_PLAINTEXT` is the gRPC leg's and is ignored.
-#
-# **Everything else carries over**: the credential fragment, the CA and client certificate, the
-# compression, the queue and retry figures, and the batching. The transport is not supposed to
-# change what the backend receives.
-#
-# **The delivery channel keeps its own transport either way.** `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG`
-# is the other channel's and is untouched by this file — the two are independent, and this variable
-# moves one of them.
-#
-# ## And the off switch outranks it
-#
-# `AIRA_OTEL_BACKEND_CONFIG=…/nobackend.yaml` is merged **after** this file on purpose, so a
-# channel that is switched off stays off however its transport is set. The alternative ordering
-# makes a stale `_PROTOCOL_CONFIG` quietly turn a disabled channel back on, which is the kind of
-# defect that is only ever found by wondering why a backend is still receiving.
+# It only moves the base pipelines onto `otlphttp/backend`. The lists are complete because a merged
+# list replaces: `debug` and `file/arrived` are what `make otel-arrivals` and the arrivals file
+# read. `AIRA_OTEL_BACKEND_CONFIG=…/nobackend.yaml` is merged after this and outranks it.
 
 service:
   pipelines:
-    # Only the observability channel's own three. The delivery stream's `traces/siem`,
-    # `metrics/siem` and `logs/siem` are not named here for the same reason this file is not named
-    # in `collector-forward-grpc.yaml`: they are the other channel, and switching this one's
-    # transport must not reach them.
-    #
-    # **The lists are complete, not additions** — a merged exporter list replaces. `debug` and
-    # `file/arrived` are what `make otel-arrivals` and `AIRA_OTEL_ARRIVED_FILE` read, and dropping
-    # either here would unhook a diagnostic rather than a destination, silently.
     traces:
       exporters: [otlphttp/backend, debug, file/arrived]
     metrics:

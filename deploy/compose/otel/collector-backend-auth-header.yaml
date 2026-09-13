@@ -1,54 +1,14 @@
-# A credential in a header on the **observability channel** — whichever header your trace backend
-# wants.
+# A credential in a header on the observability channel, under whichever name the backend wants:
+# `authorization`, `x-api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, …
 #
 #     AIRA_OTEL_BACKEND_AUTH_CONFIG=/etc/otelcol-contrib/backend-auth-header.yaml
 #     AIRA_OTEL_BACKEND_AUTH_HEADER=x-api-key           # default: authorization
 #     AIRA_OTEL_BACKEND_AUTHORIZATION=…                 # sent verbatim, scheme and all
 #
-# **This channel had no credential at all until `FRD-620`**, which meant a trace backend behind any
-# authentication — Grafana Cloud, Honeycomb, Datadog, a Tempo behind an nginx — was reachable only
-# by editing a file this repository ships. The delivery channel had four credential fragments and a
-# chapter about them; `FRD-618` §3.1c named the gap and left it open. This closes it, with the same
-# four shapes and the same names one prefix along.
-#
-# **The header name is a variable, because `Authorization` is not what most of them use.** What
-# OTLP-accepting products actually ask for: `x-api-key`, `api-key`, `DD-API-KEY`,
-# `X-Honeycomb-Team`, `X-Seq-ApiKey`, `Authorization: Bearer …`.
-#
-# ## Why an extension rather than three lines of `headers:`
-#
-# The obvious version is `headers: {${env:AIRA_OTEL_BACKEND_AUTH_HEADER}: ${env:…}}`, and it
-# **validates and does not work.** Measured on 2026-09-02 on the other channel: the collector
-# substitutes `${env:…}` in a *value* and not in a **key**, so the request went out with the header
-# literally named
-#
-#     net/http: invalid header field name "${env:AIRA_OTEL_FORWARD_AUTH_HEADER:-authorization}"
-#
-# — every export failing, in a container log, while `otelcol validate` had answered `rc=0` because
-# a key is a string and that string is a perfectly good one. `headers_setter` takes the name in a
-# *value* position, where substitution does happen.
-#
-# ## Which credential fragment
-#
-# This one for a **long-lived key** — the kind a console shows you once and you paste into a secret
-# store. It is the wrong shape for anything an identity provider mints: those expire, and a header
-# set at start-up stops working later with a `401` in a container log. `backend-auth-oauth2.yaml`
-# is that case; it fetches and refreshes.
-#
-# **Selecting this fragment and leaving the value empty sends the name of the variable you forgot.**
-# `headers_setter` refuses to be built with an empty value — measured: `missing header source` —
-# so the extension carries the placeholder default `AIRA_OTEL_BACKEND_AUTHORIZATION-is-not-set`,
-# which the receiver rejects with something legible instead of the collector refusing to start.
-# `make otlp-inspector` shows it too. `collector-config.yaml` is where that default lives.
-#
-# It is a secret: `.env` (git-ignored) or the deployment's secret store, never a committed file.
-#
-# **The extension itself is in `collector-config.yaml`**, not here, and that is not tidiness:
-# `service::extensions` is a list, a merged list replaces, and this channel and the other one can
-# both have a credential selected at once. Measured on 2026-09-07 with an extension in each of two
-# fragments: only the last started, silently, `validate` clean. So no fragment owns that list.
-#
-# Both exporters carry it, so this works over either transport without being edited.
+# HTTP basic is this fragment with `Basic <base64 of user:password>` as the value. A credential that
+# expires is a recipe (ADR-0024). The extension is defined in `collector-config.yaml`, so this file
+# only attaches it, to both transports. Selected without a value, it sends the name of the missing
+# variable.
 
 exporters:
   otlp/backend:

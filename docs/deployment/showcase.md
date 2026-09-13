@@ -527,7 +527,7 @@ AIRA_OTEL_FORWARD_COMPRESSION=none     # the default is gzip
 compression says whether it is wrapped, `gzip`, `none`, `zstd` or `snappy`. `ENCODING=none` stops
 the collector at validation, and with it Grafana. Plain JSON is still OTLP/JSON — one nested
 document per batch, each attribute a `{"key": …, "value": {"stringValue": …}}` pair — and not one
-flat event per request; for that shape in Splunk, the HEC transport in
+flat event per request; for that shape in Splunk, the Splunk HEC recipe in
 [`INTEGRATIONS.md` §6](../INTEGRATIONS.md) is the answer. `make otlp-inspector` shows what leaves,
 byte for byte, before a real receiver exists.
 

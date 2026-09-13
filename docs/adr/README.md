@@ -34,3 +34,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0021 | [Three settings we own, and the vendor's own words for the rest](ADR-0021-thinking-levels-are-the-vendors-words.md) | **Accepted** | 2026-08-19 |
 | 0022 | [A call to another system says so, on one switch](ADR-0022-a-call-to-another-system-says-so.md) | **Accepted** | 2026-09-01 |
 | 0023 | [A comment states the rule; the story lives in the DEVLOG](ADR-0023-a-comment-states-the-rule.md) | **Accepted** | 2026-09-12 |
+| 0024 | [The collector has a small core of variables; everything else is a recipe](ADR-0024-the-collector-has-a-core-and-recipes.md) | **Accepted** | 2026-09-13 |
