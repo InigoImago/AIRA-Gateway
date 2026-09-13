@@ -123,6 +123,24 @@
     }
   </div>
 
+  @if (focus(); as id) {
+    <!-- One request, linked from the content-read log (`FRD-622` FR-6). -->
+    <div class="callout spread" style="margin-top: 0.75rem" data-testid="focused-request">
+      <span>
+        Showing one request, <code>{{ id }}</code
+        >, as linked from the content-read log. Opening its content is recorded like any other read.
+      </span>
+      <button
+        type="button"
+        class="btn btn--sm"
+        (click)="clearFocus()"
+        data-testid="show-all-requests"
+      >
+        Show all requests
+      </button>
+    </div>
+  }
+
   @if (loading()) {
     <p class="loading">
       <span class="spinner" aria-hidden="true"></span>
@@ -140,7 +158,11 @@
     </p>
   } @else if (!traces().length) {
     <p class="empty" data-testid="no-traces">
-      No requests match. Traffic appears here within seconds of arriving.
+      @if (focus()) {
+        This request is no longer in the audit trail, or it is not one you may see.
+      } @else {
+        No requests match. Traffic appears here within seconds of arriving.
+      }
     </p>
   } @else {
     <div class="table-wrap" style="margin-top: 1rem">
@@ -164,6 +186,7 @@
               class="row-openable"
               [class.is-open]="openPayload() === row.id"
               [class.is-flagged]="row.flagged"
+              [class.is-focused]="focus() === row.id"
               (click)="togglePayload(row)"
             >
               <td class="table__open">

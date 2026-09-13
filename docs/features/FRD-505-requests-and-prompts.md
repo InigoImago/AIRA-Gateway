@@ -91,7 +91,9 @@ on the other.
 **FR-6 — Every content read is recorded**, before the content is returned: who, which request,
 when, and on what authority (`incident`, `use_case_admin`, `use_case_member`). A failed record means
 no read. Kept independently of `request_logs` retention — the content expires, the fact that
-somebody read it does not.
+somebody read it does not. Since `FRD-622` the record also keeps the reader's organisation-wide
+roles at that moment, and the platform roles read it back under Platform administration → Content
+reads (`GET /v1beta/content-reads`).
 
 **FR-7 — Three absences are three answers.** "This use case does not store payloads", "they were
 stored and have expired" and "this request never reached a model" are different facts about the

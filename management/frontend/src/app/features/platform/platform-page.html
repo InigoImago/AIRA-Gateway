@@ -1,0 +1,16 @@
+<div class="platform">
+  <nav class="platform__menu" aria-label="Platform administration">
+    <h2 class="platform__title">Platform administration</h2>
+    <p class="muted platform__intro">What the platform roles look after across every use case.</p>
+    <a
+      class="platform__item"
+      routerLink="content-reads"
+      routerLinkActive="is-active"
+      data-testid="platform-nav-content-reads"
+      >Content reads</a
+    >
+  </nav>
+  <section class="platform__page">
+    <router-outlet />
+  </section>
+</div>

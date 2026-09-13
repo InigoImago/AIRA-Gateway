@@ -14577,3 +14577,111 @@ design, so the probe now sends `AUTO`.
 - **Mutations:** FX1, SR1–SR5 and A6 (re-anchored onto the reformatted condition) all caught; 813
   properties.
 - **Clean-up:** the probe's use cases were purged.
+
+## 2026-09-13 — who may read content, in one choice; and the content-read log
+
+**What was asked.** This came up for a data-protection review. Two things:
+- **One setting per use case for prompts and responses**, with three options: not stored;
+  readable by the administrators plus each person for their own requests; or readable by every
+  member.
+- **A platform-administration area** for Global Administrator, IT Security and IT Steuerung. Its
+  first page shows when somebody fully opened a request, from which use case, and in which role.
+
+**What was already there.**
+- **Most of the first half.** `store_payloads` and `restrict_members_to_own_requests` express
+  exactly the three modes, and the gateway already enforced them.
+- **Other people's rows are already hidden.** In restricted mode a member does not see other
+  people's requests at all (`FRD-505` FR-4a). That is what the owner meant by "a member must not
+  even see others' requests".
+- **Who reads, unchanged.** Global Administrator and IT Security read any content, on the ground
+  `incident`; IT Steuerung reads none. The owner kept that.
+- **The data for the second half.** Since August, `payload_access` has recorded every content read
+  before the content is handed over. Nothing could read that record back.
+
+**What changed** (`FRD-622`):
+- **The data-protection panel:**
+  - it offers the three modes as one choice;
+  - it says that Global Administrators and IT Security can read stored content for incidents, and
+    that every read is recorded;
+  - a reader who may not change the mode sees it in words.
+- **The reader's roles are recorded.** A content read now also stores the reader's
+  organisation-wide roles at that moment (migration `0044`). `incident` alone does not say which
+  role read the content, and a role held today is no evidence of the role held then. Older reads
+  report `null`, not an empty list.
+- **`GET /v1beta/content-reads`:**
+  - it is served to the three platform roles only;
+  - it lists newest first, with filters and a cursor;
+  - it sits in `api/incidents`, because it is bounded by role, not by use case.
+- **The console:**
+  - a "Platform administration" link beside the user's name, for the platform roles;
+  - `/platform`, with a menu on the left and the page on the right;
+  - its first page, Content reads.
+
+**Found on the way.** Four guard tests caught problems before any person did:
+- The panel sent its fields through a spread, so the test that every writable field leaves the
+  console could not see them.
+- Three new CSS classes had no rule.
+- A guessed FRD filename was a dead link.
+- The features index was stale.
+
+Two things about the mutation checks:
+- The mutation ids CR1–CR3 were already taken, so the new ones are RD1–RD3.
+- The harness runs pytest only. The four console rules were therefore each broken once by hand, and
+  each time the matching spec went red. The four rules: the mode mapping in both directions, the
+  header gate, and the "not recorded" roles.
+
+**Measured.**
+- **Hermetic suite:** green once the four guard findings were fixed.
+  - Gateway: 44 tests for content reads and payload access.
+  - Console: 974 tests.
+  - RD1–RD3 all caught.
+  - The four console rules, each broken by hand once, all caught.
+- **Live on the rebuilt showcase:** `gateway-migrate` applied `0044`. `/v1beta/content-reads`
+  answered 200 to IT Security's real token and 403 to a member's.
+- **e2e, first run:** 160 passed, 4 failed.
+  - Three were the layout guard. The new header link pushed Logout to 385px on a 360px phone; the
+    user block now wraps.
+  - One was the retention test's `metadata` locator. The new mode wording used the word a second
+    time. The wording changed, not the test.
+- **e2e, after both fixes:** the layout, retention and content-read specs passed, 19 tests.
+- **Integration:** 1053 passed, 15 skipped.
+
+**After the owner's first look.** Two changes.
+- **The request id is a link.** It was only text, with no way to reach the request. It now links
+  to the request's row in its use case's traces, where the row is marked and "Show all requests"
+  leads back. The content is still opened by a click there, because that click is a recorded read
+  of its own (the owner's choice).
+  - The traces view follows `?request=` instead of reading it once, so a second link into a page
+    that is already open is not ignored.
+  - The gateway's trace list takes `request_id` inside the caller's scope. Mutation RQ1.
+- **The header control moved.** It now sits at the far right, after Logout, behind a divider, as a
+  gear marked "Platform". This was the owner's choice among three placements.
+- **Two specs broke on the router, not on the feature.** The traces view now reads the address, so
+  a test module without a router could not build it. The one "page in flight" case that builds its
+  own module gained `provideRouter`. The use-case page's route stub gained an observable
+  `queryParamMap`. Both failed with a missing provider or `undefined.pipe` before the fix.
+- **Measured:**
+  - hermetic: 3820 passed, coverage 96.60 %;
+  - frontend: 981 passed;
+  - mutation RQ1 caught.
+  - Five frontend rules were broken by hand, and each turned a spec red before being restored:
+    - the query without `requestId`;
+    - the row without its mark;
+    - the list restarting on every change of the address;
+    - the link to the wrong tab;
+    - the header without its divider.
+- **The browser suite could not be run twice after a red run.** The full run failed one test in
+  `gateway.spec.ts`: creating `demo-uc` was refused as "slug already exists", while the list did
+  not show it. `demo-uc` had been retired at 15:02 UTC by the suite's own teardown, since
+  `ensureUseCase` had created it and so registered it, and it was never purged. Its tombstone kept
+  the slug.
+  - The purge did not run because `test-e2e` began with `set -e`. That leaves the shell as soon
+    as the suite fails, before `status=$?` and before the purge. So the run that most needs
+    tidying was the one that skipped it, and every run after it failed the same way.
+  - The register still held 156 slugs, `demo-uc` among them. Purged by hand: 155. Then
+    `gateway.spec.ts` passed on its own, 5 tests.
+  - Fix: the recipe without `set -e`. `test_e2e_tidies_after_a_red_run.py` runs the target with
+    stand-ins for `npm`, `npx` and `docker`, and requires the purge after a red and a green suite.
+    Mutation ET1.
+- **e2e, full run after both changes:** 164 passed, 1 skipped. The teardown retired 71 use
+  cases and the purge removed all 71, leaving no register behind.

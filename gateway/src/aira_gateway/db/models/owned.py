@@ -159,6 +159,9 @@ class PayloadAccess(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     #: On what authority: `incident`, `use_case_admin` or `use_case_member`.
     ground: Mapped[str] = mapped_column(String(32), default="")
+    #: The reader's organisation-wide roles at that moment, comma-separated (`FRD-622` FR-3). NULL
+    #: for a read recorded before they were kept — unknown, which is not "none".
+    roles: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class AnomalyEvent(Base):

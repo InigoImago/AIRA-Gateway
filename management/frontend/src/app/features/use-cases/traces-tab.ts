@@ -1,8 +1,8 @@
 import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
-import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import { Trace, TracePayload } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -54,6 +54,8 @@ export class TracesTab implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   protected readonly feedback = inject(PageFeedback);
   protected readonly live = inject(Live);
 
@@ -81,6 +83,11 @@ export class TracesTab implements OnInit {
   protected readonly credential = signal('');
   /** The server refuses this filter without an incident role, so it is offered on that condition. */
   protected readonly sourceIp = signal('');
+  /**
+   * One request by its id, from the content-read log's link (`FRD-622` FR-6). The row is shown and
+   * marked; its content is still opened by a click, because opening it is a recorded read.
+   */
+  protected readonly focus = signal<string | null>(null);
 
   /** The row whose content is open. One at a time: several open payloads is an unreadable screen
    *  and a disclosure nobody meant to make. */
@@ -96,7 +103,19 @@ export class TracesTab implements OnInit {
   protected readonly outcomes = OUTCOMES;
 
   ngOnInit(): void {
-    this.startLive();
+    // The request to focus on, from the address (`FRD-622` FR-6). Followed rather than read once:
+    // a second link into a page that is already open changes only the query. Distinct, so a change
+    // of another parameter — the selected tab — does not restart the list.
+    const focusing = this.route.queryParamMap
+      .pipe(
+        map((params) => params.get('request') || null),
+        distinctUntilChanged(),
+      )
+      .subscribe((requested) => {
+        this.focus.set(requested);
+        this.startLive();
+      });
+    this.destroyRef.onDestroy(() => focusing.unsubscribe());
     // A failure leaves the incident fields hidden — the safe direction, since the server would
     // refuse them anyway.
     this.meService.get().subscribe({
@@ -117,6 +136,16 @@ export class TracesTab implements OnInit {
   protected setSourceIp(value: string): void {
     this.sourceIp.set(value);
     this.typed.next();
+  }
+
+  /** Back to the whole list. The address changes and the list follows it, so a reload agrees. */
+  protected clearFocus(): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { request: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
   }
 
   /** Restart the live view from the top — also on a filter change, since a cursor from one filter
@@ -149,6 +178,7 @@ export class TracesTab implements OnInit {
       mine: this.mine(),
       credential: this.credential().trim(),
       sourceIp: this.sourceIp().trim(),
+      requestId: this.focus() ?? '',
       limit: PAGE,
     };
   }

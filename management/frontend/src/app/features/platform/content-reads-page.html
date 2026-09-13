@@ -1,0 +1,102 @@
+<div class="stack">
+  <header>
+    <h2 class="card__title" style="margin: 0">Content reads</h2>
+    <p class="muted" style="margin: 0.25rem 0 0">
+      Every time somebody opened a request's stored prompt and response: when, who, from which use
+      case, and in which role. Kept after the content itself has expired.
+    </p>
+  </header>
+
+  @if (feedback.error(); as error) {
+    <div class="callout callout--danger" role="alert">{{ error }}</div>
+  }
+
+  <div class="form-inline">
+    <div class="field">
+      <label for="reads-use-case">Use case</label>
+      <input
+        id="reads-use-case"
+        data-testid="reads-use-case"
+        placeholder="slug"
+        [ngModel]="useCase()"
+        (ngModelChange)="setUseCase($event)"
+      />
+    </div>
+    <div class="field">
+      <label for="reads-reader">Reader</label>
+      <input
+        id="reads-reader"
+        data-testid="reads-reader"
+        placeholder="username"
+        [ngModel]="reader()"
+        (ngModelChange)="setReader($event)"
+      />
+    </div>
+  </div>
+
+  @if (loading()) {
+    <p class="muted" data-testid="reads-loading">Loading…</p>
+  } @else if (!reads().length) {
+    <p class="empty" data-testid="no-reads">
+      @if (filtered()) {
+        No reads match these filters.
+      } @else {
+        No stored content has been read yet.
+      }
+    </p>
+  } @else {
+    <div class="table-wrap">
+      <table class="table" data-testid="content-reads">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Reader</th>
+            <th scope="col">Use case</th>
+            <th scope="col">Request</th>
+            <th scope="col">Ground</th>
+            <th scope="col">Roles at the time</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of reads(); track row.id) {
+            <tr [attr.data-testid]="'read-' + row.id">
+              <td>{{ row.created_at | date: 'dd.MM.yyyy HH:mm' }}</td>
+              <td data-testid="read-who">{{ who(row) }}</td>
+              <td>
+                @if (row.use_case) {
+                  <a [routerLink]="['/use-cases', row.use_case]">{{ row.use_case }}</a>
+                } @else {
+                  —
+                }
+              </td>
+              <td>
+                <a
+                  [routerLink]="requestLink(row)"
+                  [queryParams]="requestQuery(row)"
+                  title="Show this request"
+                  data-testid="read-request"
+                  ><code>{{ row.request_log_id }}</code></a
+                >
+              </td>
+              <td data-testid="read-ground">{{ ground(row) }}</td>
+              <td data-testid="read-roles">{{ roles(row) }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    @if (cursor()) {
+      <div class="row">
+        <button
+          type="button"
+          class="btn"
+          (click)="loadMore()"
+          [disabled]="loadingMore()"
+          data-testid="reads-load-more"
+        >
+          {{ loadingMore() ? 'Loading…' : 'Load more' }}
+        </button>
+      </div>
+    }
+  }
+</div>

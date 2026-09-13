@@ -18,6 +18,21 @@
         }}</span>
       }
       <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
+      <!-- Platform administration (`FRD-622` FR-5), for the three platform roles: its own control
+           at the far right, set apart from who is signed in. A link, not a button: the area is a
+           place with its own address. -->
+      @if (hasOversight()) {
+        <span class="aira-user__divider" aria-hidden="true"></span>
+        <a
+          class="btn btn--sm aira-platform"
+          routerLink="/platform"
+          routerLinkActive="is-active"
+          data-testid="platform-admin"
+          title="Platform administration"
+          aria-label="Platform administration"
+          ><span aria-hidden="true">⚙</span> Platform</a
+        >
+      }
     </div>
   }
   <!--

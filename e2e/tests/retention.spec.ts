@@ -62,7 +62,7 @@ test.describe('Payload storage', () => {
     await page.goto(`/use-cases/${slug}`);
     await expect(page.locator('#retention-days')).toBeVisible();
 
-    await page.uncheck('input[type="checkbox"][name="store_payloads"]');
+    await page.check('[data-testid="content-mode-not-stored"]');
     // With nothing kept there is no period to ask for.
     await expect(page.locator('#retention-days')).toHaveCount(0);
     // Addressed by its own id rather than as "the warning on this page": the overview carries
@@ -76,7 +76,7 @@ test.describe('Payload storage', () => {
     await expect(page.locator('[role="status"]')).toContainText('no longer stored');
 
     await page.reload();
-    await expect(page.locator('input[type="checkbox"][name="store_payloads"]')).not.toBeChecked();
+    await expect(page.getByTestId('content-mode-not-stored')).toBeChecked();
     await expect(page.locator('text=Payload storage')).toBeVisible();
   });
 
@@ -86,11 +86,11 @@ test.describe('Payload storage', () => {
     await createUseCase(page, slug, 'Restore probe');
 
     await page.goto(`/use-cases/${slug}`);
-    await page.uncheck('input[type="checkbox"][name="store_payloads"]');
+    await page.check('[data-testid="content-mode-not-stored"]');
     await page.click('button:has-text("Save storage settings")');
     await expect(page.locator('[role="status"]')).toContainText('no longer stored');
 
-    await page.check('input[type="checkbox"][name="store_payloads"]');
+    await page.check('[data-testid="content-mode-members"]');
     await expect(page.locator('#retention-days')).toBeVisible();
     await page.fill('#retention-days', '3');
     await page.click('button:has-text("Save storage settings")');

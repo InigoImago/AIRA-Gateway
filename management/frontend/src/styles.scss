@@ -924,6 +924,29 @@ $field-label-gap: 0.3rem;
   margin-top: 0.15rem;
 }
 
+/* The content modes of a use case (`FRD-622` FR-1): a legend, then one radio line per mode with
+ * its explanation under the label. A fieldset, for the grouping; not its default frame. */
+.content-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.content-modes__option {
+  line-height: 1.35;
+}
+.content-modes__hint {
+  display: block;
+  margin-top: 0.1rem;
+}
+
+/* The request the content-read log linked to (`FRD-622` FR-6), marked among its neighbours. */
+.table tr.is-focused > td {
+  background: var(--aira-brand-soft);
+}
+
 .field__legend {
   display: block;
   font-size: 0.8rem;

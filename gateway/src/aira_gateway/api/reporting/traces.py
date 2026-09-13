@@ -95,6 +95,9 @@ async def traces(
     # Only requests where the model asked for a function.
     tools_only: bool = Query(False),
     flagged_only: bool = Query(False),
+    # One request by its id, which is where the content-read log links to (`FRD-622` FR-6). Bounded
+    # by the same scope and restriction as every other filter, so an id is no way around them.
+    request_id: str = Query("", max_length=36),
     limit: int = Query(TRACE_PAGE, ge=1, le=MAX_TRACE_PAGE),
     cursor: str = Query("", max_length=128),
 ) -> JSONResponse:
@@ -142,6 +145,8 @@ async def traces(
         stmt = stmt.where(RequestLog.tool_calls.is_not(None))
     if flagged_only:
         stmt = stmt.where(RequestLog.flagged.is_(True))
+    if request_id:
+        stmt = stmt.where(RequestLog.id == request_id)
 
     # A use case may show its users only their own requests (`FRD-505` FR-4) — applied to the list
     # too, since the rows alone disclose who else calls, how often and at what cost. By person, not
@@ -231,6 +236,9 @@ async def trace_payload(
                 # The name too, so a read joins to the person rather than a credential (`FRD-613`).
                 username=principal.username,
                 ground=verdict.ground,
+                # The roles held at this moment (`FRD-622` FR-3): `incident` alone does not say
+                # which role read it, and today's roles are not evidence of the ones held then.
+                roles=",".join(sorted(principal.roles)),
             )
         )
         await session.commit()

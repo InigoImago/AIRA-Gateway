@@ -52,6 +52,10 @@
   align-items: center;
   gap: 0.75rem;
   min-width: 0;
+  /* Wraps rather than widening the page: name, platform link, role chips and Logout do not fit a
+   * phone on one line, and the document must never scroll sideways. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
 
   /* Usernames come from Keycloak and can be an e-mail address or a disambiguated
    * "name-<sub>" — long enough to push the logout button off screen. Truncate instead. */
@@ -63,6 +67,17 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+/* Platform administration, at the far right and set apart from who is signed in (`FRD-622`
+ * FR-5). */
+.aira-user__divider {
+  align-self: stretch;
+  width: 1px;
+  background: var(--aira-border);
+}
+.aira-platform {
+  white-space: nowrap;
 }
 
 .aira-nav {

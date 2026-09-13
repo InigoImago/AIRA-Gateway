@@ -4,6 +4,7 @@ Bounded by **role** rather than by use case, which is why none of this sits behi
 `api/reporting`'s `visible_scope`. Every module registers its routes on the one `router`.
 
     common          the router, and reading the caller's JSON body
+    content_reads   who read which stored content, for the platform roles (`FRD-622`)
     suspensions     the kill switch: list, create, lift (`FRD-503`)
     diagnostics     what both model checks share: the role gate, the upstream asked about, the row
     model_check     can this model be reached at all (`FRD-506`)
@@ -11,7 +12,12 @@ Bounded by **role** rather than by use case, which is why none of this sits behi
 """
 
 # Importing the endpoint modules registers their routes on `router`.
-from aira_gateway.api.incidents import model_check, suspensions, thinking_check  # noqa: F401
+from aira_gateway.api.incidents import (  # noqa: F401
+    content_reads,
+    model_check,
+    suspensions,
+    thinking_check,
+)
 from aira_gateway.api.incidents.common import router
 from aira_gateway.api.incidents.diagnostics import MODEL_CHECK_TIMEOUT_SECONDS
 from aira_gateway.api.incidents.suspensions import (

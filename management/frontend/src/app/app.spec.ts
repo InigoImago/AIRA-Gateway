@@ -127,6 +127,30 @@ describe('App', () => {
 
     expect(el.querySelector('[data-testid="nav-requests"]')).toBeNull();
   });
+
+  // ---- platform administration (`FRD-622` FR-5) --------------------------------------------------
+
+  it('offers platform administration beside the name to each of the three platform roles', () => {
+    for (const role of ['global-admin', 'it-security', 'it-steuerung']) {
+      const link = render([role]).querySelector('.aira-user [data-testid="platform-admin"]');
+
+      expect(link?.getAttribute('href'), role).toBe('/platform');
+    }
+  });
+
+  it('places platform administration at the far right, after Logout', () => {
+    const el = render(['global-admin']);
+    const controls = [...el.querySelectorAll('.aira-user a, .aira-user button')];
+    const platform = el.querySelector('[data-testid="platform-admin"]');
+
+    expect(controls.at(-1)).toBe(platform);
+    expect(platform?.previousElementSibling?.classList.contains('aira-user__divider')).toBe(true);
+    expect(platform?.getAttribute('aria-label')).toBe('Platform administration');
+  });
+
+  it('does not offer platform administration to somebody who only works in use cases', () => {
+    expect(render([]).querySelector('[data-testid="platform-admin"]')).toBeNull();
+  });
 });
 
 describe('App when the identity provider cannot be reached', () => {

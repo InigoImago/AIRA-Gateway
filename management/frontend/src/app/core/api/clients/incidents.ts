@@ -1,6 +1,13 @@
 import { Observable } from 'rxjs';
 import { API, GW } from '../prefixes';
-import { AnomalyPage, AnomalyRule, Suspension, TracePage, TracePayload } from '../types/incidents';
+import {
+  AnomalyPage,
+  AnomalyRule,
+  ContentReadPage,
+  Suspension,
+  TracePage,
+  TracePayload,
+} from '../types/incidents';
 import { ApiClientClass, seg } from './base';
 
 /** Anomaly findings and rules, suspensions, and request traces (`FRD-500`–`FRD-505`). */
@@ -35,6 +42,8 @@ export function withIncidents<T extends ApiClientClass>(Base: T) {
       toolsOnly?: boolean;
       /** Only the requests a pipeline step objected to (`FRD-505` FR-5). */
       flaggedOnly?: boolean;
+      /** One request by its id — where the content-read log links to (`FRD-622` FR-6). */
+      requestId?: string;
       cursor?: string;
       limit?: number;
     }): Observable<TracePage> {
@@ -48,6 +57,7 @@ export function withIncidents<T extends ApiClientClass>(Base: T) {
       if (options.mine) params['mine'] = true;
       if (options.toolsOnly) params['tools_only'] = true;
       if (options.flaggedOnly) params['flagged_only'] = true;
+      if (options.requestId) params['request_id'] = options.requestId;
       if (options.cursor) params['cursor'] = options.cursor;
       return this.http.get<TracePage>(`${GW}/v1beta/traces`, { params });
     }
@@ -60,6 +70,20 @@ export function withIncidents<T extends ApiClientClass>(Base: T) {
      */
     tracePayload(id: string): Observable<TracePayload> {
       return this.http.get<TracePayload>(`${GW}/v1beta/traces/${seg(id)}/payload`);
+    }
+
+    /** Who read which stored content, for the platform roles (`FRD-622` FR-4). Paged by cursor. */
+    contentReads(options: {
+      useCase?: string;
+      reader?: string;
+      cursor?: string;
+      limit?: number;
+    }): Observable<ContentReadPage> {
+      const params: Record<string, string | number> = { limit: options.limit ?? 50 };
+      if (options.useCase) params['use_case'] = options.useCase;
+      if (options.reader) params['reader'] = options.reader;
+      if (options.cursor) params['cursor'] = options.cursor;
+      return this.http.get<ContentReadPage>(`${GW}/v1beta/content-reads`, { params });
     }
 
     /** Traffic that is currently stopped, and what was stopped before (`FRD-503`). */

@@ -451,16 +451,15 @@ wait-healthy: ## Block until the containerised stack answers (after up-full, and
 	$(COMPOSE_FULL) ps; exit 1
 
 test-e2e: ## Run browser end-to-end tests (needs the stack + all services; see e2e/README.md)
-	@# **Tidied whether or not it passed**, and the ordering here is the whole point. Written as
-	@# two recipe lines first, which make abandons at the first failure — so the one run that
-	@# leaves the most behind, the failing one, was exactly the run that never cleaned up. Measured:
-	@# a red suite left 68 tombstones and a cleared register, which is nothing anybody could name
-	@# again.
+	@# **Tidied whether or not it passed**: one shell line that keeps the suite's status and returns
+	@# it after the purge. No `set -e`, which leaves the shell at the first failing command — the
+	@# suite — so a red run would skip the purge. A retired use case keeps its slug until it is
+	@# purged, so the next run could not create it again, would fail, and would skip the purge too
+	@# (`tools/tests/test_e2e_tidies_after_a_red_run.py`).
 	@#
 	@# Playwright's own teardown *retires* what the suite made (the product's path, `FRD-607`);
 	@# this purges the tombstones, which is a demo-only step and cannot be reached over HTTP.
-	@set -e; \
-	( cd e2e && npm install --silent && npx playwright test ); status=$$?; \
+	@( cd e2e && npm install --silent && npx playwright test ); status=$$?; \
 	$(MAKE) --no-print-directory purge-e2e-use-cases || true; \
 	exit $$status
 

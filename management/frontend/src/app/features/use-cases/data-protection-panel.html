@@ -8,32 +8,41 @@
     </p>
     @if (!canManage()) {
       <p data-testid="retention-readonly" style="margin: 0">
-        @if (useCase()?.store_payloads === false) {
-          Prompts and responses are <strong>not stored</strong> for this use case.
-        } @else {
-          Prompts and responses are kept for
-          <strong>{{ useCase()?.retention_days ?? '—' }} day(s)</strong>.
+        Prompts and responses:
+        <strong data-testid="content-mode-readonly">{{ currentLabel() }}</strong
+        >.
+        @if (useCase()?.store_payloads !== false) {
+          Kept for <strong>{{ useCase()?.retention_days ?? '—' }} day(s)</strong>.
         }
         Only an administrator of this use case can change that.
       </p>
     } @else {
       <form class="stack" (ngSubmit)="saveRetention()">
-        <!-- No `for`: the input is nested, and a `for` as well makes a real browser forward the click
-             twice, so the box toggles back (jsdom does not reproduce it). -->
-        <label class="row" style="gap: 0.5rem">
-          <!-- [checked]/(change) rather than ngModel: a one-way ngModel on a checkbox inside an
-               NgForm writes the old value back and the box springs back. -->
-          <input
-            type="checkbox"
-            id="store-payloads"
-            name="store_payloads"
-            [checked]="storePayloads()"
-            (change)="storePayloads.set($any($event.target).checked)"
-          />
-          Store prompts and responses
-        </label>
+        <fieldset class="content-modes">
+          <legend class="section-title">Who may read prompts and responses</legend>
+          @for (option of modes; track option.value) {
+            <!-- No `for`: the input is nested, and a `for` as well makes a real browser forward the
+                 click twice (jsdom does not reproduce it). -->
+            <label class="checkline content-modes__option">
+              <!-- [checked]/(change) rather than ngModel: a one-way ngModel inside an NgForm writes
+                   the old value back. -->
+              <input
+                type="radio"
+                name="content_mode"
+                [value]="option.value"
+                [checked]="mode() === option.value"
+                (change)="mode.set(option.value)"
+                [attr.data-testid]="'content-mode-' + option.value"
+              />
+              <span>
+                <strong>{{ option.label }}</strong>
+                <span class="field__hint content-modes__hint">{{ option.explains }}</span>
+              </span>
+            </label>
+          }
+        </fieldset>
 
-        @if (storePayloads()) {
+        @if (stored()) {
           <div class="form-inline">
             <div class="field">
               <label for="retention-days">Keep them for (days)</label>
@@ -57,23 +66,12 @@
           </p>
         }
 
-        <!-- Who inside the use case may read whose requests: the use case administrator's decision,
-             not IT Security's (`FRD-505` FR-4). -->
-        <label class="checkline">
-          <input
-            type="checkbox"
-            id="restrict-members"
-            name="restrict_members"
-            [checked]="restrictMembers()"
-            (change)="restrictMembers.set($any($event.target).checked)"
-            data-testid="restrict-members"
-          />
-          Show each member only their own requests
-        </label>
-        <span class="field__hint">
-          Administrators of this use case always see all of them. Off means everyone in the use case
-          sees the whole use case's traffic, which is how it has always worked.
-        </span>
+        <!-- Who else reads, said where the choice is made (`FRD-622` FR-2): the choice decides who
+             inside the use case reads, not whether the platform roles can. -->
+        <p class="field__hint" style="margin: 0" data-testid="platform-readers">
+          Whichever you choose, Global Administrators and IT Security can read stored content when
+          investigating an incident. Every read is recorded with who read it and in which role.
+        </p>
 
         <div class="row">
           <!-- Named rather than "Save": the page has two forms, and two identical buttons are

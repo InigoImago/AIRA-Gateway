@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { Router, provideRouter } from '@angular/router';
 import { Subject, of, throwError } from 'rxjs';
 import { Trace, TracePage } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
@@ -356,6 +356,7 @@ describe('TracesTab — while a page is in flight', () => {
     TestBed.configureTestingModule({
       imports: [Host],
       providers: [
+        provideRouter([]),
         {
           provide: UseCaseService,
           useValue: {
@@ -706,5 +707,53 @@ describe('TracesTab — whose name is on the row', () => {
     });
 
     expect(testid('trace-via-key')).toBeNull();
+  });
+});
+
+describe('TracesTab — one request, linked from the content-read log (`FRD-622` FR-6)', () => {
+  async function focusedOn(id: string, options: Options = {}) {
+    const harness = setup(options);
+    await TestBed.inject(Router).navigateByUrl(`/?request=${id}`);
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  it('asks for that one request, marks its row and does not open its content', async () => {
+    const harness = await focusedOn('t1');
+
+    expect(harness.queries.at(-1)?.['requestId']).toBe('t1');
+    expect(harness.testid('focused-request')?.textContent).toContain('t1');
+    expect(harness.element.querySelector('tbody tr.is-focused')).not.toBeNull();
+    // Opening the content is a recorded read, so the link does not do it for the reader.
+    expect(harness.queries.some((query) => 'payloadFor' in query)).toBe(false);
+    expect(harness.testid('payload-request')).toBeNull();
+  });
+
+  it('goes back to every request, and the address with it', async () => {
+    const harness = await focusedOn('t1');
+    harness.click('show-all-requests');
+    await harness.fixture.whenStable();
+    harness.fixture.detectChanges();
+
+    expect(harness.queries.at(-1)?.['requestId']).toBe('');
+    expect(harness.testid('focused-request')).toBeNull();
+    expect(TestBed.inject(Router).url).not.toContain('request=');
+  });
+
+  it('says a linked request that is gone is gone, rather than that nothing matches', async () => {
+    const harness = await focusedOn('gone', {
+      pages: [{ traces: [], next_cursor: null, scope: 'use_cases' }],
+    });
+
+    expect(harness.testid('no-traces')?.textContent).toContain('no longer in the audit trail');
+  });
+
+  it('does not restart the list when another parameter changes', async () => {
+    const harness = await focusedOn('t1');
+    const asked = harness.queries.length;
+    await TestBed.inject(Router).navigateByUrl('/?request=t1&tab=traces');
+    harness.fixture.detectChanges();
+
+    expect(harness.queries.length).toBe(asked);
   });
 });

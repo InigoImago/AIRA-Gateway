@@ -7433,6 +7433,47 @@ MUTATIONS = [
         "    requested = use_case",
         "gateway/tests/test_a_refused_access_is_on_its_span.py",
     ),
+    Mutation(
+        "RD1",
+        "a content read records the roles the reader held at that moment",
+        "gateway/src/aira_gateway/api/reporting/traces.py",
+        '                roles=",".join(sorted(principal.roles)),\n',
+        "",
+        "gateway/tests/test_the_content_read_log.py",
+    ),
+    Mutation(
+        "RD2",
+        "the content-read log is served to the platform roles only",
+        "gateway/src/aira_gateway/api/incidents/content_reads.py",
+        '    if not (principal.is_oversight or principal.method == "demo"):',
+        "    if False:",
+        "gateway/tests/test_the_content_read_log.py",
+    ),
+    Mutation(
+        "RD3",
+        "a read from before roles were kept says unknown, not none",
+        "gateway/src/aira_gateway/api/incidents/content_reads.py",
+        '            value = None if value is None else [role for role in value.split(",") if role]',
+        '            value = [role for role in (value or "").split(",") if role]',
+        "gateway/tests/test_the_content_read_log.py",
+    ),
+    Mutation(
+        "RQ1",
+        "the trace list narrows to one request by its id",
+        "gateway/src/aira_gateway/api/reporting/traces.py",
+        "        stmt = stmt.where(RequestLog.id == request_id)",
+        "        stmt = stmt",
+        "gateway/tests/test_traces.py",
+    ),
+    # ---- the browser suite tidies after a red run -------------------------------------------
+    Mutation(
+        "ET1",
+        "a red browser run still purges the use cases it retired",
+        "Makefile",
+        "@( cd e2e && npm install --silent && npx playwright test )",
+        "@set -e; ( cd e2e && npm install --silent && npx playwright test )",
+        "tools/tests/test_e2e_tidies_after_a_red_run.py",
+    ),
 ]
 
 

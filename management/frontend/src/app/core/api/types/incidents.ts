@@ -127,3 +127,24 @@ export interface TracePage {
    */
   in_scope?: boolean;
 }
+
+/** One reading of a request's stored prompt and response (`FRD-622` FR-4). Metadata only. */
+export interface ContentRead {
+  id: string;
+  created_at: string;
+  request_log_id: string;
+  use_case: string;
+  subject: string;
+  username: string | null;
+  /** The authority the read rested on: `incident`, `use_case_admin` or `use_case_member`. */
+  ground: string;
+  /** The reader's organisation-wide roles at that moment; `null` for a read from before they were
+   *  kept, which is unknown rather than "none". */
+  roles: string[] | null;
+}
+
+export interface ContentReadPage {
+  reads: ContentRead[];
+  /** `null` on the last page. */
+  next_cursor: string | null;
+}

@@ -1,0 +1,60 @@
+// Platform administration: the menu on the left, the chosen page on the right (`FRD-622` FR-5).
+.platform {
+  display: grid;
+  grid-template-columns: minmax(11rem, 15rem) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.platform__menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-right: 1rem;
+  border-right: 1px solid var(--aira-border);
+}
+
+.platform__title {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.platform__intro {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+}
+
+.platform__item {
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--aira-radius-sm);
+  color: var(--aira-text);
+  text-decoration: none;
+
+  &:hover {
+    background: var(--aira-bg);
+  }
+
+  &.is-active {
+    background: var(--aira-brand-soft);
+    color: var(--aira-brand-strong);
+    font-weight: 600;
+  }
+}
+
+// The page must never widen the document; its tables scroll inside it.
+.platform__page {
+  min-width: 0;
+}
+
+// On a narrow screen the menu goes above the page rather than squeezing it.
+@media (max-width: 720px) {
+  .platform {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .platform__menu {
+    padding: 0 0 0.75rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--aira-border);
+  }
+}

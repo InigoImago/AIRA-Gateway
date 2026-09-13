@@ -107,6 +107,24 @@ def test_a_trace_row_never_carries_a_payload() -> None:
     assert "response_payload" not in body
 
 
+def test_one_request_by_its_id_stays_inside_the_callers_scope() -> None:
+    """The content-read log links to one request by its id (`FRD-622` FR-6). The id narrows the
+    list the caller may already see; it opens nothing their scope does not cover."""
+    member = Principal(subject="alice", method="oidc", use_cases=("uc-a",))
+    with _client(member) as client:
+        _fill(
+            client,
+            _row(id="req-mine", use_case="uc-a"),
+            _row(id="req-neighbour", use_case="uc-a", seconds_ago=5),
+            _row(id="req-elsewhere", use_case="uc-b"),
+        )
+        found = client.get("/v1beta/traces", params={"request_id": "req-mine"}).json()
+        hidden = client.get("/v1beta/traces", params={"request_id": "req-elsewhere"}).json()
+
+    assert [row["id"] for row in found["traces"]] == ["req-mine"]
+    assert hidden["traces"] == []
+
+
 def test_a_trace_row_carries_what_an_investigation_needs() -> None:
     with _client() as client:
         _fill(client, _row(requested_model="gemini-2.0-flash", model_selection="fallback:1"))

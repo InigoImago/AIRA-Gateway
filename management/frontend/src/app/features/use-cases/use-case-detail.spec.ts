@@ -1,7 +1,7 @@
 import { Type } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
-import { ActivatedRoute, provideRouter } from '@angular/router';
+import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { Observable, of, throwError } from 'rxjs';
 import {
   ApiKey,
@@ -121,7 +121,7 @@ interface CapabilitiesView {
 }
 interface DataProtectionView {
   retentionDays: Writable<number | null>;
-  storePayloads: Writable<boolean>;
+  mode: Writable<string>;
   saveRetention: () => void;
 }
 
@@ -219,6 +219,8 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
             paramMap: { get: () => 'demo-uc' },
             queryParamMap: { get: () => queryTab },
           },
+          // The traces tab follows the address for a linked request (`FRD-622` FR-6); none here.
+          queryParamMap: of(convertToParamMap(queryTab ? { tab: queryTab } : {})),
         },
       },
       { provide: UseCaseService, useValue: service },
@@ -464,7 +466,7 @@ describe('UseCaseDetail — the overview settings', () => {
     // An editable form shown while the GET is in flight is silently undone by its response.
     const harness = setup({ get: new Observable<UseCase>(() => undefined) });
     expect(harness.component.loading()).toBe(true);
-    expect(harness.html().querySelector('#store-payloads')).toBeNull();
+    expect(harness.html().querySelector('input[name="content_mode"]')).toBeNull();
     expect(harness.html().querySelector('#retention-days')).toBeNull();
   });
 
@@ -475,22 +477,24 @@ describe('UseCaseDetail — the overview settings', () => {
     expect(harness.text()).toContain('off');
   });
 
-  it('keeps the payload switch and the period it applies to next to each other', () => {
+  it('keeps the content choice and the period it applies to next to each other', () => {
     // Nothing else — in particular no capability switch — may come between the two a reader
     // treats as one setting.
     const harness = setup();
-    panel<DataProtectionView>(harness, DataProtectionPanel).storePayloads.set(true);
+    panel<DataProtectionView>(harness, DataProtectionPanel).mode.set('members');
     harness.fixture.detectChanges();
 
-    const form = harness.html().querySelector('form:has(#store-payloads)')!;
-    const controls = [...form.querySelectorAll('input, select, textarea')].map((c) => c.id);
+    const form = harness.html().querySelector('form:has([name="content_mode"])')!;
+    const controls = [...form.querySelectorAll('input, select, textarea')].map(
+      (c) => c.getAttribute('name') ?? c.id,
+    );
     const between = controls.slice(
-      controls.indexOf('store-payloads') + 1,
-      controls.indexOf('retention-days'),
+      controls.lastIndexOf('content_mode') + 1,
+      controls.indexOf('retention_days'),
     );
 
-    expect(controls).toContain('retention-days');
-    expect(between, `${between.join(', ')} sits between the switch and its period`).toEqual([]);
+    expect(controls).toContain('retention_days');
+    expect(between, `${between.join(', ')} sits between the choice and its period`).toEqual([]);
   });
 
   it('does not claim a saving when caching is switched off', () => {
@@ -569,7 +573,7 @@ describe('UseCaseDetail — what a reader may do', () => {
 
     harness.component.selectTab('overview');
     harness.fixture.detectChanges();
-    expect(html().querySelector('#store-payloads')).toBeNull();
+    expect(html().querySelector('input[name="content_mode"]')).toBeNull();
     // The setting is still *reported* — it is exactly the kind of thing a member needs to know.
     expect(html().querySelector('[data-testid="retention-readonly"]')?.textContent).toContain('7');
   });
@@ -640,7 +644,7 @@ describe('UseCaseDetail — an oversight role', () => {
       '[data-testid="retention-readonly"]',
     );
 
-    expect(readonly?.textContent).toContain('not stored');
+    expect(readonly?.textContent).toContain('Not stored');
     expect(readonly?.textContent).not.toContain('day(s)');
   });
 });

@@ -49,6 +49,20 @@ export const routes: Routes = [
     loadComponent: () => import('./features/security/security-page').then((m) => m.SecurityPage),
   },
   {
+    // Platform administration (`FRD-622`): a menu on the left, the chosen page as a child route.
+    path: 'platform',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/platform/platform-page').then((m) => m.PlatformPage),
+    children: [
+      { path: '', pathMatch: 'full', redirectTo: 'content-reads' },
+      {
+        path: 'content-reads',
+        loadComponent: () =>
+          import('./features/platform/content-reads-page').then((m) => m.ContentReadsPage),
+      },
+    ],
+  },
+  {
     path: 'use-cases/:slug/pipeline',
     canActivate: [authGuard],
     loadComponent: () =>
