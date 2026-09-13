@@ -63,13 +63,23 @@ and an installation watching its own agents has no way to see why a model did wh
 - **FR-3 A use-case switch**, `include_reasoning`, default **off**. Carried to the gateway on the
   config event like every other use-case setting.
 - **FR-4 Off means refused, not dropped.** With the switch off, `includeThoughts: true` is refused
-  by name exactly as today (`FRD-124`): answering 200 with no thoughts is the silent drop.
+  by name exactly as today (`FRD-124`): answering 200 with no thoughts is the silent drop. The same
+  holds for a **stream**, whatever the switch says: streamed answers carry no reasoning (§5.4), so
+  `includeThoughts: true` on `streamGenerateContent` is refused rather than answered without it.
 - **FR-5 On means returned and stored like the answer.** The thoughts travel in the response and
   are written into the stored response payload — same column, same `store_payloads` gate, same
-  retention, same role check on reading (`ADR-0016`, `FRD-406`). No second path.
+  retention, same role check on reading (`ADR-0016`, `FRD-406`). No second path. An explicit
+  `includeThoughts: false` withholds them — Google's own meaning of the field, and a caller who
+  declined must not receive, or have stored, text it did not ask for. With thinking off, nothing is
+  asked for: Google refuses `includeThoughts` without thinking, which used to fail every request
+  with thinking off in a use case with the switch on.
 - **FR-6 The console offers it** on the use case, beside `store_payloads` and `tools_enabled`.
 - **FR-7 Where a provider returns no reasoning**, the switch changes nothing and says so: a use case
   with reasoning on, calling a model that reports none, is not an error.
+- **FR-8 Reported apart on the Gemini surface, as Google does.** `candidatesTokenCount` is the
+  answer, `thoughtsTokenCount` the thinking, `totalTokenCount` both. The surface once sent
+  `completion_tokens` — thinking included — as `candidatesTokenCount` beside `thoughtsTokenCount`,
+  so a client adding the two counted the reasoning twice. FR-1's invariant is unchanged inside.
 
 ## 5. Design & Architecture
 

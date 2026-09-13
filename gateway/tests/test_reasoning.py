@@ -178,3 +178,20 @@ def test_the_caller_is_told_what_thinking_cost() -> None:
 
     assert spent.model_dump(exclude_none=True)["thoughtsTokenCount"] == 443
     assert "thoughtsTokenCount" not in silent.model_dump(exclude_none=True)
+
+
+def test_the_answer_and_the_thinking_are_counted_apart_as_google_does() -> None:
+    """`candidatesTokenCount` is the answer without the thoughts, `thoughtsTokenCount` the thoughts,
+    and `totalTokenCount` both. A client adding the first two must not count the reasoning twice —
+    which it did while `candidatesTokenCount` carried the thoughts as well."""
+    from aira_gateway.api.gemini.mapping import canonical_to_gemini, chunk_to_gemini
+    from aira_gateway.core.canonical import CanonicalChunk, CanonicalResponse, CanonicalUsage
+
+    usage = CanonicalUsage(prompt_tokens=17, completion_tokens=1104, reasoning_tokens=443)
+    answered = canonical_to_gemini(CanonicalResponse(model="m", text="7", usage=usage))
+    streamed = chunk_to_gemini(CanonicalChunk(text_delta="7", usage=usage), "m")
+
+    for reported in (answered.usageMetadata, streamed.usageMetadata):
+        assert reported.candidatesTokenCount == 661
+        assert reported.thoughtsTokenCount == 443
+        assert reported.totalTokenCount == 17 + 661 + 443

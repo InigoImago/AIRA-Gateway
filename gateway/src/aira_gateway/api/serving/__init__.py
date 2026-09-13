@@ -40,6 +40,7 @@ from aira_gateway.api.serving.context import (
     released_for,
     released_models,
     schema_bounds,
+    served_models,
     use_case_of,
     use_case_record,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "run_pipeline",
     "run_pipeline_over_texts",
     "schema_bounds",
+    "served_models",
     "upstream_error",
     "upstream_status",
     "use_case_of",

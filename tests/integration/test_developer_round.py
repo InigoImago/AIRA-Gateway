@@ -107,7 +107,10 @@ async def test_a_gemini_request_is_served_and_its_figures_land_in_the_database(
     # The row and the response must agree about what was consumed, or the audit is a second
     # opinion rather than a record.
     assert row["prompt_tokens"] == reported["promptTokenCount"]
-    assert row["completion_tokens"] == reported["candidatesTokenCount"]
+    # Both halves of the billed output: the answer, and the thoughts Google reports apart.
+    assert row["completion_tokens"] == reported["candidatesTokenCount"] + reported.get(
+        "thoughtsTokenCount", 0
+    )
     assert row["total_tokens"] == reported["totalTokenCount"]
     assert row["cost_nanos"] and row["cost_nanos"] > 0, "a priced model recorded no cost"
     assert row["latency_ms"] is not None

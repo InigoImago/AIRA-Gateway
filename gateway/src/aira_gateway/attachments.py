@@ -81,13 +81,20 @@ class Limits:
 
 
 def decode(raw: str, *, index: int) -> bytes:
-    """Base64 → bytes, or a refusal naming the part."""
+    """Base64 → bytes, or a refusal naming the part.
+
+    An empty part is refused too: forwarded, it comes back as the provider's error, not the
+    caller's.
+    """
     try:
         # `validate=True`: without it, characters outside the alphabet are silently discarded and
         # a corrupted upload becomes a shorter, valid-looking document.
-        return base64.b64decode(raw, validate=True)
+        decoded = base64.b64decode(raw, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise AttachmentRejected(f"Part {index}: data is not valid base64.") from exc
+    if not decoded:
+        raise AttachmentRejected(f"Part {index}: the attachment is empty.")
+    return decoded
 
 
 def check_media_type(media_type: str, limits: Limits, *, index: int) -> None:

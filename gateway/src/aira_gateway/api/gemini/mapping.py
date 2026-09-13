@@ -34,7 +34,14 @@ from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.thinking import mode_from
 from aira_gateway.upstreams.base import UpstreamModel
 
-_ROLE_FROM_GEMINI = {"user": Role.USER, "model": Role.MODEL, "system": Role.SYSTEM}
+#: Every role `schemas.Content` accepts. `function` is an older spelling of a function response,
+#: which is the user's side of the turn.
+_ROLE_FROM_GEMINI = {
+    "user": Role.USER,
+    "model": Role.MODEL,
+    "system": Role.SYSTEM,
+    "function": Role.USER,
+}
 
 #: Google's two sentinel `thinkingBudget` values are modes, not budgets: ``0`` is off and ``-1``
 #: is the model's own choice. Read as `limited` they would ask for zero or minus one tokens.
@@ -105,7 +112,7 @@ def gemini_to_canonical(
         counted += len(parts)
         messages.append(CanonicalMessage(role=Role.SYSTEM, parts=parts))
     for content in request.contents:
-        role = _ROLE_FROM_GEMINI.get(content.role or "user", Role.USER)
+        role = _ROLE_FROM_GEMINI[content.role or "user"]
         parts = _canonical_parts(content, limits, counted)
         counted += len(parts)
         messages.append(CanonicalMessage(role=role, parts=parts))
@@ -238,12 +245,20 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
         ],
         usageMetadata=schemas.UsageMetadata(
             promptTokenCount=response.usage.prompt_tokens,
-            candidatesTokenCount=response.usage.completion_tokens,
+            candidatesTokenCount=_candidates(
+                response.usage.completion_tokens, response.usage.reasoning_tokens
+            ),
             totalTokenCount=response.usage.total_tokens,
             thoughtsTokenCount=response.usage.reasoning_tokens or None,
         ),
         modelVersion=response.model,
     )
+
+
+def _candidates(completion: int, reasoning: int) -> int:
+    """Google's `candidatesTokenCount`: the answer **without** the thoughts, which it reports apart
+    as `thoughtsTokenCount`. `completion_tokens` holds both, since both are billed as output."""
+    return max(0, completion - reasoning)
 
 
 def chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateContentResponse:
@@ -272,7 +287,9 @@ def chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConten
         ],
         usageMetadata=schemas.UsageMetadata(
             promptTokenCount=usage.prompt_tokens if usage else 0,
-            candidatesTokenCount=usage.completion_tokens if usage else 0,
+            candidatesTokenCount=(
+                _candidates(usage.completion_tokens, usage.reasoning_tokens) if usage else 0
+            ),
             totalTokenCount=usage.total_tokens if usage else 0,
             thoughtsTokenCount=(usage.reasoning_tokens or None) if usage else None,
         ),

@@ -11,6 +11,7 @@ on it must be reviewed for what it cannot see (`FRD-110` FR-9).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any
 
@@ -252,6 +253,26 @@ class CanonicalEmbeddingRequest(BaseModel):
     @property
     def size(self) -> int:
         return len(self.texts)
+
+
+class EmbeddingVectors(list[list[float]]):
+    """Vectors, and what the adapter could say about producing them.
+
+    A list, so an adapter with nothing to report returns a plain one. ``served_region`` is where the
+    call was answered — the audit row's residency evidence (`FRD-115` FR-10); ``input_tokens`` is
+    what it cost, so it can be priced (`FRD-403`). ``None`` means not reported, never zero.
+    """
+
+    def __init__(
+        self,
+        vectors: Iterable[list[float]] = (),
+        *,
+        served_region: str = "",
+        input_tokens: int | None = None,
+    ) -> None:
+        super().__init__(vectors)
+        self.served_region = served_region
+        self.input_tokens = input_tokens
 
 
 # == responses ====================================================================================

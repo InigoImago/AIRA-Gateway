@@ -77,7 +77,8 @@ async def embed(self, request: EmbeddingRequest) -> list[list[float]]: ...
 with `EmbeddingRequest = {model, texts: list[str], task_type, dimensions | None}` — a single text
 is a list of one, so there is one code path rather than two. Both the mock and the Gemini adapter
 implement it; the Gemini adapter uses `batchEmbedContents` for lists and `embedContent` for one,
-because the single-item endpoint has lower latency.
+because the single-item endpoint has lower latency. **Vertex is different:** it serves neither verb
+to an API key, so its adapter embeds through `:predict`, one text per call (`FRD-115` FR-2).
 
 Changing a `Protocol` is a small breaking change and this is the moment to take it: doing it once,
 here, is cheaper than adding a second method and living with two.

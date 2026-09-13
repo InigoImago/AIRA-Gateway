@@ -155,6 +155,43 @@ def test_the_model_default_is_used_when_the_caller_sets_no_cap() -> None:
     assert declaration.output_cap(512) == 512, "the caller's own bound must win"
 
 
+async def test_the_model_default_reaches_the_upstream_when_the_caller_sets_no_cap() -> None:
+    """`FRD-114` FR-2 at the wire, not only in `output_cap`: the declared default is what the
+    upstream is sent, not merely what the budget estimate assumes."""
+    from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, CanonicalUsage
+    from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
+
+    class _Capturing:
+        is_test_double = True
+
+        def __init__(self) -> None:
+            self.caps: list[int | None] = []
+
+        def models(self) -> list[UpstreamModel]:
+            return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]
+
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            self.caps.append(request.max_output_tokens)
+            return CanonicalResponse(
+                model="mock-1",
+                text="ok",
+                usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+            )
+
+    provider = _Capturing()
+    app = _app()
+    app.state.providers = ProviderRegistry([provider])
+    with TestClient(app) as client:
+        await _declare(app, "mock-1", capabilities=["generate"], default_max_output_tokens=123)
+        client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+        client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={**_BODY, "generationConfig": {"maxOutputTokens": 50}},
+        )
+
+    assert provider.caps == [123, 50], "the default when none is set; the caller's own otherwise"
+
+
 # -- capabilities, enforced ------------------------------------------------------------------
 
 

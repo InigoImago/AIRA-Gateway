@@ -67,7 +67,8 @@ question is about.
   different prompts.
 - **FR-2 Inline data.** A data part carries a declared media type and bytes. On the wire the bytes
   are base64; in the canonical model they are `bytes`. Invalid base64 is a **400**, not a
-  truncated forward.
+  truncated forward. So is an **empty** part: forwarded, it came back as the provider's refusal
+  and was recorded as `upstream_error`, the provider's fault rather than the caller's.
 - **FR-3 Media-type allow-list, intersected with the model.** The fourteen types from
   the media types the contract lists are what *AIRA* accepts; what the **target model** accepts is declared in
   `FRD-114`, and Anthropic's set is a subset of Google's. A part is admitted only if both allow it,

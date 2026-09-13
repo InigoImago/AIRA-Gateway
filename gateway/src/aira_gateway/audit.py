@@ -50,6 +50,8 @@ class Outcome(StrEnum):
     MODEL_NOT_FOUND = "model_not_found"
     INVALID_REQUEST = "invalid_request"
     UPSTREAM_ERROR = "upstream_error"
+    #: This gateway failed while serving (a `500`) — neither the caller's fault nor the provider's.
+    INTERNAL_ERROR = "internal_error"
     #: No candidate model could serve the request, e.g. none reads its attachment (`ADR-0012` §3).
     NO_CAPABLE_MODEL = "no_capable_model"
     #: Refused on size before any route ran — kept apart from malformed requests.

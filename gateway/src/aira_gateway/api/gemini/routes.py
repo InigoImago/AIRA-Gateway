@@ -42,17 +42,17 @@ from aira_gateway.api.serving import (
     json_body,
     prepare_for_dispatch,
     record_refusal,
+    refusal_outcome,
     requirements_for,
     resolve_direct_target,
     schema_bounds,
-    upstream_status,
+    served_models,
 )
-from aira_gateway.audit import AuditTrail, Outcome
+from aira_gateway.audit import AuditTrail
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback
 from aira_gateway.state import providers_of
 from aira_gateway.telemetry import model_call_chunks, model_call_span
-from aira_gateway.upstreams.base import UpstreamError
 
 _log = get_logger("aira_gateway")
 
@@ -68,8 +68,7 @@ GENERATION_METHODS = frozenset({"generateContent", "streamGenerateContent"})
 @router.get("/v1beta/models")
 async def list_models(request: Request) -> JSONResponse:
     models = [
-        await _described(request, upstream_model_to_gemini(m))
-        for m in providers_of(request).models()
+        await _described(request, upstream_model_to_gemini(m)) for m in await served_models(request)
     ]
     # `exclude_none`: a limit nobody declared is an absent field, as with Google, never a null.
     return JSONResponse(schemas.ListModelsResponse(models=models).model_dump(exclude_none=True))
@@ -77,7 +76,7 @@ async def list_models(request: Request) -> JSONResponse:
 
 @router.get("/v1beta/models/{model}")
 async def get_model(model: str, request: Request) -> Response:
-    upstream_model = providers_of(request).get_model(model)
+    upstream_model = next((m for m in await served_models(request) if m.name == model), None)
     if upstream_model is None:
         return _error(404, f"Model '{model}' not found.", "NOT_FOUND")
     described = await _described(request, upstream_model_to_gemini(upstream_model))
@@ -152,6 +151,14 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     if method in GENERATION_METHODS:
         gemini_request = _validated(schemas.GenerateContentRequest, body)
         canonical = gemini_to_canonical(model, gemini_request, bounds=schema_bounds(request))
+        if method == "streamGenerateContent" and _asked_for_reasoning(gemini_request):
+            raise GeminiHTTPError(
+                400,
+                "'includeThoughts' is not served on a stream: streamed answers carry no reasoning "
+                "(FRD-135), and a stream without the thoughts asked for would look complete. Use "
+                "generateContent, or omit it.",
+                "INVALID_ARGUMENT",
+            )
     elif method in EMBEDDING_METHODS:
         embed_request = _embedding_request(model, method, body)
     else:
@@ -236,7 +243,7 @@ async def _embed(
                 embedding=schemas.ContentEmbedding(values=vectors[0] if vectors else [])
             ).model_dump()
         )
-        acct.embedded(model, payload, units=embed_request.size)
+        acct.embedded(model, payload, units=embed_request.size, vectors=vectors)
     return JSONResponse(payload, headers=headers)
 
 
@@ -270,9 +277,11 @@ async def _stream_response(
             streamed_calls: list[str] = []
             final_usage = None
             separator = ""
-            # Overridden only by an upstream failure. A caller who hangs up leaves the
-            # `Accounting` default (499), exactly as on the KIRA surface.
-            status = 200
+            # What stopped the stream after its headers were sent, if anything did.
+            failure: Exception | None = None
+            # Whether the stream ran to its end. Vertex reports usage on every chunk, so having
+            # usage is not having answered: a caller who left first is `499`, as on KIRA.
+            delivered = False
             notice = StreamedNotice(
                 prepared.notices, structured=canonical.response_schema is not None
             )
@@ -297,17 +306,18 @@ async def _stream_response(
                         else:
                             yield f"{separator}{payload}"
                             separator = ","
-                except UpstreamError as exc:
-                    # Headers are already sent: log it and end the stream cleanly.
-                    status = upstream_status(exc.status_code)[0]
+                except REFUSALS as exc:
+                    # Headers are already sent: record what stopped it and end the stream cleanly.
+                    failure = exc
                     _log.error(
                         "upstream_stream_error",
-                        error=exc.message,
-                        status=exc.status_code,
+                        error=str(exc),
+                        status=getattr(exc, "status_code", None),
                         model=canonical.model,
                     )
                 if not sse:
                     yield "]"
+                delivered = True
             finally:
                 outcome_note = notice.outcome()
                 if outcome_note is not None:
@@ -315,12 +325,10 @@ async def _stream_response(
                 # No usage reported means nothing chargeable, so the reservation is released.
                 if final_usage is not None:
                     # The call names too: a streamed tool call has no text to accumulate.
-                    acct.served(
-                        canonical.model, final_usage, {"text": "".join(parts)}, streamed_calls
-                    )
-                if status != 200:
-                    acct.status = status
-                    acct.outcome = Outcome.UPSTREAM_ERROR
+                    report = acct.served if delivered else acct.abandoned
+                    report(canonical.model, final_usage, {"text": "".join(parts)}, streamed_calls)
+                if failure is not None:
+                    acct.failed(refusal_response(failure).status_code, refusal_outcome(failure))
 
     media_type = "text/event-stream" if sse else "application/json"
     return StreamingResponse(generate_chunks(), media_type=media_type, headers=headers)
@@ -375,9 +383,10 @@ def _embedding_request(model: str, method: str, body: dict[str, Any]) -> Canonic
     return gemini_to_embedding(model, entries)
 
 
-def _asked_for_reasoning(parsed: schemas.GenerateContentRequest | None) -> bool:
-    """This surface's spelling of "give me the model's reasoning" (`FRD-135` FR-4)."""
+def _asked_for_reasoning(parsed: schemas.GenerateContentRequest | None) -> bool | None:
+    """This surface's spelling of "give me the model's reasoning" (`FRD-135` FR-4): ``True``,
+    ``False`` when declined explicitly, ``None`` when the caller did not say."""
     if parsed is None or parsed.generationConfig is None:
-        return False
+        return None
     thinking = parsed.generationConfig.thinkingConfig
-    return bool(thinking is not None and thinking.includeThoughts)
+    return None if thinking is None else thinking.includeThoughts

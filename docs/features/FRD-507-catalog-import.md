@@ -117,6 +117,12 @@ into the gateway's configuration. That is an echo. The list nobody had was the *
 Three lists, and the design is mostly about keeping them apart: collapsing any two produces a
 screen that is confidently wrong rather than empty.
 
+"What the gateway serves" includes every **approved** catalogued model an adapter serves, not only
+the ones configuration names — cataloguing is enough to serve a model, so a listing of configuration
+alone omitted models that answered. Each entry offers the verbs its declaration allows; a model
+declared to generate only no longer advertises `embedContent`. Both surfaces' lists read the same
+function (`serving.served_models`).
+
 **FR-6** The provider field is a **choice**, not a string. `GET /v1beta/providers` answers what
 _this installation_ is configured with — a hard-coded vocabulary would describe what the product
 supports, which is a different question and offers providers no credential reaches. A provider not

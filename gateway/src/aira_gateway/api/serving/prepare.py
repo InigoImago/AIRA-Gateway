@@ -34,6 +34,7 @@ from aira_gateway.api.serving.controls import (
     cache_ttl_for,
     check_declaration,
     check_not_empty,
+    check_sampling,
     check_tools_permitted,
     enforce_pre_dispatch,
     guard_before_work,
@@ -97,7 +98,7 @@ async def prepare_for_dispatch(
     *,
     method: str,
     canonical: CanonicalRequest | None = None,
-    reasoning_asked_for: bool = False,
+    reasoning_asked_for: bool | None = None,
     embed: CanonicalEmbeddingRequest | None = None,
     requested_output: int | None = None,
     default_task_type: str | None = None,
@@ -110,6 +111,7 @@ async def prepare_for_dispatch(
         trail.tools_declared = len(canonical.tools)
         # Requests that can never succeed are refused before they spend an allowance.
         check_not_empty(canonical)
+        check_sampling(canonical)
         await check_tools_permitted(request, canonical)
         canonical = await resolve_reasoning(request, canonical, asked_for=reasoning_asked_for)
 
@@ -144,12 +146,18 @@ async def prepare_for_dispatch(
                 "cache_prefix": await cache_prefix_wanted(request, declaration),
                 "cache_ttl": await cache_ttl_for(request),
                 "addressing": declaration.addressing,
+                # The model's default when the caller set none (`FRD-114` FR-2), so the cap that
+                # applies is the one this installation declared, not the vendor's.
+                "max_output_tokens": declaration.output_cap(canonical.max_output_tokens),
             }
         )
     if embed is not None:
         embed = validate_embedding(
             embed, declaration, embedding_bounds(request), default_task_type=default_task_type
         )
+        # The catalogue's addressing, as for generation: a catalogued model on a regional
+        # platform has nowhere to be sent without it (`FRD-507`).
+        embed = embed.model_copy(update={"addressing": declaration.addressing})
 
     reservation = await enforce_pre_dispatch(
         request,

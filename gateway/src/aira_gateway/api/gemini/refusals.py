@@ -19,8 +19,9 @@ from aira_gateway.embedding import EmbeddingRejected
 from aira_gateway.pipeline.dispatch import NoCapableModel
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.thinking import ThinkingRejected
-from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError
+from aira_gateway.upstreams.base import AmbiguousModel, DialectUnsupported, UpstreamError
 
 
 def refusal_response(exc: Exception) -> JSONResponse:
@@ -30,8 +31,9 @@ def refusal_response(exc: Exception) -> JSONResponse:
         # Google's envelope has no field for the contract's code, so it travels in the message;
         # the KIRA surface renders it as the code (`FRD-107`).
         return _error(400, f"{exc.code}: {exc.message}", "INVALID_ARGUMENT")
-    if isinstance(exc, NoCapableModel):
-        # Every candidate was excluded: a configuration somebody can fix, not an outage.
+    if isinstance(exc, NoCapableModel | AmbiguousModel | RegionNotAllowed):
+        # Every candidate was excluded, or the model has no place to be sent: a configuration
+        # somebody can fix, not an outage.
         return _error(400, str(exc), "FAILED_PRECONDITION")
     if isinstance(exc, Suspended | RateLimited):
         # 429 for a suspension too: the caller is stopped temporarily, and a 403 would send them

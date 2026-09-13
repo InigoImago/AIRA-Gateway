@@ -16,7 +16,13 @@ from aira_gateway.auth.attribution import Attribution
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.service import BudgetService, Reservation
 from aira_gateway.config import GatewaySettings
-from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
+from aira_gateway.core.canonical import (
+    CanonicalChunk,
+    CanonicalMessage,
+    CanonicalRequest,
+    CanonicalUsage,
+    Role,
+)
 from aira_gateway.db.models import RequestLog
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, UpstreamModel
@@ -201,6 +207,26 @@ def test_an_unexpected_error_also_releases_the_reservation() -> None:
     assert budgets.settled == 0
 
 
+async def test_an_unexpected_error_still_leaves_a_row() -> None:
+    """A request that failed in *this* gateway was attributed and reached the accounting, so the
+    audit must say what became of it. Only refusals are recorded elsewhere — at the surface's
+    boundary — and a 500 is not one, so it used to leave no row at all."""
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.state.providers = ProviderRegistry([_BoomProvider()])
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        generated = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+        embedded = client.post("/v1beta/models/mock-1:embedContent", json=_EMBED_BODY)
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    assert (generated.status_code, embedded.status_code) == (500, 500)
+    assert sorted((row.operation, row.status, row.outcome) for row in rows) == [
+        ("embedContent", 500, "internal_error"),
+        ("generateContent", 500, "internal_error"),
+    ]
+
+
 def test_a_failed_stream_releases_rather_than_charging_for_nothing() -> None:
     """A stream that produced no output consumed nothing. Settling would still book a request
     against a request-limited budget, so a provider outage would eat the allowance."""
@@ -256,6 +282,50 @@ async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservatio
             rows = list((await session.execute(select(RequestLog))).scalars())
         assert len(rows) == 1, "a disconnected stream must still be logged"
         assert rows[0].operation == "streamGenerateContent"
+
+
+class _ReportsUsageOnEveryChunk:
+    """Like Vertex: every chunk carries the usage so far, so having usage is not having answered."""
+
+    is_test_double = True
+
+    def models(self) -> list[UpstreamModel]:
+        return [UpstreamModel("mock-1", "mock-1", ("streamGenerateContent",))]
+
+    async def stream_generate(self, request):  # noqa: ANN001, ANN201
+        for count in (1, 2, 3):
+            yield CanonicalChunk(
+                text_delta=f"part{count} ",
+                usage=CanonicalUsage(prompt_tokens=4, completion_tokens=count),
+            )
+
+
+async def test_a_caller_who_leaves_after_usage_arrived_is_499_and_billed_for_it() -> None:
+    """Recorded as served with a 200 before: the first Vertex chunk already carries usage, and
+    "some usage arrived" was read as "the answer was delivered"."""
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.state.providers = ProviderRegistry([_ReportsUsageOnEveryChunk()])
+    budgets = _TrackingBudgets()
+    app.state.budgets = budgets
+
+    with TestClient(app):
+        response = await _stream_response(
+            _stream_request(app),
+            _canonical(),
+            _prepared(),
+            AuditTrail(operation="streamGenerateContent", api="gemini", requested_model="mock-1"),
+            sse=True,
+        )
+        iterator = response.body_iterator
+        await iterator.__anext__()  # the first chunk and its usage, then the caller goes away
+        await iterator.aclose()
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    assert [(row.status, row.outcome, row.completion_tokens) for row in rows] == [
+        (499, "client_gone", 1)
+    ]
+    assert budgets.settled == 1, "what the upstream reported was spent, so it is booked"
 
 
 _EMBED_BODY = {"content": {"parts": [{"text": "hi"}]}}

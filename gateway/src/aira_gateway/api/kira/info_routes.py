@@ -17,13 +17,12 @@ from fastapi.responses import JSONResponse
 from aira_common.models import Capability
 from aira_gateway.api.kira import BASE, errors, schemas
 from aira_gateway.api.kira.headers import surface_headers
-from aira_gateway.api.serving import catalog_of
+from aira_gateway.api.serving import catalog_of, served_models
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.reporting.service import ReportingService
-from aira_gateway.state import providers_of
 
 router = APIRouter(tags=["kira"], prefix=BASE)
 
@@ -39,7 +38,7 @@ async def models(request: Request, principal: Principal = Depends(require_princi
     del principal
     catalog = catalog_of(request)
     listed: list[schemas.KiModel] = []
-    for described in providers_of(request).models():
+    for described in await served_models(request):
         declaration = await catalog.declaration(described.name)
         if declaration.numeric_id is None:
             # A KIRA client addresses models by id; without one it cannot call this model.

@@ -66,8 +66,12 @@ either dialect exists, and keeps the dialect work free of authentication concern
   {publisher}/models/{model}:{method}`, where `{host}` is `{location}-aiplatform.googleapis.com`
   or `aiplatform.eu.rep.googleapis.com` for the `eu` multi-region.
 - **FR-2 Publisher-dependent method and dialect.** `publishers/google` → `:generateContent` /
-  `:streamGenerateContent` / `:embedContent`, Gemini body. `publishers/anthropic` → `:rawPredict` /
-  `:streamRawPredict`, Anthropic body (`FRD-119`).
+  `:streamGenerateContent`, Gemini body; embeddings → `:predict` (`{"instances": [{"content",
+  "task_type"}], "parameters": {"outputDimensionality", "autoTruncate": false}}`), one text per
+  call. Vertex does not serve the Generative Language API's `batchEmbedContents` (404) and refuses
+  its `embedContent` for an API key (401) — found against a real project, where every embedding
+  had answered 500. `autoTruncate` is off so an over-long text is refused, not embedded in part.
+  `publishers/anthropic` → `:rawPredict` / `:streamRawPredict`, Anthropic body (`FRD-119`).
 - **FR-2a Self-deployed endpoints.** Models deployed from Model Garden onto our own capacity
   (Nemotron and similar NIM containers) are addressed by endpoint id and speak the **OpenAI**
   dialect. Same transport, same credential, different addressing and different failure modes
@@ -111,7 +115,11 @@ either dialect exists, and keeps the dialect work free of authentication concern
 - **FR-9 Token-acquisition failure is an upstream failure**, mapping to `UpstreamError` and a
   503-shaped answer — never a client error.
 - **FR-10 Provider, publisher and region on every audit row and span.** FR-5 is a configuration
-  claim; this is what makes it auditable.
+  claim; this is what makes it auditable. The region is the one the adapter reports as having
+  answered — for generation and for embeddings — and only then the configured or catalogued one.
+  A catalogued model is attributed to the adapter of its own **publisher**: Vertex hosts two, and a
+  lookup by provider name alone once found the one serving nothing and left the row blank. Served
+  rows used to ignore the reported region altogether; only refusal rows passed it on.
 
 ## 5. Design & Architecture
 

@@ -290,10 +290,12 @@ graph TB
     exit{"How did it end?"}
     exit -->|"answered"| settle["settle the reservation<br/>with what was really used"]
     exit -->|"refused"| release["release the reservation"]
-    exit -->|"client hung up"| cancel["release · outcome <b>client_gone</b>"]
+    exit -->|"client hung up"| cancel["release, or settle what was already reported<br/>status 499 · outcome <b>client_gone</b>"]
+    exit -->|"the gateway failed"| fail["release · status 500 · outcome <b>internal_error</b>"]
     settle --> row["audit row"]
     release --> row
     cancel --> row
+    fail --> row
     row --> queue["bounded queue → worker<br/><i>drained on shutdown,<br/>inline when full</i>"]
 
     style row fill:#4f46e5,color:#fff
@@ -353,6 +355,7 @@ period has passed (default 7 days). It must be scheduled or nothing is deleted.
 | Declared, but the dialect has no field for it | 400 `FAILED_PRECONDITION`, **naming the reason** | `invalid_request`           |
 | Upstream said 400                 | 400 `FAILED_PRECONDITION`, carrying its reason | `upstream_error`            |
 | Upstream 401/403                  | 502, **masked**                                | `upstream_error`            |
+| This gateway failed (a defect)    | 500                                            | `internal_error`            |
 | Caller hung up                    | —                                              | `client_gone`               |
 
 Two rules behind that table. **Nothing a request asks for is silently dropped**: a field this

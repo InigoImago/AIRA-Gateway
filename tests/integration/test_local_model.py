@@ -347,7 +347,10 @@ async def test_thinking_is_billed_as_output_and_never_returned(
         pytest.skip(f"the model did not serve a thinking request ({response.status_code})")
 
     answer = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    reported = response.json()["usageMetadata"]["candidatesTokenCount"]
+    usage = response.json()["usageMetadata"]
+    # Reported apart, as Google does: `candidatesTokenCount` the answer, `thoughtsTokenCount` the
+    # reasoning. Together they are the billed output.
+    reported = usage["candidatesTokenCount"] + usage.get("thoughtsTokenCount", 0)
 
     # The billed output is far larger than the answer: that *is* the thinking, counted as output.
     assert reported > max(1, len(answer)), "thinking does not appear in the output token count"

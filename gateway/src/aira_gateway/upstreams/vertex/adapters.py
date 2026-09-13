@@ -19,6 +19,7 @@ from aira_gateway.core.canonical import (
     CanonicalEmbeddingRequest,
     CanonicalRequest,
     CanonicalResponse,
+    EmbeddingVectors,
 )
 from aira_gateway.core.schema import ResponseSchema
 from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
@@ -26,10 +27,7 @@ from aira_gateway.upstreams.gemini_mapping import (
     SAMPLING as GEMINI_SAMPLING,
 )
 from aira_gateway.upstreams.gemini_mapping import (
-    batch_embedding_body,
-    canonical_to_gemini_embedding,
     canonical_to_gemini_request,
-    embedding_values,
     gemini_chunk_to_canonical,
     gemini_response_to_canonical,
 )
@@ -43,6 +41,11 @@ from aira_gateway.upstreams.vertex.anthropic_mapping import (
 )
 from aira_gateway.upstreams.vertex.anthropic_mapping import (
     schema_refusal as anthropic_schema_refusal,
+)
+from aira_gateway.upstreams.vertex.embedding_mapping import (
+    predict_body,
+    predict_tokens,
+    predict_values,
 )
 from aira_gateway.upstreams.vertex.regions import (
     VertexModel,
@@ -169,23 +172,27 @@ class VertexGeminiAdapter(_VertexAdapter):
             yield chunk
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
-        """A list goes to `batchEmbedContents`, a single text to the lower-latency `embedContent`.
+        """Through `:predict`, one text per call, in the caller's order (`embedding_mapping`).
 
         Embeddings take the regional chain too: a batch refused for want of quota is exactly what
         failover is for.
         """
-        method = "batchEmbedContents" if request.size > 1 else "embedContent"
-        body = (
-            batch_embedding_body(request, request.model)
-            if request.size > 1
-            else canonical_to_gemini_embedding(request)
-        )
 
-        async def attempt(region: str, publisher: str) -> list[list[float]]:
+        async def attempt(region: str, publisher: str) -> EmbeddingVectors:
             url = self._transport.url(
-                region=region, publisher=publisher, model=request.model, method=method
+                region=region, publisher=publisher, model=request.model, method="predict"
             )
-            return embedding_values(await self._transport.post(url, body))
+            answers = [
+                await self._transport.post(url, predict_body(request, text))
+                for text in request.texts
+            ]
+            counts = [predict_tokens(answer) for answer in answers]
+            # Where it was answered and what it cost, for the audit row and the price.
+            return EmbeddingVectors(
+                (predict_values(answer) for answer in answers),
+                served_region=region,
+                input_tokens=None if None in counts else sum(count or 0 for count in counts),
+            )
 
         return await _across_regions(self._targets_for(request.model, request.addressing), attempt)
 

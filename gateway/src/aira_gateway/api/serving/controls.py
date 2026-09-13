@@ -32,6 +32,18 @@ EMBEDDING_METHODS = frozenset({"embedContent", "batchEmbedContents"})
 #: The prompt-cache lifetime a use case gets unless it chose the long one (`FRD-133`).
 DEFAULT_CACHE_TTL = "5m"
 
+#: The range every supported dialect accepts for each sampling control, under the name a caller
+#: sends (`FRD-124`). Checked before dispatch, so an out-of-range value is the caller's `400` naming
+#: the field, never an upstream refusal recorded as the provider's error. A dialect with a narrower
+#: range still refuses upstream.
+SAMPLING_BOUNDS: dict[str, tuple[str, float, float]] = {
+    "temperature": ("temperature", 0.0, 2.0),
+    "top_p": ("topP", 0.0, 1.0),
+    "top_k": ("topK", 1.0, float("inf")),
+    "presence_penalty": ("presencePenalty", -2.0, 2.0),
+    "frequency_penalty": ("frequencyPenalty", -2.0, 2.0),
+}
+
 
 # == refusals that need no model ==================================================================
 
@@ -67,6 +79,19 @@ def check_not_empty(canonical: CanonicalRequest) -> None:
         )
 
 
+def check_sampling(canonical: CanonicalRequest) -> None:
+    """Refuse a sampling value outside the range every dialect accepts, naming the field."""
+    for attribute, (name, low, high) in SAMPLING_BOUNDS.items():
+        value = getattr(canonical, attribute)
+        if value is not None and not low <= value <= high:
+            allowed = f"at least {low:g}" if high == float("inf") else f"from {low:g} to {high:g}"
+            raise GeminiHTTPError(
+                400,
+                f"{name} {value:g} is outside the accepted range ({allowed}).",
+                "INVALID_ARGUMENT",
+            )
+
+
 async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -> None:
     """A request may declare functions only if its use case enabled tool calling (`FRD-131` FR-3).
 
@@ -95,7 +120,7 @@ async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -
 
 
 async def resolve_reasoning(
-    request: Request, canonical: CanonicalRequest, *, asked_for: bool
+    request: Request, canonical: CanonicalRequest, *, asked_for: bool | None
 ) -> CanonicalRequest:
     """Whether the model's reasoning comes back (`FRD-135` FR-3/FR-4) — the use case decides.
 
@@ -114,7 +139,10 @@ async def resolve_reasoning(
             "on (FRD-135). Send it as false, or omit it.",
             "FAILED_PRECONDITION",
         )
-    return canonical.model_copy(update={"include_reasoning": allowed}) if allowed else canonical
+    # An explicit no withholds them even where the use case allows them: Google's own meaning of
+    # the field, and a caller who declined must not receive text it did not ask for.
+    returned = allowed and asked_for is not False
+    return canonical.model_copy(update={"include_reasoning": True}) if returned else canonical
 
 
 async def guard_before_work(request: Request, *, units: int = 1) -> None:

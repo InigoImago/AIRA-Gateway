@@ -240,7 +240,7 @@ class _ConfiguredInWest1:
 
         return UpstreamModel(model, model, ("generateContent",), "vertex", "google", "europe-west1")
 
-    def provenance_for(self, provider: str) -> tuple[str, str, str] | None:
+    def provenance_for(self, provider: str, publisher: str = "") -> tuple[str, str, str] | None:
         return ("vertex", "google", "europe-west1")
 
 
@@ -281,7 +281,7 @@ async def test_a_catalogued_model_records_the_region_that_answered_too() -> None
         def get_model(self, model: str) -> Any:
             return None
 
-        def provenance_for(self, provider: str) -> tuple[str, str, str] | None:
+        def provenance_for(self, provider: str, publisher: str = "") -> tuple[str, str, str] | None:
             return ("vertex", "google", "europe-west1")
 
     class _Catalog:

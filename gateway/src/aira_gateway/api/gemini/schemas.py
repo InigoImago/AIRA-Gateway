@@ -24,6 +24,11 @@ _STRICT = ConfigDict(extra="forbid")
 #: matches before a trailing newline, and this name reaches the audit row and span attributes.
 _FUNCTION_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 
+#: The roles a turn may carry. `system` and `function` are older spellings Google clients still send
+#: (a system turn; a function response). Anything else is refused: an `assistant` turn read as the
+#: user's own words changes the conversation, and nothing in the answer would show it.
+_ROLES = frozenset({"user", "model", "system", "function"})
+
 # -- fields Google defines that this gateway refuses, each with the reason given to the caller -----
 
 #: Part shapes. `functionCall`/`functionResponse` are carried (`FRD-131`): `ADR-0013` refuses
@@ -160,6 +165,14 @@ class Content(BaseModel):
     role: str | None = None
     parts: list[Part]
 
+    @model_validator(mode="after")
+    def _known_role(self) -> Content:
+        if self.role is not None and self.role not in _ROLES:
+            raise ValueError(
+                f"role '{self.role}' is not a Gemini role; a turn is 'user' or 'model'."
+            )
+        return self
+
 
 class ThinkingConfig(BaseModel):
     """Google's own field, plus the canonical form (`FRD-111` §7).
@@ -224,6 +237,26 @@ class GenerationConfig(BaseModel):
                 f"request for {self.candidateCount} with one would look like a complete answer."
             )
         return self
+
+    @model_validator(mode="after")
+    def _served_media_type(self) -> GenerationConfig:
+        """Text, or JSON **with** a schema (`FRD-112`): any other type would be answered in prose,
+        and JSON without a schema has no counterpart on every supported dialect."""
+        mime = self.responseMimeType
+        if mime is None or mime == "text/plain":
+            return self
+        if mime == "application/json" and self.responseSchema is not None:
+            return self
+        if mime == "application/json":
+            raise ValueError(
+                "'responseMimeType' application/json without a 'responseSchema' is not served: "
+                "JSON without a schema is not expressed on every supported dialect, so the answer "
+                "would arrive as prose. Send a responseSchema, or omit responseMimeType."
+            )
+        raise ValueError(
+            f"'responseMimeType' '{mime}' is not served: this gateway answers in text/plain, or in "
+            "application/json with a 'responseSchema'."
+        )
 
 
 class FunctionDeclaration(BaseModel):

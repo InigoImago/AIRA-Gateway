@@ -19,8 +19,9 @@ from aira_gateway.embedding import EmbeddingRejected
 from aira_gateway.pipeline.dispatch import NoCapableModel
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.thinking import ThinkingRejected
-from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError
+from aira_gateway.upstreams.base import AmbiguousModel, DialectUnsupported, UpstreamError
 
 #: The shared refusals plus this surface's own error type.
 KIRA_REFUSALS = (*REFUSALS, errors.KiraError)
@@ -55,7 +56,7 @@ def refusal_response(exc: Exception) -> JSONResponse:
         return errors.kira_error_response(429, errors.EXTERNAL_KI_API_TOO_MANY_REQUEST, exc.message)
     if isinstance(exc, PipelineRejected):
         return errors.kira_error_response(exc.code, errors.VALIDATION_ERROR, exc.message)
-    if isinstance(exc, NoCapableModel):
+    if isinstance(exc, NoCapableModel | AmbiguousModel | RegionNotAllowed):
         return errors.kira_error_response(400, errors.MODEL_NOT_FOUND, str(exc))
     if isinstance(exc, DialectUnsupported):
         # The model exists; the request as written cannot be carried to it. `MODEL_NOT_FOUND`

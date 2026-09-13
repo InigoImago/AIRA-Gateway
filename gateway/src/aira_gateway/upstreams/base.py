@@ -262,21 +262,31 @@ class ProviderRegistry:
         """
         return {provider: upstream for (provider, _), upstream in self._by_provider.items()}
 
-    def provenance_for(self, provider: str) -> tuple[str, str, str] | None:
+    def _exact(self, provider: str, publisher: str) -> Upstream | None:
+        """The adapter owning exactly ``(provider, publisher)``: one platform hosts several wire
+        formats (Vertex: `google`, `anthropic`), so the provider name alone finds either."""
+        return self._by_provider.get((provider, publisher)) if publisher else None
+
+    def provenance_for(self, provider: str, publisher: str = "") -> tuple[str, str, str] | None:
         """Where an adapter that owns a provider name reaches its models (`FRD-507`).
 
         A catalogue-resolved model has no entry in `_models`, and a blank residency column on its
         audit row would be neither claim nor evidence (`FRD-115`). Read from one of the adapter's
         own models, else from its declared `provenance`; ``None`` rather than a guess.
         """
-        upstream = self.by_name().get(provider)
+        exact = self._exact(provider, publisher)
+        upstream = exact or self.by_name().get(provider)
         if upstream is None:
             return None
         for model in upstream.models():
             if model.provider:
                 return (model.provider, model.publisher, model.region)
         declared = getattr(upstream, "provenance", None)
-        return declared if isinstance(declared, tuple) else None
+        if isinstance(declared, tuple):
+            return declared
+        # An adapter serving only catalogued models still names who it is; the region is the
+        # caller's to add, from what answered or from what the catalogue lists.
+        return (provider, publisher, "") if exact is not None else None
 
     def provider_for(self, model: str, provider: str = "", publisher: str = "") -> Upstream | None:
         """Which adapter serves this model.
@@ -291,8 +301,7 @@ class ProviderRegistry:
             return direct
         if not provider:
             return None
-        exact = self._by_provider.get((provider, publisher)) if publisher else None
-        return exact or self._by_provider.get((provider, ""))
+        return self._exact(provider, publisher) or self._by_provider.get((provider, ""))
 
     def models(self) -> list[UpstreamModel]:
         return list(self._models.values())

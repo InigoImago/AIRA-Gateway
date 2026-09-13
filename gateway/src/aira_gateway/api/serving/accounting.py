@@ -22,7 +22,7 @@ from fastapi import Request
 from aira_common.logging import get_logger
 from aira_gateway.api.serving.context import attribution_of, provenance
 from aira_gateway.api.serving.prepare import Prepared
-from aira_gateway.api.serving.refusals import refusal_outcome
+from aira_gateway.api.serving.refusals import REFUSALS, refusal_outcome
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
 from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
 from aira_gateway.persistence.recorder import record_request
@@ -77,10 +77,45 @@ class Accounting:
         if tool_calls and self.trail is not None:
             self.trail.tool_calls = list(tool_calls)
 
-    def embedded(self, model: str, payload: dict[str, Any], *, units: int) -> None:
-        """Vectors, which cost tokens nobody reports. Weighed as the many requests it is."""
-        self.served(model, None, payload)
+    def embedded(
+        self,
+        model: str,
+        payload: dict[str, Any],
+        *,
+        units: int,
+        vectors: Sequence[list[float]] = (),
+    ) -> None:
+        """Vectors, weighed as the many requests they are (`FRD-113` FR-6).
+
+        Priced by the input tokens the adapter reported (`FRD-403`) and recorded where it says they
+        were produced (`FRD-115` FR-10). An adapter that reports neither leaves the row unpriced
+        and the region to configuration — unknown, never zero.
+        """
+        tokens = getattr(vectors, "input_tokens", None)
+        usage: CanonicalUsage | None = None
+        if tokens is not None:
+            usage = CanonicalUsage(prompt_tokens=tokens, completion_tokens=0)
+        self.served(model, usage, payload)
         self.requests = units
+        region = getattr(vectors, "served_region", "")
+        if region and self.trail is not None:
+            self.trail.served_region = region
+
+    def abandoned(
+        self,
+        model: str,
+        usage: CanonicalUsage | None,
+        payload: dict[str, Any],
+        tool_calls: Sequence[str] = (),
+    ) -> None:
+        """The caller left mid-stream after the upstream had reported usage (`FRD-128` FR-2).
+
+        What was reported was produced and reached them, so it is settled; the row still says
+        `499`/`client_gone` rather than that the request was served.
+        """
+        self.served(model, usage, payload, tool_calls)
+        self.status = CLIENT_CLOSED_REQUEST
+        self.outcome = Outcome.CLIENT_GONE
 
     def failed(self, status: int, outcome: Outcome) -> None:
         self.status = status
@@ -101,7 +136,8 @@ async def accounting(
 
     - The stored body is read off the trail, which holds the pipeline's rewrite (`FRD-309`).
     - A refusal propagating to the surface is recorded there, by :func:`record_refusal`; this exit
-      only settles, so no request gets two rows.
+      only settles, so no request gets two rows. Any other exception is this gateway failing, and
+      nothing else would record it: it leaves a `500`/`internal_error` row here.
     - The settle-and-record is **shielded**: a dropped socket cancels the task, and an unshielded
       `await` in `finally` would lose exactly the row this exists to write.
     - Nothing produced means the reservation is released, not settled, so a caller who hung up or
@@ -117,8 +153,11 @@ async def accounting(
         except asyncio.CancelledError, GeneratorExit:
             # The caller left: nobody else will write a row, so this exit must.
             raise
-        except BaseException:
+        except REFUSALS:
             record = False
+            raise
+        except BaseException:
+            state.failed(500, Outcome.INTERNAL_ERROR)
             raise
         finally:
             await asyncio.shield(
@@ -176,7 +215,7 @@ async def _settle_and_record(
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
         tool_calls=tool_summary(trail),
-        provenance=await provenance(request, model),
+        provenance=await provenance(request, model, trail.served_region),
         api=api,
     )
 

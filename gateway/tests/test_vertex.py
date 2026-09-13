@@ -400,6 +400,49 @@ async def test_a_gemini_request_on_vertex_uses_generate_content() -> None:
     assert seen["url"].endswith("/publishers/google/models/gemini-1:generateContent")
 
 
+async def test_a_gemini_embedding_on_vertex_goes_to_predict_one_text_per_call() -> None:
+    """Vertex does not serve `batchEmbedContents` and refuses `embedContent` for an API key; its
+    embedding verb is `:predict`, which takes one text per call for `gemini-embedding-001`."""
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append((str(request.url), body))
+        text = body["instances"][0]["content"]
+        embeddings = {"values": [float(len(text)), 1.0], "statistics": {"token_count": len(text)}}
+        return httpx.Response(200, json={"predictions": [{"embeddings": embeddings}]})
+
+    adapter = VertexGeminiAdapter(_transport(handler), [VertexModel("eu", "google", "embed-1")])
+    vectors = await adapter.embed(
+        CanonicalEmbeddingRequest(
+            model="embed-1", texts=["a", "bbb"], task_type="RETRIEVAL_QUERY", dimensions=768
+        )
+    )
+
+    assert vectors == [[1.0, 1.0], [3.0, 1.0]], "one vector per text, in the caller's order"
+    # Where it was answered and what it cost, for the audit row's residency and its price.
+    assert getattr(vectors, "served_region", None) == "eu"
+    assert getattr(vectors, "input_tokens", None) == 4
+    assert [url.rsplit(":", 1)[-1] for url, _ in seen] == ["predict", "predict"]
+    assert seen[0][1] == {
+        "instances": [{"content": "a", "task_type": "RETRIEVAL_QUERY"}],
+        # Off, or an over-long text is embedded in part and answered with a 200.
+        "parameters": {"autoTruncate": False, "outputDimensionality": 768},
+    }
+
+
+async def test_a_predict_answer_without_a_vector_is_the_providers_fault() -> None:
+    adapter = VertexGeminiAdapter(
+        _transport(lambda request: httpx.Response(200, json={"predictions": []})),
+        [VertexModel("eu", "google", "embed-1")],
+    )
+
+    with pytest.raises(UpstreamError) as caught:
+        await adapter.embed(CanonicalEmbeddingRequest(model="embed-1", texts=["a"]))
+
+    assert caught.value.status_code == 502
+
+
 async def test_an_upstream_status_is_preserved_so_the_route_can_pass_it_through() -> None:
     """429/503/504 mean something specific to a caller, and the route already maps them. A
     transport that flattened everything to 502 would lose that across every vendor at once."""

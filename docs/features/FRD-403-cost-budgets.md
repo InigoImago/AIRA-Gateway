@@ -47,7 +47,9 @@ Budgets could only cap **tokens** and **request counts**. Neither is a cost cont
   least one limit of any kind is still required.
 - **FR-5 Pricing**: the gateway computes each request's cost from the prompt/completion token
   split and the model's prices, once per request, shared by the budget counters and the audit log
-  so the two cannot disagree.
+  so the two cannot disagree. An **embedding** is priced by the input tokens its adapter reports
+  (Vertex's `:predict` does); one whose adapter reports none stays unpriced under FR-7. Every
+  embedding counted as unpriced until a live round found it, since none reported usage at all.
 - **FR-6 Enforcement**: pre-dispatch, an exhausted cost limit rejects with
   `429 RESOURCE_EXHAUSTED`, exactly like the count limits.
 - **FR-7 Unpriced traffic**: a request whose model has no price is counted under

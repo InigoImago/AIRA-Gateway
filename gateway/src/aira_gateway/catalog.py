@@ -271,6 +271,13 @@ class ModelCatalog:
             return ModelDeclaration(name=model)
         return _from_record(model, record)
 
+    async def catalogued(self) -> list[ModelDeclaration]:
+        """Every model the catalogue holds, for a listing: a catalogued model is served by its
+        adapter even when configuration does not name it (`FRD-507`)."""
+        async with self._sessionmaker() as session:
+            records = (await session.execute(select(ModelRead))).scalars().all()
+        return [_from_record(record.model, record) for record in records]
+
     async def by_numeric_id(self, numeric_id: int) -> str | None:
         """The model a KIRA-style integer id refers to (`FRD-114` FR-6).
 
@@ -328,6 +335,9 @@ class _MemoisedCatalog(ModelCatalog):
 
     async def by_numeric_id(self, numeric_id: int) -> str | None:
         return await self._source.by_numeric_id(numeric_id)
+
+    async def catalogued(self) -> list[ModelDeclaration]:
+        return await self._source.catalogued()
 
 
 def _from_record(model: str, record: ModelRead) -> ModelDeclaration:

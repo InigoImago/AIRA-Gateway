@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import Request
 
+from aira_common.models import Capability
 from aira_gateway.auth.attribution import Attribution
 from aira_gateway.catalog import ModelCatalog, ModelDeclaration
 from aira_gateway.core.schema import SchemaBounds
@@ -18,6 +19,10 @@ from aira_gateway.db.models import UseCaseRead
 from aira_gateway.embedding import EmbeddingBounds
 from aira_gateway.pipeline.dispatch import Routing, RoutingOf
 from aira_gateway.state import providers_of, sessionmaker_of, settings_of
+from aira_gateway.upstreams.base import UpstreamModel
+
+#: The verbs of a model that generates. The embedding verbs follow the declaration's batch flag.
+_GENERATION_VERBS = ("generateContent", "streamGenerateContent")
 
 
 def attribution_of(request: Request) -> Attribution | None:
@@ -123,7 +128,9 @@ async def provenance(
     ``served_region`` wins whenever the adapter reported one (`FRD-609`): with a failover chain the
     configured region is not where the request went, and a wrong residency claim reads as
     evidence. Otherwise the registry answers, then — for a model reached only through the
-    catalogue (`FRD-507`) — the adapter owning its provider. ``None`` rather than blank fields.
+    catalogue (`FRD-507`) — the adapter owning its provider **and publisher**, with the model's own
+    declared publisher and first region before the adapter's, which belong to another model.
+    ``None`` rather than blank fields.
     """
     registry = providers_of(request)
     described = registry.get_model(model)
@@ -133,10 +140,69 @@ async def provenance(
     declared = await catalog_of(request).declaration(model)
     if not declared.provider:
         return None
-    configured = registry.provenance_for(declared.provider)
+    configured = registry.provenance_for(declared.provider, declared.publisher)
     if configured is None:
         return None
-    return (configured[0], configured[1], served_region or configured[2])
+    region = served_region or next(iter(declared.regions), "") or configured[2]
+    return (configured[0], declared.publisher or configured[1], region)
+
+
+async def served_models(request: Request) -> list[UpstreamModel]:
+    """Every model a request may name, with the verbs the catalogue lets it answer.
+
+    Configuration **and** the catalogue: a catalogued model is served by the adapter owning its
+    provider even when configuration does not name it (`FRD-507`), so a list of configuration alone
+    omits models that work. An unapproved one is left out, since it would be refused (`FRD-307`).
+    """
+    registry = providers_of(request)
+    catalog = catalog_of(request)
+    listed = [
+        UpstreamModel(
+            model.name,
+            model.version,
+            _verbs(await catalog.declaration(model.name), model.supported_methods),
+            model.provider,
+            model.publisher,
+            model.region,
+        )
+        for model in registry.models()
+    ]
+    configured = {model.name for model in listed}
+    for declaration in await catalog.catalogued():
+        if declaration.name in configured or not declaration.approved or not declaration.provider:
+            continue
+        adapter = registry.provider_for(
+            declaration.name, declaration.provider, declaration.publisher
+        )
+        if adapter is None:
+            continue
+        listed.append(
+            UpstreamModel(
+                declaration.name,
+                declaration.name,
+                _verbs(declaration, (*_GENERATION_VERBS, "embedContent")),
+                declaration.provider,
+                declaration.publisher,
+                declaration.regions[0] if declaration.regions else "",
+            )
+        )
+    return listed
+
+
+def _verbs(declaration: ModelDeclaration, offered: tuple[str, ...]) -> tuple[str, ...]:
+    """The verbs an adapter offers, narrowed to what the model is declared to do — an undeclared
+    model has the baseline — plus the batch verb where the declaration allows one."""
+    allowed: set[str] = set()
+    if declaration.can(Capability.GENERATE):
+        allowed.update(_GENERATION_VERBS)
+    if declaration.can(Capability.EMBED):
+        allowed.add("embedContent")
+        if declaration.supports_batch:
+            allowed.add("batchEmbedContents")
+    verbs = [verb for verb in offered if verb in allowed]
+    if "embedContent" in verbs and "batchEmbedContents" in allowed - set(verbs):
+        verbs.append("batchEmbedContents")
+    return tuple(verbs)
 
 
 def schema_bounds(request: Request) -> SchemaBounds:

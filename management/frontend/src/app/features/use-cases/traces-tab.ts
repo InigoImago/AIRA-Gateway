@@ -28,6 +28,7 @@ const OUTCOMES = [
   'invalid_request',
   'request_too_large',
   'upstream_error',
+  'internal_error',
   'client_gone',
 ];
 

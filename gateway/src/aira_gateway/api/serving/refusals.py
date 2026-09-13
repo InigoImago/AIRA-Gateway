@@ -15,8 +15,9 @@ from aira_gateway.embedding import EmbeddingRejected
 from aira_gateway.pipeline.dispatch import NoCapableModel
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.thinking import ThinkingRejected
-from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError
+from aira_gateway.upstreams.base import AmbiguousModel, DialectUnsupported, UpstreamError
 
 #: Every exception a surface must treat as a refusal rather than an unhandled error. Listed once,
 #: so a new control cannot be caught by one surface and escape the other.
@@ -31,6 +32,10 @@ REFUSALS = (
     PipelineRejected,
     NoCapableModel,
     UpstreamError,
+    # A model with nowhere to be sent — no region catalogued, or one residency forbids — is what a
+    # chain skips a candidate for (`dispatch_with_fallback`); a direct verb refuses it the same way.
+    AmbiguousModel,
+    RegionNotAllowed,
     # A declaration the model's wire format cannot express is an operator-fixable refusal, not a
     # 500: the audit row must say the catalogue is wrong, not that the gateway broke.
     DialectUnsupported,
@@ -82,7 +87,7 @@ def refusal_outcome(exc: Exception) -> Outcome:
         return Outcome.SUSPENDED
     if isinstance(exc, AttachmentRejected | ThinkingRejected | SchemaRejected | EmbeddingRejected):
         return Outcome.INVALID_REQUEST
-    if isinstance(exc, NoCapableModel):
+    if isinstance(exc, NoCapableModel | AmbiguousModel | RegionNotAllowed):
         return Outcome.NO_CAPABLE_MODEL
     if isinstance(exc, RateLimited):
         return Outcome.RATE_LIMITED

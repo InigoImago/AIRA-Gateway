@@ -96,6 +96,53 @@ class _SlowProvider:
         return [[0.0]]
 
 
+class _ReportsUsageFirst(_SlowProvider):
+    """Like Vertex, whose first streamed chunk already carries the usage so far."""
+
+    async def stream_generate(self, request: CanonicalRequest):  # noqa: ANN201
+        self.calls += 1
+        yield CanonicalChunk(
+            text_delta="do", usage=CanonicalUsage(prompt_tokens=3, completion_tokens=2)
+        )
+        self.entered.set()
+        await self.finish.wait()
+        yield CanonicalChunk(
+            text_delta="ne",
+            usage=CanonicalUsage(prompt_tokens=3, completion_tokens=4),
+            finish_reason="stop",
+        )
+
+
+async def test_a_caller_who_leaves_after_usage_arrived_is_billed_for_it_and_recorded() -> None:
+    """What the upstream reported was spent and reached the caller, so it is settled — and the row
+    still says the caller left (`499`), which is what the Gemini surface once got wrong."""
+    provider = _ReportsUsageFirst()
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0, allowed_regions="eu"))
+    app.state.providers = ProviderRegistry([provider])
+
+    with TestClient(app):
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="slow-1", numeric_id=1, capabilities=["generate"]))
+            await session.commit()
+
+        from aira_gateway.api.kira import routes
+
+        task = asyncio.create_task(_drive(routes, _kira_request(app), None))
+        await asyncio.wait_for(provider.entered.wait(), timeout=5)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        provider.finish.set()
+        await asyncio.sleep(0.1)
+
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    assert [(row.status, row.outcome, row.completion_tokens) for row in rows] == [
+        (499, "client_gone", 2)
+    ]
+
+
 async def test_a_caller_that_goes_away_while_the_model_answers_is_still_recorded() -> None:
     """The upstream was called. Whether the caller stayed to hear the answer does not change that,
     and a request that reached a model and left no row is the one thing `FRD-122` exists to

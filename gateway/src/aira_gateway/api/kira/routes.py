@@ -136,6 +136,8 @@ async def streaming_chat(
             notice = StreamedNotice(
                 prepared.notices, structured=canonical.response_schema is not None
             )
+            # Whether the stream ended on its own — answered, or stopped by a refusal.
+            finished = False
             try:
                 async for chunk in model_call_chunks(
                     canonical.model, provider.stream_generate(canonical)
@@ -151,11 +153,17 @@ async def streaming_chat(
                     led = notice.lead(chunk.text_delta)
                     parts.append(led)
                     yield f"data: {json.dumps(update_event(led))}\n\n"
+                finished = True
             except KIRA_REFUSALS as exc:
                 # The status is already sent; the failure is reported into the accounting.
+                finished = True
                 acct.failed(502, refusal_outcome(exc))
                 return
             finally:
+                if not finished and usage is not None:
+                    # The caller left mid-answer after the upstream reported usage: that much was
+                    # spent and reached them, so it is settled — and recorded as `499`.
+                    acct.abandoned(canonical.model, usage, {"text": "".join(parts)})
                 outcome_note = notice.outcome()
                 if outcome_note is not None:
                     trail.decisions.append(outcome_note)
@@ -228,7 +236,7 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
                 vectors = await provider.embed(embed_request)
             # One vector, whatever the input shape: a list was joined into one text.
             payload = schemas.EmbeddingResponse(vector=vectors[0] if vectors else []).model_dump()
-            acct.embedded(model, payload, units=embed_request.size)
+            acct.embedded(model, payload, units=embed_request.size, vectors=vectors)
         return JSONResponse(payload, headers=surface_headers(request))
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)

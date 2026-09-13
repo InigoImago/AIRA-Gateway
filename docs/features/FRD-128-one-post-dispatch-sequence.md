@@ -42,14 +42,21 @@ and the guarantee is the *order*, exactly as before. Two of the six were right.
 - **FR-2** A caller who abandons the request is recorded with status **499** and outcome
   `client_gone`. Nobody is sent that status; it exists so the audit can tell that case from a
   served one, and `client_gone` is its own outcome because "clients keep hanging up" is a
-  different thing to investigate from "the provider keeps failing".
+  different thing to investigate from "the provider keeps failing". That holds **after usage has
+  arrived** too: Vertex reports usage on every streamed chunk, and the Gemini surface once read
+  "some usage" as "answered" and recorded a caller who left after the first chunk as `200 served`.
+  What the upstream reported is settled — it was spent and reached the caller — under `499`, on
+  both surfaces alike.
 - **FR-3** Nothing chargeable produced → released. Settling would still book one request, and a
   use case with a request limit would lose allowance to a caller who hung up.
 - **FR-4** An embedding produced vectors and reports **no tokens**, which is distinct from
   producing nothing — `Accounting.produced` carries that, and the batch settles as the many
   requests it is (`FRD-113` FR-6).
-- **FR-5** An exception on its way to the surface's boundary releases but does **not** record; the
-  boundary writes that row. One request, one row.
+- **FR-5** A **refusal** on its way to the surface's boundary releases but does **not** record; the
+  boundary writes that row. One request, one row. **Any other exception** is this gateway failing,
+  which no boundary records, so the sequence writes it: status `500`, outcome `internal_error`.
+  It once wrote nothing for those too — found when a live round's embeddings failed with a 500 and
+  left the audit trail without a trace of them.
 
 ## 4. Design notes worth keeping
 

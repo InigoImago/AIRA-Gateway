@@ -14279,3 +14279,136 @@ guard tests parametrized over the new modules), coverage 96.51 %
 console build clean. A full `make mutants` run over the merged gateway,
 library and backend reported **all 776 properties caught**; the 14 anchored in the console were
 re-run on the final merge and are caught as well.
+
+## 2026-09-13 — both surfaces against a real Gemini on Vertex, and eight fixes
+
+**What was run.** A throwaway use case releasing `gemini-2.5-flash` (Vertex, `europe-west1`) and
+`gemini-embedding-001`, and 123 cases against both surfaces: generation with and without a stream
+(JSON array and SSE), system instructions, several turns, stop sequences, `MAX_TOKENS`, function
+calls and responses, attachments, Unicode, single and batched embeddings, and every class of
+malformed input — broken and deeply nested JSON, non-UTF-8, `Infinity`, a 9 MB body, empty
+contents, wrong types, out-of-range values, unknown and unreleased models. About 45 real model
+calls; the recorded cost was 0.0006 in the catalogue's currency.
+
+**Generation held on both surfaces; embeddings did not work at all.** Eight defects in total, none
+introduced by the refactoring above — the code at `ce8313e` is identical at every site:
+
+1. *Vertex embeddings used another API's verbs.* The adapter sent the Generative Language API's
+   `embedContent`/`batchEmbedContents`; Vertex answers an API key with 401 for the first and 404
+   for the second. Its embedding verb is `:predict`, one text per call for `gemini-embedding-001`.
+   Separately, the catalogue's addressing never reached an embedding request, so a catalogued
+   Vertex embedding model had no region. Every embedding answered 500 — and the hermetic suite
+   mocks Vertex, so it could not have noticed (`FRD-115` FR-2).
+2. *A 500 left no audit row.* `accounting` treated every exception as a refusal on its way to the
+   surface's boundary. Only refusals are now; anything else is recorded as `500` with the new
+   outcome `internal_error`. `AmbiguousModel` and `RegionNotAllowed` on a direct verb are refusals
+   (`no_capable_model`), as they already were inside a fallback chain (`FRD-128` FR-5).
+3. *A stream the caller left was recorded as served.* Vertex reports usage on every chunk, and the
+   Gemini surface read "some usage" as "answered"; KIRA recorded `499` but settled nothing. Both
+   now record `499`/`client_gone` and settle the usage reported so far (`FRD-128` FR-2).
+4. *The declared default output cap was never sent* (`FRD-114` FR-2). It fed the budget estimate
+   only, so a request without a cap got the vendor's default: over a thousand tokens where the
+   catalogue declared 256.
+5. *A role Gemini does not have* (`assistant`, anything) was read as `user` (`FRD-124` FR-10).
+6. *`responseMimeType` was parsed and ignored*: `text/xml` got prose with a 200 (FR-11).
+7. *An out-of-range sampling value* was forwarded, refused upstream and recorded as the provider's
+   `upstream_error` (FR-12).
+8. *The model lists* omitted a catalogued model that was served, and offered every adapter verb —
+   `embedContent` on a model declared to generate only (`FRD-507` §4.5).
+
+Each fix has a test that fails without it and a mutation — EM1–EM4, IE1, SA1–SA3, OC1, RO1, MT1,
+SB1, LS1, LS2; 790 properties now.
+
+**Deliberate, though the first run counted them as failures.** `includeThoughts` is refused while
+a use case returns no reasoning (`FRD-135`); the `ANY`/`NONE` tool modes, `safetySettings` and a
+`candidateCount` above 1 are refused by name; the KIRA surface answers validation errors with 422,
+the predecessor's status (`FRD-107`); an unreleased model is `400 no_capable_model`.
+
+**This installation's data, not the code.** The catalogue row of `gemini-2.5-flash` declares no
+`structured_output`, and its thinking block puts level words under `modes` and writes `levels` as a
+mapping, so level words and explicit thinking budgets are refused for it. Its default cap of 256
+is low for a model that thinks by default. **Left open:** the KIRA surface answers a few validation
+errors with 400 rather than 422, and a Gemini path without `:method` is recorded with the model's
+name as its operation.
+
+**Measured after the fixes.** Hermetic suite 3818 passed, coverage 96.56 %; ruff and mypy clean
+(355 files); console 963 tests, Prettier and the build clean. The rebuilt images were verified by
+id in the running containers, and the live round was run again with its expectations corrected
+for the deliberate behaviour above: 108 cases as expected. Real embeddings now answer on both
+surfaces — single, batched (three texts, three vectors, the two about dogs closer to each other
+than to the stock market), at 768 and at the declared 3072 components — and a text beyond the
+model's input is refused rather than embedded in part. A request without a cap stopped at 252 of
+the declared 256 tokens; before, 1068.
+
+**Four more found by the second run, and fixed.** They were invisible while every embedding failed:
+
+- *A catalogued Vertex model's audit row named no provider and no region.* `provenance_for` looked
+  the adapter up by provider name alone, and Vertex has two (`google`, `anthropic`); the one it
+  found serves no configured model. It now takes the exact pair, and the model's own declared
+  publisher and first region come before the adapter's (`FRD-115` FR-10).
+- *A served row ignored the region that answered.* `annotate` put the adapter's `served_region` on
+  the trail, and only refusal rows passed it on; served rows named the configured region, which a
+  failover makes wrong. Found while fixing the first — the unit test called `provenance` with the
+  region directly, and nothing tested the wire from the trail to the row.
+- *Embeddings were never priced.* An embedding reported no usage, so every row counted as unpriced
+  and a cost budget could not see it. Vertex's `:predict` returns a token count; the adapter hands
+  it back with the vectors and the region that answered (`EmbeddingVectors`), and the accounting
+  prices from it (`FRD-403` FR-5). Adapters that report none still leave the row unpriced.
+- *The Gemini surface's `candidatesTokenCount` included the thoughts,* which `thoughtsTokenCount`
+  reported again, so a client adding both counted the reasoning twice. It is the answer alone now,
+  as Google reports it (`FRD-135` FR-8).
+
+Mutations PV1, PV2, EP1, EP2, TK1; 795 properties.
+
+**Measured after these four.** Hermetic suite 3821 passed, coverage 96.58 %; ruff and mypy clean.
+Integration against the images of the first eight fixes 1052 passed, e2e 162 passed; the two
+integration files changed for the token counts, against the final images, 56 passed. Live, every
+served row now names `vertex` and `europe-west1`, embeddings included; every embedding row is
+priced from the tokens Vertex reported (two tokens, 300 nano-units at the probe's 0.15 per
+million); and a reasoning answer reports one answer token, 607 thought tokens and a total that is
+their sum with the prompt. The one embedding still counted unpriced in the second run was the
+probe's own catalogue row, written with an input price only — which FRD-403 FR-2 treats as no
+price, as it should.
+
+## 2026-09-13 — files and the model's reasoning, live
+
+**What was run.** Real files made in the probe itself — a PNG with digits drawn into it, a PNG of
+two colours, a PDF, CSV, HTML, Markdown and plain text — each with a question only the file
+answers; two files in one request, a document from an earlier turn, an image in a stream, and both
+KIRA paths. Then the refusals: a PNG label on PDF bytes, a JPEG label on PNG bytes, `audio/mpeg`,
+`image/gif`, seventeen parts, `fileData`, an empty part, a part past the body limit, and a model
+that declares no attachment support. Then the reasoning switch, off and on, with `includeThoughts`
+sent as true, false and not at all, with thinking off, in a stream and on KIRA.
+
+**The files were read.** Every question was answered from its file on both surfaces, two files
+were told apart, and the audit rows kept a digest of each file and none of its bytes. The one
+answer that had looked wrong in the first round — a model saying it saw no attachment — was the
+model's, not the gateway's: sent straight to Vertex, the same request behaves the same, and the
+answer turns on whether the question comes before the document or after it. The prompt tokens
+are identical either way, so the document arrives.
+
+**Four defects, fixed:**
+
+1. *An explicit `includeThoughts: false` was ignored* where the use case returns reasoning, and the
+   thoughts came back anyway. It withholds them now (`FRD-135` FR-5).
+2. *With thinking off, `includeThoughts` was still sent*, and Google refuses it: every request with
+   thinking off failed in a use case with reasoning on — not only those that asked for thoughts.
+3. *A stream asking for thoughts answered 200 without them.* Streams carry no reasoning, so it is
+   refused by name instead (`FRD-135` FR-4).
+4. *An empty attachment was forwarded* and came back as the provider's error (`FRD-110` FR-2).
+
+The invalid-base64 test had sent a datum that now decodes to nothing and is refused for being
+empty, so it had stopped proving `validate=True`: the mutation removing it survived. It sends a
+PDF's first line with one stray character now, which would decode to `%PDF-1.4` without the check.
+Mutations RS1–RS3 and AE1; 799 properties.
+
+**Not tested, and why.** A JPEG's understanding — nothing in this environment can encode one, and
+its path differs from the PNG's only by the media type; its signature check is covered. A part at
+the per-part bound — base64 makes a 6 MiB part larger than the 8 MiB body ceiling, which refuses it
+first.
+
+**Measured after the fixes.** Hermetic suite 3825 passed, coverage 96.59 %; ruff and mypy clean;
+the rebuilt images verified by id. Live, the files and reasoning round passed all 31 of its checks
+— `includeThoughts: false` returns no thoughts, thinking off with the switch on answers with one
+token and none counted, a stream asking for thoughts is refused by name, an empty part is refused
+by the gateway — and the general round all 112, every served row priced and placed.

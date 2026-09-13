@@ -128,8 +128,12 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         thinking_config: dict[str, Any] = {}
         if request.thinking is not None:
             thinking_config.update(thinking_fields(request.thinking))
-        if request.include_reasoning:
-            # Only where the use case allows it (`FRD-135` FR-3); without it Google returns none.
+        # Only where the use case allows it (`FRD-135` FR-3), and never with thinking off: Google
+        # refuses `includeThoughts` without thinking, and there would be nothing to return.
+        thinking_off = (
+            request.thinking is not None and request.thinking.mode == ThinkingMode.DISABLED
+        )
+        if request.include_reasoning and not thinking_off:
             thinking_config["includeThoughts"] = True
         generation_config["thinkingConfig"] = thinking_config
     if request.response_schema is not None:

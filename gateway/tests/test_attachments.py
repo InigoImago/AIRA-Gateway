@@ -229,7 +229,13 @@ async def test_a_part_must_carry_exactly_one_kind(part: dict[str, Any], fragment
 
 async def test_invalid_base64_is_refused_rather_than_truncated() -> None:
     """Without `validate=True`, stray characters are silently discarded and a corrupted upload
-    becomes a shorter, valid-looking document."""
+    becomes a shorter, valid-looking document.
+
+    The datum is a PDF's own first line with one stray character in it: dropped silently, it would
+    decode to `%PDF-1.4` and pass every later check. A datum that decodes to nothing proves less
+    since an empty attachment is refused on its own.
+    """
+    corrupted = "JVBE!Ri0xLjQK"  # base64 of b"%PDF-1.4\n", with a "!" in the middle
     app = _app()
     with TestClient(app) as client:
         await _declare(app, "mock-1", **_READS_PDF)
@@ -240,7 +246,7 @@ async def test_invalid_base64_is_refused_rather_than_truncated() -> None:
                     {
                         "role": "user",
                         "parts": [
-                            {"inlineData": {"mimeType": "application/pdf", "data": "not base64!!"}}
+                            {"inlineData": {"mimeType": "application/pdf", "data": corrupted}}
                         ],
                     }
                 ]

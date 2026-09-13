@@ -60,6 +60,16 @@ is a promise to honour it.
 - **FR-8** The compatibility surface holds the same rule; its refusals keep the predecessor's
   status codes (**422**) and error vocabulary.
 - **FR-9** A refusal is audited like any other (`FRD-122`).
+- **FR-10** A `role` Gemini does not have is refused, naming it. `user` and `model` are the roles;
+  `system` and `function` are older spellings clients still send and are mapped. An `assistant`
+  turn used to be read as the user's own words, with nothing in the answer to show it.
+- **FR-11** `responseMimeType` is served as `text/plain`, or as `application/json` **with** a
+  `responseSchema`; anything else is refused, naming the value. It used to be parsed and ignored,
+  so `text/xml` was answered in prose with a 200.
+- **FR-12** A sampling value outside the range every dialect accepts — `temperature` 0–2, `topP`
+  0–1, `topK` ≥ 1, the penalties −2–2 — is the caller's `400 INVALID_ARGUMENT`, before dispatch.
+  Forwarded, it came back as the provider's `400 FAILED_PRECONDITION` and was recorded as
+  `upstream_error`, the provider's fault. A dialect with a narrower range still refuses upstream.
 
 ## 5. Design & Architecture
 
