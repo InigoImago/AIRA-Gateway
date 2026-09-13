@@ -1,0 +1,62 @@
+# The delivery channel over Splunk's HTTP Event Collector instead of OTLP (`FRD-621`).
+#
+#     AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+#     AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/forward-splunk-hec.yaml
+#     AIRA_OTEL_FORWARD_HEC_ENDPOINT=https://splunk.internal:8088/services/collector
+#     AIRA_OTEL_FORWARD_HEC_TOKEN=…
+#
+# **A transport of its own, not an encoding.** OTLP/JSON is one nested document per batch, with the
+# attributes three levels down as key/value pairs. Splunk indexes one event per record, and the
+# `splunk_hec` exporter does that conversion: a span becomes one HEC event whose `attributes` is a
+# flat object. Splunk extracts them as fields once the sourcetype says the event is JSON
+# (`KV_MODE = json`), or per search with `| spath`.
+#
+# **Same filter, same batching as the OTLP legs.** Only the exporters the three `…/siem` pipelines
+# use change, as in `forward-grpc.yaml`, so Splunk receives what the OTLP leg would have sent: one
+# record per request and per model call. No base pipeline is named, so Grafana is untouched.
+#
+# **Two exporters, because metrics need a metrics index.** `mstats` reads nothing else, and one
+# `index` cannot be both kinds. The two differ in the index and in nothing else.
+#
+# **What does not reach this leg.** HEC's token is the credential, so no `…_AUTH_CONFIG` fragment
+# applies; `_ENCODING` does not (HEC is JSON), and neither does `_COMPRESSION` (the exporter gzips,
+# which HEC accepts). The fallbacks are in `docker-compose.yml`, because Compose passes an empty
+# string for an unset variable and that overrides a default spelled here.
+
+exporters:
+  splunk_hec/forward: &hec
+    # The full URL, path included — nothing is appended.
+    endpoint: ${env:AIRA_OTEL_FORWARD_HEC_ENDPOINT}
+    token: ${env:AIRA_OTEL_FORWARD_HEC_TOKEN}
+    # Empty means the token's default index.
+    index: ${env:AIRA_OTEL_FORWARD_HEC_INDEX}
+    sourcetype: ${env:AIRA_OTEL_FORWARD_HEC_SOURCETYPE}
+    source: aira
+    tls:
+      insecure_skip_verify: ${env:AIRA_OTEL_FORWARD_INSECURE}
+      ca_file: ${env:AIRA_OTEL_FORWARD_CA_FILE}
+      cert_file: ${env:AIRA_OTEL_FORWARD_CLIENT_CERT_FILE}
+      key_file: ${env:AIRA_OTEL_FORWARD_CLIENT_KEY_FILE}
+    sending_queue:
+      enabled: true
+      num_consumers: ${env:AIRA_OTEL_FORWARD_CONSUMERS}
+      queue_size: ${env:AIRA_OTEL_FORWARD_QUEUE}
+    retry_on_failure:
+      enabled: true
+      initial_interval: ${env:AIRA_OTEL_FORWARD_RETRY_INITIAL}
+      max_interval: 60s
+      max_elapsed_time: 300s
+  splunk_hec/forward_metrics:
+    <<: *hec
+    index: ${env:AIRA_OTEL_FORWARD_HEC_METRICS_INDEX}
+
+service:
+  pipelines:
+    # Only the delivery stream's own three, as in `forward-grpc.yaml`: a merged exporter list
+    # replaces, and naming a base pipeline here would unhook Grafana.
+    traces/siem:
+      exporters: [splunk_hec/forward]
+    logs/siem:
+      exporters: [splunk_hec/forward]
+    metrics/siem:
+      exporters: [splunk_hec/forward_metrics]

@@ -20,6 +20,9 @@ from __future__ import annotations
 import dataclasses
 import gzip
 import json
+import threading
+import urllib.request
+from http.server import ThreadingHTTPServer
 
 import otlp_inspector
 import pytest
@@ -383,3 +386,135 @@ def test_an_attribute_value_cannot_inject_markup() -> None:
 
     assert "<script>alert(1)</script>" not in page
     assert "&lt;script&gt;" in page
+
+
+# --- Splunk HEC, the transport that is not OTLP (`FRD-621`) ---------------------------------------
+
+#: Two real HEC events, as the `splunk_hec` exporter of collector-contrib 0.157.0 sent them through
+#: the delivery leg on 2026-09-13, trimmed: a model-call span and a log record. The span's
+#: attributes are a flat object — the conversion the exporter exists for — and the resource
+#: attributes ride in `fields`.
+HEC_SPAN = {
+    "event": {
+        "trace_id": "ea9703c3ecaad238bf937019507909c1",
+        "span_id": "e2502050d997d239",
+        "parent_span_id": "b717c2d780b0d7b5",
+        "name": "POST",
+        "attributes": {
+            "aira.model": "gemini-2.5-flash",
+            "aira.model_call.purpose": "serve",
+            "aira.use_case": "kundenservice",
+            "http.status_code": 200,
+        },
+        "end_time": 1789293897339949452,
+        "kind": "SPAN_KIND_CLIENT",
+        "start_time": 1789293896708285333,
+    },
+    "fields": {"collector": "aira-otel-collector", "service.name": "aira-gateway"},
+    "host": "unknown",
+    "source": "aira",
+    "sourcetype": "aira:otel",
+    "time": 1789293896.7082853,
+}
+HEC_LOG = {
+    "event": '{"system": "postgres", "operation": "connect", "outcome": "ok"}',
+    "fields": {"otel.log.severity.text": "INFO", "service.name": "aira-management"},
+    "host": "unknown",
+    "source": "aira",
+    "sourcetype": "aira:otel",
+    "time": 1789293790.179175,
+}
+HEC_BODY = json.dumps(HEC_SPAN) + json.dumps(HEC_LOG)
+
+
+def _post_hec(
+    inspector: Inspector, body: str, *, headers: dict[str, str] | None = None
+) -> otlp_inspector.Arrival:
+    return inspector.record(
+        signal=otlp_inspector.HEC_SIGNAL,
+        raw=gzip.compress(body.encode()),
+        content_type="application/json",
+        content_encoding="gzip",
+        headers=headers,
+    )
+
+
+@pytest.mark.parametrize("separator", ["", "\n", "\r\n  "])
+def test_a_hec_body_is_counted_by_the_events_in_it(separator: str) -> None:
+    """**HEC takes JSON objects one after another, with no array around them**, so `json.loads`
+    refuses every body of more than one event. Counting a batch as one record would answer *how
+    much is going to Splunk* with the number of requests rather than the number of events."""
+    body = json.dumps(HEC_SPAN) + separator + json.dumps(HEC_LOG)
+    arrival = _post_hec(Inspector(), body)
+
+    assert arrival.readable
+    assert arrival.records == 2
+    assert arrival.body == body, "the bytes the sender posted, not a re-serialisation"
+    assert arrival.document() == [HEC_SPAN, HEC_LOG]
+
+
+def test_hec_is_counted_apart_and_shown_on_the_page() -> None:
+    """A fourth line in the counts rather than folded into `traces`: one HEC batch carries spans,
+    logs and metrics together, so it is not any one of the three."""
+    inspector = Inspector()
+    _post_hec(inspector, HEC_BODY)
+    page = render_page(inspector)
+
+    assert inspector.summary()["batches"]["hec"] == 1
+    assert inspector.summary()["records"]["hec"] == 2
+    assert "hec 1 batches / 2 records" in page
+    assert "aira.model_call.purpose" in page
+
+
+def test_a_splunk_token_is_described_and_not_shown() -> None:
+    """HEC's credential is `Authorization: Splunk <token>` — the scheme is worth showing, the token
+    is not."""
+    token = "11111111-2222-3333-4444-555555555555"
+    arrival = _post_hec(Inspector(), HEC_BODY, headers={"authorization": f"Splunk {token}"})
+
+    assert arrival.credentials == {"authorization": "Splunk (43 chars)"}
+    assert token not in json.dumps(dataclasses.asdict(arrival), default=str)
+
+
+@pytest.mark.parametrize("body", ["[1, 2]", "{not json", '{"event": 1} 7'])
+def test_a_hec_body_that_is_not_a_run_of_events_is_counted_and_not_read(body: str) -> None:
+    """Reported as unreadable and kept as an arrival — the counters are still the truth about
+    *did anything reach here*."""
+    inspector = Inspector()
+    arrival = _post_hec(inspector, body)
+
+    assert not arrival.readable
+    assert arrival.records == 0
+    assert inspector.summary()["batches"]["hec"] == 1
+
+
+def test_the_server_takes_hec_where_a_sender_posts_it_and_answers_as_hec_does() -> None:
+    """Over HTTP, because the path and the reply are the server's: a sender pointed at
+    `/services/collector` that got a `404` would retry until its queue filled, and one that parses
+    the reply expects HEC's body rather than OTLP's `{}`. OTLP keeps its own answer."""
+    inspector = Inspector()
+    handler = type("BoundHandler", (otlp_inspector.Handler,), {"inspector": inspector})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # No proxy: the environment may name one, and it cannot reach this process's loopback.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def post(path: str, body: bytes) -> bytes:
+        request = urllib.request.Request(
+            base + path, data=body, headers={"content-type": "application/json"}, method="POST"
+        )
+        with opener.open(request) as reply:
+            assert reply.status == 200
+            return reply.read()
+
+    try:
+        for path in sorted(otlp_inspector.HEC_PATHS):
+            assert json.loads(post(path, HEC_BODY.encode())) == {"text": "Success", "code": 0}
+        assert post("/v1/traces", json.dumps(TRACES).encode()) == b"{}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert inspector.summary()["records"]["hec"] == 4
+    assert inspector.summary()["records"]["traces"] == 1

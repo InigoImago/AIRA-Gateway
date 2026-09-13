@@ -32,6 +32,12 @@ Monitor destination needs (`FRD-618`), so a batch may well arrive as protobuf; d
 mean a schema and a dependency this file does not have. It is counted, sized, and labelled, and the
 page says which variable to flip to read it. Answering *did it leave, and was it authenticated* is
 the job; answering *what does field 4 say* is what `json` is for.
+
+**Splunk's HTTP Event Collector is accepted too** (`FRD-621`), at `/services/collector`, so the
+`…-splunk-hec.yaml` transport can be pointed here before a Splunk exists. HEC is not OTLP: a body
+is JSON events one after another with no enclosing array, one per span, log record or metric data
+point. They are counted as events, shown as the list they are, and answered with HEC's own success
+body.
 """
 
 from __future__ import annotations
@@ -50,6 +56,14 @@ from typing import Any
 
 #: The OTLP/HTTP paths a collector posts to. Anything else is a page request.
 SIGNAL_PATHS = {"/v1/traces": "traces", "/v1/metrics": "metrics", "/v1/logs": "logs"}
+
+#: Splunk HEC's event endpoint, in both spellings a sender may be configured with. One signal,
+#: because HEC carries spans, logs and metrics on the same path and each event says which it is.
+HEC_PATHS = frozenset({"/services/collector", "/services/collector/event"})
+HEC_SIGNAL = "hec"
+
+#: Every signal the page counts, in the order it lists them.
+SIGNALS = (*SIGNAL_PATHS.values(), HEC_SIGNAL)
 
 #: How many batches are kept. A batch, not a span: `AIRA_OTEL_FORWARD_BATCH_SIZE` decides how many
 #: records ride in one, so this is a bound on *arrivals* and the record count varies with it.
@@ -143,6 +157,27 @@ def _nanos(value: Any) -> float | None:
         return None
 
 
+def hec_events(text: str) -> list[dict[str, Any]]:
+    """A HEC body as the list of events it carries.
+
+    HEC takes JSON objects **concatenated** — `{"event":…}{"event":…}`, with or without whitespace
+    between them — and not an array, so `json.loads` refuses any body of more than one event.
+    Raises `ValueError` on anything that is not a run of JSON objects.
+    """
+    decoder = json.JSONDecoder()
+    events: list[dict[str, Any]] = []
+    at = 0
+    while True:
+        while at < len(text) and text[at].isspace():
+            at += 1
+        if at == len(text):
+            return events
+        event, at = decoder.raw_decode(text, at)
+        if not isinstance(event, dict):
+            raise ValueError(f"not a HEC event: {type(event).__name__}")
+        events.append(event)
+
+
 @dataclass(slots=True)
 class Arrival:
     """One POST, and everything the page knows about it."""
@@ -170,7 +205,7 @@ class Arrival:
 
     def document(self) -> Any:
         """The body parsed, for rendering. Never cached: the text is the record."""
-        return json.loads(self.body)
+        return hec_events(self.body) if self.signal == HEC_SIGNAL else json.loads(self.body)
 
 
 #: Where each signal keeps its records, in the protobuf-JSON mapping: the resource list, the scope
@@ -208,8 +243,8 @@ class Inspector:
         self._lock = threading.Lock()
         self._arrivals: deque[Arrival] = deque(maxlen=keep)
         self._next = 1
-        self.totals: dict[str, int] = {"traces": 0, "logs": 0, "metrics": 0}
-        self.records: dict[str, int] = {"traces": 0, "logs": 0, "metrics": 0}
+        self.totals: dict[str, int] = dict.fromkeys(SIGNALS, 0)
+        self.records: dict[str, int] = dict.fromkeys(SIGNALS, 0)
         self.started = time.time()
 
     def record(
@@ -244,6 +279,16 @@ class Inspector:
 
         if len(body) > self.max_body:
             arrival.undecoded = f"{len(body)} bytes, over the {self.max_body}-byte keep limit"
+        elif signal == HEC_SIGNAL:
+            # HEC defines one body format, so it is parsed whatever the content type says.
+            try:
+                text = body.decode()
+                events = hec_events(text)
+            except (ValueError, UnicodeDecodeError) as exc:
+                arrival.undecoded = f"{type(exc).__name__}: {exc}"
+            else:
+                arrival.body = text
+                arrival.records = len(events)
         elif "json" in content_type:
             try:
                 text = body.decode()
@@ -462,7 +507,7 @@ def render_page(inspector: Inspector, *, refresh: int = 15) -> str:
 
     counts = " · ".join(
         f"{signal} {summary['batches'][signal]} batches / {summary['records'][signal]} records"
-        for signal in ("traces", "logs", "metrics")
+        for signal in SIGNALS
     )
 
     if not arrivals:
@@ -488,7 +533,9 @@ def render_page(inspector: Inspector, *, refresh: int = 15) -> str:
             "<code>AIRA_OTEL_FORWARD_CONFIG</code> names the forwarding fragment <em>and</em> "
             "<code>AIRA_OTEL_FORWARD_ENDPOINT</code> points at this container. The endpoint alone "
             "changes nothing — the fragment is the switch — and both need the collector "
-            "recreated.<br><br>"
+            "recreated. Over Splunk HEC the address is "
+            "<code>AIRA_OTEL_FORWARD_HEC_ENDPOINT</code>, ending in "
+            "<code>/services/collector</code>.<br><br>"
             "<b>3. Nothing has happened yet.</b> Send a request through the gateway.</p>"
         )
     else:
@@ -520,6 +567,10 @@ def render_page(inspector: Inspector, *, refresh: int = 15) -> str:
 #: away and `FRD-617` §3.8 is about, one hop upstream of this one.
 OK_BODY = b"{}"
 
+#: What HEC answers an accepted batch with. A sender that parses the reply sees what a real HEC
+#: would have said.
+HEC_OK_BODY = b'{"text":"Success","code":0}'
+
 
 class Handler(BaseHTTPRequestHandler):
     inspector: Inspector
@@ -534,9 +585,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802 — the stdlib's spelling
-        signal = SIGNAL_PATHS.get(self.path.split("?", 1)[0])
+        path = self.path.split("?", 1)[0]
+        signal = HEC_SIGNAL if path in HEC_PATHS else SIGNAL_PATHS.get(path)
         if signal is None:
-            self._send(404, b'{"error":"not an OTLP path"}', "application/json")
+            self._send(404, b'{"error":"not an OTLP or HEC path"}', "application/json")
             return
         length = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(length) if length else b""
@@ -547,7 +599,7 @@ class Handler(BaseHTTPRequestHandler):
             content_encoding=(self.headers.get("content-encoding") or "").lower(),
             headers={key.lower(): value for key, value in self.headers.items()},
         )
-        self._send(200, OK_BODY, "application/json")
+        self._send(200, HEC_OK_BODY if signal == HEC_SIGNAL else OK_BODY, "application/json")
 
     def do_GET(self) -> None:  # noqa: N802 — the stdlib's spelling
         path = self.path.split("?", 1)[0]
@@ -591,7 +643,7 @@ def serve(host: str = "0.0.0.0", port: int = 4318, keep: int = DEFAULT_KEEP) -> 
     server = ThreadingHTTPServer((host, port), handler)
     print(  # noqa: T201 — this is a command-line tool and this is its only output
         f"otlp-inspector listening on {host}:{port} — OTLP at /v1/{{traces,logs,metrics}}, "
-        f"the page at /",
+        f"Splunk HEC at /services/collector, the page at /",
         flush=True,
     )
     server.serve_forever()

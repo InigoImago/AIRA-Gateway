@@ -511,6 +511,26 @@ broken one. `endpoint` is where the **applications** send, which is the collecto
 collector sends *onward* is `deploy/compose/otel/collector-config.yaml` and is deliberately not an
 AIRA setting, so it is not in this file. `FRD-615` §6 records what that costs.
 
+**Plain JSON to a second destination.** The delivery channel — one record per request, for a SIEM
+— is configured by Compose variables in `.env`, not by this file. It sends OTLP/JSON by default,
+gzip-compressed. For a receiver that wants the JSON as it is, readable in a proxy log and parseable
+without unwrapping, turn the compression off:
+
+```bash
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_ENDPOINT=https://siem.internal:4318
+AIRA_OTEL_FORWARD_ENCODING=json        # the default; `proto` is the only other value
+AIRA_OTEL_FORWARD_COMPRESSION=none     # the default is gzip
+```
+
+**There is no encoding called `none`.** The encoding says *what* is sent, `json` or `proto`; the
+compression says whether it is wrapped, `gzip`, `none`, `zstd` or `snappy`. `ENCODING=none` stops
+the collector at validation, and with it Grafana. Plain JSON is still OTLP/JSON — one nested
+document per batch, each attribute a `{"key": …, "value": {"stringValue": …}}` pair — and not one
+flat event per request; for that shape in Splunk, the HEC transport in
+[`INTEGRATIONS.md` §6](../INTEGRATIONS.md) is the answer. `make otlp-inspector` shows what leaves,
+byte for byte, before a real receiver exists.
+
 ---
 
 ## When something goes wrong

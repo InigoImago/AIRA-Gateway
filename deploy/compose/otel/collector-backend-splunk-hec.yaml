@@ -1,0 +1,52 @@
+# The observability channel over Splunk's HTTP Event Collector instead of OTLP (`FRD-621`).
+#
+#     AIRA_OTEL_BACKEND_PROTOCOL_CONFIG=/etc/otelcol-contrib/backend-splunk-hec.yaml
+#     AIRA_OTEL_BACKEND_HEC_ENDPOINT=https://splunk.internal:8088/services/collector
+#     AIRA_OTEL_BACKEND_HEC_TOKEN=…
+#
+# For an installation whose trace backend *is* Splunk. The delivery channel has the same fragment
+# under the same names (`forward-splunk-hec.yaml`), which says why the exporter looks as it does: a
+# transport on one channel and not the other is the asymmetry `FRD-620` removed.
+#
+# **Every span, metric and log**, one HEC event per record — this channel is not filtered. HEC's
+# token is the credential, so no `…_AUTH_CONFIG` fragment applies, and `_ENCODING` and
+# `_COMPRESSION` do not reach this leg. Metrics have an exporter of their own because they need a
+# metrics index; the two differ in the index and in nothing else.
+#
+# `AIRA_OTEL_BACKEND_CONFIG=…/nobackend.yaml` still switches the channel off: it is merged after
+# this fragment and outranks it.
+
+exporters:
+  splunk_hec/backend: &hec
+    endpoint: ${env:AIRA_OTEL_BACKEND_HEC_ENDPOINT}
+    token: ${env:AIRA_OTEL_BACKEND_HEC_TOKEN}
+    index: ${env:AIRA_OTEL_BACKEND_HEC_INDEX}
+    sourcetype: ${env:AIRA_OTEL_BACKEND_HEC_SOURCETYPE}
+    source: aira
+    tls:
+      insecure_skip_verify: ${env:AIRA_OTEL_BACKEND_INSECURE}
+      ca_file: ${env:AIRA_OTEL_BACKEND_CA_FILE}
+      cert_file: ${env:AIRA_OTEL_BACKEND_CLIENT_CERT_FILE}
+      key_file: ${env:AIRA_OTEL_BACKEND_CLIENT_KEY_FILE}
+    sending_queue:
+      enabled: true
+      num_consumers: ${env:AIRA_OTEL_BACKEND_CONSUMERS}
+      queue_size: ${env:AIRA_OTEL_BACKEND_QUEUE}
+    retry_on_failure:
+      enabled: true
+      initial_interval: ${env:AIRA_OTEL_BACKEND_RETRY_INITIAL}
+      max_interval: 60s
+      max_elapsed_time: 300s
+  splunk_hec/backend_metrics:
+    <<: *hec
+    index: ${env:AIRA_OTEL_BACKEND_HEC_METRICS_INDEX}
+
+service:
+  pipelines:
+    # Complete lists, because a merged list replaces: the two inspection exporters stay.
+    traces:
+      exporters: [splunk_hec/backend, debug, file/arrived]
+    logs:
+      exporters: [splunk_hec/backend, debug, file/arrived]
+    metrics:
+      exporters: [splunk_hec/backend_metrics, debug, file/arrived]

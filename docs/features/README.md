@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**79 of 87 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**80 of 88 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -98,3 +98,4 @@ status that goes stale in the copy nobody opens.
 | [618](FRD-618-any-otlp-consumer.md) | Any OTLP consumer, not one of them | 1 (observability) | ✅ Built |
 | [619](FRD-619-a-model-access-says-who.md) | A model access that says who it was for | 1 (observability) | ✅ Built |
 | [620](FRD-620-both-channels-configured-the-same-way.md) | Both channels configured the same way | 1 (observability) | ✅ Built |
+| [621](FRD-621-splunk-hec-on-either-channel.md) | Splunk HEC on either channel | 1 (observability) | ✅ Built |

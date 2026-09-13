@@ -843,7 +843,7 @@ destination varies on seven axes, and each is a variable or a fragment (`FRD-618
 
 | | variable | |
 |---|---|---|
-| **transport** | `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | HTTP (default) or `…/forward-grpc.yaml` for gRPC |
+| **transport** | `AIRA_OTEL_FORWARD_PROTOCOL_CONFIG` | HTTP (default) or `…/forward-grpc.yaml` for gRPC — and `…/forward-splunk-hec.yaml` for Splunk, which is not OTLP ([below](#splunk-over-its-http-event-collector)) |
 | **encoding** | `AIRA_OTEL_FORWARD_ENCODING` | `json` · `proto`. The spec makes protobuf **required** and JSON optional, so a conformant receiver may refuse JSON |
 | **path** | `_TRACES_ENDPOINT` / `_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` | full URLs, for a receiver with a route in front of OTLP; default `<endpoint>/v1/<signal>` |
 | **credential name** | `AIRA_OTEL_FORWARD_AUTH_HEADER` | `Authorization` is what a *minority* ask for |
@@ -898,6 +898,55 @@ and undocumented — the collector refused to start with `headers_setter: missin
 taking Grafana with it, while this documentation said an empty header went out. Since `FRD-620` it
 sends the **name of the variable you forgot**: `AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set`, which
 `make otlp-inspector` shows and the far end quotes back in its rejection.
+
+#### Splunk, over its HTTP Event Collector
+
+Splunk Enterprise and Splunk Cloud Platform take events over HEC, which is not OTLP: one JSON event
+per span, log record or metric data point, rather than one nested document per batch with the
+attributes three levels down. `…/forward-splunk-hec.yaml` is a third transport for that
+(`FRD-621`), selected the way gRPC is and behind the same filter and batching — so Splunk receives
+what the OTLP leg would have sent, one record per request and per model call:
+
+```bash
+AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
+AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/forward-splunk-hec.yaml
+AIRA_OTEL_FORWARD_HEC_ENDPOINT=https://splunk.internal:8088/services/collector
+AIRA_OTEL_FORWARD_HEC_TOKEN=…                      # → Vault
+AIRA_OTEL_FORWARD_HEC_INDEX=aira                   # the request records and logs
+AIRA_OTEL_FORWARD_HEC_METRICS_INDEX=aira_metrics   # a metrics index
+```
+
+What arrives is one event per span, log record or metric data point. A model call, as
+collector-contrib 0.157.0 sent it, trimmed:
+
+```json
+{"event": {"trace_id": "ea97…", "span_id": "e250…", "parent_span_id": "b717…", "name": "POST",
+           "kind": "SPAN_KIND_CLIENT", "start_time": 1789293896708285333, "end_time": …,
+           "attributes": {"aira.use_case": "kundenservice", "aira.model": "gemini-2.5-flash",
+                          "aira.model_call.purpose": "serve", "aira.subject": "…",
+                          "http.status_code": 200}},
+ "fields": {"service.name": "aira-gateway", "deployment.environment": "local", …},
+ "source": "aira", "sourcetype": "aira:otel", "time": 1789293896.708}
+```
+
+The attributes are a flat object in the event; the resource attributes are in `fields`, which HEC
+indexes as fields of their own.
+
+What Splunk has to provide:
+
+- **A HEC token** whose allowed indexes include both of those. It is the credential on this leg,
+  sent as `Authorization: Splunk …`, so no `…_AUTH_CONFIG` fragment applies.
+- **A metrics index for the metrics.** `mstats` reads nothing else, and one index cannot be both
+  kinds — which is why the fragment has two exporters that differ in the index and in nothing else.
+- **`KV_MODE = json` for the sourcetype** (`aira:otel` unless `…_HEC_SOURCETYPE` says otherwise).
+  The span attributes are then search-time fields — `attributes.aira.use_case`; without it,
+  `spath` extracts them per search.
+
+`_ENCODING` and `_COMPRESSION` do not reach this leg: HEC is JSON, and the exporter gzips, which HEC
+accepts. `make otlp-inspector` accepts HEC too, at `http://otlp-inspector:4318/services/collector`,
+so the leg can be checked before a Splunk exists. The observability channel has the same fragment,
+`…/backend-splunk-hec.yaml`, under the `AIRA_OTEL_BACKEND_HEC_*` names, for an installation whose
+trace backend is Splunk.
 
 #### And the other direction: sending **to** this installation
 

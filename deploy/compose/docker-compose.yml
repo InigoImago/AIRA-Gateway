@@ -276,6 +276,8 @@ services:
       - ./otel/collector-forward-auth-basic.yaml:/etc/otelcol-contrib/forward-auth-basic.yaml:ro
       - ./otel/collector-forward-auth-oauth2.yaml:/etc/otelcol-contrib/forward-auth-oauth2.yaml:ro
       - ./otel/collector-forward-auth-azure-identity.yaml:/etc/otelcol-contrib/forward-auth-azure-identity.yaml:ro
+      - ./otel/collector-backend-splunk-hec.yaml:/etc/otelcol-contrib/backend-splunk-hec.yaml:ro
+      - ./otel/collector-forward-splunk-hec.yaml:/etc/otelcol-contrib/forward-splunk-hec.yaml:ro
       - ./otel/collector-empty.yaml:/etc/otelcol-contrib/empty.yaml:ro
       # Writable, for `AIRA_OTEL_ARRIVED_FILE=/payload/arrived.json`. Git-ignored, and nothing is
       # written here unless that variable names a path inside it.
@@ -374,6 +376,15 @@ services:
       AIRA_OTEL_BACKEND_CONSUMERS: ${AIRA_OTEL_BACKEND_CONSUMERS:-10}
       AIRA_OTEL_BACKEND_QUEUE: ${AIRA_OTEL_BACKEND_QUEUE:-1000}
       AIRA_OTEL_BACKEND_RETRY_INITIAL: ${AIRA_OTEL_BACKEND_RETRY_INITIAL:-5s}
+      # ---- Channel 1 over Splunk HEC, read only by `backend-splunk-hec.yaml` (`FRD-621`) -------
+      # The full URL, path included. HEC's own token is the credential, so no auth fragment applies.
+      AIRA_OTEL_BACKEND_HEC_ENDPOINT: ${AIRA_OTEL_BACKEND_HEC_ENDPOINT:-https://backend-hec-endpoint-not-set.invalid:8088/services/collector}
+      AIRA_OTEL_BACKEND_HEC_TOKEN: ${AIRA_OTEL_BACKEND_HEC_TOKEN:-AIRA_OTEL_BACKEND_HEC_TOKEN-is-not-set}
+      # Empty means the token's default index. Metrics go to their own, because `mstats` reads a
+      # metrics index and nothing else.
+      AIRA_OTEL_BACKEND_HEC_INDEX: ${AIRA_OTEL_BACKEND_HEC_INDEX:-}
+      AIRA_OTEL_BACKEND_HEC_METRICS_INDEX: ${AIRA_OTEL_BACKEND_HEC_METRICS_INDEX:-}
+      AIRA_OTEL_BACKEND_HEC_SOURCETYPE: ${AIRA_OTEL_BACKEND_HEC_SOURCETYPE:-aira:otel}
       # ---- Channel 2: delivery — one record per API access and per model access --------------
       # ---- A second destination beside Grafana (off unless the two above are set) ----------
       #
@@ -446,6 +457,14 @@ services:
       AIRA_OTEL_FORWARD_CONSUMERS: ${AIRA_OTEL_FORWARD_CONSUMERS:-1}
       AIRA_OTEL_FORWARD_QUEUE: ${AIRA_OTEL_FORWARD_QUEUE:-5000}
       AIRA_OTEL_FORWARD_RETRY_INITIAL: ${AIRA_OTEL_FORWARD_RETRY_INITIAL:-5s}
+      # ---- Channel 2 over Splunk HEC, read only by `forward-splunk-hec.yaml` (`FRD-621`) -------
+      # The same four names as channel 1's, and the same fallbacks: a fragment selected without an
+      # endpoint fails by name in `make otel-status` rather than stopping the collector.
+      AIRA_OTEL_FORWARD_HEC_ENDPOINT: ${AIRA_OTEL_FORWARD_HEC_ENDPOINT:-https://forward-hec-endpoint-not-set.invalid:8088/services/collector}
+      AIRA_OTEL_FORWARD_HEC_TOKEN: ${AIRA_OTEL_FORWARD_HEC_TOKEN:-AIRA_OTEL_FORWARD_HEC_TOKEN-is-not-set}
+      AIRA_OTEL_FORWARD_HEC_INDEX: ${AIRA_OTEL_FORWARD_HEC_INDEX:-}
+      AIRA_OTEL_FORWARD_HEC_METRICS_INDEX: ${AIRA_OTEL_FORWARD_HEC_METRICS_INDEX:-}
+      AIRA_OTEL_FORWARD_HEC_SOURCETYPE: ${AIRA_OTEL_FORWARD_HEC_SOURCETYPE:-aira:otel}
     extra_hosts:
       # **A destination outside this network needs a name this container can resolve**, and the
       # two entries below are how, without touching DNS.

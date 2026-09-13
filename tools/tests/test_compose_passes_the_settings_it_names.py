@@ -124,6 +124,17 @@ COMPOSE_ONLY = {
     "AIRA_OTEL_BACKEND_CONSUMERS",
     "AIRA_OTEL_BACKEND_QUEUE",
     "AIRA_OTEL_BACKEND_RETRY_INITIAL",
+    # Splunk HEC as a third transport, on both channels under the same five names (`FRD-621`).
+    "AIRA_OTEL_BACKEND_HEC_ENDPOINT",
+    "AIRA_OTEL_BACKEND_HEC_TOKEN",
+    "AIRA_OTEL_BACKEND_HEC_INDEX",
+    "AIRA_OTEL_BACKEND_HEC_METRICS_INDEX",
+    "AIRA_OTEL_BACKEND_HEC_SOURCETYPE",
+    "AIRA_OTEL_FORWARD_HEC_ENDPOINT",
+    "AIRA_OTEL_FORWARD_HEC_TOKEN",
+    "AIRA_OTEL_FORWARD_HEC_INDEX",
+    "AIRA_OTEL_FORWARD_HEC_METRICS_INDEX",
+    "AIRA_OTEL_FORWARD_HEC_SOURCETYPE",
     # And the second destination, which is the collector's configuration and not the product's:
     # which fragment to merge, where to send, how hard to push, and the two `extra_hosts` entries
     # that let a container reach a machine outside its network.

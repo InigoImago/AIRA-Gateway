@@ -14412,3 +14412,50 @@ the rebuilt images verified by id. Live, the files and reasoning round passed al
 — `includeThoughts: false` returns no thoughts, thinking off with the switch on answers with one
 token and none counted, a stream asking for thoughts is refused by name, an empty part is refused
 by the gateway — and the general round all 112, every served row priced and placed.
+
+## 2026-09-13 — Splunk HEC on either channel
+
+**Where it started.** The question was whether the delivery channel can send plain JSON. It could
+already: `AIRA_OTEL_FORWARD_ENCODING=json` is the default, and `_COMPRESSION=none` removes the gzip.
+There is no encoding called `none`, and setting one stops the collector at validation; the showcase
+now says so. OTLP/JSON, though, is a nested document per batch, and Splunk takes one event per record
+over HEC. So the next step was a fragment for Splunk.
+
+**What was built** (`FRD-621`):
+- **Fragments.** One more transport fragment per channel, `forward-splunk-hec.yaml` and
+  `backend-splunk-hec.yaml`, both using the collector's `splunk_hec` exporter.
+- **Pipelines.** Only the exporters change. The delivery fragment moves its three `…/siem`
+  pipelines, and the observability fragment keeps `debug` and `file/arrived`.
+- **Metrics.** They get an exporter of their own, merged from the first with a different index,
+  because `mstats` reads only a metrics index and one index cannot be both kinds.
+- **Variables.** Five per channel under the same names. The Compose fallbacks follow the existing
+  rule: a `.invalid` endpoint, and a token that names its own variable.
+- **Inspector.** It accepts HEC at `/services/collector`, counts events and answers as HEC does.
+
+**Measured.**
+- **Validation.** `otelcol validate` against collector-contrib 0.157.0 returned `rc=0` on four
+  combinations:
+  - both channels on HEC;
+  - the delivery channel alone;
+  - the observability channel with `nobackend.yaml` outranking it;
+  - HEC beside a credential fragment.
+
+  `print-config` shows the two exporters with separate indexes.
+- **Live run.** The inspector stood in for Splunk. The generation round of the live probe sent 20
+  attributed requests through the gateway to Gemini on Vertex. 22 HEC batches with 4891 events
+  arrived: 34 spans, 13 log records and 4844 metric data points.
+- **Filter.** The 34 spans are the 20 request spans plus the 14 model calls of the 14 served
+  requests, so the filter holds on the new leg.
+- **Indexes.** Every metric event carried the metrics index, and no span or log did.
+- **Event shape.** Each span arrived as one event whose `attributes` is a flat object (`aira.use_case`,
+  `aira.model`, `aira.model_call.purpose`), with the resource attributes in `fields`.
+- **Token.** It was on every request as `Authorization: Splunk …`.
+- **Cleanup.** The probe left no rows behind, and the collector was put back on the OTLP leg.
+
+**Worth knowing.** A metrics batch over HEC is large, because every data point is its own event. One
+batch held 2422 events and was 2.6 MB decoded, which is over the inspector's 2 MiB keep limit. The
+inspector counts that batch but not its events, and cannot show it. That is the limit working as
+designed. It is noted here because it is the first thing somebody pointing the inspector at this leg
+will see.
+
+Mutations HEC1–HEC8; 807 properties.
