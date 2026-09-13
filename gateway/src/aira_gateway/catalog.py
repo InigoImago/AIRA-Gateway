@@ -1,17 +1,9 @@
 """What the gateway is allowed to do with a model (FRD-114).
 
 Management authors the declarations; this is where they become decisions. The rule that shapes
-everything here is FR-7:
-
-    **An undeclared model gets the baseline, and nothing more.**
-
-The tempting default is the opposite — let an undeclared model accept everything and let the
-provider complain. That is wrong for the same reason "unpriced is not free" is wrong: absence of
-information is not permission. An undeclared model would otherwise accept a 32 768-token thinking
-budget, which the pre-dispatch reservation would then have to estimate against nothing.
-
-So every refusal here names the missing declaration. The fix is a catalog edit, and saying so is
-the difference between a support ticket and a two-minute correction.
+everything here is FR-7: **an undeclared model gets the baseline, and nothing more** — absence of
+information is not permission. Every refusal names the missing declaration, because the fix is a
+catalog edit.
 """
 
 from __future__ import annotations
@@ -32,15 +24,27 @@ from aira_common.models import (
 )
 from aira_gateway.db.models import ModelRead
 
+#: The widest model name the catalog can hold — `model_catalog.model` and `request_logs.model` are
+#: both `String(128)`. A longer name cannot name a declared model, by construction.
+MAX_MODEL_NAME = 128
+
+#: The largest token figure this gateway can account for, and so the largest a caller may ask for.
+#:
+#: Derived, not chosen: `budget_usage.tokens` and `budgets.limit_tokens` are `Integer`. A larger
+#: figure would overflow the reservation's 64-bit `HINCRBY`, which reads as the counter store being
+#: away and switches budget enforcement to its racy fallback (`FRD-405` §4.2). Both caller-named
+#: figures — `maxOutputTokens` and a `limited` thinking budget — are checked against it
+#: unconditionally, because the model's own bounds are nullable.
+MAX_ACCOUNTABLE_TOKENS = 2**31 - 1
+
 _log = structlog.get_logger(__name__)
 
 
 class AmbiguousModelId(Exception):
     """Two catalog entries claim the same KIRA integer id.
 
-    A configuration fault, not a caller's mistake — which is why it is raised rather than resolved.
-    Choosing one would answer, bill and audit under a model the caller never named, and nothing in
-    the response would look wrong.
+    A configuration fault, raised rather than resolved: choosing one would answer, bill and audit
+    under a model the caller never named, with nothing in the response looking wrong.
     """
 
     def __init__(self, numeric_id: int, models: list[str]) -> None:
@@ -56,49 +60,39 @@ class ModelDeclaration:
 
     name: str
     declared: bool = False
-    #: Whether the catalog holds a row for this model at all — distinct from :attr:`declared`,
-    #: which means somebody also wrote down what it can do. A model can be catalogued and priced
-    #: without a capability list; only the first of those is what `FRD-307` requires.
+    #: Whether the catalog holds a row at all — distinct from :attr:`declared`, which means somebody
+    #: also wrote down what it can do. Only this one is what `FRD-307` requires.
     in_catalog: bool = False
-    #: Whether a Global Administrator has released it (`FRD-307`). Undeclared models are not
-    #: gated by this — see :class:`ModelApproved` for why.
+    #: Whether a Global Administrator has released it (`FRD-307`; see :class:`ModelApproved`).
     approved: bool = True
     capabilities: frozenset[Capability] = BASELINE_CAPABILITIES
-    #: What the model can hold at once. Carried so the model list can publish it; nothing on
-    #: the request path reads it, because the upstream is the authority on what fits.
+    #: Published on the model list; nothing on the request path reads it — the upstream decides.
     context_window: int | None = None
     max_output_tokens: int | None = None
     default_max_output_tokens: int | None = None
     thinking: dict[str, Any] | None = None
     embedding: dict[str, Any] | None = None
     attachments: dict[str, Any] = field(default_factory=dict)
-    #: Which adapter serves it (`FRD-507`). The catalog is already the authority on *what may be
-    #: served*; carrying the provider makes it the authority on *who serves it* too, so a model
-    #: becomes usable by being catalogued rather than by also being named in configuration.
+    #: Which adapter serves it (`FRD-507`), so a model becomes usable by being catalogued.
     provider: str = ""
-    #: How to reach this model on its platform: `{"regions": ["europe-west1", "europe-west4"]}` on
-    #: Vertex, a deployment on Azure. **A column that existed in both planes, travelled over Kafka,
-    #: and nothing read** — which is why a Vertex model could be catalogued and would never answer,
-    #: and the console had to say so at the moment of declaring. Read now, so it can.
-    #:
-    #: Values stay `str | list[str]` rather than `str`, because a region list is a list.
+    #: How to reach it on its platform: `{"regions": [...]}` on Vertex, a deployment on Azure.
+    #: Values stay `str | list[str]`, because a region list is a list; read through :attr:`regions`.
     addressing: dict[str, Any] = field(default_factory=dict)
+    publisher: str = ""
+    platform: str = ""
+    hosting: str = ""
+    deprecated: bool = False
+    #: The KIRA-style integer alias, when one is assigned (`FRD-114` FR-6, `FRD-107` FR-4).
+    numeric_id: int | None = None
 
     @property
     def regions(self) -> tuple[str, ...]:
         """Where this model may be addressed, **in the order it should be tried** (`FRD-609`).
 
-        One reader for two spellings, and only one of them is current. `{"region": "x"}` was the
-        shape until a model could name several; rows written before that still carry it, and a
-        redelivered Kafka event can carry it after a rollback. Normalising here rather than
-        migrating in five readers is the same argument `thinking_levels` makes one field along:
-        the shape is read in one place, so a second spelling cannot mean two different things in
-        two of them.
-
-        Order is meaning, not presentation: the first region a request may use is the first one
-        this installation's residency policy permits, and a failure falls through to the next
-        (`vertex/adapters.py`). Duplicates are dropped and blanks ignored, because a list that
-        names the same place twice would retry the failure it just had.
+        The one reader for both spellings — `{"region": "x"}` from older rows and redelivered
+        events, `{"regions": [...]}` now. Order is meaning: the first permitted region is tried
+        first and a failure falls through to the next (`vertex/adapters.py`). Duplicates are dropped
+        so a failure is not retried in the same place.
         """
         block = self.addressing or {}
         raw = block.get("regions")
@@ -114,13 +108,6 @@ class ModelDeclaration:
             if isinstance(region, str) and region.strip():
                 seen.setdefault(region.strip(), None)
         return tuple(seen)
-
-    publisher: str = ""
-    platform: str = ""
-    hosting: str = ""
-    deprecated: bool = False
-    #: The KIRA-style integer alias, when one is assigned (`FRD-114` FR-6, `FRD-107` FR-4).
-    numeric_id: int | None = None
 
     def can(self, capability: Capability) -> bool:
         return capability in self.capabilities
@@ -141,15 +128,9 @@ class ModelDeclaration:
     def attachment_tokens(self, media_types: list[str]) -> int:
         """What the declared attachments are expected to cost in **input** tokens.
 
-        An image or a PDF costs hundreds to thousands of input tokens that no property of the
-        request body predicts. Without this the pre-dispatch reservation would treat a request
-        carrying a 20 000-token document as a sentence — reopening under documents exactly the
-        race `FRD-405` closed for text, where N concurrent requests all pass a limit with room
-        for one.
-
-        Wrong **high** by design, and corrected by `settle` the moment the real usage arrives.
-        What must not happen is a silent zero: that is the "unknown is not zero" rule, and a
-        reservation that ignores the expensive half of a request is not a limit.
+        Nothing in the request body predicts what a document costs, and a reservation that ignored
+        it would reopen for documents the race `FRD-405` closed for text. Wrong **high** by design,
+        corrected by `settle`; never a silent zero.
         """
         declared = (self.attachments or {}).get("media_types")
         if not isinstance(declared, dict):
@@ -163,10 +144,8 @@ class ModelDeclaration:
 
     # -- thinking (FRD-111) ---------------------------------------------------------------
     #
-    # Read off the declaration rather than parsed into a dataclass at construction: the block is
-    # authored in Management and validated *there* (`FRD-114` FR-3), so a second parser here would
-    # be a second opinion about the same JSON — and the two would drift in whichever plane was not
-    # under test.
+    # Read off the declaration rather than parsed at construction: the block is validated in
+    # Management (`FRD-114` FR-3), and a second parser here would drift from it.
 
     @property
     def thinking_modes(self) -> frozenset[ThinkingMode]:
@@ -197,26 +176,18 @@ class ModelDeclaration:
     def thinking_default(self) -> dict[str, Any] | None:
         """What the model does when the caller says nothing (`FRD-111` FR-4).
 
-        Not the provider's default and not *none*: the predecessor applies a per-model default,
-        and a gateway that quietly sent no thinking where the predecessor sent some would answer
-        differently for a reason nobody could see.
+        The per-model default, as the predecessor applies it — not the provider's, and not none.
         """
         default = (self.thinking or {}).get("default")
         return default if isinstance(default, dict) else None
 
     @property
     def thinking_levels(self) -> tuple[str, ...]:
-        """The **vendor's own** level words this model accepts, in the order they were declared.
+        """The **vendor's own** level words this model accepts, in declared order (`ADR-0021`).
 
-        Free text, and that is the point (`ADR-0021`): the vendors converged on words after
-        starting with numbers — Gemini 3 takes ``thinkingLevel``, OpenAI ``reasoning_effort`` —
-        and they do not agree on the set. A closed enum here would make a vendor's next word a code
-        change; a list typed into the catalog and **checked against the model** makes it a Tuesday.
-
-        This replaced a ``{level: token count}`` table. The table asked whoever catalogued the
-        model for a number no vendor publishes, and a wrong guess was not merely unfounded: a
-        hand-typed ``medium = 2000`` silently truncates an agentic run that needed twenty thousand
-        thinking tokens. Nothing is derived here now — a word is sent, or it is not offered.
+        Free text checked against the model, so a vendor's next word is a catalog edit rather than
+        a code change. No token count is derived from a level: a guessed figure would silently
+        truncate the model's reasoning.
         """
         levels = (self.thinking or {}).get("levels")
         if not isinstance(levels, list):
@@ -253,61 +224,20 @@ class ModelDeclaration:
     def output_cap(self, requested: int | None) -> int | None:
         """The output token cap to send upstream: the caller's, else the model's default.
 
-        Not merely convenience — Anthropic **requires** ``max_tokens`` on every request
-        (`FRD-119` §5.3), so a caller who omits it would otherwise receive a vendor error about a
-        field they never set. It also sharpens the pre-dispatch reservation for every vendor.
+        Anthropic **requires** ``max_tokens`` (`FRD-119` §5.3), so a caller who omits it would
+        otherwise get a vendor error about a field they never set.
         """
         return requested if requested is not None else self.default_max_output_tokens
-
-
-#: The widest model name the catalog can hold — `model_catalog.model` and `request_logs.model` are
-#: both `String(128)`. A name longer than this cannot name a declared model, by construction.
-MAX_MODEL_NAME = 128
-
-#: The largest token figure this gateway can **account for**, and therefore the largest one a
-#: caller may ask for.
-#:
-#: Derived, not chosen: `budget_usage.tokens` and `budgets.limit_tokens` are `Integer`, so this is
-#: the largest number a token budget could ever be set to. A request asking for more is asking for
-#: more than any limit could permit — and, before this bound existed, it did not merely fail to
-#: fit, it **switched the limit off**.
-#:
-#: Measured on 2026-09-08. The pre-dispatch reservation moves the shared counter with `HINCRBY`,
-#: which is 64-bit integer arithmetic in Redis, so an estimate at or above 2⁶³ answers *"increment
-#: would overflow"*. `RedisRunner` turns every such error into `CountersUnavailable` — which is
-#: what a Redis that is genuinely away looks like — so `BudgetService.guard` released, logged
-#: `counters_unavailable`, marked **budget enforcement degraded** and fell back to the racy
-#: read-then-book path, and the request was served. One number in one field, and `FRD-405` §4.2's
-#: whole reason for existing was off for that request, with `/readyz` blaming the counter store.
-#:
-#: Both caller-named figures reach that arithmetic and **both were bounded only where the model
-#: declared a bound** (`serving.check_declaration` for `maxOutputTokens`, `thinking._limited_budget`
-#: for a `limited` budget) — the *"a value nobody wrote is a value nothing checks"* shape, applied
-#: to a bound rather than to a value. `max_output_tokens` and `thinking_bounds` are both nullable
-#: and both default to `None`, so an ordinary catalogue row declares neither.
-MAX_ACCOUNTABLE_TOKENS = 2**31 - 1
 
 
 def is_lookupable(model: str) -> bool:
     """Whether ``model`` is a name this catalog could possibly hold.
 
-    **A caller-supplied string reaching a database is the whole point.** The model name arrives in
-    a URL path segment and is used as a primary key, and two shapes of it were found to reach
-    Postgres and fail there — neither visible to the hermetic suite, because SQLite accepts both:
-
-    - a **NUL byte** (`mock-1%00:generateContent`) raises `psycopg.DataError` and the caller gets
-      a **500**, breaking this project's own rule that a caller's mistake is answered with an
-      actionable status and never with our error;
-    - a name of **300 characters** exceeds `String(128)`, and the row that records the refusal
-      then fails to write — so an oversized name is a request the audit trail does not have
-      (`FRD-122`), which is worse than the wrong status code.
-
-    Refused *before* the query rather than caught after it: a lookup that cannot match anything is
-    not worth a round trip, and catching a database error would make the answer depend on which
-    database is behind it. The same reasoning as `is_valid_use_case`, one identifier over.
-
-    Control characters generally, not just NUL: they cannot appear in a declared model name, and
-    every one of them is a value that behaves differently in a log line, a URL and a database.
+    The name arrives in a URL path segment and is used as a primary key. A NUL byte makes Postgres
+    raise (a 500 for a caller's mistake), and an over-long name makes the refusal's own audit row
+    fail to write (`FRD-122`) — neither visible under SQLite. Refused before the query, so the
+    answer never depends on which database is behind it. Control characters generally, because
+    none can appear in a declared name.
     """
     if not model or len(model) > MAX_MODEL_NAME:
         return False
@@ -323,28 +253,17 @@ class ModelCatalog:
     def per_request(self) -> ModelCatalog:
         """A view of this catalog that answers each model **once**, for the life of one request.
 
-        Every reader here opens its own session, and one request asks the same question five times:
-        the pipeline's `declaration_of`, the routed model's provider, `check_declaration`, the
-        reservation's `estimate`, `provenance`, and once per candidate inside `requirements_for`.
-        Measured on 2026-08-15 against the hermetic app: **15 sessions for one served request**, of
-        which five were `declaration()` for the same model — each a connection checked out of the
-        pool for a row that had already been read.
-
-        A cache with a **request's** lifetime rather than the app's, deliberately. The catalog is a
-        runtime authority: what it says decides whether a request is accepted, and configuration
-        arrives over Kafka at any moment. An app-scoped cache would mean a model stayed approved
-        after a Global Administrator revoked it, for as long as the entry lived — which is the
-        opposite of what `FRD-307` is for. Within one request the answer must not change anyway:
-        the pre-dispatch checks and the dispatch that follows are supposed to be deciding about the
-        same declaration, and re-reading was how they could quietly disagree.
+        One request asks the same question several times (pipeline, routing, declaration check,
+        reservation, provenance, each candidate). A request's lifetime, never the app's: the catalog
+        is a runtime authority, and an app-scoped cache would keep a revoked model approved
+        (`FRD-307`). Within a request the answer must not change, so every check decides about the
+        same declaration.
         """
         return _MemoisedCatalog(self)
 
     async def declaration(self, model: str) -> ModelDeclaration:
         if not is_lookupable(model):
-            # Undeclared, which is what it is: no such row can exist. The caller then meets the
-            # ordinary `model_not_found` 404 instead of a 500, and nothing about *which* database
-            # is running decides the answer.
+            # Undeclared, which is what it is: the caller meets the ordinary `model_not_found`.
             return ModelDeclaration(name=model)
         async with self._sessionmaker() as session:
             record = await session.get(ModelRead, model)
@@ -355,9 +274,7 @@ class ModelCatalog:
     async def by_numeric_id(self, numeric_id: int) -> str | None:
         """The model a KIRA-style integer id refers to (`FRD-114` FR-6).
 
-        Exists only for `FRD-107`. If `ADR-0010` is ever revisited toward moving the clients
-        instead, this and the column go together — an unused numeric alias left in a catalog reads
-        as though it meant something.
+        Exists only for `FRD-107`; if `ADR-0010` is revisited, this and the column go together.
         """
         async with self._sessionmaker() as session:
             result = await session.execute(
@@ -367,12 +284,8 @@ class ModelCatalog:
         if not names:
             return None
         if len(names) > 1:
-            # An **ambiguous** id, which is the routing-table problem of `ADR-0011` in the catalog:
-            # picking one would silently send a caller's traffic to whichever row was read first,
-            # and bill it accordingly. Management enforces uniqueness where the declaration is
-            # written; this is the read-model's side of the same rule, and it was reached — a seed
-            # run for a second local model reused an id, and `scalar_one_or_none()` answered the
-            # KIRA surface with an unhandled 500 (2026-08-08).
+            # Management enforces uniqueness where the declaration is written; this is the
+            # read-model's side of the same rule. Picking one would route and bill silently.
             _log.error(
                 "ambiguous_numeric_model_id",
                 numeric_id=numeric_id,
@@ -384,9 +297,8 @@ class ModelCatalog:
     async def exceeds_output_cap(self, model: str, requested: int | None) -> int | None:
         """The model's cap if ``requested`` is above it, else ``None``.
 
-        Refused here rather than passed on for the provider to reject differently: the same
-        mistake would otherwise produce a different error per vendor, and a caller cannot write
-        against that.
+        Refused here rather than by the provider, so the same mistake gets the same error on every
+        vendor.
         """
         if requested is None:
             return None
@@ -398,10 +310,9 @@ class ModelCatalog:
 class _MemoisedCatalog(ModelCatalog):
     """One request's view: the same model is read from the database once.
 
-    A subclass so that everything typed against `ModelCatalog` — the requirements, the dispatch
-    resolver, both surfaces — is handed one without knowing. `by_numeric_id` is **not** memoised:
-    it happens once per KIRA request by construction, and caching a lookup that raises on an
-    ambiguous id would cache the raise as well.
+    A subclass, so everything typed against `ModelCatalog` takes one without knowing.
+    `by_numeric_id` is **not** memoised: it runs once per KIRA request, and caching a lookup that
+    raises on an ambiguous id would cache the raise.
     """
 
     def __init__(self, source: ModelCatalog) -> None:
@@ -437,10 +348,8 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
         embedding=record.embedding if isinstance(record.embedding, dict) else None,
         attachments=record.attachments if isinstance(record.attachments, dict) else {},
         provider=record.provider or "",
-        # **Not stringified.** This used to coerce every value with `str()`, which turned a
-        # `regions` list into the literal `"['europe-west1']"` — a region name nothing could match
-        # and a residency claim nothing could read. Values are carried as they arrive and shaped by
-        # the one reader that knows what each key means (`ModelDeclaration.regions`).
+        # Values carried as they arrive, not stringified (a `regions` list would become a string
+        # nothing matches); `ModelDeclaration.regions` shapes them.
         addressing=(
             {str(key): value for key, value in record.addressing.items()}
             if isinstance(record.addressing, dict)

@@ -1,28 +1,15 @@
 """A bound on failed authentications, keyed by source address (`ADR-0015`, this plane).
 
-The gateway has had one since 2026-08-08 and states the argument there:
+Limits keyed by use case or member need a verified identity, so they cannot bound somebody probing
+credentials — and here each probe costs a JWKS verification.
 
-> Every limit `FRD-405` built is keyed by use case or member, so it needs a **verified** identity
-> and cannot bound the traffic of somebody who has none — an unauthenticated caller could probe
-> credentials, and each attempt a database round trip, without ever meeting a bound.
+**Not `AnonRateThrottle`**: DRF runs `check_permissions` before `check_throttles`, and every view
+requires authentication, so an anonymous request is refused before any throttle runs. The bound
+therefore lives in the authentication class, checked before the token is verified and recorded only
+when it is rejected — **refusals only**, so a working credential never touches it.
 
-Management had none, and a request here is more expensive than one there: a presented token is
-verified against the issuer's JWKS before anything decides it is invalid.
-
-**Not `AnonRateThrottle`.** That was the obvious answer and it cannot work: DRF runs
-`check_permissions` before `check_throttles`, and every view here requires authentication — so an
-unauthenticated request is refused at the permission check and the throttle never runs. Measured
-before this module existed: two anonymous requests against a rate of one per minute, both `401`,
-the second never counted. A throttle that cannot fire is the badge-wearing absent control this
-project keeps naming, and shipping one would have been worse than shipping nothing.
-
-So the bound lives where the failure does — in the authentication class, checked before the token
-is verified and recorded only when it is rejected. **Refusals only**, exactly as the gateway counts
-them: a working credential never touches this bucket however busy its holder is.
-
-Per process, like every other DRF throttle here: Django's cache is `LocMemCache` unless a
-deployment configures one, so N workers admit N × the rate. Bounded and imprecise beats unbounded
-(`FallbackTokenBucket` makes the same trade on the other plane).
+Per process: Django's cache is `LocMemCache` unless a deployment configures one, so N workers admit
+N × the rate. Bounded and imprecise beats unbounded.
 """
 
 from __future__ import annotations
@@ -36,12 +23,26 @@ from rest_framework.throttling import BaseThrottle
 #: Cache key shape. Namespaced so it cannot collide with DRF's own scoped keys.
 _KEY = "aira_auth_failures_%s"
 
+#: Seconds per period name in DRF's `<n>/<period>` notation.
+_PERIODS = {
+    "s": 1,
+    "sec": 1,
+    "second": 1,
+    "m": 60,
+    "min": 60,
+    "minute": 60,
+    "h": 3600,
+    "hour": 3600,
+    "d": 86400,
+    "day": 86400,
+}
+
 
 class FailedAuthentications:
     """How many refusals one address may collect in a window, and whether it is over.
 
-    Split into *check* and *record* rather than DRF's single `allow_request`, because that one
-    counts every call — including the successful ones this must not count.
+    Split into *check* and *record* rather than DRF's single `allow_request`, which counts every
+    call — including the successful ones this must not count.
     """
 
     def __init__(self, rate: str) -> None:
@@ -83,33 +84,17 @@ class FailedAuthentications:
 
 
 def _ident(request: Any) -> str:
-    """The source address, as DRF resolves it.
-
-    Borrowed from `BaseThrottle.get_ident` rather than reimplemented: it already honours
-    `NUM_PROXIES`, and an address this reads differently from the rest of the stack would bound a
-    different caller than the one being refused.
-    """
+    """The source address as DRF resolves it (honouring `NUM_PROXIES`), so this bounds the same
+    caller the rest of the stack sees."""
     return str(BaseThrottle().get_ident(request))
 
 
 def _parse(rate: str) -> tuple[int, int]:
     """``"60/minute"`` → ``(60, 60)``. An unreadable rate switches the bound **off** rather than
     guessing: a bound nobody configured that starts refusing traffic is worse than none."""
-    periods = {
-        "s": 1,
-        "sec": 1,
-        "second": 1,
-        "m": 60,
-        "min": 60,
-        "minute": 60,
-        "h": 3600,
-        "hour": 3600,
-        "d": 86400,
-        "day": 86400,
-    }
     count, _, period = str(rate).partition("/")
     try:
         limit = int(count)
     except ValueError:
         return 0, 60
-    return limit, periods.get(period.strip().lower(), 60)
+    return limit, _PERIODS.get(period.strip().lower(), 60)

@@ -1,9 +1,5 @@
 <div #root class="multiselect" [attr.data-testid]="testid()">
-  <!--
-    The chosen set, first and always visible. In a plain dropdown it is behind the same scroll as
-    everything else, so "what did I actually pick" costs a scroll through a list of fifty — which
-    is the question somebody arriving at this screen has.
-  -->
+  <!-- The chosen set, first and always visible: "what did I pick" should not cost a scroll. -->
   @if (chosen().length) {
     <ul class="chips" [attr.data-testid]="testid() + '-chosen'">
       @for (option of chosen(); track option.value) {
@@ -28,13 +24,8 @@
     </ul>
   }
 
-  <!--
-    **Disabled means greyed, not gone.** The field used to disappear entirely when this component
-    was read-only, which left a paragraph of chips that a reader does not recognise as a control —
-    the owner's report, and the reason `FRD-206` says read-only means *inert*. A disabled input in
-    the same place, in the browser's own disabled styling, says "this is the control and it is not
-    yours to use" without a sentence having to.
-  -->
+  <!-- Disabled means greyed, not gone: read-only is *inert* (`FRD-206`), and a disabled input in
+       the same place says "this is the control and it is not yours to use". -->
   <div class="multiselect__field">
     @if (disabled()) {
       <input
@@ -77,12 +68,8 @@
 
   @if (!disabled()) {
     @if (open()) {
-      <!--
-        `absolute` inside a wrapper this component owns, so the list floats over what follows
-        instead of pushing the page around while somebody types. Its own height is capped rather
-        than the container's: a list that grows the section it sits in moves every control below
-        it on each keystroke.
-      -->
+      <!-- Floats over what follows, with its own height capped, so typing never moves the controls
+           below it. -->
       <ul class="picker" role="listbox" [id]="testid() + '-list'">
         @for (option of matches(); track option.value; let i = $index) {
           <li>
@@ -112,11 +99,8 @@
           </li>
         }
         @if (!matches().length) {
-          <!--
-            Two different empties, said differently. "Nothing matches what you typed" is the
-            reader's to fix; "there is nothing to choose from" is somebody else's, and a shared
-            message would send half of them to the wrong place.
-          -->
+          <!-- Two different empties: "nothing matches" is the reader's to fix, "nothing to choose
+               from" is somebody else's. -->
           <li class="picker__empty" [attr.data-testid]="testid() + '-empty'">
             @if (query().trim()) {
               Nothing matches “{{ query() }}”.

@@ -34,7 +34,8 @@ MODELS_TS = (
     / "app"
     / "core"
     / "api"
-    / "models.ts"
+    / "types"
+    / "catalog.ts"
 )
 
 
@@ -46,7 +47,7 @@ def _console_capabilities() -> set[str]:
     """
     source = MODELS_TS.read_text()
     match = re.search(r"export const CAPABILITIES[^=]*=\s*\[(.*?)\]", source, re.DOTALL)
-    assert match, "CAPABILITIES is no longer an array literal in models.ts"
+    assert match, "CAPABILITIES is no longer an array literal in types/catalog.ts"
     return set(re.findall(r"'([a-z_]+)'", match.group(1)))
 
 
@@ -104,7 +105,7 @@ def _console_list(name: str, pattern: str = r"'([a-z0-9_/.+-]+)'") -> set[str]:
     """The values of one array literal in the SPA's model definitions."""
     source = MODELS_TS.read_text()
     match = re.search(rf"export const {name}[^=]*=\s*\[(.*?)\]", source, re.DOTALL)
-    assert match, f"{name} is no longer an array literal in models.ts"
+    assert match, f"{name} is no longer an array literal in types/catalog.ts"
     return set(re.findall(pattern, match.group(1)))
 
 
@@ -170,10 +171,10 @@ def test_every_pipeline_step_exists_in_all_three_places() -> None:
 
     editor = (
         pathlib.Path(__file__).resolve().parents[2]
-        / "management/frontend/src/app/features/pipelines/pipeline-editor.ts"
+        / "management/frontend/src/app/features/pipelines/pipeline-steps.ts"
     ).read_text()
-    offered = re.search(r"stepTypes: StepType\[\] = \[([^\]]*)\]", editor)
-    assert offered, "stepTypes is no longer an array literal in the pipeline editor"
+    offered = re.search(r"STEP_TYPES: StepType\[\] = \[([^\]]*)\]", editor)
+    assert offered, "STEP_TYPES is no longer an array literal in the pipeline builder's steps"
     console = set(re.findall(r"'([a-z_]+)'", offered.group(1)))
 
     assert gateway == management, (

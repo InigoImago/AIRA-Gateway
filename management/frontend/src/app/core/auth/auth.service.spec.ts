@@ -17,18 +17,15 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
     },
     hasValidAccessToken: () => true,
     initCodeFlow: (state?: string) => calls.push(`initCodeFlow:${state ?? ''}`),
-    // Recorded as JSON rather than coerced to a boolean: the escape passes an **object**
-    // (`{ client_id }`), and a stub that flattened it to `logOut:[object Object]` would make the
-    // difference between the local-only logout and the provider-side one unassertable — which is
-    // the difference the loop escape turns on.
+    // Recorded as JSON: the escape passes an **object** (`{ client_id }`), and flattening it would
+    // make the local-only and the provider-side logout indistinguishable.
     logOut: (options?: boolean | Record<string, string>) =>
       calls.push(`logOut:${JSON.stringify(options ?? false)}`),
     /** Where the login was started from, handed back after the redirect. */
     state: '',
     getAccessToken: () => 'token-abc',
-    // The renewal half of the facade. Stubbed with the real names rather than left out: a
-    // stand-in that silently lacks the method under test is how a session-expiry defect survives
-    // a green suite — which is exactly how this one did.
+    // The renewal half of the facade, stubbed with the real names: a stand-in that silently lacks
+    // the method under test lets a session-expiry defect survive a green suite.
     setupAutomaticSilentRefresh: () => calls.push('silentRefresh'),
     events: {
       subscribe: (handler: (event: OAuthEvent) => void) => {
@@ -38,10 +35,8 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
     },
     ...overrides,
   };
-  // The console's issuer comes from `runtime-config.js`, which the container writes at start and
-  // `ng serve` serves from `public/`. A test environment has neither, and an empty issuer is now a
-  // *reported* failure rather than a silent localhost — so the tests that exercise a working
-  // startup have to arrange what a deployment arranges.
+  // The issuer comes from `runtime-config.js`, which a test environment does not have, and an empty
+  // issuer is a reported startup failure — so a working startup arranges what a deployment does.
   (window as unknown as { __AIRA_CONFIG__?: unknown }).__AIRA_CONFIG__ = {
     issuer: 'http://keycloak.test/realms/aira',
     clientId: 'aira-gateway',
@@ -52,10 +47,9 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
   return { service: TestBed.inject(AuthService), calls, fire: (event: OAuthEvent) => emit(event) };
 }
 
-// **The login counter lives in `sessionStorage`**, which is shared by every test in this file —
-// that is the whole point of it (`AuthService.reauthenticate`: it has to survive a full-page
-// navigation, so it cannot live in the service). Without this, the third test to sign in again
-// trips the loop breaker and the ones after it fail for a reason that has nothing to do with them.
+// **The login counter lives in `sessionStorage`**, shared by every test in this file (it has to
+// survive a full-page navigation). Without clearing it, the third test to sign in again trips the
+// loop breaker for the tests after it.
 beforeEach(() => window.sessionStorage.clear());
 
 describe('AuthService', () => {
@@ -74,9 +68,8 @@ describe('AuthService', () => {
   });
 
   it('arms the silent refresh, so a session does not simply end mid-use', async () => {
-    // Without this the access token expires and every screen starts reporting "invalid
-    // credentials" — which reads as the backend rejecting the user rather than as a session that
-    // ran out, and in a console about spend and controls that makes somebody doubt the data.
+    // Without it the token expires and every screen reports "invalid credentials", which reads as
+    // the backend rejecting the user rather than as a session that ran out.
     const { service, calls } = setup();
     await service.init();
     expect(calls).toContain('silentRefresh');
@@ -112,9 +105,8 @@ describe('AuthService', () => {
   });
 
   it('sends a dead session to the login rather than leaving it to fail on every screen', () => {
-    // Restarting Keycloak takes the session with it. Before this, the first request after that
-    // reported "invalid credentials" — on every panel at once, which reads as the backend
-    // rejecting the user rather than as a session that ended.
+    // Restarting Keycloak takes the session with it; "invalid credentials" on every panel at once
+    // would read as the backend rejecting the user rather than as a session that ended.
     const { service, calls } = setup({ hasValidAccessToken: () => false });
     service.reauthenticate();
 
@@ -182,12 +174,8 @@ describe('AuthService — coming back to where the session ended', () => {
 
   it('refuses anything that is not a same-origin path', async () => {
     // `state` survives a round trip through the browser, so treating it as a destination would be
-    // an open redirect with extra steps. Both shapes are refused: an absolute URL, and the
-    // protocol-relative form that looks like a path and is not.
-    // `/\evil.example` is the one the pattern-matching guard let through: it is not the
-    // protocol-relative form, and a URL parser resolves it to one anyway — `\` is `/` in a
-    // special scheme. Listed here beside the two shapes that were already refused, because a
-    // guard whose sibling cases are tested and whose third is not is the narrowest kind.
+    // an open redirect. Refused: an absolute URL, the protocol-relative form, and `/\evil.example`,
+    // which a URL parser resolves to another origin because `\` is `/` in a special scheme.
     for (const hostile of [
       'https://evil.example/steal',
       '//evil.example/steal',
@@ -215,21 +203,15 @@ describe('AuthService — coming back to where the session ended', () => {
 
 describe('the scopes the console asks for', () => {
   it('does not ask for an offline token', () => {
-    // This one line took the whole console down. A realm that does not permit offline tokens
-    // answers the code-to-token exchange with `not_allowed`, and answers it *without* CORS
-    // headers — so the browser reports a CORS error naming neither the scope nor the setting.
-    // Nothing rendered at all.
-    //
-    // It was also unnecessary: the authorization-code flow already returns a refresh token.
-    // `offline_access` asks for one that outlives the SSO session, which is a credential a
-    // governance console has no business holding.
+    // A realm that does not permit offline tokens refuses the code-to-token exchange without CORS
+    // headers, so the console never renders. The code flow already returns a refresh token, and
+    // one that outlives the SSO session is not a credential a governance console should hold.
     expect(authConfig.scope).toBe('openid profile email');
   });
 
   it('still renews ahead of expiry, which is what the scope was reached for', () => {
-    // The requirement survives; only the instrument was wrong. Without these the session ends at
-    // the token's lifetime and every screen reports "invalid credentials", which reads as the
-    // data being untrustworthy rather than the session having run out.
+    // Renewal is still required: without it the session ends at the token's lifetime and every
+    // screen reports "invalid credentials".
     expect(authConfig.timeoutFactor).toBeLessThan(1);
     expect(authConfig.silentRefreshRedirectUri).toContain('/silent-refresh.html');
   });
@@ -237,13 +219,9 @@ describe('the scopes the console asks for', () => {
 
 describe('AuthService — a console that does not know its issuer', () => {
   it('says so, and does not try to reach an identity provider it cannot name', async () => {
-    /** The fallback used to be `http://localhost:8080/realms/aira`: a deployment whose
-     *  `runtime-config.js` did not load sent every user to a login page on whatever machine their
-     *  browser sat at, and the error named neither the realm nor the reason. Empty and reported
-     *  beats plausible and wrong.
-     *
-     *  Reported rather than thrown: `authConfig` is read at startup, before the shell that could
-     *  explain a thrown error exists — throwing took four test suites down when it was tried. */
+    /** A fallback issuer would send every user of a deployment whose `runtime-config.js` did not
+     *  load to a login page on their own machine. Empty and reported beats plausible and wrong —
+     *  reported rather than thrown, because the shell that explains it must still boot. */
     const { service, calls } = setup();
     delete (window as unknown as { __AIRA_CONFIG__?: unknown }).__AIRA_CONFIG__;
 
@@ -255,14 +233,12 @@ describe('AuthService — a console that does not know its issuer', () => {
 });
 
 /**
- * The loop the guard above could not see.
+ * The loop across pages.
  *
- * `reauthenticating` prevents five panels starting five logins **in one page**. It cannot prevent
- * the same refusal coming back **after** the redirect, because the redirect destroys the object
- * holding it — and that is the loop somebody actually meets: Keycloak still has a valid SSO
- * session, answers the authorization request without asking anything, and sends a fresh token that
- * is refused for the same reason as the last one. Reported from use: the page flickers through the
- * round trip as fast as the browser can navigate, until the account is locked out.
+ * `reauthenticating` prevents five panels starting five logins **in one page**; it cannot see the
+ * same refusal coming back **after** the redirect, which destroys the object holding it. Keycloak's
+ * SSO session answers at once with a fresh token refused for the same reason, and the page would
+ * flicker through the round trip until the account is locked out.
  */
 describe('AuthService — signing in again when signing in is not the problem', () => {
   /** A fresh service each time, which is what a full-page navigation actually produces. */
@@ -278,7 +254,7 @@ describe('AuthService — signing in again when signing in is not the problem', 
 
   it('stops redirecting once signing in again has demonstrably not helped', () => {
     // Three round trips, each a new page and therefore a new service — the in-memory guard is
-    // `false` every time, which is precisely why it never saw this.
+    // `false` every time.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       afterRedirect().service.reauthenticate();
     }
@@ -311,13 +287,9 @@ describe('AuthService — signing in again when signing in is not the problem', 
     service.reauthenticate();
     service.signOutCompletely();
 
-    // `logOut(true)` is the local-only form and is what `reauthenticate` uses. The escape needs
-    // the other one: Keycloak is the half that keeps saying yes, and a local clear sends the
-    // reader back to an SSO session that signs them straight in again.
-    //
-    // And it carries `client_id`, because by then the loop has removed the `id_token` the provider
-    // would otherwise accept as the hint — the browser test found that one, on a Keycloak error
-    // page, while every other tier was green.
+    // `logOut(true)` is the local-only form `reauthenticate` uses; the escape needs the other one,
+    // or the SSO session signs the reader straight back in. And it carries `client_id`, because
+    // the loop has already removed the `id_token` the provider would otherwise take as the hint.
     const escape = calls.filter((call) => call.startsWith('logOut:')).at(-1);
     expect(escape).not.toBe('logOut:true');
     expect(escape).toContain('client_id');
@@ -348,8 +320,7 @@ describe('AuthService — signing in again when signing in is not the problem', 
     service.reauthenticate();
 
     // Errs towards letting a login happen: the failure this guard prevents is a storm, not one
-    // redirect, and a console that refused to sign anybody in because of a stray string would be
-    // a worse bug than the one being fixed.
+    // redirect.
     expect(calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
   });
 });

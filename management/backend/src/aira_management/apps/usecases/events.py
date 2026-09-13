@@ -1,7 +1,7 @@
-"""In-process change hook for use-case events (FRD-202).
+"""In-process hook for use-case events (`FRD-202`).
 
-Subscribers are notified on use-case/membership changes. In FRD-204 a Kafka publisher
-subscribes here; for now it is the extension point (and lets tests observe changes).
+Every configuration change is announced here; the outbox subscribes and carries each event to the
+gateway over Kafka (`FRD-204`), and tests subscribe to observe changes.
 """
 
 from __future__ import annotations

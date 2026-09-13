@@ -33,3 +33,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0020 | [The question catalogue tests a use case's pipeline, not a model](ADR-0020-the-catalogue-tests-a-pipeline.md) | Accepted | 2026-08-16 |
 | 0021 | [Three settings we own, and the vendor's own words for the rest](ADR-0021-thinking-levels-are-the-vendors-words.md) | **Accepted** | 2026-08-19 |
 | 0022 | [A call to another system says so, on one switch](ADR-0022-a-call-to-another-system-says-so.md) | **Accepted** | 2026-09-01 |
+| 0023 | [A comment states the rule; the story lives in the DEVLOG](ADR-0023-a-comment-states-the-rule.md) | **Accepted** | 2026-09-12 |

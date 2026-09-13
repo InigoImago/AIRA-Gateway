@@ -1,10 +1,8 @@
-"""How Azure addresses a model, which is not by its name (FRD-120 §5.2).
+"""How Azure addresses a model, which is not by its name (`FRD-120` §5.2).
 
-Lives here rather than beside the dialect on purpose. The dialect is **platform-free** — that is
-the property that let Foundry reuse it without a line of change, and `ADR-0011`'s justification
-rests on it. A `Routes` implementation that names a cloud belongs to that cloud's package, and the
-architecture assertion in ``test_vertex.py`` is what keeps the two apart: it parses every module
-outside the platform packages and fails if a vendor appears in code.
+Here rather than beside the dialect: the dialect is **platform-free**, which is what let Foundry
+reuse it unchanged (`ADR-0011`). The architecture assertion in ``test_vertex.py`` keeps vendor
+names inside the platform packages.
 """
 
 from __future__ import annotations
@@ -12,16 +10,17 @@ from __future__ import annotations
 from urllib.parse import quote
 
 
+class UnknownDeployment(Exception):
+    """A model this platform has no addressing for. A startup or configuration mistake."""
+
+
 class AzureRoutes:
     """Azure OpenAI: the deployment in the path, an API version, no model in the body.
 
-    ``deployments`` maps the **caller-facing model name** to the deployment that serves it — the
-    mapping `FRD-114` carries per catalog entry, so that a deployment migration is a catalog edit
-    rather than a change to every use case's configuration.
-
-    A model with no deployment raises rather than falling back to its own name. Azure would answer
-    404 for a deployment that does not exist, which reads as "the model is gone" instead of "nobody
-    told us where it lives", and sends whoever debugs it to the wrong system.
+    ``deployments`` maps the **caller-facing model name** to the deployment that serves it, so a
+    deployment migration is a catalog edit, not a change to every use case (`FRD-114`). A model
+    with no deployment raises rather than falling back to its own name: Azure's 404 for a missing
+    deployment reads as "the model is gone" instead of "nobody told us where it lives".
     """
 
     def __init__(self, deployments: dict[str, str], api_version: str) -> None:
@@ -54,29 +53,19 @@ class AzureRoutes:
         )
 
     def listing(self) -> str:
-        # Not a deployment path: this asks whether the *resource* answers, which is the question a
-        # readiness probe has. Asking a deployment would make the verdict depend on which one, and
-        # a resource with one cold deployment is not an unreachable resource.
+        # The *resource's* listing, not a deployment's: a readiness verdict must not depend on
+        # which deployment was asked, and one cold deployment is not an unreachable resource.
         return f"/openai/models?api-version={self._api_version}"
 
     def names_models(self) -> bool:
-        """No — and this is the platform the distinction was written for (`FRD-507` stage C).
+        """No: this listing answers which models the resource *could* run (`FRD-507` stage C).
 
-        That listing answers "which models could this resource run", not "which models can be
-        called". Each of them needs a **deployment** first, and the deployment name is what
-        `_deployments` above maps and what every request path carries. A model imported from here
-        would be catalogued, approved, priced — and answer 404 on its first request, with the
-        catalog saying it was ready. Cataloguing is enough to serve a model only where the model
-        name is the whole addressing (`FRD-507` stage B); here it is not.
+        Each needs a deployment before any request can reach it, so an imported entry would be
+        catalogued, approved, priced — and answer 404 on its first request.
         """
         return False
 
     def body_model(self, model: str) -> str | None:
-        # The path already named the deployment. Azure ignores a body `model`, and sending one
-        # would put a *caller-facing* name on the wire where a reader would take it for the
-        # deployment — two different strings that look like one field.
+        # The path already names the deployment. A body `model` would put a caller-facing name on
+        # the wire where a reader would take it for the deployment.
         return None
-
-
-class UnknownDeployment(Exception):
-    """A model this platform has no addressing for. A startup or configuration mistake."""

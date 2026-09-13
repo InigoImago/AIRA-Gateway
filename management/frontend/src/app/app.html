@@ -1,8 +1,6 @@
 <header class="aira-header">
   <div class="aira-header__brand">
-    <!-- The mark, not the letters. `aria-hidden` because the heading beside it already names the
-         product — an image and a heading saying the same thing is one thing said twice to a
-         screen reader. -->
+    <!-- `aria-hidden`: the heading beside the mark already names the product. -->
     <img class="aira-logo" src="aira-mark.svg" alt="" aria-hidden="true" width="34" height="30" />
     <div>
       <h1>{{ title() }}</h1>
@@ -12,10 +10,8 @@
   @if (me(); as user) {
     <div class="aira-user">
       <span class="aira-user__name">{{ user.username }}</span>
-      <!-- Which hat you are wearing, one chip per role. Half of what a role-based console has
-           to answer is "why can I not do this", and the first step is showing which role is
-           asking. `data-role` carries the slug, so the role is assertable without depending on
-           the wording. -->
+      <!-- One chip per role. `data-role` carries the slug, so the role is assertable without
+           depending on the wording. -->
       @for (role of roleChips(); track role.slug) {
         <span class="aira-user__role" [attr.data-role]="role.slug" [title]="role.explains">{{
           role.label
@@ -25,17 +21,8 @@
     </div>
   }
   <!--
-    The console is signed in and could not find out **who you are** (`/me` failed).
-
-    Everything role-shaped in this shell comes from that call: the username, the role chips, the
-    Logout button, and the nav entries for investigating an incident and for oversight. Without an
-    error branch a failure removed all of them silently, so an IT Security reader saw a console
-    built for somebody with fewer rights and nothing saying why — and no way to sign out, which is
-    the one action that reliably fixes it.
-
-    Beside the header rather than instead of the routes, unlike `startupError`: the screens below
-    still work, and each reports its own outcome. What is wrong here is the *shell*, so this says
-    so and leaves the reader able to leave.
+    `/me` failed. Everything role-shaped in this shell came from it, so say so and keep Logout —
+    beside the header rather than instead of the routes, because the screens below still work.
   -->
   @if (accountError(); as message) {
     <div class="aira-user" data-testid="account-error">
@@ -51,18 +38,7 @@
     >Models &amp; prices</a
   >
   <a class="aira-nav__item" routerLink="/reporting" routerLinkActive="is-active">Reporting</a>
-  <!--
-    Cross-use-case request browsing, for the roles that may act on an incident (`FRD-505`). Not
-    offered to `it-steuerung`: that role sees every figure and no content, and this screen's whole
-    point is the content behind the figures. Offering it and refusing on use is `FRD-206`'s defect.
-  -->
-  <!--
-    Putting the question catalogue to a use case's pipeline (`ADR-0020`). Offered to whoever may
-    **run** it, which since that decision is anybody who belongs to a use case — a use-case
-    administrator asking whether their own filter holds is the reader this screen gained. It sat
-    inside the incident-role block below while a run was about a model and the whole installation
-    was the audience.
-  -->
+  <!-- The question catalogue against a use case's pipeline (`ADR-0020`), for whoever may run it. -->
   @if (mayTest()) {
     <a
       class="aira-nav__item"
@@ -72,6 +48,8 @@
       >Pipeline tests</a
     >
   }
+  <!-- Cross-use-case requests (`FRD-505`), for the roles that may act on an incident. Not
+       `it-steuerung`: that role sees every figure and no content. -->
   @if (mayInvestigate()) {
     <a
       class="aira-nav__item"
@@ -82,13 +60,8 @@
     >
   }
   <!--
-    The register of processing activities (`FRD-608`). Offered to an oversight role, and the
-    gateway does **not** restrict it to one: `visible_scope` answers for anybody, so a member who
-    types the URL gets a register of their own use cases rather than a refusal.
-    It is not in everybody's navigation because the value of the screen is **comparison across use
-    cases**, which a member of one cannot do — and everything it would tell them about their own is
-    already on its detail page. Offering it to them would be a tab that looks broken, which is the
-    other half of what `FRD-206` is about.
+    The register of processing activities (`FRD-608`), for oversight roles. The gateway answers a
+    member with their own use cases too, but the screen's value is comparison across use cases.
   -->
   @if (hasOversight()) {
     <a
@@ -99,10 +72,7 @@
       >Register</a
     >
   }
-  <!--
-    The tab an oversight role could not previously be given, because there was nothing behind it.
-    `FRD-502` built the screen; a tab that does not respond is what `FRD-206` removed.
-  -->
+  <!-- The security console (`FRD-502`), for oversight roles. -->
   @if (hasOversight()) {
     <a
       class="aira-nav__item"
@@ -112,41 +82,17 @@
       >Security</a
     >
   }
-  <!--
-    Screens that do not exist yet used to sit here as disabled tabs, one per oversight role. They
-    read as broken navigation — somebody logs in as the administrator, sees "Administration", and
-    finds it does not respond. A tab that cannot be clicked teaches nothing except that something
-    is wrong.
-
-    What each role *may* do is instead shown where they are: the use-case list says whose it is,
-    and the roles are named in the header. When `FRD-500`/`501`/`503` build the security console,
-    it becomes a real tab.
-  -->
+  <!-- No disabled tabs for screens that do not exist: a tab that does not respond reads as broken
+       navigation (`FRD-206`). -->
 </nav>
 
 <main class="aira-main">
   <!--
-    The identity provider could not be reached when the console started (`AuthService.startupError`).
-
-    Rendered instead of the routes, not beside them: every screen behind this needs a token, so
-    showing them would fill the page with failures that all have one cause and name none of it.
-    Before this existed the whole page was **white** — a `200` from the web server and nothing in
-    it, which reads as "this application is broken" rather than "its login service is down". A
-    reader cannot tell those apart, and they report the wrong one.
-
-    It names the issuer, because a *misdirected* console fails identically to an unreachable one
-    and the two need different people to fix them.
-  -->
-  <!--
-    Signing in again stopped helping (`AuthService.reauthenticate`).
-
-    Instead of the routes, for the same reason as `startupError` below: every screen behind this
-    needs a token the API is refusing, so they would fill the page with failures that share one
-    cause and name none of it.
-
-    The button ends the session **at Keycloak**, which is the only exit. Keycloak is the half that
-    keeps saying yes — clearing tokens here sends the reader back to an SSO session that signs them
-    straight in again, which is the loop with an extra step.
+    Signing in again stopped helping (`AuthService.reauthenticate`), or the identity provider could
+    not be reached at startup (`AuthService.startupError`). Either replaces the routes: every screen
+    behind it needs a token, and would fill the page with failures sharing one unnamed cause. The
+    loop's button ends the session at Keycloak, the only exit; the startup message names the issuer,
+    because a misdirected console fails like an unreachable one.
   -->
   @if (loginLoop(); as reason) {
     <section class="panel" data-testid="login-loop">

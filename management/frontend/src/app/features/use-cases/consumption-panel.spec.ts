@@ -52,11 +52,8 @@ function setup(consumption: Partial<UseCaseConsumption> = {}) {
 }
 
 /**
- * The defect this panel exists for, and the four ways it can be empty.
- *
- * Asserted on the **rendered DOM** rather than on the component's signals, because the fault was
- * never in the arithmetic: the figures existed in `request_logs` and nothing put them on screen.
- * A test of the computation would have passed against the broken console.
+ * Consumption without a budget, and the four ways the panel can be empty — asserted on the
+ * rendered DOM, because the risk is figures that exist and never reach the screen.
  */
 describe('ConsumptionPanel', () => {
   it('shows what was consumed, with no budget anywhere in sight', () => {
@@ -93,10 +90,8 @@ describe('ConsumptionPanel', () => {
   });
 
   /**
-   * "Nothing happened here" and "this is not yours to see" are two facts that look identical in
-   * the rows. The second one names the Keycloak group, and says that administering a use case in
-   * the console does not put you in it — which is the thing a reader would otherwise conclude was
-   * a broken screen (`FRD-209`: AIRA never writes to the directory).
+   * "Nothing happened" and "not yours to see" look identical in the rows. The second names the
+   * Keycloak group, which administering the use case does not put you in (`FRD-209`).
    */
   it('distinguishes a figure it may not see from a figure that is zero', () => {
     const panel = setup({ outOfScope: true });
@@ -106,11 +101,7 @@ describe('ConsumptionPanel', () => {
     expect(panel.at('consumption-down')).toBeNull();
   });
 
-  /**
-   * One window arriving and the other not is a **third** state, and it is the one the first
-   * version of this feature got wrong: a single failure flag written by two independent requests
-   * hid the month that had already been fetched. What is known is shown; the dash says so.
-   */
+  /** One window arriving and the other not is a third state: what is known is shown, the dash says so. */
   it('shows the window that arrived when the other one did not', () => {
     const panel = setup({
       month: reportRow(),
@@ -141,9 +132,8 @@ describe('ConsumptionPanel', () => {
   });
 
   /**
-   * Each figure carries what it counts (`FRD-206`). Asserted as **rendered text**, because the
-   * hint takes projected content and passing it as an attribute is silently ignored by Angular —
-   * three hints on the requests screen said nothing at all for exactly that reason.
+   * Each figure carries what it counts (`FRD-206`). Asserted as rendered text: the hint takes
+   * projected content, and an attribute would be silently ignored.
    */
   it('explains what each figure counts', () => {
     const panel = setup({ month: reportRow(), today: reportRow() });

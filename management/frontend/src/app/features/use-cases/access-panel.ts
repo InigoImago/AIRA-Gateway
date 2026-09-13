@@ -13,10 +13,8 @@ const TYPING_PAUSE_MS = 250;
 /**
  * What else the removal did, in the sentence that reports it.
  *
- * Ending somebody's access revokes the API keys of this use case that rested on it (`FRD-613`) —
- * the half of offboarding that actually reaches a model. Saying nothing about it would leave the
- * reader believing they had only edited a list, and would hide the one consequence they might
- * need to tell somebody about.
+ * Ending somebody's access revokes this use case's API keys that rested on it (`FRD-613`); the
+ * reader must learn that, not believe they only edited a list.
  */
 function keysRevoked(change: AccessChange | null | undefined): string {
   const keys = change?.revoked_keys ?? [];
@@ -28,14 +26,9 @@ function keysRevoked(change: AccessChange | null | undefined): string {
 /**
  * Who can reach this use case, and as what (`FRD-209`).
  *
- * One panel for **both kinds of grant**, because the question a person is asking is "who should
- * get this" and not "am I about to name a group or a person". Two panels would make them choose
- * the mechanism before they have chosen the recipient, which is backwards — and would put the
- * search box on one of them.
- *
- * A group grant is the point of the feature: a department has a group, the identity provider knows
- * who is in it, and somebody joining or leaving takes effect without anybody editing an access
- * list here. A person is still grantable, for the cases where a group would be one person.
+ * One panel for both kinds of grant, because the reader asks "who should get this", not "a group
+ * or a person". A group grant follows the identity provider's membership, so joiners and leavers
+ * need no edit here; a person is grantable where a group would be one person.
  */
 @Component({
   selector: 'app-access-panel',
@@ -63,11 +56,8 @@ export class AccessPanel implements OnInit {
   protected readonly results = signal<DirectoryEntry[]>([]);
   protected readonly searching = signal(false);
   /**
-   * Where the last answer came from.
-   *
-   * `local` means Keycloak could not be asked, and the console says so: an empty list from a
-   * directory nobody could reach reads exactly like "no such group", and those are different
-   * answers to act on.
+   * Where the last answer came from. `local` means Keycloak could not be asked, which the console
+   * states: an empty list from an unreachable directory otherwise reads as "no such group".
    */
   protected readonly source = signal<'keycloak' | 'local' | 'none'>('none');
   protected readonly hint = signal('');
@@ -119,8 +109,7 @@ export class AccessPanel implements OnInit {
   protected grant(): void {
     const entry = this.picked();
     if (!entry) return;
-    // Typed as the wider of the two on purpose: `feedback.run` only cares that something
-    // completed, and narrowing here would mean two near-identical blocks that can drift.
+    // The wider type on purpose: `feedback.run` only needs completion, and one block cannot drift.
     const request: Observable<unknown> =
       entry.kind === 'group'
         ? this.service.grantGroup(this.slug(), entry.id, this.role())
@@ -175,8 +164,7 @@ export class AccessPanel implements OnInit {
   }
 
   private lookup(value: string): void {
-    // Switched, not queued: a slow answer for "ku" must not land after a fast one for "kunden"
-    // and repopulate the list with results nobody is looking at any more.
+    // Switched, not queued: a slow answer for "ku" must not land after a fast one for "kunden".
     this.inFlight?.unsubscribe();
     if (value.trim().length < 2) {
       this.results.set([]);

@@ -1,50 +1,21 @@
 """One line per call to a system that is not ours (`FRD-617`).
 
-Everything else this codebase says about itself is about a request it **received**: a server span,
-an audit row, a degradation entry. Integration work needs the other direction — *what did we send,
-where, how long did it take, and did it arrive* — and that half existed nowhere. A collector on the
-wrong port, a broker that refuses our SASL mechanism and an identity provider that has gone away
-all presented as ordinary silence, or as somebody else's fault.
+Everything else the codebase reports is about a request it **received**. Integration work needs the
+other direction: what did we send, where, how long did it take, and did it arrive.
+`watch(system, operation, **fields)` times one call and emits exactly one structured line with the
+system, operation, outcome, duration and the caller's fields. It is not a metrics facility and not a
+slow-query log (`postgres` and `redis` are watched per connection, §3.3).
 
-## What this is
-
-`watch(system, operation, **fields)` wraps a call, times it, and emits exactly **one** structured
-line carrying the system, the operation, the outcome, the duration and whatever the caller thought
-was worth naming. That is the whole feature. It is not a metrics facility (the trace and the
-collector's own counters are that), and it is not a slow query log — see `FRD-617` §3.3 for why
-`postgres` and `redis` are watched at connection granularity and not per statement.
-
-## Off is off, and on is one switch
-
-`AIRA_DEBUG_INTEGRATIONS` selects systems by name from :data:`SYSTEMS`. Empty is the default.
-Disabled, a call site costs one frozenset membership test and yields a shared no-op — nothing is
-formatted, timed, or allocated per field.
-
-There is deliberately **no second knob**. The lines go out at `INFO` (`WARNING` for a failure)
-rather than `DEBUG`, because a debug channel that also requires `AIRA_LOG_LEVEL=DEBUG` is one whose
-first use is spent discovering that it needs `AIRA_LOG_LEVEL=DEBUG`, and lowering the root level to
-see six lines buys every library's opinion as well.
-
-The vocabulary is closed and an unknown name is a **startup refusal**. `LESSONS.md` §3: a setting
-that silently means nothing is worse than one that is missing, because the operator concludes the
-feature does not work rather than that they misspelled it.
-
-## Never in the way
-
-`FR-6`: a watched call behaves exactly as it would unwatched. The exception propagates untouched,
-the return value is the callee's, and an error *inside* this module is suppressed — a diagnostic
-channel that can fail the thing it observes is a liability, and this one runs on the request path
-(`auth`) and inside a telemetry exporter, which are the two places a raised exception is hardest to
-attribute.
-
-## And it must not travel by the thing it describes
-
-Lines about `otel` are marked local-only and never enter the OTLP log pipeline. `FRD-617` §3.2 has
-the mechanism and the reason: a line reporting a failed log export becomes a log record, which is
-queued for export, which fails, which produces another line. The same trap ate the SDK's *own*
-explanation of every export failure this project has ever had — with `AIRA_OTEL_ENABLED=true` the
-only handler on the root logger is the OTLP one, so the sentence saying why the exporter could not
-post was posted to the exporter that could not post.
+- **Off is off, and on is one switch.** `AIRA_DEBUG_INTEGRATIONS` names systems from
+  :data:`SYSTEMS`; empty is the default and costs one set lookup per call site. Lines go out at
+  `INFO` (`WARNING` on failure), so no log-level change is needed. An unknown name is a start-up
+  refusal: a setting that silently means nothing reads as a broken feature (`LESSONS.md` §3).
+- **Never in the way** (FR-6). A watched call behaves exactly as unwatched — exception and return
+  value untouched — and an error inside this module is suppressed: it runs on the auth path and
+  inside a telemetry exporter.
+- **Not carried by what it describes** (§3.2). `otel` lines are local-only and never enter the OTLP
+  log pipeline: a line about a failed log export would be queued for export, fail, and produce
+  another.
 """
 
 from __future__ import annotations
@@ -57,25 +28,25 @@ from typing import Any
 from aira_common.logging import LOCAL_ONLY_KEY, get_logger
 from aira_common.observability import redact_target
 
-_log = get_logger("aira_common.integration")
-
-#: The systems this build knows how to watch. Closed on purpose — see the module docstring.
-#:
-#: Ordered as an operator meets them: the two that carry telemetry and configuration, the one that
-#: decides who a caller is, and the three that hold state.
+#: The systems this build can watch, in the order an operator meets them. Closed on purpose.
 SYSTEMS: tuple[str, ...] = ("otel", "kafka", "auth", "vault", "redis", "postgres")
 
 #: The one word that means every system, including ones added after the setting was written.
 ALL = "all"
 
-#: Systems whose lines must not be exported through OpenTelemetry. `otel` is the only one that can
-#: be, and the reason is circularity rather than sensitivity — see the module docstring.
+#: Systems whose lines must not be exported through OpenTelemetry — for circularity, not
+#: sensitivity (see the module docstring).
 LOCAL_ONLY_SYSTEMS = frozenset({"otel"})
 
-#: Fields whose value may be an address and must therefore pass the shared credential redaction
-#: before it is written anywhere (`ADR-0007`). `redact_target` is both halves of that: the query
-#: parameter a Gemini key rides in, and the `user:password@` a Redis or Postgres URL carries.
+#: Fields that may hold an address and must pass the shared credential redaction before they are
+#: written anywhere (`ADR-0007`): both a query-string key and a `user:password@`.
 _URL_FIELDS = frozenset({"target", "endpoint", "url", "uri"})
+
+#: How far down an exception's `__cause__` chain to look for a timeout. Three covers the deepest
+#: wrapping seen (`PyJWKClientConnectionError` → `URLError` → `TimeoutError`) and bounds the walk.
+_CAUSE_DEPTH = 3
+
+_log = get_logger("aira_common.integration")
 
 _watched: frozenset[str] = frozenset()
 
@@ -87,12 +58,8 @@ class UnknownIntegration(ValueError):
 def parse_systems(spec: str) -> frozenset[str]:
     """Turn the setting's text into the set of systems to watch.
 
-    Empty, whitespace and a lone separator all mean *off*, because a compose file writing
-    ``${AIRA_DEBUG_INTEGRATIONS:-}`` produces an empty string and that is the ordinary way this
-    setting is absent (the same idiom `BaseAiraSettings._empty_means_unset` exists for).
-
-    An unrecognised name raises. The alternative — ignore it — produces an installation where the
-    operator has switched the feature on, sees nothing, and concludes the feature is broken.
+    Empty, whitespace and a lone separator all mean *off* — compose's
+    ``${AIRA_DEBUG_INTEGRATIONS:-}`` produces an empty string. An unrecognised name raises.
     """
     names = [part.strip().lower() for part in spec.split(",")]
     wanted = {name for name in names if name}
@@ -112,10 +79,9 @@ def parse_systems(spec: str) -> frozenset[str]:
 def configure_integration_debug(spec: str) -> frozenset[str]:
     """Set which systems are watched, process-wide. Returns what is now watched.
 
-    Called once per process next to :func:`aira_common.logging.configure_logging`. Process-wide
-    rather than passed down, for the same reason logging is: the call sites are in a shared
-    library, an exporter's background thread and a Django app registry, and threading a settings
-    object to all three would mean the ones that could not reach it stay unwatched.
+    Called once per process beside :func:`aira_common.logging.configure_logging`. Process-wide
+    rather than passed down: the call sites include a shared library, an exporter's background
+    thread and a Django app registry.
     """
     global _watched
     _watched = parse_systems(spec)
@@ -137,10 +103,8 @@ def is_on(system: str) -> bool:
 class Call:
     """The handle a watched call adds detail to. Yielded by :func:`watch`.
 
-    Mutable on purpose: what is worth reporting is often only known *after* the call — the
-    partition and offset a Kafka record landed on, how many spans a batch held, whether an
-    exporter answered `SUCCESS` or `FAILURE`. A caller that had to know its own outcome in advance
-    would report the ones that go well and nothing else.
+    Mutable, because what is worth reporting is often known only *after* the call — a Kafka
+    record's partition and offset, whether an exporter answered `SUCCESS`.
     """
 
     __slots__ = ("_fields", "_live")
@@ -157,46 +121,26 @@ class Call:
     def failed(self, detail: str) -> None:
         """Record a failure the callee reported **as a value** rather than by raising.
 
-        The case this exists for is an OTLP exporter: it returns ``SpanExportResult.FAILURE`` and
-        raises nothing at all, so a channel that only watched exceptions would report every
-        unsuccessful export as a success that took a while.
+        An OTLP exporter returns ``FAILURE`` and raises nothing, so a channel watching only
+        exceptions would report every failed export as a slow success.
         """
         if self._live:
             self._fields["outcome"] = "failed"
             self._fields["detail"] = detail
 
 
-#: Yielded when the system is not watched. One object for the whole process: a call site must not
-#: allocate to be ignored.
+#: Yielded when the system is not watched: one object per process, so being ignored allocates
+#: nothing.
 _IGNORED = Call({}, live=False)
-
-
-#: How far down an exception's `__cause__` chain to look. Three is deep enough for every wrapping
-#: seen here — `PyJWKClientConnectionError` → `URLError` → `TimeoutError` is the longest — and
-#: bounded so a client library with a cyclic or very deep chain cannot turn a log line into a walk.
-_CAUSE_DEPTH = 3
 
 
 def _is_timeout(exc: BaseException) -> bool:
     """Whether this failure is *"it did not answer"* rather than *"it said no"*.
 
-    The distinction is not cosmetic. A refusal means a wrong address, a wrong port or a wrong
-    credential and is answered by changing configuration; a timeout means a firewall, a hung
-    process or a route that goes nowhere and is answered by looking at the network. Collapsing the
-    two sends whoever reads the line to the wrong one of those about half the time.
-
-    Three ways of asking, because clients disagree about all three:
-
-    - `TimeoutError`, which covers the stdlib and `asyncio` (one class since 3.11);
-    - **the name**, because httpx, redis-py, aiokafka and urllib3 each define their own type, and
-      importing four client libraries into a shared module so a classification can be exact is a
-      worse trade than matching a name they all agree on;
-    - **the cause chain**, because a library may wrap it in a type that says neither. Measured:
-      `PyJWKClient` raises `PyJWKClientConnectionError` for a refused connection *and* for a read
-      timeout, with the real answer one `__cause__` down — so without this every identity-provider
-      failure read as `failed`, and the field that is supposed to separate "the port is wrong" from
-      "something is swallowing the packets" separated nothing on the one system where that question
-      is asked per request.
+    A refusal points at configuration (address, port, credential); a timeout at the network. Asked
+    three ways, because clients disagree: `TimeoutError` (stdlib and `asyncio`); the type's
+    **name**, since httpx, redis-py, aiokafka and urllib3 each define their own; and the **cause
+    chain**, since `PyJWKClient` wraps a read timeout in `PyJWKClientConnectionError`.
     """
     seen = exc
     for _ in range(_CAUSE_DEPTH):
@@ -219,15 +163,8 @@ def _clean(fields: Mapping[str, Any]) -> dict[str, Any]:
 def report(system: str, operation: str, **fields: Any) -> None:
     """Write one line for ``system``, if it is watched. The channel's only output.
 
-    Named `report` and not `emit`: `emit` is this codebase's word for *publishing a configuration
-    event to the outbox*, and two guards read the source for `emit("…")` to check that every event
-    Management publishes has a topic and a branch in the gateway's consumer. A second `emit` with
-    an unrelated first argument made both of them fail on `postgres` — which is the guards working,
-    and a name worth changing rather than an exclusion worth adding.
-
-    Suppresses everything it could raise, for the reason in the module docstring: this runs inside
-    an exporter's background thread and on the authentication path, and a diagnostic that can take
-    down what it observes is worse than no diagnostic.
+    Not named `emit`: that is this codebase's word for publishing a configuration event, and two
+    guards read the source for `emit("…")`. Suppresses everything it could raise (FR-6).
     """
     if system not in _watched:
         return
@@ -253,13 +190,8 @@ def report(system: str, operation: str, **fields: Any) -> None:
 def watch(system: str, operation: str, **fields: Any) -> Iterator[Call]:
     """Time one call to ``system`` and emit a line saying how it went.
 
-    Emits on the way out whether the call returned or raised, which is the property that makes the
-    channel usable: *"there is no line"* then means *"the call was never made"*, and that is a
-    different problem from one that failed. A version that only reported failures would leave the
-    two indistinguishable, which is the state `tools/lab_status.py` was written to escape one layer
-    further out.
-
-    The exception is re-raised untouched (`FR-6`).
+    Emits whether the call returned or raised, so *"there is no line"* means *"the call was never
+    made"* — a different problem from one that failed. The exception is re-raised untouched (FR-6).
     """
     if system not in _watched:
         yield _IGNORED
@@ -272,8 +204,7 @@ def watch(system: str, operation: str, **fields: Any) -> Iterator[Call]:
     except BaseException as exc:
         collected["outcome"] = "timeout" if _is_timeout(exc) else "failed"
         collected["error_type"] = type(exc).__name__
-        # Bounded: a driver that embeds a whole response body in its message would otherwise put it
-        # in the log, and the first two hundred characters of any of these carries the reason.
+        # Bounded: a driver may embed a whole response body in its message.
         collected["error"] = str(exc)[:200]
         report(system, operation, duration_ms=_elapsed_ms(started), **collected)
         raise

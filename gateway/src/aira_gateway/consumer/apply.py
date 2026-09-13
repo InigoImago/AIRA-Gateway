@@ -1,11 +1,17 @@
-"""Idempotent application of config events into the gateway read-model (FRD-204).
+"""Idempotent application of configuration events into the gateway read-model (`FRD-204`).
 
-Every handler is an upsert or delete keyed by natural keys, so re-delivering an event (or
-replaying a compacted topic) converges to the same state.
+Every handler is an upsert or delete keyed by natural keys, so a redelivered event — or a replayed
+compacted topic — converges to the same state. :data:`HANDLERS`, at the end of the module, is the
+event vocabulary; `tools/tests` check it against what Management emits.
+
+**Absent is not empty.** During a rolling update an event from an older Management lacks newer
+fields (`FRD-127`), so each handler states what an absent field means where it reads it — and the
+readings differ on purpose.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +20,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_common.money import to_nanos
+from aira_gateway.db.base import Base
 from aira_gateway.db.models import (
     AnomalyRuleRead,
     ApiKey,
@@ -30,12 +37,54 @@ from aira_gateway.retention import DEFAULT_RETENTION_DAYS
 
 _log = structlog.get_logger(__name__)
 
-#: Event types this gateway knowingly does not apply, and why each one is here rather than handled.
-#:
-#: An entry means *"seen, considered, nothing to do"*. Anything **not** in this set that reaches
-#: the `else` below is a configuration change that this instance did not make — which is the one
-#: failure a control plane cannot afford to be quiet about.
+Handler = Callable[[AsyncSession, dict[str, Any]], Awaitable[None]]
+
+#: Event types this gateway knowingly does not apply, each with the reason. Any other type without
+#: a handler is logged, because an unapplied event is a control an operator believes is in force.
 IGNORED_EVENT_TYPES: frozenset[str] = frozenset()
+
+#: A model event's declaration fields, and the value applied when the event carries one as null.
+#: A field the event omits is left alone: an older Management sends prices without capabilities,
+#: and applying them must not blank a declaration somebody made (`FRD-114`).
+_DECLARATION_DEFAULTS: dict[str, Any] = {
+    "capabilities": None,
+    "publisher": "",
+    "platform": "",
+    "addressing": None,
+    "underlying_model": "",
+    "context_window": None,
+    "max_output_tokens": None,
+    "default_max_output_tokens": None,
+    "thinking": None,
+    "embedding": None,
+    "attachments": None,
+    "hosting": "",
+    "deprecated": False,
+    "numeric_id": None,
+}
+
+
+async def apply_event(session: AsyncSession, event_type: str, payload: dict[str, Any]) -> None:
+    """Apply one configuration event and commit it.
+
+    An unknown type is tolerated — an older gateway must survive a newer Management's events rather
+    than crash-loop its consumer (`FRD-127`) — but never silently.
+    """
+    handler = HANDLERS.get(event_type)
+    if handler is None:
+        if event_type not in IGNORED_EVENT_TYPES:
+            _log.warning(
+                "config_event_not_applied",
+                event_type=event_type,
+                # Names only: configuration carries `client_secret`-shaped fields (`FRD-122`).
+                fields=sorted(payload),
+            )
+        return
+    await handler(session, payload)
+    await session.commit()
+
+
+# == reading a payload ============================================================================
 
 
 def _price_nanos(value: object) -> int | None:
@@ -43,78 +92,25 @@ def _price_nanos(value: object) -> int | None:
     return None if value is None else to_nanos(str(value))
 
 
-async def apply_event(session: AsyncSession, event_type: str, payload: dict[str, Any]) -> None:
-    """Apply one config event; unknown types are ignored (forward-compatible)."""
-    if event_type == "usecase.upserted":
-        await _upsert_usecase(session, payload)
-    elif event_type == "usecase.deleted":
-        await _retire_usecase(session, payload["slug"])
-    elif event_type == "usecase.purged":
-        await _purge_usecase(session, payload["slug"])
-    elif event_type == "membership.upserted":
-        await _upsert_member(session, payload)
-    elif event_type == "membership.removed":
-        await _remove_member(session, payload["slug"], payload["username"])
-    elif event_type == "use_case_group.granted":
-        await _upsert_group_grant(session, payload)
-    elif event_type == "use_case_group.revoked":
-        await _remove_group_grant(session, payload["slug"], payload["group"])
-    elif event_type == "api_key.created":
-        await _upsert_api_key(session, payload)
-    elif event_type == "api_key.revoked":
-        await _set_api_key_active(session, payload["prefix"], active=False)
-    elif event_type == "pipeline.upserted":
-        await _upsert_pipeline(session, payload)
-    elif event_type == "pipeline.deleted":
-        await _delete_pipeline(session, payload["use_case"])
-    elif event_type == "budget.upserted":
-        await _upsert_budget(session, payload)
-    elif event_type == "budget.deleted":
-        await _delete_budget(session, payload["id"])
-    elif event_type == "ratelimit.upserted":
-        await _upsert_rate_limit(session, payload)
-    elif event_type == "ratelimit.deleted":
-        await _delete_rate_limit(session, payload["id"])
-    elif event_type == "anomaly_rule.upserted":
-        await _upsert_anomaly_rule(session, payload)
-    elif event_type == "anomaly_rule.deleted":
-        await _delete_anomaly_rule(session, payload["id"])
-    elif event_type == "model.upserted":
-        await _upsert_model(session, payload)
-    elif event_type == "model.deleted":
-        await _delete_model(session, payload["name"])
-    else:
-        # **Tolerated, and said out loud.** This was a bare `return`.
-        #
-        # Tolerating is right and stays: a rolling update runs two gateway versions at once
-        # (`FRD-127`), and an older one must survive a newer Management's events rather than
-        # crash-looping its consumer — which would stop *every* configuration change reaching it,
-        # not just the new one.
-        #
-        # Silence is the part that was wrong, and it is the same rule the KIRA surface reached on
-        # 2026-08-18: tolerance does not require saying nothing. An unapplied event is a
-        # governance control an operator believes is in force and is not — a budget that never
-        # arrives, a released model that never lands — and the only symptom is the console and the
-        # gateway disagreeing, with nothing anywhere connecting the two. One log line makes it a
-        # search instead of an investigation.
-        if event_type not in IGNORED_EVENT_TYPES:
-            _log.warning(
-                "config_event_not_applied",
-                event_type=event_type,
-                # Names only. The payload is configuration, and configuration carries the
-                # `client_secret`-shaped fields `FRD-122` keeps out of logs.
-                fields=sorted(payload),
-            )
-        return
-    await session.commit()
+def _moment(value: Any) -> datetime | None:
+    """An ISO-8601 instant from an event, or ``None`` if absent or unparsable.
+
+    Not raising keeps the stream moving past one malformed field; for an expiry that is safe only
+    because the key can still be revoked by hand.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _released_models(payload: dict[str, Any]) -> list[str] | None:
-    """The models this event says the use case may call, or ``None`` if it did not say.
+    """The models the use case may call, or ``None`` if the event did not say (`FRD-308`).
 
-    Anything that is not a list of strings is read as "did not say" rather than as "released
-    nothing": a malformed payload must not be able to stop a use case, and the consumer's job is
-    to apply what it understands (`aira_common.models.parse_capabilities` takes the same line).
+    Anything but a list of strings reads as "did not say": a malformed payload must not be able to
+    stop a use case.
     """
     released = payload.get("allowed_models")
     if not isinstance(released, list):
@@ -122,88 +118,74 @@ def _released_models(payload: dict[str, Any]) -> list[str] | None:
     return sorted({str(name) for name in released if isinstance(name, str) and name})
 
 
+async def _upsert(
+    session: AsyncSession, entity: type[Base], fields: dict[str, Any], **key: Any
+) -> None:
+    """Insert the row ``key`` names, or overwrite ``fields`` on it — so a redelivery converges."""
+    (identity,) = key.values()
+    record = await session.get(entity, identity)
+    if record is None:
+        session.add(entity(**key, **fields))
+    else:
+        for name, value in fields.items():
+            setattr(record, name, value)
+
+
+# == use cases ====================================================================================
+
+
 async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
-    existing = await session.get(UseCaseRead, payload["slug"])
     fields = {
         "name": payload.get("name", ""),
         "description": payload.get("description", ""),
         "processing_notes": payload.get("processing_notes", ""),
-        # Older Management versions do not send these; the defaults keep today's behaviour for
-        # storage and the conservative promise for retention.
+        # Absent: storage on, as before the field existed.
         "store_payloads": bool(payload.get("store_payloads", True)),
-        # Absent means **off**, which matters for an event written by an older Management: a
-        # missing field must not read as permission (`FRD-114` FR-7, one layer over).
+        # Absent means **off**: a missing capability must not read as permission (`FRD-114` FR-7).
         "tools_enabled": bool(payload.get("tools_enabled", False)),
         "include_reasoning": bool(payload.get("include_reasoning", False)),
-        # Same default-off reading as `tools_enabled`: an event from an older Management carries
-        # no such field, and inventing consent from its absence is the wrong direction for a
-        # setting whose cache scope is shared across the organisation (`FRD-133` §4b).
+        # Off as well: the cache scope is shared across the organisation (`FRD-133` §4b).
         "prompt_caching_enabled": bool(payload.get("prompt_caching_enabled", False)),
-        # Absent means the cheap default, not the expensive one: an older Management sends no
-        # such field, and reading its silence as "one hour" would double every write price.
+        # The cheap TTL; reading silence as "1h" would double every write price.
         "prompt_cache_ttl": str(payload.get("prompt_cache_ttl") or "5m"),
-        # Absent means **unrestricted**, unlike `tools_enabled` above — and the difference is
-        # deliberate. A missing capability must not read as permission; a missing *restriction*
-        # must not read as one either, or an event from an older Management would silently narrow
-        # what every member of that use case can see.
+        # Absent means **unrestricted**: a missing restriction must not narrow what members see.
         "restrict_members_to_own_requests": bool(
             payload.get("restrict_members_to_own_requests", False)
         ),
         "retention_days": int(payload.get("retention_days") or DEFAULT_RETENTION_DAYS),
-        # `FRD-308`, and the **third** reading of an absent field on this row — none of them is
-        # the same as the others, which is why each says so where it is decided.
-        #
-        # Absent means *this event could not answer*, so the column keeps its `None` and the
-        # gateway treats the use case as unrestricted. An empty **list** is an answer: somebody
-        # released nothing, and nothing may be called. Collapsing the two would stop every use
-        # case on a stack whose Management has not been upgraded yet — a governance feature
-        # arriving as an outage, which is how one gets switched off for good (`FRD-500`).
+        # Absent keeps `None`, read as unrestricted; an empty list releases nothing (`FRD-308`).
         "allowed_models": _released_models(payload),
     }
-    if existing is None:
-        session.add(UseCaseRead(slug=payload["slug"], **fields))
-    else:
-        for key, value in fields.items():
-            setattr(existing, key, value)
+    await _upsert(session, UseCaseRead, fields, slug=payload["slug"])
 
 
-async def _retire_usecase(session: AsyncSession, slug: str) -> None:
+async def _retire_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
     """End every kind of access, and **keep the row as a tombstone** (`FRD-607`).
 
     Management cascades the deletion in its own database but publishes only ``usecase.deleted``,
-    so this is the one place the gateway can learn that the children are gone. Leaving them was a
-    real defect: an API key kept authenticating after its use case had been deleted, so whoever
-    deleted it believed access had ended when it had not — and a slug created again later
-    silently inherited the old budgets, limits and pipeline.
+    so the children go here — otherwise a key keeps authenticating and a re-created slug inherits
+    the old budgets, limits and pipeline.
 
-    Two deliberate asymmetries:
+    - Keys are **deactivated, not deleted**: delivery is at-least-once, and a redelivered
+      ``api_key.created`` must not resurrect one (`ADR-0007`).
+    - ``request_logs`` are **kept**: the audit trail outlives the use case (`FRD-404` §4.1).
+    - The tombstone keeps the use case's retention promise and lets the payload view tell
+      `NOT_STORED` from `EXPIRED`. It grants nothing.
 
-    - Keys are **deactivated, not deleted**. Delivery is at-least-once, so a re-delivered
-      ``api_key.created`` would otherwise resurrect one; revocation has to be terminal for the
-      same reason it is in :func:`_upsert_api_key` (ADR-0007).
-    - ``request_logs`` are **kept**. The audit trail and the spend history are what a later
-      question about what was spent, and by whom, is answered from; they outlive the use case on
-      purpose (FRD-404 §4.1). Their payloads still expire on the retention clock.
-
-    This tombstone is the *only* place the check belongs. Refusing a key at authentication time
-    because its use case is unknown looks like cheap defence in depth and is not: keys and use
-    cases arrive on different Kafka topics with no ordering between them, so a freshly issued key
-    can legitimately reach the gateway before the use case it belongs to, and the check would
-    refuse it.
+    The check belongs here and not at authentication: keys and use cases arrive on different
+    topics with no ordering, so a new key may legitimately arrive before its use case.
     """
+    slug = payload["slug"]
     await session.execute(update(ApiKey).where(ApiKey.use_case == slug).values(is_active=False))
     await session.execute(delete(BudgetRead).where(BudgetRead.use_case == slug))
-    # Group grants go too. Leaving one would let a re-created slug silently inherit access an
-    # entire department still holds — the same defect the keys had, one route further out.
     await session.execute(delete(UseCaseGroupRead).where(UseCaseGroupRead.use_case_slug == slug))
     await session.execute(delete(RateLimitRead).where(RateLimitRead.use_case == slug))
-    # A rule scoped to this use case goes with it; a **global** rule does not, and the filter says
-    # so explicitly. `use_case IS NULL` means "everywhere", and a cascade that swept those away
-    # would let deleting one use case silently switch off detection for every other.
+    # Only rules scoped to this use case: `use_case IS NULL` is a global rule, and sweeping those
+    # would switch off detection for every other use case.
     await session.execute(delete(AnomalyRuleRead).where(AnomalyRuleRead.use_case == slug))
     await session.execute(delete(PipelineConfigRead).where(PipelineConfigRead.use_case == slug))
-    # Usage counters are keyed by scope, not by a foreign key: "uc:<slug>" for the whole use case
-    # and "member:<slug>:<subject>" for each member.
+    # Usage counters are keyed by scope, not by a foreign key: "uc:<slug>" for the use case and
+    # "member:<slug>:<subject>" for each member.
     await session.execute(
         delete(BudgetUsage).where(
             (BudgetUsage.scope_key == f"uc:{slug}")
@@ -211,63 +193,22 @@ async def _retire_usecase(session: AsyncSession, slug: str) -> None:
         )
     )
     await session.execute(delete(UseCaseMemberRead).where(UseCaseMemberRead.use_case_slug == slug))
-    # **The row itself stays.** This used to delete it, and two things depended on it not being
-    # here that nobody had connected:
-    #
-    # - `retention.py` reads a use case's own `retention_days` and `store_payloads` from this
-    #   table. With the row gone, every stored prompt of a retired use case fell through to the
-    #   *installation default* — a promise made to data subjects, quietly replaced by a different
-    #   one at the moment somebody pressed Delete.
-    # - `payloads.py` asks this table to tell a `NOT_STORED` refusal apart from an `EXPIRED` one.
-    #   Without it, "we never kept this" and "we kept it and it aged out" became the same answer.
-    #
-    # Access does not depend on it: keys are deactivated above, and members, group grants, budgets,
-    # limits, rules and the pipeline are all gone. The tombstone grants nothing.
     await session.execute(
         update(UseCaseRead).where(UseCaseRead.slug == slug).values(deleted_at=datetime.now(UTC))
     )
 
 
-async def _purge_usecase(session: AsyncSession, slug: str) -> None:
-    """Drop the tombstone — the second, deliberate decision (`FRD-607`).
+async def _purge_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """Drop the tombstone — a Global Administrator's separate decision (`FRD-607`).
 
-    Reached only by `usecase.purged`, which Management emits only for a use case that has been
-    retired for `PURGE_AFTER_DAYS` and only at a **Global Administrator's** request. Everything
-    that grants access went with the retirement; what goes here is the last record of what the use
-    case *was*.
-
-    `request_logs` still stay. They outlive the use case on purpose (`FRD-404` §4.1) and outlive
-    its record too — after this their payloads fall to the installation default, which is the
-    honest consequence of removing the row that named a shorter one, and is the reason the purge
-    is a decision somebody takes rather than a cleanup that happens.
+    `request_logs` still stay (`FRD-404` §4.1); their payloads fall back to the installation's
+    retention default once the row that named a shorter one is gone.
     """
+    slug = payload["slug"]
     await session.execute(delete(UseCaseRead).where(UseCaseRead.slug == slug))
 
 
-async def _upsert_group_grant(session: AsyncSession, payload: dict[str, Any]) -> None:
-    result = await session.execute(
-        select(UseCaseGroupRead).where(
-            UseCaseGroupRead.use_case_slug == payload["slug"],
-            UseCaseGroupRead.group_path == payload["group"],
-        )
-    )
-    row = result.scalar_one_or_none()
-    role = payload.get("role", "user")
-    if row is None:
-        session.add(
-            UseCaseGroupRead(use_case_slug=payload["slug"], group_path=payload["group"], role=role)
-        )
-    else:
-        row.role = role
-
-
-async def _remove_group_grant(session: AsyncSession, slug: str, group_path: str) -> None:
-    await session.execute(
-        delete(UseCaseGroupRead).where(
-            UseCaseGroupRead.use_case_slug == slug,
-            UseCaseGroupRead.group_path == group_path,
-        )
-    )
+# == access: members, group grants, API keys ======================================================
 
 
 async def _upsert_member(session: AsyncSession, payload: dict[str, Any]) -> None:
@@ -287,35 +228,46 @@ async def _upsert_member(session: AsyncSession, payload: dict[str, Any]) -> None
         member.role = role
 
 
-async def _remove_member(session: AsyncSession, slug: str, subject: str) -> None:
+async def _remove_member(session: AsyncSession, payload: dict[str, Any]) -> None:
     await session.execute(
         delete(UseCaseMemberRead).where(
-            UseCaseMemberRead.use_case_slug == slug, UseCaseMemberRead.subject == subject
+            UseCaseMemberRead.use_case_slug == payload["slug"],
+            UseCaseMemberRead.subject == payload["username"],
         )
     )
 
 
-def _moment(value: Any) -> datetime | None:
-    """Parse an ISO-8601 instant from an event, or ``None``.
+async def _upsert_group_grant(session: AsyncSession, payload: dict[str, Any]) -> None:
+    result = await session.execute(
+        select(UseCaseGroupRead).where(
+            UseCaseGroupRead.use_case_slug == payload["slug"],
+            UseCaseGroupRead.group_path == payload["group"],
+        )
+    )
+    row = result.scalar_one_or_none()
+    role = payload.get("role", "user")
+    if row is None:
+        session.add(
+            UseCaseGroupRead(use_case_slug=payload["slug"], group_path=payload["group"], role=role)
+        )
+    else:
+        row.role = role
 
-    An unparsable value yields ``None`` rather than raising: the event stream must not stall on one
-    malformed field, and for an *expiry* the failure direction is the safe one only because the
-    key is still revocable by hand. Nothing else in the payload is optional in this way.
-    """
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
+
+async def _remove_group_grant(session: AsyncSession, payload: dict[str, Any]) -> None:
+    await session.execute(
+        delete(UseCaseGroupRead).where(
+            UseCaseGroupRead.use_case_slug == payload["slug"],
+            UseCaseGroupRead.group_path == payload["group"],
+        )
+    )
 
 
 async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> None:
-    """Upsert a Management-issued API key into the read-model, keyed by prefix (FRD-205).
+    """Upsert a Management-issued API key, keyed by prefix (`FRD-205`).
 
-    Delivery is at-least-once, so a ``created`` event can be re-delivered *after* the matching
-    ``revoked`` event. Revocation is therefore terminal here: an existing record's metadata is
-    refreshed, but a key that has been deactivated is never brought back to life (ADR-0007).
+    A ``created`` event can be redelivered *after* the matching ``revoked``, so revocation is
+    terminal: metadata is refreshed, but a deactivated key is never reactivated (`ADR-0007`).
     """
     result = await session.execute(select(ApiKey).where(ApiKey.prefix == payload["prefix"]))
     record = result.scalar_one_or_none()
@@ -341,59 +293,40 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
         record.expires_at = _moment(payload.get("expires_at"))
 
 
-async def _set_api_key_active(session: AsyncSession, prefix: str, *, active: bool) -> None:
-    """Apply a revocation, and **write down when**.
+async def _revoke_api_key(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """Deactivate a key, and **write down when**.
 
-    Two paths revoke a key and they recorded different things. `ApiKeyService.revoke` — the
-    gateway-side one, used by the CLI — sets `is_active` *and* stamps `revoked_at`. This one is how
-    every revocation from Management arrives, and it set only the flag. So on any deployed system,
-    where revocations come over Kafka, `revoked_at` was **NULL for every key that had actually been
-    revoked**: a column that says "never revoked" about the ones that were.
-
-    Nothing authenticates on it — `verify` reads `is_active`, so no credential was ever accepted
-    that should not have been. What it breaks is the record, and the record is the point: "when was
-    this credential revoked" is an incident question, and the field that answers it was empty.
-    Found on 2026-08-12 by querying `revoked_at` during a showcase check and drawing exactly the
-    wrong conclusion from it, which is what a reader would have done.
-
-    The event carries no timestamp, so this is when the gateway *learned* of the revocation rather
-    than when it was decided — a few seconds later, and said out loud rather than implied. Only
-    stamped on the way down: revocation is terminal, and a reactivation that cleared the time would
-    erase the record of a decision.
+    `revoked_at` is the record an incident asks for ("when was this credential revoked"). The event
+    carries no timestamp, so this is when the gateway learned of it. Stamped once: revocation is
+    terminal, and a later event must not erase the record of the decision.
     """
-    result = await session.execute(select(ApiKey).where(ApiKey.prefix == prefix))
+    result = await session.execute(select(ApiKey).where(ApiKey.prefix == payload["prefix"]))
     record = result.scalar_one_or_none()
     if record is not None:
-        record.is_active = active
-        if not active and record.revoked_at is None:
+        record.is_active = False
+        if record.revoked_at is None:
             record.revoked_at = datetime.now(UTC)
 
 
+# == pipeline, budgets, rate limits, anomaly rules ================================================
+
+
 async def _upsert_pipeline(session: AsyncSession, payload: dict[str, Any]) -> None:
-    """Upsert a use case's pipeline config, keyed by use case (FRD-300)."""
-    steps = payload.get("steps", [])
-    fallback = payload.get("fallback_models", [])
-    record = await session.get(PipelineConfigRead, payload["use_case"])
-    if record is None:
-        session.add(
-            PipelineConfigRead(
-                use_case=payload["use_case"],
-                steps=steps,
-                fallback_models=fallback,
-            )
-        )
-    else:
-        record.steps = steps
-        record.fallback_models = fallback
+    """Upsert a use case's pipeline configuration, keyed by use case (`FRD-300`)."""
+    fields = {
+        "steps": payload.get("steps", []),
+        "fallback_models": payload.get("fallback_models", []),
+    }
+    await _upsert(session, PipelineConfigRead, fields, use_case=payload["use_case"])
 
 
-async def _delete_pipeline(session: AsyncSession, use_case: str) -> None:
+async def _delete_pipeline(session: AsyncSession, payload: dict[str, Any]) -> None:
+    use_case = payload["use_case"]
     await session.execute(delete(PipelineConfigRead).where(PipelineConfigRead.use_case == use_case))
 
 
 async def _upsert_budget(session: AsyncSession, payload: dict[str, Any]) -> None:
-    """Upsert a budget definition into the read-model, keyed by id (FRD-400)."""
-    record = await session.get(BudgetRead, payload["id"])
+    """Upsert a budget definition, keyed by id (`FRD-400`)."""
     fields = {
         "use_case": payload["use_case"],
         "scope": payload["scope"],
@@ -404,20 +337,15 @@ async def _upsert_budget(session: AsyncSession, payload: dict[str, Any]) -> None
         "limit_requests": payload.get("limit_requests"),
         "enabled": payload.get("enabled", True),
     }
-    if record is None:
-        session.add(BudgetRead(id=payload["id"], **fields))
-    else:
-        for key, value in fields.items():
-            setattr(record, key, value)
+    await _upsert(session, BudgetRead, fields, id=payload["id"])
 
 
-async def _delete_budget(session: AsyncSession, budget_id: int) -> None:
-    await session.execute(delete(BudgetRead).where(BudgetRead.id == budget_id))
+async def _delete_budget(session: AsyncSession, payload: dict[str, Any]) -> None:
+    await session.execute(delete(BudgetRead).where(BudgetRead.id == payload["id"]))
 
 
 async def _upsert_rate_limit(session: AsyncSession, payload: dict[str, Any]) -> None:
-    """Upsert a request-rate limit into the read-model, keyed by id (FRD-405)."""
-    record = await session.get(RateLimitRead, payload["id"])
+    """Upsert a request-rate limit, keyed by id (`FRD-405`)."""
     fields = {
         "use_case": payload["use_case"],
         "scope": payload["scope"],
@@ -426,23 +354,17 @@ async def _upsert_rate_limit(session: AsyncSession, payload: dict[str, Any]) -> 
         "burst": int(payload.get("burst") or 0),
         "enabled": payload.get("enabled", True),
     }
-    if record is None:
-        session.add(RateLimitRead(id=payload["id"], **fields))
-    else:
-        for key, value in fields.items():
-            setattr(record, key, value)
+    await _upsert(session, RateLimitRead, fields, id=payload["id"])
 
 
-async def _delete_rate_limit(session: AsyncSession, limit_id: int) -> None:
-    await session.execute(delete(RateLimitRead).where(RateLimitRead.id == limit_id))
+async def _delete_rate_limit(session: AsyncSession, payload: dict[str, Any]) -> None:
+    await session.execute(delete(RateLimitRead).where(RateLimitRead.id == payload["id"]))
 
 
 async def _upsert_anomaly_rule(session: AsyncSession, payload: dict[str, Any]) -> None:
-    existing = await session.get(AnomalyRuleRead, payload["id"])
     fields = {
-        # `None` means the rule is global. An older Management that sends no key at all would be
-        # read as global, which is the wrong default for a rule that can block traffic — so a
-        # missing key is treated as a malformed event and the rule is skipped rather than widened.
+        # `None` means the rule is global. An event with no key at all is malformed and skipped
+        # below: reading it as global would widen a rule that can block traffic.
         "use_case": payload.get("use_case"),
         "name": payload.get("name", ""),
         "kind": payload["kind"],
@@ -458,46 +380,21 @@ async def _upsert_anomaly_rule(session: AsyncSession, payload: dict[str, Any]) -
     }
     if "use_case" not in payload:
         return
-    if existing is None:
-        session.add(AnomalyRuleRead(id=payload["id"], **fields))
-    else:
-        for key, value in fields.items():
-            setattr(existing, key, value)
+    await _upsert(session, AnomalyRuleRead, fields, id=payload["id"])
 
 
-async def _delete_anomaly_rule(session: AsyncSession, rule_id: int) -> None:
-    await session.execute(delete(AnomalyRuleRead).where(AnomalyRuleRead.id == rule_id))
+async def _delete_anomaly_rule(session: AsyncSession, payload: dict[str, Any]) -> None:
+    await session.execute(delete(AnomalyRuleRead).where(AnomalyRuleRead.id == payload["id"]))
 
 
-#: Declaration fields, with the value applied when the event does not carry them at all.
-#:
-#: The defaults matter during a rolling deploy: an older Management sends the FRD-403 payload with
-#: no capability fields, and the consumer must apply the prices it *did* send without blanking a
-#: declaration somebody made — while a payload that carries the field with a null clears it, which
-#: is the same event saying "this model no longer declares that".
-_DECLARATION_DEFAULTS: dict[str, Any] = {
-    "capabilities": None,
-    "publisher": "",
-    "platform": "",
-    "addressing": None,
-    "underlying_model": "",
-    "context_window": None,
-    "max_output_tokens": None,
-    "default_max_output_tokens": None,
-    "thinking": None,
-    "embedding": None,
-    "attachments": None,
-    "hosting": "",
-    "deprecated": False,
-    "numeric_id": None,
-}
+# == the model catalogue ==========================================================================
 
 
 async def _upsert_model(session: AsyncSession, payload: dict[str, Any]) -> None:
-    """Upsert a catalogued model, keyed by model name (FRD-403, FRD-114)."""
+    """Upsert a catalogued model, keyed by model name (`FRD-403`, `FRD-114`)."""
     fields: dict[str, Any] = {
-        # Absent means approved, for the reason on the column: an event written by an older
-        # Management must not retire every model in the catalog.
+        # Absent means approved (see `ModelRead.approved`): an older Management's event must not
+        # retire every model in the catalogue.
         "approved": bool(payload.get("approved", True)),
         "display_name": payload.get("display_name", ""),
         "provider": payload.get("provider", ""),
@@ -513,13 +410,32 @@ async def _upsert_model(session: AsyncSession, payload: dict[str, Any]) -> None:
     for field, default in _DECLARATION_DEFAULTS.items():
         if field in payload:
             fields[field] = payload[field] if payload[field] is not None else default
-    record = await session.get(ModelRead, payload["name"])
-    if record is None:
-        session.add(ModelRead(model=payload["name"], **fields))
-    else:
-        for key, value in fields.items():
-            setattr(record, key, value)
+    await _upsert(session, ModelRead, fields, model=payload["name"])
 
 
-async def _delete_model(session: AsyncSession, name: str) -> None:
-    await session.execute(delete(ModelRead).where(ModelRead.model == name))
+async def _delete_model(session: AsyncSession, payload: dict[str, Any]) -> None:
+    await session.execute(delete(ModelRead).where(ModelRead.model == payload["name"]))
+
+
+#: The event vocabulary: every configuration event this gateway applies, and its handler.
+HANDLERS: dict[str, Handler] = {
+    "usecase.upserted": _upsert_usecase,
+    "usecase.deleted": _retire_usecase,
+    "usecase.purged": _purge_usecase,
+    "membership.upserted": _upsert_member,
+    "membership.removed": _remove_member,
+    "use_case_group.granted": _upsert_group_grant,
+    "use_case_group.revoked": _remove_group_grant,
+    "api_key.created": _upsert_api_key,
+    "api_key.revoked": _revoke_api_key,
+    "pipeline.upserted": _upsert_pipeline,
+    "pipeline.deleted": _delete_pipeline,
+    "budget.upserted": _upsert_budget,
+    "budget.deleted": _delete_budget,
+    "ratelimit.upserted": _upsert_rate_limit,
+    "ratelimit.deleted": _delete_rate_limit,
+    "anomaly_rule.upserted": _upsert_anomaly_rule,
+    "anomaly_rule.deleted": _delete_anomaly_rule,
+    "model.upserted": _upsert_model,
+    "model.deleted": _delete_model,
+}

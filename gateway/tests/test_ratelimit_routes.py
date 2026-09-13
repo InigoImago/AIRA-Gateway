@@ -240,7 +240,6 @@ async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservatio
         response = await _stream_response(
             request,
             _canonical(),
-            _BODY,
             _prepared(),
             AuditTrail(operation="streamGenerateContent", api="gemini", requested_model="mock-1"),
             sse=False,

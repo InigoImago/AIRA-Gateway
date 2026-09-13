@@ -1,11 +1,13 @@
 """ASGI middleware for the gateway.
 
-- :class:`UseCasePathMiddleware` — the ``/uc/<use-case>`` path selector (FRD-102). Strips a
-  leading ``/uc/<slug>`` from the request path and stashes the slug in the scope so the normal
-  Gemini routes still match. The header ``X-AIRA-Use-Case`` (resolved later) takes precedence
-  over this path slug.
-- :class:`BodySizeLimitMiddleware` — refuses oversized request bodies before they are buffered
-  into memory (ADR-0007).
+- :class:`UseCasePathMiddleware` — the ``/uc/<use-case>`` path selector (`FRD-102`).
+- :class:`BodySizeLimitMiddleware` — refuses oversized bodies before they are buffered (`ADR-0007`)
+  and audits the refusal (:func:`record_oversized`).
+- :class:`SecurityHeadersMiddleware` — the response headers a JSON API owes a browser.
+- :class:`TraceIdMiddleware` — the trace id on every traced response (`FRD-117` FR-4).
+
+All pure ASGI: `BaseHTTPMiddleware` runs the downstream app in a separate task, which loses the
+OpenTelemetry span context, and a response from an exception handler must pass through too.
 """
 
 from __future__ import annotations
@@ -20,15 +22,24 @@ from aira_gateway.audit import Outcome
 from aira_gateway.auth.attribution import USE_CASE_PATH_KEY
 from aira_gateway.persistence.writer import PendingLog
 
+#: A leading ``/uc/<slug>`` and the path after it.
 _USE_CASE_PATH = re.compile(r"^/uc/([^/]+)(/.*)$")
 
-#: Which surface a path belongs to, for the refusals that answer **before any route** and must
-#: still speak that surface's error language. One definition, read by `describe_target` (which
-#: puts `api` on the audit row) and by the body-ceiling's own response.
+#: `/v1beta/models/<model>:<method>` — the model may contain colons, the method never does.
+_RESOURCE = re.compile(r"/models/(?P<resource>[^/]+)$")
+
+#: Which surface a path belongs to, for refusals that answer **before any route** and must still
+#: speak that surface's error language. Read by `describe_target` (the audit row's `api`) and by the
+#: body ceiling's own response.
 KIRA_PREFIX = "/kira/"
 
 
 class UseCasePathMiddleware:
+    """Strip a leading ``/uc/<slug>`` so the normal routes match, and keep the slug in the scope.
+
+    The ``X-AIRA-Use-Case`` header, resolved later, takes precedence over this path slug.
+    """
+
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
@@ -51,17 +62,11 @@ class RequestTooLarge(Exception):
         self.limit = limit
 
 
-#: `/v1beta/models/<model>:<method>` — the model may contain colons, the method never does.
-_RESOURCE = re.compile(r"/models/(?P<resource>[^/]+)$")
-
-
 def describe_target(path: str) -> tuple[str, str, str]:
     """``(api, model, operation)`` for a request refused before any route saw it.
 
-    Best effort by design. A request rejected on its declared size never reaches the routing
-    table, so this reads the path — and where it cannot tell, it says ``unknown`` rather than
-    guessing. An audit row that names the wrong model is worse than one that admits it does not
-    know which was meant.
+    Best effort, read from the path; where it cannot tell it says ``unknown`` — an audit row naming
+    the wrong model is worse than one admitting it does not know.
     """
     api = "kira" if path.startswith(KIRA_PREFIX) else "gemini"
     match = _RESOURCE.search(path)
@@ -74,23 +79,14 @@ def describe_target(path: str) -> tuple[str, str, str]:
 
 
 async def record_oversized(scope: Scope, limit: int) -> None:
-    """Audit a request refused for its size (`FRD-122`, extended).
+    """Audit a request refused for its size (`FRD-122`: the log records what was **asked**).
 
-    `FRD-122`'s rule is that the log records what was **asked**, not only what was served, and it
-    closed that gap at the route's exception boundary — one site, because a fact repeated at every
-    exit is a fact eventually forgotten at one of them. This refusal happens *before* any route,
-    in pure ASGI, so the boundary never runs and the request left no trace at all. Found by
-    posting a 20 MB body at a running gateway and counting rows.
+    This refusal happens before any route, so the route's exception boundary never runs.
 
-    **Deliberately unattributed.** The credential in the header has not been verified at this
-    point, and recording it would let anyone write another system's identity into the audit trail
-    by sending one oversized request. An unverifiable claim is not evidence; the source IP and the
-    outcome are. This is the same reasoning as "unpriced is not free" and "undeclared is not
-    permitted", applied to identity.
-
-    Never allowed to fail the response. A full writer queue turning a 413 into a 500 is the exact
-    defect `FRD-405`'s review found on the refusal path, and it would be worse here — the whole
-    point of this ceiling is to stay cheap under abuse.
+    - **Deliberately unattributed**: the credential has not been verified here, and recording it
+      would let anyone write another identity into the audit trail with one oversized request.
+    - **Never fails the response**: a full writer queue must not turn a 413 into a 500, and this
+      ceiling has to stay cheap under abuse.
     """
     app = scope.get("app")
     writer = getattr(getattr(app, "state", None), "log_writer", None)
@@ -113,8 +109,7 @@ async def record_oversized(scope: Scope, limit: int) -> None:
                 latency_ms=None,
                 trace_id=trace_context_fields().get("trace_id"),
                 request_payload=None,
-                # Never the body: it is over the ceiling, and storing what we refused to read
-                # would undo the reason for refusing it.
+                # Never the body: storing what we refused to read would undo the refusal.
                 response_payload=None,
                 cost_nanos=None,
                 outcome=str(Outcome.REQUEST_TOO_LARGE),
@@ -129,13 +124,18 @@ async def record_oversized(scope: Scope, limit: int) -> None:
 class BodySizeLimitMiddleware:
     """Reject request bodies larger than ``max_bytes``.
 
-    A declared ``Content-Length`` is rejected up front; bodies streamed without one are counted
-    as they arrive and abort the request as soon as the limit is passed, so an unbounded upload
-    can never be buffered into memory.
-
-    Both paths record the refusal (:func:`record_oversized`) — through one function, because the
-    two ways of being too large are two exits from one decision.
+    A declared ``Content-Length`` is rejected up front; bodies streamed without one are counted as
+    they arrive and abort as soon as the limit is passed, so an unbounded upload is never buffered.
+    Both exits record the refusal through :func:`record_oversized`.
     """
+
+    #: The refusal in each surface's own envelope, as bytes because this answers in pure ASGI. The
+    #: path decides: a KIRA client switches on `code`, and migrating (`FRD-107`) must be only a
+    #: change of URL.
+    _GEMINI_TOO_LARGE = (
+        b'{"error":{"code":413,"message":"Request body too large.","status":"INVALID_ARGUMENT"}}'
+    )
+    _KIRA_TOO_LARGE = b'{"code":"VALIDATION_ERROR","message":"Request body too large."}'
 
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
         self.app = app
@@ -152,9 +152,8 @@ class BodySizeLimitMiddleware:
             return
 
         received = 0
-        # ASGI `state` is the standard channel to the application, and Starlette surfaces it as
-        # `request.state`. The count is already being taken to enforce the ceiling; recording it
-        # is what lets `FRD-501`'s `payload_size` rule measure anything at all.
+        # ASGI `state` surfaces as `request.state`; the count is what `FRD-501`'s `payload_size`
+        # rule measures.
         state = scope.setdefault("state", {})
 
         async def counting_receive() -> Message:
@@ -164,10 +163,8 @@ class BodySizeLimitMiddleware:
                 received += len(message.get("body", b""))
                 state["request_bytes"] = received
                 if received > self.max_bytes:
-                    # The other exit: a body that lied about its length, or declared none. Same
-                    # refusal, same row — recorded here rather than in the exception handler,
-                    # because that handler has a Request whose attribution was never resolved and
-                    # would look like it knew who this was.
+                    # A body that lied about its length, or declared none. Recorded here rather
+                    # than in the exception handler, whose Request has no resolved attribution.
                     await record_oversized(scope, self.max_bytes)
                     raise RequestTooLarge(self.max_bytes)
             return message
@@ -182,19 +179,6 @@ class BodySizeLimitMiddleware:
                 except ValueError:
                     return 0
         return 0
-
-    #: The refusal, in each surface's own envelope. Written out as bytes because this answers in
-    #: pure ASGI, before anything that could build a response object.
-    #:
-    #: **The path decides**, and this function already had it: `describe_target` reads the very
-    #: same prefix to put `api` on the audit row, so the middleware knew which surface it was
-    #: refusing and answered both of them in Google's shape. A KIRA client switches on `code`, and
-    #: `FRD-107`'s premise is that migrating is a change of URL — an error shape that depends on
-    #: how large the body was is not that.
-    _GEMINI_TOO_LARGE = (
-        b'{"error":{"code":413,"message":"Request body too large.","status":"INVALID_ARGUMENT"}}'
-    )
-    _KIRA_TOO_LARGE = b'{"code":"VALIDATION_ERROR","message":"Request body too large."}'
 
     async def _reject(self, send: Send, path: str = "") -> None:
         body = self._KIRA_TOO_LARGE if path.startswith(KIRA_PREFIX) else self._GEMINI_TOO_LARGE
@@ -212,35 +196,21 @@ class BodySizeLimitMiddleware:
 
 
 class SecurityHeadersMiddleware:
-    """The response headers a JSON API owes a browser (2026-08-08).
+    """The response headers a JSON API owes a browser (`ADR-0007`).
 
-    Management has had these since `ADR-0007` (Django's `SECURE_*` settings); the gateway had
-    none. It is not a browser-facing service, which is the argument for skipping them and is not
-    good enough: the console's dry-run, consumption and reporting views call it **from a browser**
-    through the `/gw` proxy, and a JSON body that a browser is willing to sniff as HTML is the
-    ingredient every reflected-content trick needs.
+    The console calls this service from a browser through the `/gw` proxy, so:
 
-    Four headers, and deliberately not more:
+    - `X-Content-Type-Options: nosniff` — a JSON body a browser sniffs as HTML is the ingredient of
+      every reflected-content trick.
+    - `Referrer-Policy: no-referrer` — Gemini clients send `?key=<api key>`; a followed link would
+      leak it in `Referer`.
+    - `Cache-Control: no-store` — responses carry other people's prompts and spend. On **every**
+      response, health probes included: a cached probe is a liveness answer about the past.
+    - `X-Frame-Options: DENY` — nothing here is meant to be embedded.
 
-    - `X-Content-Type-Options: nosniff` — the one that matters here. It stops a browser second-
-      guessing `application/json`, which is what turns a reflected error message into markup.
-    - `Referrer-Policy: no-referrer` — this API is addressed with `?key=<api key>` by every Gemini
-      client. Without it, following any link from a response leaks the credential in `Referer`.
-    - `Cache-Control: no-store` — responses here contain other people's prompts and other
-      people's spend. On **every** response, health probes included: this sentence used to carve
-      them out and the code never did, which `test_security_headers` pins in the other direction.
-      Carving them out would also be the wrong rule to hold: a probe is the one response an
-      intermediary is most likely to cache, and a stale `healthz` is a liveness answer about a
-      moment that has passed. A route that has already said something about caching still keeps
-      its own answer — these are defaults, not overrides.
-    - `X-Frame-Options: DENY` — nothing served here is meant to be embedded.
-
-    **No HSTS and no CSP**: TLS is terminated in front of this service (so the header would be
-    ours to guess at rather than to state), and a content policy on a JSON API constrains nothing
-    while reading as a protection that is present.
-
-    Pure ASGI, like `TraceIdMiddleware` above and for the same reason — an error response is still
-    a response.
+    Defaults, not overrides: a route that set one of these keeps its own value. **No HSTS and no
+    CSP**: TLS terminates in front of this service, and a content policy on a JSON API constrains
+    nothing while reading as a protection.
     """
 
     HEADERS: tuple[tuple[bytes, bytes], ...] = (
@@ -262,8 +232,6 @@ class SecurityHeadersMiddleware:
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers") or [])
                 present = {name.lower() for name, _ in headers}
-                # A route that has already said something about caching keeps its answer; these
-                # are defaults, not overrides.
                 headers.extend((name, value) for name, value in self.HEADERS if name not in present)
                 message = {**message, "headers": headers}
             await send(message)
@@ -274,20 +242,10 @@ class SecurityHeadersMiddleware:
 class TraceIdMiddleware:
     """Put the active trace id on every **traced** response, failures included (`FRD-117` FR-4).
 
-    *Traced* is the load-bearing word and it was missing from this line for a while. The health
-    probes are excluded from tracing on purpose (`observability.HEALTH_PATHS`), so they have no
-    span and get no header — which is the second paragraph below working as intended, and not a
-    gap. Saying "every response" here cost a real test: `test_diagnostics.py` used `/healthz` as its
-    control, found no header, and skipped on every stack while reporting that tracing was off.
-
-    Pure ASGI and mounted outermost, and both are load-bearing. Outermost, because a response
-    produced by an exception handler is still a response — and the requests that most need
-    correlating are exactly the ones that went wrong. `BaseHTTPMiddleware` is avoided because it
-    runs the downstream app in a separate task, which loses the OpenTelemetry span context: the
-    header would then be absent precisely when a span exists.
-
-    Absent when no span is active, rather than a placeholder. An id that correlates with nothing is
-    worse than no id, because somebody will search for it.
+    Health probes are excluded from tracing (`observability.HEALTH_PATHS`), so they carry no
+    header. Mounted outermost, because the requests that most need correlating are the ones an
+    exception handler answered. Absent when no span is active: an id that correlates with nothing
+    is worse than none, because somebody will search for it.
     """
 
     HEADER = b"x-trace-id"

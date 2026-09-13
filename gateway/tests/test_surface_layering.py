@@ -23,9 +23,8 @@ from pathlib import Path
 
 import pytest
 
-SURFACES = sorted(
-    (Path(__file__).resolve().parents[1] / "src" / "aira_gateway" / "api").glob("*/routes.py")
-)
+API = Path(__file__).resolve().parents[1] / "src" / "aira_gateway" / "api"
+SURFACES = sorted(API.glob("*/routes.py"))
 
 #: The steps of the pre-dispatch sequence. A surface calling one of these directly is a surface
 #: assembling the order itself, which is the thing this file exists to prevent.
@@ -131,9 +130,22 @@ def test_no_surface_swallows_a_failed_audit_write() -> None:
 
 
 def test_every_surface_reports_a_lost_audit_row_under_the_same_name() -> None:
-    """One event name, or the search that looks for missing rows finds one surface's worth."""
+    """One event name, or the search that looks for missing rows finds one surface's worth.
+
+    Both surfaces record a refusal through the shared `serving.record_refusal`, which owns the name.
+    A surface that catches refusals must use it; one that writes a row any other way must report a
+    failure under the same name.
+    """
+    shared = (API / "serving" / "accounting.py").read_text()
+    assert "async def record_refusal(" in shared
+    assert "audit_refusal_not_recorded" in shared
     for surface in SURFACES:
         source = surface.read_text()
+        if "REFUSALS" in source:
+            assert "record_refusal" in _called_names(surface), (
+                f"{surface.parent.name} catches refusals without recording them through "
+                "`record_refusal`."
+            )
         if "_record" not in source and "record_request" not in source:
             continue
         assert "audit_refusal_not_recorded" in source, (

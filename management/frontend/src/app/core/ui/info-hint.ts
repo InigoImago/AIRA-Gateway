@@ -9,61 +9,26 @@ import {
 } from '@angular/core';
 
 /**
- * The small "i" that carries the rest of a sentence.
- *
- * A governance console is read by people deciding whether a control is working, and a figure or a
- * control whose meaning is guessed at gets argued about instead of acted on. But a heading long
- * enough to define itself is a heading that wraps and breaks the row it is in. This is where the
- * rest goes.
- *
- * The interaction was got wrong twice before it was extracted here, and both mistakes are the
- * reason this is a component rather than a `title` attribute:
- *
- * - A `title` shows **nothing** on a touch screen, needs a long hover on a mouse, and is invisible
- *   to a keyboard. The control looked clickable and did nothing.
- * - Opening only on click is still wrong: an "i" is a thing you point at.
- *
- * So all three: **hover** shows it, **focus** shows it (keyboard), and a **click pins** it open
- * (touch, and for reading something longer without holding the pointer still).
- *
- * **One pinned at a time**, across the whole page. The panels are overlays: two open beside each
- * other overlap one another and cover the figures they describe, and a row of six tiles pinned
- * open is a wall of text where six numbers were. Hover is exempt — only one thing can be pointed
- * at anyway.
- *
- * ## Why the panel is placed by measurement rather than by CSS
- *
- * It began as `position: absolute` centred on the button, and a walkthrough of the model editor
- * found the two failures that arrangement always has, both of them reported as "the window
- * jiggles and the text runs out of its frame":
- *
- * - **An absolutely positioned panel still extends its scroll container.** Open one near the
- *   bottom and the document grows, a scrollbar appears, the page reflows narrower, the "i" slides
- *   out from under the pointer, the panel closes, the scrollbar goes away, and the pointer is back
- *   over the "i" — a flicker loop that never settles.
- * - **A centred panel leaves its container.** Measured in the model editor: a 480px panel centred
- *   on an "i" near the left edge started 58px outside the dialog. There was a hand-written escape
- *   for the last cell of a table, which is the same defect noticed once and fixed in one place.
- *
- * So the panel is `position: fixed` and placed from the button's own rectangle, clamped into the
- * viewport. Fixed means it contributes nothing to any scroll extent and is clipped by no ancestor
- * — the two properties an overlay needs and the two that `absolute` cannot give it. It is rendered
- * invisible for one frame while it is measured, because a panel that is placed after it is seen is
- * a panel that visibly jumps.
- */
-
-/**
- * The hint currently pinned open, if any.
- *
- * Module-level rather than injected: a service would have to be provided somewhere, and the one
- * thing this project has already learned about provider scope is that "somewhere" is where it
- * goes wrong (`live.spec.ts`). There is one pointer and one reader per document, so one value.
+ * The hint currently pinned open, if any. Module-level rather than a service: there is one pointer
+ * and one reader per document, and a provided service's scope is exactly where this would go wrong.
  */
 const pinnedHint = signal<InfoHint | null>(null);
 
 /** Breathing room between the panel and the edge of the viewport. */
 const MARGIN = 8;
 
+/**
+ * The small "i" that carries the rest of a sentence a heading has no room for.
+ *
+ * - **Hover and focus** show it and a **click pins** it: a `title` attribute shows nothing on a
+ *   touch screen or to a keyboard.
+ * - **One pinned at a time**, page-wide: the panels are overlays, and two open cover each other and
+ *   the figures they describe. Hover is exempt — only one thing can be pointed at anyway.
+ * - The panel is `position: fixed`, placed from the button's rectangle and clamped into the
+ *   viewport. An absolutely positioned panel extends its scroll container (a flicker loop near the
+ *   bottom of a page) and leaves its container when centred near an edge. It stays invisible for
+ *   the one frame it is measured, so it never visibly jumps.
+ */
 @Component({
   selector: 'app-info-hint',
   template: `
@@ -121,13 +86,12 @@ export class InfoHint {
     afterRenderEffect(() => {
       const panel = this.panel();
       if (!panel) {
-        // Closed. Forget the placement, so the next open measures again rather than flashing at
-        // wherever this one happened to be.
+        // Closed: forget the placement, so the next open measures again.
         this.placed.set(false);
         return;
       }
-      // Once per open. The position is written onto the element rather than bound, because
-      // placing it requires *reading* where it landed — see `place`.
+      // Once per open. Written onto the element rather than bound, because placing it requires
+      // reading where it landed.
       if (this.placed()) return;
       this.place(this.trigger().nativeElement, panel.nativeElement);
       this.placed.set(true);
@@ -135,21 +99,13 @@ export class InfoHint {
   }
 
   /**
-   * Below the "i" and centred on it, pulled back inside the viewport at either edge.
-   *
-   * Above it instead when there is no room below — the last row of a long form is exactly where
-   * an explanation is most likely to be asked for, and a panel that opens off the bottom of the
-   * screen is one nobody reads.
+   * Below the "i" and centred on it, pulled back inside the viewport at either edge — or above it
+   * when there is no room below, since the last row of a form is where help is most often asked.
    */
   private place(trigger: HTMLElement, panel: HTMLElement): void {
-    // **`fixed` is not always relative to the viewport.** Any ancestor carrying a `transform` (or
-    // a filter, or `will-change`) becomes the containing block for its fixed descendants, and the
-    // modal these panels most often open inside has one. Writing viewport coordinates straight
-    // into `top`/`left` put the first measured panel 201 pixels left of where it was asked to go
-    // and 25 below — which reads as a positioning bug and is a coordinate-space one.
-    //
-    // So the origin is *read* rather than assumed: park the panel at (0, 0) and see where that
-    // is. One extra layout read per hover, and it is right whatever the ancestors do.
+    // `fixed` is relative to an ancestor carrying a `transform` (the modal has one), not always to
+    // the viewport. So the origin is read — park the panel at (0, 0) and see where that lands —
+    // rather than assumed.
     panel.style.top = '0px';
     panel.style.left = '0px';
     const origin = panel.getBoundingClientRect();
@@ -159,8 +115,7 @@ export class InfoHint {
 
     const centred = anchor.left + anchor.width / 2 - width / 2;
     const rightmost = window.innerWidth - width - MARGIN;
-    // `Math.max` last: with a panel wider than the viewport, staying on the left edge loses the
-    // start of the sentence rather than the end of it.
+    // `Math.max` last: a panel wider than the viewport loses the end of the sentence, not the start.
     const left = Math.max(MARGIN, Math.min(centred, rightmost));
 
     const below = anchor.bottom + 6;

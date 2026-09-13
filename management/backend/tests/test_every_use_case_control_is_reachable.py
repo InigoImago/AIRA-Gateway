@@ -26,12 +26,12 @@ from aira_management.apps.usecases.serializers import UseCaseSerializer
 REPO = Path(__file__).resolve().parents[3]
 USE_CASE_PANELS = REPO / "management/frontend/src/app/features/use-cases"
 PIPELINE_EDITOR = REPO / "management/frontend/src/app/features/pipelines/pipeline-editor.html"
-PIPELINE_ENGINE = REPO / "gateway/src/aira_gateway/pipeline/engine.py"
+PIPELINE_ENGINE = REPO / "gateway/src/aira_gateway/pipeline/engine"
 RULE_FORM = REPO / "management/frontend/src/app/features/security/rule-form.ts"
-USE_CASE_SERVICE = REPO / "management/frontend/src/app/core/api/use-case.service.ts"
-SECURITY_PAGE = REPO / "management/frontend/src/app/features/security/security-page.ts"
-INCIDENTS_API = REPO / "gateway/src/aira_gateway/api/incidents.py"
-SMOKE_TESTS = REPO / "management/frontend/src/app/features/smoketests/smoke-tests.ts"
+USE_CASE_SERVICE = REPO / "management/frontend/src/app/core/api/clients/access.ts"
+SECURITY_PAGE = REPO / "management/frontend/src/app/features/security/suspensions-panel.ts"
+INCIDENTS_API = REPO / "gateway/src/aira_gateway/api/incidents/suspensions.py"
+SMOKE_TESTS = REPO / "management/frontend/src/app/features/smoketests/question-catalogue.ts"
 
 
 def _arguments(source: str, call: str) -> list[str]:
@@ -99,13 +99,13 @@ def test_the_exemptions_are_still_writable_fields() -> None:
 
 #: Step-config keys the gateway reads but no operator authors, with the reason.
 #:
-#: Empty, and it should stay that way: every one of the twelve keys `engine.py` consults is offered
+#: Empty, and it should stay that way: every one of the twelve keys the engine consults is offered
 #: by the builder. An entry here means the data plane obeys something nobody can type.
 NOT_AUTHORED: dict[str, str] = {}
 
 
 def test_every_pipeline_setting_the_gateway_obeys_can_be_authored() -> None:
-    """What `engine.py` reads out of a step's config, against what the builder can set.
+    """What the engine reads out of a step's config, against what the builder can set.
 
     This is the pipeline's version of the `ModelDeclaration` check, and it is the one worth having:
     a step's config is free-form JSON on both sides, so a key the engine starts reading is a
@@ -113,7 +113,9 @@ def test_every_pipeline_setting_the_gateway_obeys_can_be_authored() -> None:
     notices. `action` defaulting to `"block"` and `use_builtins` to `True` are the difference
     between a filter that stops a request and one that watches it go past.
     """
-    engine = PIPELINE_ENGINE.read_text(encoding="utf-8")
+    engine = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(PIPELINE_ENGINE.glob("*.py"))
+    )
     read_by_the_engine = set(re.findall(r'config\.get\(\s*"([a-z_]+)"', engine))
     editor = PIPELINE_EDITOR.read_text(encoding="utf-8")
     settable = set(re.findall(r"set(?:Step|List)Field\([^,]+,\s*'([a-z_]+)'", editor, re.S))
@@ -131,9 +133,9 @@ def test_every_pipeline_setting_the_gateway_obeys_can_be_authored() -> None:
 def test_every_field_of_a_routing_category_can_be_authored() -> None:
     """A category is three strings, and the description is the load-bearing one.
 
-    `classifiers.py` builds the router's prompt as ``- {name}: {description}``, so the description
-    is *how the classifier is told what the category means*. A category list somebody could name
-    and not describe would route by nothing and look configured.
+    `classifiers/routing.py` builds the router's prompt as ``- {name}: {description}``, so the
+    description is *how the classifier is told what the category means*. A category list somebody
+    could name and not describe would route by nothing and look configured.
     """
     editor = PIPELINE_EDITOR.read_text(encoding="utf-8")
     settable = set(re.findall(r"setCategoryField\([^,]+,\s*\$index,\s*'([a-z_]+)'", editor, re.S))
@@ -236,8 +238,8 @@ def test_every_field_of_an_issued_api_key_leaves_the_console() -> None:
     nobody a way to ask for less.
     """
     source = USE_CASE_SERVICE.read_text(encoding="utf-8")
-    start = source.index("  issueApiKey(")
-    body = source[start : source.index("\n  }", start)]
+    start = source.index("    issueApiKey(")
+    body = source[start : source.index("\n    }", start)]
     sent = set(re.findall(r"([a-z_]+)\s*:", body)) | set(re.findall(r"body\.([a-z_]+)", body))
 
     writable = {n for n, f in IssueApiKeySerializer().fields.items() if not f.read_only}

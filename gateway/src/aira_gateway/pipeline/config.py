@@ -3,6 +3,12 @@
 A ``Pipeline`` is an ordered list of steps plus a dispatch fallback chain. It is authored in
 Management and distributed to the gateway read-model as JSON; ``Pipeline.from_dict`` parses that
 JSON leniently (unknown step types are ignored so old gateways tolerate new config).
+
+**The gateway re-applies Management's bounds.** The read-model is also reachable by a direct write,
+a publish onto an unauthenticated broker, and `pipeline:dryRun`'s unvalidated `pipeline` field, so
+the protection cannot sit at one end of the link only (`ADR-0018`). Oversized values are truncated
+with a log line rather than dropped: a step on a shortened instruction is degraded, a use case whose
+filter vanished is unprotected.
 """
 
 from __future__ import annotations
@@ -15,73 +21,32 @@ from aira_common.logging import get_logger
 
 _log = get_logger("aira_gateway.pipeline")
 
-# Defence in depth: Management validates configs at authoring time, but the gateway also
-# refuses to build an unbounded pipeline out of whatever the read-model happens to contain.
 MAX_STEPS = 32
 MAX_FALLBACK_MODELS = 16
-#: The same ceiling Management's serializer applies to a model name — **and now applied**.
-#:
-#: It was declared here and read by nothing, so the second half of the sentence below was true for
-#: the step configuration and false for the fallback chain: `from_dict` bounded how *many* models a
-#: chain may name and not how long each name may be. A name is not only looked up — a candidate the
-#: registry cannot resolve is recorded on the audit row as `{"to": <name>}` in a `json` column and
-#: named back to the caller in the `NoCapableModel` message, so an unbounded one is unbounded in
-#: two places a caller reads and a database stores.
+#: Management's ceiling on a model name. A fallback name reaches an audit row and the caller's
+#: `NoCapableModel` message, so it is bounded in length as well as in count.
 MAX_MODEL_LENGTH = 128
-
-#: The **same bounds the Management serializer applies**, asked again here.
-#:
-#: `aira_common.patterns` states the rule this closes: *"Both planes ask, because only one of them
-#: used to. The protection sat at one end of a link and the other end trusted it, which is the
-#: shape of three of the four findings in `ADR-0018`."* That was acted on for the regex bound and
-#: for the step count, and not for the rest — so `instruction`, `notice` and the category list
-#: arrived here unbounded. Three ways in, none of them exotic: a row written straight into the
-#: read-model, a publish onto an unauthenticated broker (`KafkaSecurity`), and
-#: `POST /v1beta/pipeline:dryRun`, whose `pipeline` field is an unvalidated object by design.
-#:
-#: What each one costs, unbounded: an `instruction` is a system prompt sent on **every** request of
-#: the use case, so its length is a bill; a `notice` is put in front of somebody else's answer, so
-#: its length is their screen; and the category list is pasted whole into the router's prompt.
-#:
-#: **Truncated with a log line, not dropped.** The same treatment the pattern bounds beside it
-#: already give: a step running on a shortened instruction is degraded, a use case whose filter
-#: vanished is unprotected, and only one of those announces itself.
+#: Applied to **every** string in a step's config: an `instruction` is a system prompt sent on every
+#: request (a bill), a `notice` is shown in front of somebody's answer (their screen).
 MAX_TEXT_LENGTH = 4_000
+#: The category list is pasted whole into the router's prompt.
 MAX_CATEGORIES = 32
-# `TEXT_KEYS` and `CATEGORY_TEXT_KEYS` stood here until 2026-08-20, naming the step keys that hold
-# operator-authored prose, on a comment saying a step that grows a fourth text field "should have to
-# add it here". Nothing read either of them: `_bounded` clips **every** string in a step's config,
-# which is the stronger rule and needs no list. Two names describing a mechanism the module does not
-# have, in the module that owns the mechanism — a reader adding a field would have added it to a
-# list that decides nothing, and concluded the bound was in force because they had.
 
 
 class StepType(StrEnum):
     """The steps a pipeline may run before dispatch.
 
-    `allow_check` was a member until 2026-08-11 and is now `FRD-308`'s per-use-case model release.
-    It is not a rename: the step ran **once, before routing**, against the model the caller named,
-    and measurement showed both ways around it — a `model_route` step re-targeted a request to a
-    forbidden model and it was served 200, and a fallback chain dispatched to one and it was served
-    200. A release is a property of the use case rather than a stage of its pipeline, and it is
-    enforced at every hop like every other dispatch condition (`ADR-0012` §3).
-
-    An unknown step name in a stored config is dropped rather than refused (see `parse_pipeline`),
-    so a read-model row still carrying the old step degrades to a pipeline without it — which is
-    correct, because the release now enforces what it used to.
+    The former `allow_check` step is now `FRD-308`'s per-use-case model release, enforced at every
+    dispatch hop (`ADR-0012` §3). A stored config still naming it degrades to a pipeline without it
+    (see `Pipeline.from_dict`), which is correct because the release enforces what it used to.
     """
 
     INJECTION_FILTER = "injection_filter"
     MODEL_ROUTE = "model_route"
-    #: Replace personal data in the prompt before it reaches the model, with a trusted model of
-    #: the use case's own choosing (2026-08-14).
-    #:
-    #: **The first step that changes what the caller sent.** The other two block or re-target; this
-    #: one rewrites, and the request that goes upstream — and the one the audit trail keeps — is
-    #: the rewritten one. That is the point: the original exists nowhere afterwards, which is what
-    #: makes it a data-protection control rather than a note about one. The consequence is stated
-    #: where it is decided (`FRD-122` holds that the log records what was *asked*, and this is the
-    #: one place that is relaxed, in favour of exactly the data the step exists to remove).
+    #: Replaces personal data in the prompt with a trusted model of the use case's choosing
+    #: (`FRD-309`). The only step that changes what the caller sent: the request dispatched **and**
+    #: the one the audit trail keeps is the rewritten one — the one place `FRD-122`'s "log what was
+    #: asked" is relaxed, in favour of the data the step exists to remove.
     PII_FILTER = "pii_filter"
 
 
@@ -96,8 +61,7 @@ def _clipped(value: Any, *, where: str, step: str) -> Any:
 
 
 def _bounded(config: dict[str, Any], step: str) -> dict[str, Any]:
-    """The step's configuration with the operator-authored text held to the bounds Management
-    applies when it is written. See `MAX_TEXT_LENGTH` for why the gateway asks a second time."""
+    """The step's configuration with every operator-authored text held to Management's bounds."""
     bounded = {key: _clipped(value, where=key, step=step) for key, value in config.items()}
 
     categories = bounded.get("categories")
@@ -152,9 +116,6 @@ class Pipeline:
                     config=_bounded(config, str(step_type)) if isinstance(config, dict) else {},
                 )
             )
-        # Bounded on both axes: how many, and how long each. See `MAX_MODEL_LENGTH` — a name
-        # longer than any model has is a name that reaches an audit row and a caller's error
-        # message, so it is cut here rather than carried.
         fallbacks = tuple(
             str(m)[:MAX_MODEL_LENGTH]
             for m in list(data.get("fallback_models", []))[:MAX_FALLBACK_MODELS]

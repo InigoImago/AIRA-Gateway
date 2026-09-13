@@ -1,4 +1,4 @@
-"""API-key persistence and verification service (FRD-101)."""
+"""API-key persistence and verification service (`FRD-101`)."""
 
 from __future__ import annotations
 
@@ -14,11 +14,7 @@ from aira_gateway.db.models import ApiKey
 
 
 def _default_key_days() -> int:
-    """The configured lifetime, read here rather than passed in.
-
-    One definition shared with Management (`aira_common.config`), because a key policy with two
-    definitions is a key policy with two answers.
-    """
+    """The configured key lifetime, defined once with Management (`aira_common.config`)."""
     return GatewaySettings().api_key_default_days
 
 
@@ -33,10 +29,9 @@ class ApiKeyService:
     ) -> tuple[str, ApiKey]:
         """Create a key; return the plaintext (shown once) and the stored record.
 
-        ``expires_in_days`` defaults to the installation's configured lifetime. This is the
-        **break-glass** path — an operator with database access, for the moment the control plane
-        is unavailable — and it is bounded like every other key: a credential minted during an
-        incident is exactly the one nobody remembers to take away afterwards.
+        This is the **break-glass** path, and it is bounded like every other key: a credential
+        minted during an incident is the one nobody remembers to take away afterwards.
+        ``expires_in_days`` defaults to the installation's configured lifetime.
         """
         full, prefix, key_hash = keys.generate_api_key()
         days = expires_in_days if expires_in_days is not None else _default_key_days()
@@ -62,21 +57,16 @@ class ApiKeyService:
         if record is None or not keys.verify_hash(full, record.key_hash):
             return None
         if record.expires_at is not None and self._aware(record.expires_at) <= datetime.now(UTC):
-            # Expiry is checked *here* rather than filtered in the query, so that an expired key is
-            # a refused credential and not a missing one: the two look identical to a caller and
-            # very different to whoever has to explain what changed at 03:00.
+            # Checked here rather than filtered in the query, so an expired key is a refused
+            # credential and not a missing one.
             return None
         use_cases = (record.use_case,) if record.use_case else ()
         return Principal(
             subject=record.subject,
             method="api_key",
-            # An API key's subject already **is** the owner's username (`FRD-604`), so the two
-            # answers coincide here. Stated rather than left implicit: it is what makes a
-            # `member`-scoped rule written by name behave identically whichever credential the
-            # person used, which is the whole point of carrying a name at all.
+            # An API key's subject already **is** the owner's username (`FRD-604`).
             username=record.subject,
-            # The prefix *is* the key's identity — it is the public half of the credential and is
-            # already stored unhashed, so recording it discloses nothing the database does not.
+            # The prefix is the public half of the credential, already stored unhashed.
             credential=record.prefix,
             label=record.label,
             use_cases=use_cases,
@@ -95,11 +85,8 @@ class ApiKeyService:
     async def ensure_demo_key(self) -> None:
         """Idempotently seed the deterministic demo key (demo mode only).
 
-        The one key with **no** expiry, and the exemption is the same one `ADR-0015` makes for the
-        deployment guard: demo mode is a loud, deliberate declaration, the key's plaintext is
-        published in this repository, and a demo that stops working a month after somebody cloned
-        the repository is a demo nobody trusts. Its security property comes from `AIRA_DEMO_MODE`
-        being a declared state, not from a date.
+        The one key with **no** expiry (`ADR-0015`): its plaintext is published in this repository,
+        and its safety comes from `AIRA_DEMO_MODE` being a declared state, not from a date.
         """
         prefix = keys.parse_prefix(keys.DEMO_API_KEY)
         assert prefix is not None  # constant is a valid key

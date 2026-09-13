@@ -1,22 +1,15 @@
 """Liveness and readiness endpoints.
 
-``/healthz`` reports process liveness. ``/readyz`` probes the dependencies the gateway
-needs (Postgres, Kafka) and returns 503 until they are reachable.
+``/healthz`` reports process liveness. ``/readyz`` probes the dependencies the gateway needs
+(Postgres, Kafka) and returns 503 until they are reachable.
 
-**The verdict is public, the diagnosis is not** (2026-08-08). The full body names the database
-host, the Kafka host, every configured upstream and which fallbacks are currently in force —
-a map of the deployment and its weak spot. A probe needs the status code; an operator presents
-the credential they already have. Locally the whole body is served to everyone.
+**The verdict is public, the diagnosis is not.** A probe needs only the status code; the full body
+maps the deployment and its weak spots, so it is served to operators (and to everyone locally).
 
-Redis is reported but does **not** fail readiness (ADR-0008): rate limiting and budget
-enforcement both degrade to a documented fallback without it, so taking the instance out of
-service would turn a cache outage into an outage. It is still surfaced, because degraded
-operation that nobody can see is indistinguishable from working.
-
-Two different things are reported, deliberately. ``checks.counters`` is a probe — is the store
-reachable *now*. ``fallbacks`` is what each feature last experienced on the request path, and
-names what its fallback costs while it lasts. A probe can succeed while traffic is still being
-served degraded, and a store can be unreachable with no feature having needed it yet.
+Redis is reported but does **not** fail readiness (ADR-0008): rate limits and budgets degrade to a
+documented fallback without it, and evicting the instance would turn a cache outage into an
+outage. ``checks.counters`` is a probe of the store *now*; ``fallbacks`` is what each feature last
+experienced on the request path — the two can disagree in either direction.
 """
 
 from __future__ import annotations
@@ -29,9 +22,9 @@ from aira_common.health import check_tcp
 from aira_common.secrets import secrets_state
 from aira_gateway.auth.dependencies import resolve_principal
 from aira_gateway.auth.principal import Principal
-from aira_gateway.config import GatewaySettings
 from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.security import is_local
+from aira_gateway.state import settings_of
 
 router = APIRouter(tags=["health"])
 
@@ -40,9 +33,8 @@ router = APIRouter(tags=["health"])
 async def healthz() -> dict[str, str]:
     """Liveness probe: the process is up and serving.
 
-    **Deliberately trivial, and it must stay that way.** No I/O of any kind. A liveness probe that
-    checks a dependency restarts a healthy process when that dependency blinks, which is how a
-    restart loop gets built out of a transient outage.
+    **No I/O, and it must stay that way**: a liveness probe that checks a dependency restarts a
+    healthy process when that dependency blinks.
     """
     return {"status": "ok"}
 
@@ -51,11 +43,10 @@ async def healthz() -> dict[str, str]:
 async def version_info(request: Request) -> dict[str, object]:
     """What is running here (`FRD-117` FR-1). Unauthenticated, like the predecessor's.
 
-    Absent build metadata yields **nulls, not an error**: a development run has no build number
-    and should still answer. It carries no configuration and no secret — a commit hash identifies
-    the code, which is exactly what somebody correlating a bug report needs and nothing more.
+    Absent build metadata yields nulls, not an error. No configuration and no secret — a commit hash
+    identifies the code and nothing more.
     """
-    settings: GatewaySettings = request.app.state.settings
+    settings = settings_of(request)
     commit = settings.git_commit or ""
     return {
         "service": settings.app_name,
@@ -71,19 +62,13 @@ async def version_info(request: Request) -> dict[str, object]:
 
 
 def _is_operator(principal: Principal) -> bool:
-    """Whether this credential is an **operator's**, in this system's own vocabulary.
+    """Whether this credential is an **operator's**. Two kinds, and no third:
 
-    Two, and no third:
-
-    - an **incident role** — Global Administrator or IT Security (`INCIDENT_ROLES`), the same set
-      that may stop traffic and ask whether a model is reachable (`api/incidents.py`). Deliberately
-      not `is_oversight`: IT Steuerung is given every *figure* and no write anywhere (PRD §154),
-      and a deployment's topology is not a figure.
-    - the **unbound break-glass key** (`ADR-0015`), minted by an operator with database access for
-      the moment the control plane is unavailable. That moment is exactly when somebody needs to
-      read this body, and it is the one credential in the system that means "an operator". A key
-      **bound** to a use case is the opposite — it is issued by Management to a team, and it is the
-      weakest credential here.
+    - an **incident role** — Global Administrator or IT Security (`INCIDENT_ROLES`). Not
+      `is_oversight`: IT Steuerung gets every figure, and a deployment's topology is not a figure.
+    - the **unbound break-glass key** (`ADR-0015`), minted for when the control plane is down —
+      exactly when this body is needed. A key **bound** to a use case is a team's, and the weakest
+      credential here.
     """
     if principal.may_act_on_incidents:
         return True
@@ -93,25 +78,12 @@ def _is_operator(principal: Principal) -> bool:
 async def _may_see_detail(request: Request) -> bool:
     """Whether this caller gets the diagnosis as well as the verdict.
 
-    `/readyz` must stay unauthenticated — a Kubernetes probe carries no credential, and a readiness
-    endpoint that answers 401 is an endpoint that reports every pod as unhealthy. But the full body
-    names the database host, the Kafka bootstrap host, every configured upstream and which
-    fallbacks are in force: a map of the deployment, its dependencies and their current weak spot,
-    served to anyone who can reach the port.
-
-    So the **verdict** is public and the **diagnosis** is not. A probe reads `status` and the status
-    code, which is all it has ever used; an operator debugging one presents the credential they
-    already have. Locally everything is shown, because a laptop has no topology to protect and an
-    endpoint that is less useful in development is one people stop looking at.
-
-    **"An operator", not "anybody who authenticated".** This asked only `principal is not None`,
-    while the paragraph above says *operator* — so a use-case-scoped API key, which is the weakest
-    credential this system issues and belongs to whichever team asked for one, was handed the
-    database host, the Kafka host, the full upstream list, the current fallback state and the names
-    of every secret loaded (`secrets_state()`). The gate now asks the question the docstring always
-    described; see :func:`_is_operator`.
+    `/readyz` stays unauthenticated — a Kubernetes probe carries no credential — but the full body
+    names the database and Kafka hosts, every upstream, the fallbacks in force and the secrets
+    loaded. An operator (:func:`_is_operator`) presents the credential they already have; locally
+    everything is shown.
     """
-    settings: GatewaySettings = request.app.state.settings
+    settings = settings_of(request)
     if is_local(settings):
         return True
     try:
@@ -124,7 +96,7 @@ async def _may_see_detail(request: Request) -> bool:
 @router.get("/readyz")
 async def readyz(request: Request) -> JSONResponse:
     """Readiness probe: dependencies are reachable."""
-    settings: GatewaySettings = request.app.state.settings
+    settings = settings_of(request)
     kafka_host, kafka_port = settings.kafka_host_port
 
     results = [
@@ -137,24 +109,17 @@ async def readyz(request: Request) -> JSONResponse:
     counters_ok, counters_detail = await _counters_state(request)
     checks["counters"] = {"ok": counters_ok, "detail": counters_detail, "required": False}
 
-    # What the features have actually *experienced*, which the probe above cannot tell you: a
-    # store that answers a ping right now may still have refused the last hundred requests, and
-    # one that is unreachable matters only insofar as some feature had to fall back.
     degradation = getattr(request.app.state, "degradation", None)
     fallbacks = degradation.features if degradation is not None else {}
 
-    # Read from a **cached** background verdict, never probed inline (`FRD-117` §5.2). An inline
-    # probe makes readiness as slow as the slowest upstream, so one degraded provider evicts pods
-    # that were serving perfectly well — a health check that can take down a healthy service.
+    # A cached background verdict, never probed inline (`FRD-117` §5.2): an inline probe makes
+    # readiness as slow as the slowest upstream and evicts healthy pods.
     probe: UpstreamProbe | None = getattr(request.app.state, "upstream_probe", None)
     upstreams = probe.snapshot() if probe is not None else {}
 
     degraded = not counters_ok or bool(fallbacks) or bool(probe and probe.degraded)
     if not await _may_see_detail(request):
-        # The verdict, and nothing that describes the deployment. `degraded` stays because it is
-        # the answer, not a detail — a caller who cannot tell "up" from "up on its fallbacks" has
-        # to guess, and guessing here means either evacuating a healthy instance or ignoring a
-        # real one.
+        # `degraded` stays: it is the answer, not a detail describing the deployment.
         return JSONResponse(
             status_code=200 if ready else 503,
             content={"status": "ready" if ready else "not_ready", "degraded": degraded},
@@ -164,24 +129,13 @@ async def readyz(request: Request) -> JSONResponse:
         status_code=200 if ready else 503,
         content={
             "status": "ready" if ready else "not_ready",
-            # Degraded is not "not ready": the instance still serves, with the fallbacks in
-            # ADR-0008 in force. An unreachable *upstream* is the same shape of answer — a gateway
-            # that still refuses over-budget requests and serves reporting is not down, and
-            # evicting it helps nobody (FR-3). Anything watching this should alert, not evacuate.
+            # Degraded is not "not ready": the instance still serves on its fallbacks (ADR-0008,
+            # FR-3). Anything watching this should alert, not evacuate.
             "degraded": degraded,
             "fallbacks": fallbacks,
             "checks": checks,
             "upstreams": upstreams,
-            # **Where the credentials came from.**
-            #
-            # `FRD-116` built Vault reading and the compose stack never passed `VAULT_ADDR`, so
-            # for three days every credential came from the environment while the feature was
-            # marked done. Nothing anywhere said so, and that is why nobody noticed: an absent
-            # secret store is indistinguishable from a present one when neither is reported.
-            #
-            # Names only, never values — the same rule the loader logs under. Behind the same
-            # credential gate as the rest of this body: which secrets an installation holds is
-            # not a fact for an unauthenticated prober.
+            # Where the credentials came from (`FRD-116`) — names only, never values.
             "secrets": secrets_state(),
         },
     )

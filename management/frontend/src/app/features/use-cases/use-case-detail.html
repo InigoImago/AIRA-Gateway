@@ -121,328 +121,104 @@
     </button>
   </div>
 
-  <!-- Overview -->
-  @if (tab() === 'overview' && !loading()) {
-    <!-- Gated on the load: the settings below are editable, and a form rendered before its data
-         has arrived lets a change be silently overwritten by the response — the same race the
-         pipeline builder had. -->
-    <div class="card stack" role="tabpanel" aria-labelledby="tab-overview">
-      <!-- Was two paragraphs printing values no screen could set: "No description." was the only
-           thing most installations ever saw. Same two values, as controls (`FRD-206`). -->
-      <app-about-panel
-        [slug]="slug"
-        [canManage]="canManage()"
-        [useCase]="useCase()"
-        (saved)="useCase.set($event)"
-      />
-      <div class="tiles">
-        <div class="tile">
-          <div class="tile__value">{{ members().length }}</div>
-          <div class="tile__label">Members</div>
-        </div>
-        <div class="tile">
-          <div class="tile__value">{{ apiKeys().length }}</div>
-          <div class="tile__label">API keys</div>
-        </div>
-        <div class="tile">
-          <div class="tile__value">{{ budgets().length }}</div>
-          <div class="tile__label">Budgets</div>
-        </div>
-        <div class="tile">
-          <div class="tile__value">
-            {{ useCase()?.store_payloads === false ? 'off' : (useCase()?.retention_days ?? '—') }}
+  <!-- Overview. Gated on the load: an editable form rendered before its data arrives lets the
+       response silently overwrite a change. The two settings panels then stay on the page, so an
+       unsaved change survives a look at another tab; off the Overview the wrapper has no box. -->
+  @if (!loading()) {
+    <div
+      [class.card]="onOverview()"
+      [class.stack]="onOverview()"
+      [attr.role]="onOverview() ? 'tabpanel' : null"
+      [attr.aria-labelledby]="onOverview() ? 'tab-overview' : null"
+      [style.display]="onOverview() ? null : 'contents'"
+    >
+      @if (onOverview()) {
+        <app-about-panel
+          [slug]="slug"
+          [canManage]="canManage()"
+          [useCase]="useCase()"
+          (saved)="useCase.set($event)"
+        />
+        <div class="tiles">
+          <div class="tile">
+            <div class="tile__value">{{ members().length }}</div>
+            <div class="tile__label">Members</div>
           </div>
-          <div class="tile__label">
-            {{
-              useCase()?.store_payloads === false ? 'Payload storage' : 'Days of payload retention'
-            }}
+          <div class="tile">
+            <div class="tile__value">{{ apiKeys().length }}</div>
+            <div class="tile__label">API keys</div>
+          </div>
+          <div class="tile">
+            <div class="tile__value">{{ budgets().length }}</div>
+            <div class="tile__label">Budgets</div>
+          </div>
+          <div class="tile">
+            <div class="tile__value">
+              {{ useCase()?.store_payloads === false ? 'off' : (useCase()?.retention_days ?? '—') }}
+            </div>
+            <div class="tile__label">
+              {{
+                useCase()?.store_payloads === false
+                  ? 'Payload storage'
+                  : 'Days of payload retention'
+              }}
+            </div>
           </div>
         </div>
-      </div>
 
-      <!--
-        What it has actually used, beside how it is configured (`FRD-603`). On the overview rather
-        than in the budgets tab, because consumption is a fact about the use case and not a fact
-        about its limits — and a reader opening a use case wants both in one place.
-      -->
-      <app-consumption-panel [slug]="slug" [consumption]="consumption()" />
+        <!-- What it has used, beside how it is configured (`FRD-603`). -->
+        <app-consumption-panel [slug]="slug" [consumption]="consumption()" />
 
-      <!--
-        And the reader's own share of it, asked for by name: *"I want to see my consumption and
-        remaining budget in the overview of the use case."* The same panel the members tab uses,
-        narrowed to one person — the arithmetic of a remainder is the part worth not writing twice.
-      -->
-      @if (myName(); as me) {
-        <app-people-panel
-          [only]="me"
-          [month]="peopleMonth()"
-          [today]="peopleToday()"
-          [budgets]="budgets()"
-          [usage]="usage()"
-          [unavailable]="consumption().unavailable"
-          [reason]="consumption().reason"
+        <!-- The reader's own share: the members tab's panel, narrowed to one person. -->
+        @if (myName(); as me) {
+          <app-people-panel
+            [only]="me"
+            [month]="peopleMonth()"
+            [today]="peopleToday()"
+            [budgets]="budgets()"
+            [usage]="usage()"
+            [unavailable]="consumption().unavailable"
+            [reason]="consumption().reason"
+          />
+        }
+
+        <!-- Which models this use case may call (`FRD-308`): with nothing released it refuses every
+           request, so it sits on the overview. -->
+        <app-model-release-panel
+          [slug]="slug"
+          [canManage]="canAdmin()"
+          [released]="useCase()?.allowed_models ?? []"
+          (saved)="useCase.set($event)"
+        />
+
+        <!-- How to call it. Below the release, because the examples are built from what is released. -->
+        <app-connection-panel
+          [slug]="slug"
+          [released]="useCase()?.allowed_models ?? []"
+          [kira]="kiraModels()"
+          [failure]="kiraFailure()"
         />
       }
 
-      <!--
-        Which models this use case may call (`FRD-308`). On the overview beside the other
-        configuration, because it is the most consequential setting a use case has: with nothing
-        released it answers every request with a refusal.
-      -->
-      <app-model-release-panel
+      <app-capabilities-panel
+        [shown]="onOverview()"
         [slug]="slug"
-        [canManage]="canAdmin()"
-        [released]="useCase()?.allowed_models ?? []"
+        [useCase]="useCase()"
+        [canManage]="canManage()"
         (saved)="useCase.set($event)"
       />
 
-      <!--
-        How to *use* it, beside how it is governed. Everything else on this page is about the
-        second, and a person who has just issued a key had no address to put it against — an
-        instruction with no destination, which is the half of `FRD-206` that announces itself
-        through nothing. Below the release on purpose: what a client may call is what the examples
-        are built from, so the reader meets the setting before the consequence.
-      -->
-      <app-connection-panel
+      <app-data-protection-panel
+        [shown]="onOverview()"
         [slug]="slug"
-        [released]="useCase()?.allowed_models ?? []"
-        [kira]="kiraModels()"
-        [failure]="kiraFailure()"
+        [useCase]="useCase()"
+        [canManage]="canManage()"
+        (saved)="useCase.set($event)"
       />
-
-      <!--
-        Not data protection, and it was in that panel because that is where the form was — which
-        put two unrelated switches between "store prompts" and "keep them for N days", the pair a
-        reader treats as one setting. Its own section, its own save, its own sentence when it
-        succeeds: a message about retention shown after switching caching on is a message about
-        the wrong thing.
-      -->
-      <div class="disclosure">
-        <h3 class="section-title" style="margin-bottom: 0.25rem">What this use case may do</h3>
-        <p class="muted" style="margin: 0 0 0.75rem">
-          Two capabilities, both off unless somebody turns them on. Neither changes what an answer
-          says — the first decides what a caller may ask for, the second only what it costs.
-        </p>
-        @if (!canManage()) {
-          <p data-testid="capabilities-readonly" style="margin: 0">
-            Function calling is
-            <strong>{{ useCase()?.tools_enabled ? 'on' : 'off' }}</strong> and prompt caching is
-            <strong>{{ useCase()?.prompt_caching_enabled ? 'on' : 'off' }}</strong
-            >. Only an administrator of this use case can change that.
-          </p>
-        } @else {
-          <form class="stack" (ngSubmit)="saveCapabilities()">
-            <!--
-              Two switches that lived only in the API until 2026-08-10. `FRD-206` recorded the
-              defect where a console offers what the server refuses; this is its inverse — a
-              capability with no way in, which does not announce itself because nothing ever fails.
-            -->
-            <label class="row" style="gap: 0.5rem">
-              <input
-                type="checkbox"
-                id="include-reasoning"
-                name="include_reasoning"
-                data-testid="include-reasoning"
-                [checked]="includeReasoning()"
-                (change)="includeReasoning.set($any($event.target).checked)"
-              />
-              Return and keep the model's reasoning
-              <app-info-hint label="Reasoning" testid="include-reasoning" [wide]="true">
-                A thinking model works through a problem before answering. Off, that reasoning is
-                asked for from nobody and a request for it is <strong>refused by name</strong> —
-                never served with the thoughts silently missing. On, it comes back with the answer
-                and is <strong>stored exactly like the answer</strong>: same payload, same
-                retention, same role needed to read it. Worth having when you are watching agents
-                and want to know <em>why</em> one called a tool. Worth leaving off otherwise:
-                reasoning can restate the prompt word for word, so turning it on is a decision about
-                content, not about detail. The thinking tokens are counted and billed either way —
-                that is not a choice, the provider charges for them.
-              </app-info-hint>
-            </label>
-
-            <label class="row" style="gap: 0.5rem">
-              <input
-                type="checkbox"
-                id="tools-enabled"
-                name="tools_enabled"
-                [checked]="toolsEnabled()"
-                (change)="toolsEnabled.set($any($event.target).checked)"
-              />
-              Let this use case declare functions for the model to call
-              <app-info-hint label="Function calling" testid="tools-enabled" [wide]="true">
-                Lets a caller send tool definitions and lets the model answer with a call to one.
-                The gateway carries them and <strong>never executes anything</strong> — running the
-                function is the caller's job, and the arguments a model asks for are never treated
-                as an instruction here. Off unless the use case needs it: a use case that summarises
-                documents has no business declaring functions, and an assistant that calls tools
-                makes many model requests per human instruction, so limits set for a chatbot will
-                trip at once.
-              </app-info-hint>
-            </label>
-
-            <label class="row" style="gap: 0.5rem">
-              <input
-                type="checkbox"
-                id="prompt-caching"
-                name="prompt_caching_enabled"
-                [checked]="promptCaching()"
-                (change)="promptCaching.set($any($event.target).checked)"
-              />
-              Cache the stable part of each request at the provider
-              <app-info-hint label="Prompt caching" testid="prompt-caching" [wide]="true">
-                Marks the tool declarations and the system instruction — measured at 99 % of an
-                assistant's request — so the provider charges a fraction for them on a repeat within
-                five minutes. It changes the price, never the answer, and a model that cannot do it
-                is served normally rather than skipped. Off by default: on Google Cloud the cache is
-                shared across the whole organisation, so a use case whose system prompt is itself
-                confidential should decide for itself.
-              </app-info-hint>
-            </label>
-
-            @if (promptCaching()) {
-              <div class="field">
-                <label for="cache-ttl">
-                  Keep the cached prefix for
-                  <app-info-hint label="Cache lifetime" testid="cache-ttl" [wide]="true">
-                    The one setting with a real trade-off, and only your own traffic settles it.
-                    Writing the cache costs <strong>more</strong> than an ordinary request — about a
-                    quarter extra for five minutes, about double for an hour — and reading it back
-                    costs a fraction. Five minutes pays off when turns follow each other closely; an
-                    hour only pays off if the gap between them regularly exceeds five minutes,
-                    because otherwise you paid double for a cache that had already expired. Change
-                    it, send traffic, then watch the <em>Cached</em> share on this use case's
-                    overview — that is the measurement, and nothing else settles it.
-                  </app-info-hint>
-                </label>
-                <select
-                  id="cache-ttl"
-                  name="prompt_cache_ttl"
-                  [ngModel]="cacheTtl()"
-                  (ngModelChange)="cacheTtl.set($event)"
-                >
-                  <option value="5m">5 minutes — cheaper to write</option>
-                  <option value="1h">1 hour — survives longer pauses, costs about double</option>
-                </select>
-              </div>
-            }
-            <div class="row">
-              <button type="submit" class="btn btn--primary" [disabled]="!canSaveCapabilities()">
-                {{ feedback.busy() ? 'Saving…' : 'Save capabilities' }}
-              </button>
-            </div>
-          </form>
-        }
-      </div>
-
-      <div class="disclosure">
-        <h3 class="section-title" style="margin-bottom: 0.25rem">Data protection</h3>
-        <p class="muted" style="margin: 0 0 0.75rem">
-          Prompts and responses sent through this use case can be stored so incidents can be
-          investigated. Either way the metadata — who, when, which model, how many tokens, what it
-          cost — is kept for reporting.
-        </p>
-        @if (!canManage()) {
-          <p data-testid="retention-readonly" style="margin: 0">
-            @if (useCase()?.store_payloads === false) {
-              Prompts and responses are <strong>not stored</strong> for this use case.
-            } @else {
-              Prompts and responses are kept for
-              <strong>{{ useCase()?.retention_days ?? '—' }} day(s)</strong>.
-            }
-            Only an administrator of this use case can change that.
-          </p>
-        } @else {
-          <form class="stack" (ngSubmit)="saveRetention()">
-            <!-- No `for`: the input is nested, so the label is already associated with it. Adding
-               `for` as well makes a real browser forward the click a second time — the box
-               toggles twice and the switch looks dead. jsdom does not reproduce it. -->
-            <label class="row" style="gap: 0.5rem">
-              <!-- Plain [checked]/(change) rather than ngModel: a one-way ngModel binding on a
-                 checkbox inside an NgForm writes the old value straight back, so the box springs
-                 back and the switch cannot be operated. -->
-              <input
-                type="checkbox"
-                id="store-payloads"
-                name="store_payloads"
-                [checked]="storePayloads()"
-                (change)="storePayloads.set($any($event.target).checked)"
-              />
-              Store prompts and responses
-            </label>
-
-            @if (storePayloads()) {
-              <div class="form-inline">
-                <div class="field">
-                  <label for="retention-days">Keep them for (days)</label>
-                  <input
-                    id="retention-days"
-                    name="retention_days"
-                    type="number"
-                    min="1"
-                    max="3650"
-                    [ngModel]="retentionDays()"
-                    (ngModelChange)="retentionDays.set($event)"
-                  />
-                  <span class="field__hint">Deleted automatically once the period has passed.</span>
-                </div>
-              </div>
-            } @else {
-              <p
-                class="callout callout--warning"
-                style="margin: 0"
-                data-testid="storage-off-warning"
-              >
-                Nothing a caller sends or receives is written for this use case. Anything already
-                stored is removed on the next retention run. Incidents can then only be traced
-                through the metadata.
-              </p>
-            }
-
-            <!--
-              Who inside the use case may read whose requests. A separate question from *whether*
-              anything is stored, and it belongs to the administrator of the use case rather than
-              to IT Security (`FRD-505` FR-4).
-            -->
-            <label class="checkline">
-              <input
-                type="checkbox"
-                id="restrict-members"
-                name="restrict_members"
-                [checked]="restrictMembers()"
-                (change)="restrictMembers.set($any($event.target).checked)"
-                data-testid="restrict-members"
-              />
-              Show each member only their own requests
-            </label>
-            <span class="field__hint">
-              Administrators of this use case always see all of them. Off means everyone in the use
-              case sees the whole use case's traffic, which is how it has always worked.
-            </span>
-
-            <div class="row">
-              <!-- Named, not just "Save": there are two forms on this page now, and two buttons
-                 reading "Save" is a pair a screen reader announces identically and a reader has to
-                 work out from position. It also made three e2e tests ambiguous, which is the same
-                 complaint from the machine. -->
-              <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
-                {{ feedback.busy() ? 'Saving…' : 'Save storage settings' }}
-              </button>
-              @if (retentionError(); as message) {
-                <span class="field__hint field__hint--error">{{ message }}</span>
-              }
-            </div>
-          </form>
-        }
-      </div>
     </div>
   }
 
-  <!--
-    Who can reach this use case. Rewritten by `FRD-209`: a grant names a **Keycloak group** or a
-    person, and one panel handles both — because the question is "who should get this", not "am I
-    about to name a group or a person". Two panels would make somebody choose the mechanism before
-    they have chosen the recipient.
-  -->
+  <!-- Who can reach this use case (`FRD-209`), then what each of them used (`FRD-606`). -->
   @if (tab() === 'members') {
     <app-access-panel
       [slug]="slug"
@@ -450,11 +226,6 @@
       [members]="members()"
       (changed)="reloadMembers()"
     />
-    <!--
-      Under the access list, because the two answer the same reader's two questions in order: who
-      may call this, and what did they call. Access is the thing you change here; consumption is
-      the thing you look at — so the editable panel keeps the top (`FRD-606`).
-    -->
     <app-people-panel
       [month]="peopleMonth()"
       [today]="peopleToday()"
@@ -464,268 +235,21 @@
     />
   }
 
-  <!-- API keys -->
   @if (tab() === 'keys') {
-    <div class="card" role="tabpanel" aria-labelledby="tab-keys">
-      <div class="spread">
-        <h3 class="section-title" style="margin: 0">API keys</h3>
-        @if (isMember()) {
-          <button
-            type="button"
-            class="btn btn--sm btn--primary"
-            (click)="showIssueKey.set(true)"
-            data-testid="issue-key"
-          >
-            + Issue key
-          </button>
-        }
-      </div>
-      <p class="muted" style="margin: 0.25rem 0 0">
-        Keys are bound to this use case — requests made with them are attributed here automatically.
-        Only members of the use case can issue one.
-      </p>
-
-      @if (!isMember()) {
-        <p class="muted" style="margin: 0.25rem 0 0" data-testid="keys-readonly">
-          A key is data-plane access, so only members of this use case may issue one — seeing a use
-          case is deliberately not enough.
-        </p>
-      }
-
-      <!--
-        A window, like every other thing this console creates. It was a disclosure that expanded
-        inside the panel — the one creator that behaved differently from budgets, rate limits,
-        anomaly rules and model declarations, so the reader learned the pattern three times and
-        met an exception on the fourth. `core/ui/modal.ts` owns the three promises a hand-rolled
-        panel forgets one of: Escape closes it, the keyboard moves inside it, the backdrop closes.
-      -->
-      <app-modal
-        [open]="showIssueKey() && isMember()"
-        title="Issue an API key"
-        testid="key-editor"
-        (closed)="showIssueKey.set(false)"
-      >
-        <div modal-body>
-          <p class="callout" style="margin-top: 1rem" data-testid="key-responsibility">
-            Requests made with this key are recorded under <strong>your name</strong>, and it is you
-            who answers for how it is used — including by anything you hand it to. If it is meant
-            for a team or a service rather than for you personally, issue it under an account that
-            says so.
-          </p>
-          <!--
-            **A stack, not a row.** It declared `.form-inline` and laid out as three lines anyway:
-            each field is as wide as its own hint, so the inputs came out 838, 641 and 461 px wide
-            — a ragged right edge that reads as a rendering fault. `.form-inline` is for a filter
-            row, where two or three short controls genuinely share a line; a window is a form, and
-            a form in a 880 px dialog with a sentence under every field has one control per line
-            whatever class it claims.
-
-            The alignment guard found this by insisting it had something to compare: no line here
-            carries two controls, which is the same thing it reported about the create-use-case
-            form before that assertion was withdrawn for the same reason.
-          -->
-          <form id="issue-key-form" class="stack" (ngSubmit)="issueKey()">
-            <div class="field">
-              <label for="key-label">Label (optional)</label>
-              <input
-                id="key-label"
-                name="label"
-                [ngModel]="keyLabel()"
-                (ngModelChange)="keyLabel.set($event)"
-                placeholder="e.g. opencode laptop"
-                autocomplete="off"
-              />
-              <span class="field__hint">Helps you tell keys apart later — it is not a secret.</span>
-            </div>
-            <div class="field">
-              <label for="key-expiry">Expires after (days)</label>
-              <input
-                id="key-expiry"
-                name="expires_in_days"
-                type="number"
-                min="1"
-                [attr.max]="maxKeyDays()"
-                [ngModel]="keyExpiresInDays()"
-                (ngModelChange)="keyExpiresInDays.set($event)"
-                [placeholder]="defaultKeyDays()"
-                autocomplete="off"
-              />
-              <span class="field__hint">
-                Leave empty for the standard {{ defaultKeyDays() }} days. Keys always expire; the
-                longest this installation allows is {{ maxKeyDays() }} days.
-              </span>
-            </div>
-            <div class="field">
-              <label for="key-owner">
-                Owned by (optional)
-                <app-info-hint label="Key owner" testid="key-owner" [wide]="true">
-                  Leave this empty and the key is yours: your name appears beside every request made
-                  with it, and you answer for how it is used. Name somebody else — a technical
-                  account for a team or a service — and <strong>they</strong> answer for it, while
-                  the console records that <strong>you</strong> created it. Both facts are kept,
-                  which is what signing in as the technical account would destroy. The account has
-                  to have access to this use case already.
-                </app-info-hint>
-              </label>
-              <input
-                id="key-owner"
-                name="owner"
-                [ngModel]="keyOwner()"
-                (ngModelChange)="keyOwner.set($event)"
-                placeholder="you"
-                autocomplete="off"
-              />
-              <span class="field__hint">
-                A username that already has access here. Anything else is refused by name.
-              </span>
-            </div>
-          </form>
-        </div>
-
-        <div modal-foot>
-          <button type="button" class="btn" (click)="showIssueKey.set(false)">Cancel</button>
-          <button
-            type="submit"
-            form="issue-key-form"
-            class="btn btn--primary"
-            [disabled]="feedback.busy()"
-          >
-            {{ feedback.busy() ? 'Issuing…' : 'Issue' }}
-          </button>
-        </div>
-      </app-modal>
-
-      @if (issued(); as key) {
-        <div class="callout callout--warning stack" style="margin-top: 1rem" role="alert">
-          <strong>Copy this key now — it is shown only once.</strong>
-          <code class="secret">{{ key.api_key }}</code>
-          <div class="row">
-            <button type="button" class="btn btn--sm btn--primary" (click)="copyKey(key.api_key)">
-              {{ copied() ? 'Copied ✓' : 'Copy' }}
-            </button>
-            <button
-              type="button"
-              class="btn btn--sm"
-              (click)="copyOpenCodeConfig(key)"
-              data-testid="copy-opencode"
-            >
-              {{ configCopied() ? 'Config copied ✓' : 'Copy OpenCode config' }}
-            </button>
-            <button
-              type="button"
-              class="btn btn--sm"
-              (click)="downloadOpenCodeConfig(key)"
-              data-testid="download-opencode"
-            >
-              Download opencode.json
-            </button>
-            <button type="button" class="btn btn--sm btn--ghost" (click)="dismissIssued()">
-              Done
-            </button>
-          </div>
-          <span class="field__hint">
-            The OpenCode configuration is built now, while the key exists: it is shown once and
-            never retrievable, so a config offered later could only carry a placeholder.
-            <strong>It contains the key</strong> — treat the file as the credential it is.
-          </span>
-          <!-- Repeated at the one moment the plaintext exists, because this is where it is about
-               to leave the screen and go somewhere the reader will not remember later. -->
-          <span class="field__hint" data-testid="key-issued-responsibility">
-            This key is recorded as yours. Whatever is done with it — by you, by a tool, or by an
-            agent you give it to — is attributed to your name.
-          </span>
-          @if (copyFailed()) {
-            <span class="field__hint field__hint--error">
-              This browser would not let the page write to the clipboard — select the key above and
-              copy it manually.
-            </span>
-          }
-        </div>
-      }
-
-      <div class="table-wrap" style="margin-top: 1rem">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">Prefix</th>
-              <th scope="col">Label</th>
-              <th scope="col">
-                Owner
-                <app-info-hint label="Owner" testid="key-owner" [wide]="true">
-                  Who issued this key and answers for how it is used. Every request made with it is
-                  recorded under this name — which says who is accountable for the credential, not
-                  that this person wrote the request. A key handed to an agent, a script or a team
-                  still points here.
-                </app-info-hint>
-              </th>
-              <th scope="col">Status</th>
-              <th scope="col">Expires</th>
-              <th scope="col"><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (key of apiKeys(); track key.prefix) {
-              <tr>
-                <td>
-                  <code>aira_{{ key.prefix }}_…</code>
-                </td>
-                <td>{{ key.label || '—' }}</td>
-                <td>
-                  {{ key.owner }}
-                  <!-- Only when they differ. An ordinary key is owned by the person who made it,
-                     and saying "issued by" on every row would turn a distinction that matters into
-                     noise that nobody reads — which is how the one row where it matters gets
-                     skipped. -->
-                  @if (key.issued_by) {
-                    <span class="muted" style="display: block; font-size: 0.78rem">
-                      issued by {{ key.issued_by }}
-                    </span>
-                  }
-                </td>
-                <td>
-                  @if (key.is_active) {
-                    <span class="badge badge--success">active</span>
-                  } @else {
-                    <span class="badge badge--danger">revoked</span>
-                  }
-                </td>
-                <td>
-                  @if (key.expires_at) {
-                    {{ key.expires_at | date: 'yyyy-MM-dd' }}
-                  } @else {
-                    <!-- Issued before keys were bounded. It still works, and saying so plainly is
-                         the point: an unbounded credential nobody can see is one nobody replaces. -->
-                    <span class="badge badge--warning">no end date</span>
-                  }
-                </td>
-                <td class="table__actions">
-                  <div class="actions">
-                    @if (key.is_active && canManage()) {
-                      <button
-                        type="button"
-                        class="btn btn--sm btn--danger"
-                        [disabled]="feedback.busy()"
-                        [attr.aria-label]="'Revoke key ' + key.prefix"
-                        (click)="revokeKey(key.prefix)"
-                      >
-                        Revoke
-                      </button>
-                    }
-                  </div>
-                </td>
-              </tr>
-            } @empty {
-              <tr>
-                <td class="table__empty" colspan="6">No keys issued yet.</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <app-api-keys-panel
+      [slug]="slug"
+      [keys]="apiKeys()"
+      [canManage]="canManage()"
+      [isMember]="isMember()"
+      [models]="catalog()"
+      [currency]="currency()"
+      [defaultKeyDays]="defaultKeyDays()"
+      [maxKeyDays]="maxKeyDays()"
+      [(issued)]="issued"
+      (changed)="loadKeys()"
+    />
   }
 
-  <!-- Budgets -->
   @if (tab() === 'budgets') {
     <app-budgets-tab
       [slug]="slug"
@@ -739,7 +263,6 @@
     />
   }
 
-  <!-- Warnings about this use case (FRD-502) -->
   @if (tab() === 'rules') {
     <app-rules-tab [slug]="slug" [canManage]="canManage()" (countChanged)="ruleCount.set($event)" />
   }
@@ -748,12 +271,10 @@
     <app-warnings-tab [slug]="slug" (countChanged)="warningCount.set($event)" />
   }
 
-  <!-- What actually happened, request by request (FRD-502) -->
   @if (tab() === 'traces') {
     <app-traces-tab [slug]="slug" />
   }
 
-  <!-- Rate limits (FRD-405) -->
   @if (tab() === 'rate-limits') {
     <app-rate-limits-tab
       [slug]="slug"

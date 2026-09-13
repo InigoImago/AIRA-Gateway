@@ -1,22 +1,15 @@
 """Fallback-aware dispatch, and the conditions a candidate has to meet (FRD-302, ADR-0012 §3).
 
-Tries ``[model, *fallback_models]`` in order and returns the first success, together with the
-position of the candidate that answered — the audit trail has to be able to say that a substitution
-happened (`FRD-122` FR-3).
+Tries ``[model, *fallback_models]`` in order and returns the first success with the position of the
+candidate that answered, so the audit trail can say a substitution happened (`FRD-122` FR-3).
 
-**A chain must not be able to degrade a request silently.** That is the rule `ADR-0012` §3 states
-for attachments and it applies to every property of a candidate that changes what comes back: a
-model that cannot read the PDF, a model that cannot enforce the schema, a model in a region this
-request may not use. Falling back to one of those does not produce an error. It produces a fluent,
-confident answer — computed from less than the caller sent, or somewhere they did not permit —
-returned with a 200 and indistinguishable from a correct one.
+**A chain must not degrade a request silently.** A fallback that cannot read the attachment,
+enforce the schema, or serve from a permitted region does not fail — it answers fluently from less
+than the caller sent, with a 200. So a candidate that fails a condition is **skipped** with its
+reason, and when none qualifies the request fails with those reasons (`NoCapableModel`) rather than
+as an upstream outage.
 
-So a candidate that fails a condition is **skipped**, the reason is kept, and when no candidate
-qualifies the request **fails** with those reasons rather than with "no provider available", which
-reads as an upstream outage and sends the reader looking in the wrong place.
-
-Conditions arrive as an async predicate rather than as objects this module knows about: dispatch
-should not learn what a media type is when `FRD-110` lands, nor what a region is now.
+Conditions arrive as an async predicate, so dispatch never learns what a region or a media type is.
 """
 
 from __future__ import annotations
@@ -38,18 +31,9 @@ Permits = Callable[[str], Awaitable[str | None]]
 class Routing:
     """Everything the catalogue says about **reaching** one candidate.
 
-    Three facts from one declaration, kept together because they are read together and because
-    fetching two of them and leaving the third behind is exactly how this went wrong. The chain
-    used to ask only for ``(provider, publisher)``; ``addressing`` stayed as the *primary's*, on a
-    request that had already been re-pointed at a different model.
-
-    Nowhere is that visible except at the platform that reads it. On Vertex, ``addressing`` is the
-    region list, so a fallback catalogued in `europe-west4` was addressed at the primary's
-    `europe-west1` — *not deployed here*, then the primary's remaining regions, all equally wrong;
-    and a catalogued Vertex fallback behind a primary that carries no addressing at all was refused
-    with *"catalogued for this platform and says no region"*, which the catalogue flatly
-    contradicts. `ADR-0011`'s rule in its usual clothes: the caller's model name is never the
-    platform's addressing, and a chain that changes the first must change the second with it.
+    Kept together because they are read together: a hop that took the fallback's provider but kept
+    the primary's ``addressing`` sent it to the primary's regions (`ADR-0011` — the caller's model
+    name is never the platform's addressing, and a chain that changes one must change both).
     """
 
     provider: str = ""
@@ -72,9 +56,8 @@ class Skipped:
 class NoCapableModel(Exception):
     """No candidate could serve the request.
 
-    Distinct from an upstream failure on purpose. "Every model was excluded" is a configuration or
-    capability problem the operator can fix; "the upstream is down" is not, and reporting them as
-    the same 502 sends whoever reads it to the wrong place.
+    Distinct from an upstream failure: "every model was excluded" is a configuration the operator
+    can fix, and reporting it as a 502 sends the reader to the wrong place.
     """
 
     def __init__(self, skipped: list[Skipped]) -> None:
@@ -105,14 +88,11 @@ async def dispatch_with_fallback(
     last_error: UpstreamError | None = None
 
     for index, model in enumerate(candidates):
-        # The catalog names who serves a model, so one that was catalogued rather than configured
-        # resolves too (`FRD-507`). Asked per candidate, because a fallback chain may cross
-        # providers — that is what a chain is for.
+        # Asked per candidate: a chain may cross providers, and a catalogued model resolves too
+        # (`FRD-507`).
         routing = await routing_of(model) if routing_of is not None else Routing()
         provider = registry.provider_for(model, routing.provider, routing.publisher)
         if provider is None:
-            # Previously a silent `continue`. A model nobody serves is a configuration mistake,
-            # and it should be visible in the failure rather than inferred from its absence.
             skipped.append(Skipped(model, "no provider serves this model"))
             continue
         if permits is not None:
@@ -121,37 +101,25 @@ async def dispatch_with_fallback(
                 skipped.append(Skipped(model, refusal))
                 continue
         try:
-            # **The addressing moves with the model.** `model_copy` used to change the name alone,
-            # which left every hop after the first carrying the primary's platform address — see
-            # :class:`Routing`. Only where the chain was told how to look one up: with no
-            # ``routing_of`` the request keeps what it arrived with, which is what a caller that
-            # resolved the addressing itself expects.
+            # The addressing moves with the model (see `Routing`). Without ``routing_of`` the
+            # request keeps what it arrived with, as a caller that resolved it itself expects.
             update: dict[str, Any] = {"model": model}
             if routing_of is not None:
                 update["addressing"] = routing.addressing
-            # Per attempt, so a chain that tries three models leaves three model-access records
-            # naming three models (`FRD-619`).
+            # Per attempt, so each model tried leaves its own model-access record (`FRD-619`).
             with model_call_span(model, purpose="serve"):
                 response = await provider.generate(request.model_copy(update=update))
         except UpstreamError as exc:
             last_error = exc
         except (AmbiguousModel, RegionNotAllowed) as exc:
-            # **A candidate that cannot be addressed is a candidate, not a server error.**
-            #
-            # Since cataloguing a model became enough to serve it, the address can be wrong in two
-            # new ways an operator controls: a platform that needs a region and a catalogue entry
-            # that names none, or a region outside `AIRA_ALLOWED_REGIONS`. Both used to escape the
-            # chain and reach the caller as a **500** — a configuration fault dressed as our fault,
-            # measured on 2026-08-19 for both.
-            #
-            # Recorded as a skip so a fallback chain moves on, which is what a chain is for, and so
-            # the refusal names the model and the reason when nothing else qualifies.
+            # A candidate that cannot be addressed — no region catalogued, or one outside
+            # `AIRA_ALLOWED_REGIONS` — is a configuration fault, not a 500: skip it and move on.
             skipped.append(Skipped(model, str(exc)))
         else:
             return Dispatched(response, index, skipped)
 
-    # An upstream that was *tried* and failed is an outage and is reported as one — the caller may
-    # usefully retry. Everything else is a chain that had nothing to offer.
+    # An upstream that was *tried* and failed is an outage, which the caller may usefully retry.
+    # Everything else is a chain that had nothing to offer.
     if last_error is not None:
         raise last_error
     raise NoCapableModel(skipped)

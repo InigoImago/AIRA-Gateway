@@ -15,7 +15,7 @@ def test_empty_endpoint_returns_false() -> None:
 
 
 def test_enabled_configures_providers(monkeypatch) -> None:
-    monkeypatch.setattr(obs, "_configured", False)
+    monkeypatch.setattr("aira_common.observability.providers._configured", False)
     ok = obs.configure_observability(
         service_name="t",
         service_version="1.2.3",
@@ -140,7 +140,7 @@ def test_configure_observability_is_what_excludes_them(monkeypatch) -> None:
     monkeypatch.delenv(EXCLUDED_URLS_ENV, raising=False)
     # `configure_observability` is idempotent by design and returns early once configured, so the
     # module-level latch is cleared — otherwise this asserts about a previous test's call.
-    monkeypatch.setattr(observability, "_configured", False)
+    monkeypatch.setattr("aira_common.observability.providers._configured", False)
 
     observability.configure_observability(
         service_name="probe", endpoint="http://127.0.0.1:1", enabled=True

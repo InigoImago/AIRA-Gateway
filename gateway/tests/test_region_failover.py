@@ -26,11 +26,8 @@ import pytest
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
 from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.upstreams.base import UpstreamError
-from aira_gateway.upstreams.vertex.adapters import (
-    REGION_FAILOVER_STATUSES,
-    VertexGeminiAdapter,
-    _across_regions,
-)
+from aira_gateway.upstreams.vertex.adapters import VertexGeminiAdapter
+from aira_gateway.upstreams.vertex.regions import REGION_FAILOVER_STATUSES, _across_regions
 
 pytestmark = pytest.mark.anyio
 
@@ -218,7 +215,7 @@ def test_the_two_readers_of_a_region_list_agree(addressing: dict, expected: tupl
     `read-regions.spec.ts`.
     """
     from aira_gateway.catalog import ModelDeclaration
-    from aira_gateway.upstreams.vertex.adapters import _declared_regions
+    from aira_gateway.upstreams.vertex.regions import _declared_regions
 
     assert _declared_regions(addressing) == expected
     assert ModelDeclaration(name="m", addressing=addressing).regions == expected

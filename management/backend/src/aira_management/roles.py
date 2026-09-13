@@ -1,9 +1,7 @@
-"""Canonical AIRA roles — re-exported from the shared definition.
+"""Canonical AIRA roles, re-exported from the shared definition in :mod:`aira_common.roles`.
 
-The definition moved to :mod:`aira_common.roles` when the gateway came to need the same answer
-to "is this caller governance" for reporting across use cases (ADR-0009). This module stays so
-the Django side keeps importing from where it always has, and so there is one obvious place to
-look from inside Management.
+The gateway needs the same answers (`ADR-0009`), so the definition is shared; this module is where
+Management imports them from.
 """
 
 from __future__ import annotations

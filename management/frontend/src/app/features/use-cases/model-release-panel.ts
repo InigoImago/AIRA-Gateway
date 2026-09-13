@@ -8,14 +8,10 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 /**
  * Which models this use case may call (`FRD-308`).
  *
- * Two gates with different owners, and the panel has to make that legible or it reads as one
- * setting with a confusing name. A **Global Administrator** decides what may be used in this
- * installation at all — that is the catalog, and this screen cannot change it. An **administrator
- * of this use case** decides which of those it reaches.
- *
- * **Empty means none**, which is the owner's decision (2026-08-11) and the state every use case
- * starts in. So the empty case is not a quiet blank list: it is the loudest thing on the panel,
- * because a use case in it answers every request with a refusal and the cause is on this screen.
+ * Two gates with different owners: a Global Administrator approves models for the installation
+ * (the catalog, not changeable here); an administrator of this use case releases some of those to
+ * it. **Empty means none** — the state every use case starts in — so the empty case is the loudest
+ * thing on the panel: such a use case refuses every request, and the cause is on this screen.
  */
 @Component({
   selector: 'app-model-release-panel',
@@ -39,39 +35,17 @@ export class ModelReleasePanel implements OnInit {
   /** The working set, so nothing is written until Save. */
   protected readonly chosen = signal<Set<string>>(new Set());
 
-  ngOnInit(): void {
-    this.chosen.set(new Set(this.released()));
-    this.service.models().subscribe({
-      next: (models) => {
-        this.catalog.set(models);
-        this.loading.set(false);
-      },
-      error: () => {
-        this.loading.set(false);
-        this.feedback.fail(null, 'Could not load the model catalog.');
-      },
-    });
-  }
-
   /**
-   * Only **approved** models are offered.
-   *
-   * Not a display preference: the server refuses to release an unapproved one, so offering it
-   * would be `FRD-206`'s complaint exactly — a control that invites a click and then answers 400.
-   * A model that was approved when it was released and has since been withdrawn is a different
-   * case and is shown below, because that one somebody has to act on.
+   * Only approved models are offered: the server refuses to release an unapproved one, and a
+   * control that invites a click and answers 400 is `FRD-206`'s complaint.
    */
   protected readonly releasable = computed(() =>
     this.catalog().filter((model) => model.approved !== false),
   );
 
   /**
-   * The catalog as the picker needs it.
-   *
-   * The **price** rides along as the option's detail, and that is not decoration: releasing a
-   * model to a team is a spending decision, and the figure that makes it one used to be two
-   * clicks away on another screen. An unpriced model says so, because "no price" and "free" are
-   * different facts (`FRD-403`).
+   * The catalog as the picker needs it. The price rides along as the option's detail, because
+   * releasing a model is a spending decision; "no price on file" is not "free" (`FRD-403`).
    */
   protected readonly choices = computed<MultiSelectOption[]>(() =>
     this.releasable().map((model) => ({
@@ -88,46 +62,50 @@ export class ModelReleasePanel implements OnInit {
   );
 
   /**
-   * Released here, and no longer approved for the installation.
-   *
-   * Shown rather than silently dropped. The gateway refuses these anyway — `ModelApproved` runs
-   * before this rule — so a use case carrying one is already failing for a reason its own screen
-   * would otherwise not mention.
+   * Released here and no longer approved. Shown, not dropped: the gateway already refuses them
+   * (approval is checked first), and this screen is where the reader can act on it.
    */
   protected readonly withdrawn = computed(() => {
     const approved = new Set(this.releasable().map((model) => model.name));
     return [...this.chosen()].filter((name) => !approved.has(name)).sort();
   });
 
-  /** What the picker binds to. Sorted, so the chips do not reorder themselves as they are
-   *  toggled — a list that rearranges under the pointer is one somebody clicks wrong. */
+  /** What the picker binds to. Sorted, so chips do not reorder under the pointer as they toggle. */
   protected readonly chosenList = computed(() => [...this.chosen()].sort());
-
-  protected setChosen(names: string[]): void {
-    // A new Set every time: a mutated one is the same object, and a zoneless signal that compares
-    // by reference renders nothing (`FRD-203` §4).
-    this.chosen.set(new Set(names));
-  }
 
   protected readonly count = computed(() => this.chosen().size);
 
   /**
-   * Whether anything is unsaved. The separator is `\0` **as an escape**, never as a raw byte:
-   * a NUL is what makes this list comparison safe — no model name can contain one — and two of
-   * them sat in this file as literal bytes until 2026-08-17, which made every standard text tool
-   * classify the source as *binary* and skip it **silently**. `grep allowed_models` across the
-   * console then reported that nothing writes it, on the day somebody was auditing exactly that.
-   * The escape is the same string to the compiler and a text file to everything else.
+   * Whether anything is unsaved. The separator is `\0` written as an escape, never a raw byte: no
+   * model name can contain a NUL, and a literal one makes text tools treat the source as binary.
    */
   protected readonly dirty = computed(() => {
     const before = [...this.released()].sort().join('\0');
     return before !== [...this.chosen()].sort().join('\0');
   });
 
+  ngOnInit(): void {
+    this.chosen.set(new Set(this.released()));
+    this.service.models().subscribe({
+      next: (models) => {
+        this.catalog.set(models);
+        this.loading.set(false);
+      },
+      error: () => {
+        this.loading.set(false);
+        this.feedback.fail(null, 'Could not load the model catalog.');
+      },
+    });
+  }
+
+  protected setChosen(names: string[]): void {
+    // A new Set every time: a zoneless signal compares by reference (`FRD-203` §4).
+    this.chosen.set(new Set(names));
+  }
+
   protected save(): void {
-    // `feedback.busy()` rather than a signal of this panel's own: `run` sets and clears it on
-    // **both** branches, and a private flag is one more thing a failed save leaves stuck on —
-    // a control that is dead with no message to explain it.
+    // `feedback.busy()`, not a private flag: `run` clears it on both branches, so a failed save
+    // cannot leave the control stuck.
     if (!this.canManage() || this.feedback.busy()) return;
     const chosen = [...this.chosen()].sort();
     this.feedback.run(this.service.update(this.slug(), { allowed_models: chosen }), {
@@ -135,9 +113,7 @@ export class ModelReleasePanel implements OnInit {
       success: (useCase: UseCase) => {
         this.chosen.set(new Set(useCase.allowed_models ?? chosen));
         this.saved.emit(useCase);
-        // Says what the state now *is*, not that a form was submitted — and the zero case says
-        // what it means, because "0 models released" and "saved" would leave a reader believing
-        // their use case works.
+        // States what the release now is, and what zero means.
         this.feedback.succeed(
           chosen.length
             ? `${chosen.length} model(s) released. This use case can call those and no others.`

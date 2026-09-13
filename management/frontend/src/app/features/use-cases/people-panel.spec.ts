@@ -56,8 +56,7 @@ function setup() {
 
 describe('PeoplePanel', () => {
   it('shows tokens and money per person without any budget at all', () => {
-    // `FRD-603`'s rule, one level down: consumption used to be rendered only as a fraction of a
-    // limit, so a use case without one showed neither the tokens nor the money it had spent.
+    // `FRD-603`'s rule, one level down: figures exist whether or not a limit does.
     const harness = setup();
     harness.host.month.set([row({ key: 'erika', total_tokens: 900, cost: '12.34', requests: 7 })]);
     harness.render();
@@ -69,9 +68,7 @@ describe('PeoplePanel', () => {
   });
 
   it('says which half came from a sign-in and which from a key', () => {
-    // The reported ask in one line: *"for both the API key and the Keycloak sign-in"*. One row,
-    // two halves — because before this the same person was two rows under two keys, one of them a
-    // Keycloak uuid nobody recognises.
+    // One row per person, with the sign-in and the key as two halves.
     const harness = setup();
     harness.host.month.set([
       row({
@@ -102,10 +99,8 @@ describe('PeoplePanel', () => {
   });
 
   it('shows a half that spent money without making a request', () => {
-    // Found on the live stack, not in this file: a pipeline step's model call is recorded with no
-    // request against it (`FRD-125` FR-9), so a person whose only traffic that month went through
-    // a classifier had a half with real money in it and no row saying so. The first version of
-    // this hid it behind `requests > 0`.
+    // A pipeline step's model call is recorded with no request against it (`FRD-125` FR-9), so
+    // spend alone counts as calling.
     const harness = setup();
     harness.host.month.set([
       row({
@@ -145,9 +140,7 @@ describe('PeoplePanel', () => {
   });
 
   it('keeps the precision the figures beside it use', () => {
-    // Seen on the live stack: an allowance of 0.01 against a spend of 0.0003 reported
-    // "0.01 of 0.01" — a remainder that says nothing was used. Two decimals is not a rounding
-    // choice there, it is the whole answer disappearing.
+    // At a fixed two decimals, 0.01 minus 0.0003 would read "0.01 of 0.01" — nothing used.
     const harness = setup();
     // The limit arrives as a fixed-scale decimal — `0.010000` — so the width comes from the
     // significant places on both sides, not from the storage format.
@@ -204,10 +197,7 @@ describe('PeoplePanel', () => {
 
 describe('PeoplePanel — narrowed to the reader', () => {
   it('shows only my row, and says so', () => {
-    // Asked for by name: *"I want to see my consumption and remaining budget in the overview of
-    // the use case."* The same panel as the members tab, because the arithmetic of a remainder is
-    // the part worth not writing twice — a copy on the overview is a copy that disagrees with the
-    // members tab the first time either is touched.
+    // The same panel as the members tab, so the remainder arithmetic exists once.
     const harness = setup();
     harness.host.only.set('erika');
     harness.host.month.set([
@@ -223,8 +213,7 @@ describe('PeoplePanel — narrowed to the reader', () => {
   });
 
   it('tells "you did not call" apart from "nobody did"', () => {
-    // A reader looking at their own figures and told "nobody has called" would reasonably conclude
-    // the use case is idle — a statement about everybody, made from a row about one person.
+    // "Nobody has called" would be a statement about everybody, made from one person's row.
     const harness = setup();
     harness.host.only.set('erika');
     harness.host.month.set([row({ key: 'ahmed' })]);
@@ -248,9 +237,7 @@ describe('PeoplePanel — narrowed to the reader', () => {
 
 describe('PeoplePanel — the shared pot', () => {
   it('says what is left of a use-case budget, as shared', () => {
-    // The other half of *"my consumption and remaining budget"*. A `use_case` budget is one pot the
-    // first caller to arrive may spend all of, so what remains is the use case's — dividing it by
-    // head would invent an allowance nobody configured.
+    // A `use_case` budget is one shared pot, so its remainder is the use case's, not the reader's.
     const harness = setup();
     harness.host.only.set('erika');
     harness.host.budgets.set([
@@ -275,12 +262,8 @@ describe('PeoplePanel — the shared pot', () => {
   });
 
   it('says nothing about a pot whose figures have not arrived', () => {
-    // `FRD-603`'s rule: unknown is not zero. "500 of 500 left" for a budget nobody measured is a
-    // confident statement about an untouched allowance.
-    //
-    // Asserted on **the line's absence**, not on its wording: written as
-    // `not.toContain('of 500 requests')` first, and a mutation that renders a made-up remainder
-    // under a different label sailed straight past it. What must not appear is the statement.
+    // Unknown is not zero (`FRD-603`). Asserted on the line's absence, not its wording, so a made-up
+    // remainder under another label cannot pass.
     const harness = setup();
     harness.host.only.set('erika');
     harness.host.budgets.set([{ id: 7, scope: 'use_case', period: 'day', limit_requests: 500 }]);
@@ -294,9 +277,7 @@ describe('PeoplePanel — the shared pot', () => {
   });
 
   it('does not offer a shared remainder where the budget is per head', () => {
-    // **With its usage present**, or the test proves nothing: the first version left `usage` empty,
-    // so the line was absent because nothing had been measured rather than because the scope is
-    // wrong — and a mutation that treats any budget as the shared pot passed it.
+    // With its usage present, so the line is absent because of the scope, not for lack of figures.
     const harness = setup();
     harness.host.only.set('erika');
     harness.host.budgets.set([

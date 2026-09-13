@@ -2,9 +2,9 @@
 
 Runs all registered seed contributions idempotently. ``--fresh`` resets demo data first.
 
-Seeding creates well-known demo accounts (including a superuser) with a fixed password, so it
-only runs where that is intended: locally, or with ``AIRA_DEMO_MODE`` explicitly on. Anywhere
-else it refuses unless ``--force`` is given (ADR-0007).
+Seeding creates well-known demo accounts and deterministic demo API keys, so it only runs where
+that is intended: locally, or with ``AIRA_DEMO_MODE`` explicitly on. Anywhere else it refuses
+unless ``--force`` is given (ADR-0007).
 """
 
 from __future__ import annotations

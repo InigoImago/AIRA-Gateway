@@ -31,8 +31,7 @@ describe('openCodeModel', () => {
   });
 
   it('omits the limits entirely when the context window is unknown', () => {
-    // Not `{context: 0, output: 4096}`. Half a limit is a gauge stuck at 0%, which is the exact
-    // thing reported — and worse than no gauge, because it looks like a measurement.
+    // Not `{context: 0, output: 4096}`: half a limit is a gauge stuck at 0% that looks measured.
     const entry = openCodeModel(model({ context_window: null }), 'USD');
 
     expect(entry.limit).toBeUndefined();
@@ -79,8 +78,7 @@ describe('openCodeModel', () => {
   });
 
   it('writes no price before the console has been told the currency', () => {
-    // Empty until the first `/v1/me`. Guessing "probably dollars" is how the defect this whole
-    // file documents came about.
+    // Empty until the first `/v1/me`; no guessing "probably dollars".
     expect(openCodeModel(model(), '').cost).toBeUndefined();
   });
 

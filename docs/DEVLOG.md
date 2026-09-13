@@ -14201,3 +14201,81 @@ suite mid-test — `test_diagnostics.py` was between its deliberate `docker stop
 something else is not a measurement**, and a live-stack suite is not a thing to interrupt. The
 header added above is the part of that which generalises; the rest is a note to whoever reads this
 next.
+
+## 2026-09-12 — a structural refactoring, with the tests as ground truth
+
+**What was asked.** The owner found the code hard to read: files had grown one round at a time,
+constants and definitions sat between the functions that use them, and about half of every file
+was comment. The instruction was to make it clearer — gateway first, then management — with the
+existing tests as the ground truth, and to fix behaviour only where it was clearly wrong.
+
+**The decision behind it is `ADR-0023`.** Comments and docstrings now state the rule and its reason,
+with the FRD/ADR reference; the story of how a rule was found stays here, in the FRDs and in git.
+Constants sit at the top of their module, and a file holding several concerns became a package
+whose `__init__` re-exports its public names, so no import site had to change.
+
+**How it was done.** `api/serving.py` and the two API surfaces were split by hand first, as the
+reference for the rest. The remaining groups — pipeline, operations endpoints and reporting,
+upstreams, the data and accounting layer, auth and anomalies, the top-level modules, `aira_common`,
+the two halves of the management backend and the two halves of the console — were each done in an
+isolated git worktree against one written brief and merged one at a time. Every group had to pass
+ruff, mypy, the full hermetic suite with its coverage gate, and **a mutation run over every
+property anchored in its files**: moving code moves the anchors in `tools/mutation_check.py`, so
+each group re-pointed its entries and then broke each property on purpose to show a test still
+notices. Every one of those runs reported every property caught.
+
+**Measured, `ce8313e` → this entry** (non-migration sources):
+
+| | lines | files | code share | largest file |
+|---|---|---|---|---|
+| gateway | 25 809 → 21 549 | 106 → 149 | 50 % → 62 % | 1757 → 441 |
+| management backend | 8 511 → 7 521 | 99 → 117 | 55 % → 65 % | 908 → 530 (seed data) |
+| `aira_common` | 4 544 → 3 828 | 24 → 31 | 44 % → 53 % | 887 → 339 |
+| console (`.ts` + `.html`, no specs) | 19 078 → 17 478 | 72 → 115 | — | 1611 → 902 |
+
+The console's largest pieces were `model-catalog` (1457 lines of TypeScript, 1611 of template),
+`core/api/models.ts` (1078) and `use-case.service.ts` (705). The catalogue is a page, an editor and
+two panels now; the API types and the client are one module per resource behind their old paths.
+The editor stays one component of ~850 + ~900 lines on purpose: its tabs share one form's state.
+
+Code lines themselves grew slightly (import headers of the new modules); what went is prose.
+
+**What the reading found on the way.** No behaviour defect in the request path. Structural ones:
+
+- *The refused audit row was written twice.* Both surfaces assembled it by hand and logged a lost
+  row under the same event name — the shape `FRD-126` names. It is `serving.record_refusal` now,
+  and `test_surface_layering.py` requires every surface that catches refusals to go through it.
+- `serving.registry_of` duplicated `state.providers_of`. The surfaces use the accessor now, which
+  also brought them under `test_every_spender_takes_the_gate.py` — the old name was not one the
+  guard looked for.
+- Duplicated helpers merged: the upsert in the config consumer (six copies, now one handler table),
+  the report/register date window, the two model checks' role gate, the two Vertex stream openers,
+  a second copy of `upstream_reason`, verdict counting in the smoke tests, the KIRA surface
+  re-resolving attribution it had just resolved.
+- Dead code removed: an unused alias in the OpenAI adapter, an unreachable branch in the Anthropic
+  mapping, dead console handlers, a model field declared twice in the catalogue (the first
+  declaration was shadowed). Stale comments that described code already deleted were removed or
+  corrected, among them one on the Vertex scope that claimed the opposite of its value.
+- Stacked TSDoc blocks in the console — two doc comments on one member, of which only the last
+  attaches — were merged.
+
+**One defect fixed.** The model catalogue's row check and its editor wrote their reachability
+verdict into **one** signal, so a verdict could appear under a model it was not about — the editor's
+check under the open row after closing, a row's check in the editor when cataloguing another model.
+They are two signals now, each cleared when its model changes; the HTTP request is unchanged.
+
+**One behaviour change was caught and reverted.** Splitting the use-case overview into panels made
+an unsaved change in the capabilities and data-protection forms disappear on a tab switch. That is a
+visible regression the brief forbids; the panels keep their state again, and a spec pins it —
+observed failing with the panels back inside the tab's `@if`, green with them kept alive.
+
+**Pre-existing, reported rather than changed.** `e2e/tests/agent-traces.spec.ts` expects
+`data-testid="smoke-attribution"`, which the smoke-test template has never carried.
+
+**Final state, measured on the merged branch.** Hermetic suite 3792 passed (3772 before; the difference is
+guard tests parametrized over the new modules), coverage 96.51 %
+(96.03 % before); ruff and mypy clean (354 files); console 963 tests, coverage 93.3 / 92.61 / 77.2 /
+95 % (statements / branches / functions / lines, all above where they started); Prettier and the
+console build clean. A full `make mutants` run over the merged gateway,
+library and backend reported **all 776 properties caught**; the 14 anchored in the console were
+re-run on the final merge and are caught as well.

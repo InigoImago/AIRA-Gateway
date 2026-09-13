@@ -1,18 +1,12 @@
 """What a model must satisfy to serve a particular request (ADR-0012 §3).
 
 The dispatch chain asks one question per candidate — *may this model serve this request?* — and
-this is where the answers live. Each requirement is small, states its own reason in words an
-operator can act on, and is checked against the model **about to be dispatched to**, not the one
-the caller named: with routing and cross-vendor fallback those are different models, and the
-check that runs before routing protects nothing.
+each requirement here answers it in words an operator can act on. Every check runs against the
+model **about to be dispatched to**, at every hop: with routing and cross-vendor fallback that is
+not the model the caller named, and a check that runs before routing protects nothing.
 
-Region came first, media types with `FRD-110`, structured output and thinking with `FRD-112` and
-`FRD-111`. Four now share this mechanism rather than each inventing one, which is the point of
-having put it here when there was one.
-
-They all guard the same failure: **a chain must not be able to degrade a request silently.** Every
-one of these properties changes what comes back without changing the status code, so a candidate
-that cannot meet one is skipped rather than served.
+They all guard one failure: **a chain must not degrade a request silently.** Each property changes
+what comes back without changing the status code, so a candidate that cannot meet one is skipped.
 """
 
 from __future__ import annotations
@@ -34,21 +28,39 @@ class Requirement(Protocol):
     async def refusal(self, model: str) -> str | None: ...
 
 
+def _is_test_double(registry: object | None, model: str) -> bool:
+    """Whether ``model`` is served by the mock, which is not a model.
+
+    Governing deterministic fiction is theatre; the exemption is bounded by `create_app`
+    registering the double in no environment but `local` and the demo.
+    """
+    provider = (
+        registry.provider_for(model)  # type: ignore[attr-defined]
+        if registry is not None
+        else None
+    )
+    return bool(getattr(provider, "is_test_double", False))
+
+
+async def adapter_for(
+    registry: ProviderRegistry, catalog: ModelCatalog, model: str
+) -> object | None:
+    """The adapter that will actually serve ``model`` — configuration **or** catalogue.
+
+    The dialect requirements must reach the adapter the dispatch chain will. A lookup by name alone
+    answers ``None`` for a model servable because it is catalogued (`FRD-507` stage B), and reading
+    that as "no restriction" skips the check for exactly those models.
+    """
+    declaration = await catalog.declaration(model)
+    return registry.provider_for(model, declaration.provider, declaration.publisher)
+
+
 class RegionAllowed:
     """The model must run somewhere this request is permitted to be processed.
 
-    Today the permitted set is the deployment's own allow-list, so this cannot refuse anything a
-    correctly configured gateway would offer — every model was already checked at startup. It is
-    built now anyway, for two reasons that are not speculative:
-
-    - **A chain spanning two allowed regions is unconstrained.** Nothing today expresses "this
-      request stays in `eu`", so a fallback can move it to another permitted region without
-      anything recording an intent it violated. When residency becomes a per-use-case property,
-      this is the check that enforces it — and it enforces it *per hop*, which is the part that
-      would otherwise be got wrong.
-    - **A model with no declared region is not assumed to be fine.** An adapter that forgets to
-      declare where it runs produces a request nobody can place afterwards, which is precisely
-      what the provenance columns exist to prevent.
+    Today the permitted set is the deployment's allow-list, already checked at startup; this
+    enforces it **per hop**, which is what a per-use-case residency will need. A model with no
+    declared region is not refused — the mock and the laptop adapter declare none.
     """
 
     def __init__(self, registry: ProviderRegistry, allowed: Sequence[str]) -> None:
@@ -62,10 +74,7 @@ class RegionAllowed:
         if described is None:
             return None  # not ours to refuse; the chain reports it as unserved
         if not described.region:
-            # The mock and the laptop adapter declare none. Refusing them would break every
-            # development setup; the honest reading is "this deployment has no residency posture
-            # to violate", and the constraint only bites where a region is actually declared.
-            return None
+            return None  # no residency posture to violate
         if described.region not in self._allowed:
             return (
                 f"runs in '{described.region}', and this request may only be processed in "
@@ -75,26 +84,12 @@ class RegionAllowed:
 
 
 class ModelApproved:
-    """A Global Administrator must have released this model for use (`FRD-307`).
+    """A Global Administrator must have catalogued and released this model (`FRD-307`).
 
-    The governance question the catalog could not answer. Every other requirement here asks whether
-    a model *can* do something; this one asks whether anybody *decided* it may be used at all — and
-    the two are independent. A model appearing on an upstream is not the same event as somebody
-    accepting it into this installation, and until today the first implied the second.
-
-    **A model that is not in the catalog is refused too** — the owner's decision, 2026-08-09:
-    *"es dürfen nur die Modelle verwendet werden, die im Katalog stehen und explizit von einem
-    globalen Admin angelegt wurden."* That is a real narrowing of `FRD-114` FR-7, which said an
-    undeclared model gets the baseline and nothing more: the baseline is now *nothing*. It closes
-    the loophole the first version left — deleting a declaration made a model usable again — and
-    it means a model appearing on an upstream is inert until somebody accepts it.
-
-    The two refusals are kept apart. "Not in the catalog" needs somebody to add the model; "not
-    approved" needs somebody to release it, and one message for both sends the reader to the wrong
-    action.
-
-    Checked at **every hop**, like the rest: a chain whose fallback is unapproved would otherwise
-    route around the decision rather than honouring it.
+    A model appearing on an upstream is not the same event as somebody accepting it into this
+    installation. **A model not in the catalog is refused too** — the owner's narrowing of `FRD-114`
+    FR-7, so deleting a declaration cannot make a model usable again. The two refusals stay apart:
+    one needs somebody to add the model, the other to release it.
     """
 
     def __init__(self, catalog: ModelCatalog, registry: object | None = None) -> None:
@@ -102,22 +97,11 @@ class ModelApproved:
         self._registry = registry
 
     async def refusal(self, model: str) -> str | None:
-        provider = (
-            self._registry.provider_for(model)  # type: ignore[attr-defined]
-            if self._registry is not None
-            else None
-        )
-        if getattr(provider, "is_test_double", False):
-            # Not a model. Governing deterministic fiction is theatre, and the exemption is bounded
-            # by where the double is registered at all — `create_app` leaves it out of every
-            # environment but `local`.
+        if _is_test_double(self._registry, model):
             return None
 
         declaration = await self._catalog.declaration(model)
         if not declaration.in_catalog:
-            # A different fact from "not approved", and a different thing to do about it. One
-            # needs somebody to add the model; the other needs somebody to release it, and a
-            # message that conflated them would send the reader to the wrong action.
             return (
                 f"'{model}' is not in the model catalog. Only models a Global Administrator has "
                 "catalogued and approved may be used."
@@ -133,26 +117,11 @@ class ModelApproved:
 class ModelReleasedForUseCase:
     """This use case must have been given the model (`FRD-308`).
 
-    The second of two gates, and they have different owners. `ModelApproved` above is the
-    installation's: a Global Administrator decides what may be used **here at all**. This one is
-    the use case's own administrator's: which of those *this* use case reaches. Neither implies the
-    other, and a system with only the first lets any use case call every model anybody approved.
-
-    **Empty means none** — the owner's decision, 2026-08-11. A use case reaches the models somebody
-    released for it; absence of a release is not a release, the same rule as "unpriced is not free"
-    and "undeclared is not permitted".
-
-    `None` is a third state and it is not "none": it means **no event has said**, which is what a
-    read-model row written by an older Management looks like. Reading that as an empty release
-    would stop every use case on a partially upgraded stack — a governance control arriving as an
-    outage, which `FRD-500` records as the way a control gets switched off permanently.
-
-    Checked at **every hop**, which is the whole reason this is a requirement rather than a
-    pipeline step. The step it replaces (`allow_check`) ran once, before routing, against the model
-    the *caller* named — and measurement on 2026-08-11 showed both ways around it: a `model_route`
-    step re-targeted the request to a forbidden model and it was served 200, and a `fallback_models`
-    chain dispatched to one and it was served 200. This file's own docstring had already written
-    the rule down: *the check that runs before routing protects nothing.*
+    The second gate, owned by the use case's administrator; `ModelApproved` is the installation's.
+    Three states: a list is exactly those, **empty means none**, and `None` means no event has said
+    — a read-model row from an older Management, which must not stop every use case on a partially
+    upgraded stack. A requirement rather than a pipeline step because a route or a fallback could
+    otherwise reach a model the use case was never given.
     """
 
     def __init__(
@@ -168,21 +137,12 @@ class ModelReleasedForUseCase:
     async def refusal(self, model: str) -> str | None:
         if self._released is None:
             return None  # nothing has told us; not ours to refuse
-        provider = (
-            self._registry.provider_for(model)  # type: ignore[attr-defined]
-            if self._registry is not None
-            else None
-        )
-        if getattr(provider, "is_test_double", False):
-            # Not a model, exactly as `ModelApproved` reasons — and bounded the same way, by the
-            # double being registered in no environment but `local`.
+        if _is_test_double(self._registry, model):
             return None
         if model in self._released:
             return None
         if not self._released:
-            # Said separately, because it is what every use case looks like on the day this
-            # shipped and the two need different actions: one is "release this model", the other
-            # is "release *a* model".
+            # "Release *a* model" and "release this model" are different actions.
             return (
                 f"use case '{self._use_case}' has no model released to it. An administrator of "
                 "the use case chooses which approved models it may call; until one is chosen it "
@@ -197,14 +157,8 @@ class ModelReleasedForUseCase:
 class ToolsSupported:
     """The model must be able to answer with a function call (`FRD-131` FR-4).
 
-    The same argument as :class:`MediaTypesSupported`, one field over. A model that cannot do tool
-    calling, sent a request that declares tools, answers in **prose** — and a client whose entire
-    loop is built on parsing a function call either errors on the spot or, worse, tries to read the
-    prose as one. Either way the caller is told nothing about why.
-
-    Checked at **every hop**: a chain whose first candidate can do tools and whose fallback cannot
-    would otherwise turn a fallback into a silent downgrade, which is the failure `ADR-0012` §3
-    exists to prevent.
+    A model without tool calling answers a tools request in **prose**, and a client built on
+    parsing a function call errors or misreads it.
     """
 
     def __init__(self, catalog: ModelCatalog) -> None:
@@ -223,19 +177,8 @@ class ToolsSupported:
 class MediaTypesSupported:
     """The model must be able to read every attachment the request carries (`ADR-0012` §3).
 
-    **This is the requirement the whole document feature turns on.** The tempting behaviour when a
-    model cannot read a PDF is to send the prompt without it and let the model answer anyway. That
-    produces **no error**: it produces a fluent, confident answer about a document the model never
-    saw, returned with a 200, indistinguishable from a correct one to everyone including the
-    caller — who then reports that "the model is hallucinating" and looks for the fault in the
-    wrong place entirely.
-
-    So a model that cannot read what was sent is refused, by name, with the types it lacks. An
-    error is a recoverable outcome; a confident wrong answer is not.
-
-    Checked against the model **about to be dispatched to** — after routing, at every hop of the
-    chain. A check against the model the caller named would be satisfied by a request that then
-    fell back to one that cannot read a thing.
+    Sending the prompt without the document produces no error: it produces a fluent, confident
+    answer about a document the model never saw, with a 200. An error is recoverable; that is not.
     """
 
     def __init__(self, catalog: ModelCatalog, required: frozenset[str]) -> None:
@@ -247,9 +190,7 @@ class MediaTypesSupported:
             return None
         declaration = await self._catalog.declaration(model)
         if not declaration.can(Capability.ATTACHMENTS):
-            # Undeclared *and* declared-without-attachments land here, and the message says which:
-            # one is a catalog gap somebody can close in a minute, the other is a fact about the
-            # model. Telling them apart is the difference between a fix and a support ticket.
+            # Says which: a catalog gap somebody can close, or a fact about the model.
             missing = "declares no attachment support" if declaration.declared else "is undeclared"
             return f"{missing}, so it cannot read the {sorted(self._required)} this request carries"
         unreadable = self._required - declaration.media_types
@@ -261,16 +202,8 @@ class MediaTypesSupported:
 class StructuredOutputSupported:
     """The model must be able to constrain its answer to the caller's schema (`FRD-112` §5.3).
 
-    **This is the requirement the whole feature turns on, and it has to run after routing.** A use
-    case with a fallback chain could otherwise accept a schema request, have the primary fail, fall
-    back to a model without structured output, and return prose to a caller that will call
-    ``JSON.parse`` on it. The failure surfaces as a parse error in someone else's application,
-    days later, with nothing pointing back here.
-
-    Which *mechanism* the model uses is not this check's business — Gemini has a schema parameter,
-    Anthropic a forced tool call, Azure a `json_schema` response format. One flag over three
-    unrelated mechanisms is `ADR-0011` rule 3, and it is what stops the catalog from having to know
-    how any of them work.
+    Otherwise a fallback returns prose to a caller about to ``JSON.parse`` it. Which mechanism the
+    model uses is not this check's business (`ADR-0011` rule 3).
     """
 
     def __init__(self, catalog: ModelCatalog) -> None:
@@ -287,9 +220,7 @@ class StructuredOutputSupported:
 class ThinkingHonoured:
     """The model must offer the thinking this request resolved to (`FRD-111`).
 
-    Same shape and same reason as the two above: a candidate that cannot think as much as was
-    asked does not fail, it answers *less well*, with a 200, in a way only the person reading the
-    answer would ever notice.
+    A candidate that cannot think as much as was asked answers *less well*, with a 200.
     """
 
     def __init__(self, catalog: ModelCatalog, setting: Thinking | None) -> None:
@@ -302,46 +233,11 @@ class ThinkingHonoured:
         return permitted_by(self._setting, await self._catalog.declaration(model))
 
 
-async def adapter_for(
-    registry: ProviderRegistry, catalog: ModelCatalog, model: str
-) -> object | None:
-    """The adapter that will actually serve ``model`` — configuration **or** catalogue.
-
-    The two requirements below are about the *dialect*, so both have to reach the same adapter the
-    dispatch chain will. Both asked `provider_for(model)` with no second argument, which resolves a
-    model named in configuration and answers ``None`` for one that is servable **because it is
-    catalogued** (`FRD-507` stage B) — and both read that ``None`` as *no restriction*, so the
-    check was skipped entirely for exactly the models the catalogue was made the authority on.
-
-    Measured on 2026-08-26 against the hermetic app: an adapter owning a provider name, a model
-    catalogued to it, `topK` on the request — served **200** by a dialect that has no `top_k`,
-    which is the silent degradation this whole module exists to refuse. On the Anthropic dialect it
-    is worse than a wrong answer: `_add_sampling` raises there, so the request the requirement
-    should have skipped becomes a 500 instead.
-
-    The third occurrence of one shape. `PipelineEngine._provider_for` and
-    `prepare_for_dispatch` each had to learn the same thing, and both wrote down the same reason:
-    *a lookup by name alone reads "nothing" as "quietly do less"*. Written once here so the fourth
-    reader inherits it rather than rediscovering it.
-    """
-    declaration = await catalog.declaration(model)
-    return registry.provider_for(model, declaration.provider, declaration.publisher)
-
-
 class SamplingExpressible:
     """The candidate's dialect must be able to express every sampling control this request sets.
 
-    The fifth requirement, and the first that is a property of the **dialect** rather than of the
-    model: no model declaration can say whether `top_k` exists, because that depends on the wire
-    format the request will travel over. `ADR-0011` again — the caller asks for one thing, three
-    vendors offer three vocabularies, and where one of them has no word for it the honest answer is
-    to say so.
-
-    The failure it prevents is quiet by construction. `seed` on a Claude candidate produces a
-    perfectly good answer that simply is not reproducible; `top_k` on an OpenAI-compatible one
-    produces a perfectly good answer sampled from a wider distribution than was asked for. Nothing
-    in either response differs from a correct one, which is the definition of a difference that has
-    to be refused rather than absorbed.
+    A property of the **dialect**, not the model (`ADR-0011`): `seed` on Claude or `top_k` on an
+    OpenAI-compatible server produces an answer that differs from a correct one only in the answer.
     """
 
     def __init__(
@@ -357,9 +253,8 @@ class SamplingExpressible:
         provider = await adapter_for(self._registry, self._catalog, model)
         if provider is None:
             return None  # dispatch already reports an unserved model, and says it better
-        # Undeclared means unsupported, as everywhere else. An adapter that omits the attribute
-        # refuses every sampling control rather than silently accepting them all — and a test
-        # makes the omission itself fail, so this branch is a floor and not a policy.
+        # Undeclared means unsupported: an adapter without the attribute refuses every control
+        # (and a test makes the omission itself fail).
         supported: frozenset[str] = getattr(provider, "sampling_controls", frozenset())
         missing = sorted(self._requested - supported)
         if not missing:
@@ -373,16 +268,8 @@ class SamplingExpressible:
 class SchemaExpressible:
     """The candidate's dialect must be able to express the caller's schema (`ADR-0012` §3).
 
-    A property of the **dialect**, like `SamplingExpressible`, and it replaced a cruder rule. Until
-    2026-08-08 this check was `ToolsAndSchemaTogether`: Anthropic had no schema parameter, so
-    `FRD-119` implemented one as a forced tool call, and a request carrying both a schema and the
-    caller's own tools needed the same field twice. The provider has since added `output_config`,
-    the mechanism is gone, and with it the conflict — the exclusion was never our design.
-
-    What remains is narrower and real: that dialect's schema vocabulary is **smaller** than the one
-    our surface accepts, so a schema using `minimum` or `pattern` cannot be sent there faithfully.
-    Skipped by name, because a constraint silently dropped produces an answer that satisfies the
-    schema the caller *sent* and not the one they *meant*.
+    Anthropic's schema vocabulary is smaller than the one our surface accepts; a constraint dropped
+    silently yields an answer matching the schema the caller *sent*, not the one they *meant*.
     """
 
     def __init__(
@@ -396,9 +283,7 @@ class SchemaExpressible:
         provider = await adapter_for(self._registry, self._catalog, model)
         if provider is None:
             return None  # dispatch already reports an unserved model, and says it better
-        # Absent means "no limits this dialect knows of", which is the honest default: every
-        # dialect that has restrictions declares them, and one that does not is not thereby
-        # claiming a capability — it is claiming no *restriction*, which is what silence means here.
+        # Absent means no restriction this dialect knows of; every restricted dialect declares one.
         check = getattr(provider, "schema_refusal", None)
         if check is None:
             return None
@@ -409,8 +294,7 @@ class SchemaExpressible:
 def permits(requirements: Sequence[Requirement]) -> Callable[[str], Awaitable[str | None]]:
     """Combine requirements into the predicate the dispatch chain takes.
 
-    First refusal wins: a candidate excluded for two reasons is excluded, and naming the first is
-    enough to act on. Returning them all would read as though every one had to be fixed.
+    First refusal wins: naming one reason is enough to act on.
     """
 
     async def check(model: str) -> str | None:

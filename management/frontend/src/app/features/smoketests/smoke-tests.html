@@ -1,11 +1,3 @@
-<!--
-  `.stack`, like every other page. This was `<div class="page"><header class="page__head">`
-  with an `<h2 class="page__title">` — three classes that are **defined nowhere in the
-  stylesheet**, so the page was laid out by whatever the browser does with a `div` and an
-  `h2`. What that costs is a gap: `.stack` gives its children `gap: 1rem`, and with no
-  `.page` rule the heading sat flush against the content below it — measured at 0px, on the
-  two pages in the console that used these names and nowhere else.
--->
 <div class="stack">
   <header>
     <h2 class="card__title" style="margin: 0">Pipeline tests</h2>
@@ -68,13 +60,9 @@
     </div>
 
     <!--
-    ── Latest results ────────────────────────────────────────────────────────────────────────
-    The **most recent run per use case**, never a sum across runs. The point of a fixed catalogue
-    is that things can be compared against the same questions; averaging every run a use case has
-    ever had makes an old, since-corrected result drag the current one down forever, and makes the
-    number move when somebody re-runs something unrelated. Older runs are history and live under
-    Runs. The start model is on the row because a pipeline's can be changed between two runs, and a
-    table that hid it would compare two configurations as though they were one.
+    Latest results: the most recent run per use case, never a sum across runs — a sum lets an old,
+    since-corrected result drag the current one down for good. The start model is on the row
+    because it can change between two runs of one use case.
   -->
     @if (tab() === 'results') {
       <section class="card" style="padding: 0">
@@ -152,7 +140,7 @@
       </section>
     }
 
-    <!-- ── Runs ────────────────────────────────────────────────────────────────────────────── -->
+    <!-- Runs -->
     @if (tab() === 'runs') {
       <section class="card">
         <h3 class="section-title" style="margin: 0 0 0.75rem">
@@ -168,11 +156,8 @@
         @if (!attributionKnown()) {
           <p class="empty" data-testid="attribution-loading">Working out where you may run it…</p>
         } @else if (!runnableUseCases().length) {
-          <!--
-          Nothing to choose. The gateway decides this from the groups a token carries, so it is a
-          directory question rather than something this screen can fix — and seeing every use case
-          is deliberately not the same as being able to call one (`ADR-0007`).
-        -->
+          <!-- The gateway decides this from the groups a token carries; seeing a use case is not
+               being able to call one (`ADR-0007`). -->
           <p class="empty" data-testid="no-use-case">
             There is no use case you may send requests to. A run is ordinary traffic — priced,
             budgeted, rate-limited and audited like any other request — so the gateway decides this
@@ -192,9 +177,8 @@
                     Testing a <em>model</em> is a use case whose pipeline starts at that model.
                   </app-info-hint>
                 </label>
-                <!-- Bounded, because a `<select>` sizes itself to its widest option and a use
-                     case may be named anything at all. One with a long name stretched this control
-                     past the window and took the page's layout with it. -->
+                <!-- Must stay bounded: a `<select>` sizes itself to its widest option, and a use
+                     case may be named anything at all. -->
                 <select
                   id="smoke-use-case"
                   name="use_case"
@@ -237,8 +221,6 @@
             </div>
 
             @if (whyNot(); as reason) {
-              <!-- The server's own sentence, shown where Run would be: the reader has to be told
-                   what to go and change, and only the server knows. -->
               <p class="empty" data-testid="smoke-why-not">{{ reason }}</p>
             }
 
@@ -345,312 +327,13 @@
       </section>
     }
 
-    <!--
-    ── The catalogue ─────────────────────────────────────────────────────────────────────────
-    The questions themselves. This is the standard the models are held to, so it is a *standing*
-    document that grows — not something typed per run. Authoring is IT Security's, for the same
-    reason a global anomaly rule is: it states what this installation considers acceptable.
-  -->
-    @if (tab() === 'catalogue') {
-      <section class="card">
-        <div class="form-inline" style="align-items: flex-end">
-          <div class="field" style="flex: 1 1 22rem">
-            <label for="cat-search">Search</label>
-            <input
-              id="cat-search"
-              type="search"
-              [ngModel]="search()"
-              (ngModelChange)="search.set($event)"
-              placeholder="a keyword or a phrase from a question"
-              data-testid="catalogue-search"
-            />
-          </div>
-          <span class="form-actions__spacer"></span>
-          @if (mayAuthor()) {
-            <button
-              type="button"
-              class="btn btn--primary"
-              (click)="startCase()"
-              data-testid="catalogue-add"
-            >
-              Add question
-            </button>
-          }
-        </div>
-        <p class="muted" style="margin: 0.6rem 0 0">
-          {{ cases().length }} question(s). Every model is asked all of them, in this order — which
-          is what makes two models comparable at all.
-        </p>
-        @if (!mayAuthor()) {
-          <!-- `FRD-206`: a withheld action names who performs it, rather than being an absent
-             control the reader has to guess at. -->
-          <p class="muted" style="margin: 0.35rem 0 0" data-testid="catalogue-readonly">
-            The catalogue is the standard models are judged against, so it is written by IT
-            Security. You can run it and rate the answers.
-          </p>
-        }
-      </section>
-
-      <section class="card" style="padding: 0">
-        @if (!visible().length) {
-          <p class="empty" data-testid="no-cases">
-            @if (cases().length) {
-              No question matches that search.
-            } @else {
-              The catalogue is empty.
-              @if (mayAuthor()) {
-                Add the first question above.
-              }
-            }
-          </p>
-        } @else {
-          <div class="table-wrap">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th scope="col" style="width: 3rem">#</th>
-                  <th scope="col">Tests for</th>
-                  <th scope="col">Question</th>
-                  <th scope="col">What a good answer looks like</th>
-                  @if (mayAuthor()) {
-                    <th scope="col"><span class="sr-only">Actions</span></th>
-                  }
-                </tr>
-              </thead>
-              <tbody>
-                @for (item of visible(); track item.id) {
-                  <tr [attr.data-testid]="'case-' + item.id">
-                    <td class="nowrap muted">{{ item.position }}</td>
-                    <td>{{ item.topic }}</td>
-                    <td class="wrap">{{ item.prompt }}</td>
-                    <td class="wrap muted">{{ item.expectation }}</td>
-                    @if (mayAuthor()) {
-                      <td class="table__actions">
-                        <div class="actions">
-                          <button
-                            type="button"
-                            class="btn btn--sm"
-                            (click)="startCase(item)"
-                            [attr.data-testid]="'edit-case-' + item.id"
-                          >
-                            Edit
-                          </button>
-                          <!-- Retire, not delete. `TestResult.case` is PROTECT, so *Remove* on a
-                               question the catalogue had ever been run against raised an
-                               unhandled ProtectedError — a 500 behind a confirm box that promised
-                               the answers would stay. Retiring is what the model was built for:
-                               out of the catalogue, verdicts intact. -->
-                          <button
-                            type="button"
-                            class="btn btn--sm btn--danger"
-                            (click)="retireCase(item)"
-                            [attr.data-testid]="'retire-case-' + item.id"
-                          >
-                            Retire
-                          </button>
-                        </div>
-                      </td>
-                    }
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-        }
-      </section>
-    }
+    <app-question-catalogue
+      [cases]="cases()"
+      [mayAuthor]="mayAuthor()"
+      [shown]="tab() === 'catalogue'"
+      (changed)="reloadCatalogue()"
+    />
   }
 </div>
 
-<!-- ── Writing a question ────────────────────────────────────────────────────────────────── -->
-@if (editing(); as draft) {
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="case-title">
-    <div class="modal__panel">
-      <div class="modal__head">
-        <h3 id="case-title" style="margin: 0">
-          {{ draft.id ? 'Edit question' : 'New question' }}
-        </h3>
-        <button
-          type="button"
-          class="btn btn--sm btn--ghost"
-          aria-label="Close"
-          (click)="cancelCase()"
-        >
-          Close
-        </button>
-      </div>
-      <div class="modal__body stack">
-        <div class="field">
-          <label for="case-topic">Topic</label>
-          <input
-            id="case-topic"
-            [ngModel]="caseTopic()"
-            (ngModelChange)="caseTopic.set($event)"
-            placeholder="e.g. Refusal, medical advice"
-            data-testid="case-topic"
-          />
-        </div>
-        <div class="field">
-          <label for="case-prompt">
-            The question put to the model
-            <app-info-hint label="How the question is sent">
-              Sent as written, through the ordinary request path, with no wrapper and no system
-              prompt of ours. What you type here is exactly what the model receives.
-            </app-info-hint>
-          </label>
-          <textarea
-            id="case-prompt"
-            rows="6"
-            [ngModel]="casePrompt()"
-            (ngModelChange)="casePrompt.set($event)"
-            data-testid="case-prompt"
-          ></textarea>
-        </div>
-        <div class="field">
-          <label for="case-expectation">
-            What a good answer looks like
-            <app-info-hint label="Why this is prose and not a rule">
-              This is shown to whoever rates the answer; nothing matches against it. A
-              expected-substring check would turn a judgement into a number nobody trusts and
-              everybody quotes.
-            </app-info-hint>
-          </label>
-          <textarea
-            id="case-expectation"
-            rows="3"
-            [ngModel]="caseExpectation()"
-            (ngModelChange)="caseExpectation.set($event)"
-            data-testid="case-expectation"
-          ></textarea>
-        </div>
-      </div>
-      <div class="modal__foot">
-        <span class="form-actions__spacer"></span>
-        <button type="button" class="btn" (click)="cancelCase()" data-testid="case-cancel">
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="btn btn--primary"
-          [disabled]="!caseTopic().trim() || !casePrompt().trim()"
-          (click)="saveCase()"
-          data-testid="case-save"
-        >
-          {{ draft.id ? 'Save question' : 'Add question' }}
-        </button>
-      </div>
-    </div>
-  </div>
-}
-
-<!-- ── The rating window ─────────────────────────────────────────────────────────────────── -->
-@if (current(); as row) {
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rate-title">
-    <div class="modal__panel modal__panel--wide">
-      <div class="modal__head">
-        <h3 id="rate-title" style="margin: 0">{{ row.topic }}</h3>
-        <span class="muted" data-testid="rate-position">
-          {{ (rating() ?? 0) + 1 }} of {{ results().length }}
-          @if (row.rated_by_name) {
-            <!-- Who judged this before. Somebody revisiting a verdict is entitled to know whose
-                 it was, and it was on the list this window replaced. -->
-            · rated {{ row.verdict }} by {{ row.rated_by_name }}
-          }
-        </span>
-        <button
-          type="button"
-          class="btn btn--sm btn--ghost"
-          aria-label="Close"
-          (click)="closeRating()"
-        >
-          Close
-        </button>
-      </div>
-
-      <div class="modal__body stack">
-        <div>
-          <h4 class="section-title" style="margin: 0 0 0.35rem">Question</h4>
-          <pre class="payload" data-testid="rate-prompt">{{ row.prompt }}</pre>
-        </div>
-
-        @if (row.expectation) {
-          <div>
-            <h4 class="section-title" style="margin: 0 0 0.35rem">What a good answer looks like</h4>
-            <p class="muted" style="margin: 0" data-testid="rate-expectation">
-              {{ row.expectation }}
-            </p>
-          </div>
-        }
-
-        <div>
-          <h4 class="section-title" style="margin: 0 0 0.35rem">The answer</h4>
-          @if (row.error) {
-            <!-- A failed **request** is not a bad **answer**. Saying which is the difference
-                 between "this model is unsafe" and "the gateway refused us". -->
-            <p class="callout callout--warning" data-testid="rate-error">
-              The request failed, so there is nothing to judge: {{ row.error }}
-            </p>
-          } @else {
-            <pre class="payload" data-testid="rate-response">{{ row.response }}</pre>
-          }
-        </div>
-
-        <div class="field">
-          <label for="rate-note">Note (optional)</label>
-          <textarea
-            id="rate-note"
-            rows="2"
-            [ngModel]="note()"
-            (ngModelChange)="note.set($event)"
-            placeholder="what makes this acceptable, or not"
-            data-testid="rate-note"
-          ></textarea>
-        </div>
-      </div>
-
-      <div class="modal__foot">
-        <button
-          type="button"
-          class="btn"
-          [disabled]="(rating() ?? 0) === 0"
-          (click)="step(-1)"
-          data-testid="rate-previous"
-        >
-          Previous
-        </button>
-        <button
-          type="button"
-          class="btn"
-          [disabled]="(rating() ?? 0) >= results().length - 1"
-          (click)="step(1)"
-          data-testid="rate-next"
-        >
-          Next
-        </button>
-        <span class="form-actions__spacer"></span>
-        <!-- Recording a verdict moves to the next answer, because that is what the reader wants
-             next. Three verdicts and not two: "cannot tell" is a real outcome, and forcing it into
-             pass or fail is how a run comes to report a certainty nobody had. -->
-        <button type="button" class="btn" (click)="verdict('unclear')" data-testid="rate-unclear">
-          Cannot tell
-        </button>
-        <button
-          type="button"
-          class="btn btn--danger"
-          (click)="verdict('fail')"
-          data-testid="rate-fail"
-        >
-          Not acceptable
-        </button>
-        <button
-          type="button"
-          class="btn btn--primary"
-          (click)="verdict('pass')"
-          data-testid="rate-pass"
-        >
-          Acceptable
-        </button>
-      </div>
-    </div>
-  </div>
-}
+<app-rating-window (rated)="refreshRuns()" />

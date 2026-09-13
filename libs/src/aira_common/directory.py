@@ -1,15 +1,8 @@
 """Looking up groups and people in Keycloak, to grant them access (`FRD-209` §3).
 
-**Read-only, always.** AIRA never creates a group, never puts anybody in one, never deletes one.
-The identity provider is the source of truth about who works where; a console that edited it would
-be a second place to change that, and the two would disagree within a week.
-
-Why a lookup exists at all: a grant names a group *path*, and typing one from memory is how a grant
-comes to name a group that does not exist — silently, because a path matching nobody simply never
-applies. Nothing fails, nobody gets access, and there is nothing on screen to notice.
-
-The client is deliberately small. It answers two questions ("which groups look like this", "which
-people look like this"), holds one token, and knows nothing about use cases.
+**Read-only, always**: the identity provider is the source of truth about who works where, and AIRA
+never creates, fills or deletes a group. The lookup exists because a grant names a group *path*,
+and a path typed from memory that matches nobody silently never applies.
 """
 
 from __future__ import annotations
@@ -21,12 +14,12 @@ import httpx
 
 from aira_common.access import SubjectKind
 
-#: How many of each kind one search returns. A directory search is a picker, not a report: a
-#: hundred results is a list nobody reads, and the answer to "too many" is a better search term.
+#: How many of each kind one search returns. A search is a picker, not a report: the answer to
+#: "too many" is a better search term.
 SEARCH_LIMIT = 25
 
-#: Long enough for a slow identity provider, short enough that a console search does not appear to
-#: hang. A directory that is down must say so quickly.
+#: Long enough for a slow identity provider, short enough that a directory that is down says so
+#: quickly.
 TIMEOUT_SECONDS = 5.0
 
 
@@ -46,19 +39,29 @@ class DirectoryEntry:
 class DirectoryUnavailable(RuntimeError):
     """The identity provider could not be asked.
 
-    Distinct from "nothing matched" on purpose: a console that showed an empty list for both would
-    have somebody conclude a group does not exist when in fact nobody could look.
+    Distinct from "nothing matched": an empty list for both would have somebody conclude a group
+    does not exist when nobody could look.
     """
+
+
+def _user_entry(row: dict[str, Any], username: str) -> DirectoryEntry:
+    """A user row as a grantable entry. The address tells two people of one name apart."""
+    parts = (row.get("firstName"), row.get("lastName"))
+    name = " ".join(part for part in parts if isinstance(part, str)).strip()
+    return DirectoryEntry(
+        kind=SubjectKind.USER,
+        id=username,
+        label=name or username,
+        detail=str(row.get("email") or ""),
+    )
 
 
 class KeycloakDirectory:
     """Search groups and users in one realm through the Admin API.
 
-    Credentials are a **client-credentials** service account with `view-users` and `query-groups`
-    on the realm — the least it can be given. It is never handed a user's token: a directory search
-    is the console asking on the reader's behalf, and forwarding their token would make the results
-    depend on what that individual happens to be allowed to see in Keycloak, which is a different
-    question from "who could be granted access here".
+    Authenticates as a **client-credentials** service account with `view-users` and `query-groups`,
+    never with the reader's token: results would then depend on what that individual may see in
+    Keycloak, not on who could be granted access here.
     """
 
     def __init__(
@@ -74,19 +77,14 @@ class KeycloakDirectory:
         self._realm = realm
         self._client_id = client_id
         self._client_secret = client_secret
-        # Injected in tests so the whole class is exercised against a transport rather than a
-        # stand-in for itself — a double that is more permissive than the thing it replaces is a
-        # trap this project has already fallen into.
+        # Injected in tests, so the class is exercised against a transport rather than a stand-in.
         self._http = client or httpx.Client(timeout=TIMEOUT_SECONDS)
 
     def find_user(self, username: str) -> DirectoryEntry | None:
         """The one person with exactly this username, or ``None``.
 
-        Separate from :meth:`search` because the two answer different questions and only one of
-        them may be approximate. A search populates a picker and a substring match is a help; this
-        decides whether an **account** is created for a name somebody typed, and a substring match
-        there would attach a credential and a membership to the wrong person. Keycloak's
-        `exact=true` is what makes it the same question the grant is about.
+        Unlike :meth:`search`, never approximate: this decides whether an account is created for a
+        typed name, and a substring match would attach it to the wrong person (`exact=true`).
         """
         wanted = username.strip()
         if not wanted:
@@ -95,26 +93,13 @@ class KeycloakDirectory:
         for row in rows:
             found = row.get("username")
             if isinstance(found, str) and found == wanted:
-                parts = (row.get("firstName"), row.get("lastName"))
-                name = " ".join(part for part in parts if isinstance(part, str)).strip()
-                return DirectoryEntry(
-                    kind=SubjectKind.USER,
-                    id=found,
-                    label=name or found,
-                    detail=str(row.get("email") or ""),
-                )
+                return _user_entry(row, found)
         return None
 
     def search(self, query: str) -> list[DirectoryEntry]:
-        """Groups and users matching ``query``, groups first.
-
-        Groups first because granting to one is the point of the feature, and a list that opens
-        with twelve people who happen to share a substring buries it.
-        """
+        """Groups and users matching ``query``, groups first — granting to a group is the point."""
         token = self._token()
         return [*self._groups(token, query), *self._users(token, query)]
-
-    # ---- the Admin API ---------------------------------------------------------------------
 
     def _token(self) -> str:
         try:
@@ -129,8 +114,8 @@ class KeycloakDirectory:
             response.raise_for_status()
             token = response.json().get("access_token")
         except (httpx.HTTPError, ValueError) as exc:
-            # The reason is not carried outward: it may name the client, and the console shows this
-            # to whoever is granting access. The *fact* is what they need.
+            # The reason is not carried outward: it may name the client, and the console shows
+            # this to whoever is granting access.
             raise DirectoryUnavailable("the identity provider could not be reached") from exc
         if not isinstance(token, str) or not token:
             raise DirectoryUnavailable("the identity provider returned no token")
@@ -156,8 +141,7 @@ class KeycloakDirectory:
             {"search": query, "max": SEARCH_LIMIT, "briefRepresentation": "true"},
         )
         found: list[DirectoryEntry] = []
-        # Flattened, because Keycloak returns a tree and a grant names a leaf as readily as a
-        # parent. Both are grantable and only the caller knows which they mean.
+        # Flattened: Keycloak returns a tree, and a leaf is as grantable as its parent.
         self._flatten(rows, found)
         return found[:SEARCH_LIMIT]
 
@@ -180,21 +164,8 @@ class KeycloakDirectory:
 
     def _users(self, token: str, query: str) -> list[DirectoryEntry]:
         rows = self._get(token, "/users", {"search": query, "max": SEARCH_LIMIT})
-        found: list[DirectoryEntry] = []
-        for row in rows:
-            username = row.get("username")
-            if not isinstance(username, str) or not username:
-                continue
-            parts = (row.get("firstName"), row.get("lastName"))
-            name = " ".join(part for part in parts if isinstance(part, str)).strip()
-            found.append(
-                DirectoryEntry(
-                    kind=SubjectKind.USER,
-                    id=username,
-                    label=name or username,
-                    # The address distinguishes two people with the same name, which is the whole
-                    # reason a picker shows a second line. It is not a credential.
-                    detail=str(row.get("email") or ""),
-                )
-            )
-        return found
+        return [
+            _user_entry(row, username)
+            for row in rows
+            if isinstance(username := row.get("username"), str) and username
+        ]

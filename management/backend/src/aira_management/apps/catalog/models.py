@@ -1,22 +1,16 @@
 """Model catalog: what a model costs, what it can do, and how it is reached (FRD-403, FRD-114).
 
-This is the table FRD-307 foresees for the governed model catalog. It began (FRD-403) with the
-attribute cost budgeting needs — what a model costs — and FRD-114 added what validation needs:
-capabilities, limits, and the platform addressing behind a caller-facing name.
+Two rules from `ADR-0011` shape the columns:
 
-Two rules from `ADR-0011` shape the columns and are worth stating where they are implemented:
+- **A caller names a model; the platform's addressing is configuration here.** No pipeline config
+  may contain an Azure deployment name or a Vertex publisher path, or a vendor-side redeployment
+  becomes a migration across every use case.
+- **The price attaches to the underlying model, not to the addressing.** An Azure deployment
+  called ``production`` has no price, and unpriced traffic is counted apart rather than as zero —
+  so getting this wrong would quietly make the spend figures incomplete.
 
-- **A caller names a model; the platform's addressing is configuration here** (rule 2). No use
-  case's pipeline config may contain an Azure deployment name or a Vertex publisher path, or a
-  vendor-side redeployment becomes a migration across every use case.
-- **The price attaches to the underlying model, not to the addressing** (rule 2 again). An Azure
-  deployment may be called ``production``; that string has no price, and since unpriced traffic is
-  counted apart rather than as zero, getting this wrong would not fail — the spend figures would
-  quietly stop being complete.
-
-Prices are quoted the way providers quote them — per **one million tokens**, separately for
-input and output, because every provider charges differently for the two. A single price, or a
-budget in tokens, cannot express what a request actually costs.
+Prices are per **one million tokens**, separately for input and output, the way providers quote
+them.
 """
 
 from __future__ import annotations
@@ -63,14 +57,9 @@ class Model(models.Model):
         help_text="Price per 1,000,000 output tokens, in the installation currency",
     )
 
-    # What a prompt cache costs on this model (`FRD-133`). Two more rates rather than a multiplier,
-    # because the vendors do not agree on one: Anthropic publishes 0.1x for a read and 1.25x or 2x
-    # for a write depending on the lifetime, Azure publishes an absolute cached-input price, and a
-    # self-hosted runtime has neither. A rate is a fact you can copy off a price list; a multiplier
-    # is one somebody has to derive, and derive again per model.
-    #
-    # Null means "charge the ordinary input rate", which never under-bills — deliberately not
-    # "free". `FRD-403`'s rule about unpriced traffic, applied one field in.
+    # What a prompt cache costs (`FRD-133`): rates rather than a multiplier, because vendors quote
+    # them differently and a rate can be copied off a price list. Null means "charge the ordinary
+    # input rate", which never under-bills — deliberately not "free".
     cached_input_price_per_million = models.DecimalField(
         max_digits=12,
         decimal_places=6,
@@ -105,26 +94,13 @@ class Model(models.Model):
 
     #: How much the model can hold at once, prompt and answer together (`FRD-132` §11).
     #:
-    #: Not a limit AIRA enforces — the upstream refuses what does not fit, and a second copy of
-    #: that number here would be one more thing to keep true. It is here because a **client** has
-    #: nowhere else to learn it: the official Gemini model resource carries it as
-    #: `inputTokenLimit`, and a coding assistant shows *how full the conversation is* out of it.
-    #: Left empty it simply is not published, which reads as unknown rather than as zero.
-    context_window = models.PositiveIntegerField(null=True, blank=True)
-
-    #: How much the model can hold at once, prompt and answer together (`FRD-132` §11).
-    #:
-    #: Not a limit AIRA enforces — the upstream refuses what does not fit, and a second copy of
-    #: that number here would be one more thing to keep true. It is here because a **client** has
-    #: nowhere else to learn it: the official Gemini model resource carries it as
-    #: `inputTokenLimit`, and a coding assistant shows *how full the conversation is* out of it.
-    #: Left empty it is simply not published, which reads as unknown rather than as zero.
+    #: Not enforced here — the upstream refuses what does not fit. Published because a client has
+    #: nowhere else to learn it (Gemini's `inputTokenLimit`). Empty reads as unknown, not zero.
     context_window = models.PositiveIntegerField(null=True, blank=True)
 
     max_output_tokens = models.PositiveIntegerField(null=True, blank=True)
-    #: Applied when the caller sets no cap. Not polish: Anthropic **requires** ``max_tokens`` on
-    #: every request (`FRD-119` §5.3), so without this a caller who omits it — most of them, since
-    #: it is optional today — would get a vendor error about a field they never set.
+    #: Applied when the caller sets no cap. Anthropic **requires** ``max_tokens`` on every request
+    #: (`FRD-119` §5.3), so without it a caller who omits one gets a vendor error.
     default_max_output_tokens = models.PositiveIntegerField(null=True, blank=True)
 
     #: ``{"modes": [...], "min_tokens": n, "max_tokens": n, "default": {...}, "levels": {...}}``
@@ -136,12 +112,11 @@ class Model(models.Model):
 
     hosting = models.CharField(max_length=16, blank=True)
 
-    #: Warns, never blocks. Blocking is what FRD-307's revocation is for, and conflating the two
-    #: removes the ability to announce a retirement before performing one.
+    #: Warns, never blocks — blocking is FRD-307's revocation, so a retirement can be announced
+    #: before it is performed.
     deprecated = models.BooleanField(default=False)
 
-    #: A stable integer alias, for the predecessor's ``model_id`` (`FRD-107`). Unused unless that
-    #: surface is built, and it should be removed with it rather than left to read as meaningful.
+    #: A stable integer alias, for the KIRA surface's ``model_id`` (`FRD-107`).
     numeric_id = models.PositiveIntegerField(null=True, blank=True, unique=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -155,8 +130,8 @@ class Model(models.Model):
 
     @property
     def is_declared(self) -> bool:
-        """Whether anyone has said what this model can do. Shown in the UI the same way an
-        unpriced model is: visibly incomplete rather than silently absent."""
+        """Whether anyone has said what this model can do — shown as visibly incomplete, like an
+        unpriced model."""
         return bool(self.capabilities)
 
     @property

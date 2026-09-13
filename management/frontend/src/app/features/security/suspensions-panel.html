@@ -1,0 +1,259 @@
+@if (shown()) {
+  <div class="card" role="tabpanel">
+    <div class="spread">
+      <h3 class="section-title" style="margin: 0">
+        Stopped traffic
+        <!--
+          How far a stop reaches, told before it is pressed. There is deliberately no switch for the
+          installation: an operator control that can take the whole gateway down is an outage
+          waiting to happen.
+        -->
+        <app-info-hint label="stopping traffic" testid="stop-scope" [wide]="true">
+          An immediate, manual refusal — the kill switch of <code>FRD-503</code>. It reaches
+          <strong>one caller</strong> (a username or service account),
+          <strong>one API key</strong> (by its prefix), or <strong>one whole use case</strong>.
+          There is no switch for the installation: everything here is scoped, on purpose. Stopped
+          requests are answered <strong>429</strong> — the credential is still valid, they are being
+          told to come back later — and each is recorded with the outcome <code>suspended</code>, so
+          an investigation afterwards can see exactly what was refused. It takes a few seconds to
+          reach every gateway instance, and lifting one takes the same.
+        </app-info-hint>
+      </h3>
+      @if (canStop()) {
+        <button
+          type="button"
+          class="btn btn--sm btn--danger"
+          [attr.aria-expanded]="showStop()"
+          (click)="showStop.set(!showStop())"
+          data-testid="stop-toggle"
+        >
+          {{ showStop() ? 'Cancel' : 'Stop traffic' }}
+        </button>
+      }
+    </div>
+
+    @if (!canStop()) {
+      <p class="muted" style="margin: 0.25rem 0 0" data-testid="stop-readonly">
+        You can see everything that is stopped and why. Stopping and restoring traffic is done by IT
+        Security or a Global Administrator.
+      </p>
+    }
+
+    @if (showStop() && canStop()) {
+      <form class="form-inline disclosure" (ngSubmit)="stop()">
+        <div class="field">
+          <label for="stop-target">Stop a</label>
+          <select
+            id="stop-target"
+            name="target"
+            [ngModel]="target()"
+            (ngModelChange)="target.set($event)"
+          >
+            <option value="subject">caller</option>
+            <option value="credential">credential (API key)</option>
+            <option value="use_case">whole use case</option>
+          </select>
+        </div>
+        <div class="field grow">
+          <label for="stop-value">Which one</label>
+          <input
+            id="stop-value"
+            name="target_value"
+            [ngModel]="targetValue()"
+            (ngModelChange)="targetValue.set($event)"
+            placeholder="a username, a key prefix, or a use-case id"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field grow">
+          <label for="stop-reason">Reason</label>
+          <input
+            id="stop-reason"
+            name="reason"
+            [ngModel]="reason()"
+            (ngModelChange)="reason.set($event)"
+            placeholder="what you saw"
+            autocomplete="off"
+          />
+          <span class="field__hint">Kept with the decision, and read by whoever reviews it.</span>
+        </div>
+        <div class="field">
+          <label for="stop-scope">Where</label>
+          <select
+            id="stop-scope"
+            name="use_case"
+            [ngModel]="scope()"
+            (ngModelChange)="scope.set($event)"
+            data-testid="stop-scope"
+          >
+            <option value="">everywhere</option>
+            @for (slug of useCases(); track slug) {
+              <option [value]="slug">only in {{ slug }}</option>
+            }
+          </select>
+          <span class="field__hint">
+            A credential is often bound to one use case; stopping it everywhere stops more than the
+            incident.
+          </span>
+        </div>
+        <div class="field">
+          <label for="stop-action">Do what</label>
+          <select
+            id="stop-action"
+            name="action"
+            [ngModel]="action()"
+            (ngModelChange)="action.set($event)"
+            data-testid="stop-action"
+          >
+            <option value="block">refuse every request</option>
+            <option value="throttle">hold it to a rate</option>
+          </select>
+        </div>
+        @if (action() === 'throttle') {
+          <div class="field">
+            <label for="stop-rpm">Requests per minute</label>
+            <input
+              id="stop-rpm"
+              name="throttle_rpm"
+              type="number"
+              min="1"
+              [ngModel]="throttleRpm()"
+              (ngModelChange)="throttleRpm.set($event)"
+              placeholder="e.g. 10"
+              data-testid="stop-rpm"
+            />
+            <span class="field__hint"
+              >Required for a throttle — the server refuses one without.</span
+            >
+          </div>
+        }
+        <div class="field">
+          <label for="stop-minutes">For (minutes)</label>
+          <input
+            id="stop-minutes"
+            name="minutes"
+            type="number"
+            min="1"
+            [ngModel]="minutes()"
+            (ngModelChange)="minutes.set($event)"
+            placeholder="until lifted"
+          />
+          <span class="field__hint">Empty means until somebody lifts it.</span>
+        </div>
+        <button type="submit" class="btn btn--danger" [disabled]="!canSubmit()">
+          {{ feedback.busy() ? 'Stopping…' : 'Stop' }}
+        </button>
+      </form>
+    }
+
+    <!-- One box for both lists; see `searchSuspensions`. -->
+    @if (active().length || past().length) {
+      <div class="table-tools" style="margin-top: 1rem">
+        <label class="search">
+          <span>Find a decision</span>
+          <input
+            type="search"
+            [value]="activeView.query()"
+            (input)="searchSuspensions($any($event.target).value)"
+            placeholder="a caller, a key prefix, a use case"
+            data-testid="suspension-search"
+            autocomplete="off"
+          />
+        </label>
+      </div>
+    }
+
+    <div class="table-wrap" style="margin-top: 1rem">
+      <table class="table" data-testid="active-suspensions">
+        <thead>
+          <tr>
+            <th scope="col">Target</th>
+            <th scope="col">Action</th>
+            <th scope="col">Until</th>
+            <th scope="col">By</th>
+            <th scope="col">Reason</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of activeView.rows(); track row.id) {
+            <tr>
+              <td>
+                <code>{{ row.target_value }}</code>
+                <div class="muted" style="font-size: 0.78rem">
+                  {{ row.target }}{{ row.use_case ? ' · ' + row.use_case : ' · everywhere' }}
+                </div>
+              </td>
+              <td>
+                @if (row.action === 'throttle') {
+                  <span class="badge badge--warning">{{ row.throttle_rpm }}/min</span>
+                } @else {
+                  <span class="badge badge--danger">blocked</span>
+                }
+              </td>
+              <td class="nowrap">
+                {{ row.expires_at ? (row.expires_at | date: 'short') : 'until lifted' }}
+              </td>
+              <td>
+                <code>{{ row.author }}</code>
+              </td>
+              <td>{{ row.reason || '—' }}</td>
+              <td class="table__actions">
+                <div class="actions">
+                  @if (canStop()) {
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      [disabled]="feedback.busy()"
+                      [attr.aria-label]="'Restore access for ' + row.target_value"
+                      (click)="lift(row)"
+                    >
+                      Restore
+                    </button>
+                  }
+                </div>
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td class="table__empty" colspan="6">Nothing is stopped.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    <div style="padding: 0 1rem 0.9rem">
+      <app-table-pager [view]="activeView" noun="suspensions" testid="active-pager" />
+    </div>
+
+    @if (past().length) {
+      <details style="margin-top: 1rem">
+        <summary class="muted" data-testid="past-summary">
+          Earlier decisions ({{ past().length }}) — already lifted or expired. Kept as a record of
+          who stopped what, when, and why.
+        </summary>
+        <div class="table-wrap" style="margin-top: 0.5rem">
+          <table class="table">
+            <tbody>
+              @for (row of pastView.rows(); track row.id) {
+                <tr>
+                  <td>
+                    <code>{{ row.target_value }}</code>
+                  </td>
+                  <td>{{ row.author }}</td>
+                  <td>{{ row.reason || '—' }}</td>
+                  <td class="nowrap">
+                    {{ row.lifted_at ? 'lifted by ' + row.lifted_by : 'expired' }}
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div style="padding: 0.5rem 0 0">
+          <app-table-pager [view]="pastView" noun="decisions" testid="past-pager" />
+        </div>
+      </details>
+    }
+  </div>
+}

@@ -10,9 +10,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-# A summary the command prints, not a contract anything computes with. Mostly counts — but the
-# showcase step also reports the demo API keys it re-derived, and squeezing those into an int
-# would mean the seed cannot tell you the one thing you need to call the gateway with.
+#: A summary the command prints, not a contract anything computes with: mostly counts, but the
+#: showcase step also reports the demo API keys it re-derived.
 SeedResult = dict[str, object]
 SeedFn = Callable[[bool], SeedResult]
 

@@ -1,23 +1,18 @@
-import { AnomalyEvent, AnomalyRule } from '../../core/api/models';
-
 /**
- * Saying what a rule does, and what a finding found, in words.
+ * Saying what a rule does, and what a finding found, in words rather than the raw kind and two bare
+ * numbers.
  *
- * The console used to print the raw vocabulary — `refusal_rate`, `spend_spike`, `new_source_ip` —
- * next to two bare numbers. That is enough for whoever wrote the rule and nothing for whoever has
- * to decide, at eleven at night, whether the alert in front of them matters. A closed vocabulary
- * (`aira_common.anomalies`) is exactly what makes this safe to write: there are seven kinds, they
- * cannot grow by configuration, and each has one meaning.
- *
- * Two things stay honest here:
+ * Safe to write because the vocabulary is closed (`aira_common.anomalies`): seven kinds, each with
+ * one meaning. Two things stay honest here:
  *
  * - **A ratio is not a threshold.** `spend_spike` at 300 means "three times the window before",
- *   not "300 euros" — `FRD-500` chose a ratio deliberately, because a fixed number is a budget and
- *   there already is one. Printing it without the word "times" invites exactly that confusion.
+ *   not "300 euros" — `FRD-500` chose a ratio because a fixed number is a budget, and there is one.
  * - **`alert` is not enforcement.** `ADR-0014` keeps detecting and doing apart, and so does every
  *   sentence below: a rule that alerts *records* and takes nothing away.
  */
+import { AnomalyEvent, AnomalyRule } from '../../core/api/models';
 
+/** What each kind's threshold is counted in. */
 const UNITS: Record<string, string> = {
   refusal_rate: '% of requests',
   error_rate: '% of requests',
@@ -75,8 +70,7 @@ function consequence(rule: AnomalyRule): string {
         ? `traffic is slowed to ${rule.throttle_rpm} requests a minute`
         : 'traffic is slowed';
     default:
-      // The default, and a safety property: a system whose first setting is `block` blocks
-      // wrongly once and is switched off forever (`FRD-500` §3).
+      // `alert`, the safe default (`FRD-500` §3).
       return 'it is recorded — nothing is taken away';
   }
 }

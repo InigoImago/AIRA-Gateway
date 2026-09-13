@@ -1,0 +1,91 @@
+@if (shown()) {
+  <div class="disclosure">
+    <h3 class="section-title" style="margin-bottom: 0.25rem">Data protection</h3>
+    <p class="muted" style="margin: 0 0 0.75rem">
+      Prompts and responses sent through this use case can be stored so incidents can be
+      investigated. Either way the metadata — who, when, which model, how many tokens, what it cost
+      — is kept for reporting.
+    </p>
+    @if (!canManage()) {
+      <p data-testid="retention-readonly" style="margin: 0">
+        @if (useCase()?.store_payloads === false) {
+          Prompts and responses are <strong>not stored</strong> for this use case.
+        } @else {
+          Prompts and responses are kept for
+          <strong>{{ useCase()?.retention_days ?? '—' }} day(s)</strong>.
+        }
+        Only an administrator of this use case can change that.
+      </p>
+    } @else {
+      <form class="stack" (ngSubmit)="saveRetention()">
+        <!-- No `for`: the input is nested, and a `for` as well makes a real browser forward the click
+             twice, so the box toggles back (jsdom does not reproduce it). -->
+        <label class="row" style="gap: 0.5rem">
+          <!-- [checked]/(change) rather than ngModel: a one-way ngModel on a checkbox inside an
+               NgForm writes the old value back and the box springs back. -->
+          <input
+            type="checkbox"
+            id="store-payloads"
+            name="store_payloads"
+            [checked]="storePayloads()"
+            (change)="storePayloads.set($any($event.target).checked)"
+          />
+          Store prompts and responses
+        </label>
+
+        @if (storePayloads()) {
+          <div class="form-inline">
+            <div class="field">
+              <label for="retention-days">Keep them for (days)</label>
+              <input
+                id="retention-days"
+                name="retention_days"
+                type="number"
+                min="1"
+                max="3650"
+                [ngModel]="retentionDays()"
+                (ngModelChange)="retentionDays.set($event)"
+              />
+              <span class="field__hint">Deleted automatically once the period has passed.</span>
+            </div>
+          </div>
+        } @else {
+          <p class="callout callout--warning" style="margin: 0" data-testid="storage-off-warning">
+            Nothing a caller sends or receives is written for this use case. Anything already stored
+            is removed on the next retention run. Incidents can then only be traced through the
+            metadata.
+          </p>
+        }
+
+        <!-- Who inside the use case may read whose requests: the use case administrator's decision,
+             not IT Security's (`FRD-505` FR-4). -->
+        <label class="checkline">
+          <input
+            type="checkbox"
+            id="restrict-members"
+            name="restrict_members"
+            [checked]="restrictMembers()"
+            (change)="restrictMembers.set($any($event.target).checked)"
+            data-testid="restrict-members"
+          />
+          Show each member only their own requests
+        </label>
+        <span class="field__hint">
+          Administrators of this use case always see all of them. Off means everyone in the use case
+          sees the whole use case's traffic, which is how it has always worked.
+        </span>
+
+        <div class="row">
+          <!-- Named rather than "Save": the page has two forms, and two identical buttons are
+               ambiguous to a screen reader and to e2e. -->
+          <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
+            {{ feedback.busy() ? 'Saving…' : 'Save storage settings' }}
+          </button>
+          @if (retentionError(); as message) {
+            <span class="field__hint field__hint--error">{{ message }}</span>
+          }
+        </div>
+      </form>
+    }
+  </div>
+}

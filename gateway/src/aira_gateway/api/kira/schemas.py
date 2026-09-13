@@ -1,16 +1,8 @@
-"""The predecessor's wire shapes.
+"""The predecessor's wire shapes (`FRD-107`).
 
-Field names are the predecessor's. Most of them are snake_case there and are spelled that way
-here; the ones the predecessor spells in camelCase — `maxTokens` and `responseSchema` (`FRD-107`
-FR-2) — carry an alias, with ``populate_by_name`` so the snake_case form is accepted too. A
-compatibility surface that required the "nicer" spelling would not be one.
-
-The sentence above used to say that *every* field accepted both spellings, and five fields carried
-an ``alias=`` that restated their own name — which looks like a second spelling and is not one.
-Nothing behaved wrongly; a reader checking whether `conversationHistory` was accepted would have
-been told yes by the module and no by the server. This project has named that shape often enough:
-a comment claiming a rule the system does not have. The redundant aliases are gone so the two
-that remain are the two that mean something.
+Field names are the predecessor's. Most are snake_case; the two it spells in camelCase —
+`maxTokens` and `responseSchema` (`FRD-107` FR-2) — carry an alias, with ``populate_by_name`` so the
+snake_case form is accepted too. Only those two accept a second spelling.
 """
 
 from __future__ import annotations
@@ -19,26 +11,24 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+#: Response shapes: aliases accepted, extras ignored.
 _ALIASED = ConfigDict(populate_by_name=True, extra="ignore")
 
 #: Request shapes **accept** what they do not model, and **name** it (`FRD-124` §5.6).
 #:
-#: This was `extra="forbid"`, and the argument for it was good: an unsupported field refused by
-#: name is a migrating client learning at migration time rather than hoping. What it missed is that
-#: a compatibility surface's job is to accept the predecessor's traffic, and the predecessor's
-#: clients send fields nobody here has heard of. Measured against a real chatbot: every call `422`,
-#: over fields that change no answer.
-#:
-#: The rule that replaces it keeps the half that mattered — **nothing is ignored silently**. Where
-#: the names go is the route's business, not this module's: `note_unmodelled` in `routes.py` puts
-#: them in the `X-AIRA-Unmodelled-Fields` response header on every exit, and on the
-#: `kira_request_refused` log line when the request failed for some other reason. This module only
-#: has to stop refusing, and to say which fields were extra — see `ignored_fields` below.
-#:
-#: Typed fields are validated exactly as before: a `model_id` that is not an integer is still a
-#: `422`, and `FRD-124`'s rule stands unchanged on the **Gemini** surface, which is Google's
-#: contract rather than a migration path.
+#: A compatibility surface must accept the predecessor's traffic, and its clients send fields nobody
+#: here models; refusing them failed every call over fields that change no answer. Nothing is
+#: ignored silently: `ignored_fields` lists the extras and the surface names them in the
+#: `X-AIRA-Unmodelled-Fields` header (`headers.note_unmodelled`). Typed fields are validated as
+#: before, and the Gemini surface keeps `FRD-124`'s strict rule — that is Google's contract.
 _TOLERANT_ALIASED = ConfigDict(populate_by_name=True, extra="allow")
+
+#: The predecessor's numeric model handle, bounded to what the `INTEGER` column holds: an unbounded
+#: value reached Postgres as `NumericValueOutOfRange`, a 500 for a number the caller chose.
+ModelId = Annotated[int, Field(ge=1, le=2_147_483_647)]
+
+#: The predecessor's health vocabulary: a title-cased string, not a boolean.
+HealthState = Literal["Healthy", "Unhealthy"]
 
 
 def _normalise(name: str) -> str:
@@ -48,17 +38,10 @@ def _normalise(name: str) -> str:
 class TolerantRequest(BaseModel):
     """Accepts what it does not model — **except a near-miss of something it does**.
 
-    Two failures, and only one of them is fixed by tolerance.
-
-    A client sending a field this surface never heard of is a compatibility problem, and refusing
-    it stops the client working for no gain: measured against a real chatbot, whose every call came
-    back `422`. Those are accepted, and named on the response — see `_TOLERANT_ALIASED`.
-
-    A client sending `conversationHistory` where this surface calls it `conversation_history` is a
-    different thing entirely. Accepting that quietly answers **without the conversation** — a wrong
-    answer rather than a missing feature, and the one case `FRD-124`'s rule was really protecting.
-    A field whose name differs from a modelled one only by case or punctuation is refused, by name,
-    with the spelling this surface takes.
+    An unknown field is accepted and named (`_TOLERANT_ALIASED`). A field that differs from a
+    modelled one only by case or punctuation — `conversationHistory` for `conversation_history` —
+    is refused, naming the spelling this surface takes: accepting it would answer *without* what
+    was sent, a wrong answer rather than a missing feature.
     """
 
     @model_validator(mode="after")
@@ -81,22 +64,42 @@ class TolerantRequest(BaseModel):
         return self
 
 
+def ignored_fields(*models: BaseModel | None) -> tuple[str, ...]:
+    """Every field a caller sent that this surface does not model, in order, deduplicated.
+
+    What keeps tolerance from being the silent drop `FRD-124` was written against: an operator can
+    see which fields a client sends that this surface does not act on.
+    """
+    seen: dict[str, None] = {}
+    for model in models:
+        if model is None:
+            continue
+        for name in model.model_extra or {}:
+            seen.setdefault(str(name), None)
+        for value in model.__dict__.values():
+            if isinstance(value, BaseModel):
+                for name in ignored_fields(value):
+                    seen.setdefault(name, None)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, BaseModel):
+                        for name in ignored_fields(item):
+                            seen.setdefault(name, None)
+    return tuple(seen)
+
+
+# -- requests --------------------------------------------------------------------------------------
+
+
 class TextPart(TolerantRequest):
     model_config = _TOLERANT_ALIASED
     text: str
 
 
-# An attachment part had a class here and nothing ever built one: `parts` is deliberately a list
-# of plain dicts (see below), and the mapper reads them itself. It was worse than unused —
-# `extra="forbid"` on a shape accepting only `mime_type` described a surface stricter than the one
-# that runs, which takes `mimeType` as well. A shape that documents a contract the server does not
-# have is the unreachable-helper problem in a costume, so the validator below, which does run, is
-# where the rule lives. `FRD-110`'s attachments are unaffected: Stage A has carried documents since
-# the day it shipped, through `mapping._parts`.
-
-
 class RequestContent(TolerantRequest):
     model_config = _TOLERANT_ALIASED
+    #: Plain dicts, so a part can be either text or an attachment (`mime_type`/`mimeType` + `data`,
+    #: `FRD-110`); the mapper reads them (`mapping._parts`) and the validator below is the contract.
     parts: list[dict[str, Any]]
 
     @model_validator(mode="after")
@@ -108,21 +111,8 @@ class RequestContent(TolerantRequest):
                 raise ValueError(
                     f"parts[{index}]: a part carries either 'text' or 'mime_type' + 'data'"
                 )
-            # **A text part carries text.** `parts` is a list of plain dicts so that a part can be
-            # either kind, and the mapper used to hand whatever arrived to `str(...)`. Measured on
-            # 2026-08-12:
-            #
-            #     {"text": null}      → the model was asked about the word  "None"
-            #     {"text": 123}       → "123"
-            #     {"text": true}      → "True"
-            #     {"text": {"a": 1}}  → "{'a': 1}"      (a Python repr, on the wire)
-            #
-            # No error, a 200, and a fluent answer to a question nobody asked — the shape this
-            # project keeps paying for, and our own `FRD-124` rule broken in our own code: a value
-            # silently transformed is worse than one refused, because only the refusal is visible.
-            # The predecessor types this field as a string and rejects the rest, so refusing is
-            # also the *compatible* answer; that is a coincidence, and it would be right either
-            # way.
+            # A text part carries text. A non-string would be converted (`null` → "None") and
+            # answered with a 200 — a silently transformed value, which `FRD-124` forbids.
             if has_text and not isinstance(part["text"], str):
                 raise ValueError(
                     f"parts[{index}]: 'text' must be a string, not "
@@ -144,42 +134,6 @@ class ThinkingSetting(TolerantRequest):
     tokens: int | None = None
 
 
-def ignored_fields(*models: BaseModel | None) -> tuple[str, ...]:
-    """Every field a caller sent that this surface does not model, in order, deduplicated.
-
-    The half of `extra="forbid"` worth keeping: a compatibility surface accepts the predecessor's
-    traffic, and **says what it did not understand**. Without this, tolerance is the silent drop
-    `FRD-124` was written against; with it, an operator can see that a client is sending
-    `thinkingBudget` months before anybody wonders why thinking never happens.
-    """
-    seen: dict[str, None] = {}
-    for model in models:
-        if model is None:
-            continue
-        for name in model.model_extra or {}:
-            seen.setdefault(str(name), None)
-        for value in model.__dict__.values():
-            if isinstance(value, BaseModel):
-                for name in ignored_fields(value):
-                    seen.setdefault(name, None)
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, BaseModel):
-                        for name in ignored_fields(item):
-                            seen.setdefault(name, None)
-    return tuple(seen)
-
-
-#: The predecessor's numeric handle for a model, and the range the **column** can hold.
-#:
-#: `int` alone let `999999999999999999999999999` through the surface and into a `WHERE numeric_id
-#: = …` against an `INTEGER` column, where Postgres answered `NumericValueOutOfRange` and the
-#: caller got a **500** for a number they chose. Python's ints have no width; the database's do,
-#: and a boundary that models one as the other has simply moved the failure somewhere it reads as
-#: our fault. Bounded here, it is a `422` naming the field, like every other wrong value.
-ModelId = Annotated[int, Field(ge=1, le=2_147_483_647)]
-
-
 class ChatRequest(TolerantRequest):
     model_config = _TOLERANT_ALIASED
 
@@ -189,11 +143,21 @@ class ChatRequest(TolerantRequest):
     conversation_history: list[ConversationContent] | None = None
     max_tokens: int | None = Field(default=None, alias="maxTokens")
     temperature: float = 1.0
-    #: Served since Stage B (`FRD-111`). Validated against what the model declares, and the
-    #: refusals carry the predecessor's own codes so a migrating client's error handling still
-    #: switches on the same strings.
+    #: Validated against what the model declares (`FRD-111`); refusals carry the predecessor's own
+    #: codes, so a migrating client's error handling switches on the same strings.
     thinking: ThinkingSetting | None = None
     response_schema: dict[str, Any] | None = Field(default=None, alias="responseSchema")
+
+
+class EmbeddingRequest(TolerantRequest):
+    model_config = _TOLERANT_ALIASED
+
+    text: str | list[str]
+    model_id: ModelId
+    task_type: str | None = None
+
+
+# -- responses -------------------------------------------------------------------------------------
 
 
 class UsageDataDto(BaseModel):
@@ -206,30 +170,10 @@ class ChatResponse(BaseModel):
     usage_data: UsageDataDto | None = None
 
 
-class EmbeddingRequest(TolerantRequest):
-    model_config = _TOLERANT_ALIASED
-
-    text: str | list[str]
-    model_id: ModelId
-    task_type: str | None = None
-
-
 class EmbeddingResponse(BaseModel):
     """One text in, one vector out — the shape the contract documents."""
 
     vector: list[float]
-
-
-# `BatchEmbeddingResponse` stood here until 2026-08-12, carrying `vectors: list[list[float]]`.
-#
-# It existed because `FRD-113` §11 could not tell which of two readings the predecessor meant for a
-# list input — one vector per text, or one vector for the lot — assumed the first, and made the
-# assumption **visible on the wire** under a distinct key so that whoever checked against the real
-# predecessor would notice rather than have to dig.
-#
-# That is exactly what happened: a comparison against the predecessor's own source confirmed the
-# **second** reading. The key did its job, and its job is finished. Kept as a note rather than as a
-# class, because a response model nothing returns is a shape somebody will eventually return.
 
 
 class ThinkingConfig(BaseModel):
@@ -258,33 +202,15 @@ class KiModel(BaseModel):
     supports_aggregation: bool | None = None
 
 
-#: The predecessor's health vocabulary is a **string**, title-cased, not a boolean and not an
-#: upper-cased one. Both fields carried the wrong spelling here until 2026-08-12, which a typed
-#: client cannot deserialise at all — the one failure mode a compatibility surface exists to
-#: prevent.
-HealthState = Literal["Healthy", "Unhealthy"]
-
-
 class HealthCheck(BaseModel):
-    """One entity of `GET /health` (`health_check_models.py`).
-
-    This shipped with `FRD-107` as ``{service, healthy: bool, tags}`` — invented rather than
-    copied, and inside a list called ``checks`` where the contract calls it ``entities``. Every
-    field name was different and the status was a boolean where the predecessor has a string, so
-    the endpoint that tells a monitoring system whether to page somebody was the *least*
-    compatible thing on the surface. Found by a static comparison against the predecessor's own
-    source, not by any test here: our tests assert our shape, which is exactly what a shape
-    somebody invented will always pass.
-    """
+    """One entity of `GET /health`, as the predecessor's `health_check_models.py` defines it."""
 
     model_config = _ALIASED
 
     service: str
     status: HealthState
-    #: Seconds. The predecessor measures each check as it runs it; we probe in the background
-    #: (`FRD-117` §5.2 — probing inline makes readiness as slow as the slowest upstream), so this
-    #: is how long the **last** probe took. Real either way, which is the part that matters: a
-    #: fabricated 0.0 would be a number somebody graphs.
+    #: Seconds the **last** background probe took (`FRD-117` §5.2 — probing inline would make
+    #: readiness as slow as the slowest upstream). Real rather than a fabricated 0.0.
     time_taken: float
     tags: list[str]
 
@@ -293,7 +219,7 @@ class HealthResponse(BaseModel):
     model_config = _ALIASED
 
     status: HealthState
-    #: How long *this* call took. Small, and honestly so: the verdicts are already in memory.
+    #: How long *this* call took — small, because the verdicts are already in memory.
     total_time_taken: float
     entities: list[HealthCheck]
 

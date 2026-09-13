@@ -1,21 +1,13 @@
-"""Resolving a token's Keycloak groups into the use cases they reach (`FRD-209`).
+"""Resolving a caller's Keycloak groups and name into the use cases they reach (`FRD-209`).
 
-The gateway never asks Management on the request path (`FRD-204`), so group grants arrive over
-Kafka into `use_case_groups` and are read from there. That is a read on **every** authenticated
-OIDC request against a table written rarely — a cache problem, not shared state, so it is cached
-in-process for a few seconds. Exactly the shape `FRD-503` §4.1 settled for suspensions, and for the
-same reason.
+The gateway never asks Management on the request path (`FRD-204`): grants arrive over Kafka into
+`use_case_groups` and `use_case_members`. Read on every OIDC request and written rarely, so the
+whole of both tables is cached in-process for a few seconds — the `FRD-503` §4.1 shape. A
+per-caller cache would hold one entry per person and miss for everybody at once when it expired.
 
-Two properties worth stating, because both are decisions rather than consequences:
-
-**Degradation refuses rather than admits.** If the table cannot be read, the `/use-cases/<slug>`
-convention still resolves — it needs no lookup — and a caller who was a member *only* by group
-grant is refused. The moment a control cannot be evaluated is the worst moment to assume it passes;
-`FRD-405` settled that for rate limits and `FRD-125` for the injection filter.
-
-**The whole table is cached, not one query per caller.** Grants are configuration: tens of rows,
-not thousands, and every caller's answer comes from the same set. A per-caller cache would be a
-cache with one entry per person and a miss for everybody at once when it expired.
+**Degradation refuses rather than admits.** If the tables cannot be read, the `/use-cases/<slug>`
+convention still resolves (it needs no lookup) and a caller who was a member only by grant is
+refused (`FRD-405`, `FRD-125`).
 """
 
 from __future__ import annotations
@@ -38,26 +30,16 @@ _log = get_logger("aira_gateway.grants")
 
 
 class GroupGrantResolver:
-    """Answers "which use cases does this caller reach, and as what".
-
-    **Both routes `FRD-209` §2.1 names**, and the second was missing. A grant to a Keycloak group
-    resolved; a grant naming a *person* did not — although Management writes it, Kafka carries it,
-    and `use_case_members` on this side holds it. `resolve()` has taken a `direct` argument since
-    the vocabulary was written, with tests, and nothing passed one: two correct halves and no wire.
-
-    Reported from the console as *"I want to add any group from Keycloak and any user as well, and
-    give them admin or user rights — I do not want to have to make a group named after the use
-    case."* That is `FR-6` word for word, and two thirds of it worked.
-    """
+    """Answers "which use cases does this caller reach, and as what" — by a grant to one of their
+    groups or a grant naming them (`FRD-209` §2.1)."""
 
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sessionmaker = sessionmaker
         self._grants: tuple[tuple[str, str, str], ...] = ()
         self._members: tuple[tuple[str, str, str], ...] = ()
         self._loaded_at = 0.0
-        #: False until the first successful load. Distinct from "loaded and empty": an
-        #: installation with no group grants is a normal state, an unreadable table is not, and
-        #: only one of the two should make anybody look at a log.
+        #: False until the first successful load — distinct from "loaded and empty", which is a
+        #: normal state.
         self._ready = False
 
     async def use_cases(
@@ -65,10 +47,8 @@ class GroupGrantResolver:
     ) -> dict[str, str]:
         """The use cases this caller reaches, mapped to the strongest role each grants.
 
-        ``username`` rather than a subject, because that is the alphabet the two planes share here:
-        Management keys a membership to a Django user, the event carries `username`, and the read
-        model stores it. An OIDC token's `sub` never appears in either. The same mismatch
-        `Principal.username` exists for, written down there.
+        ``username`` rather than a subject: Management keys a membership to a Django user and the
+        read model stores its username; an OIDC token's `sub` appears in neither.
         """
         held = list(group_paths)
         grants, members = await self._current()
@@ -94,13 +74,8 @@ class GroupGrantResolver:
                         )
                     )
                 ).all()
-                # **The whole table again, and this one can actually grow**: a row per person per
-                # use case, where grants are a row per *group* per use case. Loaded the same way
-                # regardless, because the alternative is a query per caller — one cache entry per
-                # person and a miss for everybody at once when it expires, which is the shape this
-                # cache exists to avoid. At an installation where this list reaches six figures the
-                # right answer is an indexed lookup on `subject` with its own short cache; the
-                # number to watch is rows, and it is one row per membership somebody typed.
+                # One row per person per use case, so this table can grow. At six figures the
+                # answer is an indexed lookup on `subject` with its own short cache.
                 member_rows = (
                     await session.execute(
                         select(
@@ -115,21 +90,10 @@ class GroupGrantResolver:
             self._loaded_at = now
             self._ready = True
         except Exception as exc:  # the database is not reachable, or the table is not there yet
-            # Deliberately not raising: a caller whose membership comes from the `/use-cases/<slug>`
-            # convention is unaffected, and refusing *everybody* because a read-model table could
-            # not be read would turn a config-distribution problem into a total outage. The caller
-            # who *was* a member only by grant is refused, which is the safe half.
-            #
-            # **Dropped, not served stale**, and that is the deliberate half: a review on
-            # 2026-08-12 proposed keeping the last good copy — one blink of the database takes
-            # access from every group-granted caller, which reads like a fault-tolerance gap — and
-            # `test_grants_are_dropped_rather_than_served_stale_when_the_read_fails` refused the
-            # change. It is right to. A grant is *permission*, so the safe direction is the
-            # opposite of a rate limit's: the moment this table stops being readable, its last
-            # answer stops being evidence, and handing it out anyway lets access outlive the row
-            # that justified it. `TokenSource` serving through a failed refresh is not the same
-            # case — a credential we already hold is still ours; a permission we can no longer
-            # verify is not still granted.
+            # Not raising: `/use-cases/<slug>` members are unaffected, and refusing everybody would
+            # turn a config-distribution problem into an outage. **Dropped, not served stale**: a
+            # grant is permission, and an answer the table can no longer back is not evidence
+            # (`test_grants_are_dropped_rather_than_served_stale_when_the_read_fails`).
             _log.warning("group_grants_unavailable", error=str(exc), error_type=type(exc).__name__)
             self._grants = ()
             self._members = ()

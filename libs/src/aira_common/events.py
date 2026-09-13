@@ -1,10 +1,7 @@
-"""Event abstraction for inter-component Kafka communication.
+"""Event envelope and publisher interface for inter-component communication.
 
-This module defines the *interface* both components program against. A real
-aiokafka-backed publisher is introduced when event emission lands (Phase 1,
-FR-GW-12); until then the in-memory implementation powers unit tests and demo mode.
-Keeping the transport behind :class:`EventPublisher` means no service imports a Kafka
-client directly.
+Services program against :class:`EventPublisher`, so none imports a Kafka client directly. The
+in-memory implementation serves unit tests and demo mode.
 """
 
 from __future__ import annotations
@@ -17,8 +14,8 @@ from pydantic import BaseModel, Field
 class Event(BaseModel):
     """Envelope for a domain event published to Kafka.
 
-    ``type`` and ``version`` identify the schema; ``payload`` carries the body. The
-    concrete per-topic schemas are defined in their respective FRDs.
+    ``type`` and ``version`` identify the schema; ``payload`` carries the body. The concrete
+    per-topic schemas are defined in their respective FRDs.
     """
 
     type: str

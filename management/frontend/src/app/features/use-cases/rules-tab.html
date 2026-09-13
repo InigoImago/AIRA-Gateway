@@ -48,8 +48,8 @@
       Loading rules…
     </p>
   } @else if (!rules().length) {
-    <!-- The distinction `FRD-502` insists on: a quiet detector and an absent one look identical
-         from a findings list, so the place that knows must say which. -->
+    <!-- A quiet detector and an absent one look identical from a findings list, so the place that
+         knows says which (`FRD-502`). -->
     <p class="empty" data-testid="no-rules">
       Nothing is being watched for this use case specifically. That is why its
       <strong>Warnings</strong> tab can be empty and mean nothing on its own — global rules written

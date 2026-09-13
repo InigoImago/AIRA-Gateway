@@ -1,12 +1,7 @@
-"""KIRA ⇄ canonical (FRD-107).
+"""KIRA ⇄ canonical (FRD-107). Pure functions, free of FastAPI, like `api/gemini/mapping.py`.
 
-Pure functions, no FastAPI — the same shape as `api/gemini/mapping.py`, which is what makes a
-third surface a copy of a known pattern rather than a new invention.
-
-The one thing this file will not do is **approximate**. A field Stage A cannot honour is raised as
-a refusal here, at the mapping boundary, rather than dropped on the way through. The difference
-matters: a dropped field produces an answer that is wrong for a reason the caller cannot see, which
-is the same failure documents have (`FRD-110`) one level up.
+Nothing is approximated: a field that cannot be honoured is refused here rather than dropped,
+because a dropped field produces an answer that is wrong for a reason the caller cannot see.
 """
 
 from __future__ import annotations
@@ -31,27 +26,16 @@ from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.embedding import EMPTY_EMBEDDING_INPUT, EmbeddingRejected
 from aira_gateway.thinking import mode_from
 
-#: What the predecessor puts between two text parts of one message.
-#:
-#: It joins them and sends **one** string; this surface kept them as separate canonical parts,
-#: which every adapter then renders its own way — Gemini as several parts, the OpenAI dialect as a
-#: concatenation with nothing between. So `["Hallo", "Welt"]` became `HalloWelt` on one provider
-#: and a two-part message on another, where the predecessor sends `"Hallo\nWelt"`.
-#:
-#: That is the expensive kind of incompatibility: no error anywhere, a 200, and an answer to a
-#: subtly different prompt. Found by comparing against the documented contract, which
-#: is the only place it *could* be found — no test of ours would call a missing newline a failure,
-#: because both sides of such a test would have come from the same idea of what the prompt is.
+#: What the predecessor puts between two text parts of one message: it sends them as one string.
+#: Kept as separate parts, each adapter would render them differently ("HalloWelt" on one).
 TEXT_PART_SEPARATOR = "\n"
 
 
 def _parts(content: schemas.RequestContent, limits: Limits, offset: int) -> list[CanonicalPart]:
-    """The predecessor's parts, with its own joining rule applied (`FRD-107` FR-2).
+    """The predecessor's parts, with its joining rule applied (`FRD-107` FR-2).
 
-    Text parts are merged into one, in order, separated by a newline — and only *runs* of them, so
-    a message that interleaves text and attachments keeps its order rather than having all its
-    prose pulled to the front. An attachment ends a run, exactly as it would if the predecessor
-    had them.
+    Each *run* of text parts becomes one text; an attachment ends a run, so a message that
+    interleaves text and attachments keeps its order.
     """
     parts: list[CanonicalPart] = []
     pending: list[str] = []
@@ -64,10 +48,7 @@ def _parts(content: schemas.RequestContent, limits: Limits, offset: int) -> list
     for local, raw in enumerate(content.parts):
         index = offset + local
         if "text" in raw:
-            # `str(...)` stood here and converted anything — a null into the word "None", a dict
-            # into a Python repr. The type is checked where the request is parsed
-            # (`RequestContent`), because a surface parses and the layer decides; this stays a
-            # plain read so there is one place that can refuse rather than two that can disagree.
+            # The type was checked when the request was parsed (`RequestContent`).
             pending.append(raw["text"])
             continue
         _flush()
@@ -83,10 +64,8 @@ def _parts(content: schemas.RequestContent, limits: Limits, offset: int) -> list
 def thinking_of(setting: schemas.ThinkingSetting | None) -> Thinking | None:
     """The predecessor's ``{mode, tokens}`` onto the canonical one (`FRD-111` §5.1).
 
-    An unknown mode is refused with the predecessor's own code rather than with a validation
-    error about an enum, because a migrating client's error handling switches on that string —
-    and it is refused by :func:`aira_gateway.thinking.mode_from`, which both surfaces read, so the
-    two cannot come to disagree about what `" High"` means.
+    An unknown mode is refused by `thinking.mode_from` with the contract's own code — the same
+    function the Gemini surface uses, so the two cannot disagree about a mode.
     """
     if setting is None:
         return None
@@ -101,9 +80,8 @@ def to_canonical(
 ) -> CanonicalRequest:
     """Map a KIRA chat request onto the canonical one.
 
-    History arrives oldest-first, as the contract specifies, and is placed before the current
-    turn, which is the order every provider expects — reversing it would produce a coherent
-    conversation about the wrong thing.
+    History arrives oldest-first and is placed before the current turn — the order every provider
+    expects.
     """
     limits = limits or Limits()
     messages: list[CanonicalMessage] = []
@@ -159,46 +137,17 @@ def update_event(message: str) -> dict[str, Any]:
 def to_embedding(request: schemas.EmbeddingRequest, model: str) -> CanonicalEmbeddingRequest:
     """The predecessor's embedding request onto the canonical one.
 
-    The predecessor's default task type is **the route's** to pass, not this mapper's: it applies
-    only where the model declares that type, so it is a decision the validator makes with the
-    declaration in hand. Filling it in blindly here would refuse every embedding against a model
-    nobody has declared task types for — the compatibility default failing as though the caller
-    had asked for something impossible.
-
-    Dimensionality is not a field here — the predecessor makes it part of the model's *identity*
-    (two ids for one model, differing only in width). Each id is its own catalog row, and the row's
-    declared default is what the validator applies.
+    - **A list is one embedding**, as in the predecessor (confirmed from its source, `FRD-113`
+      §11). Its texts are joined with nothing between them, which is how the provider combines a
+      multi-part content; `TEXT_PART_SEPARATOR` is the *chat* rule and would change every vector.
+    - **A blank entry is refused** with the contract's `EMPTY_EMBEDDING_INPUT` code, because the
+      join would otherwise absorb it without trace.
+    - The default task type is the route's to pass (it applies only where the model declares it),
+      and dimensionality is part of a model's identity in the predecessor (one catalogue row per
+      width) — so neither is set here.
     """
-    # **A list is one embedding, not many.** `FRD-113` §11 recorded this as an open question with
-    # two readings — a list yields one vector per text, or a list is combined into a single vector
-    # — assumed the first, and asked for it to be confirmed against the running predecessor. It
-    # was confirmed on 2026-08-12, from the predecessor's own source: it sends the texts as
-    # several **parts of one** embedding call and answers the documented singular `vector`.
-    #
-    # So the assumption was wrong, and the consequence was the worst kind: a caller sending five
-    # chunks received five vectors where the predecessor gives one — not an error, *different
-    # data*, in the right shape for a different question.
-    #
-    # Joined with nothing between them, which is not a guess either: measured against
-    # `gemini-embedding-001` the same day, a multi-part content's vector is cosine **1.000000** to
-    # the parts concatenated with no separator, 0.9936 with a space, and **0.9489** to their mean.
-    # The provider concatenates; it does not build a centroid, which is the plausible reading and
-    # the wrong one. A caller who wants a centroid computes it from n separate calls — their
-    # arithmetic to choose (`ADR-0013`), and the Gemini surface's `batchEmbedContents` is where it
-    # is available.
     entries = [request.text] if isinstance(request.text, str) else list(request.text)
 
-    # **A blank entry is refused, not joined away.** The parts become one text, and a join absorbs
-    # an empty element without trace: `["ok", ""]` embedded exactly like `["ok"]`, answered 200, and
-    # the caller had no way to learn that one of their chunks was empty. Whitespace counts — three
-    # spaces contribute nothing to a vector either.
-    #
-    # Refused **here** rather than in the request schema, which is where it was first written. A
-    # schema violation becomes `VALIDATION_ERROR`, and the contract has a code for precisely this
-    # case: a migrating client's error handling switches on `EMPTY_EMBEDDING_INPUT`, and replacing
-    # it with the generic one is the compatibility failure this surface exists to prevent. The
-    # canonical validator raises the same code — it simply never sees a blank, because the join
-    # happens first.
     if not entries or any(not entry.strip() for entry in entries):
         blanks = [index for index, entry in enumerate(entries) if not entry.strip()]
         where = f" at position(s) {', '.join(str(i) for i in blanks)}" if blanks else ""
@@ -207,11 +156,6 @@ def to_embedding(request: schemas.EmbeddingRequest, model: str) -> CanonicalEmbe
             f"Embedding input must be a non-empty text, or a list of them{where}.",
         )
 
-    # Joined with **nothing** between them, and that is measured rather than chosen: against
-    # `gemini-embedding-001` a multi-part content's vector is cosine 1.000000 to the parts
-    # concatenated with no separator, 0.9936 with a space. `TEXT_PART_SEPARATOR` is the *chat*
-    # rule (`\n` between text parts of one message) and putting it here would quietly change every
-    # vector — nearly the same number, for a different question.
     return CanonicalEmbeddingRequest(
         model=model, texts=["".join(entries)], task_type=request.task_type
     )

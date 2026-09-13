@@ -1,12 +1,13 @@
 """Model catalog API (FRD-403, FRD-114).
 
-Prices are a fact about the provider contract, not a per-use-case setting, so they are
-maintained centrally: every authenticated user may read the catalog (the budget views need it to
-explain their figures), only a Global Administrator may change it.
+Prices are a fact about the provider contract, not a per-use-case setting: every authenticated user
+may read the catalog (the budget views explain their figures with it), only a Global Administrator
+may change it.
 """
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from django.db import transaction
@@ -22,39 +23,27 @@ from aira_management.apps.usecases.events import emit
 from aira_management.rbac import MayCatalogueModels
 
 
+def _price(value: Decimal | None) -> str | None:
+    """A price as a decimal *string*: a JSON number is a float, and money must not round-trip
+    through one."""
+    return str(value) if value is not None else None
+
+
 def _payload(model: Model) -> dict[str, Any]:
-    """Event payload. Prices travel as decimal *strings*: JSON numbers are floats, and a price
-    that survives the trip only approximately would produce costs nobody can reconcile."""
+    """The `model.*` event.
+
+    Carries everything validation needs, because the gateway never calls Management on the request
+    path (FRD-114 FR-8). Null prices travel too, so removing a price removes it from the gateway.
+    """
     return {
         "name": model.name,
         "display_name": model.display_name,
         "approved": model.approved,
         "provider": model.provider,
-        "input_price_per_million": (
-            str(model.input_price_per_million)
-            if model.input_price_per_million is not None
-            else None
-        ),
-        "output_price_per_million": (
-            str(model.output_price_per_million)
-            if model.output_price_per_million is not None
-            else None
-        ),
-        # `FRD-133`. Carried even when null, so an operator removing a cache price takes it off the
-        # gateway too — an event that omits a field the consumer would otherwise leave standing is
-        # how a deleted price keeps being charged.
-        "cached_input_price_per_million": (
-            str(model.cached_input_price_per_million)
-            if model.cached_input_price_per_million is not None
-            else None
-        ),
-        "cache_write_price_per_million": (
-            str(model.cache_write_price_per_million)
-            if model.cache_write_price_per_million is not None
-            else None
-        ),
-        # FRD-114. The gateway reads its own read-model on the request path and never calls
-        # Management (FR-8), so everything validation needs has to travel with the event.
+        "input_price_per_million": _price(model.input_price_per_million),
+        "output_price_per_million": _price(model.output_price_per_million),
+        "cached_input_price_per_million": _price(model.cached_input_price_per_million),
+        "cache_write_price_per_million": _price(model.cache_write_price_per_million),
         "capabilities": list(model.capabilities or []),
         "publisher": model.publisher,
         "platform": model.platform,
@@ -78,16 +67,8 @@ class ModelViewSet(viewsets.ModelViewSet[Model]):
     lookup_field = "name"
     lookup_value_regex = "[^/]+"
 
-    # Deliberately **not** paged, and this is the decision rather than an omission.
-    #
-    # The catalog is bounded by how many models an organisation has contracted — tens, not
-    # thousands — and two of the console's warnings ("N models have no price on file", "N have no
-    # capability declaration") are counts over the *whole* catalog. Paging it would turn those into
-    # "N on this page", which is a figure that means nothing. The console searches and pages it in
-    # the browser instead, which it can honestly do because it has the whole thing.
-    #
-    # `/api/v1/use-cases/` is the opposite case and is paged at the server: unbounded, and its
-    # serializer computes object-level permissions per row.
+    # Deliberately **not** paged: the catalog is bounded by what an organisation has contracted,
+    # and the console's warnings ("N models have no price on file") are counts over the whole of it.
     def get_queryset(self) -> QuerySet[Model]:
         return Model.objects.all().order_by("name")
 

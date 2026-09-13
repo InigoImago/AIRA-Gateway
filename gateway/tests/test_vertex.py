@@ -793,7 +793,7 @@ def test_a_catalogued_model_is_addressed_from_its_declaration() -> None:
     was not enough — and `addressing` was a column in both planes, carried over Kafka, that nothing
     read.
     """
-    from aira_gateway.upstreams.vertex.adapters import _targets
+    from aira_gateway.upstreams.vertex.regions import _targets
 
     # Both spellings, because a row written before a model could name several still carries the
     # singular one — and a redelivered Kafka event can carry it after a rollback.
@@ -808,7 +808,7 @@ def test_a_catalogued_model_is_addressed_from_its_declaration() -> None:
 def test_a_configured_model_still_wins() -> None:
     """An installation that named a model in configuration keeps the region it named. Changing
     where existing traffic goes would be the worst possible way to add a feature."""
-    from aira_gateway.upstreams.vertex.adapters import VertexModel, _targets
+    from aira_gateway.upstreams.vertex.regions import VertexModel, _targets
 
     configured = {"m": VertexModel("europe-west4", "google", "m")}
 
@@ -823,7 +823,7 @@ def test_a_catalogued_model_with_no_region_is_refused_by_name() -> None:
     """Not guessed. A guess about residency is the one guess this product may not make, and the
     message says which of the two places to fix."""
     from aira_gateway.upstreams.base import AmbiguousModel
-    from aira_gateway.upstreams.vertex.adapters import _targets
+    from aira_gateway.upstreams.vertex.regions import _targets
 
     with pytest.raises(AmbiguousModel) as caught:
         _targets({}, "google", "gemini-2.5-pro", {})

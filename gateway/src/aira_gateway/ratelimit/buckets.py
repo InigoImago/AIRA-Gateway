@@ -1,29 +1,18 @@
-"""Token buckets for rate limiting (FRD-405 §4.1).
+"""Token buckets for rate limiting (`FRD-405` §4.1).
 
-A bucket holds ``capacity`` tokens and refills at ``refill_per_second``. A request takes
-``cost`` tokens — one for an ordinary call, and **one per text for an embedding batch**, because a
-batch of 500 admitted as a single request turns a limit of 10 per minute into 5 000 texts per
-minute: intact on paper, gone in practice (`FRD-113` §5.3). Refill is computed from elapsed time
-on each check, so there is no timer and an idle bucket costs nothing.
+A bucket holds ``capacity`` tokens and refills at ``refill_per_second``, computed from elapsed time
+on each check — no timer, and an idle bucket costs nothing. A request takes ``cost`` tokens: one,
+or **one per text of an embedding batch**, or a batch of 500 would turn 10 per minute into 5 000
+texts (`FRD-113` §5.3). A bucket rather than fixed windows: a window lets twice the limit through
+across a boundary and cannot tell a short burst from sustained flooding.
 
-Why a token bucket rather than a counter per fixed window: a fixed window lets twice the limit
-through across a boundary (all of it in the last second of one minute, all of it again in the
-first second of the next) and it cannot tell a short legitimate burst from sustained flooding.
-A bucket expresses the actual intent — bursts are fine, a sustained flood is not.
+**A request is weighed against every bucket that applies to it, all or nothing**: taking from a
+use-case bucket before finding the member bucket empty would charge the use case for a refused
+request. That is a property of the interface, not a rule for callers to remember.
 
-**A request is weighed against every bucket that applies to it, all or nothing.** A caller may be
-subject to a use-case bucket and a member bucket at once; taking a token from the first before
-discovering the second is empty would charge the whole use case for a request that was refused,
-so one throttled member could starve everybody else. Taking from all of them or from none is
-therefore a property of the interface, not a rule callers are expected to remember.
-
-Two implementations, and the difference matters:
-
-- :class:`RedisTokenBucket` is shared by every gateway instance and does refill-test-take in one
-  Lua script, so two instances behind a load balancer enforce one limit rather than one each.
-- :class:`InMemoryTokenBucket` is per process. It is the fallback when Redis is unreachable, and
-  what the hermetic tests use. On N instances it permits N × the limit — degraded, but bounded,
-  which at the moment Redis is down is worth considerably more than letting everything through.
+- :class:`RedisTokenBucket` is shared by every gateway instance: refill-test-take in one script.
+- :class:`InMemoryTokenBucket` is per process — the fallback while Redis is unreachable, and what
+  the hermetic tests use. On N instances it permits N × the limit: degraded, but bounded.
 """
 
 from __future__ import annotations
@@ -36,16 +25,14 @@ from typing import Protocol
 
 from aira_common.counters import CountersUnavailable, DegradationLog, ScriptRunner
 
-# Refill, test, take — over every bucket, in one indivisible step. Splitting this into a read and
-# a write, or into one call per bucket, is precisely the race the shared bucket exists to remove.
-#
-# The clock is Redis' own (``TIME``), not the caller's: the instances sharing these buckets do not
-# share a clock, and letting each one supply its own would make the refill rate depend on which
-# instance happened to serve the request.
-#
-# Two passes on purpose. The first only *reads* and decides; the second writes. A single pass
-# would have to debit each bucket before knowing whether a later one refuses, which is the defect
-# this shape exists to make impossible.
+#: The lowest rate a bucket is built with. Below it ``capacity / refill`` overflows the script's
+#: expiry and the in-memory bucket answers ``inf`` seconds; callers already refuse a non-positive
+#: rate, and the floor keeps the two implementations agreeing.
+MINIMUM_RPM = 1
+
+# Refill, test, take — over every bucket, in one indivisible step, on Redis' own clock (``TIME``):
+# the instances sharing these buckets do not share a clock. Two passes on purpose: the first reads
+# and decides, the second writes, so no bucket is debited before a later one could refuse.
 _TAKE_TOKENS = """
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000.0
@@ -106,27 +93,14 @@ class BucketRequest:
     label: str = ""
 
 
-#: Below this a bucket refills so slowly that ``capacity / refill`` overflows the expiry the Lua
-#: script sets, and the in-memory bucket answers ``inf`` seconds. A limit of "nothing per minute"
-#: is not a limit anyone configures on purpose, and it is not this module's to interpret — the
-#: callers already refuse a non-positive rate. Stated as a floor so a future caller cannot make
-#: the two implementations disagree about division by zero.
-MINIMUM_RPM = 1
-
-
 def per_minute(
     key: str, limit_rpm: int, label: str = "", burst: int | None = None
 ) -> BucketRequest:
-    """A "``limit_rpm`` requests per minute" allowance, as the bucket that enforces it.
+    """A ``limit_rpm`` requests-per-minute allowance, as the bucket that enforces it.
 
-    Written once because it is written in three places and the three must not drift: a configured
-    rate limit (`FRD-405`), the bound on failed authentications (`ADR-0015`), and a throttling
-    suspension (`FRD-503`). The last of those is the reason this exists — it was building its own
-    object with the *wrong shape entirely*, and nothing compared the two because the seam between
-    them runs through the untyped ``app.state``.
-
-    ``burst`` is the bucket's size. Unset means the limit itself, so a plain "60 per minute"
-    behaves the way somebody reading it expects rather than allowing nothing through at once.
+    The one constructor for a configured rate limit (`FRD-405`), the failed-authentication bound
+    (`ADR-0015`) and a throttling suspension (`FRD-503`), so the three cannot drift. ``burst`` is
+    the bucket's size; unset means the limit itself.
     """
     rate = max(MINIMUM_RPM, limit_rpm)
     return BucketRequest(
@@ -170,8 +144,8 @@ class RedisTokenBucket:
     async def take(self, requests: Sequence[BucketRequest], cost: int = 1) -> BucketDecision:
         """Take ``cost`` tokens from each bucket, or report how long until they are available.
 
-        Raises :class:`CountersUnavailable` when Redis cannot be reached — the caller falls back
-        to the in-memory bucket rather than letting the request through (FRD-405 §4.3).
+        Raises :class:`CountersUnavailable` when Redis cannot be reached; the caller falls back
+        to the in-memory bucket rather than letting the request through (`FRD-405` §4.3).
         """
         if not requests:
             return ALLOWED
@@ -192,8 +166,7 @@ class RedisTokenBucket:
 class InMemoryTokenBucket:
     """Per-process buckets: the fallback while Redis is unreachable, and what unit tests use.
 
-    ``clock`` is injectable so refill over time can be tested without sleeping — a limiter whose
-    time-dependent behaviour is only ever exercised at one instant is barely tested at all.
+    ``clock`` is injectable so refill over time can be tested without sleeping.
     """
 
     def __init__(self, clock: object = None) -> None:
@@ -205,8 +178,7 @@ class InMemoryTokenBucket:
             return ALLOWED
         now = float(self._clock())  # type: ignore[operator]
 
-        # Same two passes as the Lua, for the same reason: decide over all of them before
-        # debiting any of them.
+        # The same two passes as the script: decide over all of them before debiting any.
         available: list[float] = []
         decision = ALLOWED
         for request in requests:
@@ -230,12 +202,10 @@ class InMemoryTokenBucket:
 
 
 class FallbackTokenBucket:
-    """Uses the shared buckets, and the local ones whenever the shared store is unreachable.
+    """The shared buckets, and the local ones whenever the shared store is unreachable.
 
-    The fallback is not "allow everything". Redis being down coincides with infrastructure
-    already under strain, which is the worst moment to stop bounding a runaway caller: one
-    client can exhaust the database connection pool and take every other use case down with it.
-    Per-process buckets are imprecise across instances and still prevent that.
+    Not "allow everything": Redis being down coincides with infrastructure under strain, the worst
+    moment to stop bounding a runaway caller who could exhaust the database pool for everyone.
     """
 
     FEATURE = "rate limiting"
@@ -245,9 +215,8 @@ class FallbackTokenBucket:
     ) -> None:
         self._shared = shared
         self._local = local
-        # `is not None`, not `or`: an empty log is falsy by design (so `if degradation:` reads
-        # as "is anything degraded"), and `or` would quietly swap a caller's log for a private
-        # one at exactly the moment nothing was wrong yet — which is always, at construction.
+        # `is not None`, not `or`: an empty log is falsy by design, and `or` would swap the
+        # caller's log for a private one at construction, when nothing is degraded yet.
         self._degradation = degradation if degradation is not None else DegradationLog()
 
     @property

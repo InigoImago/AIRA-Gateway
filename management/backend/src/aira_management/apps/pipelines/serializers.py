@@ -14,45 +14,32 @@ from rest_framework import serializers
 from aira_common.patterns import catastrophic_reason
 from aira_management.apps.pipelines.models import PipelineConfig
 
-#: `allow_check` left on 2026-08-11: which models a use case may call is a property of the
-#: use case (`FRD-308`), enforced at every hop, not a stage that ran once before routing.
+#: `allow_check` is not a step: which models a use case may call is a property of the use case
+#: (`FRD-308`), enforced at every hop rather than once before routing.
 STEP_TYPES = {"injection_filter", "model_route", "pii_filter"}
 
 MAX_STEPS = 32
 MAX_FALLBACK_MODELS = 16
 MAX_PATTERNS = 64
 MAX_PATTERN_LENGTH = 256
-# `MAX_MODELS = 64` stood here and was read by nothing. It bounded `allow_check`'s list of models,
-# and that step left on 2026-08-11 (see the note above `STEP_TYPES`) — nothing in a pipeline is a
-# list of models any more except the fallback chain, which has its own bound one line down.
-# Removed rather than kept: a named ceiling nothing applies is a bound this module claims and does
-# not have, and it reads as reassurance to whoever adds the next list.
 MAX_MODEL_LENGTH = 128
 MAX_CATEGORIES = 32
 MAX_TEXT_LENGTH = 4_000
 
-#: What a *blocking* LLM filter may be told to do when its classifier reaches no verdict
-#: (`FRD-125`). Validated **here**, where the value is authored, rather than left to the gateway:
-#: the gateway treats anything that is not "allow" as blocking, so a typo would be safe — and
-#: silently mean the opposite of what somebody typed, which is the failure this whole release is
-#: about, one layer up.
+#: What a *blocking* LLM filter does when its classifier reaches no verdict, and a PII filter when
+#: it fails (`FRD-125`). Validated where it is authored: the gateway treats anything but "allow" as
+#: blocking, so a typo would be safe and silently mean the opposite of what was typed.
 UNDETERMINED_POLICIES = ("block", "allow")
 
 
 def _check_regex(pattern: str) -> None:
     """Refuse a pattern that could hang a gateway worker, **where it is written**.
 
-    The rule itself lives in `aira_common.patterns`, because the gateway asks it too: it used to
-    compile whatever reached its read-model, so the protection was at one end of a link and the
-    trust at the other (`ADR-0018`). Refusing here is what makes the operator hear about it at the
-    moment they can still rewrite the pattern.
+    The rule lives in `aira_common.patterns` because the gateway asks it too (`ADR-0018`); refusing
+    here tells the operator while they can still rewrite the pattern, in the rule's own words.
     """
     reason = catastrophic_reason(pattern)
     if reason is not None:
-        # **The reason, not a guess at it.** This said "nests quantifiers" for as long as that was
-        # the only shape the rule knew; `a*a*a*a*…` is the other one, and an operator told to
-        # "rewrite it without a repeated group" would have gone looking for a group that is not
-        # there. The refusal comes from the same function that made the decision.
         raise serializers.ValidationError(
             f"Pattern '{pattern}' can hang the gateway: {reason}. Rewrite it so the engine has "
             "only one way to match."
@@ -79,6 +66,14 @@ def _check_text(config: dict[str, Any], field: str) -> None:
         )
 
 
+def _check_policy(config: dict[str, Any], field: str) -> None:
+    policy = config.get(field)
+    if policy is not None and policy not in UNDETERMINED_POLICIES:
+        raise serializers.ValidationError(
+            f"step.config.{field} must be one of {list(UNDETERMINED_POLICIES)}, not '{policy}'."
+        )
+
+
 def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
     if step_type == "injection_filter":
         patterns = config.get("patterns", [])
@@ -86,28 +81,15 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
         for pattern in patterns:
             _check_regex(pattern)
         _check_text(config, "instruction")
-        policy = config.get("on_undetermined")
-        if policy is not None and policy not in UNDETERMINED_POLICIES:
-            raise serializers.ValidationError(
-                f"step.config.on_undetermined must be one of {list(UNDETERMINED_POLICIES)}, "
-                f"not '{policy}'."
-            )
+        _check_policy(config, "on_undetermined")
     elif step_type == "pii_filter":
-        # The instruction is what the operator wants removed, the notice is what the caller is
-        # told about it. Both are free text and both are bounded like every other caller-supplied
-        # string here — the notice is put in front of a model's answer, so its length is somebody
-        # else's screen.
+        # What to remove, and what the caller is told about it. The notice is put in front of a
+        # model's answer, so it is bounded like every operator-authored string.
         _check_text(config, "instruction")
         _check_text(config, "notice")
-        policy = config.get("on_failure")
-        if policy is not None and policy not in UNDETERMINED_POLICIES:
-            raise serializers.ValidationError(
-                f"step.config.on_failure must be one of {list(UNDETERMINED_POLICIES)}, "
-                f"not '{policy}'."
-            )
+        _check_policy(config, "on_failure")
     elif step_type == "model_route":
-        # The sentence the caller is told about the classification (`FRD-309`). Bounded like every
-        # other operator-authored string here — it is put in front of somebody else's answer.
+        # The sentence the caller is told about the classification (`FRD-309`).
         _check_text(config, "notice")
         categories = config.get("categories", [])
         if not isinstance(categories, list) or len(categories) > MAX_CATEGORIES:
@@ -124,11 +106,9 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
 def _models_named_in(steps: list[Any], fallbacks: list[Any]) -> list[str]:
     """Every model a pipeline could reach, wherever it is written.
 
-    Mirrored by `aira_gateway.api.pipeline.models_named_in`, which asks the same question of an
-    **unsaved** pipeline posted to the dry run. Two implementations for one question is a smell —
-    and the alternative is worse here: this list is a *validation* concern in Management's own
-    vocabulary, and the shared library would have to carry the pipeline schema to hold it. Both
-    are one screenful, both are tested, and the pair is named in each so neither is edited alone.
+    Mirrored by `aira_gateway.api.pipeline.models_named_in` for an unsaved pipeline posted to the
+    dry run; sharing one would put the pipeline schema into the shared library.
+    `tools/tests/test_both_planes_find_the_same_models_in_a_pipeline.py` keeps the two in step.
     """
     named: list[str] = []
     for step in steps:
@@ -168,18 +148,9 @@ class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         """Every model this pipeline names must be **released to this use case** (`FRD-308`).
 
-        The gateway already refuses one at dispatch, so this cannot be the only check and is not
-        meant to be — it is the one that arrives while somebody can still fix it. Without it a
-        builder happily saves a routing rule pointing at a model the use case may not call, and
-        the failure surfaces later as refused traffic on a configuration that looks correct.
-
-        Collected from **everywhere a model can be written**: the classifier a filter runs, the
-        classifier a router runs, each category's target, the default target and the fallback
-        chain. A check that read one of those would refuse the obvious mistake and leave four.
-
-        A use case with **nothing released** can save a pipeline that names no model at all; the
-        moment it names one, this refuses — which is the honest order, because such a use case can
-        serve nothing either.
+        The gateway refuses one at dispatch as well; this is the check that arrives while somebody
+        can still fix it. Collected from **everywhere a model can be written** (`_models_named_in`).
+        A pipeline that names no model saves even on a use case with nothing released.
         """
         use_case = self.context.get("use_case")
         if use_case is None:

@@ -113,7 +113,7 @@ def test_somebody_the_directory_knows_can_be_granted_before_they_ever_sign_in(
 ) -> None:
     """`FRD-209` FR-4, finally holding on the half it never did."""
     monkeypatch.setattr(
-        "aira_management.apps.usecases.views.known_person",
+        "aira_management.apps.usecases.views.grants.known_person",
         lambda username: DirectoryEntry(
             kind=SubjectKind.USER, id=username, label="Ada", detail="ada@example.org"
         ),
@@ -131,7 +131,9 @@ def test_a_name_the_directory_does_not_know_is_refused(
     usecase: UseCase, boss: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An account created for a name nobody has is an accountability chain ending in a string."""
-    monkeypatch.setattr("aira_management.apps.usecases.views.known_person", lambda username: None)
+    monkeypatch.setattr(
+        "aira_management.apps.usecases.views.grants.known_person", lambda username: None
+    )
     refused = _client(boss).post(
         f"{BASE}uc-a/members/", {"username": "nobody", "role": "user"}, format="json"
     )
@@ -149,7 +151,7 @@ def test_a_directory_that_cannot_be_asked_says_so_rather_than_denying_the_person
     def _unavailable(username: str) -> DirectoryEntry:
         raise DirectoryUnavailable("no directory client is configured")
 
-    monkeypatch.setattr("aira_management.apps.usecases.views.known_person", _unavailable)
+    monkeypatch.setattr("aira_management.apps.usecases.views.grants.known_person", _unavailable)
     refused = _client(boss).post(
         f"{BASE}uc-a/members/", {"username": "newcomer", "role": "user"}, format="json"
     )

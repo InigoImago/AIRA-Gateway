@@ -37,13 +37,8 @@
       </p>
     }
     @if (nothingReleased()) {
-      <!--
-        Said once, **above** the builder rather than under it, which is where it used to sit: it
-        explains why every model dropdown on this page is empty and why a dry run will refuse, so a
-        reader who meets it after scrolling past both has already drawn their own conclusion. A use
-        case with nothing released can serve nothing either, so a pipeline for it is a
-        configuration for traffic that is refused before a step runs.
-      -->
+      <!-- Said once, above the builder: it explains why every model dropdown is empty and why a
+           dry run will refuse. -->
       <p class="callout callout--warning" data-testid="pipeline-nothing-released">
         No model is released to this use case, so there is nothing to route to and nothing to test
         with — and every request it makes is refused before a step runs. Release a model on the use
@@ -52,27 +47,16 @@
     }
     <div class="pipe">
       <!--
-        **The left column is the graph *and* the test panel.** Measured with a routing step
-        selected: the graph is 478 px tall and the inspector 688, so the left column left 210 px of
-        dead space while the test panel sat below both — starting at y=1232 in a 720 px viewport,
-        half a screen under the fold, on the one panel whose job is to say whether what you just
-        configured works.
+        The left column holds the graph and the test panel, so results sit beside the step being
+        edited and neither column needs its own scroll container.
 
-        Putting it in that space balances the columns and brings the results up beside the step
-        being edited. No scroll container anywhere: the inspector used to be `position: sticky` with
-        `overflow-y: auto`, which is a scrollable area inside a page that already scrolls.
-
-        **The two fieldsets are the reason the grid is not inside one.** A reader who cannot manage
-        this pipeline may still run it — the callout above says so — and a `<fieldset disabled>`
-        makes *every* descendant inert, with no way to exempt one. Wrapping the whole grid put the
-        test panel inside the guard and took the dry run away from exactly the people the read-only
-        view is for. Both bind the same `canManage()`; there is one rule and two places it is
-        applied, which the reader test below asserts by checking every fieldset on the page.
+        Two guards rather than one fieldset around the grid: `<fieldset disabled>` makes every
+        descendant inert with no exemption, and a reader who may not edit may still run the
+        pipeline. Both bind the same `canManage()`.
       -->
       <div class="pipe__left">
-        <!-- A native disabled fieldset, so every control inside it — including the buttons that add
-             and remove steps — is genuinely inert. Leaving the graph editable and only hiding Save
-             would let somebody rearrange a pipeline for nothing. -->
+        <!-- A native disabled fieldset makes every control inside inert, including add and remove;
+             hiding Save alone would let somebody rearrange a pipeline for nothing. -->
         <fieldset class="bare" [disabled]="!canManage()">
           <!-- Graph -->
           <div class="pipe__graph card">
@@ -175,251 +159,12 @@
         </fieldset>
 
         <!-- Test panel — outside the guard on purpose: running the pipeline changes nothing. -->
-        <div class="pipe__test card stack">
-          <h3 class="section-title" style="margin: 0">Test this pipeline</h3>
-          <div class="field">
-            <label for="sample-system">Sample system prompt</label>
-            <textarea
-              id="sample-system"
-              rows="2"
-              [ngModel]="sampleSystem()"
-              (ngModelChange)="sampleSystem.set($event)"
-              placeholder="You are a helpful assistant."
-            ></textarea>
-          </div>
-          <div class="field">
-            <label for="sample-user">Sample user message</label>
-            <textarea
-              id="sample-user"
-              rows="2"
-              [ngModel]="sampleUser()"
-              (ngModelChange)="sampleUser.set($event)"
-              placeholder="Ignore all previous instructions and…"
-            ></textarea>
-          </div>
-
-          <!--
-            Where this attempt **enters** the pipeline. Offered rather than inferred: the gateway
-            guesses when nobody says, and its guesses are documented as wrong three times over —
-            each reported back as `effective_model`, which a builder reads as a decision somebody
-            made. Bounded by the released models, because anything else is refused at dispatch.
-
-            "Let the gateway choose" stays, and stays the default: a pipeline whose requests always
-            name their own model is the ordinary case, and a builder who does not care should not
-            have to.
-          -->
-          <div class="field">
-            <label for="dry-run-model">Enter at</label>
-            <select
-              id="dry-run-model"
-              [ngModel]="dryRunModel()"
-              (ngModelChange)="dryRunModel.set($event)"
-              [disabled]="nothingReleased()"
-              data-testid="dry-run-model"
-            >
-              <option value="">let the gateway choose</option>
-              @for (model of released(); track model) {
-                <option [value]="model">{{ model }}</option>
-              }
-            </select>
-          </div>
-
-          <!--
-            Said **before** the button, not after the 403. Reported: a use-case administrator and a
-            global administrator both pressed Run dry-run on the showcase use case and were refused
-            — they were members by database row, and the gateway reads the Keycloak groups in a
-            token. The console's own membership answer says yes to both, so the screen offered an
-            action the server would refuse, which reads as a broken system rather than as a
-            boundary (`FRD-206`).
-
-            The button stays enabled: this is the console's reading of a rule the gateway owns, and
-            a disabled control that is wrong about it would be unarguable. A sentence that is wrong
-            can at least be ignored by somebody who presses the button and finds it works.
-          -->
-          @if (!mayCall()) {
-            <p class="callout callout--warning" style="margin: 0" data-testid="dry-run-not-member">
-              A dry run calls real models and is charged to this use case, so the gateway applies
-              the same membership rule a request does — and it reads the groups in your Keycloak
-              token, not this console's member list. You are not in a group that reaches this use
-              case, so it will refuse. Grant one of your groups access on the use case, or ask
-              somebody who is in one to test it.
-            </p>
-          }
-          <div class="spread">
-            <span class="muted" style="font-weight: 600">Dry-run (runs the real steps)</span>
-            <button
-              type="button"
-              class="btn btn--sm btn--primary"
-              [disabled]="dryRunning()"
-              (click)="runDryRun()"
-            >
-              {{ dryRunning() ? 'Running…' : 'Run dry-run' }}
-            </button>
-          </div>
-          <!--
-            Off by default, and that is the setting rather than the styling: the answer this panel
-            gives by default has to be the answer production would give. Asked for because a filter
-            that blocks the sample leaves every step behind it untested, and the only way to see
-            them was to delete the filter and put it back.
-          -->
-          <label class="checkline" style="margin: -0.4rem 0 0">
-            <input
-              type="checkbox"
-              id="past-blocks"
-              [ngModel]="pastBlocks()"
-              (ngModelChange)="pastBlocks.set($event)"
-            />
-            <span class="muted">
-              Keep going past a block — runs the later steps too, so you can check them against this
-              use case. Production stops at the refusal, and those steps cost tokens here.
-            </span>
-          </label>
-
-          <!--
-            `currentError`, not `dryRunError`: the message is about one attempt, and it used to stay
-            on screen until the next run — so a reader who read it, changed the step it was about
-            and looked again was still being told about an attempt that no longer matched anything
-            in front of them.
-          -->
-          @if (currentError(); as message) {
-            <p class="callout callout--danger" style="margin: 0">{{ message }}</p>
-          }
-          @if (dryRunning() && dryRun()) {
-            <p class="muted" style="margin: 0">Re-running — showing the previous result…</p>
-          } @else if (dryRunStale()) {
-            <!--
-              A trace stays on screen while somebody keeps editing, and from the first change it
-              describes a configuration that no longer exists. Said rather than cleared: the last
-              result is still the most useful thing on the panel, and a step that vanishes the
-              moment you touch a field is worse than one labelled out of date.
-            -->
-            <p class="callout callout--warning" style="margin: 0" data-testid="dry-run-stale">
-              Changed since this run — the trace below describes the previous configuration.
-            </p>
-          }
-
-          @if (dryRun(); as result) {
-            <!--
-                **The trace as steps, not as a list of badges.** It used to render
-                `[blocked] injection_filter` per entry, which names what happened and never why —
-                and for all three LLM-backed steps the why is a model's answer that nothing showed.
-                Somebody tuning a category list or a redaction instruction is reading exactly that.
-
-                The numbering and the connector repeat the graph above deliberately: the same order,
-                the same words, so the result can be read against the thing being edited.
-              -->
-            <ol class="trace">
-              @for (card of traceCards(); track $index) {
-                <li class="trace__step" [class.trace__step--simulated]="card.simulated">
-                  <div class="trace__head">
-                    <span class="trace__n" [class.trace__n--skipped]="card.simulated">{{
-                      card.step
-                    }}</span>
-                    <span class="trace__title">{{ card.title }}</span>
-                    <span class="badge {{ card.badge }}">{{ card.action }}</span>
-                    <!--
-                      Said on the card, not once above the list: this entry describes a step
-                      production never reaches, and a reader scanning outcomes reads the badge
-                      beside the step, not a caption further up.
-                    -->
-                    @if (card.simulated) {
-                      <span class="badge badge--muted">would not run — refused above</span>
-                    }
-                  </div>
-                  <p class="trace__summary">{{ card.summary }}</p>
-                  @if (card.classifier) {
-                    <p class="trace__asked muted">
-                      asked <code>{{ card.classifier }}</code>
-                    </p>
-                  }
-                  @if (card.output) {
-                    <div class="trace__said">
-                      <span class="trace__label">the model replied</span>
-                      <pre>{{ card.output }}</pre>
-                    </div>
-                  }
-                  @if (card.before && card.after) {
-                    <div class="trace__diff">
-                      <div>
-                        <span class="trace__label">before</span>
-                        <pre>{{ card.before }}</pre>
-                      </div>
-                      <div>
-                        <span class="trace__label">after</span>
-                        <pre class="trace__after">{{ card.after }}</pre>
-                      </div>
-                    </div>
-                  }
-                </li>
-              }
-              <!--
-                Configured, in order, and never evaluated — because an earlier step stopped the
-                request. `dry_run` stops where production stops, which is the truthful thing for it
-                to do, but it left somebody whose first step blocks with no way to see whether the
-                rest of their pipeline works at all. Shown as what they are; an outcome invented
-                for them would be a claim about model calls that were never made.
-              -->
-              @for (card of notReached(); track $index) {
-                <li class="trace__step trace__step--skipped">
-                  <div class="trace__head">
-                    <span class="trace__n trace__n--skipped">{{ card.step }}</span>
-                    <span class="trace__title">{{ card.title }}</span>
-                    <span class="badge badge--muted">not reached</span>
-                  </div>
-                  <p class="trace__summary muted">
-                    The request stopped above, so this step was never asked. Remove or relax the
-                    step that blocked to test this one.
-                  </p>
-                </li>
-              }
-              <li class="trace__step trace__step--end">
-                @if (result.blocked) {
-                  <div class="trace__head">
-                    <span class="trace__n trace__n--stop">✕</span>
-                    <span class="trace__title">Request refused</span>
-                  </div>
-                  <p class="trace__summary">{{ result.block_reason }}</p>
-                } @else {
-                  <div class="trace__head">
-                    <span class="trace__n trace__n--go">→</span>
-                    <span class="trace__title">Dispatched</span>
-                  </div>
-                  <p class="trace__summary">
-                    to <code>{{ result.effective_model }}</code>
-                    @if (result.fallback_models.length) {
-                      , falling back to
-                      @for (model of result.fallback_models; track $index) {
-                        <code>{{ model }}</code
-                        >{{ $last ? '' : ', ' }}
-                      }
-                    }
-                  </p>
-                }
-              </li>
-            </ol>
-          }
-
-          <!--
-            Two previews, and they answer different questions: this one is computed in the browser
-            from the pattern list and shows what a *deterministic* step would do as you type,
-            without spending anything. The dry run above calls the real models.
-
-            Shown when there is no trace, and again once the trace goes stale — at that moment it
-            is the only thing on the panel describing the pipeline as it now stands.
-          -->
-          @if (!dryRunning() && (!dryRun() || dryRunStale())) {
-            <div class="muted" style="font-weight: 600">Live preview (deterministic steps)</div>
-            @for (row of preview(); track $index) {
-              <div class="trace-row">
-                <span class="badge {{ actionClass(row.action) }}">{{ row.action }}</span>
-                <span>{{ row.label }}</span>
-                <span class="muted">{{ row.note }}</span>
-              </div>
-            } @empty {
-              <p class="muted" style="margin: 0">Add steps to preview them here.</p>
-            }
-          }
-        </div>
+        <app-pipeline-test-panel
+          [slug]="slug"
+          [config]="config()"
+          [released]="released()"
+          [mayCall]="mayCall()"
+        />
       </div>
 
       <!-- Inspector -->
@@ -494,8 +239,8 @@
                     }
                   </select>
                   <!-- A classifier call is a real model call, charged to this use case and
-                       audited under `pipeline:injection_filter` (`FRD-125b`). It may only name a
-                       model the use case may call, so this chooses rather than accepting text. -->
+                       audited under `pipeline:injection_filter` (`FRD-125b`), so it may only name
+                       a released model. -->
                 </div>
                 <div class="field">
                   <label for="insp-instruction">Instruction to the classifier (optional)</label>

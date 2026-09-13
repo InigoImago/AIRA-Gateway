@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.config import GatewaySettings
@@ -20,27 +22,28 @@ def _use_sqlite(settings: GatewaySettings) -> bool:
     return settings.test_database or ("pytest" in sys.modules)
 
 
-async def _create(subject: str, label: str | None, days: int | None) -> tuple[str, str]:
+@asynccontextmanager
+async def _key_service() -> AsyncIterator[ApiKeyService]:
+    """An `ApiKeyService` on a fresh engine, disposed of on the way out."""
     settings = GatewaySettings()
     engine = build_engine(settings.database_url(use_sqlite=_use_sqlite(settings)))
     await create_all(engine)
     try:
         async with build_sessionmaker(engine)() as session:
-            full, record = await ApiKeyService(session).create(subject, label, expires_in_days=days)
-            return full, record.prefix
+            yield ApiKeyService(session)
     finally:
         await engine.dispose()
+
+
+async def _create(subject: str, label: str | None, days: int | None) -> tuple[str, str]:
+    async with _key_service() as service:
+        full, record = await service.create(subject, label, expires_in_days=days)
+        return full, record.prefix
 
 
 async def _revoke(prefix: str) -> bool:
-    settings = GatewaySettings()
-    engine = build_engine(settings.database_url(use_sqlite=_use_sqlite(settings)))
-    await create_all(engine)
-    try:
-        async with build_sessionmaker(engine)() as session:
-            return await ApiKeyService(session).revoke(prefix)
-    finally:
-        await engine.dispose()
+    async with _key_service() as service:
+        return await service.revoke(prefix)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,8 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     create = api_key.add_parser("create")
     create.add_argument("--subject", required=True)
     create.add_argument("--label", default=None)
-    # Bounded like every key Management issues. There is deliberately no `--never-expires`: a
-    # credential minted by hand during an incident is the one nobody remembers to take away.
+    # Bounded like every key Management issues. No `--never-expires`: a credential minted by hand
+    # during an incident is the one nobody remembers to take away.
     create.add_argument(
         "--days",
         type=int,

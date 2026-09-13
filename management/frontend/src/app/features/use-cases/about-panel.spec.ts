@@ -51,8 +51,7 @@ function setup(options: { canManage?: boolean; update?: unknown } = {}) {
 
 describe('AboutPanel', () => {
   it('shows the text, not a form, until somebody asks to edit', async () => {
-    /** Reported: a page of input boxes does not read as a description, it reads as a form somebody
-     *  left open. The text is what an overview is for; the pencil is the way in. */
+    // An overview is read as text; open inputs read as a form somebody left open.
     const page = setup();
     await Promise.resolve();
     page.fixture.detectChanges();
@@ -75,8 +74,7 @@ describe('AboutPanel', () => {
   });
 
   it('forgets a cancelled draft rather than leaving it on screen', async () => {
-    /** A cancel that kept the text would show, as the use case's description, something the server
-     *  has never been told — the same lie as an unsaved field looking saved. */
+    // A kept draft would show as the description something the server was never told.
     const page = setup();
     page.panel.startEditing();
     page.panel.edit('description', 'half a thought');
@@ -100,9 +98,8 @@ describe('AboutPanel', () => {
   });
 
   it('does not overwrite what is being typed when the parent reloads', async () => {
-    /** The parent reloads the use case after every other panel's save. Without the touched flag
-     *  the effect would refill both fields from the server mid-sentence, and the reader would
-     *  watch their own text vanish with nothing to explain it. */
+    // The parent reloads after every other panel's save; the touched flag keeps the effect from
+    // refilling the fields mid-sentence.
     const page = setup();
     page.panel.startEditing();
     page.panel.edit('description', 'half a sentence');
@@ -114,10 +111,7 @@ describe('AboutPanel', () => {
   });
 
   it('shows the values to a reader who may not change them, without a way in', async () => {
-    /** The read view is the same for everybody; what a reader without rights loses is the pencil.
-     *  Not the released-models mistake — there the *control itself* was replaced by prose and the
-     *  reader could not tell configuration from decoration. Here the text is the content, and the
-     *  control is one click away for whoever may use it. */
+    // The read view is the same for everybody; a reader without rights only loses the Edit button.
     const page = setup({ canManage: false });
     await Promise.resolve();
     page.fixture.detectChanges();

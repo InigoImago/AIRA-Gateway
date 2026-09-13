@@ -85,7 +85,7 @@ describe('describeRule', () => {
   });
 
   it('names the byte figure a payload rule needs', () => {
-    // The kind that was declared with one number and needed two — the defect stage A shipped.
+    // `payload_size` needs a byte figure as well as a count (`FRD-501` §7).
     expect(describeRule(rule({ kind: 'payload_size', parameter: 1_000_000 }))).toContain(
       '1000000 bytes',
     );
@@ -122,9 +122,8 @@ describe('describeAction', () => {
   });
 
   it('does not let "asked to block, did not" read as "blocked"', () => {
-    // The engine records `detected_not_enforced` in those words for a reason: a rule that asked
-    // for a block and got none is a finding *and* a gap, and a console that showed only "blocked"
-    // would report traffic as stopped that was still flowing.
+    // A rule that asked for a block and got none is a finding *and* a gap; showing "blocked" would
+    // report traffic as stopped that was still flowing.
     const sentence = describeAction(event({ action_taken: 'detected_not_enforced' }));
 
     expect(sentence).toContain('it was not');
@@ -143,11 +142,6 @@ describe('unitOf', () => {
 });
 
 describe('rule-language — every kind has words', () => {
-  // **A fourth hand-written copy of a closed vocabulary**, and it was wrong in the same two ways
-  // as the other three: it listed `token_spike`, which does not exist, and omitted
-  // `blocked_prompt_rate`, which does. So this test asserted that every kind has words by checking
-  // a list that was missing the kind without any — a guard agreeing with the thing it guards.
-  //
   // Kept explicit, because TypeScript cannot import the Python enum; held to it by
   // `tools/tests/test_the_console_speaks_the_closed_vocabulary.py`, which compares every copy
   // against `aira_common.anomalies` in both directions.
@@ -162,8 +156,7 @@ describe('rule-language — every kind has words', () => {
   ];
 
   it('describes all seven, and none of them by their slug', () => {
-    // The vocabulary is closed (`aira_common.anomalies`), which is exactly what makes this safe
-    // to write — and what makes a missing case a real gap rather than a default nobody hits.
+    // The vocabulary is closed (`aira_common.anomalies`), so a missing case is a real gap.
     for (const kind of KINDS) {
       const sentence = describeRule(rule({ kind, threshold: 200, parameter: 1000 }));
       expect(sentence, kind).not.toContain(kind);
@@ -173,7 +166,7 @@ describe('rule-language — every kind has words', () => {
 
   it('falls back to the raw kind rather than inventing a meaning', () => {
     // A kind the gateway grows before this console knows it must read as unfamiliar, not as
-    // something else — the same rule as "undeclared means the baseline and nothing more".
+    // something else.
     expect(describeRule(rule({ kind: 'future_kind' }))).toContain('future_kind');
   });
 

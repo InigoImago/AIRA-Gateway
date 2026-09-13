@@ -348,8 +348,10 @@ def test_the_writer_bound_sits_above_the_door_bound() -> None:
 # =================================================================================================
 
 _API = Path(__file__).resolve().parents[1] / "src" / "aira_gateway" / "api"
-#: Every module that reads a caller's body. `serving.py` is the reader itself and is exempt.
-_READERS = sorted(path for path in _API.rglob("*.py") if path.name != "serving.py")
+#: Every module that reads a caller's body. The `serving` package holds the reader and is exempt.
+_READERS = sorted(
+    path for path in _API.rglob("*.py") if "serving" not in path.relative_to(_API).parts
+)
 
 
 def test_there_are_modules_to_check() -> None:

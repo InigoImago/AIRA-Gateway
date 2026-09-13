@@ -1,33 +1,15 @@
 """Is the upstream reachable, and how do we ask without becoming the problem (FRD-117 §5.2).
 
-This is the design point the FRD spends its space on, so it is worth restating where it is
-implemented.
+Probing every model on every readiness check would be a continuous stream of billable calls and
+would make readiness as slow as the slowest upstream — evicting healthy pods. So a background
+prober runs on an interval and `/readyz` reads the *last verdict*. The rules that follow:
 
-The predecessor's `/health` probes the database **and every registered model** on every call. With
-a Kubernetes readiness probe every few seconds across every replica, that is a continuous stream of
-upstream calls — billable ones, against a provider quota, answering a question whose answer changes
-rarely. Worse, it makes the probe **as slow as the slowest upstream**, so one degraded provider
-causes readiness timeouts and evicts pods that were serving perfectly well. A health check that can
-take down a healthy service is a liability, not a safeguard.
-
-So the probe runs in the background on an interval and `/readyz` reads the *last verdict*. Three
-consequences follow, and each is a rule rather than a detail:
-
-- **The probe never generates.** An adapter that can answer cheaply implements ``ping``; a
-  generation would cost money to answer "are you there", and against a self-deployed endpoint it
-  would **wake a scaled-to-zero model** (`ADR-0012` §5), turning every health check into a cold
-  start.
-- **An adapter with no ``ping`` is reported as unprobed, not as healthy.** The first draft of this
-  called ``models()`` — which is *local configuration*, evaluated once when the registry is built.
-  It cannot fail later and says nothing about the network, so every verdict would have been a
-  confident green describing nothing at all. That is worse than no probe, because a green board is
-  acted upon.
-- **A stale verdict is reported as stale**, never as healthy. "The prober has not run" is itself
-  information, and the version that rounds it to "fine" is the one that hides an outage.
-- **Unreachable is degraded, not down.** A gateway that still refuses over-budget requests, still
-  enforces limits and still serves reporting is not down, and evicting it helps nobody. It feeds
-  the `DegradationLog` from `FRD-405`, so there is one vocabulary for "something is broken and we
-  are still serving" rather than a second one nobody correlates.
+- **The probe never generates.** An adapter answers cheaply through ``ping``; a generation costs
+  money and would wake a scaled-to-zero self-deployed model (`ADR-0012` §5).
+- **No ``ping`` is reported as unprobed**, never healthy — "we did not look" is not "it is fine".
+- **A stale verdict is reported as stale**, never healthy: a dead prober must be visible.
+- **Unreachable is degraded, not down.** It feeds the `DegradationLog` (`FRD-405`), one vocabulary
+  for "something is broken and we are still serving".
 """
 
 from __future__ import annotations
@@ -41,23 +23,21 @@ from aira_common.counters import DegradationLog
 from aira_common.logging import get_logger
 from aira_gateway.upstreams.base import ProviderRegistry
 
-_log = get_logger("aira_gateway.diagnostics")
-
-#: How often the background prober runs. A minute is far more often than the answer changes and far
-#: less often than a readiness probe would ask.
+#: How often the background prober runs: far more often than the answer changes, far less often
+#: than a readiness probe asks.
 DEFAULT_INTERVAL_SECONDS = 60.0
 
-#: How long a verdict is trusted before it is reported as **stale**. Deliberately longer than the
-#: interval so a single slow round does not flap, and short enough that a prober which died is
-#: visible within a couple of cycles rather than never.
+#: How long a verdict is trusted before it is reported **stale**: longer than the interval so one
+#: slow round does not flap, short enough that a dead prober shows within a couple of cycles.
 DEFAULT_STALE_AFTER_SECONDS = 180.0
 
-#: The probe's own timeout. Short on purpose: this asks "are you there", and an upstream that takes
-#: ten seconds to answer that has already answered it.
+#: The probe's own timeout. Short: an upstream that takes ten seconds to say "here" has answered.
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
 #: The feature name in the shared degradation log.
 FEATURE = "upstream reachability"
+
+_log = get_logger("aira_gateway.diagnostics")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,14 +48,10 @@ class Verdict:
     ok: bool
     detail: str
     at: float
-    #: Whether a remote question was actually asked. An adapter with no cheap call is reported as
-    #: *unprobed* rather than as healthy — the distinction the first draft of this module missed.
+    #: Whether a remote question was actually asked; an adapter with no cheap call is *unprobed*.
     probed: bool = True
-    #: How long the question took. It was measured all along and spent only on a formatted string
-    #: inside `detail`, which no consumer can read as a number — so the compatibility surface's
-    #: `time_taken`, which the predecessor reports per check, had nowhere to come from. `None`
-    #: where nothing was asked: an unprobed adapter took no time, and reporting 0.0 would make
-    #: "we did not look" indistinguishable from "it answered instantly".
+    #: How long the question took, as a number (KIRA's `time_taken`). `None` where nothing was
+    #: asked — 0.0 would make "we did not look" read as "it answered instantly".
     took_seconds: float | None = None
 
     def as_dict(self, now: float, stale_after: float) -> dict[str, object]:
@@ -86,8 +62,7 @@ class Verdict:
             "probed": self.probed,
             "detail": self.detail,
             "age_seconds": round(age, 1),
-            # Reported, not inferred by the reader. A caller that had to compare a timestamp
-            # against an interval it cannot see would get it wrong in one direction or the other.
+            # Reported, not left to a reader who cannot see the interval.
             "stale": age > stale_after,
         }
 
@@ -96,9 +71,8 @@ class Verdict:
 class UpstreamProbe:
     """A background prober whose verdicts `/readyz` reads.
 
-    ``clock`` and the interval are injectable so staleness can be tested without waiting — a
-    property that is only ever exercised at one instant is barely tested at all, and this one is
-    about the passage of time.
+    ``clock`` and the interval are injectable so staleness — a property about the passage of
+    time — can be tested without waiting.
     """
 
     registry: ProviderRegistry
@@ -116,9 +90,7 @@ class UpstreamProbe:
     async def probe_once(self) -> dict[str, Verdict]:
         """Ask every provider the cheapest question there is, concurrently.
 
-        Concurrently because one slow provider must not delay the verdict for the others — the
-        serial version reintroduces "as slow as the slowest upstream" inside the prober, where it
-        is merely wasteful rather than fatal, but it is the same mistake.
+        Concurrently, so one slow provider cannot delay the verdict for the others.
         """
         providers = {
             getattr(provider, "probe_name", None) or type(provider).__name__: provider
@@ -135,13 +107,8 @@ class UpstreamProbe:
     def _each_provider(self) -> list[object]:
         """Every registered adapter — including one that serves no *configured* model.
 
-        The second half was missing until 2026-08-10, and it stopped being a hypothetical the day
-        cataloguing a model became enough to serve it (`FRD-507` stage B). An adapter whose
-        configured list is empty — which a Google AI Studio deployment now normally has — appeared
-        in no model's provenance, so this walked past it and `/readyz` said **nothing at all**
-        about that upstream. Nothing is the wrong answer: `FRD-117`'s rule is that "we did not
-        look" and "it is fine" are different verdicts, and an upstream that is silently not probed
-        reads as the first while behaving like neither.
+        Since cataloguing a model is enough to serve it (`FRD-507` stage B), an adapter can have an
+        empty configured list and still carry traffic; it must still be probed.
         """
         return list(self.registry.each())
 
@@ -149,9 +116,7 @@ class UpstreamProbe:
         """One provider, one cheap remote question, one verdict."""
         ping = getattr(provider, "ping", None)
         if ping is None:
-            # Said, not assumed. An adapter with nothing cheap to ask cannot be reported green on
-            # that basis — "we did not look" and "it is fine" are different answers, and only one
-            # of them is safe to act on.
+            # Said, not assumed: nothing cheap to ask cannot be reported green.
             return Verdict(name, True, "no probe available; not checked", self._now(), probed=False)
 
         start = self._now()
@@ -166,8 +131,8 @@ class UpstreamProbe:
                 took_seconds=round(self._now() - start, 3),
             )
         except Exception as exc:  # noqa: BLE001 — any failure here is "not reachable"
-            # Deliberately broad: a probe that let an unexpected exception escape would kill the
-            # background task, and every verdict would then quietly go stale rather than red.
+            # Broad on purpose: an escaping exception would kill the background task, and every
+            # verdict would quietly go stale rather than red.
             return Verdict(
                 name,
                 False,
@@ -195,13 +160,7 @@ class UpstreamProbe:
             self.degradation.working(FEATURE)
 
     def snapshot(self) -> dict[str, dict[str, object]]:
-        """What `/readyz` reports. Never performs I/O — that is the whole point.
-
-        The value type was `object`, which is the same as saying nothing: every consumer then read
-        `verdict.get("ok")` through an untyped `app.state` and nobody checked that a verdict is a
-        mapping at all. Declared properly the day the readers started saying what they had got —
-        and mypy immediately named three of those reads.
-        """
+        """What `/readyz` reports. Never performs I/O — that is the whole point."""
         now = self._now()
         return {
             name: verdict.as_dict(now, self.stale_after)
@@ -212,9 +171,8 @@ class UpstreamProbe:
     def degraded(self) -> bool:
         """True when a provider is unreachable **or** its verdict has gone stale.
 
-        Stale counts, and that is the part worth arguing for: a prober that has died leaves the
-        last good verdict behind, and a reader that trusted it would see a green board describing
-        a minute that has long passed.
+        Stale counts: a dead prober leaves its last good verdict behind, describing a minute that
+        has long passed.
         """
         now = self._now()
         if not self._verdicts:

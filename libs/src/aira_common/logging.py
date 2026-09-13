@@ -1,9 +1,9 @@
-"""Structured logging setup based on structlog.
+"""Structured logging on structlog, shared by both services.
 
-Both AIRA services call :func:`configure_logging` once at startup and obtain loggers via
-:func:`get_logger`. Logs are rendered as JSON by default and go to **two** sinks from one
-rendering — stdout, and a stdlib logger the OTLP handler ships (:data:`EXPORT_LOGGER`, `FRD-001`
-FR-6). Context variables (e.g. trace/request ids) are merged in automatically.
+Each service calls :func:`configure_logging` once at start-up and gets loggers from
+:func:`get_logger`. Lines are rendered as JSON by default, and one rendering goes to **two** sinks:
+stdout, and the stdlib logger :data:`EXPORT_LOGGER` that the OTLP handler ships (`FRD-001` FR-6).
+Context variables (trace and request ids) are merged in.
 """
 
 from __future__ import annotations
@@ -18,7 +18,25 @@ from opentelemetry import trace
 
 from aira_common.observability import install_access_log_redaction
 
+#: The stdlib logger every rendered line is also handed to, so the OTLP handler on the root logger
+#: can ship it (`FRD-001` FR-6). structlog's `PrintLoggerFactory` alone creates no `LogRecord`.
+EXPORT_LOGGER = "aira.app"
+
+#: The event-dict key that keeps a line **out of the OTLP log pipeline** while leaving it on stdout
+#: (`FRD-617` §3.2) — for lines *about* the thing that ships lines, which would otherwise feed
+#: themselves back into it. `aira_common.integration_debug` marks its `otel` lines with it.
+LOCAL_ONLY_KEY = "local_only"
+
 _LEVELS: dict[str, int] = logging.getLevelNamesMapping()
+
+#: structlog method name → stdlib level, for the two `getLevelNamesMapping` lacks. Both would fall
+#: to `INFO` otherwise, and a severity that understates is how an alert stops firing.
+_METHOD_LEVELS: dict[str, int] = {"exception": logging.ERROR, "msg": logging.INFO}
+
+#: How :data:`LOCAL_ONLY_KEY` reaches :func:`forward_to_stdlib`, which runs after the renderer and
+#: sees a string. A context variable rather than a global, so one thread's local-only line cannot
+#: suppress another's ordinary one; it is set on every line, so it never outlives its call.
+_hold_back: ContextVar[bool] = ContextVar("aira_log_hold_back", default=False)
 
 
 def add_trace_context(
@@ -32,76 +50,24 @@ def add_trace_context(
     return event_dict
 
 
-#: The stdlib logger an application log line is *also* handed to, so that whatever is attached to
-#: the root logger can ship it (`FRD-001` FR-6).
-#:
-#: **The third of the observability baseline that was not wired.** `configure_observability` has
-#: attached an OTLP `LoggingHandler` to the root logger since `FRD-001`, and this module configured
-#: structlog with `PrintLoggerFactory` — which writes to stdout and creates no `logging.LogRecord`
-#: at all. So every line this system writes about itself (`rate_limited`, `oidc_token_rejected`,
-#: `config_event_failed`, `unhandled_error`) went to stdout and nowhere else, while the Compose
-#: stack collects no container output and uvicorn's access logger is configured with
-#: `propagate: False`. Traces and metrics arrived; **logs were the signal nobody had**, under a
-#: diagram in `FRD-001` §5 that says `logs (Loki)`.
-#:
-#: Two correct halves and no wire, the shape `LESSONS.md` §1 lists — and one that had been
-#: *written down* rather than fixed: the 2026-08-31 DEVLOG entry names it in passing as something
-#: "a reader will look for and not find". A note is not a wire.
-EXPORT_LOGGER = "aira.app"
-
-#: The event-dict key a caller sets to keep a line **out of the OTLP log pipeline** while leaving
-#: it on stdout unchanged (`FRD-617` §3.2).
-#:
-#: It exists for exactly one shape: a line *about* the thing that ships lines. A report that a span
-#: export failed becomes a log record, which is queued for export, which fails, which produces
-#: another report — a trickle that never lets the pipeline go quiet and makes "did my logs get
-#: through" a question that answers itself. `aira_common.integration_debug` marks its `otel` events
-#: with this; nothing else needs it.
-LOCAL_ONLY_KEY = "local_only"
-
-#: How the flag reaches :func:`forward_to_stdlib`, which runs **after** the renderer and therefore
-#: sees a string rather than the event dict. A context variable rather than a module global because
-#: several threads log at once — each thread carries its own context, so one thread's local-only
-#: line cannot suppress another thread's ordinary one. Set on every line by
-#: :func:`hold_back_from_export`, so a value can never outlive the call that set it.
-_hold_back: ContextVar[bool] = ContextVar("aira_log_hold_back", default=False)
-
-
 def hold_back_from_export(
     _logger: Any, _method_name: str, event_dict: structlog.typing.EventDict
 ) -> structlog.typing.EventDict:
     """structlog processor: take :data:`LOCAL_ONLY_KEY` off the event and remember it.
 
-    Placed immediately before the renderer, so the flag is gone by the time the line is rendered —
-    stdout shows an ordinary line, with no marker explaining a mechanism the reader does not need.
+    Immediately before the renderer, so stdout shows an ordinary line with no marker.
     """
     _hold_back.set(bool(event_dict.pop(LOCAL_ONLY_KEY, False)))
     return event_dict
 
 
-#: structlog's method name → the stdlib level to emit at. `exception` is `error` with a traceback
-#: and has no entry in `getLevelNamesMapping`; `msg` is structlog's own generic method. Both would
-#: otherwise fall to `INFO`, and a severity that understates is how an alert stops firing.
-_METHOD_LEVELS: dict[str, int] = {"exception": logging.ERROR, "msg": logging.INFO}
-
-
 def forward_to_stdlib(_logger: Any, method_name: str, event: Any) -> Any:
     """structlog processor: hand the **rendered** line to stdlib logging, then return it unchanged.
 
-    Placed after the renderer on purpose. A processor before it would have to render a second time
-    to produce something a `LogRecord` can carry, and two renderings of one event are two answers
-    to *what did this line say*. One rendering, two sinks: stdout is byte-for-byte what it was.
-
-    Never allowed to fail the log call. A handler that raises — an exporter mid-shutdown, a full
-    queue — must not turn a warning into an exception on the path that was trying to report
-    something.
-
-    **What the exported record's `code.*` attributes name is this function**, not the line that
-    logged — the record is created here, and the depth between here and the application varies
-    with structlog's own call chain, so guessing a `stacklevel` would put a *confident* wrong file
-    on every line instead of an obvious one. Written down rather than approximated: everything a
-    reader needs is in the body, which is the rendered event with all of its keys, and the
-    `trace_id` in it is what ties the line to its request.
+    After the renderer, so one rendering feeds both sinks and stdout is byte-for-byte unchanged.
+    Never allowed to fail the log call. The exported record's `code.*` attributes name this
+    function rather than the caller — a guessed `stacklevel` would name a confidently wrong file;
+    the rendered body and its `trace_id` carry what a reader needs.
     """
     if not isinstance(event, str) or _hold_back.get():
         return event
@@ -114,14 +80,10 @@ def forward_to_stdlib(_logger: Any, method_name: str, event: Any) -> Any:
 def _prepare_export_logger(level: int) -> None:
     """Make :data:`EXPORT_LOGGER` emit at ``level`` and reach the root logger, quietly.
 
-    Three properties, each deliberate:
-
-    - **its own level**, because a record is filtered by the level of the logger it is emitted on
-      and the root logger's default is `WARNING` — an `INFO` line would never reach a handler;
-    - **`propagate`**, because the OTLP handler is on the root logger and this one has none;
-    - **a `NullHandler`**, because `logging.lastResort` prints to **stderr** whenever a record
-      finds no handler anywhere in the chain. Without it a gateway with telemetry switched off
-      would print every warning twice — once as JSON on stdout and once bare on stderr.
+    - its own level, because the root logger's default `WARNING` would filter out `INFO`;
+    - `propagate`, because the OTLP handler is on the root logger and this one has none;
+    - a `NullHandler`, because otherwise `logging.lastResort` prints every warning a second time,
+      bare on stderr, whenever telemetry is off.
     """
     logger = logging.getLogger(EXPORT_LOGGER)
     logger.setLevel(level)
@@ -138,8 +100,7 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
         json_output: Render JSON lines when True, else a colorized console format.
     """
     log_level = _LEVELS.get(level.upper(), logging.INFO)
-    # Every service that configures logging gets it: the access log is written by the web server,
-    # not by us, so there is no code path of ours to put this on instead.
+    # The access log is written by the web server, so there is no code path of ours to put this on.
     install_access_log_redaction()
 
     processors: list[structlog.typing.Processor] = [
@@ -149,8 +110,8 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
-        # Last before the renderer: it has to see the event dict, and what it takes off must not
-        # reach the rendered line.
+        # Last before the renderer: it must see the event dict, and what it removes must not be
+        # rendered.
         hold_back_from_export,
     ]
     renderer: structlog.typing.Processor = (
@@ -160,8 +121,7 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
     _prepare_export_logger(log_level)
 
     structlog.configure(
-        # `forward_to_stdlib` is **after** the renderer, which is what lets it hand over the
-        # finished line rather than render a second copy of it (`FRD-001` §5a).
+        # `forward_to_stdlib` after the renderer hands over the finished line (`FRD-001` §5a).
         processors=[*processors, renderer, forward_to_stdlib],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
         logger_factory=structlog.PrintLoggerFactory(),

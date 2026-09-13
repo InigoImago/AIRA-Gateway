@@ -1,18 +1,12 @@
-"""Shared atomic counters, backed by Redis (ADR-0008).
+"""Shared atomic counters, backed by Redis (`ADR-0008`).
 
-The gateway needs counters that several processes agree on and that can be *checked and updated
-in one indivisible step*: rate-limit buckets and budget reservations. Doing that with separate
-reads and writes is what the counters exist to fix, so every operation here is a single Lua
-script — one round trip, no window in which another instance sees a stale value.
+Rate-limit buckets and budget reservations must be checked and updated in one indivisible step
+across processes, so every operation is a single Lua script — one round trip, no window in which
+another instance sees a stale value. This module owns the transport only; the *meaning* of each
+counter lives with its feature (``aira_gateway.ratelimit``, ``aira_gateway.budgets``).
 
-This module owns the transport only: connecting, running a script, and being honest about when
-Redis is not reachable. The *meaning* of each counter lives with the feature that uses it
-(``aira_gateway.ratelimit``, ``aira_gateway.budgets``), the same way ``kafka.py`` carries records
-without knowing what they mean.
-
-Unavailability is a normal state, not an exception to be swallowed at the call site: callers ask
-for a runner and handle :class:`CountersUnavailable` by taking their own decided fallback. See
-``FRD-405 §4.3`` for what each caller does.
+Unavailability is a normal state, not an exception to swallow at the call site: callers handle
+:class:`CountersUnavailable` by taking their own decided fallback (`FRD-405` §4.3).
 """
 
 from __future__ import annotations
@@ -24,17 +18,15 @@ from typing import Any, Protocol
 from aira_common.integration_debug import watch
 from aira_common.logging import get_logger
 
-_log = get_logger("aira_common.counters")
-
-# After a failure, stop trying for this long. Without it every request pays a connection
-# timeout while Redis is down — turning a degraded dependency into a slow gateway, which is
-# the failure mode the fallbacks exist to avoid.
+#: After a failure, stop trying for this long, so a Redis outage does not make every request pay a
+#: connection timeout.
 RETRY_AFTER_FAILURE_SECONDS = 5.0
 
-# Script arguments are numbers or strings; Redis serialises both. Floats are explicit here
-# because a refill rate is one, and coercing it to int would silently round every limit below
-# 60 per minute down to zero.
+#: A script argument. Floats are allowed because a refill rate is one; coercing it to int would
+#: round every limit below 60 per minute down to zero.
 type ScriptArg = str | int | float
+
+_log = get_logger("aira_common.counters")
 
 
 class CountersUnavailable(RuntimeError):
@@ -44,15 +36,10 @@ class CountersUnavailable(RuntimeError):
 class DegradationLog:
     """What each feature has most recently experienced from the shared counter store.
 
-    Every feature built on these counters needs a decided answer to "and what if it is gone" —
-    and every one of those answers is invisible unless somebody records it. Before this, one
-    feature set a flag nobody read and another logged a warning, so a gateway could run for a
-    week on its fallbacks with the health endpoint reporting nothing but a successful ping.
-
-    The *shape* of the fallback is deliberately not shared. Rate limiting degrades to a local
-    equivalent, budgets degrade to the store that is already authoritative, and forcing those
-    into one abstraction would hide the reason they differ (see ADR-0008). What is shared is
-    that both say so, in one place, in the same words.
+    A fallback is invisible unless somebody records it, so every feature reports here, in the same
+    words, for the health endpoint to read. The *shape* of each fallback is deliberately not shared
+    (`ADR-0008`): rate limiting degrades to a local equivalent, budgets to the store that is already
+    authoritative.
     """
 
     def __init__(self) -> None:
@@ -89,8 +76,8 @@ class ScriptRunner(Protocol):
 class DisabledRunner:
     """Used when no Redis is configured. Every call reports unavailability immediately.
 
-    This is not an error state: an installation may deliberately run without Redis, in which case
-    every caller takes its documented fallback and nothing here should be noisy about it.
+    Not an error state: an installation may run without Redis, and every caller then takes its
+    documented fallback quietly.
     """
 
     async def run(self, script: str, keys: Sequence[str], args: Sequence[ScriptArg]) -> Any:
@@ -103,9 +90,8 @@ class DisabledRunner:
 class RedisRunner:
     """Redis-backed script runner with a small circuit breaker.
 
-    Scripts are cached by SHA on the server and re-uploaded automatically if Redis was restarted
-    (redis-py's ``Script`` handles the ``NOSCRIPT`` retry), so callers pass source text and pay
-    the upload once.
+    Scripts are cached by SHA on the server and re-uploaded after a Redis restart (redis-py's
+    ``Script`` retries on ``NOSCRIPT``), so callers pass source text and pay the upload once.
     """
 
     def __init__(
@@ -117,8 +103,7 @@ class RedisRunner:
     ) -> None:
         self._url = url
         self._connect_timeout = connect_timeout
-        # Injectable so the breaker's *reopening* can be tested and not only its closing. A
-        # breaker that never lets go is indistinguishable, in a green suite, from one that does.
+        # Injectable so the breaker's *reopening* can be tested, not only its closing.
         self._clock = clock
         self._client: Any | None = None
         self._scripts: dict[str, Any] = {}
@@ -141,11 +126,8 @@ class RedisRunner:
         if now < self._unavailable_until:
             raise CountersUnavailable("Counter store is in a failed state; not retrying yet.")
         try:
-            # Watched at the *call*, not per counter, and successes included: "is Redis answering,
-            # and how slowly" is the question here, and a channel that only spoke up on failure
-            # would leave a store that answers in 400 ms indistinguishable from one that answers
-            # in 4 — which is the difference between a working gateway and one whose every
-            # request pays for it (`FRD-617` §3.3).
+            # Watched per call, successes included: how slowly Redis answers is the question
+            # (`FRD-617` §3.3).
             with watch("redis", "script", target=self._url, keys=len(keys)):
                 client = self._connect()
                 registered = self._scripts.get(script)

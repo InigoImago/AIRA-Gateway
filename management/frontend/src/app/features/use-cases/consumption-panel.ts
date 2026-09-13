@@ -3,25 +3,6 @@ import { RouterLink } from '@angular/router';
 import { ReportRow, UseCaseConsumption } from '../../core/api/models';
 import { InfoHint } from '../../core/ui/info-hint';
 
-/**
- * What a use case has consumed, whether or not a limit is set (`FRD-603`).
- *
- * On the **overview**, because that is where somebody goes to see where a use case stands, and
- * consumption is a fact about the use case rather than a fact about its budgets. It began life in
- * the budgets tab, which was the shape of the defect it fixes: consumption used to be rendered
- * only *inside* a budget card, as a fraction of a limit, so a use case with no limit showed
- * neither the tokens nor the money it had spent — while every request had been counted and priced
- * in the request log all along.
- *
- * A panel, not a block in the parent: the page owns the load, the panel owns the rendering
- * (`CLAUDE.md` §3). It has no mutations, so it reports through neither the page banner nor one of
- * its own — every state it can be in is a statement about the figures, and each one is said in
- * the card.
- *
- * The rule it exists to keep: **unknown is never rendered as zero.** A figure that did not arrive
- * is an em dash with a reason beside it; `0.00` is reserved for a use case that genuinely
- * consumed nothing.
- */
 /** One figure in the card: what it is called, what it says, and what it counts. */
 interface Stat {
   key: string;
@@ -30,6 +11,34 @@ interface Stat {
   help: string;
 }
 
+/**
+ * What each figure counts, for the "i" beside it — the same explanations the reporting screen
+ * gives (`FRD-206`), because these are the figures somebody reconciles against an invoice.
+ */
+const FIGURE_HELP = {
+  cost: `What this use case's traffic cost, priced per model from the catalog at the time of each
+      request. Traffic on a model with no price on file is counted separately and is not in this
+      figure — unknown is not zero.`,
+  requests: `Every request the gateway handled for this use case, including the ones it refused —
+      over budget, rate-limited, or blocked by a pipeline step. A refusal costs nothing and is
+      still something that happened.`,
+  tokens: `Prompt and completion tokens together. A token differs in price by more than ten times
+      between models and output is billed several times higher than input, so this is a volume
+      figure and not a cost one.`,
+  cached: `How much of the input the provider served from its prompt cache instead of reading
+      again — the share is what makes caching measurable. 0 % with caching switched on means the
+      prefix is changing between turns, the gap between them is longer than the cache lifetime, or
+      the model does not cache at all. A provider that reports nothing (a self-hosted one) also
+      shows 0 %, and there it costs nothing either way.`,
+};
+
+/**
+ * What a use case has consumed, whether or not a limit is set (`FRD-603`).
+ *
+ * The page owns the load and this panel the rendering (`CLAUDE.md` §3); it has no mutations, so
+ * every state is said in the card. **Unknown is never rendered as zero**: a figure that did not
+ * arrive is an em dash with a reason, and `0.00` means genuinely nothing consumed.
+ */
 @Component({
   selector: 'app-consumption-panel',
   imports: [RouterLink, InfoHint],
@@ -45,31 +54,6 @@ export class ConsumptionPanel {
   /** Requests this month whose cost is unknown because their model has no price on file. */
   protected readonly unpriced = computed(() => this.consumption().month?.unpriced_requests ?? 0);
 
-  /**
-   * What each figure counts, for the "i" beside it.
-   *
-   * The reporting screen carries the same explanations for the same numbers (`FRD-206`), and they
-   * are worth repeating here rather than assuming: "Spend" that quietly excludes unpriced traffic
-   * and "Requests" that includes the ones a control refused are exactly the two figures somebody
-   * would otherwise reconcile against an invoice and give up on.
-   */
-  private readonly explain = {
-    cost: `What this use case's traffic cost, priced per model from the catalog at the time of each
-      request. Traffic on a model with no price on file is counted separately and is not in this
-      figure — unknown is not zero.`,
-    requests: `Every request the gateway handled for this use case, including the ones it refused —
-      over budget, rate-limited, or blocked by a pipeline step. A refusal costs nothing and is
-      still something that happened.`,
-    tokens: `Prompt and completion tokens together. A token differs in price by more than ten times
-      between models and output is billed several times higher than input, so this is a volume
-      figure and not a cost one.`,
-    cached: `How much of the input the provider served from its prompt cache instead of reading
-      again — the share is what makes caching measurable. 0 % with caching switched on means the
-      prefix is changing between turns, the gap between them is longer than the cache lifetime, or
-      the model does not cache at all. A provider that reports nothing (a self-hosted one) also
-      shows 0 %, and there it costs nothing either way.`,
-  };
-
   private share(row: ReportRow): string {
     if (!row.prompt_tokens) return '—';
     return `${Math.round((100 * (row.cached_input_tokens ?? 0)) / row.prompt_tokens)}%`;
@@ -77,29 +61,27 @@ export class ConsumptionPanel {
 
   private statsFor(row: ReportRow | null): Stat[] {
     return [
-      // Spend first: it is the figure anybody asking "what has this cost" came for, and the one a
-      // token count cannot stand in for — the same model-to-model price spread that made
-      // `FRD-403` reject token caps as a cost control.
-      { key: 'cost', label: 'Spend ($)', value: row ? row.cost : '—', help: this.explain.cost },
+      // Spend first: a token count cannot stand in for cost, given the price spread between
+      // models (`FRD-403`).
+      { key: 'cost', label: 'Spend ($)', value: row ? row.cost : '—', help: FIGURE_HELP.cost },
       {
         key: 'requests',
         label: 'Requests',
         value: row ? `${row.requests}` : '—',
-        help: this.explain.requests,
+        help: FIGURE_HELP.requests,
       },
       {
         key: 'tokens',
         label: 'Tokens',
         value: row ? `${row.total_tokens}` : '—',
-        help: this.explain.tokens,
+        help: FIGURE_HELP.tokens,
       },
       {
         key: 'cached',
         label: 'Cached',
-        // A share, not a count: "12,000 cached" says nothing without the total beside it, and the
-        // question anybody asks of a cache is what fraction it caught.
+        // A share, not a count: what fraction the cache caught is the question.
         value: row ? this.share(row) : '—',
-        help: this.explain.cached,
+        help: FIGURE_HELP.cached,
       },
     ];
   }

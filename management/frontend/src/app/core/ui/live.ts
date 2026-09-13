@@ -5,20 +5,13 @@ import { Observable, Subscription, interval } from 'rxjs';
 /**
  * A view that refreshes itself, without the reader reloading anything (`FRD-502` FR-13–15).
  *
- * Polling rather than a stream, deliberately. Server-sent events would push, and would also need a
- * long-lived connection per open console through whatever proxy sits in front, a reconnect story,
- * and a second delivery path for facts that already have one. Findings and traces change at human
- * speed, so an interval poll of an ordinary endpoint is the smaller thing — and the easier one to
- * reason about when it breaks.
+ * Polling rather than a stream: findings and traces change at human speed, and an interval poll of
+ * an ordinary endpoint needs no long-lived connection, reconnect story or second delivery path.
  *
- * Three properties this exists to guarantee, each of which is a way live views go wrong:
- *
- * - **It stops.** On destroy, and while the tab is hidden. A console left open in a background tab
- *   overnight must not be a load generator.
- * - **It is visible.** `enabled` and `lastUpdated` are for the screen to show. A view that changes
- *   under somebody who did not ask it to is a view they stop trusting.
- * - **It never overlaps itself.** A slow response must not stack requests behind it; the next tick
- *   is skipped while one is in flight.
+ * - **It stops** — on destroy, and while the tab is hidden, so a background tab is not a load
+ *   generator.
+ * - **It is visible** — `enabled` and `lastUpdated` are for the screen to show.
+ * - **It never overlaps itself** — a tick is skipped while a request is in flight.
  */
 @Injectable()
 export class Live {
@@ -35,19 +28,15 @@ export class Live {
   private inFlight = false;
 
   constructor() {
-    // Explicit, rather than relying on `takeUntilDestroyed` alone. That operator ends with
-    // *whichever* `DestroyRef` was injected, which depends on where this service is provided — on
-    // a component it is the component's, in a module it is the environment's, and the second lives
-    // as long as the application. A timer that only stops when the service happens to be provided
-    // in the right place is a timer somebody will provide in the wrong one.
+    // Stopped explicitly, not only through `takeUntilDestroyed`: that ends with whichever
+    // `DestroyRef` was injected, which lives as long as the application when this is provided in
+    // the environment rather than on a component.
     this.destroyRef.onDestroy(() => this.stop());
   }
 
   /**
-   * Run `load` now, and then every `seconds` while enabled and visible.
-   *
-   * `load` reports its own errors; a failed refresh must not stop the timer, or one blip ends the
-   * liveness for the rest of the session.
+   * Run `load` now, and then every `seconds` while enabled and visible. `load` reports its own
+   * errors; a failed refresh does not stop the timer.
    */
   start<T>(seconds: number, load: () => Observable<T>, onValue: (value: T) => void): void {
     this.stop();
@@ -79,8 +68,8 @@ export class Live {
   }
 
   private run<T>(load: () => Observable<T>, onValue: (value: T) => void): void {
-    // Skipped rather than queued: stacking requests behind a slow one turns a refresh interval
-    // into a load test against the very endpoint that is already struggling.
+    // Skipped rather than queued: stacking requests behind a slow one turns a refresh interval into
+    // a load test against the endpoint that is already struggling.
     if (this.inFlight) return;
     this.inFlight = true;
     this.refreshing.set(true);
@@ -94,8 +83,7 @@ export class Live {
           this.refreshing.set(false);
         },
         error: () => {
-          // The caller's own handler reports it. What matters here is that the timer survives:
-          // one failed poll must not end the liveness for the rest of the session.
+          // The caller's handler reports it; the timer survives, or one blip ends liveness.
           this.inFlight = false;
           this.refreshing.set(false);
         },

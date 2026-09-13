@@ -1,22 +1,12 @@
-"""Where a request goes, which is not the same question as what it says (ADR-0011).
+"""How a platform addresses a model in the OpenAI dialect — `ADR-0011`'s third axis.
 
-The dialect owns the body. The transport owns reaching the cloud. This owns the third axis:
-**model identity** — the caller names a model, and the platform's addressing is configuration.
+The dialect owns the body and the transport owns reaching the endpoint; this owns **model
+identity**. A plain endpoint takes ``POST /v1/chat/completions`` with the model in the body. A
+platform that addresses by **path** puts its own identifier there and leaves the body's model out;
+its implementation lives in that platform's package, never here, so the dialect stays reusable.
 
-Two platforms speaking one dialect address it in two incompatible ways:
-
-- A plain OpenAI-compatible endpoint takes ``POST /v1/chat/completions`` with ``{"model": …}`` in
-  the body. The model *is* the name.
-- A platform that addresses by **path** puts its own identifier there and leaves the body's model
-  field out. `FRD-120`'s is the first; its implementation lives in that platform's package, not
-  here, because this file is the *dialect's* — and a dialect that names a platform is one the next
-  platform cannot reuse.
-
-`FRD-120` §5.2 is explicit about why the indirection earns its place, and the reason is not
-tidiness. If a deployment name were allowed to be the model name, then every use case's pipeline
-config would embed Azure resource naming — and **pricing would break quietly**: `FRD-403` prices by
-model, a deployment called `production` has no price, and unpriced traffic is counted apart rather
-than as zero. The spend figure would simply stop being complete, with nothing failing.
+Why the indirection (`FRD-120` §5.2): were a deployment name allowed to be the model name, pricing
+would break quietly — `FRD-403` prices by model, and a deployment called `production` has no price.
 """
 
 from __future__ import annotations
@@ -42,17 +32,9 @@ class Routes(Protocol):
     def names_models(self) -> bool:
         """Whether that listing's ids are names a **caller** could use (`FRD-507` stage C).
 
-        The third axis again, and the reason it is a question at all. On a plain endpoint the
-        listing's ids *are* the model names: read one, catalogue it, call it. On a platform that
-        addresses by path, the same listing names models the resource could run — each of which
-        needs a deployment created for it before any request can reach it, and the deployment name
-        is what the addressing carries. Importing from there produces a catalog entry that looks
-        complete and is unreachable, which is `FRD-506`'s "listed is not usable" with the catalog
-        vouching for it.
-
-        Declared per platform, never defaulted: undeclared would have to mean *yes* for the
-        protocol to stay silent about it, and this file's whole subject is that a platform's
-        addressing must be stated rather than assumed.
+        On a plain endpoint they are. On a platform that addresses by path each listed model needs
+        a deployment first, and importing one would produce a catalog entry that looks complete and
+        is unreachable (`FRD-506`). Declared per platform, never defaulted.
         """
         ...
 

@@ -17,8 +17,8 @@ from aira_gateway.core.schema import (
     SchemaRejected,
     SchemaType,
     parse,
+    to_json_schema,
 )
-from aira_gateway.upstreams.vertex.anthropic_mapping import to_json_schema
 
 # The contract's own example — the thing a migrating client actually sends.
 RECIPES = {

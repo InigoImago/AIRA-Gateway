@@ -61,9 +61,8 @@
     }
   </div>
 
-  <!-- The cap on the `(none)` row of the table below: spend that belongs to no use case. It sits
-       above the report rather than beside that row because it is a control, not a figure, and it
-       must be findable when the period returns nothing at all. -->
+  <!-- The cap on the `(none)` row below. Above the report: it is a control, not a figure, and must
+       be findable when the period returns nothing. -->
   <app-installation-budget-card />
 
   @if (loading()) {
@@ -84,20 +83,8 @@
         </span>
       </div>
 
-      <!--
-        Short headings, with the explanation on the info button.
-
-        Two things went wrong before this. "Refused by a control" wrapped to two lines and broke
-        the card row — and the fix for a heading that does not fit is not a smaller font, it is a
-        shorter heading plus somewhere to put the rest. Then that somewhere was a `title`
-        attribute, so the button looked clickable and did nothing: a native tooltip needs a long
-        hover, never appears on a touch screen, and is invisible to a keyboard.
-
-        So: **hovering shows it**, which is what anybody reaching for an "i" expects; focusing it
-        shows it too, for a keyboard; and clicking pins it open, for a touch screen where there is
-        no hover at all. The panel is positioned rather than in flow, so the card does not grow
-        under the pointer and shove the rest of the row sideways.
-      -->
+      <!-- Short headings, so the card row does not wrap; the definition is on the info button,
+           which works by hover, focus and tap — never a `title`, which touch and keyboard miss. -->
       <dl class="stat-row">
         @for (stat of stats(); track stat.key) {
           <div class="stat">
@@ -126,11 +113,7 @@
       }
     </div>
 
-    <!--
-      One table, chosen here. Four stacked breakdowns made the page long enough that its own
-      export control scrolled out of sight — and there were then two ideas of "which table",
-      one for the screen and one for the file. Now the file is whatever is on screen.
-    -->
+    <!-- One table, chosen here: the file is whatever is on screen. -->
     <div class="card">
       <div class="filter-row">
         <div class="field">
@@ -160,8 +143,7 @@
           </button>
         } @else {
           <!-- Said rather than discovered by a 400: the CSV renderer takes three breakdowns
-               (`FRD-602`), and a button that looks ready and is not is the defect `FRD-206`
-               was written about. -->
+               (`FRD-602`, `FRD-206`). -->
           <span class="muted" data-testid="export-unavailable" style="padding-bottom: 0.6rem">
             The outcome breakdown is shown here but not exported. Pick use case, model or member to
             download a file.

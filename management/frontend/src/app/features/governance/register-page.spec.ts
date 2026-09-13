@@ -5,13 +5,9 @@ import { UseCaseService } from '../../core/api/use-case.service';
 import { RegisterPage } from './register-page';
 
 /**
- * The register screen (`FRD-608`).
- *
- * The tests worth having here are the ones about **reading** rather than about rendering: that a
- * finding is visible as a finding, that "not stored" does not print an erasure deadline, that a
- * retired use case is in the table and says so, and that a failed load is never an empty table.
- * The last is the one that matters most on this screen of all of them — an empty register and an
- * unreachable gateway look identical, and somebody would take the first as evidence.
+ * The register screen (`FRD-608`), tested for what a reader takes from it: a finding shows as a
+ * finding, "not stored" prints no erasure deadline, a retired use case stays and says so, and a
+ * failed load is never an empty table.
  */
 
 function model(over: Partial<RegisterModel> = {}): RegisterModel {
@@ -91,9 +87,7 @@ function setup(
       exports.push({ from, to });
       return csv ?? of(new Blob(['use_case\n'], { type: 'text/csv' }));
     },
-    // Management's half of the catalogue comparison. Answered rather than left undefined: the
-    // page asks for it on every load, and a double that throws would fail these tests for a
-    // reason that has nothing to do with what they assert.
+    // Management's half of the catalogue comparison, asked for on every load.
     models: () => authored,
   };
   TestBed.configureTestingModule({
@@ -124,9 +118,7 @@ describe('RegisterPage', () => {
   });
 
   it('puts on the closed row only what a reader compares rows by', () => {
-    // Four columns and a caret, where this began with nine. The test is as much about what is
-    // **absent** as about what is there: nine columns is not more information, it is the same
-    // information arranged so none of it can be scanned.
+    // Four columns and a caret: what is absent matters as much as what is there.
     const { text } = setup();
 
     expect(text()).toContain('Demo');
@@ -169,9 +161,8 @@ describe('RegisterPage', () => {
   });
 
   it('lets several rows be open at once — a register is read by comparing', () => {
-    // The deliberate difference from the request list, which keeps one open. Opening a request
-    // fetches its payload; here everything is already loaded, and the question this screen answers
-    // is *these two side by side*. One-at-a-time would close the row being compared against.
+    // Unlike the request list, which keeps one open: everything here is loaded, and a register is
+    // read by comparing two rows side by side.
     const harness = setup(
       of(
         register({
@@ -204,9 +195,7 @@ describe('RegisterPage', () => {
   });
 
   it('never swaps the caret for a second glyph, which is a different width', () => {
-    // The small constant jiggle nobody can point at: `▸` and `▾` do not measure the same in the
-    // fonts a console is read in, so a table that swaps them moves every cell on the row. One
-    // glyph, rotated by CSS.
+    // `▸` and `▾` differ in width, so swapping them shifts the row. One glyph, rotated by CSS.
     const harness = setup();
     const caret = () =>
       harness.testid('register-open-demo-uc')?.querySelector('.row-toggle__caret');
@@ -220,9 +209,8 @@ describe('RegisterPage', () => {
   });
 
   it('declares a fixed column width for every column, so an open row cannot resize them', () => {
-    // The columns of an automatic table are measured from every cell it holds, the opened detail
-    // included — so opening one row moves the columns of all the others. The guard is structural
-    // rather than visual: a `<col>` per column, and the detail spanning exactly that many.
+    // An automatic table sizes its columns from every cell, the opened detail included. Checked
+    // structurally: a `<col>` per column.
     const { element } = setup();
     const table = element.querySelector('[data-testid="register-table"]');
     const columns = table?.querySelectorAll('colgroup > col') ?? [];
@@ -247,16 +235,13 @@ describe('RegisterPage', () => {
   });
 
   it('prints no erasure deadline for a use case that stores nothing', () => {
-    // The number is still in the database — turning storage back on should not lose it — and
-    // printed beside "not stored" it reads as a promise about data that was never written.
+    // Printed beside "not stored", a deadline reads as a promise about data never written.
     const { text } = setup(
       of(register({ use_cases: [entry({ prompts_stored: false, retention_days: null })] })),
     );
 
     expect(text()).toContain('not stored');
     expect(text()).not.toContain('day(s)');
-    // And it is on the closed row, because "does this use case keep prompts" is the question the
-    // table is scanned for rather than a detail about one use case.
   });
 
   it('keeps a retired use case in the register and marks it', () => {
@@ -424,8 +409,8 @@ describe('RegisterPage', () => {
   });
 
   it('never shows an empty table when the register could not be loaded', () => {
-    // **The one that matters on this screen.** An empty register and an unreachable gateway look
-    // identical, and this is the screen where somebody would take the first as evidence.
+    // An empty register and an unreachable gateway look identical; the first would be taken as
+    // evidence.
     const { text, testid } = setup(throwError(() => new Error('gateway down')));
 
     expect(text()).toContain('Could not load the register');
@@ -455,7 +440,7 @@ describe('RegisterPage', () => {
 
   it('says when the two planes disagree about the catalogue', () => {
     // `FRD-608` §4: a model the gateway could serve that Management has no row for is one no
-    // screen shows and no role can remove. Both planes keep a catalogue and nothing compared them.
+    // screen shows and no role can remove.
     const harness = setup(
       of(register({ catalogue: ['gemini-2.5-flash', 'mock-1'] })),
       undefined,
@@ -478,8 +463,7 @@ describe('RegisterPage', () => {
   });
 
   it('does not report drift while Management is unreachable', () => {
-    // A diff against a list that never arrived reports every model as missing — the loudest
-    // possible way to be wrong, on the screen whose findings are meant to be acted on.
+    // A diff against a list that never arrived would report every model as missing.
     const harness = setup(
       of(register()),
       undefined,

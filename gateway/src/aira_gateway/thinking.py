@@ -1,21 +1,13 @@
 """Resolving and validating a thinking setting against the model that will serve it (FRD-111).
 
-Two jobs, and the second is the one with money in it.
+**Validate.** A mode the model does not offer, a ``limited`` budget outside its bounds — each
+refused with its own code, so a client can tell which to correct.
 
-**Validate.** A mode the model does not declare, a ``limited`` budget below its minimum or above
-its maximum — each refused with its own code, because a client that cannot tell "wrong mode" from
-"budget too high" cannot correct either.
+**Resolve.** Absent a setting, the model's *declared default* applies — not the provider's, and not
+none, or the gateway would answer differently from the predecessor for a reason nobody could see.
 
-**Resolve.** Absent a setting the model's *declared default* applies — not the provider's, and not
-none. The predecessor applies that default, and a gateway that quietly sent nothing would answer
-differently for a reason nobody could see. Resolution also fills in ``tokens`` for the abstract
-levels from the catalog's level→budget table, so what goes upstream and what the budget reserves
-against are the same number rather than two guesses.
-
-Why the reservation cares: thinking tokens are billed as output tokens, and the predecessor's own
-configuration allows budgets up to 32 768 of them — an order of magnitude more than a typical
-answer. A gateway that enforces spend limits cannot treat the most expensive knob on the request
-as invisible (`FRD-405` closed exactly this window for ordinary output).
+The reservation cares too: thinking tokens bill as output and can be an order of magnitude more
+than a typical answer, so the budget cannot treat them as invisible (`FRD-405`).
 """
 
 from __future__ import annotations
@@ -34,7 +26,7 @@ THINKING_TOKEN_COUNT_TOO_HIGH = "THINKING_TOKEN_COUNT_TOO_HIGH"
 UNEXPECTED_THINKING_TOKEN_COUNT = "UNEXPECTED_THINKING_TOKEN_COUNT"
 
 #: A mode is a word. Bounded so a caller cannot push a paragraph into an error message or an audit
-#: row now that the set is open — the only thing lost with the closed enum that was worth keeping.
+#: row now that the set is open.
 MAX_MODE_LENGTH = 32
 
 
@@ -48,31 +40,12 @@ class ThinkingRejected(Exception):
 
 
 def mode_from(raw: str) -> str:
-    """Normalise a client's mode word. **What it may be is a question for the model, not here.**
+    """Normalise a client's mode word; whether the model offers it is decided later.
 
-    This used to refuse anything outside a closed enum, at parse time, before the model was known.
-    That was right while the vocabulary was ours; it is wrong now that a level is a word the vendor
-    accepts (`ADR-0021`): a new vendor word would be refused by a gateway that has no opinion about
-    it, and the caller would be told it "is not a thinking mode" when the model in question takes
-    it happily.
-
-    So the refusal moved to where the answer lives — :func:`_validated`, against the model's own
-    declared list, with a message that **names what that model offers**. Which is the better error
-    besides: `'turbo' is not a thinking mode` sends a reader to the specification, and `model X
-    offers ['low', 'high']` sends them to the answer.
-
-    Only the shape is checked here, because a mode is a word: non-empty, and short enough that it
-    cannot be used to push a wall of text into an error message or an audit row.
-
-    **Here rather than in each surface's mapper, where it was written twice.** Both spelled out the
-    same four lines — the same normalisation, the same code, the same message — and the risk is not
-    that the copies look different but that they *stop* being the same in a way no test compares:
-    a surface that forgets ``.strip()`` accepts `" high"` from a client the other one refuses, and
-    a surface that stops lowercasing turns `"HIGH"` into an error message naming the vocabulary it
-    just rejected. Neither is an error anywhere. That is the shape this project has paid for
-    repeatedly — an empty membership list meaning "anything goes" on one surface and nothing on the
-    other, a kill switch guarded by a visibility predicate on one plane.
-
+    Only the shape is checked here — non-empty and short. The vocabulary is the vendor's
+    (`ADR-0021`), so the refusal lives in :func:`_validated`, against the model's declared list,
+    naming what that model offers. One function for both surfaces, so they cannot drift apart on
+    stripping or case.
     """
     mode = raw.strip().lower()
     if not mode or len(mode) > MAX_MODE_LENGTH:
@@ -99,18 +72,9 @@ def resolve(requested: Thinking | None, declaration: ModelDeclaration) -> Thinki
 def for_a_classifier(declaration: ModelDeclaration) -> Thinking | None:
     """What a pipeline's LLM step should send, so it gets one word rather than a page of reasoning.
 
-    Off **where the model can be told to be off**, and nothing at all where it cannot — the two
-    cases the classifier used to collapse into one by sending `disabled` unconditionally,
-    bypassing the catalog entirely. Measured: that is a 400 from Google for any model whose
-    thinking cannot be switched off, which the classifier then swallowed as "no verdict".
-
-    `FRD-125`'s original finding is the other side of the same coin and is preserved: a reasoning
-    model sent no directive **thinks anyway** and spends a four-token allowance on it, so where the
-    catalog says the model can be quietened, it is told so explicitly.
-
-    This asks a different question from `resolve` — *what may we ask for* rather than *what did the
-    caller ask for* — so it answers rather than raising: a filter whose model declares thinking
-    without an off is a filter that still has to run.
+    Off **where the model can be told to be off** — a reasoning model sent no directive thinks
+    anyway (`FRD-125`) — and nothing where it cannot, because an unconditional off is a 400 from
+    Google for such a model. Answers rather than raising: the filter still has to run.
     """
     if ThinkingMode.DISABLED not in declaration.thinking_modes:
         return None
@@ -123,10 +87,8 @@ def _default_for(declaration: ModelDeclaration) -> Thinking | None:
         return None
     mode = default.get("mode")
     if not isinstance(mode, str) or not mode.strip():
-        # A declaration Management validated cannot reach this. Treating a malformed one as "no
-        # thinking" rather than raising is deliberate: a catalog typo must not take every request
-        # for that model with it, and the setting is the one part of a request that is safe to
-        # omit — omitting it is what happened before this feature existed.
+        # Management validation prevents this. A malformed default reads as "no thinking" rather
+        # than failing every request for the model; omitting the setting is always safe.
         return None
     tokens = default.get("tokens")
     return Thinking(
@@ -140,31 +102,19 @@ def _validated(requested: Thinking, declaration: ModelDeclaration) -> Thinking |
     declared = declaration.thinking_modes
 
     if mode == ThinkingMode.DISABLED and not declaration.offers_thinking:
-        # "Do not think" asked of a model that cannot is already true. Refusing it would fail
-        # requests that are asking for exactly what they are going to get, and every caller who
-        # sets `disabled` defensively across a fleet of models would have to special-case ours.
+        # "Do not think" asked of a model that cannot is already true, so it is not refused.
         if requested.tokens is not None:
             raise ThinkingRejected(
                 UNEXPECTED_THINKING_TOKEN_COUNT,
                 "'tokens' applies only to the 'limited' thinking mode.",
             )
-        # **Nothing to send**, not an explicit off — corrected 2026-08-11 against a measurement.
-        # This used to return `Thinking(DISABLED, tokens=0)`, which the Gemini mapper turns into
-        # `thinkingConfig: {thinkingBudget: 0}`, and Google answers **400 for every model that
-        # cannot have thinking switched off**: `gemini-flash-latest` refuses it alone, with a
-        # token cap, with a large cap — in every combination. Drop the parameter and the same
-        # model answers in one output token.
-        #
-        # It also contradicted this module's own docstring, which says `None` means "the model was
-        # never going to think and no parameter is needed" — which is exactly the case this branch
-        # is about. Asserting an off for a model that declares no thinking is a claim about the
-        # provider's API, and `FRD-124`'s "off has to be said out loud" is about a model that
-        # **can** think: there, silence means the default wins. Here there is no default to beat.
+        # **Nothing to send**, not an explicit off: Google answers 400 to a zero budget for every
+        # model whose thinking cannot be switched off. `FRD-124`'s "off has to be said out loud"
+        # is about a model that can think; here there is no default to beat.
         return None
 
-    # **Two lists, one question.** A control mode is one of ours and a level is the vendor's own
-    # word; a caller does not know or care which kind theirs is, so the refusal names both rather
-    # than telling somebody who asked for `low` that the model declares `['auto', 'disabled']`.
+    # A control mode is ours and a level is the vendor's word; the caller does not care which,
+    # so the refusal names both lists.
     offered = [str(m) for m in declared] + list(declaration.thinking_levels)
     if not declaration.can(Capability.THINKING) or mode not in offered:
         raise ThinkingRejected(
@@ -185,9 +135,8 @@ def _validated(requested: Thinking, declaration: ModelDeclaration) -> Thinking |
 
     if mode == ThinkingMode.LIMITED:
         return Thinking(mode=mode, tokens=_limited_budget(requested.tokens, declaration))
-    # **No number is invented here.** A level word goes upstream as the word, and `auto` as
-    # whatever that dialect spells "you decide" — see `reserved_tokens` for the figure the budget
-    # holds back, which is a different question and was the same field until `ADR-0021`.
+    # **No number is invented here**: a level goes upstream as the word, and the budget's figure is
+    # `reserved_tokens`' separate question (`ADR-0021`).
     return Thinking(mode=mode, tokens=None)
 
 
@@ -209,16 +158,9 @@ def _limited_budget(tokens: int | None, declaration: ModelDeclaration) -> int:
             f"A thinking budget of {tokens} is above the {maximum} this model accepts.",
         )
     if tokens > MAX_ACCOUNTABLE_TOKENS:
-        # **The same door as `maxOutputTokens`, and it was open for the same reason.** Both checks
-        # above ask what the *model* declared, and `thinking_bounds` is nullable — so a model that
-        # declares none bounded this field by nothing, and `reserved_tokens` hands the caller's
-        # figure straight to the pre-dispatch reservation. At 2⁶³ that overflows the shared
-        # counter, is reported as the counter store being away, and switches budget enforcement
-        # to its racy path for the request (`catalog.MAX_ACCOUNTABLE_TOKENS`).
-        #
-        # `TOO_HIGH` rather than a new code: a migrating client already switches on it, and "your
-        # budget is above what will be accepted" is the same fact whether the ceiling is the
-        # model's or this gateway's — the *message* is what says which.
+        # Unconditional, because the model's bounds are nullable (`catalog.MAX_ACCOUNTABLE_TOKENS`).
+        # `TOO_HIGH` rather than a new code: a migrating client already switches on it, and the
+        # message says whose ceiling it is.
         raise ThinkingRejected(
             THINKING_TOKEN_COUNT_TOO_HIGH,
             f"A thinking budget of {tokens} is above the {MAX_ACCOUNTABLE_TOKENS} this gateway "
@@ -230,22 +172,10 @@ def _limited_budget(tokens: int | None, declaration: ModelDeclaration) -> int:
 def reserved_tokens(setting: Thinking | None, declaration: ModelDeclaration) -> int:
     """What the pre-dispatch reservation must add for this setting (`FRD-111` FR-5).
 
-    **Asks the model, not the request.** This used to read ``setting.tokens``, which meant every
-    setting had to carry a number — and a level has none to carry, so the catalog grew a
-    ``level → token count`` table whose only reader was this line. The table asked whoever
-    catalogued a model for a figure no vendor publishes, and the number it produced was then sent
-    *upstream* as well, where it silently capped the model's reasoning. One field doing two jobs,
-    and the dangerous job was the one nobody asked for.
-
-    Two jobs now. ``setting.tokens`` is what goes on the wire and only ``limited`` has one, named
-    by the caller. The reservation is a **spend estimate** and reads the model's own ceiling, which
-    is a real, vendor-stated number: Google names it in its own refusal (*"supported values are
-    integers from 1 to 24576"*).
-
-    Over-reserving is the safe direction and briefly so: ``settle`` corrects the figure the moment
-    the response arrives, and thinking tokens bill as output. A model with no declared ceiling
-    reserves nothing extra rather than guessing — the output cap already bounds the request, and a
-    guess here is the very thing this change removed.
+    **Asks the model, not the request.** ``setting.tokens`` is what goes on the wire, and only
+    ``limited`` has one. The reservation is a spend estimate and reads the model's own declared
+    ceiling — a real, vendor-stated number; a model without one reserves nothing extra rather than
+    guessing. Over-reserving is the safe direction, and ``settle`` corrects it.
     """
     if setting is None or setting.mode == ThinkingMode.DISABLED:
         return 0
@@ -258,10 +188,8 @@ def reserved_tokens(setting: Thinking | None, declaration: ModelDeclaration) -> 
 def permitted_by(setting: Thinking | None, declaration: ModelDeclaration) -> str | None:
     """Why this candidate may not serve a request carrying ``setting``, or ``None`` if it may.
 
-    Used per hop of the dispatch chain. A fallback candidate that cannot honour the mode is
-    **skipped**, never served with a different amount of thinking than was resolved: an answer
-    computed with less reasoning than asked for is not an error, it is a worse answer returned
-    with a 200 — the same failure shape as a dropped attachment.
+    Used per hop of the dispatch chain. A candidate that cannot honour the mode is **skipped**,
+    never served with less thinking than was resolved — a worse answer returned with a 200.
     """
     if setting is None or setting.mode == ThinkingMode.DISABLED:
         return None

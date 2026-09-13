@@ -3,25 +3,22 @@ import { OAuthService } from 'angular-oauth2-oidc';
 import { authConfig } from './auth.config';
 
 /**
- * Where the login attempts are counted. `sessionStorage` and not a field, because the thing being
- * counted is a **full-page navigation to Keycloak and back** — which destroys every field this
- * application has. Per tab, and gone when the tab closes, which is the right lifetime for
- * "am I going round in circles right now".
+ * Where login attempts are counted. `sessionStorage`, not a field: what is counted is a full-page
+ * navigation to Keycloak and back, which destroys every field this application has. Per tab, and
+ * gone when the tab closes.
  */
 const LOOP_KEY = 'aira.reauth-attempts';
 
 /**
- * How many logins may be started in {@link LOOP_WINDOW_MS} before the console stops trying.
+ * How many logins may start within {@link LOOP_WINDOW_MS} before the console stops trying.
  *
- * Three, because one is an ordinary expiry, two is that plus a race between panels, and a third
- * inside two minutes is not a session ending — it is the same refusal coming back. Keycloak's own
- * brute-force default trips at thirty, and the point of this number is to be reached long before
- * an account is locked.
+ * One is an ordinary expiry, two is that plus a race between panels; a third inside two minutes is
+ * the same refusal coming back. Reached long before Keycloak's brute-force limit locks an account.
  */
 const LOOP_LIMIT = 3;
 const LOOP_WINDOW_MS = 2 * 60 * 1000;
 
-/** Facade over angular-oauth2-oidc so components/guards depend on a small surface. */
+/** Facade over angular-oauth2-oidc so components and guards depend on a small surface. */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly oauth = inject(OAuthService);
@@ -29,36 +26,23 @@ export class AuthService {
   /**
    * Set when the identity provider could not be reached at startup.
    *
-   * **This is why it exists.** `init()` runs in an app initialiser, and a rejected initialiser
-   * makes `bootstrapApplication` reject — so an unreachable Keycloak produced a **completely white
-   * page**: no message, no header, no hint, and a `200` from the web server. On 2026-08-11 that
-   * cost real time: the stack's infrastructure had crashed, and the console was indistinguishable
-   * from a broken deployment of itself. A reader cannot tell "the login service is down" from
-   * "this application is broken", and they will report the second.
-   *
-   * So a failure here is **recorded, not thrown**: the app boots, and the shell renders a page
-   * that says what is wrong and what to do. That is the same rule this console already applies to
-   * every load and mutation (`core/api/error-message.ts`) — *no silent failures* — applied to the
-   * one step that runs before any of that exists.
+   * `init()` runs in an app initialiser, and a rejected initialiser leaves a blank page that cannot
+   * be told apart from a broken deployment. So the failure is **recorded, not thrown**: the app
+   * boots and the shell says what is wrong — no silent failures, before anything else exists.
    */
   readonly startupError = signal<string | null>(null);
-  /** Set once a re-login has been started, so concurrent 401s do not each start their own. */
+  /** Set once a re-login has started, so concurrent 401s do not each start their own. */
   private reauthenticating = false;
 
   /**
-   * Set when signing in again has demonstrably stopped helping — see {@link reauthenticate}.
-   *
-   * Rendered instead of the routes, like {@link startupError}: every screen behind it needs a
-   * token the API is refusing, so showing them would fill the page with failures that have one
-   * cause and name none of it.
+   * Set when signing in again has stopped helping — see {@link reauthenticate}. Rendered instead of
+   * the routes: every screen behind it needs a token the API is refusing.
    */
   readonly loginLoop = signal<string | null>(null);
 
   async init(): Promise<void> {
     if (!authConfig.issuer) {
-      // A console that does not know its issuer cannot log anybody in, and must not pretend it is
-      // merely unreachable: the fix is a deployment one and the message says so, rather than
-      // sending somebody to check whether Keycloak is up.
+      // A deployment fault, said as one — not a reason to check whether Keycloak is up.
       this.startupError.set(
         'no identity provider is configured — runtime-config.js did not load, or carries no ' +
           'issuer. It is written at container start from AIRA_OIDC_ISSUER.',
@@ -69,9 +53,8 @@ export class AuthService {
     try {
       await this.oauth.loadDiscoveryDocumentAndTryLogin();
     } catch (error: unknown) {
-      // Deliberately swallowed, and the reason is in `startupError` above: rethrowing here is
-      // exactly what produced the blank page. The issuer is named because a *misdirected* console
-      // fails the same way as an unreachable one, and the two need different people to fix them.
+      // Swallowed on purpose (see `startupError`). The issuer is named: a misdirected console fails
+      // like an unreachable one, and the two need different people to fix them.
       this.startupError.set(authConfig.issuer ?? 'the configured issuer');
       console.error('AIRA: the identity provider could not be reached at startup', error);
       return;
@@ -79,16 +62,11 @@ export class AuthService {
     this.authenticated.set(this.oauth.hasValidAccessToken());
     this.restoreLocation();
 
-    // **Renew before it expires.** Without this the session simply ends after the token's lifetime
-    // and every screen starts reporting "invalid credentials" — which reads as the backend
-    // rejecting the user, not as a session that ran out. In a console whose whole purpose is to
-    // show whether spending and controls are working, an error that looks like the *data* is
-    // untrustworthy is worse than an error that says "log in again".
+    // Renew before expiry: a session that simply ends reads as the backend rejecting the user.
     this.oauth.setupAutomaticSilentRefresh();
 
-    // And when renewal genuinely fails — the refresh token is gone, the session was ended in
-    // Keycloak — say so once and send them to the login, instead of leaving a dead console
-    // answering 401 to everything.
+    // When renewal genuinely fails, send the reader to the login once, instead of leaving a console
+    // that answers 401 to everything.
     this.oauth.events.subscribe((event) => {
       if (event.type === 'token_received' || event.type === 'token_refreshed') {
         this.authenticated.set(true);
@@ -99,9 +77,7 @@ export class AuthService {
         event.type === 'token_refresh_error'
       ) {
         this.authenticated.set(this.oauth.hasValidAccessToken());
-        // Renewal failed and there is nothing left to renew: the refresh token is gone, or
-        // Keycloak was restarted and the session went with it. Do not wait for the next request
-        // to produce a 401 on a screen the reader is already looking at.
+        // Nothing left to renew: do not wait for the next request to 401 on screen.
         if (!this.oauth.hasValidAccessToken()) {
           this.reauthenticate();
         }
@@ -114,37 +90,24 @@ export class AuthService {
   }
 
   /**
-   * The session is over — send them to the login rather than to an error message.
+   * The session is over — send the reader to the login rather than to an error message.
    *
-   * Guarded twice, against two different loops, and the second guard is the one that matters.
+   * Guarded against two loops:
    *
-   * **Within one page**, five panels each getting a 401 would otherwise start five logins, and the
-   * last one wins the `state` while the others leave stale entries behind. `reauthenticating` is
-   * that guard, and it is never cleared because the only thing that follows is a full-page
-   * navigation to Keycloak.
-   *
-   * **Across pages**, that flag is worse than useless: the navigation it describes destroys the
-   * service holding it, so on the way back it is `false` again. And there is a real case where the
-   * way back leads straight here — the API refusing a token for a reason a **fresh token does not
-   * change**. Keycloak still has a valid SSO session, so it answers the authorization request
-   * without asking anybody anything and redirects back at once; the console exchanges the code,
-   * calls the API, is refused again, and redirects again. Reported from use: the page flickers
-   * through the round trip as fast as the browser can navigate, throwing an error each time, until
-   * Keycloak's brute-force limit locks the account out.
-   *
-   * A login cannot fix a refusal that is not about the login. So the attempts are counted in
-   * `sessionStorage` — which survives the redirect precisely because it is not in this object —
-   * and past {@link LOOP_LIMIT} within {@link LOOP_WINDOW_MS} this stops and says so instead.
-   * The counter is cleared by the first first-party call that succeeds, which is the only honest
-   * evidence that the loop is over.
+   * - **Within one page**, `reauthenticating` stops five panels' 401s from starting five logins. It
+   *   is never cleared: the only thing that follows is a full-page navigation.
+   * - **Across pages**, where that flag does not survive the redirect. When the API refuses a token
+   *   for a reason a fresh token does not change, Keycloak's SSO session answers at once and the
+   *   console would redirect as fast as the browser navigates, until the account is locked. So the
+   *   attempts are counted in `sessionStorage`, and past {@link LOOP_LIMIT} within
+   *   {@link LOOP_WINDOW_MS} this stops and says so. The first first-party success clears the count.
    */
   reauthenticate(): void {
     if (this.reauthenticating) return;
 
     const attempts = this.recordReauthAttempt();
     if (attempts > LOOP_LIMIT) {
-      // Deliberately not another redirect, and deliberately not a silent stop: a console that
-      // simply gave up would look like the one that was flickering, minus the explanation.
+      // Neither another redirect nor a silent stop: the reader is told why it stopped.
       this.authenticated.set(false);
       this.loginLoop.set(
         `signing in again did not help ${attempts - 1} times in a row. The identity provider is ` +
@@ -156,18 +119,13 @@ export class AuthService {
 
     this.reauthenticating = true;
     this.authenticated.set(false);
-    // Drop the dead token first: without this the guard on the way back can still see a stored
-    // one and the login round-trips for nothing.
+    // Drop the dead token first, or the guard on the way back still sees a stored one.
     this.oauth.logOut(true);
     this.oauth.initCodeFlow(this.currentPath());
   }
 
-  /**
-   * A first-party call answered — so whatever the last refusal was, it is over.
-   *
-   * The one signal worth trusting. Anything the console could check about *itself* — a token that
-   * parses, an expiry in the future — is exactly what was true on every pass through the loop.
-   */
+  /** A first-party call answered — the one honest evidence that a login loop is over. Anything
+   *  the console can check about itself was just as true on every pass through it. */
   noteFirstPartySuccess(): void {
     this.clearReauthAttempts();
   }
@@ -175,24 +133,15 @@ export class AuthService {
   /**
    * Leave properly: end the session at the identity provider, not just here.
    *
-   * The escape from the loop above, and the only one that works. Keycloak is the half that keeps
-   * saying yes — clearing tokens locally sends the reader back to an SSO session that signs them
-   * straight in again, which is the loop with an extra step. `logOut()` without an argument is the
-   * RP-initiated logout, which ends the session at the provider.
+   * The only way out of the loop: Keycloak's SSO session is the half that keeps saying yes, so
+   * clearing tokens locally signs the reader straight back in. `logOut()` with no `true` is the
+   * RP-initiated logout.
    */
   signOutCompletely(): void {
     this.clearReauthAttempts();
     this.loginLoop.set(null);
-    // **`client_id`, because by this point there is no `id_token` left to identify us with.**
-    //
-    // RP-initiated logout wants either an `id_token_hint` or a `client_id` alongside a
-    // `post_logout_redirect_uri`, and the library only sends the hint when an id token is in
-    // storage. Every pass through the loop called `logOut(true)`, which removes it — so the one
-    // state this button exists for is exactly the state where the hint is gone, and Keycloak
-    // answers `Invalid parameter: post_logout_redirect_uri` instead of ending the session.
-    //
-    // Found by the browser test rather than by reading: the loop stopped correctly and the way out
-    // led to an error page. A guard whose escape does not work is a guard that traps somebody.
+    // `client_id`, because each pass through the loop removed the id token that would otherwise
+    // identify us, and Keycloak refuses a `post_logout_redirect_uri` without one of the two.
     this.oauth.logOut({ client_id: authConfig.clientId ?? '' });
   }
 
@@ -207,8 +156,7 @@ export class AuthService {
     try {
       window.sessionStorage?.setItem(LOOP_KEY, JSON.stringify(record));
     } catch {
-      // Storage can be unavailable — a private window, a policy. The loop guard is then only as
-      // good as the in-memory one, which is the behaviour this replaced rather than a regression.
+      // Storage can be unavailable (a private window, a policy); the in-memory guard still holds.
     }
     return record.count;
   }
@@ -227,8 +175,8 @@ export class AuthService {
         return parsed as { count: number; first: number };
       }
     } catch {
-      // Unreadable or not ours. Treated as no attempts, which errs towards letting a login
-      // happen — the failure this guard prevents is a storm, not a single redirect.
+      // Unreadable or not ours: treated as no attempts, erring towards letting a login happen —
+      // the failure this prevents is a storm, not a single redirect.
     }
     return null;
   }
@@ -237,34 +185,24 @@ export class AuthService {
     try {
       window.sessionStorage?.removeItem(LOOP_KEY);
     } catch {
-      // See above.
+      // Storage unavailable; nothing to clear.
     }
   }
 
   /**
-   * Put the reader back where the session ended.
+   * Put the reader back where the session ended, from the `state` the login round trip returns.
    *
-   * `state` is whatever `initCodeFlow` was given, handed back after the redirect. Applied with
-   * `replaceState` rather than a router navigation because this runs in an app initialiser, before
-   * the router exists — the router then boots on the restored URL, which is the same thing without
-   * a second navigation the reader would see.
+   * `replaceState` rather than a router navigation: this runs in an app initialiser, before the
+   * router exists. Only a same-origin path is honoured — `state` survives a trip through the
+   * browser, so treating it as a destination would be an open redirect.
    */
   private restoreLocation(): void {
     const stored = this.oauth.state;
     if (!stored || typeof window === 'undefined') return;
     const path = decodeURIComponent(stored);
-    // Only a same-origin path, never a URL: `state` survives a round trip through the browser, so
-    // treating it as a destination would be an open redirect with extra steps.
-    //
-    // **Resolved rather than pattern-matched.** The guard was `startsWith('/') && !startsWith('//')`,
-    // which is the rule one character narrower than it reads: a URL parser treats `\` as `/` in a
-    // special scheme, so `/\evil.example` is not the protocol-relative form and resolves to one —
-    // `new URL('/\\evil.example', origin).origin` is `https://evil.example`. The two shapes the
-    // test names were refused and the third, which looks least like a URL, was not.
-    //
-    // Asking the browser's own parser is what makes the check the same width as the sentence
-    // above it: whatever `replaceState` would resolve this to is what gets compared, so a fourth
-    // spelling nobody thought of is refused by construction rather than by being listed.
+    // Resolved by the browser's own parser rather than pattern-matched: `/\evil.example` is not
+    // `//…` and still resolves to another origin. Whatever `replaceState` would resolve is what is
+    // compared, so a spelling nobody listed is refused by construction.
     if (!path.startsWith('/')) return;
     let resolved: URL;
     try {
@@ -279,8 +217,7 @@ export class AuthService {
     }
   }
 
-  /** Where to come back to. A session that ends mid-task should not also cost the reader their
-   * place — angular-oauth2-oidc hands `state` back after the redirect. */
+  /** Where to come back to, so a session that ends mid-task does not cost the reader their place. */
   private currentPath(): string {
     if (typeof window === 'undefined') return '';
     return window.location.pathname + window.location.search;

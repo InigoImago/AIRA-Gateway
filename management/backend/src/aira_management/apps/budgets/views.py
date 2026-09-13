@@ -1,13 +1,8 @@
-"""The installation's own budget (`FRD-610`).
+"""The installation's own budget (`FRD-610`): the spend that belongs to no use case.
 
-**Its own route, not a use case's.** `/use-cases/<slug>/budgets/` reads a slug out of the path and
-resolves the object from it; this budget has no slug by definition, and bending that route to
-accept an absent one would make *"which use case is this for"* a question with a special answer at
-every layer that asks it.
-
-What it bounds is the spend that belongs to nobody: the console's model checks, break-glass keys,
-demo traffic. Measured on a running installation before this existed — 59 audit rows carrying no
-use case, and no allowance that could ever see them.
+**Its own route, not a use case's.** `/use-cases/<slug>/budgets/` resolves its object from a slug;
+this budget has none by definition, and bending that route would give *"which use case is this
+for"* a special answer at every layer that asks it.
 """
 
 from __future__ import annotations
@@ -45,10 +40,8 @@ def payload(budget: Budget) -> dict[str, Any]:
 class InstallationBudgetViewSet(viewsets.ViewSet):
     """Read for anybody who oversees the installation; write for a Global Administrator.
 
-    The split follows `ADR-0007` and the owner's open question about it: `IT Steuerung` oversees
-    and acts in nothing, so it **reads** this figure — the installation's own spend is exactly what
-    a governance role is there to see — and a Global Administrator sets it. If that should change,
-    it changes here and nowhere else.
+    `ADR-0007`: IT Steuerung oversees and acts in nothing, so it **reads** this figure, and a
+    Global Administrator sets it.
     """
 
     def get_permissions(self) -> list[Any]:
@@ -78,8 +71,8 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
             "limit_tokens": data.get("limit_tokens"),
             "limit_requests": data.get("limit_requests"),
         }
-        # Only when it was said — the same rule the use-case route learned the hard way: an upsert
-        # that does not mention `enabled` must not switch a deliberately disabled budget back on.
+        # Only when it was said: an upsert that does not mention `enabled` must not switch a
+        # deliberately disabled budget back on.
         if "enabled" in data:
             defaults["enabled"] = data["enabled"]
         with transaction.atomic():
@@ -94,16 +87,9 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
         return Response(BudgetSerializer(budget).data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request: Request, pk: str | None = None) -> Response:
-        # **A caller's own value must never become a server error**, and the id in the path is one.
-        # The router's default lookup is `[^/.]+`, so `pk` reaches here as any word — and Django
-        # raises `ValueError: Field 'id' expected a number` while *building* the query, which DRF
-        # renders as a **500** for a route that has one honest answer: there is no such budget.
-        # `pk or 0` guarded the empty string and nothing else.
-        #
-        # This is what `rest_framework.generics.get_object_or_404` does and why it exists; every
-        # `ModelViewSet` in this project is covered by it, and this hand-written one was the single
-        # route that resolves an id itself. Spelled out rather than borrowed so the 404 keeps the
-        # body it already had.
+        # The id in the path is the caller's own value and must never become a 500: the router
+        # passes any word, and Django raises while *building* the query. What
+        # `generics.get_object_or_404` does for a `ModelViewSet`, spelled out to keep this 404 body.
         budget = None
         if pk is not None:
             try:
@@ -116,18 +102,9 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
             budget_id = budget.pk
             period = budget.period
             budget.delete()
-            # Deleting the budget without saying so would leave the gateway enforcing a limit
-            # nobody can see — the shape `FRD-205` found once with API keys. So the event goes out
-            # and the gateway drops the row.
-            #
-            # **It drops the row, not the counters**, and this comment claimed otherwise until
-            # 2026-08-20. `consumer.apply._delete_budget` deletes the `BudgetRead` and touches
-            # neither `budget_usage` nor the shared counter — which is right and is worth stating
-            # rather than mis-stating: consumption is keyed by `(scope, period)` and not by a
-            # budget id, so it is a fact about what was spent rather than about the rule that was
-            # in force. The consequence a reader needs: recreating this budget inside the same
-            # period does **not** hand it a fresh allowance, because the spend it would be
-            # measuring against really happened. `use_case` and `period` ride along for a reader of
-            # the topic; the gateway resolves the row by `id`.
+            # Announced, or the gateway keeps enforcing a limit nobody can see (`FRD-205`). It
+            # drops the row, **not the counters**: consumption is keyed by `(scope, period)`, so a
+            # budget recreated within the same period gets no fresh allowance. The gateway resolves
+            # the row by `id`; `use_case` and `period` are for a reader of the topic.
             emit("budget.deleted", {"id": budget_id, "use_case": "", "period": period})
         return Response(status=status.HTTP_204_NO_CONTENT)

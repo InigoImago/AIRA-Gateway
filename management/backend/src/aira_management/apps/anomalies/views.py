@@ -1,12 +1,9 @@
 """Anomaly-rule API (FRD-500).
 
-Two surfaces on one model, because there are two genuinely different questions.
-
-A rule scoped to a use case is that use case's business, and its administrator authors it. A
-**global** rule — "any credential used from an address it has never been used from" — crosses
-every boundary the console otherwise enforces, and its effects land on use cases its author may
-not be able to see. That is IT Security's job description (PRD §154), so it is IT Security's to
-author, and the *API* says so rather than the UI (`FRD-206`: the console asks, the server decides).
+A rule scoped to a use case is that use case's business, and its administrator authors it (through
+the use-case viewset, `upsert_use_case_rule`). A **global** rule crosses every boundary the console
+otherwise enforces and lands on use cases its author may not see — IT Security's job (PRD §154), so
+theirs to author, decided by the API rather than the UI (`FRD-206`).
 """
 
 from __future__ import annotations
@@ -30,11 +27,10 @@ from aira_management.rbac import has_role, scope_queryset
 
 
 def rule_payload(rule: AnomalyRule) -> dict[str, Any]:
-    """What travels to the gateway.
+    """What travels to the gateway: everything the engine needs (`FRD-500` FR-7).
 
-    Everything the engine needs, because the gateway never calls Management on the request path
-    (`FRD-500` FR-7, the same rule as `FRD-114` FR-8). A `use_case` of ``None`` is the wire form
-    of "everywhere" — deliberately not an empty string, which would be a use case named "".
+    A `use_case` of ``None`` is the wire form of "everywhere" — not an empty string, which would be
+    a use case named "".
     """
     return {
         "id": rule.pk,
@@ -54,12 +50,8 @@ def rule_payload(rule: AnomalyRule) -> dict[str, Any]:
 
 
 def may_author_global(user: Any) -> bool:
-    """Who may write a rule that acts everywhere.
-
-    The set lives in `aira_common.roles` because the *gateway* asks the same question about its
-    kill switch, and the two had already drifted: the gateway used a visibility predicate, so IT
-    Steuerung could stop traffic there while being refused a global rule here.
-    """
+    """Who may write a rule that acts everywhere — the same set the gateway's kill switch asks
+    (`aira_common.roles.INCIDENT_ROLES`)."""
     return has_role(user, *INCIDENT_ROLES)
 
 

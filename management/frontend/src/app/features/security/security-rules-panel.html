@@ -1,0 +1,238 @@
+@if (shown()) {
+  <div class="card" style="padding: 0" role="tabpanel">
+    <div class="spread" style="padding: 0.9rem 1rem">
+      <div>
+        <h3 class="section-title" style="margin: 0">Rules</h3>
+        <p class="muted" style="margin: 0.25rem 0 0; font-size: 0.85rem">
+          A rule that applies everywhere is authored here. A rule for one use case is created on
+          that use case, by somebody who administers it.
+        </p>
+      </div>
+      @if (canStop()) {
+        <button
+          type="button"
+          class="btn btn--primary"
+          (click)="startCreate()"
+          data-testid="new-global-rule"
+        >
+          + New global rule
+        </button>
+      }
+    </div>
+
+    @if (rules().length) {
+      <div class="table-tools" style="padding: 0 1rem 0.5rem">
+        <label class="search">
+          <span>Find a rule</span>
+          <input
+            type="search"
+            [value]="ruleView.query()"
+            (input)="ruleView.search($any($event.target).value)"
+            placeholder="name, kind, use case"
+            data-testid="rule-search"
+            autocomplete="off"
+          />
+        </label>
+      </div>
+    }
+
+    @if (draft(); as newRule) {
+      <app-modal
+        [open]="true"
+        title="A rule for every use case"
+        testid="global-rule-editor"
+        [withFoot]="false"
+        (closed)="cancelCreate()"
+      >
+        <div modal-body>
+          <app-rule-form
+            [rule]="newRule"
+            [busy]="feedback.busy()"
+            formId="new-global-rule"
+            (saved)="createRule($event)"
+            (cancelled)="cancelCreate()"
+          />
+        </div>
+      </app-modal>
+    }
+
+    @if (!rules().length) {
+      <p class="empty">
+        No anomaly rules. Nothing is being watched — which is why an empty findings list means
+        nothing on its own.
+      </p>
+    } @else {
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">Rule</th>
+              <th scope="col">Applies to</th>
+              <th scope="col">Watches</th>
+              <th scope="col">Threshold</th>
+              <th scope="col">Then</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (rule of ruleView.rows(); track rule.id) {
+              <tr [class.is-open]="openRule() === rule.id">
+                <td>
+                  <!-- A rule can stop somebody's traffic, so opening it says what it does in a
+                       sentence rather than as a kind and two numbers. -->
+                  <button
+                    type="button"
+                    class="row-toggle"
+                    [attr.aria-expanded]="openRule() === rule.id"
+                    [attr.data-testid]="'rule-toggle-' + rule.id"
+                    (click)="toggleRule(rule.id)"
+                  >
+                    <span class="row-toggle__caret" [class.is-open]="openRule() === rule.id"
+                      >▶</span
+                    >
+                    {{ rule.name }}
+                  </button>
+                </td>
+                <td>
+                  @if (rule.is_global) {
+                    <span class="badge badge--warning">everywhere</span>
+                  } @else {
+                    {{ rule.use_case }}
+                  }
+                </td>
+                <td>
+                  {{ rule.kind }}
+                  <div class="muted" style="font-size: 0.78rem">
+                    {{ rule.window_minutes }} min window
+                  </div>
+                </td>
+                <td>
+                  {{ rule.threshold }}
+                  <span class="muted" style="font-size: 0.78rem">{{ unit(rule) }}</span>
+                  @if (rule.parameter) {
+                    <div class="muted" style="font-size: 0.78rem">
+                      above {{ rule.parameter }} bytes
+                    </div>
+                  }
+                </td>
+                <td>
+                  <span
+                    class="badge"
+                    [class.badge--muted]="rule.action === 'alert'"
+                    [class.badge--danger]="rule.action === 'block'"
+                    [class.badge--warning]="rule.action === 'throttle'"
+                  >
+                    {{ rule.action }}
+                  </span>
+                  @if (!rule.enabled) {
+                    <span class="badge badge--muted">off</span>
+                  }
+                </td>
+              </tr>
+
+              @if (openRule() === rule.id) {
+                <tr class="row-detail">
+                  <td colspan="5">
+                    <p
+                      class="detail-sentence"
+                      style="margin-top: 0"
+                      [attr.data-testid]="'rule-detail-' + rule.id"
+                    >
+                      {{ explain(rule) }}
+                    </p>
+
+                    @if (editing() !== rule.id) {
+                      <dl class="detail-grid">
+                        <div>
+                          <dt>Kind</dt>
+                          <dd>
+                            <code>{{ rule.kind }}</code>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Raised about</dt>
+                          <dd>{{ rule.target }}</dd>
+                        </div>
+                        <div>
+                          <dt>Window</dt>
+                          <dd>{{ rule.window_minutes }} minutes</dd>
+                        </div>
+                        <div>
+                          <dt>Threshold</dt>
+                          <dd>{{ rule.threshold }} {{ unit(rule) }}</dd>
+                        </div>
+                        <div>
+                          <dt>Smallest sample</dt>
+                          <dd>
+                            @if (rule.min_sample > 0) {
+                              {{ rule.min_sample }} request(s)
+                            } @else {
+                              not set — judged on any number of requests
+                            }
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>State</dt>
+                          <dd>{{ rule.enabled ? 'watching' : 'switched off' }}</dd>
+                        </div>
+                      </dl>
+
+                      <div class="actions" style="margin-top: 0.85rem">
+                        @if (mayEdit(rule)) {
+                          <button
+                            type="button"
+                            class="btn btn--sm"
+                            [attr.data-testid]="'rule-edit-' + rule.id"
+                            (click)="startEdit(rule)"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn--sm btn--danger"
+                            [attr.data-testid]="'rule-delete-' + rule.id"
+                            (click)="removeRule(rule)"
+                          >
+                            Delete
+                          </button>
+                        } @else if (rule.is_global) {
+                          <!-- Withheld, and it names who does it (`FRD-206`). -->
+                          <span class="muted" [attr.data-testid]="'rule-readonly-' + rule.id">
+                            A rule that applies everywhere is changed by IT Security or a Global
+                            Administrator.
+                          </span>
+                        } @else {
+                          <!-- A link to where the rule is edited, not an instruction (`FRD-208`). -->
+                          <span class="muted" [attr.data-testid]="'rule-readonly-' + rule.id">
+                            This rule belongs to
+                            <a
+                              [routerLink]="['/use-cases', rule.use_case]"
+                              [queryParams]="{ tab: 'rules' }"
+                              >{{ rule.use_case }}</a
+                            >
+                            and is changed there, by somebody who administers it.
+                          </span>
+                        }
+                      </div>
+                    } @else {
+                      <!-- The same form the use-case rules panel uses (`rule-form.ts`). -->
+                      <app-rule-form
+                        [rule]="rule"
+                        [busy]="feedback.busy()"
+                        [formId]="'rule-' + rule.id"
+                        (saved)="saveRule(rule, $event)"
+                        (cancelled)="cancelEdit()"
+                      />
+                    }
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+      <div style="padding: 0 1rem 0.9rem">
+        <app-table-pager [view]="ruleView" noun="rules" testid="rule-pager" />
+      </div>
+    }
+  </div>
+}

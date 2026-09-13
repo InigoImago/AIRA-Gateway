@@ -1,18 +1,14 @@
 """What this installation's credentials put within reach (`FRD-507` stage C).
 
-Three lists exist and they are not the same list:
+Three lists, and they are not the same list:
 
     the vendor offers   — what a credential can reach.  This module.
     the gateway serves  — what an adapter is wired for.  `/v1beta/models`.
     the catalog permits — what may actually be used.     `FRD-307`.
 
-The console had the second and the third and asked an administrator to *type* the first, which is
-how `gemini-2.5-flash` came to stand in a default after Google had withdrawn it from new keys.
-Asking the vendor removes the transcription; it removes nothing from the decision, because
-`approved` still defaults to false and nothing in this module writes anything anywhere.
-
-Bounded by **role**, not by use case: this describes the installation rather than anybody's
-traffic, and the only people it is useful to are the ones who may declare a model.
+Asking the vendor removes the transcription, not the decision: `approved` still defaults to false
+and nothing here writes anything. Bounded by **role**: it describes the installation, and only
+whoever may declare a model needs it.
 """
 
 from __future__ import annotations
@@ -26,8 +22,8 @@ from aira_common.roles import may_catalogue
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
-from aira_gateway.config import GatewaySettings
 from aira_gateway.residency import parse_allowed
+from aira_gateway.state import providers_of, settings_of
 from aira_gateway.upstreams.base import (
     OfferedModel,
     ProviderRegistry,
@@ -40,13 +36,9 @@ router = APIRouter(tags=["providers"])
 
 
 def _require_catalog_role(principal: Principal) -> None:
-    """Only whoever may declare a model may ask a vendor what it offers.
-
-    ``principal.method == "demo"`` returns early for the same reason every other role gate here
-    does: a deployment that has switched authentication off has no identity to authorise, and the
-    demo is not the place to invent one.
-    """
+    """Only whoever may declare a model may ask a vendor what it offers."""
     if principal.method == "demo":
+        # Authentication is switched off: there is no identity to authorise.
         return
     if not may_catalogue(principal.roles):
         raise GeminiHTTPError(
@@ -57,18 +49,11 @@ def _require_catalog_role(principal: Principal) -> None:
 
 
 def _grouped(registry: ProviderRegistry) -> dict[str, list[Upstream]]:
-    """Adapters by the provider name they stamp on their models.
+    """Adapters by the provider name they stamp on their models — a **list** per name.
 
-    A **list** per name, and that is the correction this module needed. A provider name does not
-    identify one adapter: an EU Vertex deployment registers two — Gemini and Anthropic, one
-    platform, one credential, two dialects — and both stamp ``vertex``. Keying by name and keeping
-    the last would have shown the console one provider and silently described it with whichever
-    adapter happened to register second, which is `ADR-0011`'s ambiguous routing table wearing a
-    read-only costume.
-
-    Grouping is also the honest answer for the reader: from a catalog author's seat "vertex" *is*
-    one provider. What differs is what may be done with it, and that is reported per entry rather
-    than by pretending the shape is simpler than it is.
+    One name can mean several adapters: an EU Vertex deployment registers Gemini and Anthropic, one
+    platform and credential, two dialects, both stamped ``vertex`` (`ADR-0011`). Keeping only the
+    last would describe the provider with whichever registered second.
     """
     grouped: dict[str, list[Upstream]] = {}
     for upstream in registry.each():
@@ -79,13 +64,8 @@ def _grouped(registry: ProviderRegistry) -> dict[str, list[Upstream]]:
 
 
 def _provider_name(upstream: Upstream) -> str:
-    """What this adapter calls itself, preferring what it puts on the audit row.
-
-    An adapter's models carry the provider name that reaches `request_logs` (`FRD-115` FR-10), so
-    that is the name a console must offer — a catalog entry naming something else would produce
-    rows nobody can join. An adapter with an empty configured list has no model to read it from,
-    which since stage B is the normal shape, so its declared tuple answers instead.
-    """
+    """What this adapter calls itself: the provider on its models' audit rows (`FRD-115` FR-10),
+    otherwise its declared provenance — an adapter with no configured model is a normal shape."""
     for model in upstream.models():
         if model.provider:
             return model.provider
@@ -108,15 +88,10 @@ def _provenance(upstreams: list[Upstream]) -> tuple[str, str]:
 
 
 def _label(upstreams: list[Upstream]) -> str:
-    """What to call this provider on a screen, from the adapter that knows.
+    """What to call this provider on a screen, as the adapter states it; empty where none does.
 
-    The *name* is an identifier: it goes in the catalog, on the audit row and into routing, and it
-    has to keep being `generative-language` — which tells a reader nothing about which vendor they
-    are choosing. A label map in the console would be a second vocabulary restated in TypeScript,
-    the shape of drift `FRD-206` and `FRD-602` both paid for; the adapter states its own.
-
-    Falls back to the bare name, which is exactly what was on screen before labels existed — an
-    adapter that has not declared one is unlabelled, not unnamed.
+    The *name* is an identifier (`generative-language`) that tells a reader nothing, and a label map
+    in the console would be a second vocabulary to keep in step.
     """
     for upstream in upstreams:
         label = getattr(upstream, "platform_label", "")
@@ -128,17 +103,11 @@ def _label(upstreams: list[Upstream]) -> str:
 def _entry(name: str, upstreams: list[Upstream], registry: ProviderRegistry) -> dict[str, Any]:
     """One provider, as somebody about to declare a model needs to see it.
 
-    ``canEnumerate`` is **stated rather than discovered by trying**: a picker that offered every
-    provider and then showed an error for the ones with no listing would report a *capability gap*
-    as a *fault*, and a reader reacts to those differently — one is "ask somebody for a key", the
-    other is "type the name yourself". Only a single adapter can answer for a name, because a
-    listing merged from two dialects would say nothing about which one serves what.
-
-    ``cataloguedIsEnough`` is the other half, and it is the one that decides whether an import
-    produces a working model or a convincing decoration: a model name is the whole addressing only
-    where an adapter owns the provider name (`FRD-507` stage B). Where it is not — Vertex, Azure —
-    the model must also be named in the gateway's configuration, and saying so at the moment of
-    declaring is the difference between a catalog entry and a support ticket.
+    - ``canEnumerate`` is stated rather than discovered by trying, so a missing listing reads as a
+      capability gap rather than a fault. Only a single adapter can answer for a name.
+    - ``cataloguedIsEnough``: whether a model name is the whole addressing, i.e. an adapter owns the
+      provider name (`FRD-507` stage B). Elsewhere — Vertex, Azure — the model must also be named
+      in the gateway's configuration.
     """
     single = upstreams[0] if len(upstreams) == 1 else None
     publisher, region = _provenance(upstreams)
@@ -154,46 +123,9 @@ def _entry(name: str, upstreams: list[Upstream], registry: ProviderRegistry) -> 
     }
 
 
-@router.get("/v1beta/providers")
-async def list_providers(
-    request: Request, principal: Principal = Depends(require_principal)
-) -> JSONResponse:
-    """The upstreams this gateway is configured with, which can be asked for a list — and where
-    this installation permits processing.
-
-    **The regions ride along rather than getting an endpoint**, because the console asks this one
-    the moment the model editor opens and the two facts are used in the same breath: *which
-    provider* and *where*. A second request would be a second thing to fail.
-
-    They are published for one reason: so nothing has to restate them. `AIRA_ALLOWED_REGIONS` is
-    the gateway's policy and the gateway enforces it at the moment it addresses a request — which
-    is correct and **late**, because a model is catalogued in Management, hours or weeks earlier,
-    by somebody who then hears nothing until a caller does. The console can refuse at authoring
-    time only if it knows the list, and it must not know it by holding a copy: one list, published
-    by its owner, read by whoever needs it (`ADR-0012` §6).
-    """
-    _require_catalog_role(principal)
-    registry: ProviderRegistry = request.app.state.providers
-    grouped = _grouped(registry)
-    settings: GatewaySettings = request.app.state.settings
-    return JSONResponse(
-        {
-            "providers": [
-                _entry(name, upstreams, registry) for name, upstreams in sorted(grouped.items())
-            ],
-            "allowedRegions": sorted(parse_allowed(settings.allowed_regions)),
-        }
-    )
-
-
 def _offered_payload(model: OfferedModel) -> dict[str, Any]:
-    """One vendor entry on the wire.
-
-    Every capability travels as ``null`` where the vendor said nothing, and the console renders
-    that as a question rather than as "no". Serialising ``None`` to ``false`` here would be the
-    whole `FRD-114` FR-7 mistake in one line: absence of information turned into a declaration,
-    arriving in a form somebody is about to save.
-    """
+    """One vendor entry on the wire. A capability the vendor did not state travels as ``null`` —
+    never ``false`` — so the console asks rather than declares (`FRD-114` FR-7)."""
     return {
         "name": model.name,
         "displayName": model.display_name,
@@ -206,28 +138,47 @@ def _offered_payload(model: OfferedModel) -> dict[str, Any]:
     }
 
 
+@router.get("/v1beta/providers")
+async def list_providers(
+    request: Request, principal: Principal = Depends(require_principal)
+) -> JSONResponse:
+    """The upstreams this gateway is configured with, which can be asked for a list — and where
+    this installation permits processing.
+
+    ``allowedRegions`` rides along so the console can refuse an unpermitted region when a model is
+    catalogued, reading the gateway's policy rather than holding a copy (`ADR-0012` §6).
+    """
+    _require_catalog_role(principal)
+    registry = providers_of(request)
+    grouped = _grouped(registry)
+    settings = settings_of(request)
+    return JSONResponse(
+        {
+            "providers": [
+                _entry(name, upstreams, registry) for name, upstreams in sorted(grouped.items())
+            ],
+            "allowedRegions": sorted(parse_allowed(settings.allowed_regions)),
+        }
+    )
+
+
 @router.get("/v1beta/providers/{name}/offerings")
 async def list_offerings(
     request: Request, name: str, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
     """What one provider says it offers this credential.
 
-    Nothing here is filtered against the catalog: the console needs to know which of these it
-    already has and which it does not, and that comparison belongs where the catalog is. A gateway
-    that returned only the unknown ones would answer "nothing left to import" and "this credential
-    reaches nothing" with the same empty list.
+    Unfiltered against the catalog: the console makes that comparison, and filtering here would
+    answer "nothing left to import" and "this credential reaches nothing" with the same empty list.
     """
     _require_catalog_role(principal)
-    registry: ProviderRegistry = request.app.state.providers
-    upstreams = _grouped(registry).get(name)
+    upstreams = _grouped(providers_of(request)).get(name)
     if not upstreams:
         raise GeminiHTTPError(404, f"No provider named '{name}' is configured.", "NOT_FOUND")
     first = upstreams[0]
     if len(upstreams) > 1 or not can_enumerate(first):
-        # 501, not a 404 and not an empty list. The provider exists and the question is a fair
-        # one; this platform simply cannot be asked, and saying so is the difference between "your
-        # credential reaches nothing" and "we have no way to ask" — which send an administrator to
-        # two different systems.
+        # 501, not a 404 or an empty list: "we have no way to ask" sends an administrator somewhere
+        # other than "your credential reaches nothing".
         raise GeminiHTTPError(
             501,
             f"'{name}' cannot be asked which models it offers. Name its models in the gateway's "
@@ -238,8 +189,8 @@ async def list_offerings(
     try:
         offered = await first.available_models()
     except UpstreamError as exc:
-        # The upstream's own text is **not** repeated back (`FRD-506`): a provider's message can
-        # carry the request URL, and for this adapter family the URL carries the key.
+        # The upstream's own text is not repeated (`FRD-506`): it can carry the request URL, and
+        # for this adapter family the URL carries the key.
         raise GeminiHTTPError(
             502,
             f"'{name}' did not answer its model listing. Its credential or endpoint may be wrong.",

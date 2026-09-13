@@ -38,8 +38,7 @@
           @if (searching()) {
             Searching…
           } @else if (source() === 'local') {
-            <!-- Said rather than implied. An empty list from a directory nobody could reach reads
-                 exactly like "no such group", and those are different answers to act on. -->
+            <!-- Said, because an unreachable directory otherwise reads as "no such group". -->
             <strong>The identity provider could not be searched.</strong> Showing what this console
             already knows: people who have signed in, and groups already granted somewhere.
           } @else if (hint()) {
@@ -140,10 +139,8 @@
               <td>{{ grant.role }}</td>
               <td class="nowrap">
                 <!--
-                  A grant to a group that matches nobody is silently inert: nothing fails, nobody
-                  gets access, and an access list that showed it identically to a working one
-                  could not be audited. This says how many known people it reaches — and is
-                  careful to say *known*, since the true size is the identity provider's answer.
+                  A grant to a group that matches nobody is silently inert, so the list says how
+                  many *known* people it reaches; the true size is the identity provider's answer.
                 -->
                 @if (grant.reaches === 0) {
                   <span class="badge badge--muted" [attr.data-testid]="'reaches-' + grant.role">

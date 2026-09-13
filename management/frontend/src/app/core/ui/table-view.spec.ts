@@ -151,17 +151,10 @@ describe('TablePager', () => {
 
   it('keeps its two buttons adjacent, so a changing page count cannot move them', () => {
     /**
-     * **The geometric property, asserted structurally.** The position label sat *between* Previous
-     * and Next; the group is pinned to the right, so Next held still and the label pushed
-     * Previous. A field sweep measured 8 px on the use-case list the moment a search changed the
-     * page count from two digits to one.
-     *
-     * Asserted here rather than in the browser, and that is the point: reproducing the pixel
-     * needs a list long enough to page **and** a search term that changes the count's digit width,
-     * which is a fact about how much demo data a machine happens to hold. A browser test written
-     * that way passed against the unfixed console on the first try — the vacuous pass this
-     * project refuses. What the fix really establishes is that nothing sits between the two
-     * buttons, and that is true of the markup regardless of the data.
+     * **The geometric property, asserted structurally**: with the variable-width position label
+     * between Previous and Next, a page count changing its digit width slid Previous. Nothing may
+     * sit between the two buttons — true of the markup whatever the data, where a browser test
+     * would depend on how much demo data a machine happens to hold.
      */
     const { element } = host();
     const previous = element.querySelector('[data-testid="pager-previous"]')!;

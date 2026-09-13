@@ -181,7 +181,7 @@ graph TB
         ops["Reporting · incidents · diagnostics"]
     end
 
-    subgraph shared["api/serving.py — the shared sequence"]
+    subgraph shared["api/serving/ — the shared sequence"]
         prep["<b>prepare_for_dispatch</b><br/>owns the ORDER of the pre-dispatch steps"]
         acct["<b>accounting</b><br/>owns every exit: served, refused, cancelled"]
     end

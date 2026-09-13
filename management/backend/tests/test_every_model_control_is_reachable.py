@@ -33,7 +33,7 @@ from aira_gateway.catalog import ModelDeclaration
 #: The console component that builds what a save sends.
 CATALOG_COMPONENT = (
     Path(__file__).resolve().parents[3]
-    / "management/frontend/src/app/features/models/model-catalog.ts"
+    / "management/frontend/src/app/features/models/model-editor.ts"
 )
 
 #: The two places a catalog payload is assembled. Named rather than searched for across the whole

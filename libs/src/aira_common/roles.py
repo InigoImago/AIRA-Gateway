@@ -1,26 +1,16 @@
 """The canonical AIRA roles, shared by both services (`ADR-0009`, amended by `ADR-0017`).
 
-**Three roles, conferred by group membership.** Keycloak remains the source of truth and neither
-service stores a role decision of its own — but what they read is the `groups` claim, resolved
-through `AIRA_ROLE_GROUPS` by :func:`roles_from_groups`. `realm_access.roles` is not read by
-either plane, and assigning a realm role directly grants nothing; that inertness is the guarantee
-`ADR-0017` was written to obtain, not an oversight.
+**Three roles, conferred by group membership.** Keycloak is the source of truth and neither service
+stores a role decision: both read the `groups` claim and resolve it through `AIRA_ROLE_GROUPS`
+(:func:`roles_from_groups`). `realm_access.roles` is read by neither plane, so a realm role assigned
+directly grants nothing — the guarantee `ADR-0017` was written to obtain. (This docstring once said
+the opposite; `docs/ROLES.md` records the correction.)
 
-This paragraph said the opposite until 2026-08-11 — *"these five roles are Keycloak realm roles …
-both read the same `realm_access.roles` claim"* — every clause of it false, on the first thing a
-reader of this module sees. It is the defect this project names by its own past example: **a
-comment claiming a rule the system does not have.** A reader who trusted it would look for the
-role on the token, find nothing, and conclude the mapping was broken.
-
-They live in the shared library rather than in Management because the gateway needs the same
-answer to one question — *is this caller governance* — for reporting that spans use cases. Two
-services deciding that independently is exactly how a role gets added in one place, missed in the
-other, and quietly grants or withholds access for months.
-
-What deliberately stays out of here is what each service *does* with a role. Management maps them
-to Django groups and object permissions; the gateway compares the resolved set on a request. Those
-are different mechanisms answering different questions, and pulling them together would make the
-data plane depend on ``django-guardian``.
+Shared rather than defined in Management because the gateway asks the same questions (is this
+caller governance, may it act on incidents), and two independent answers drift. What each plane
+*does* with a role stays in that plane — Management maps roles to Django groups and object
+permissions, the gateway compares the resolved set — so the data plane never depends on
+``django-guardian``.
 """
 
 from __future__ import annotations
@@ -32,16 +22,9 @@ from enum import StrEnum
 class Role(StrEnum):
     """The organisation-wide roles, and **only** those.
 
-    `use-case-admin` and `use-case-user` were members here until 2026-08-10. `ADR-0017` abolished
-    them on 2026-08-09 — administering or belonging to a use case is a grant *on that use case*,
-    not a property of a person — and nothing has read them since. They stayed in the vocabulary
-    anyway, the seed kept creating a Django group for each and assigning it, and the console kept
-    offering them as an answer.
-
-    That is the shape of defect this project refuses by name: **a role somebody can be given that
-    does nothing.** An absent capability reads as a boundary; a present one that has no effect
-    reads as a broken system, and the reader then distrusts the permissions that *do* work
-    (`FRD-206`). Removing them is the whole fix — every predicate already asks the grant.
+    Administering or belonging to a use case is a grant *on that use case* (`ADR-0017`), not a
+    role. A role that can be given and does nothing reads as a broken system (`FRD-206`), so none is
+    kept here.
     """
 
     GLOBAL_ADMIN = "global-admin"
@@ -51,50 +34,32 @@ class Role(StrEnum):
 
 ALL_ROLES: tuple[Role, ...] = tuple(Role)
 
-# Roles that oversee the whole installation rather than one use case.
-#
-# Oversight is read-only by design: a governance role sees every use case and may act inside none
-# of them, which is why it is deliberately *not* a membership (ADR-0007). Reporting is the first
-# thing in the data plane to need this distinction.
+#: Roles that oversee the whole installation rather than one use case. Read-only by design: a
+#: governance role sees every use case and acts inside none, which is why it is not a membership
+#: (`ADR-0007`).
 GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG})
 
-# Roles that may **see** every use case, which is a wider set than the ones that may see every
-# figure. PRD §154 is explicit about the difference: IT Security has "security oversight (restricted
-# view) … cross-use-case anomaly visibility … **cannot** see all business content by default".
-#
-# The two were one set until somebody logged in as `itsec` and found an empty console. A role that
-# sees nothing is not a restricted view, it is an absent one — and the restriction the PRD asks for
-# is on *content and spend*, not on knowing which use cases exist and how they are configured.
-# Retention, payload storage, filters and limits are exactly the security-relevant metadata that
-# role is there to oversee.
+#: Roles that may **see** every use case — wider than the roles that see every figure. IT Security's
+#: view is restricted on content and spend (PRD §154), not on which use cases exist and how they are
+#: configured, which is the security-relevant metadata it oversees.
 OVERSIGHT_ROLES: frozenset[Role] = GOVERNANCE_ROLES | frozenset({Role.IT_SECURITY})
 
-
-# Roles that may **act** across use cases in an incident: stop a caller, lift a suspension, author
-# a rule that applies everywhere.
-#
-# A third set, and the reason is the mistake this replaced. The gateway's kill switch was guarded by
-# `OVERSIGHT_ROLES` — which is a *visibility* predicate — so IT Steuerung could stop traffic, while
-# Management (correctly) refused it a global rule. PRD §154 gives that role every figure and **no
-# write anywhere**; reusing "may see every use case" for "may stop every use case" is `FRD-206`'s
-# mistake one level down, and a live round found it by asking the two planes the same question and
-# getting different answers.
+#: Roles that may **act** across use cases in an incident: stop a caller, lift a suspension, author
+#: a rule that applies everywhere. Not `OVERSIGHT_ROLES`: IT Steuerung sees every figure and writes
+#: nothing anywhere (PRD §154), and "may see every use case" is not "may stop every use case".
 INCIDENT_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_SECURITY})
 
-
-# Roles that may write the model catalog — declare a model, price it, release it for use.
-#
-# A fourth set, and the narrowest. `FRD-307` is the owner's rule: only a model a Global
-# Administrator has catalogued and released may be used at all, so this is the vocabulary in which
-# "may be used here" is decided, and it is deliberately not any of the oversight sets. IT Security
-# investigates incidents across every use case and writes nothing; IT Steuerung sees every figure
-# and writes nothing anywhere (PRD §154).
-#
-# It lives here rather than as `IsGlobalAdmin` in Management because the gateway now answers the
-# same question: asking a vendor what its credential can reach is only useful to somebody who may
-# act on the answer. Two planes deciding that independently is how `FRD-503` found the kill switch
-# guarded by a *visibility* predicate on one side and correctly refused on the other.
+#: Roles that may write the model catalog — declare, price and release a model (`FRD-307`). Here
+#: rather than in Management because the gateway asks the same question.
 CATALOG_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN})
+
+#: The roles a group may confer — today every role. Kept apart from `ALL_ROLES` because "what roles
+#: exist" and "what a group may confer" are different questions that happen to coincide.
+CONFIGURABLE_ROLES: frozenset[Role] = frozenset(ALL_ROLES)
+
+#: Role names abolished by `ADR-0017`, answered with their own message because older `.env` files
+#: still carry them.
+_RETIRED_ROLES = frozenset({"use-case-admin", "use-case-user"})
 
 
 def may_catalogue(roles: Iterable[str]) -> bool:
@@ -115,32 +80,10 @@ def has_oversight(roles: Iterable[str]) -> bool:
 def is_governance(roles: Iterable[str]) -> bool:
     """True if any of ``roles`` oversees the whole installation.
 
-    Takes plain strings because that is what a token claim contains — an unknown role name is
-    simply not governance, rather than an error, so a realm that grows a role the code has never
-    heard of does not break authentication.
+    Takes plain strings, as a token claim does: an unknown role name is simply not governance, so a
+    realm that grows a role the code has never heard of does not break authentication.
     """
     return any(role in GOVERNANCE_ROLES for role in roles)
-
-
-# ---- where a role comes from (ADR-0017) ---------------------------------------------------
-#
-# **Group membership, and nothing else.** Until 2026-08-09 both planes read `realm_access.roles`,
-# while use-case access came from the `groups` claim (`FRD-209`) — two mechanisms answering
-# "who is this", which is the shape of defect `FRD-209` was written to remove one level down.
-#
-# The two use-case roles are gone from this path entirely. They were never organisation-wide facts
-# about a person: administering *a* use case is a relationship between a group and that use case,
-# and `UseCaseGroupGrant` already holds it. What remains here are the three roles that really are
-# properties of somebody within the whole installation.
-
-#: The roles a group may confer — which, since the two use-case roles left the vocabulary
-#: (2026-08-10), is every role there is.
-#:
-#: Kept as its own name rather than collapsed into `ALL_ROLES`, because the two are different
-#: claims that merely happen to coincide: *what roles exist* and *what a group may confer*. A
-#: fourth role that is granted some other way would separate them again, and a reader of
-#: `AIRA_ROLE_GROUPS` should be looking at the second question.
-CONFIGURABLE_ROLES: frozenset[Role] = frozenset(ALL_ROLES)
 
 
 class RoleMappingError(ValueError):
@@ -150,14 +93,9 @@ class RoleMappingError(ValueError):
 def parse_role_groups(raw: str) -> dict[Role, tuple[str, ...]]:
     """Parse ``role=/path[,/path...][;role=...]`` into the mapping both planes read.
 
-    Refuses rather than ignores, on every count: an unknown role name, a role that cannot be
-    conferred by a group, an entry with no ``=``, and a group path that is not absolute. A typo
-    here grants nothing and would do so **silently** — the failure this project has now recorded
-    four times (a topic nothing created, `record_to_outbox` returning for an unknown type, the
-    seed's `continue`, a filter that had been switched off by an empty answer).
-
-    The bare realm root is refused for the same reason `FRD-209` refuses it as a grant: `/` matches
-    no group path Keycloak ever emits, so it is a rule that can never fire.
+    Refuses rather than ignores — an unknown role name, an entry with no ``=``, a group path that is
+    not absolute — because a typo here grants nothing, silently. The bare realm root is refused as
+    well: `/` matches no group path Keycloak emits (`FRD-209`).
     """
     mapping: dict[Role, tuple[str, ...]] = {}
     for entry in (part.strip() for part in raw.split(";")):
@@ -170,13 +108,7 @@ def parse_role_groups(raw: str) -> dict[Role, tuple[str, ...]]:
             role = Role(name.strip())
         except ValueError as exc:
             allowed = ", ".join(sorted(str(r) for r in CONFIGURABLE_ROLES))
-            # The two abolished names get their own sentence, because they are the ones somebody
-            # will try: they were roles until `ADR-0017`, they appear in older `.env` files, and
-            # "is not an AIRA role" would leave a reader looking for a typo. There used to be a
-            # separate branch for them further down; it became unreachable when they left the
-            # vocabulary, and an unreachable guard is not a guard.
-            retired = {"use-case-admin", "use-case-user"}
-            if name.strip() in retired:
+            if name.strip() in _RETIRED_ROLES:
                 raise RoleMappingError(
                     f"'{name.strip()}' is not a role any more. Administering or belonging to a "
                     "use case is a grant **on that use case** (FRD-209), not a property of a "
@@ -195,8 +127,8 @@ def parse_role_groups(raw: str) -> dict[Role, tuple[str, ...]]:
                 )
         if not cleaned:
             raise RoleMappingError(f"'{role}' names no group.")
-        # Two entries for one role are merged rather than the second silently winning: an
-        # installation that lists a group twice meant both.
+        # Two entries for one role merge rather than the second winning: listing a group twice
+        # meant both.
         mapping[role] = tuple(dict.fromkeys(mapping.get(role, ()) + cleaned))
     return mapping
 
@@ -206,10 +138,9 @@ def roles_from_groups(
 ) -> tuple[str, ...]:
     """The roles a caller holds, given the groups their token carries (`ADR-0017`).
 
-    Exact path match, never a prefix. `/aira/global-admins-readonly` starting with
-    `/aira/global-admins` must not confer anything, and a sub-group is a different group — if an
-    installation wants a hierarchy to confer a role, Keycloak's own group inheritance puts the
-    parent path in the token and the mapping names the parent.
+    Exact path match, never a prefix: `/aira/global-admins-readonly` must not confer what
+    `/aira/global-admins` does. A hierarchy that should confer a role does so through Keycloak's
+    group inheritance, which puts the parent path in the token.
     """
     held = set(groups)
     return tuple(

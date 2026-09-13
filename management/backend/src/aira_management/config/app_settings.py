@@ -12,9 +12,12 @@ from aira_common.config import BaseAiraSettings
 from aira_common.kafka import KafkaSecurity
 from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
 
-# The well-known development signing key. ``config.security`` refuses to start any non-local
-# environment that is still using it.
+#: The well-known development signing key. ``config.security`` refuses to start any non-local
+#: environment that is still using it.
 DEV_SECRET_KEY = "dev-insecure-secret-key-change-me"  # noqa: S105
+
+#: What separates the Keycloak root from the realm name in an issuer URL.
+_REALMS_MARKER = "/realms/"
 
 
 class ManagementSettings(BaseAiraSettings):
@@ -40,30 +43,16 @@ class ManagementSettings(BaseAiraSettings):
     # Use an in-memory SQLite DB (set by the test harness) instead of Postgres.
     test_database: bool = False
 
-    #: How fast one caller may ask, in DRF's `<n>/<period>` notation (2026-08-15).
+    #: How fast one caller may ask, in DRF's `<n>/<period>` notation.
     #:
-    #: There was no bound at all. Every request here verifies a token against a JWKS and then
-    #: reconciles the caller's groups, so an unauthenticated probe is not free — and the gateway
-    #: has bounded exactly that since `ADR-0015`, on the argument that a limit keyed by use case or
-    #: member cannot bound somebody who has neither. This plane had the same gap and not the
-    #: reasoning.
+    #: `throttle_auth_failures` bounds **refusals** per source address, in the authentication class
+    #: (`apps.api.attempts`, `ADR-0015`), where the expensive JWKS verification happens; `0`
+    #: switches it off. `throttle_user` is generous — a console screen loads five panels at once —
+    #: and sized to stop a script, not to shape ordinary use.
     #:
-    #: `user` is deliberately generous: a console screen loads five panels at once and paging
-    #: through traces is what the product is *for*, so this is sized to stop a script rather than
-    #: to shape ordinary use.
-    #:
-    #: `throttle_auth_failures` bounds **refusals**, keyed by source address, and is not a DRF
-    #: throttle: DRF checks permissions before throttles, so on an API where every view requires
-    #: authentication an `AnonRateThrottle` never runs at all. It is applied in the authentication
-    #: class instead (`apps.api.attempts`), which is where the expensive part — a JWKS verification
-    #: of a token that turns out to be invalid — actually happens. `0` switches it off.
-    #:
-    #: **Per process, and stated rather than implied.** DRF counts through Django's cache, and no
-    #: `CACHES` is configured, so this is `LocMemCache`: N workers admit N × the rate. That is the
-    #: same degradation `FallbackTokenBucket` documents on the other plane — *"imprecise across
-    #: instances and still prevents that"* — and the same reason it is worth having anyway: the
-    #: thing being stopped is one client looping, and a bound that is off by the worker count still
-    #: stops it. A deployment that wants it exact points `CACHES` at the Redis it already runs.
+    #: **Per process**: with no `CACHES` configured, Django's cache is `LocMemCache`, so N workers
+    #: admit N × the rate — still enough to stop one client looping. Point `CACHES` at a shared
+    #: store for an exact bound.
     throttle_auth_failures: str = "60/minute"
     throttle_user: str = "600/minute"
 
@@ -76,11 +65,9 @@ class ManagementSettings(BaseAiraSettings):
     oidc_clock_skew_seconds: float = DEFAULT_CLOCK_SKEW_SECONDS
     oidc_expiry_leeway_seconds: float = DEFAULT_EXPIRY_LEEWAY_SECONDS
 
-    # How this service authenticates to Kafka (2026-08-09). `PLAINTEXT` keeps the Compose stack
-    # working and is **refused outside `local`**: the gateway applies whatever arrives on these
-    # topics into the read-model its authorization comes from, so an unauthenticated broker is a
-    # way to grant yourself administrator access to any use case without a credential and without
-    # an audit row.
+    # How this service authenticates to Kafka. `PLAINTEXT` keeps the Compose stack working and is
+    # **refused outside `local`**: the gateway builds the read-model its authorization comes from
+    # out of these topics, so an unauthenticated broker lets anybody grant themselves access.
     kafka_security_protocol: str = "PLAINTEXT"
     kafka_sasl_mechanism: str = ""
     kafka_sasl_username: str = ""
@@ -96,10 +83,9 @@ class ManagementSettings(BaseAiraSettings):
             ssl_cafile=self.kafka_ssl_cafile,
         )
 
-    # Directory search (`FRD-209`). A **read-only** service account with `view-users` and
-    # `query-groups` on the realm — the least it can be given. Absent by default: without it the
-    # console falls back to what Management already knows and says so, rather than pretending the
-    # search is complete.
+    # Directory search (`FRD-209`): a **read-only** service account with `view-users` and
+    # `query-groups` on the realm. Absent by default; the console then searches what Management
+    # already knows, and says so.
     directory_client_id: str = ""
     directory_client_secret: str = ""
 
@@ -116,19 +102,16 @@ class ManagementSettings(BaseAiraSettings):
     def oidc_issuer_base(self) -> str:
         """The Keycloak root, derived from the issuer (`.../realms/<realm>`).
 
-        Derived rather than configured separately: two settings for one server is two settings to
-        get out of step, and the admin API lives beside the realm the issuer already names.
+        Derived rather than configured, so two settings for one server cannot get out of step.
         """
         issuer = self.oidc_issuer.rstrip("/")
-        marker = "/realms/"
-        return issuer.split(marker)[0] if marker in issuer else issuer
+        return issuer.split(_REALMS_MARKER)[0] if _REALMS_MARKER in issuer else issuer
 
     @property
     def oidc_realm(self) -> str:
         """The realm name, from the issuer."""
         issuer = self.oidc_issuer.rstrip("/")
-        marker = "/realms/"
-        return issuer.split(marker)[-1] if marker in issuer else ""
+        return issuer.split(_REALMS_MARKER)[-1] if _REALMS_MARKER in issuer else ""
 
     def jwks_uri(self) -> str:
         """Return the JWKS URI, deriving it from the issuer when not set explicitly."""

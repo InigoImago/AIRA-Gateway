@@ -1,15 +1,7 @@
 """The configured directory, and the one question the rest of Management asks it.
 
-`_build_directory` lived inside the search view, where it was the only caller. It has a second one
-now — granting access to somebody who has **not signed in yet** (`FRD-209` FR-4) — and a second
-copy of "which four settings make a directory client" is the drift this project keeps paying for.
-So it lives here, and the view imports it.
-
-The second caller is the reason `known_person` exists rather than the view calling `find_user`
-itself: whether an account may be created for a typed name is a decision, not a lookup, and it has
-exactly three outcomes a caller has to tell apart — **there is such a person**, **there is not**,
-and **nobody could be asked**. A function returning `DirectoryEntry | None` collapses the last two,
-and collapsing them is how "no such colleague" comes to be reported for a directory that is down.
+Shared by the directory search and by granting access to somebody who has not signed in yet
+(`FRD-209` FR-4), so "which settings make a directory client" is written once.
 """
 
 from __future__ import annotations
@@ -33,10 +25,9 @@ def build_directory() -> KeycloakDirectory | None:
 def known_person(username: str) -> DirectoryEntry | None:
     """The directory's record of ``username``, or ``None`` if it has none.
 
-    Raises :class:`DirectoryUnavailable` when there is no directory to ask, or when asking failed.
-    That is the distinction the caller owes its reader: "the directory says there is no such
-    person" is a fact about the name, and "nobody could be asked" is a fact about this
-    installation, and only one of the two is the typist's to fix.
+    Raises :class:`DirectoryUnavailable` when there is no directory to ask or asking failed: "no
+    such person" is a fact about the name, "nobody could be asked" a fact about this installation,
+    and only the first is the typist's to fix.
     """
     directory = build_directory()
     if directory is None:

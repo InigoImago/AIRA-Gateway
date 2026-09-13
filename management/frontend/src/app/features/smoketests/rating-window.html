@@ -1,0 +1,108 @@
+@if (current(); as row) {
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rate-title">
+    <div class="modal__panel modal__panel--wide">
+      <div class="modal__head">
+        <h3 id="rate-title" style="margin: 0">{{ row.topic }}</h3>
+        <span class="muted" data-testid="rate-position">
+          {{ (rating() ?? 0) + 1 }} of {{ results().length }}
+          @if (row.rated_by_name) {
+            <!-- Somebody revisiting a verdict is entitled to know whose it was. -->
+            · rated {{ row.verdict }} by {{ row.rated_by_name }}
+          }
+        </span>
+        <button
+          type="button"
+          class="btn btn--sm btn--ghost"
+          aria-label="Close"
+          (click)="closeRating()"
+        >
+          Close
+        </button>
+      </div>
+
+      <div class="modal__body stack">
+        <div>
+          <h4 class="section-title" style="margin: 0 0 0.35rem">Question</h4>
+          <pre class="payload" data-testid="rate-prompt">{{ row.prompt }}</pre>
+        </div>
+
+        @if (row.expectation) {
+          <div>
+            <h4 class="section-title" style="margin: 0 0 0.35rem">What a good answer looks like</h4>
+            <p class="muted" style="margin: 0" data-testid="rate-expectation">
+              {{ row.expectation }}
+            </p>
+          </div>
+        }
+
+        <div>
+          <h4 class="section-title" style="margin: 0 0 0.35rem">The answer</h4>
+          @if (row.error) {
+            <!-- A failed request is not a bad answer: "the gateway refused us" is not "this model
+                 is unsafe". -->
+            <p class="callout callout--warning" data-testid="rate-error">
+              The request failed, so there is nothing to judge: {{ row.error }}
+            </p>
+          } @else {
+            <pre class="payload" data-testid="rate-response">{{ row.response }}</pre>
+          }
+        </div>
+
+        <div class="field">
+          <label for="rate-note">Note (optional)</label>
+          <textarea
+            id="rate-note"
+            rows="2"
+            [ngModel]="note()"
+            (ngModelChange)="note.set($event)"
+            placeholder="what makes this acceptable, or not"
+            data-testid="rate-note"
+          ></textarea>
+        </div>
+      </div>
+
+      <div class="modal__foot">
+        <button
+          type="button"
+          class="btn"
+          [disabled]="(rating() ?? 0) === 0"
+          (click)="step(-1)"
+          data-testid="rate-previous"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          class="btn"
+          [disabled]="(rating() ?? 0) >= results().length - 1"
+          (click)="step(1)"
+          data-testid="rate-next"
+        >
+          Next
+        </button>
+        <span class="form-actions__spacer"></span>
+        <!-- Three verdicts, not two: "cannot tell" is a real outcome, and forcing it into pass or
+             fail reports a certainty nobody had. -->
+        <button type="button" class="btn" (click)="verdict('unclear')" data-testid="rate-unclear">
+          Cannot tell
+        </button>
+        <button
+          type="button"
+          class="btn btn--danger"
+          (click)="verdict('fail')"
+          data-testid="rate-fail"
+        >
+          Not acceptable
+        </button>
+        <button
+          type="button"
+          class="btn btn--primary"
+          (click)="verdict('pass')"
+          data-testid="rate-pass"
+        >
+          Acceptable
+        </button>
+      </div>
+    </div>
+  </div>
+}

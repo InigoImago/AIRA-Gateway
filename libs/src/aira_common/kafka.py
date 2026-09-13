@@ -1,9 +1,7 @@
-"""Kafka topics + a thin producer abstraction (FRD-204).
+"""Kafka topics, and a thin producer abstraction (`FRD-204`).
 
-The ``Producer`` protocol lets business logic (the management relay) be tested with an
-in-memory fake; the aiokafka-backed producer is used by the real worker (and covered by
-integration tests, hence ``# pragma: no cover`` on its I/O methods). Trace context (FRD-001)
-is propagated on Kafka headers.
+The ``Producer`` protocol lets business logic (the management relay) be tested with an in-memory
+fake. Trace context travels on message headers (`FRD-001`, `FRD-615`).
 """
 
 from __future__ import annotations
@@ -25,35 +23,27 @@ RATE_LIMIT_TOPIC = "aira.rate-limits"
 MODEL_TOPIC = "aira.models"
 ANOMALY_RULE_TOPIC = "aira.anomaly-rules"
 
+#: The header naming a record's event type.
 EVENT_TYPE_HEADER = "event_type"
 
 
 @dataclass(frozen=True, slots=True)
 class KafkaSecurity:
-    """How both planes authenticate to the broker, in one place (2026-08-09).
+    """How both planes authenticate to the broker, in one place.
 
-    **The bus is a trust boundary, and it had none.** Producer and consumer connected with
-    `bootstrap_servers` and nothing else — no protocol, no mechanism, no way to configure one. The
-    gateway applies whatever arrives on these topics straight into the read-model its
-    authorization is derived from, so anybody who could reach the broker could publish
-    `api_key.created` with a hash of their choosing, or `use_case_group.granted` naming a group
-    they are in, and hold administrator access to any use case. No credential is needed and no
-    audit row is written, because from the gateway's side nothing unusual happened: configuration
-    arrived, exactly as configuration does.
-
-    Applying events without question is the right design *if* the bus is authenticated — that is
-    what `FRD-204`'s idempotent consumer assumes. There was simply no way to make it true.
-
-    Defaults reproduce the previous behaviour (`PLAINTEXT`) so a laptop and the Compose stack keep
-    working; both planes refuse to start on it outside `local` (`ADR-0015`).
+    **The bus is a trust boundary.** The gateway applies whatever arrives on these topics to the
+    read-model its authorization is derived from, so an unauthenticated broker lets anybody who can
+    reach it publish their own API key or group grant — `FRD-204`'s idempotent consumer assumes an
+    authenticated bus. The `PLAINTEXT` default keeps a laptop and the Compose stack working; both
+    planes refuse to start on it outside `local` (`ADR-0015`).
     """
 
     protocol: str = "PLAINTEXT"
     sasl_mechanism: str = ""
     sasl_username: str = ""
     sasl_password: str = ""
-    #: Trust store for the broker's certificate. Empty uses the system trust store, which is what
-    #: a broker with a publicly-issued certificate needs; a private CA is named here.
+    #: Trust store for the broker's certificate. Empty uses the system trust store; a private CA is
+    #: named here.
     ssl_cafile: str = ""
 
     @property
@@ -63,9 +53,7 @@ class KafkaSecurity:
     def client_kwargs(self) -> dict[str, Any]:
         """The keyword arguments both aiokafka clients take.
 
-        Built here rather than at each call site: a producer that authenticates and a consumer
-        that does not is a deployment where half the bus is protected, and the half that is not is
-        the half that grants access.
+        Built once, so a producer that authenticates beside a consumer that does not cannot happen.
         """
         protocol = self.protocol.strip().upper() or "PLAINTEXT"
         kwargs: dict[str, Any] = {"security_protocol": protocol}
@@ -88,13 +76,9 @@ class KafkaRecord:
     key: str
     event_type: str
     payload: dict[str, Any]
-    #: The W3C trace context of the request that **caused** this event, where one was captured.
-    #:
-    #: An outbox publishes from a different process, minutes later, with no span of its own — so
-    #: the ambient context at publish time is empty and injecting it produced nothing at all. The
-    #: causing request's context is stored on the outbox row and restored here, which is what makes
-    #: a console change and the gateway applying it one trace (`FRD-615`). Empty for anything
-    #: published outside a request, which is honest: there was no caller.
+    #: The W3C trace context of the request that **caused** this event, if one was captured. An
+    #: outbox publishes later, from another process with no span, so the causing context is stored
+    #: on the row and restored here (`FRD-615`). Empty when there was no caller.
     traceparent: str = ""
 
 
@@ -123,13 +107,9 @@ class InMemoryProducer:
 class AiokafkaProducer:
     """Real aiokafka-backed producer.
 
-    **The client is built by an injected factory**, and that is not a testing nicety. `start()` is
-    where a `security_protocol`, a SASL mechanism, a username, a trust store and a broker address
-    are all first tested against reality at once, and it was three lines with no logging and a
-    `# pragma: no cover` — so the one call in this system where a Kafka credential is proven had
-    no unit test and said nothing when it failed. The factory lets the whole path be driven with a
-    fake broker, which is what makes the `FRD-617` lines below a wire that is tested rather than
-    two ends that both look right (`LESSONS.md` §1).
+    The client comes from an injected factory, so `start()` — where protocol, SASL mechanism,
+    credentials, trust store and broker address are first tested together — can be driven with a
+    fake broker, and its `FRD-617` lines are tested rather than assumed.
     """
 
     def __init__(
@@ -178,10 +158,8 @@ class AiokafkaProducer:
             metadata = await self._producer.send_and_wait(
                 record.topic, value=record.payload, key=record.key.encode("utf-8"), headers=headers
             )
-            # **Where it landed**, which `send_and_wait` has always returned and this discarded.
-            # A partition and an offset are what somebody takes to `kafka-console-consumer` when
-            # the far end says it never saw the event; without them the producer's word is the
-            # only evidence that anything was published.
+            # Where it landed: what somebody takes to `kafka-console-consumer` when the far end
+            # says it never saw the event.
             call.note(
                 partition=getattr(metadata, "partition", None),
                 offset=getattr(metadata, "offset", None),

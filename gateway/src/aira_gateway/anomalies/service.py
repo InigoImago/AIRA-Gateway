@@ -1,30 +1,18 @@
 """Scheduling the evaluation, and recording what it found (`FRD-501`).
 
-Off the request path entirely (`ADR-0014`): a background task on an interval, evaluating only the
-scopes that saw traffic since the last tick. A request pays nothing — not a query, not a lock, not
-a counter.
+Off the request path (`ADR-0014`): a background task on an interval, evaluating only the scopes
+that saw traffic since the last tick. A request pays nothing.
 
-**Correct with more than one gateway instance** (`FRD-127`), which it was not. Every instance runs
-this loop, and three pieces of it used to be per-process: the touched set, the cooldown map, and
-the decision to evaluate at all. Two instances therefore evaluated the same shared `request_logs`,
-reached the same verdict, and wrote an event each — while both sat inside their own cooldowns, so
-the mechanism meant to stop repeat firing was the one thing that could not see the repeat. With
-enforcement on, one finding became one suspension per instance.
+Correct with several gateway instances (`FRD-127`) because each piece of state is shared rather
+than per-process:
 
-The three answers are all in this module and each is a *shared* fact rather than a local one:
+- **which scopes saw traffic** is read from `request_logs`, so the evaluator sees the fleet's
+  traffic, not only what it served;
+- **the cooldown** is the `anomaly_events` table, so it holds across instances and restarts;
+- **one evaluator per tick**, claimed with a transaction-scoped Postgres advisory lock.
 
-- **which scopes saw traffic** is read from `request_logs`, so the instance that evaluates sees the
-  whole fleet's traffic rather than the requests it happened to serve;
-- **the cooldown** is the `anomaly_events` table, so it holds across instances *and* across
-  restarts — a rolling update used to re-fire every rule as each new instance started with an empty
-  map;
-- **one evaluator per tick**, claimed with a Postgres advisory lock held for the transaction.
-
-Kept in the serving process rather than moved to a worker of its own, which was the first plan
-(`FRD-127` §5.3 option 1). Moving it would have made the singleton structural, and it would also
-have meant that every existing deployment silently stopped detecting anything until its operator
-added a container. A capability that disappears on upgrade unless somebody reads the release notes
-is worse than one that needs a lock.
+Kept in the serving process rather than a worker of its own (`FRD-127` §5.3), so an existing
+deployment keeps detecting after an upgrade without adding a container.
 """
 
 from __future__ import annotations
@@ -45,20 +33,14 @@ from aira_gateway.db.models import AnomalyEvent, AnomalyRuleRead, RequestLog
 
 _log = structlog.get_logger(__name__)
 
-#: The advisory-lock key the evaluator claims each tick. An arbitrary constant; what matters is
-#: that every gateway instance uses the same one, so `pg_try_advisory_xact_lock` is a fleet-wide
-#: "am I the evaluator this minute".
-#:
-#: The **transaction-scoped** form deliberately: it is released when the transaction ends, however
-#: it ends. A session-scoped lock survives a crashed process until its connection is reaped, which
-#: would leave the fleet with no evaluator at all — turning a duplicate-detection defect into an
-#: absent-detection one, which is far worse.
+#: The advisory-lock key every instance claims each tick — a fleet-wide "am I the evaluator this
+#: minute". Taken **transaction-scoped**, so it is released however the transaction ends: a
+#: session-scoped lock would survive a crashed process until its connection is reaped and leave the
+#: fleet with no evaluator at all.
 TICK_LOCK_KEY = 0x4149_5241_414E_4F4D
 
-#: What an event records when a rule asked for an action that could not be carried out. `FRD-503`
-#: made the ordinary case possible; this remains for the one that is not — a `block` rule whose
-#: `action_minutes` never arrived, say. Said in the row rather than left to inference: a control
-#: displayed as active and doing nothing is the defect `FRD-125` exists to prevent.
+#: What an event records when a rule's action could not be carried out (a `block` rule without
+#: `action_minutes`, say) — said on the row rather than looking enforced (`FRD-125`).
 NOT_ENFORCED = "detected_not_enforced"
 
 
@@ -72,11 +54,7 @@ class AnomalyService:
     #: Where a fired rule's decision goes. Optional so the evaluator can be exercised without one,
     #: and so an installation with enforcement switched off still detects and records.
     suspensions: SuspensionService | None = None
-    #: How far this instance has evaluated. Rows at or after it are still unexamined.
-    #:
-    #: Replaces a set the audit writer filled in-process. That set held only the requests *this*
-    #: instance served, so with a load balancer in front the instance that evaluated knew about a
-    #: fraction of the traffic and the rest was never measured by any rule.
+    #: How far this instance has evaluated; rows at or after it are still unexamined.
     _since: datetime | None = None
     _task: asyncio.Task[None] | None = None
 
@@ -103,7 +81,7 @@ class AnomalyService:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # pragma: no cover - defensive
-                # A detector that dies on one bad tick is a detector that is off when it matters.
+                # A detector that dies on one bad tick is off when it matters.
                 _log.warning("anomaly_tick_failed", error=str(exc))
 
     # -- one round -------------------------------------------------------------------------
@@ -111,20 +89,14 @@ class AnomalyService:
     async def tick(self, now: datetime | None = None) -> list[AnomalyEvent]:
         """Evaluate every rule that could have been affected since the last tick.
 
-        **The watermark only moves on success.** A tick that raised — a database blink, a rule the
-        evaluator could not read — used to take its window with it: the scopes were cleared before
-        the evaluation ran, so the traffic in those minutes was never measured by any rule.
-        Detection is asynchronous by `ADR-0014`, which promises it happens *later*, not that it may
-        quietly not happen. Leaving `_since` where it is re-reads the same window next time, and
-        needs no merging back of a set that has been growing in the meantime.
+        **The watermark only moves on success**: a tick that raised re-reads the same window next
+        time. `ADR-0014` promises detection happens later, not that it may quietly not happen.
         """
         moment = now or datetime.now(UTC)
         async with self.sessionmaker() as session:
             if not await self._claim_the_tick(session):
-                # Another instance is evaluating this minute. Its query covers the fleet's traffic
-                # rather than its own, so this instance's window has been handled — advance and
-                # stop. Not advancing would leave a loser re-reading hours of logs on the day it
-                # finally wins one.
+                # Another instance is evaluating, over the fleet's traffic — advance and stop, or a
+                # loser would re-read hours of logs on the day it finally wins.
                 self._since = moment
                 return []
             touched = await self._touched_since(session, moment)
@@ -135,16 +107,10 @@ class AnomalyService:
         return written
 
     async def _claim_the_tick(self, session: AsyncSession) -> bool:
-        """Whether this instance is the one evaluating, fleet-wide (`FRD-127`).
+        """Whether this instance is the one evaluating, fleet-wide (`FRD-127`; see `TICK_LOCK_KEY`).
 
-        The **transaction-scoped** advisory lock: released when this transaction ends, however it
-        ends. A session-scoped one survives a crashed process until its connection is reaped, which
-        would leave the fleet with no evaluator — turning a duplicate-detection defect into an
-        absent-detection one, which is much worse.
-
-        SQLite has no advisory locks and no second instance either, so it always wins. The hermetic
-        tests exercise the evaluation; two real evaluators over one Postgres belong to the
-        integration layer, which is where that property is actually observable.
+        SQLite has no advisory locks and no second instance, so it always wins; two real
+        evaluators over one Postgres belong to the integration layer.
         """
         if session.get_bind().dialect.name != "postgresql":
             return True
@@ -154,11 +120,8 @@ class AnomalyService:
     async def _touched_since(self, session: AsyncSession, moment: datetime) -> set[str | None]:
         """Which scopes saw traffic, read from the audit rows rather than from this process.
 
-        ``None`` is a real member of this set rather than an absence: it marks traffic with no use
-        case, which a global rule still measures.
-
-        The first tick after a start looks back one interval. Anything older was either evaluated
-        by the instance this one replaced, or is outside every rule's window anyway.
+        ``None`` is a real member: traffic with no use case, which a global rule still measures.
+        The first tick after a start looks back one interval.
         """
         since = self._since or (moment - timedelta(seconds=self.interval_seconds))
         stmt = select(RequestLog.use_case).where(RequestLog.created_at >= since).distinct()
@@ -168,8 +131,7 @@ class AnomalyService:
         self, session: AsyncSession, touched: set[str | None], moment: datetime
     ) -> list[AnomalyEvent]:
         if not touched:
-            # Nothing happened. A quiet installation with 200 use cases should not run 200 queries
-            # a minute forever.
+            # A quiet installation should not run a query per rule every minute forever.
             return []
 
         scoped = {slug for slug in touched if slug is not None}
@@ -199,14 +161,12 @@ class AnomalyService:
     ) -> str:
         """Carry out the rule's action, and return what was **actually** done.
 
-        Recording and enforcing are two facts (`ADR-0014` §3), so the row says which happened
-        rather than repeating what the rule asked for. That is also what makes the alert-first
-        rollout real: "detected, action alert" is a first-class outcome, not a failure to act.
+        Recording and enforcing are two facts (`ADR-0014` §3), so the row says which happened;
+        "detected, action alert" is a first-class outcome, not a failure to act.
         """
         if action is RuleAction.ALERT:
             return RuleAction.ALERT.value
         if self.suspensions is None or not rule.action_minutes:
-            # A rule that cannot be carried out says so on the row rather than looking enforced.
             return NOT_ENFORCED
         session.add(
             suspension_from_rule(
@@ -230,14 +190,8 @@ class AnomalyService:
     ) -> bool:
         """Has this exact finding already been recorded inside the rule's own window?
 
-        **Asked of the table, not of a dict.** The cooldown used to be per process, which made it
-        useless for the two things it most needed to survive: a second instance (each sat inside
-        its own cooldown while the fleet fired once per instance) and a **restart** — a rolling
-        update brought up an instance with an empty map, so every rule fired again the moment it
-        started, describing traffic the previous instance had already reported.
-
-        Autoflush makes an event added earlier in this same tick visible here, so a rule that finds
-        the same target twice in one round still writes once.
+        Asked of the table, so the cooldown holds across instances and restarts. Autoflush makes an
+        event added earlier in this tick visible, so one round writes a finding once.
         """
         cutoff = now - timedelta(minutes=rule.window_minutes)
         stmt = (
@@ -260,9 +214,8 @@ class AnomalyService:
     ) -> AnomalyEvent | None:
         """Write the finding, unless the same one was written within the rule's own window.
 
-        The cooldown is the window itself: a 15-minute window evaluated every minute would
-        otherwise fire fifteen times about the same fifteen minutes, and each event would describe
-        traffic the previous one already described.
+        The cooldown is the window itself: otherwise a 15-minute window evaluated every minute
+        would fire fifteen times about the same fifteen minutes.
         """
         if await self._fired_recently(session, rule, finding.target_value, now):
             return None
@@ -271,36 +224,25 @@ class AnomalyService:
         try:
             action = RuleAction(rule.action)
         except ValueError:
-            # An action word this build has no code for — the same forward-compatibility hole as
-            # the rule's `kind` and `target` (`evaluator.evaluate_rule`), and reached the same way:
-            # `consumer.apply` writes `action` verbatim out of the Kafka payload.
-            #
-            # The finding itself is real and is still written. What cannot be honest is the
-            # *action*, so the row says `detected_not_enforced` — exactly what `_enforce` already
-            # records for a rule whose action cannot be carried out. Silently downgrading it to
-            # `alert` would put a word on the row that nobody configured, and raising here would
-            # take the whole tick down with it: `tick` has no per-rule boundary, so one unreadable
-            # row stopped every other rule in the installation from ever being evaluated again.
+            # An action word this build does not implement (`consumer.apply` writes it verbatim).
+            # The finding is still written, as `detected_not_enforced` rather than an action nobody
+            # configured; raising would abort the whole tick.
             _log.warning("anomaly_rule_action_not_implemented", rule_id=rule.id, action=rule.action)
             action = None
         taken = (
             NOT_ENFORCED if action is None else self._enforce(session, rule, finding, action, now)
         )
         event = AnomalyEvent(
-            # Stamped with the moment this evaluation is *about*, rather than left to the column's
-            # server default. `_fired_recently` compares against it, so the two must be the same
-            # clock — in production they are (`moment` is `now(UTC)`), and everywhere else this is
-            # what makes the window testable at all.
+            # The moment this evaluation is about, not the server default: `_fired_recently`
+            # compares against it, so both must read the same clock.
             created_at=now,
             rule_id=rule.id,
             rule_name=rule.name,
             kind=rule.kind,
             use_case=rule.use_case
             if rule.use_case is not None
-            # Compared as the stored word rather than coerced through the enum: this is the third
-            # place a rule's `target` was turned into a `RuleTarget` and the third that would have
-            # raised on one this build does not have. A string this row does not recognise simply
-            # is not `use_case`, which is the right answer and cannot fail.
+            # The stored word, not coerced through `RuleTarget`, which would raise on a target this
+            # build does not know.
             else (finding.target_value if rule.target == RuleTarget.USE_CASE.value else None),
             target=rule.target,
             target_value=finding.target_value,

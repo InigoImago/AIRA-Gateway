@@ -1,7 +1,4 @@
-<!--
-  Deliberately not a progress bar. There is no denominator here — that is the whole point of the
-  panel — and inventing one would be the defect it fixes, in the other direction.
--->
+<!-- Not a progress bar: consumption here has no denominator, and inventing one would mislead. -->
 <div class="card" data-testid="consumption">
   <div class="spread">
     <h3 class="section-title" style="margin: 0">Consumption</h3>
@@ -13,11 +10,8 @@
   </p>
 
   <!--
-    A plain callout, **not** a warning. Nothing is wrong here: the reader is simply not in the
-    group, which is the ordinary state of a use case they just created (`FRD-209` — AIRA never
-    writes to the directory). Dressing it as a warning greeted every new use case with an alarm
-    beside the retention warning already on this tab, and a page with two warnings on it about
-    nothing teaches the reader to skip the next one.
+    A plain callout, not a warning: not being in the group is the ordinary state of a new use case
+    (`FRD-209`), and warnings about nothing teach the reader to skip the next one.
   -->
   @if (consumption().outOfScope) {
     <p class="callout" style="margin-top: 1rem" data-testid="consumption-scope">

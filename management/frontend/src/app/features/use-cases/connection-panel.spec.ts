@@ -7,15 +7,8 @@ import { ConnectionPanel } from './connection-panel';
 /**
  * The connection block builds its examples from what the use case actually has.
  *
- * The defect it fixes is an absence: the console said everything about *governing* a use case and
- * nothing about *using* one, so somebody who had just issued a key had no address to put it
- * against. An absent instruction announces itself through nothing — the reader concludes the
- * feature is unfinished, or that they missed a page.
- *
- * Which makes the property under test not "does it render" but **does it only ever offer what
- * would work**. Every case here is a way the block could be confidently wrong: a model the use case
- * may not call, a KIRA id for a model that has none, an example built while the gateway has not
- * answered yet.
+ * The property under test is that it only ever offers what would work: never a model the use case
+ * may not call, a KIRA id for a model that has none, or an example before the gateway answered.
  */
 describe('ConnectionPanel', () => {
   let fixture: ComponentFixture<ConnectionPanel>;
@@ -47,13 +40,7 @@ describe('ConnectionPanel', () => {
     return (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`);
   }
 
-  /**
-   * Switch surface.
-   *
-   * The two are tabs now, so only one is in the DOM at a time — which is why the assertions below
-   * changed rather than being added to. A test that still expected both at once would have been
-   * asserting the old layout.
-   */
+  /** Switch surface. The two are tabs, so only one is in the DOM at a time. */
   function open(surface: 'gemini' | 'kira'): void {
     testid(`conn-tab-${surface}`)?.click();
     fixture.detectChanges();
@@ -63,27 +50,8 @@ describe('ConnectionPanel', () => {
     TestBed.configureTestingModule({ providers: [provideRouter([])] });
   });
 
-  /**
-   * There is no "Issue a key" button here, and that is the decision rather than an omission.
-   *
-   * It was added with the block and did nothing: a `routerLink` carrying `fragment="api-keys"`,
-   * where the page selects its tab from a **query parameter** and calls it `keys` — and behind
-   * both, the parent reads that parameter from the route *snapshot*, so navigating to the same
-   * route with a different one changes the URL and moves nothing. Offered as "make it work or take
-   * it out", the owner chose out: the panel's job is to say how to call the use case, and the tab
-   * bar two centimetres above already leads to where keys are issued. A second route to the same
-   * place is a second thing that can rot.
-   *
-   * Asserted because a **removal has no other counterpart**. Nothing fails when a control comes
-   * back, so without this the next person to read "connecting a client, but where do I get a key?"
-   * adds one, and the answer to that question is the tab bar.
-   */
-  /**
-   * Every example said `<your key>` and nothing said where one comes from — an instruction with no
-   * destination, and the gap left behind when the "Issue a key" button was removed. Naming the tab
-   * is the answer, because that is where keys are issued and a second route to it is a second
-   * thing that can rot.
-   */
+  // Every example asks for `<your key>`, so the block names the tab where keys are issued — in
+  // words, with no second route to it (see 'offers no key-issuing control of its own').
   it('says where a key comes from, since every example asks for one', () => {
     build(['chat-model']);
     answer();
@@ -94,15 +62,8 @@ describe('ConnectionPanel', () => {
     expect(text()).toContain('x-goog-api-key');
   });
 
-  /**
-   * Bearer tokens were absent outright, and they are not an edge case: they are how a person or a
-   * service account calls the gateway with no key minted, and the only way a Keycloak group grant
-   * reaches the data plane. Measured on the running stack before it was written here.
-   *
-   * The sentence that matters is the *difference* — a token carries an identity and **not** a use
-   * case — because it is what sends a reader to the section below instead of to a 403 they cannot
-   * explain.
-   */
+  // A bearer token is how a group grant reaches the data plane, and it carries an identity, not a
+  // use case — which sends the reader to the naming section instead of an unexplained 403.
   it('covers the OIDC bearer, and says what it does not carry', () => {
     build(['chat-model']);
     answer();
@@ -111,12 +72,8 @@ describe('ConnectionPanel', () => {
     expect(testid('connection-credentials')?.textContent).toContain('carries no use');
   });
 
-  /**
-   * The measured number. Configuration reaches the gateway over the event bus, so a grant is
-   * effective in this console immediately and at the gateway a few seconds later — during which a
-   * caller the page shows as a member is answered 403. Written down because the alternative is
-   * somebody concluding the grant did not work.
-   */
+  // Configuration reaches the gateway over the event bus, so a fresh grant is answered 403 for a
+  // few seconds while the console already shows it.
   it('warns that a fresh grant is not effective at the gateway instantly', () => {
     build(['chat-model']);
     answer();
@@ -124,6 +81,7 @@ describe('ConnectionPanel', () => {
     expect(testid('connection-grant-delay')?.textContent).toContain('403');
   });
 
+  // A removed control has no other test: without this one, the next reader adds it back.
   it('offers no key-issuing control of its own', () => {
     build(['chat-model']);
     answer();
@@ -190,10 +148,7 @@ describe('ConnectionPanel', () => {
     answer([{ id: 9001, name: 'somebody-else', capabilities: ['CHAT'] }]);
     open('kira');
 
-    // The gateway omits a model from its KIRA listing when the catalog gave it no id, so an absent
-    // entry is *either* no id *or* not served. This said "the gateway does not serve this model" —
-    // a confident answer to a question the panel cannot answer, and wrong for the reader whose
-    // model works fine over the Gemini API and has no number yet.
+    // An entry absent from the KIRA listing is either no id or not served; the panel cannot tell.
     expect(testid('connection-models')?.textContent).toContain("not in the gateway's KIRA listing");
     expect(testid('connection-models')?.textContent).not.toContain('does not serve');
     // No example either way: nothing here knows what that model can do.
@@ -346,10 +301,8 @@ describe('ConnectionPanel', () => {
     build(['chat-model', 'embed-model']);
     answer();
 
-    // Every button on both tabs, because a copy control wired to the wrong string is one that
-    // works and hands the reader somebody else's command — and the only way to see that is to
-    // press each one. Walked per surface now that they are tabs; a loop over all six against one
-    // tab would have found three of them absent and pressed nothing.
+    // Every button, per surface (only one tab is in the DOM): a copy control wired to the wrong
+    // string still works and hands over somebody else's command.
     for (const surface of ['gemini', 'kira'] as const) {
       open(surface);
       for (const id of [`copy-${surface}-base`, `copy-${surface}-chat`, `copy-${surface}-embed`]) {
@@ -397,9 +350,7 @@ describe('ConnectionPanel', () => {
     build(['chat-model']);
     answer();
 
-    // The prefix had no explanation at all — it was half a sentence inside a hover hint, which is
-    // where somebody who already suspects there is something to know goes looking. A caller with a
-    // client that can set a URL and not a header does not suspect it.
+    // Stated in the panel, not in a hover hint: this caller does not suspect there is anything to know.
     const section = testid('connection-attribution')?.textContent ?? '';
     expect(section).toContain('/uc/');
     expect(section).toContain('403');
@@ -424,14 +375,7 @@ describe('ConnectionPanel', () => {
   });
 
   // ---- folded shut -------------------------------------------------------------------
-  /**
-   * Reported: *"make the description of connections collapsible, it takes up too much space."*
-   *
-   * Measured on the showcase use case before the change: the overview was **3849 px** tall and
-   * this block was **3467** of them — 90% of a page whose job is to say where a use case stands.
-   * It is a reference, not a status: read once when a client is wired up, scrolled past every day
-   * after that.
-   */
+  // A reference, not a status: read once when a client is wired up, so it must not fill the overview.
   it('is a disclosure that starts shut', () => {
     build(['chat-model']);
     answer();

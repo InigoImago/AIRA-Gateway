@@ -1,15 +1,12 @@
 """What counts as abnormal, in one vocabulary both planes share (`FRD-500`).
 
-Management authors rules and validates them; the gateway evaluates them and acts. Two copies of
-"which kinds exist" would drift, and the drift would be discovered in whichever plane was not
-tested — the same argument that put :mod:`aira_common.roles` and :mod:`aira_common.models` here.
+Management authors and validates rules; the gateway evaluates them and acts. One definition, so the
+two cannot drift — the argument that put :mod:`aira_common.roles` and :mod:`aira_common.models`
+here too.
 
-The vocabulary is **closed on purpose** (`FRD-500` §4.1). The tempting alternative is a rule engine
-— a field, an operator, a value — and it fails on the first review: a rule reading
-``p95_latency > 900`` is perfectly sensible and unimplementable against a store with no percentile
-function, which `FRD-601` already ran into and said so. A closed set means every kind is one
-somebody implemented, tested and can explain, and adding one is a code change with a test rather
-than a configuration line that may or may not evaluate.
+The vocabulary is **closed on purpose** (§4.1). A generic field-operator-value engine accepts rules
+such as ``p95_latency > 900`` that no store here can evaluate; every kind below is implemented,
+tested and explainable, and adding one is a code change with a test.
 """
 
 from __future__ import annotations
@@ -39,10 +36,9 @@ class RuleKind(StrEnum):
 class RuleAction(StrEnum):
     """What happens when a rule fires (`FRD-503` defines each precisely).
 
-    ``ALERT`` is the default everywhere it can be, and that is a safety property rather than
-    timidity: a detection system whose first setting is ``BLOCK`` blocks the wrong thing once and
-    is then switched off forever. A rule is a hypothesis about what abnormal looks like until
-    somebody has watched it be right (`FRD-500` §4.3).
+    ``ALERT`` is the default everywhere it can be, as a safety property: a detection system whose
+    first setting is ``BLOCK`` blocks the wrong thing once and is then switched off forever. A rule
+    is a hypothesis until somebody has watched it be right (`FRD-500` §4.3).
     """
 
     ALERT = "alert"
@@ -53,9 +49,8 @@ class RuleAction(StrEnum):
 class RuleTarget(StrEnum):
     """What the action lands on when the rule fires.
 
-    Getting this wrong is expensive in both directions: blocking a use case because one key
-    misbehaved stops everybody, and blocking one subject while a whole use case is under attack
-    stops nothing.
+    Wrong in either direction is expensive: blocking a use case because one key misbehaved stops
+    everybody, and blocking one subject while the whole use case is attacked stops nothing.
     """
 
     #: The caller — the identity the credential belongs to.
@@ -66,7 +61,7 @@ class RuleTarget(StrEnum):
     USE_CASE = "use_case"
 
 
-#: Kinds whose threshold is a **share of requests**, expressed in percent.
+#: Kinds whose threshold is a **share of requests**, in percent.
 RATE_KINDS = frozenset(
     {
         RuleKind.REFUSAL_RATE,
@@ -76,12 +71,9 @@ RATE_KINDS = frozenset(
     }
 )
 
-#: Kinds whose threshold is a **multiple of the preceding window**, expressed in percent.
-#:
-#: A ratio rather than a fixed number, because a fixed number is a budget and there is already one.
-#: What these catch is a change of shape: a use case that has spent €4/day for a month spending €40
-#: today is worth a look even though its cap is €100, and no cap expresses that without being
-#: lowered until it refuses normal traffic.
+#: Kinds whose threshold is a **multiple of the preceding window**, in percent. A ratio, because a
+#: fixed number is a budget and there already is one: these catch a change of shape — €4 a day for
+#: a month, then €40 today — that no cap expresses without refusing normal traffic.
 RATIO_KINDS = frozenset({RuleKind.SPEND_SPIKE, RuleKind.REQUEST_SPIKE})
 
 #: Kinds that are neither: a fact is either observed or it is not.
@@ -102,29 +94,14 @@ DEFAULT_MIN_SAMPLE = 20
 MIN_ACTION_MINUTES = 1
 MAX_ACTION_MINUTES = 7 * 24 * 60
 
-
-#: Kinds that need a **second** number, and what it means.
-#:
-#: Found while implementing the engine: `payload_size` is "the share of requests above a byte
-#: threshold", and the rule carried one threshold — the share. The byte figure had nowhere to live.
-#: Stage A's model, serializer, API, 18 tests and six mutations were all green, because they tested
-#: that a rule round-trips and nothing had yet tried to *evaluate* one. A configuration schema is
-#: only proved by the code that consumes it.
-#:
-#: Deliberately a map rather than a free-form field: required where it is listed, refused
-#: everywhere else, so it cannot quietly become a second untyped parameter. Still no operators and
-#: still a closed set of kinds — a kind that wants a third number is a code change with a test.
+#: Kinds that need a **second** number, and what it means. A map rather than a free-form field:
+#: required where listed and refused everywhere else, so it cannot become an untyped parameter.
 PARAMETER_MEANING: dict[RuleKind, str] = {
     RuleKind.PAYLOAD_SIZE: "request bytes",
 }
 
-
-#: Actions that need a number of their own.
-#:
-#: The second time a declared setting turned out to be missing the figure it needs — `payload_size`
-#: was the first (`FRD-501` §4.4). The pattern is worth naming: **an enum member is not a
-#: specification.** Adding a value should prompt "what does this one need that the others do not",
-#: and the answer belongs in the schema before anything ships.
+#: Actions that need a number of their own (`FRD-501` §4.4). An enum member is not a
+#: specification: a new value must state what it needs that the others do not.
 ACTIONS_NEEDING_RATE = frozenset({RuleAction.THROTTLE})
 
 
@@ -139,8 +116,8 @@ def needs_parameter(kind: RuleKind) -> bool:
 def threshold_unit(kind: RuleKind) -> str:
     """What the threshold *means* for this kind, in words a form can print.
 
-    Written here rather than in the UI because the answer is a property of the kind, and a copy in
-    TypeScript is a copy that stops matching the day a kind is added.
+    Here rather than in the UI: the answer is a property of the kind, and a TypeScript copy stops
+    matching the day a kind is added.
     """
     if kind in RATE_KINDS:
         return "percent of requests"
@@ -152,7 +129,7 @@ def threshold_unit(kind: RuleKind) -> str:
 def needs_sample(kind: RuleKind) -> bool:
     """Whether a minimum sample is meaningful for this kind.
 
-    An event kind is not a proportion of anything: a credential used from a new address is one
-    observation, and requiring twenty of them before saying so would be requiring twenty leaks.
+    An event kind is not a proportion: requiring twenty new-address sightings before saying so
+    would be requiring twenty leaks.
     """
     return kind in RATE_KINDS or kind in RATIO_KINDS

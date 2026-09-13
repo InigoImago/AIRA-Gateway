@@ -8,9 +8,8 @@ export const authGuard: CanActivateFn = () => {
   if (auth.isAuthenticated()) {
     return true;
   }
-  // A login that cannot work is worse than none: with the issuer unreachable, `initCodeFlow`
-  // navigates the whole page to a host that does not answer, and the reader loses even the
-  // explanation the shell is showing them. Refuse the route and let that explanation stand.
+  // With the issuer unreachable, a login would navigate the page to a host that does not answer
+  // and take the shell's explanation with it. Refuse the route and let the explanation stand.
   if (auth.startupError()) {
     return false;
   }

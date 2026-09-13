@@ -1,24 +1,13 @@
 """A catalogue of questions, put to a use case's pipeline, and a human verdict on each answer.
 
-`FRD-504` asked for evidence about how the **models** behave, as opposed to how callers behave —
-every other control in AIRA governs access, and none of them says anything about what comes back.
+`FRD-504` asks for evidence about what comes back from the models, where every other control
+governs access. Since `ADR-0020` a run names a **use case** and travels its own pipeline, so the
+questions exercise the filter, router and redactor somebody configured; testing a *model* is a use
+case whose pipeline starts at it and does nothing else.
 
-**`ADR-0020` moved the subject of a run from a model to a use case.** The catalogue is unchanged
-and still belongs to Global Administrators and IT Security; what changed is what a run is *about*.
-A run names a use case and travels that use case's own pipeline, so the questions exercise the
-filter, the router and the redactor somebody configured — which is what `FRD-504` §5.3 wanted from
-the start and never got, because every run went to one seeded use case whose pipeline was empty.
-
-Testing a *model* is then a use case: IT Security makes one, releases the models to it, and points
-its pipeline's start model at the one under evaluation. Nothing about model testing is a special
-path; it is the general mechanism aimed at one model.
-
-The rest of the shape is the owner's and is unchanged: **a person reads each answer and rates it**.
-Deliberately not an automatic pass/fail on a substring — whether an answer is acceptable is a
-judgement, and a regex that pretends otherwise produces a number nobody trusts and everybody quotes.
-
-What is stored is a governance artefact and outlives any gateway instance, which is why it lives in
-the control plane rather than in the request log.
+**A person reads each answer and rates it** (owner's decision). Whether an answer is acceptable is
+a judgement, and a substring match that pretends otherwise produces a number nobody should trust.
+Stored in the control plane because it is a governance artefact that outlives any gateway instance.
 """
 
 from __future__ import annotations
@@ -26,57 +15,35 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import models
 
-#: The use case the demo seeds for **model** evaluation (`ADR-0020`).
-#:
-#: An ordinary use case in every respect: it has a released model, a pipeline that starts there, a
-#: budget and a retention period, and any other use case may be run just as well. It is seeded so a
-#: fresh installation has somewhere to demonstrate a model test from, and named here **only** so
-#: the seed and its tests agree on a slug.
-#:
-#: It used to be the single place every run was attributed to, and the application branched on it.
-#: That is what made the pipeline untestable and forced `_release_for_testing` to edit a governance
-#: decision so a run could work at all.
+#: The use case the demo seeds for **model** evaluation (`ADR-0020`). An ordinary use case in every
+#: respect; named here only so the seed and its tests agree on a slug.
 DEMO_MODEL_TEST_USE_CASE = "smoke-test"
 
 
 class TestCase(models.Model):
     """One question in the catalogue.
 
-    **One flat list, deliberately.** The first version grouped questions into named batteries, and
-    the owner's answer was that there is nothing to group: there is a catalogue of questions, and
-    every model is asked all of them. Grouping bought nothing and cost the property that makes the
-    catalogue a *standard* — with several batteries, "how does this model do" has as many answers
-    as there are groups, and none of them is comparable to another model that was asked a different
-    group.
-
-    `topic` is the keyword saying what the question tests. It is a label on a row, not a
-    categorisation: nothing branches on it, nothing is grouped by it, and two questions may
-    perfectly well share one.
+    **One flat list, deliberately** (owner's decision): every model is asked every question, which
+    is what makes the catalogue a standard. `topic` is a label saying what a question tests;
+    nothing branches on it or groups by it.
     """
 
     topic = models.CharField(max_length=120)
     prompt = models.TextField()
-    #: What a good answer looks like, in a sentence. Shown to the person rating — not matched
-    #: against, because matching is the thing this design deliberately does not do.
+    #: What a good answer looks like, in a sentence. Shown to the person rating — never matched
+    #: against.
     expectation = models.TextField(blank=True)
-    #: Position in the battery, so a run walks it in the order somebody intended — **and the key
-    #: the seed upserts on**. Keying on `topic` cost two duplicate questions on 2026-08-09: the
-    #: seed renamed three questions, and a rename against a name key is a *create*, so the old
-    #: ones stayed with their answers attached and the battery quietly grew by two. The same
-    #: lesson `FRD-208` recorded for anomaly rules, in a second place.
+    #: Position in the catalogue, the order a run walks it — **and the key the seed upserts on**,
+    #: so renaming a question corrects it in place instead of creating a second one.
     position = models.PositiveIntegerField(default=0)
-    #: A question that is no longer part of the standard but has already been answered.
-    #:
-    #: **Retired rather than deleted.** Its answers were judged by a person against the wording as
-    #: it then stood; deleting the question would take those verdicts with it, and a standard whose
-    #: history disappears each time it is corrected cannot show that anything improved.
+    #: No longer part of the standard but already answered. **Retired rather than deleted**: its
+    #: answers were judged against its wording, and deleting it would take those verdicts with it.
     retired = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["position", "id"]
         constraints = [
-            # One question per position in the catalogue. Retired ones keep their old position
-            # and are excluded, because they are history rather than part of the standard.
+            # One question per position; retired ones keep their old position and are excluded.
             models.UniqueConstraint(
                 fields=["position"],
                 condition=models.Q(retired=False),
@@ -91,27 +58,16 @@ class TestCase(models.Model):
 class TestRun(models.Model):
     """The catalogue, put to one use case's pipeline, at one time.
 
-    Both identifying fields are **strings** rather than foreign keys, for the same reason: a run is
-    evidence about what happened on a day, and it has to survive the model leaving the catalog and
-    the use case being deleted. Deleting a declaration must not delete the finding.
+    Both identifying fields are **strings** rather than foreign keys: a run is evidence about what
+    happened, and must survive the model leaving the catalog and the use case being deleted.
     """
 
-    #: The model this run **entered the pipeline at**, chosen when the run was started
-    #: (`ADR-0020`) and bounded by what is released to the use case (`FRD-308`).
-    #:
-    #: Chosen per run rather than declared on the pipeline: a use case releases several models on
-    #: purpose, and two runs of one use case entering at two different models is exactly the
-    #: comparison somebody evaluating a model wants. Recorded here because a release can change
-    #: between two runs and the older run is still evidence about what it actually met.
-    #:
-    #: It is not necessarily the model that *answered*: a `model_route` step may send the request
-    #: elsewhere, and that is the pipeline doing its job.
+    #: The model this run **entered the pipeline at**, chosen per run and bounded by what is
+    #: released to the use case (`FRD-308`). Not necessarily the model that answered: a
+    #: `model_route` step may send the request elsewhere.
     model = models.CharField(max_length=128)
-    #: **What the run is about**: the use case whose pipeline was exercised.
-    #:
-    #: A run is real traffic — priced, budgeted, rate-limited and audited exactly like any other
-    #: request (`FRD-504` §5) — and it is now that use case's traffic rather than a shared pot's.
-    #: Which is also where the cost belongs: whoever asks for the evidence pays for it.
+    #: **What the run is about**: the use case whose pipeline was exercised, and whose traffic —
+    #: priced, budgeted, rate-limited, audited (`FRD-504` §5) — the run is.
     use_case = models.CharField(max_length=64)
     started_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
@@ -127,11 +83,7 @@ class TestRun(models.Model):
 
 
 class Verdict(models.TextChoices):
-    """**Unrated is a state, not a missing value.**
-
-    A run whose answers nobody has read yet is not a run with no failures — and a screen that
-    reported it as "0 failed" would be stating something false in the most reassuring direction.
-    """
+    """**Unrated is a state, not a missing value** — a run nobody has read is not "0 failed"."""
 
     UNRATED = "unrated", "not yet rated"
     PASS = "pass", "acceptable"
@@ -147,7 +99,7 @@ class TestResult(models.Model):
     #: The answer, as it came back. Empty until the run reaches this case.
     response = models.TextField(blank=True)
     #: Set when the request itself failed — a refusal, a timeout, an upstream error. Distinct from
-    #: an empty answer, which is a *model* behaving oddly and is exactly what a battery is for.
+    #: an empty answer, which is the model behaving oddly.
     error = models.CharField(max_length=255, blank=True)
     latency_ms = models.PositiveIntegerField(null=True, blank=True)
     verdict = models.CharField(

@@ -41,7 +41,7 @@ SEED = (
     / "apps"
     / "seed"
     / "contributions"
-    / "showcase.py"
+    / "showcase_data.py"
 )
 
 #: The gateway resolves a group path to a use case two ways (`aira_common.access`): this

@@ -1,12 +1,10 @@
-"""An upstream that speaks the OpenAI wire format (FRD-123).
+"""An upstream that speaks the OpenAI wire format (`FRD-123`).
 
-    OpenAITransport            base URL, optional bearer, errors
-    └── OpenAIAdapter          /v1/chat/completions, /v1/embeddings   ← this file
+    OpenAITransport            base URL, a credential if the platform has one, errors
+    └── OpenAIAdapter          chat and embeddings, addressed through the platform's `Routes`
 
-Implements the same ``Upstream`` protocol as the mock, the Generative Language adapter and the two
-Vertex adapters, so nothing above ``upstreams/`` learns that a third dialect exists. The
-architecture assertion in ``test_vertex.py`` checks that claim by parsing every module outside the
-adapter packages; a change here that reached beyond them would fail it.
+Implements the same ``Upstream`` protocol as every other adapter, so nothing above ``upstreams/``
+learns that a third dialect exists; the architecture assertion in ``test_vertex.py`` checks it.
 """
 
 from __future__ import annotations
@@ -42,13 +40,20 @@ EMBED_METHODS = ("embedContent", "batchEmbedContents")
 
 
 class OpenAIAdapter:
-    """Models reached through an OpenAI-compatible endpoint.
+    """Models reached through an OpenAI-compatible endpoint: a plain server, or Foundry's.
 
-    ``embedding_models`` is separate from ``models`` because the two verb sets are disjoint here:
-    a chat model has no embedding endpoint and an embedding model has no chat endpoint, and
-    advertising both for everything would make `FRD-114`'s capability declaration the only thing
-    standing between a caller and a vendor error. The registry's method list should tell the truth.
+    ``embedding_models`` is separate from ``models`` because the verb sets are disjoint here — a
+    chat model has no embedding endpoint and vice versa — and the registry's method list should say
+    so rather than leave it to `FRD-114`'s declaration.
     """
+
+    sampling_controls = OPENAI_SAMPLING
+    #: **No `limited` and no `auto`**: `reasoning_effort` is a word with no token budget, so an
+    #: explicit count cannot be honoured exactly and "you decide" cannot be said (`FRD-111` §5.2).
+    thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.LIMITED, ThinkingMode.AUTO}
+    expresses_thinking_levels = True
+    #: `response_format` and `tools` are separate fields in this dialect.
+    tools_with_schema = True
 
     def __init__(
         self,
@@ -62,27 +67,20 @@ class OpenAIAdapter:
         routes: Routes | None = None,
     ) -> None:
         self._transport = transport
-        # How this platform addresses a model (`ADR-0011`'s third axis). The default is the plain
-        # form; Azure puts the deployment in the path and omits the model from the body.
+        # How this platform addresses a model (`ADR-0011`'s third axis); the plain form by default.
         self._routes: Routes = routes or StandardRoutes()
         self._provider = provider
         self._publisher = publisher
-        # Declared rather than left empty even for a local endpoint: a self-hosted model is the
-        # strongest residency story there is, and an audit row that records nothing cannot say so
-        # (`FRD-123` §5.3).
+        # Declared even for a local endpoint: a self-hosted model is the strongest residency story
+        # there is, and an audit row that records no region cannot tell it (`FRD-123` §5.3).
         self._region = region
         self._chat = list(models)
         self._embedding = list(embedding_models or [])
 
     @property
     def platform_label(self) -> str:
-        """What to call this upstream on a screen.
-
-        The configured name plus what it is, because the name alone is whatever an operator typed
-        — `local`, `gpu-2`, `ollama` — and a picker offering those beside "Google AI Studio" is
-        asking somebody to remember which is which. The label is derived rather than configured:
-        one more thing to fill in per server is one more thing to leave blank.
-        """
+        """What to call this upstream on a screen: the configured name plus what it is, because an
+        operator's `gpu-2` alone means nothing beside "Google AI Studio"."""
         kind = "OpenAI-compatible endpoint" if self._routes.names_models() else "Microsoft Foundry"
         return f"{self._provider} — {kind}"
 
@@ -90,72 +88,31 @@ class OpenAIAdapter:
     def serves_provider(self) -> str:
         """The provider name this adapter owns, so cataloguing a model is enough to serve it.
 
-        Stage B gave the Generative Language adapter this and stopped there, which left the import
-        flow offering a local model that could be catalogued and then would not answer: the
-        configured list was still the only way in, so an imported entry was a declaration with
-        nothing behind it — `FRD-206`'s "an action nobody can carry out", reached by a longer road.
-
-        The name is the **configured server's**, not the class's: a self-hosted fleet is several
-        machines, each audited under its own name (`FRD-123`), and two adapters claiming one name
-        already refuse to boot.
-
-        **Claimed only where the model name is the whole addressing**, which is the same predicate
-        that decides whether the listing is worth asking for — so Foundry, which builds this very
-        class, claims nothing: a catalogued Azure model would resolve here and then fail on a
-        deployment nobody created, and the failure would arrive as a 404 that reads as "the model
-        is gone". Vertex declares no name either, for the other reason: two adapters serve that
-        platform and a name that identifies neither cannot route.
+        The **configured server's** name: each machine of a fleet is audited under its own
+        (`FRD-123`). Claimed only where the model name is the whole addressing — a catalogued
+        Foundry model would resolve here and then 404 on a deployment nobody created.
         """
         return self._provider if self._routes.names_models() else ""
 
     @property
     def provenance(self) -> tuple[str, str, str]:
-        """Stated once, so an empty configured list still produces a complete audit row.
-
-        The same correction stage B had to make for Google: provenance is read from the registry,
-        and a catalogue-resolved model has no entry there. An empty residency column is worse than
-        the second list this removes — "the configuration says on-premises" is a claim and "this
-        request went to on-premises" is evidence, and blank is neither.
-        """
+        """Stated once, so an empty configured list still produces a complete audit row."""
         return (self._provider, self._publisher, self._region)
 
     @property
     def enumerates(self) -> bool:
         """Whether this *instance* can be asked for a model list worth importing.
 
-        An instance question, not a class one, which is why `Enumerable` carries the flag rather
-        than letting an ``isinstance`` decide: the same class serves a plain endpoint and Azure,
-        and only one of them lists names a caller can use.
+        An instance question: the same class serves a plain endpoint, whose listing names models a
+        caller can use, and Foundry, whose listing does not.
         """
         return self._routes.names_models()
 
-    async def available_models(self) -> list[OfferedModel]:
-        """The endpoint's own listing, as names and nothing else.
-
-        Bare on purpose. This dialect's listing publishes an id, an owner and a timestamp — no
-        context window, no method list, no capabilities — so every capability stays ``None``:
-        *the vendor said nothing*. It would be one line to fill in `can_generate=True` on the
-        grounds that a chat server serves chat models, and that line would turn an assumption into
-        a declaration on a screen whose whole subject is that a declaration is a measurement.
-        """
-        listing = await self._transport.get(self._routes.listing())
-        entries = listing.get("data") or []
-        return [
-            OfferedModel(name=str(entry["id"]))
-            for entry in entries
-            if isinstance(entry, dict) and entry.get("id")
-        ]
-
-    sampling_controls = OPENAI_SAMPLING
-    #: **No `limited`.** This dialect takes `reasoning_effort`, an abstract level with no token
-    #: budget at all, so a caller's explicit count cannot be honoured exactly — and rounding it
-    #: would spend a different amount than they asked for with nothing to show it (`FRD-111`
-    #: §5.2). Refused by declaration rather than by an exception in one mapper.
-    thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.LIMITED, ThinkingMode.AUTO}
-    #: `reasoning_effort` is a word and nothing else — which is also why `auto` is not above.
-    expresses_thinking_levels = True
-    #: `response_format` and `tools` are separate fields in this dialect.
-    tools_with_schema = True
+    @property
+    def probe_name(self) -> str:
+        """How this adapter appears in `/readyz`: the configured name, so several servers of one
+        kind are distinguishable (`FRD-123`)."""
+        return self._provider
 
     def models(self) -> list[UpstreamModel]:
         return [
@@ -166,32 +123,40 @@ class OpenAIAdapter:
             for name in self._embedding
         ]
 
-    def _named(self, body: dict[str, Any], model: str) -> dict[str, Any]:
-        """Put the model field the *platform* wants into a body the dialect already wrote.
+    async def available_models(self) -> list[OfferedModel]:
+        """The endpoint's own listing, as bare names.
 
-        The dialect always writes one; a platform that addresses by path takes it back out. Doing
-        it here rather than in the mapper is what keeps the dialect platform-free, which is the
-        property `FRD-120` §5.1 depends on to reuse it unchanged.
+        It publishes no capabilities, so every one stays ``None`` — *the vendor said nothing*. A
+        chat server listing a model does not declare that the model can chat.
         """
-        named = self._routes.body_model(model)
-        if named is None:
-            body.pop("model", None)
-        else:
-            body["model"] = named
-        return body
+        listing = await self._transport.get(self._routes.listing())
+        entries = listing.get("data") or []
+        return [
+            OfferedModel(name=str(entry["id"]))
+            for entry in entries
+            if isinstance(entry, dict) and entry.get("id")
+        ]
+
+    async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
+        """The cheapest remote question there is (`FRD-117` §5.2): a GET of the listing.
+
+        Never a generation, which would cost money and wake a scaled-to-zero model on every check.
+        """
+        listing = await self._transport.get(self._routes.listing())
+        count = len(listing.get("data") or [])
+        return f"{count} model(s) listed" if count else "endpoint answered"
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         body = self._named(canonical_to_openai(request), request.model)
         data = await self._transport.post(self._routes.chat(request.model), body)
-        # The use case's switch, carried to the mapper rather than decided there: the request is
-        # the only thing that knows, and this dialect returns reasoning whether or not it was
-        # asked for (`FRD-135` FR-3).
+        # The use case's switch, carried to the mapper: this dialect returns reasoning whether or
+        # not it was asked for (`FRD-135` FR-3).
         return openai_to_canonical(data, request.model, include_reasoning=request.include_reasoning)
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
         body = self._named(canonical_to_openai(request, stream=True), request.model)
-        # Tool calls arrive fragmented across deltas and are assembled here, because assembling
-        # them is *stateful* and the per-chunk mapper is deliberately not (`FRD-131` FR-6).
+        # Tool calls arrive in fragments and are assembled here: assembling is stateful, and the
+        # per-chunk mapper is not (`FRD-131` FR-6).
         calls = StreamedToolCalls()
         async with self._transport.stream(self._routes.chat(request.model), body) as response:
             async for line in response.aiter_lines():
@@ -207,24 +172,6 @@ class OpenAIAdapter:
                     chunk = chunk.model_copy(update={"tool_calls": calls.finish()})
                 yield chunk
 
-    @property
-    def probe_name(self) -> str:
-        """How this adapter appears in `/readyz`. The configured name, not the class — three
-        servers of the same kind must be distinguishable, which is the whole point of naming
-        them (`FRD-123`)."""
-        return self._provider
-
-    async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
-        """The cheapest remote question there is (`FRD-117` §5.2).
-
-        A **GET of a listing**, never a generation: a probe that generated would cost money to
-        answer "are you there", and against a self-deployed endpoint it would wake a scaled-to-zero
-        model on every health check.
-        """
-        listing = await self._transport.get(self._routes.listing())
-        count = len(listing.get("data") or [])
-        return f"{count} model(s) listed" if count else "endpoint answered"
-
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
         body = self._named(canonical_to_openai_embedding(request), request.model)
         data = await self._transport.post(self._routes.embed(request.model), body)
@@ -234,13 +181,22 @@ class OpenAIAdapter:
         """Close the connection pool this adapter owns (`ProviderRegistry.aclose`)."""
         await self._transport.aclose()
 
+    def _named(self, body: dict[str, Any], model: str) -> dict[str, Any]:
+        """Set the body's model field the way the *platform* wants it (`FRD-120` §5.1).
+
+        The dialect always writes one and a platform that addresses by path takes it out; doing it
+        here keeps the dialect platform-free.
+        """
+        named = self._routes.body_model(model)
+        if named is None:
+            body.pop("model", None)
+        else:
+            body["model"] = named
+        return body
+
 
 def _tool_call_deltas(payload: dict[str, Any]) -> Any:
-    """The `delta.tool_calls` of one SSE payload, or nothing.
-
-    Its own function so the stream loop reads as what it is — accumulate, then map — rather than
-    burying two levels of optional indexing in a condition.
-    """
+    """The `delta.tool_calls` of one SSE payload, or nothing."""
     choices = payload.get("choices") or []
     if not choices:
         return ()

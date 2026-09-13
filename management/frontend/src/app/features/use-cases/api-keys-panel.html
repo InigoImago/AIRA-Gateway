@@ -1,0 +1,235 @@
+<div class="card" role="tabpanel" aria-labelledby="tab-keys">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">API keys</h3>
+    @if (isMember()) {
+      <button
+        type="button"
+        class="btn btn--sm btn--primary"
+        (click)="showIssueKey.set(true)"
+        data-testid="issue-key"
+      >
+        + Issue key
+      </button>
+    }
+  </div>
+  <p class="muted" style="margin: 0.25rem 0 0">
+    Keys are bound to this use case — requests made with them are attributed here automatically.
+    Only members of the use case can issue one.
+  </p>
+
+  @if (!isMember()) {
+    <p class="muted" style="margin: 0.25rem 0 0" data-testid="keys-readonly">
+      A key is data-plane access, so only members of this use case may issue one — seeing a use case
+      is deliberately not enough.
+    </p>
+  }
+
+  <!-- A window, like every creator in this console: `core/ui/modal.ts` owns Escape, keyboard
+       focus and the backdrop. -->
+  <app-modal
+    [open]="showIssueKey() && isMember()"
+    title="Issue an API key"
+    testid="key-editor"
+    (closed)="showIssueKey.set(false)"
+  >
+    <div modal-body>
+      <p class="callout" style="margin-top: 1rem" data-testid="key-responsibility">
+        Requests made with this key are recorded under <strong>your name</strong>, and it is you who
+        answers for how it is used — including by anything you hand it to. If it is meant for a team
+        or a service rather than for you personally, issue it under an account that says so.
+      </p>
+      <!-- A stack, not `.form-inline`: every field carries a hint, so a window holds one control
+           per line whatever class it claims. -->
+      <form id="issue-key-form" class="stack" (ngSubmit)="issueKey()">
+        <div class="field">
+          <label for="key-label">Label (optional)</label>
+          <input
+            id="key-label"
+            name="label"
+            [ngModel]="keyLabel()"
+            (ngModelChange)="keyLabel.set($event)"
+            placeholder="e.g. opencode laptop"
+            autocomplete="off"
+          />
+          <span class="field__hint">Helps you tell keys apart later — it is not a secret.</span>
+        </div>
+        <div class="field">
+          <label for="key-expiry">Expires after (days)</label>
+          <input
+            id="key-expiry"
+            name="expires_in_days"
+            type="number"
+            min="1"
+            [attr.max]="maxKeyDays()"
+            [ngModel]="keyExpiresInDays()"
+            (ngModelChange)="keyExpiresInDays.set($event)"
+            [placeholder]="defaultKeyDays()"
+            autocomplete="off"
+          />
+          <span class="field__hint">
+            Leave empty for the standard {{ defaultKeyDays() }} days. Keys always expire; the
+            longest this installation allows is {{ maxKeyDays() }} days.
+          </span>
+        </div>
+        <div class="field">
+          <label for="key-owner">
+            Owned by (optional)
+            <app-info-hint label="Key owner" testid="key-owner" [wide]="true">
+              Leave this empty and the key is yours: your name appears beside every request made
+              with it, and you answer for how it is used. Name somebody else — a technical account
+              for a team or a service — and <strong>they</strong> answer for it, while the console
+              records that <strong>you</strong> created it. Both facts are kept, which is what
+              signing in as the technical account would destroy. The account has to have access to
+              this use case already.
+            </app-info-hint>
+          </label>
+          <input
+            id="key-owner"
+            name="owner"
+            [ngModel]="keyOwner()"
+            (ngModelChange)="keyOwner.set($event)"
+            placeholder="you"
+            autocomplete="off"
+          />
+          <span class="field__hint">
+            A username that already has access here. Anything else is refused by name.
+          </span>
+        </div>
+      </form>
+    </div>
+
+    <div modal-foot>
+      <button type="button" class="btn" (click)="showIssueKey.set(false)">Cancel</button>
+      <button
+        type="submit"
+        form="issue-key-form"
+        class="btn btn--primary"
+        [disabled]="feedback.busy()"
+      >
+        {{ feedback.busy() ? 'Issuing…' : 'Issue' }}
+      </button>
+    </div>
+  </app-modal>
+
+  @if (issued(); as key) {
+    <div class="callout callout--warning stack" style="margin-top: 1rem" role="alert">
+      <strong>Copy this key now — it is shown only once.</strong>
+      <code class="secret">{{ key.api_key }}</code>
+      <div class="row">
+        <button type="button" class="btn btn--sm btn--primary" (click)="copyKey(key.api_key)">
+          {{ copied() ? 'Copied ✓' : 'Copy' }}
+        </button>
+        <button
+          type="button"
+          class="btn btn--sm"
+          (click)="copyOpenCodeConfig(key)"
+          data-testid="copy-opencode"
+        >
+          {{ configCopied() ? 'Config copied ✓' : 'Copy OpenCode config' }}
+        </button>
+        <button
+          type="button"
+          class="btn btn--sm"
+          (click)="downloadOpenCodeConfig(key)"
+          data-testid="download-opencode"
+        >
+          Download opencode.json
+        </button>
+        <button type="button" class="btn btn--sm btn--ghost" (click)="dismissIssued()">Done</button>
+      </div>
+      <span class="field__hint">
+        The OpenCode configuration is built now, while the key exists: it is shown once and never
+        retrievable, so a config offered later could only carry a placeholder.
+        <strong>It contains the key</strong> — treat the file as the credential it is.
+      </span>
+      <!-- Repeated beside the plaintext: the last moment the reader sees the key. -->
+      <span class="field__hint" data-testid="key-issued-responsibility">
+        This key is recorded as yours. Whatever is done with it — by you, by a tool, or by an agent
+        you give it to — is attributed to your name.
+      </span>
+      @if (copyFailed()) {
+        <span class="field__hint field__hint--error">
+          This browser would not let the page write to the clipboard — select the key above and copy
+          it manually.
+        </span>
+      }
+    </div>
+  }
+
+  <div class="table-wrap" style="margin-top: 1rem">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Prefix</th>
+          <th scope="col">Label</th>
+          <th scope="col">
+            Owner
+            <app-info-hint label="Owner" testid="key-owner" [wide]="true">
+              Who issued this key and answers for how it is used. Every request made with it is
+              recorded under this name — which says who is accountable for the credential, not that
+              this person wrote the request. A key handed to an agent, a script or a team still
+              points here.
+            </app-info-hint>
+          </th>
+          <th scope="col">Status</th>
+          <th scope="col">Expires</th>
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (key of keys(); track key.prefix) {
+          <tr>
+            <td>
+              <code>aira_{{ key.prefix }}_…</code>
+            </td>
+            <td>{{ key.label || '—' }}</td>
+            <td>
+              {{ key.owner }}
+              <!-- Only when issuer and owner differ; on every row it would be noise. -->
+              @if (key.issued_by) {
+                <span class="muted" style="display: block; font-size: 0.78rem">
+                  issued by {{ key.issued_by }}
+                </span>
+              }
+            </td>
+            <td>
+              @if (key.is_active) {
+                <span class="badge badge--success">active</span>
+              } @else {
+                <span class="badge badge--danger">revoked</span>
+              }
+            </td>
+            <td>
+              @if (key.expires_at) {
+                {{ key.expires_at | date: 'yyyy-MM-dd' }}
+              } @else {
+                <!-- Issued before keys were bounded. It still works, and an unbounded credential
+                     nobody sees is one nobody replaces. -->
+                <span class="badge badge--warning">no end date</span>
+              }
+            </td>
+            <td class="table__actions">
+              <div class="actions">
+                @if (key.is_active && canManage()) {
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--danger"
+                    [disabled]="feedback.busy()"
+                    [attr.aria-label]="'Revoke key ' + key.prefix"
+                    (click)="revokeKey(key.prefix)"
+                  >
+                    Revoke
+                  </button>
+                }
+              </div>
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td class="table__empty" colspan="6">No keys issued yet.</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</div>

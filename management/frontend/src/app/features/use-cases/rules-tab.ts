@@ -9,17 +9,11 @@ import { describeRule, unitOf } from '../security/rule-language';
 import { NEW_RULE, RuleForm } from '../security/rule-form';
 
 /**
- * The anomaly rules of one use case (`FRD-208`).
+ * The anomaly rules of one use case (`FRD-208`), editable by whoever manages it — the server's
+ * rule (`AnomalyRuleViewSet._guard`, `upsert_use_case_rule`).
  *
- * This screen is here because the IT Security console pointed at it and it did not exist. A
- * use-case rule is editable by whoever manages that use case — the server has always said so
- * (`AnomalyRuleViewSet._guard`, `upsert_use_case_rule`) — and there was nowhere to do it. The
- * console's "changed on that use case" was, until now, an instruction with no destination: exactly
- * the defect `FRD-206` was written about, one level of indirection further out.
- *
- * **Global rules are deliberately absent.** They are not this use case's to change, and listing
- * them here would offer an edit the server refuses. They are on the Security console, where the
- * people who own them are.
+ * Global rules are deliberately absent: they are not this use case's to change, and listing them
+ * would offer an edit the server refuses. They live on the Security console.
  */
 @Component({
   selector: 'app-rules-tab',
@@ -30,7 +24,7 @@ export class RulesTab implements OnInit {
   readonly slug = input.required<string>();
   /** Whether this caller may change them — the server's answer, carried on the use case object. */
   readonly canManage = input(false);
-  /** So the parent's tab badge does not become a second source of truth. */
+  /** Keeps the parent's tab badge from becoming a second source of truth. */
   readonly countChanged = output<number>();
 
   private readonly service = inject(UseCaseService);

@@ -1,8 +1,7 @@
-"""Base application settings shared by AIRA components.
+"""Base settings shared by AIRA services.
 
-Settings are read from environment variables (prefixed ``AIRA_``) and an optional
-``.env`` file, following 12-factor configuration. Component-specific settings subclass
-:class:`BaseAiraSettings` and add their own fields.
+Read from ``AIRA_``-prefixed environment variables and an optional ``.env`` file, with Vault ranked
+above both (`FRD-116`). Component settings subclass :class:`BaseAiraSettings`.
 """
 
 from __future__ import annotations
@@ -23,14 +22,9 @@ from aira_common.secrets import load_secrets
 class VaultSource(PydanticBaseSettingsSource):
     """Settings read from Vault, ranked above the environment (`FRD-116` FR-3).
 
-    A settings *source* rather than an injection into ``os.environ``, and the distinction is the
-    security half of the feature: values placed in the environment are readable from `/proc`, are
-    inherited by every subprocess, and reach any library that dumps the environment on a crash.
-    Here they exist only inside the settings object.
-
-    Loaded **once**, on first construction, and cached — reading Vault per settings object would
-    make the number of calls depend on how often somebody happens to construct one, and `FRD-116`
-    FR-5 is explicit that Vault is a startup dependency and never a request-path one.
+    A settings *source* rather than an injection into ``os.environ``: environment values are
+    readable from `/proc`, inherited by every subprocess and dumped by crash handlers. Loaded once
+    and cached, because Vault is a start-up dependency and never a request-path one (FR-5).
     """
 
     _cache: dict[str, str] | None = None
@@ -42,8 +36,7 @@ class VaultSource(PydanticBaseSettingsSource):
 
     def _secrets(self) -> dict[str, str]:
         if VaultSource._cache is None:
-            # Whatever this raises is a boot failure by design: a configured Vault that cannot be
-            # read must not degrade into "carry on with the environment" (`FRD-116` §5.3).
+            # Whatever this raises is a boot failure by design (`FRD-116` §5.3).
             VaultSource._cache = load_secrets()
         return VaultSource._cache
 
@@ -79,19 +72,9 @@ class BaseAiraSettings(BaseSettings):
     def _empty_means_unset(cls, values: Any) -> Any:
         """An empty environment variable is **absent**, not a value — for non-string settings.
 
-        Docker Compose passes optional variables as `${AIRA_X:-}`, which expands to an *empty
-        string* when nobody set one. For a string setting that is harmless and is what the whole
-        compose file already relies on. For a number it is fatal: pydantic cannot parse `""` as a
-        float, and the process refuses to start with a validation error naming a variable the
-        operator never touched.
-
-        Found on 2026-08-08 by adding two timeout settings to the compose file the same way every
-        string setting is added, and watching the gateway stop booting. The idiom is not going to
-        change — so the settings tolerate it, and only where it cannot mean anything else.
-
-        Deliberately **not** applied to `str` fields: there, an empty value is a real answer, and
-        dropping it would silently substitute a non-empty default for a deployment that meant to
-        clear the setting (`AIRA_CORS_ORIGINS=` is exactly that).
+        Compose passes optional variables as `${AIRA_X:-}`, an empty string when unset, and pydantic
+        cannot parse `""` as a number. Not applied to `str` fields, where empty is a real answer
+        (`AIRA_CORS_ORIGINS=` clears the setting).
         """
         if not isinstance(values, dict):
             return values
@@ -110,12 +93,10 @@ class BaseAiraSettings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Explicit arguments still win, then **Vault**, then the environment.
+        """Explicit arguments first, then **Vault**, then the environment.
 
-        Init arguments stay first because that is how the tests construct settings, and a test
-        that could not override a value would be testing the deployment rather than the code.
-        Vault above the environment is FR-3: a key present in Vault wins, a key absent from it
-        falls back — and there is no third source.
+        Init arguments stay first because that is how the tests construct settings. Vault above the
+        environment is FR-3; there is no third source.
         """
         return (
             init_settings,
@@ -141,33 +122,22 @@ class BaseAiraSettings(BaseSettings):
     """When True, enable the mock upstream and demo-safe defaults (see FRD-002)."""
 
     api_key_default_days: int = 30
-    """How long a newly issued API key lives, in days (`ADR-0015`, 2026-08-08).
+    """How long a newly issued API key lives, in days (`ADR-0015`).
 
-    **A key is always bounded.** The first version of this made an expiry optional with "NULL means
-    never", on the argument that an expiry which cannot be omitted is one somebody sets to the year
-    3000. That argument is about the *maximum*, not about the default: the answer is a bound on
-    both ends, not an opt-in. A credential with no end date has to be inventoried by a person who
-    remembers to, and nobody does.
-
-    Shared by both planes on purpose — Management issues keys, the gateway's CLI mints the
-    break-glass one, and a policy with two definitions is a policy with two answers.
+    **A key is always bounded**: a credential with no end date has to be inventoried by somebody
+    who remembers to. Shared by both planes — Management issues keys and the gateway's CLI mints
+    the break-glass one — so the policy has one definition.
     """
 
     api_key_max_days: int = 180
-    """The longest lifetime anybody may ask for.
-
-    A ceiling rather than a fixed term, because integrations differ and a rotation everybody has to
-    do on the same day is a rotation that gets postponed. Asking for more is **refused by name**,
-    with the maximum in the message — a silently truncated lifetime would have the requester
-    believing a date that is not the one in the database.
-    """
+    """The longest lifetime anybody may ask for. Asking for more is refused by name, with the
+    maximum in the message, never silently truncated."""
 
     currency: str = "EUR"
     """Currency all prices and cost budgets are expressed in (FRD-403).
 
-    One currency per installation: prices come from a single provider contract, so quoting some
-    of them in another currency would require exchange rates and a rate date per booking — a
-    standing source of figures nobody can reconcile. Display only; no conversion happens.
+    One per installation, because prices come from a single provider contract. Display only; no
+    conversion happens.
     """
 
     otel_enabled: bool = False
@@ -180,45 +150,29 @@ class BaseAiraSettings(BaseSettings):
     """Trace sampling ratio (parent-based); 1.0 = sample everything."""
 
     debug_integrations: str = ""
-    """Which external systems to narrate one line per call for (`FRD-617`).
+    """Which external systems to report one line per call for (`FRD-617`).
 
-    A comma-separated selection from `otel`, `kafka`, `auth`, `vault`, `redis`, `postgres` — or
-    `all`. **Empty is off and is the default**, which is what a working installation runs; this
-    exists for the days when something is being integrated and *"did we send it, and did it
-    arrive"* has no answer anywhere.
-
-    Off is genuinely off: a call site then costs one set membership test and emits nothing. On
-    needs no second switch — the lines go out at `INFO`, so nobody has to discover that
-    `AIRA_LOG_LEVEL=DEBUG` is also required before the feature appears to work.
+    Comma-separated from `otel`, `kafka`, `auth`, `vault`, `redis`, `postgres`, or `all`. **Empty is
+    off and the default**, costing one set lookup per call site. The lines go out at `INFO`, so no
+    second switch is needed.
     """
 
     debug_otel_payload: int = 0
     """Print this many items of each OTLP batch as **OTLP/JSON** (`FRD-617` §3.10). 0 is off.
 
-    For handing a real payload to whoever has to parse it. A number rather than a flag, because
-    the useful request is "show me three spans" and never "show me the 512 this batch holds" —
-    what is printed is a real OTLP/JSON document of that many items, truncated in content and
-    faithful in shape.
-
-    **Not what goes over this leg.** The applications post `application/x-protobuf` and cannot be
-    made to post JSON; this is the protobuf-JSON *mapping* of the same content — the shape a
-    collector produces with `encoding: json`, which is what a SIEM parses. See
-    `docs/INTEGRATIONS.md` §6.
-
-    Expensive and loud: it renders on the exporter's thread, on every export. A debugging setting,
-    never a deployment one — and it carries span attributes (subject, use case, model, source
-    address). No prompt or response ever reaches a span (`ADR-0016`).
+    The protobuf-JSON mapping of what is sent — what a collector writes with `encoding: json` —
+    not what goes over the wire (`docs/INTEGRATIONS.md` §6). A debugging setting: it renders on
+    every export and carries span attributes (subject, use case, model, source address), though
+    never a prompt or response (`ADR-0016`).
     """
 
     @field_validator("debug_integrations")
     @classmethod
     def _integrations_are_known(cls, value: str) -> str:
-        """A misspelled system name refuses the process, rather than watching nothing.
+        """A misspelled system name refuses the process rather than watching nothing.
 
-        `LESSONS.md` §3: a setting that silently means nothing is worse than one that is missing,
-        because the operator concludes the *feature* is broken and stops using it. Imported here
-        rather than at module scope so that reading settings does not pull in the OpenTelemetry
-        SDK by way of the logging module.
+        Imported here so that reading settings does not pull in the OpenTelemetry SDK by way of
+        the logging module.
         """
         from aira_common.integration_debug import parse_systems
 

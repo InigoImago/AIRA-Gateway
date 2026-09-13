@@ -1,19 +1,12 @@
-"""Whether a configured URL would carry credentials in the clear.
+"""Whether a configured URL would carry credentials in the clear (`ADR-0015`).
 
-One rule, read by both planes' deployment checks (`ADR-0015`). Two URLs decide whether the whole
-platform's authentication holds, and neither was checked until 2026-08-09:
+One rule, read by both planes' deployment checks. Two URLs decide whether the platform's
+authentication holds: the identity provider's JWKS (over plaintext, anyone on the path substitutes
+the signing keys and mints tokens that verify) and Vault (the AppRole login and every secret read,
+`FRD-116`).
 
-- **The identity provider.** The JWKS is where signing keys come from. Fetched over plaintext,
-  anyone on the path substitutes a key set of their own and mints tokens that verify — every role,
-  every use case, every audit identity. It is the one misconfiguration that defeats authentication
-  outright rather than degrading it.
-- **Vault.** The AppRole login and every secret read cross that address, so plaintext hands over
-  the credentials the platform is built to keep (`FRD-116`).
-
-Loopback is exempt, deliberately. A sidecar or a mesh proxy on `127.0.0.1` is a normal deployment,
-and traffic that never leaves the host cannot be read off the network — refusing it would push
-operators towards `AIRA_ENVIRONMENT=local`, which turns *every* check off. A rule that is worked
-around is worse than a narrower rule that is kept.
+Loopback is exempt: traffic that never leaves the host cannot be read off the network, and refusing
+a sidecar would push operators to `AIRA_ENVIRONMENT=local`, which turns every check off.
 """
 
 from __future__ import annotations
@@ -28,9 +21,7 @@ _LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 def is_plaintext(url: str) -> bool:
     """True if ``url`` is `http://` to something other than loopback.
 
-    An empty or unparseable value is **not** reported here: "unset" is a different problem with a
-    different message, and a check that conflates them tells an operator to add TLS to a setting
-    they never filled in.
+    An empty value is **not** reported: "unset" is a different problem with a different message.
     """
     if not url or not url.strip():
         return False
@@ -43,24 +34,9 @@ def is_plaintext(url: str) -> bool:
 def plaintext_problems(named_urls: Iterable[tuple[str, str]]) -> list[str]:
     """One reason per plaintext URL, naming the setting and what it costs.
 
-    Returns reasons rather than raising so a configuration review sees every problem at once —
-    the same shape `unsafe_settings` uses on both planes, and the reason a deployment is not four
-    attempts long.
-
-    **Pairs, not a mapping, and that is the whole point.** This took a `dict[str, str]`, and one
-    setting can name several URLs: `AIRA_OIDC_ISSUERS` (`FRD-118`) configures a realm per entry,
-    so the gateway built `("AIRA_OIDC_ISSUER", issuer)` once per realm under a comment saying
-    *"every issuer and every key set … a second realm reached over plaintext is the same hole as
-    the first"*. A dict keeps the **last** value per key, so every realm but the last was dropped
-    before this function ever saw it — and with the plaintext realm listed anywhere but last, a
-    production gateway fetching signing keys over `http://` started with nothing to say.
-
-    Measured on 2026-08-26: two issuers, the plaintext one first, `unsafe_settings` returned an
-    empty list. That is the one misconfiguration this module's own docstring calls *"the one that
-    defeats authentication outright"*.
-
-    Taking pairs makes the collapse impossible to write. A caller that hands a `dict` now fails
-    loudly on unpacking rather than quietly checking one of its entries.
+    Returns reasons rather than raising, so a configuration review sees every problem at once.
+    Takes **pairs**, not a mapping: one setting can name several URLs (`AIRA_OIDC_ISSUERS`,
+    `FRD-118`), and a dict would keep only the last of them.
     """
     return [
         f"{name} is plaintext HTTP ({url}). "

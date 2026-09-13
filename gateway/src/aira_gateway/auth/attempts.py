@@ -1,29 +1,15 @@
-"""A bound on authentication *failures* from one source address (2026-08-08).
+"""A bound on authentication *failures* from one source address.
 
-`FRD-405` gave the gateway rate limits, and every one of them is keyed by use case or by member —
-which means they need a verified identity and therefore cannot bound the traffic of somebody who
-has none. An unauthenticated caller could probe credentials indefinitely, each attempt costing a
-database round trip, and never meet a limit. The body ceiling bounds one request's *size*; nothing
-bounded their *number*.
+Every `FRD-405` rate limit is keyed by a verified identity, so none of them bounds a caller who has
+none; without this, credentials could be probed indefinitely at a database round trip each.
 
-Two decisions worth keeping:
-
-**It counts refusals, not requests.** A caller presenting a working credential never touches this
-bucket, so no legitimate integration can be throttled by it however busy it is — and the bound can
-therefore be low enough to be worth having. A per-address limit on *all* traffic would have to be
-set high enough for the busiest legitimate client behind a shared NAT, which is to say high enough
-to be useless.
-
-**A shared source address shares a bucket**, and that is tolerable only because of the first
-decision. Behind a proxy that this deployment does not trust (`AIRA_TRUST_FORWARDED_FOR` off, the
-safe default for the audit trail), every caller presents the proxy's address. One prober can then
-exhaust the bucket for everybody — but "everybody" here means everybody whose credential *also*
-fails: a working credential is served throughout. The blast radius of the worst case is that
-somebody else's typo is answered 429 instead of 401.
-
-**It degrades to per-instance, not to nothing.** The same decision `FRD-405` made: the moment a
-control stops working is the worst moment to stop applying it. Without Redis the bound holds per
-process, which is weaker and is not none.
+- **It counts refusals, not requests.** A working credential never touches this bucket, so the bound
+  can be low without throttling any legitimate integration, however busy.
+- **A shared source address shares a bucket.** Behind an untrusted proxy
+  (`AIRA_TRUST_FORWARDED_FOR` off) every caller presents the proxy's address; the worst case is that
+  somebody else's typo is answered 429 instead of 401 — working credentials are served throughout.
+- **It degrades to per-instance, not to nothing** (`FRD-405`): without Redis the bound holds per
+  process.
 """
 
 from __future__ import annotations
@@ -36,25 +22,19 @@ from aira_gateway.ratelimit.buckets import per_minute
 from aira_gateway.ratelimit.service import RateLimitService
 from aira_gateway.state import settings_of
 
-# `WINDOW_SECONDS = 60.0` stood here until 2026-08-20, "kept as a name" and read by nothing — the
-# window is `per_minute`'s, and it is the only thing that decides it. A constant beside a mechanism
-# it does not feed is a second definition waiting to disagree with the first.
-
 
 async def record_failed_authentication(request: Request) -> None:
     """Take a token for this source address; raise 429 when it has none left.
 
-    Raising **instead of** the 401 is deliberate. 429 with `Retry-After` is a true statement — the
-    credential was not judged, the caller is being asked to slow down — and it does not tell a
-    prober whether the credential they just tried was closer than the last one.
+    **Instead of** the 401: 429 with `Retry-After` is true — the credential was not judged — and it
+    does not tell a prober whether the credential just tried was closer than the last.
     """
     settings = settings_of(request)
     limit = int(getattr(settings, "max_auth_failures_per_minute", 0) or 0)
     if limit <= 0:
         return
-    # Annotated: this is the one read whose `None` branch turns a **security** control off
-    # without a sound, so the declared type is what makes a rename or a wrong object a build
-    # failure rather than a bound that quietly stops counting.
+    # Annotated: a `None` here turns a security control off without a sound, so a wrong object must
+    # be a build failure.
     service: RateLimitService | None = getattr(request.app.state, "rate_limits", None)
     bucket = getattr(service, "bucket", None)
     if bucket is None:

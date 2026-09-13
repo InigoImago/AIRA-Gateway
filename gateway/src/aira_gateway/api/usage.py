@@ -1,14 +1,8 @@
-"""Budget usage endpoint (FRD-402).
+"""Budget consumption for one use case (`FRD-402`), for the console's budget view.
 
-Returns current-period consumption per budget for a use case, for the management UI's budget
-view. Read-only — no dispatch, no payload data — but it *is* per-use-case operational data, so
-it requires an authenticated caller who is entitled to that use case (ADR-0007).
-
-**Entitled** is wider here than it is for *acting*. `authorize_use_case` asks for membership,
-which is exactly right before spending somebody's budget and wrong before reading a figure an
-oversight role can already see in full on the reporting screen. Refusing the per-use-case number
-to somebody who is shown the total was not a stricter rule, it was an inconsistent one — and in
-the console it appeared as "consumption is hidden" on every budget tab, for every role.
+Read-only, but per-use-case operational data, so the caller must be entitled to the use case
+(`ADR-0007`). Entitled to *read* is wider than to *act*: an oversight role reads the per-use-case
+figure it already sees in full on the reporting screen.
 """
 
 from __future__ import annotations
@@ -33,25 +27,12 @@ async def usage(
     use_case: str, request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
     require_valid_use_case(use_case)
-    # Oversight reads; everybody else has to be a member. The same split `FRD-601` makes for the
-    # spend report, applied to the figure that report is made of.
-    #
-    # **`is_oversight`, not `is_governance`.** The two differ by exactly one role, IT Security, and
-    # this asked the narrower one while the docstring above and `reporting.visible_scope` both say
-    # oversight — so the role whose job is investigating an incident was refused the per-use-case
-    # figure it is shown in full on the reporting screen next door. `visible_scope` records the
-    # same correction being made on 2026-08-08; this call site and `kira ki_usage` were not carried
-    # with it. IT Security is deliberately a member of nothing (`ADR-0007`), so `authorize_use_case`
-    # refuses them every time.
+    # Oversight reads; everybody else has to be a member (the `FRD-601` split). `is_oversight`, not
+    # `is_governance`: IT Security is a member of nothing (`ADR-0007`) and must still see it.
     if not principal.is_oversight:
         authorize_use_case(principal, use_case)
     service: BudgetService = budgets_of(request)
-    # A per-person budget has one figure per person, so the answer depends on who is asking. The
-    # reader's own subject is the only one they may be shown: reporting somebody else's here would
-    # make a consumption bar a way of watching a named colleague, which no role asked for and the
-    # requests view (`FRD-505`) grants deliberately and records.
-    # The person, so the figure this endpoint reports is the one the gateway enforces
-    # against (`aira_gateway.scopes.person`). Reading it by subject would have shown a
-    # signed-in reader an empty allowance while their key's traffic filled the same pot.
+    # A per-person budget has one figure per person. The reader is shown their own, keyed by person
+    # as the gateway enforces it (`aira_gateway.scopes.person`) — never a named colleague's.
     figures = await service.usage(use_case, subject=principal.person)
     return JSONResponse({"use_case": use_case, "usage": figures})

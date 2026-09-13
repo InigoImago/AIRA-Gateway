@@ -1,0 +1,69 @@
+<!--
+  Fills in where a model lives and nothing else (`FRD-507`): the price, the capabilities and the
+  release stay as the empty form has them, because deciding is not a machine's work.
+-->
+<div class="row" style="margin-top: 0.75rem; align-items: center; gap: 0.75rem">
+  <button
+    type="button"
+    class="btn btn--sm"
+    (click)="discover()"
+    [disabled]="discovering()"
+    data-testid="discover-models"
+  >
+    {{ discovering() ? 'Asking the gateway…' : 'Which models does the gateway serve?' }}
+  </button>
+  @if (served(); as list) {
+    <span class="muted" style="font-size: 0.85rem" data-testid="discover-summary">
+      {{ list.length }} served · {{ alreadyCatalogued() }} already catalogued ·
+      {{ notCatalogued().length }} not yet
+    </span>
+  }
+</div>
+
+@if (served() && notCatalogued().length === 0) {
+  <p class="empty" style="margin-top: 0.5rem" data-testid="discover-none">
+    Every model the gateway serves is in the catalog. A model it does <em>not</em> serve cannot be
+    added here — configure its adapter first, then ask again.
+  </p>
+}
+@if (notCatalogued().length) {
+  <div class="table-wrap" style="margin-top: 0.5rem">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Served, not catalogued</th>
+          <th scope="col">Reached through</th>
+          <th scope="col">Region</th>
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (model of notCatalogued(); track model.name) {
+          <tr>
+            <td>
+              <code>{{ model.name }}</code>
+            </td>
+            <td>{{ model.airaProvider || '—' }} / {{ model.airaPublisher || '—' }}</td>
+            <td>{{ model.airaRegion || '—' }}</td>
+            <td class="table__actions">
+              <button
+                type="button"
+                class="btn btn--sm"
+                (click)="catalogue.emit(model)"
+                [attr.data-testid]="'import-' + model.name"
+              >
+                Catalogue…
+              </button>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+  <p class="muted" style="margin: 0.5rem 0 0; font-size: 0.85rem">
+    Offered by an endpoint, not ready to use: the price and what the model can actually do are still
+    yours to enter, and nothing is servable until you release it. An endpoint listing a model is not
+    a promise that it answers — one listed here returned
+    <em>no longer available to new users</em> on its first request.
+  </p>
+}

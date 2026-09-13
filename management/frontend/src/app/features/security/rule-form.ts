@@ -26,12 +26,9 @@ export const NEW_RULE: AnomalyRule = {
 /**
  * The seven kinds, as a person would pick them. Closed — see `aira_common.anomalies`.
  *
- * **Compared against that enum by a test**, in both directions, because this list said "closed"
- * and had drifted from it in both: it offered `token_spike`, which the server answers
- * `"token_spike" is not a valid choice` to, and it omitted `blocked_prompt_rate` — implemented in
- * the gateway, seeded by the showcase, listed on this very screen, and impossible to create from
- * it. A hand-written copy of a closed vocabulary is a copy that drifts; the comment saying so was
- * not enough, twice over.
+ * A hand-written copy of a closed vocabulary drifts, so
+ * `tools/tests/test_the_console_speaks_the_closed_vocabulary.py` holds this list to that enum in
+ * both directions.
  */
 export const RULE_KINDS: { value: string; label: string }[] = [
   { value: 'refusal_rate', label: 'Too many requests are being refused' },
@@ -47,26 +44,19 @@ export const RULE_KINDS: { value: string; label: string }[] = [
  * The form for one anomaly rule, used by the IT Security console **and** by a use case's own
  * rules panel.
  *
- * One component rather than two, because the two screens are the same form with thirteen fields
- * and a validation contract the server enforces per kind. A second copy is how the use-case form
- * quietly loses the field the global one gained — the `:embedContent` failure with a whole screen
- * to hide in.
+ * One component for both screens: thirteen fields and a validation contract the server enforces per
+ * kind, and a second copy would quietly lose the field the first one gained.
  *
- * What it deliberately does **not** offer on an existing rule: the **kind**. A rule's kind decides
- * what its threshold *means* — 50 is half the requests under `refusal_rate` and half a multiple
- * under `spend_spike` — so changing it in place silently reinterprets a number somebody chose. A
- * different kind is a different rule.
+ * It never offers to change the **kind** of an existing rule. The kind decides what the threshold
+ * *means* — 50 is half the requests under `refusal_rate` and half a multiple under `spend_spike` —
+ * so a different kind is a different rule.
  */
 @Component({
   selector: 'app-rule-form',
   imports: [FormsModule],
   template: `
-    <!--
-      Fields and actions are two things, not one wrapping row. They used to share a single
-      form-inline row, so "Create rule" and "Cancel" flowed in beside "smallest sample" and read as
-      two more settings. A form's actions belong on their own line, after a rule, where a reader
-      looks for them.
-    -->
+    <!-- Fields and actions on separate lines: the actions go after the fields, where a reader
+         looks for them, rather than reading as two more settings in the same row. -->
     <form class="form-stack" (ngSubmit)="submit()">
       <div class="form-inline">
         @if (isNew()) {
@@ -272,7 +262,7 @@ export class RuleForm {
 
   constructor() {
     // Reset from the rule whenever it changes, so opening a second rule never shows the first
-    // one's numbers — the zoneless form-state bug this project has already fixed once.
+    // one's numbers.
     effect(() => {
       const rule = this.rule();
       this.name.set(rule.name);

@@ -1,25 +1,9 @@
 <!--
-  The one thing this page never said: where to send a request. Every example below is built from
-  what this use case actually has, so a block that cannot be filled in honestly says so instead.
+  Where to send a request. Folded shut in a `<details>`: it is a reference, not a status, and would
+  otherwise dominate the overview; the summary keeps the one sentence needed to decide to open it.
 
-  **Folded shut, because it is a reference and not a status.** Measured on the showcase use case:
-  the overview was 3849 px tall and this block was 3467 of them — 90% of a page whose job is to
-  say where a use case stands. Somebody who has already wired a client up scrolls past all of it
-  every time they come to look at anything else.
-
-  A `<details>`, not a signal and a class: it is the element that already does this, it opens on
-  find-in-page, and the disclosure state survives nothing that matters. The summary keeps the
-  heading and the one sentence a reader needs to decide whether to open it.
--->
-<!--
-  **Before the card, not inside it.** Everything after `</summary>` is hidden while a `<details>`
-  is shut — only the summary shows — so a callout placed there is a message nobody meets, which is
-  the opposite of what this one is for. It answers "why is there nothing here" (`FRD-308`: a use
-  case starts able to call nothing), and a reader must not have to open a block to be told why it
-  is empty.
-
-  Found by the browser test that asserts a reader *meets* it: it went red when the fold was added,
-  and red again when the callout was moved out of the fold but not out of the element.
+  The callout sits before the card, not inside it: everything after `</summary>` is hidden while
+  shut, and "why is there nothing here" (`FRD-308`) must be met without opening anything.
 -->
 @if (!released().length) {
   <p class="callout" style="margin-bottom: 0.75rem" data-testid="connection-nothing-released">
@@ -33,12 +17,7 @@
   <summary class="connect__summary">
     <span>
       <span class="section-title">Connecting a client</span>
-      <!--
-        The **substantive** sentence, not a label for the block. It is the answer to the question
-        that prompted this panel — a caller hunting for a per-use-case URL that does not exist —
-        and a reader has that question *before* deciding to open anything. Shortening it to
-        "base URLs and examples" put the answer behind the fold that exists to hide the examples.
-      -->
+      <!-- The answer itself, not a label: a reader asks it before deciding to open anything. -->
       <span class="muted connect__hint">
         A key is issued for one use case and carries it, so a client normally sends nothing else —
         no use case in the URL, no header. Open for base URLs and a request for each surface.
@@ -62,14 +41,8 @@
       <!-- Said in the summary instead: see the block above. -->
     } @else {
       <!--
-      Two surfaces, two tabs. They are alternatives rather than steps: a migrating KIRA client will
-      never send a model name and a new Gemini client will never send an id, so stacking them made
-      every reader filter out half of what they were shown — and the addressing, the one thing that
-      genuinely differs, was the easiest to take from the wrong column.
-
-      Same markup as the page's own tab bar (`role="tablist"`, `aria-selected`, a panel labelled by
-      its tab), because a second tab strip that behaves differently from the first is worse than
-      none. Distinct ids so the two strips cannot collide.
+      Two surfaces as tabs, because they are alternatives. Same markup as the page's own tab bar,
+      with distinct ids so the two strips cannot collide.
     -->
       <div
         class="tabs"
@@ -268,12 +241,7 @@
                       } @else if (model.embeds) {
                         embeddings
                       } @else if (answered()) {
-                        <!--
-                        Two states this panel cannot tell apart, said as one. The gateway leaves a
-                        model out of its KIRA listing when the catalog gave it no number, so an
-                        absent entry means *either* no id *or* not served — and claiming the second
-                        is a confident answer to a question nothing here can answer.
-                      -->
+                        <!-- Absent from the listing means no id *or* not served; say only that. -->
                         <span class="muted">not in the gateway's KIRA listing</span>
                       } @else {
                         <span class="muted">…</span>
@@ -327,12 +295,7 @@
         </div>
       }
 
-      <!--
-      Said rather than implied. The address above is the one this console reaches the gateway at,
-      which the reader's own browser proves on every other panel — but it is the console's proxy,
-      not the gateway's published address, and a client on another machine needs the second. A URL
-      that is right here and wrong everywhere else is worse than one that explains itself.
-    -->
+      <!-- The address above is the console's proxy, not the gateway's published address. -->
       <p class="muted" style="margin-top: 1rem" data-testid="connection-base-note">
         That is the address <em>this console</em> reaches the gateway at, so it works from anywhere
         that can reach the console. A client elsewhere uses whatever address your operator publishes
@@ -340,21 +303,9 @@
       </p>
 
       <!--
-      Outside the tabs on purpose: attribution is the same question on both surfaces, and stating
-      it twice would invite the two statements to drift. It was one sentence in a hover hint, which
-      is the wrong place for the thing a caller in two use cases has to get right — a hint is read
-      by somebody who already suspects there is something to know, and this reader does not.
-    -->
-      <!--
-      Where the credential in every example above comes from. The block said `<your key>` four
-      times and never said where to get one — an instruction with no destination (`FRD-208`), and
-      the reason a button was added here and then removed: the answer is a tab on this same page,
-      so the block says so in words rather than growing a second route to it.
-
-      Bearer tokens were missing outright, and they are not an edge case: they are how a person or
-      a service account calls the gateway without anybody minting a key, and how a Keycloak group
-      grant reaches the data plane at all. What a reader has to know is that a token carries an
-      identity and **not** a use case, which is why the next section exists.
+      Credentials and attribution sit outside the tabs: they are the same on both surfaces, and one
+      statement cannot drift from another. A token carries an identity and not a use case, which is
+      why naming a use case follows.
     -->
       <h4 class="section-title" style="margin-top: 1.5rem">Credentials</h4>
       <div data-testid="connection-credentials" class="stack">

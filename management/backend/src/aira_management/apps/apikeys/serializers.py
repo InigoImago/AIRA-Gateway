@@ -1,4 +1,4 @@
-"""Serializers for API keys (FRD-205)."""
+"""Serializers for API keys (`FRD-205`)."""
 
 from __future__ import annotations
 
@@ -27,14 +27,9 @@ class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
             "revoked_at",
             "expires_at",
         ]
-        #: **Every one of them.** This serializer only ever renders — issuing goes through
-        #: `IssueApiKeySerializer`, revoking is its own route — and nothing here is a caller's to
-        #: decide: `prefix` is generated with the secret it belongs to, `is_active` and
-        #: `revoked_at` are what revocation *means*, and `issued_by` is the record of who
-        #: authorised the credential. Said out loud rather than left to the fact that no endpoint
-        #: writes with it today, because that fact is one `serializer(data=request.data)` away from
-        #: changing, and the shape of that mistake is a caller reviving a revoked key or choosing
-        #: the prefix of somebody else's.
+        #: **Every one of them**, stated rather than left to no endpoint writing with it today:
+        #: nothing here is a caller's to decide, and a writable one would let a caller revive a
+        #: revoked key or choose the prefix of somebody else's.
         read_only_fields = fields
 
 
@@ -43,27 +38,14 @@ class IssueApiKeySerializer(serializers.Serializer[Any]):
     label = serializers.CharField(  # type: ignore[assignment]
         required=False, allow_blank=True, default=""
     )
-    #: Lifetime in days. **Optional to state, never optional to have**: omitting it takes
-    #: `AIRA_API_KEY_DEFAULT_DAYS` (30 days), and anything past `AIRA_API_KEY_MAX_DAYS` (180) is
-    #: refused by name. There is no way to ask this API for a key that never expires — a credential
-    #: with no end date has to be inventoried by somebody who remembers to, and nobody does.
-    #:
-    #: The bounds are checked in `validate` rather than declared on the field, for two reasons: an
-    #: installation that changes the setting means it without a redeploy, and a per-field validator
-    #: does **not** run for a field the caller omitted — which is exactly the case that has to end
-    #: with a date.
+    #: Lifetime in days. **Optional to state, never optional to have**: omitted, it takes
+    #: `AIRA_API_KEY_DEFAULT_DAYS`; past `AIRA_API_KEY_MAX_DAYS` it is refused. No key never
+    #: expires. Bounded in `validate`, not on the field, because a field validator does not run for
+    #: an omitted field — exactly the case that must still end with a date.
     expires_in_days = serializers.IntegerField(required=False, allow_null=True, default=None)
-    #: Issue it **on behalf of** somebody else — a technical account for a shared credential
-    #: (`FRD-604` FR-5).
-    #:
-    #: Optional, and omitting it is the ordinary case: the caller owns what they create. Naming
-    #: one splits the two questions a shared key otherwise collapses — who answers for the
-    #: credential, and which human made it — and the second is the one that gets destroyed by
-    #: signing in as the technical user, which is the alternative this exists to replace.
-    #:
-    #: A username, checked against the directory *and* against access to this use case by the
-    #: view: a credential must not be attached to somebody who has nothing to do with the use
-    #: case, or the owner column becomes a place to put a colleague's name.
+    #: Issue it **on behalf of** somebody else, e.g. a technical account for a shared credential
+    #: (`FRD-604` FR-5). The view checks the name against the directory and against access to this
+    #: use case.
     owner = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:

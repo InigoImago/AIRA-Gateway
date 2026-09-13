@@ -20,7 +20,7 @@ one line, and they point in opposite directions:
   largest table this system has, reachable by any console user who can see the security screen.
 
 So two guards. The behavioural one asserts the restriction; the structural one asserts that **no**
-scoped read in `reporting.py` names a table it is not selecting from — because this is a defect
+scoped read in `api/reporting` names a table it is not selecting from — because this is a defect
 that a green suite cannot see and a reviewer only finds by rendering the SQL.
 """
 
@@ -41,7 +41,7 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import AnomalyEvent, ApiKey, RequestLog, UseCaseRead
 
-SOURCE = Path(__file__).resolve().parents[1] / "src" / "aira_gateway" / "api" / "reporting.py"
+SOURCE = Path(__file__).resolve().parents[1] / "src" / "aira_gateway" / "api" / "reporting"
 
 
 # == the statement ==============================================================================
@@ -201,9 +201,14 @@ def test_no_query_in_reporting_conditions_on_a_table_it_does_not_select() -> Non
     Deliberately crude — it compares the model names a `select(...)` mentions against the ones its
     `.where(...)` chain mentions, in the same function. A condition over a table the statement does
     not select from is either a cartesian product or a subquery somebody forgot to write, and this
-    module has no subqueries.
+    package has no subqueries.
     """
-    tree = ast.parse(SOURCE.read_text())
+    modules = sorted(SOURCE.glob("*.py"))
+    assert modules, f"no modules under {SOURCE} — the guard would check nothing"
+    tree = ast.Module(
+        body=[node for path in modules for node in ast.parse(path.read_text()).body],
+        type_ignores=[],
+    )
     models = {"RequestLog", "AnomalyEvent", "PayloadAccess", "UseCaseRead"}
     offenders: list[str] = []
 

@@ -38,14 +38,8 @@ _TOPIC_FOR = {
     "api_key.created": API_KEY_TOPIC,
     "api_key.revoked": API_KEY_TOPIC,
     "pipeline.upserted": PIPELINE_TOPIC,
-    # No `pipeline.deleted`: Management has no endpoint that deletes a pipeline — clearing one is
-    # a PUT with no steps, and a use case's pipeline goes with the use case. The route was here
-    # and nothing ever sent it, which is dead configuration that reads as a working path. Found by
-    # the reverse half of `test_outbox_routing`, added the same day for the opposite defect.
-    #
-    # The gateway keeps its `pipeline.deleted` handler: that branch is what forward compatibility
-    # means, and removing it would make an older gateway crash on a newer Management that grows
-    # the endpoint.
+    # No `pipeline.deleted`: Management never deletes a pipeline (clearing one is a PUT with no
+    # steps). The gateway keeps its handler for forward compatibility with a Management that will.
     "budget.upserted": BUDGET_TOPIC,
     "budget.deleted": BUDGET_TOPIC,
     "ratelimit.upserted": RATE_LIMIT_TOPIC,
@@ -59,20 +53,9 @@ _TOPIC_FOR = {
 
 #: What *else* identifies an entity, where its slug or id does not identify it on its own.
 #:
-#: A compacted topic keeps the **last** message per key, so the key has to be the entity's whole
-#: natural key. A group grant belongs to a (use case, group) pair and a membership to a (use case,
-#: user); keyed on the slug alone, the second one written erases the first from the log.
-#:
-#: That was found for grants in a live round and fixed **for grants only**, as an `if` beside this
-#: function — while `membership.upserted`, three lines above it in the same table and carrying the
-#: same shape of payload, kept a slug-only key. So every member of a use case shared one key.
-#:
-#: It bites exactly where it is hardest to see. The live read-model is right, because each event
-#: was applied as it arrived; it is a **rebuild** that loses people, when a fresh consumer group
-#: reads a compacted topic and finds one member per use case. Disaster recovery is the worst place
-#: to keep a latent fault.
-#:
-#: A table rather than a second `if`, because the third one would have been forgotten too.
+#: A compacted topic keeps the **last** message per key, so the key must be the entity's whole
+#: natural key: a membership belongs to (use case, user) and a group grant to (use case, group).
+#: Keyed on the slug alone, a **rebuild** from the topic would find one member per use case.
 _ALSO_IDENTIFIED_BY = {
     "membership.upserted": "username",
     "membership.removed": "username",
@@ -101,8 +84,7 @@ def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
         key=key,
         event_type=event_type,
         payload=payload,
-        # **Captured here because here is where a span exists.** This runs inside the view's
-        # transaction, under Django's instrumented request; the relay that publishes the row runs
-        # in another process minutes later, under nothing (`FRD-615`).
+        # Captured here, inside the instrumented request; the relay runs later in another process
+        # with no span (`FRD-615`).
         traceparent=traceparent_from_context(),
     )

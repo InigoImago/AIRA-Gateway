@@ -56,7 +56,7 @@ GATES = frozenset({"dispatch_with_fallback", "resolve_direct_target"})
 #: decoration: a call that reaches a model with no condition asked and no sentence explaining it
 #: is the defect, not the list.
 UNCONDITIONED: dict[str, str] = {
-    "pipeline/classifiers.py:classify_text:generate": (
+    "pipeline/classifiers/injection.py:classify_text:generate": (
         "The pipeline's own classifier — the injection filter and the router. It is not the "
         "caller's request: it is the gateway deciding *about* that request, on a model an "
         "administrator named in the pipeline configuration, and the conditions are about what may "
@@ -70,7 +70,13 @@ UNCONDITIONED: dict[str, str] = {
         "is gone; a step reaches only the model in its own configuration, and one that names none "
         "degrades (the LLM filter falls back to the heuristic, the router to its `default_model`)."
     ),
-    "pipeline/classifiers.py:rewrite:generate": (
+    "pipeline/classifiers/routing.py:classify_text:generate": (
+        "The router's classifier, on the same terms as the injection classifier above: the "
+        "gateway deciding *about* the caller's request on a model an administrator named in the "
+        "pipeline configuration, audited and billed as `pipeline:model_route` (`FRD-125b`), and "
+        "bounded by the release the pipeline serializer validates against (`FRD-308`)."
+    ),
+    "pipeline/classifiers/redaction.py:rewrite:generate": (
         "The pipeline's redactor (`FRD-309`), and the same argument as the classifier above: it is "
         "the gateway acting *on* the caller's request rather than serving it, on a model an "
         "administrator named in the pipeline configuration. It is audited and billed as "
@@ -83,7 +89,7 @@ UNCONDITIONED: dict[str, str] = {
         "fallback went, `config.model` really is the only model this step can reach, which is what "
         "the sentence claimed all along."
     ),
-    "api/incidents.py:_accepts:generate": (
+    "api/incidents/thinking_check.py:_accepts:generate": (
         "The console's *Ask the model* button (`ADR-0021`), and it is a question **about the "
         "installation** rather than a request served for anybody: it names no use case, so there "
         "is no release, no residency claim and no budget that could apply to it. What it asks is "
@@ -226,7 +232,7 @@ def test_both_gates_are_real_functions() -> None:
     """`GATES` is matched by name, so a rename would make every site read as ungated — noisy and
     safe — while a **deleted** gate would make them read as gated by a name nothing defines. That
     is the direction worth asserting."""
-    serving = (SOURCE / "api" / "serving.py").read_text()
+    serving = (SOURCE / "api" / "serving" / "prepare.py").read_text()
     dispatch = (SOURCE / "pipeline" / "dispatch.py").read_text()
 
     assert "async def resolve_direct_target(" in serving

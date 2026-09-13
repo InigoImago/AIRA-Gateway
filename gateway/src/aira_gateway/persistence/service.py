@@ -1,4 +1,4 @@
-"""Persistence of request/response logs (FRD-103)."""
+"""Persistence of request/response logs (`FRD-103`)."""
 
 from __future__ import annotations
 
@@ -9,43 +9,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.models import RequestLog
 
-#: `request_logs.model` and `.requested_model` are `String(128)`; `.operation` is `String(64)`.
-MODEL_COLUMN = 128
-OPERATION_COLUMN = 64
-#: `.subject` and `.username` are `String(255)`.
-#:
-#: Bounded here for the same reason the two above are, and it was not. `auth/oidc.py` cuts
-#: `preferred_username` to 150 and the client id to 64, on a comment saying the claim is "bounded
-#: like every other claim that reaches a stored field" — and `sub`, which is the one every audit
-#: row is keyed on, was not among them. A directory that mints a long subject would therefore fail
-#: the INSERT on Postgres *after* the request had been served, and the row recording it would
-#: vanish: `FRD-122`'s rule broken by the row meant to satisfy it, which is exactly what `_fits`
-#: was written for. Bounded rather than refused, because the identity is only truncated where the
-#: alternative is having no record of the request at all.
-SUBJECT_COLUMN = 255
+#: Widths of the `request_logs` columns whose content the caller chooses (see `_fits`).
+MODEL_COLUMN = 128  # `.model`, `.requested_model`
+OPERATION_COLUMN = 64  # `.operation`
+SUBJECT_COLUMN = 255  # `.subject`, `.username` — a token's `sub` and `preferred_username`
 
 
 def _fits(value: str | None, width: int = MODEL_COLUMN) -> str | None:
-    """``value``, in a form the column can actually store.
+    """``value``, in a form the column can store — **a row that does not fit is a lost row**.
 
-    **A row that does not fit is a request the audit trail does not have.** The model name and the
-    method both come from the caller's URL, so their content is theirs to choose, and two shapes of
-    it made the INSERT fail on Postgres — after the request had been correctly refused. The writer
-    logged `request_log_write_failed`, and the row recording the refusal vanished: `FRD-122`'s rule
-    broken by the very row meant to satisfy it, reachable by anyone who can send a request.
-
-        a 300-character name   → value too long for type character varying(128)
-        a NUL byte             → PostgreSQL text fields cannot contain NUL (0x00) bytes
-
-    Both invisible to the hermetic suite, because **SQLite enforces neither** — the trap this
-    project has recorded twice before (a Keycloak client description over `varchar(255)`, and a
-    42-character migration id that applied its DDL and then failed writing `alembic_version`).
-
-    Two corrections, and the order matters: control characters are removed **before** the cut, so
-    the width is counted in characters that will survive. Sanitising rather than refusing, because
-    the row exists to say *what was asked* and a slightly less faithful row is worth incomparably
-    more than no row — the same trade `FRD-122` makes when it records a refusal it cannot
-    attribute.
+    The model name and method come from the caller's URL and the subject from their token, and two
+    shapes fail the INSERT on Postgres after the request was handled: a value wider than the column
+    and a NUL byte. SQLite enforces neither, so the hermetic suite cannot see it. Control characters
+    are removed **before** the cut, so the width counts characters that survive. Sanitised rather
+    than refused: a slightly less faithful row beats no row (`FRD-122`).
     """
     if value is None:
         return None
@@ -63,8 +40,7 @@ class RequestLogService:
         *,
         subject: str,
         auth_method: str,
-        #: Descriptive only (`FRD-606`); `subject` is the identity. Defaulted so a caller that
-        #: knows no name still writes a valid row — a refusal often knows nothing else.
+        #: Descriptive only (`FRD-606`); `subject` is the identity.
         username: str | None = None,
         use_case: str | None,
         source_ip: str | None,
@@ -77,8 +53,7 @@ class RequestLogService:
         request_payload: dict[str, Any] | None,
         response_payload: dict[str, Any] | None,
         cost_nanos: int | None = None,
-        #: No default — see `PendingLog.api`. The one caller in production passes what the surface
-        #: put on the audit trail; a test that omits it is a test writing a row no surface produced.
+        #: No default — see `PendingLog.api`.
         api: str,
         credential: str | None = None,
         issuer: str | None = None,
@@ -95,8 +70,6 @@ class RequestLogService:
         request_bytes: int | None = None,
     ) -> RequestLog:
         entry = RequestLog(
-            # Caller-derived like the three below: `subject` is a token's `sub` and `username` its
-            # `preferred_username`, and neither is this service's to choose. See `SUBJECT_COLUMN`.
             subject=str(_fits(subject, SUBJECT_COLUMN)),
             username=_fits(username, SUBJECT_COLUMN),
             auth_method=auth_method,
@@ -105,9 +78,6 @@ class RequestLogService:
             credential=credential,
             issuer=issuer,
             api=api,
-            # All three are caller-derived — the model name and the method come straight out of
-            # the URL — so all three are bounded to their column. The cost is the row's
-            # *precision*; the alternative was the row itself.
             operation=str(_fits(operation, OPERATION_COLUMN)),
             model=str(_fits(model)),
             requested_model=_fits(requested_model),
@@ -117,16 +87,14 @@ class RequestLogService:
             pipeline_decisions=pipeline_decisions,
             flagged=flagged,
             tool_calls=tool_calls,
-            # An empty mapping means "nothing was degraded", which is a fact worth keeping
-            # distinct from "we did not look" — so it is stored rather than collapsed to NULL.
+            # `{}` means "nothing was degraded" and is kept apart from NULL, "we did not look".
             degraded=degraded,
             provider=provider,
             publisher=publisher,
             region=region,
             prompt_tokens=usage.prompt_tokens if usage else None,
-            # Recorded even when zero: on a provider that caches, zero is the fact that this turn
-            # missed, which is what makes a cache that has silently stopped working visible
-            # (`FRD-133` FR-5). NULL is reserved for "no usage at all" — a refused request.
+            # Recorded even when zero: on a caching provider, zero is a miss, which is what makes a
+            # cache that stopped working visible (`FRD-133` FR-5). NULL means no usage at all.
             cached_input_tokens=usage.cached_input_tokens if usage else None,
             cache_write_tokens=usage.cache_write_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
@@ -141,8 +109,6 @@ class RequestLogService:
         )
         self._session.add(entry)
         await self._session.commit()
-        # No refresh: the sessionmaker uses expire_on_commit=False, so everything a caller reads
-        # from the returned entry is already populated. Re-selecting the row would be an extra
-        # query per logged request for nothing — and on a shared connection it is not merely
-        # wasteful but a source of spurious failures.
+        # No refresh: `expire_on_commit=False` leaves the entry populated, and re-selecting it on a
+        # shared connection is a source of spurious failures.
         return entry

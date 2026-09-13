@@ -1,0 +1,185 @@
+@if (shown()) {
+  <section class="card">
+    <div class="form-inline" style="align-items: flex-end">
+      <div class="field" style="flex: 1 1 22rem">
+        <label for="cat-search">Search</label>
+        <input
+          id="cat-search"
+          type="search"
+          [ngModel]="search()"
+          (ngModelChange)="search.set($event)"
+          placeholder="a keyword or a phrase from a question"
+          data-testid="catalogue-search"
+        />
+      </div>
+      <span class="form-actions__spacer"></span>
+      @if (mayAuthor()) {
+        <button
+          type="button"
+          class="btn btn--primary"
+          (click)="startCase()"
+          data-testid="catalogue-add"
+        >
+          Add question
+        </button>
+      }
+    </div>
+    <p class="muted" style="margin: 0.6rem 0 0">
+      {{ cases().length }} question(s). Every model is asked all of them, in this order — which is
+      what makes two models comparable at all.
+    </p>
+    @if (!mayAuthor()) {
+      <!-- `FRD-206`: a withheld action names who performs it. -->
+      <p class="muted" style="margin: 0.35rem 0 0" data-testid="catalogue-readonly">
+        The catalogue is the standard models are judged against, so it is written by IT Security.
+        You can run it and rate the answers.
+      </p>
+    }
+  </section>
+
+  <section class="card" style="padding: 0">
+    @if (!visible().length) {
+      <p class="empty" data-testid="no-cases">
+        @if (cases().length) {
+          No question matches that search.
+        } @else {
+          The catalogue is empty.
+          @if (mayAuthor()) {
+            Add the first question above.
+          }
+        }
+      </p>
+    } @else {
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col" style="width: 3rem">#</th>
+              <th scope="col">Tests for</th>
+              <th scope="col">Question</th>
+              <th scope="col">What a good answer looks like</th>
+              @if (mayAuthor()) {
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (item of visible(); track item.id) {
+              <tr [attr.data-testid]="'case-' + item.id">
+                <td class="nowrap muted">{{ item.position }}</td>
+                <td>{{ item.topic }}</td>
+                <td class="wrap">{{ item.prompt }}</td>
+                <td class="wrap muted">{{ item.expectation }}</td>
+                @if (mayAuthor()) {
+                  <td class="table__actions">
+                    <div class="actions">
+                      <button
+                        type="button"
+                        class="btn btn--sm"
+                        (click)="startCase(item)"
+                        [attr.data-testid]="'edit-case-' + item.id"
+                      >
+                        Edit
+                      </button>
+                      <!-- Retire, not delete: an answered question is PROTECTed, and retiring
+                           keeps its verdicts. -->
+                      <button
+                        type="button"
+                        class="btn btn--sm btn--danger"
+                        (click)="retireCase(item)"
+                        [attr.data-testid]="'retire-case-' + item.id"
+                      >
+                        Retire
+                      </button>
+                    </div>
+                  </td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+}
+
+<!-- Writing a question -->
+@if (editing(); as draft) {
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="case-title">
+    <div class="modal__panel">
+      <div class="modal__head">
+        <h3 id="case-title" style="margin: 0">
+          {{ draft.id ? 'Edit question' : 'New question' }}
+        </h3>
+        <button
+          type="button"
+          class="btn btn--sm btn--ghost"
+          aria-label="Close"
+          (click)="cancelCase()"
+        >
+          Close
+        </button>
+      </div>
+      <div class="modal__body stack">
+        <div class="field">
+          <label for="case-topic">Topic</label>
+          <input
+            id="case-topic"
+            [ngModel]="caseTopic()"
+            (ngModelChange)="caseTopic.set($event)"
+            placeholder="e.g. Refusal, medical advice"
+            data-testid="case-topic"
+          />
+        </div>
+        <div class="field">
+          <label for="case-prompt">
+            The question put to the model
+            <app-info-hint label="How the question is sent">
+              Sent as written, through the ordinary request path, with no wrapper and no system
+              prompt of ours. What you type here is exactly what the model receives.
+            </app-info-hint>
+          </label>
+          <textarea
+            id="case-prompt"
+            rows="6"
+            [ngModel]="casePrompt()"
+            (ngModelChange)="casePrompt.set($event)"
+            data-testid="case-prompt"
+          ></textarea>
+        </div>
+        <div class="field">
+          <label for="case-expectation">
+            What a good answer looks like
+            <app-info-hint label="Why this is prose and not a rule">
+              This is shown to whoever rates the answer; nothing matches against it. A
+              expected-substring check would turn a judgement into a number nobody trusts and
+              everybody quotes.
+            </app-info-hint>
+          </label>
+          <textarea
+            id="case-expectation"
+            rows="3"
+            [ngModel]="caseExpectation()"
+            (ngModelChange)="caseExpectation.set($event)"
+            data-testid="case-expectation"
+          ></textarea>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <span class="form-actions__spacer"></span>
+        <button type="button" class="btn" (click)="cancelCase()" data-testid="case-cancel">
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="btn btn--primary"
+          [disabled]="!caseTopic().trim() || !casePrompt().trim()"
+          (click)="saveCase()"
+          data-testid="case-save"
+        >
+          {{ draft.id ? 'Save question' : 'Add question' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

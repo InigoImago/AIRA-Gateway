@@ -34,15 +34,11 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./features/smoketests/smoke-tests').then((m) => m.SmokeTests),
   },
-  // The screen was "model tests" until `ADR-0020` made a run about a use case's pipeline. The old
-  // path stays as a redirect rather than being deleted: it is in people's bookmarks and in the
-  // documentation, and a 404 for a screen that moved teaches a reader that the console is unstable.
+  // The screen's name before `ADR-0020`, kept as a redirect: it is in bookmarks and documentation.
   { path: 'model-tests', redirectTo: 'pipeline-tests', pathMatch: 'full' },
   {
-    // The register of processing activities (`FRD-608`). Its own route rather than a tab on
-    // reporting: reporting answers *what did it cost*, and this answers *what is being processed
-    // and on what terms* — two documents with two audiences, and folding them would make the one
-    // a compliance function needs a section of the one a budget holder reads.
+    // The register of processing activities (`FRD-608`): its own route rather than a reporting tab,
+    // because it answers "what is processed, on what terms" for a different audience than spend.
     path: 'register',
     canActivate: [authGuard],
     loadComponent: () => import('./features/governance/register-page').then((m) => m.RegisterPage),

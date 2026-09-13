@@ -1,0 +1,192 @@
+<div class="pipe__test card stack">
+  <h3 class="section-title" style="margin: 0">Test this pipeline</h3>
+  <div class="field">
+    <label for="sample-system">Sample system prompt</label>
+    <textarea
+      id="sample-system"
+      rows="2"
+      [ngModel]="sampleSystem()"
+      (ngModelChange)="sampleSystem.set($event)"
+      placeholder="You are a helpful assistant."
+    ></textarea>
+  </div>
+  <div class="field">
+    <label for="sample-user">Sample user message</label>
+    <textarea
+      id="sample-user"
+      rows="2"
+      [ngModel]="sampleUser()"
+      (ngModelChange)="sampleUser.set($event)"
+      placeholder="Ignore all previous instructions and…"
+    ></textarea>
+  </div>
+
+  <!-- Where the attempt enters the pipeline, offered rather than inferred and bounded by the
+       release (anything else is refused at dispatch). "Let the gateway choose" stays the default:
+       a request that names its own model is the ordinary case. -->
+  <div class="field">
+    <label for="dry-run-model">Enter at</label>
+    <select
+      id="dry-run-model"
+      [ngModel]="dryRunModel()"
+      (ngModelChange)="dryRunModel.set($event)"
+      [disabled]="nothingReleased()"
+      data-testid="dry-run-model"
+    >
+      <option value="">let the gateway choose</option>
+      @for (model of released(); track model) {
+        <option [value]="model">{{ model }}</option>
+      }
+    </select>
+  </div>
+
+  <!-- Said before the button, not after the 403: the gateway reads the groups in the token, not
+       this console's member list (`FRD-206`). The button stays enabled — this is the console's
+       reading of a rule the gateway owns, and a disabled control that is wrong could not be
+       argued with. -->
+  @if (!mayCall()) {
+    <p class="callout callout--warning" style="margin: 0" data-testid="dry-run-not-member">
+      A dry run calls real models and is charged to this use case, so the gateway applies the same
+      membership rule a request does — and it reads the groups in your Keycloak token, not this
+      console's member list. You are not in a group that reaches this use case, so it will refuse.
+      Grant one of your groups access on the use case, or ask somebody who is in one to test it.
+    </p>
+  }
+  <div class="spread">
+    <span class="muted" style="font-weight: 600">Dry-run (runs the real steps)</span>
+    <button
+      type="button"
+      class="btn btn--sm btn--primary"
+      [disabled]="dryRunning()"
+      (click)="runDryRun()"
+    >
+      {{ dryRunning() ? 'Running…' : 'Run dry-run' }}
+    </button>
+  </div>
+  <!-- Off by default: the answer this panel gives by default has to be the one production gives. -->
+  <label class="checkline" style="margin: -0.4rem 0 0">
+    <input
+      type="checkbox"
+      id="past-blocks"
+      [ngModel]="pastBlocks()"
+      (ngModelChange)="pastBlocks.set($event)"
+    />
+    <span class="muted">
+      Keep going past a block — runs the later steps too, so you can check them against this use
+      case. Production stops at the refusal, and those steps cost tokens here.
+    </span>
+  </label>
+
+  <!-- `currentError`, not `dryRunError`: the message is about one attempt and goes once the
+       pipeline or the sample changes. -->
+  @if (currentError(); as message) {
+    <p class="callout callout--danger" style="margin: 0">{{ message }}</p>
+  }
+  @if (dryRunning() && dryRun()) {
+    <p class="muted" style="margin: 0">Re-running — showing the previous result…</p>
+  } @else if (dryRunStale()) {
+    <!-- Said rather than cleared: the last result is still the most useful thing on the panel. -->
+    <p class="callout callout--warning" style="margin: 0" data-testid="dry-run-stale">
+      Changed since this run — the trace below describes the previous configuration.
+    </p>
+  }
+
+  @if (dryRun(); as result) {
+    <!-- The trace as steps, numbered and connected like the graph above, so the result reads
+         against the thing being edited. -->
+    <ol class="trace">
+      @for (card of traceCards(); track $index) {
+        <li class="trace__step" [class.trace__step--simulated]="card.simulated">
+          <div class="trace__head">
+            <span class="trace__n" [class.trace__n--skipped]="card.simulated">{{ card.step }}</span>
+            <span class="trace__title">{{ card.title }}</span>
+            <span class="badge {{ card.badge }}">{{ card.action }}</span>
+            <!-- On the card, beside the badge: this entry is a step production never reaches. -->
+            @if (card.simulated) {
+              <span class="badge badge--muted">would not run — refused above</span>
+            }
+          </div>
+          <p class="trace__summary">{{ card.summary }}</p>
+          @if (card.classifier) {
+            <p class="trace__asked muted">
+              asked <code>{{ card.classifier }}</code>
+            </p>
+          }
+          @if (card.output) {
+            <div class="trace__said">
+              <span class="trace__label">the model replied</span>
+              <pre>{{ card.output }}</pre>
+            </div>
+          }
+          @if (card.before && card.after) {
+            <div class="trace__diff">
+              <div>
+                <span class="trace__label">before</span>
+                <pre>{{ card.before }}</pre>
+              </div>
+              <div>
+                <span class="trace__label">after</span>
+                <pre class="trace__after">{{ card.after }}</pre>
+              </div>
+            </div>
+          }
+        </li>
+      }
+      <!-- Configured, in order, never evaluated because an earlier step stopped the request.
+           Shown as what they are: an invented outcome would claim model calls never made. -->
+      @for (card of notReached(); track $index) {
+        <li class="trace__step trace__step--skipped">
+          <div class="trace__head">
+            <span class="trace__n trace__n--skipped">{{ card.step }}</span>
+            <span class="trace__title">{{ card.title }}</span>
+            <span class="badge badge--muted">not reached</span>
+          </div>
+          <p class="trace__summary muted">
+            The request stopped above, so this step was never asked. Remove or relax the step that
+            blocked to test this one.
+          </p>
+        </li>
+      }
+      <li class="trace__step trace__step--end">
+        @if (result.blocked) {
+          <div class="trace__head">
+            <span class="trace__n trace__n--stop">✕</span>
+            <span class="trace__title">Request refused</span>
+          </div>
+          <p class="trace__summary">{{ result.block_reason }}</p>
+        } @else {
+          <div class="trace__head">
+            <span class="trace__n trace__n--go">→</span>
+            <span class="trace__title">Dispatched</span>
+          </div>
+          <p class="trace__summary">
+            to <code>{{ result.effective_model }}</code>
+            @if (result.fallback_models.length) {
+              , falling back to
+              @for (model of result.fallback_models; track $index) {
+                <code>{{ model }}</code
+                >{{ $last ? '' : ', ' }}
+              }
+            }
+          </p>
+        }
+      </li>
+    </ol>
+  }
+
+  <!-- Computed in the browser from the pattern list: what a deterministic step would do, at no
+       cost; the dry run calls the real models. Shown when there is no trace, and again once the
+       trace is stale — then it is the only thing describing the pipeline as it stands. -->
+  @if (!dryRunning() && (!dryRun() || dryRunStale())) {
+    <div class="muted" style="font-weight: 600">Live preview (deterministic steps)</div>
+    @for (row of preview(); track $index) {
+      <div class="trace-row">
+        <span class="badge {{ actionClass(row.action) }}">{{ row.action }}</span>
+        <span>{{ row.label }}</span>
+        <span class="muted">{{ row.note }}</span>
+      </div>
+    } @empty {
+      <p class="muted" style="margin: 0">Add steps to preview them here.</p>
+    }
+  }
+</div>

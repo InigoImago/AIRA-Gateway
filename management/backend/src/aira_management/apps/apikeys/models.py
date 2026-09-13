@@ -1,4 +1,4 @@
-"""API-key model — Management is the source of truth for issuance (FRD-205, ADR-0006).
+"""API-key model — Management is the source of truth for issuance (`FRD-205`, `ADR-0006`).
 
 Only the hash of the full key is stored; the plaintext is shown once at issue time and never
 persisted. Each key is bound to exactly one use case, which the gateway uses to attribute and
@@ -18,17 +18,10 @@ class ApiKey(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="api_keys"
     )
-    #: Who created it, when that is not the owner (`FRD-604` FR-5).
-    #:
-    #: **Two different questions.** `owner` is who *answers for* the credential — a technical
-    #: account for a team's shared key — and it is the name every audit row carries, correctly: a
-    #: row describes what called, not who authorised the credential months earlier. `issued_by` is
-    #: the human who created it, and it is the fact that a shared credential otherwise destroys.
-    #:
-    #: A **string**, not a foreign key, and for the same reason as `UseCaseGroupGrant.granted_by`
-    #: and a suspension's `author`: this is a fact about the past. Deleting the person must not
-    #: delete the record of what they did, and must not be prevented by it either. Blank means the
-    #: owner issued it themselves, which is every key from before this column existed.
+    #: Who created it, when that is not the owner (`FRD-604` FR-5). `owner` answers for the
+    #: credential and is the name every audit row carries; `issued_by` is the human who created it,
+    #: the fact a shared credential otherwise loses. A string rather than a foreign key, because a
+    #: record of the past must outlive the account. Blank means the owner issued it.
     issued_by = models.CharField(max_length=150, blank=True)
     prefix = models.CharField(max_length=32, unique=True, db_index=True)
     key_hash = models.CharField(max_length=64)
@@ -36,10 +29,9 @@ class ApiKey(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
-    #: When the key stops working on its own (2026-08-08). **NULL means never** — every key issued
-    #: before this existed carries that, and an expiry that cannot be omitted is one somebody sets
-    #: to the year 3000. Expiry and revocation are different events and stay separate columns:
-    #: "it lapsed as planned" and "we took it away" are not the same answer to an audit.
+    #: When the key stops working on its own. **NULL means never**, which only keys issued before
+    #: expiry existed carry. Kept apart from `revoked_at`: "it lapsed as planned" and "we took it
+    #: away" are different answers to an audit.
     expires_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

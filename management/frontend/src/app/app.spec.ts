@@ -58,12 +58,8 @@ describe('App', () => {
   });
 
   it('names the role in the header instead of showing tabs that do not respond', () => {
-    // The console used to render a disabled tab per oversight role — "Security", "Governance",
-    // "Administration" — for screens that do not exist. Somebody logging in as the administrator
-    // clicked "Administration" and nothing happened, which teaches only that something is broken.
-    //
-    // What a role *is* answers the question they actually have. The tabs come back when
-    // `FRD-500`/`501`/`503` build the console behind them.
+    // No disabled tabs for screens that do not exist — a tab that does not respond reads as broken
+    // (`FRD-206`). Which role is asking is said in the header instead.
     configure(true, ['it-security', 'global-admin']);
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
@@ -135,18 +131,12 @@ describe('App', () => {
 
 describe('App when the identity provider cannot be reached', () => {
   /**
-   * The console said **nothing at all** in this case until 2026-08-11.
+   * An unreachable Keycloak must not leave a blank page: `AuthService.init()` runs in an app
+   * initialiser, and a reader cannot tell "the login service is down" from "this application is
+   * broken".
    *
-   * `AuthService.init()` runs in an app initialiser, and a rejected initialiser makes
-   * `bootstrapApplication` reject — so an unreachable Keycloak produced a completely white page
-   * with a `200` from the web server. A reader cannot tell "the login service is down" from "this
-   * application is broken", and they report the second. It cost a real afternoon: the stack's
-   * infrastructure had crashed, and the console was indistinguishable from a broken deployment
-   * of itself.
-   *
-   * These cases are about what a person **sees**, which is why they assert on rendered text
-   * rather than on the signal: a flag nobody renders is the same blank page with better
-   * bookkeeping.
+   * Asserted on rendered text rather than on the signal: a flag nobody renders is the same blank
+   * page with better bookkeeping.
    */
   function renderWithStartupError(issuer: string | null): HTMLElement {
     TestBed.resetTestingModule();
@@ -203,14 +193,9 @@ describe('App when the identity provider cannot be reached', () => {
 
 describe('App when the console cannot find out who you are', () => {
   /**
-   * `/me` had no error branch, and everything role-shaped in the shell comes from it: the
-   * username, the role chips, **Logout**, and the nav entries for investigating an incident and
-   * for oversight. A failure removed all of them and said nothing — so an IT Security reader saw
-   * a console built for somebody with fewer rights, with no error to explain it and no way to
-   * sign out.
-   *
-   * That is `FRD-206`'s complaint inverted, and the inverted one is the harder to notice: a
-   * refused action announces itself, an absent one reads as a boundary.
+   * Everything role-shaped in the shell comes from `/me`: the username, the role chips, **Logout**,
+   * and the incident and oversight navigation. A failure that removes them must say so — a refused
+   * action announces itself, an absent one reads as a boundary (`FRD-206`).
    */
   function configureFailing(): void {
     TestBed.resetTestingModule();
@@ -259,8 +244,8 @@ describe('App when the console cannot find out who you are', () => {
   });
 
   it('leaves the reader able to sign out', async () => {
-    // The one action that reliably fixes it, and the one the failure used to take away: `Logout`
-    // lives inside the block that renders only when `me()` resolved.
+    // The one action that reliably fixes it — and the header's own `Logout` renders only when
+    // `me()` resolved.
     configureFailing();
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();

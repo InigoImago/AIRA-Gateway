@@ -1,25 +1,16 @@
 """Access tokens for a cloud platform: cached, refreshed ahead of expiry, single-flighted.
 
-`ADR-0011` rule 1. Every platform needs the *same* behaviour — hold a token, refresh before it
-expires, collapse concurrent refreshes into one, keep serving a still-valid token through a failed
-refresh — and differs only in how the token is obtained. Writing that three times means getting the
-refresh race right three times, and the second one is always the one that is subtly wrong.
-
-So the behaviour lives here once and the acquisition is a hook:
+`ADR-0011` rule 1: every platform needs the *same* behaviour and differs only in how a token is
+obtained, so the behaviour lives here once and the acquisition is a hook:
 
     GoogleServiceAccountTokenSource   Vertex        (signed JWT → OAuth2 exchange)
     EntraTokenSource                  Foundry       (FRD-120)
     StaticTokenSource                 dev and tests
 
-Two properties are worth naming because they are easy to omit and expensive to omit:
-
-**Refresh ahead of expiry, not on it.** Fetching lazily when the token has already expired makes
-one unlucky request pay a round trip — and under load makes *many* requests discover the expiry at
-the same moment and all fetch.
-
-**Serve through a failed refresh.** A refresh that fails while the current token is still valid is
-not an outage. Treating it as one converts a brief identity-provider hiccup into a total outage of
-the thing the token protects.
+- **Refresh ahead of expiry, not on it**, so no request pays the round trip and load does not make
+  many requests discover the expiry at the same moment.
+- **Serve through a failed refresh.** A refresh that fails while the held token is still valid is
+  not an outage.
 """
 
 from __future__ import annotations
@@ -72,8 +63,7 @@ class TokenSource:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._acquirer = acquirer
-        # Injectable, because "refreshes before expiry" is otherwise a property testable only by
-        # waiting an hour.
+        # Injectable, so "refreshes before expiry" is testable without waiting an hour.
         self._clock = clock
         self._token: AccessToken | None = None
         self._issued_at = 0.0
@@ -88,9 +78,8 @@ class TokenSource:
         return await self._refresh(held)
 
     async def _refresh(self, held: AccessToken | None) -> str:
-        # Single-flight: the lock is what stops a thundering herd forming the moment a token
-        # becomes due. Whoever wins re-checks, so the waiters return the new token rather than
-        # each fetching one of their own.
+        # Single-flight: whoever wins the lock re-checks, so the waiters return the new token
+        # rather than each fetching one of their own.
         async with self._lock:
             now = self._clock()
             current = self._token
@@ -101,8 +90,8 @@ class TokenSource:
             ):
                 return current.value
 
-            # A failed refresh backs off — but only while the held token still works. Retrying on
-            # every request would turn a struggling identity provider into a busy loop against it.
+            # A failed refresh backs off, but only while the held token still works; retrying on
+            # every request would turn a struggling identity provider into a busy loop.
             if current is not None and current.usable(now) and now < self._retry_not_before:
                 return current.value
 

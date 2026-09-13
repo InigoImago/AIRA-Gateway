@@ -4,7 +4,7 @@ There are **three** statements of it, and only two were ever compared:
 
 1. the `emit("…")` calls across Management;
 2. `_TOPIC_FOR` in `apps/outbox/subscriber.py`, which decides the Kafka topic;
-3. the `elif event_type == "…"` chain in `gateway/consumer/apply.py`, which applies it.
+3. the `HANDLERS` table in `gateway/consumer/apply.py`, which applies it.
 
 `test_outbox_routing.py` compares 1 against 2, in both directions, by walking the AST — and it
 found a real defect doing so. Nothing compared either of them against **3**, which is the end of
@@ -70,16 +70,24 @@ def _emitted() -> set[str]:
 
 
 def _applied() -> set[str]:
-    """Every event type the gateway's consumer branches on.
+    """Every event type the gateway's consumer dispatches on.
 
-    Read from the source rather than by calling `apply_event` with every candidate: the chain is
-    what a reader sees, and a branch that exists but is unreachable would pass a behavioural probe
-    by raising nothing.
+    Read from the source rather than by calling `apply_event` with every candidate: the table is
+    what a reader sees, and an entry that exists but is unreachable would pass a behavioural probe
+    by raising nothing. Both spellings count — a key of the module-level `HANDLERS` table, and an
+    `event_type == "…"` comparison anywhere in the module.
     """
     source = APPLY.read_text()
     tree = ast.parse(source)
     found: set[str] = set()
     for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign | ast.Assign) and isinstance(node.value, ast.Dict):
+            targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
+            if any(isinstance(target, ast.Name) and target.id == "HANDLERS" for target in targets):
+                for key in node.value.keys:
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        found.add(key.value)
+            continue
         if not isinstance(node, ast.Compare):
             continue
         left = node.left
@@ -106,7 +114,8 @@ def test_every_event_management_publishes_is_one_the_gateway_applies() -> None:
         "Management publishes these and the gateway's consumer has no branch for them:\n  "
         + "\n  ".join(unhandled)
         + "\n\nThe change is recorded, routed and never applied — a control an operator believes "
-        "is in force. Add a branch in `gateway/consumer/apply.py`, or record the reason in "
+        "is in force. Add a handler to `HANDLERS` in `gateway/consumer/apply.py`, or record the "
+        "reason in "
         "`DELIBERATE` above."
     )
 
@@ -156,7 +165,7 @@ def test_the_consumer_says_so_when_it_applies_nothing() -> None:
         "disagreeing."
     )
     # And the log must sit on the fallthrough rather than somewhere convenient.
-    fallthrough = source[source.index("    else:", source.index("elif event_type ==")) :]
+    fallthrough = source[source.index("if handler is None:") :]
     assert "config_event_not_applied" in fallthrough[:1500], (
         "the log line has drifted away from the branch it reports on"
     )

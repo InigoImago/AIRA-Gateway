@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { Observable, Subject, map, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import {
@@ -13,7 +14,10 @@ import {
 } from '../../core/api/models';
 import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
+import { PageFeedback } from '../../core/ui/page-feedback';
 import { ModelCatalog } from './model-catalog';
+import { ModelEditor } from './model-editor';
+import { ServedModels } from './served-models';
 
 const FLASH: CatalogModel = {
   name: 'gemini-2.0-flash',
@@ -82,27 +86,51 @@ const OFFERED_EMBED: OfferedModel = {
   thinking: null,
 };
 
-interface Catalog {
-  add: () => void;
-  openProvenance: () => void;
-  showProvenance: () => boolean;
-  provenanceKnown: () => boolean;
+/** The page: the catalog, one row's detail and check, and the browse window. */
+interface Page {
+  models: () => CatalogModel[];
+  view: { rows: () => CatalogModel[] };
+  loading: () => boolean;
+  canEdit: () => boolean;
+  unpriced: () => CatalogModel[];
+  undeclared: () => CatalogModel[];
+  check: () => { reachable: boolean | null; served: boolean; detail?: string } | null;
+  edit: (m: CatalogModel) => void;
+  remove: (m: CatalogModel) => void;
+  importServed: (model: unknown) => void;
+  openBrowse: () => void;
+  closeBrowse: () => void;
+  showBrowse: () => boolean;
+  browseProvider: { set: (v: string) => void; (): string };
+  browseSearch: { set: (v: string) => void; (): string };
+  browseMatches: () => OfferedModel[];
+  askable: () => GatewayProvider[];
+  catalogueOffered: (model: OfferedModel) => void;
+  chooseBrowseProvider: (name: string) => void;
+  offerings: () => OfferedModel[] | null;
+  offeringsError: () => string | null;
+  addManually: () => void;
+  addByName: () => void;
+}
+
+/** What the gateway serves and the catalog does not know (`FRD-507`). */
+interface Discovery {
   discover: () => void;
   discovering: () => boolean;
   served: () => unknown[] | null;
   notCatalogued: () => { name: string }[];
   alreadyCatalogued: () => number;
-  importServed: (model: unknown) => void;
+}
+
+/** The editor window: the form, its checks and the save. */
+interface Editor {
+  add: () => void;
+  edit: (m: CatalogModel) => void;
+  openProvenance: () => void;
+  showProvenance: () => boolean;
+  provenanceKnown: () => boolean;
   provider: { set: (v: string) => void; (): string };
   approved: { set: (v: boolean) => void; (): boolean };
-  models: () => CatalogModel[];
-  view: { rows: () => CatalogModel[] };
-  loading: () => boolean;
-  error: () => string | null;
-  notice: () => string | null;
-  canEdit: () => boolean;
-  unpriced: () => CatalogModel[];
-  undeclared: () => CatalogModel[];
   capabilities: { set: (v: Capability[]) => void; (): Capability[] };
   hasCapability: (c: Capability) => boolean;
   toggleCapability: (c: Capability, on: boolean) => void;
@@ -142,28 +170,14 @@ interface Catalog {
   formError: () => string | null;
   canSave: () => boolean;
   save: () => void;
-  edit: (m: CatalogModel) => void;
-  remove: (m: CatalogModel) => void;
   providers: () => GatewayProvider[] | null;
   allowedRegions: () => string[];
-  regionPermitted: () => boolean | null;
   providersError: () => string | null;
   providerIsCustom: { set: (v: boolean) => void; (): boolean };
   chooseProvider: (value: string) => void;
   selectedProvider: () => GatewayProvider | null;
-  offerings: () => OfferedModel[] | null;
-  offeringsError: () => string | null;
   useOffered: (model: OfferedModel) => void;
   providerLabel: (provider: GatewayProvider) => string;
-  openBrowse: () => void;
-  closeBrowse: () => void;
-  showBrowse: () => boolean;
-  browseProvider: { set: (v: string) => void; (): string };
-  browseSearch: { set: (v: string) => void; (): string };
-  browseMatches: () => OfferedModel[];
-  askable: () => GatewayProvider[];
-  catalogueOffered: (model: OfferedModel) => void;
-  chooseBrowseProvider: (name: string) => void;
   editing: () => string;
   vendorFilled: () => string[];
   vendorSaid: () => string[];
@@ -171,8 +185,7 @@ interface Catalog {
   platform: { set: (v: string) => void; (): string };
   checkedName: () => string | null;
   check: () => { reachable: boolean | null; served: boolean; detail?: string } | null;
-  addManually: () => void;
-  addByName: () => void;
+  runCheck: (m: { name: string }) => void;
   regions: { set: (v: string[]) => void; (): string[] };
   regionDraft: { set: (v: string) => void; (): string };
   addRegion: () => void;
@@ -256,9 +269,8 @@ function setup(
               options.levelChecks?.shift() ??
               of({
                 model: name,
-                // The dialect's answer about each ticked mode. `auto` is the one every
-                // OpenAI-family adapter declares it cannot express, and the one an administrator
-                // could tick in silence until this button reported it.
+                // The dialect's answer about each ticked mode: every OpenAI-family adapter
+                // declares that it cannot express `auto`.
                 modes: modes.map((mode) => ({
                   mode,
                   accepted: mode !== 'auto',
@@ -320,24 +332,28 @@ function setup(
 
   const fixture = TestBed.createComponent(ModelCatalog);
   fixture.detectChanges();
+  const editor = fixture.debugElement.query(By.directive(ModelEditor))
+    .componentInstance as unknown as Editor;
   return {
     fixture,
     saved,
     removed,
-    component: fixture.componentInstance as unknown as Catalog,
+    component: fixture.componentInstance as unknown as Page,
+    editor,
+    /** Rendered for a role that may catalogue; `undefined` for a reader. */
+    discovery: fixture.debugElement.query(By.directive(ServedModels))
+      ?.componentInstance as unknown as Discovery,
+    feedback: fixture.debugElement.injector.get(PageFeedback),
     asked,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
     checked,
     askedLevels,
     checkedWhere,
     html: () => fixture.nativeElement as HTMLElement,
-    /** Run the reachability check for whatever name is in the editor. Creating a model now
-     *  requires having *looked* (`FRD-506`), so every case that creates one does this — which is
-     *  also the cheapest possible proof that the gate is real. */
+    /** Run the reachability check for whatever name is in the editor. Creating a model requires
+     *  having *looked* (`FRD-506`), so every case that creates one does this. */
     lookFirst: () => {
-      (
-        fixture.componentInstance as unknown as { runCheck: (m: { name: string }) => void }
-      ).runCheck({ name: (fixture.componentInstance as unknown as Catalog).name() });
+      editor.runCheck({ name: editor.name() });
       fixture.detectChanges();
     },
     /** Open the first row's declaration. What a model *is* lives in the panel now; the columns
@@ -411,12 +427,11 @@ describe('ModelCatalog', () => {
     } as never);
     harness.fixture.detectChanges();
 
-    // Which model this window is about must be on screen. The unfolding panel it replaced put the
-    // form far below the row it came from, with nothing saying which row that was.
+    // Which model this window is about must be on screen.
     const dialog = html().querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain('gemini-2.0-flash');
 
-    harness.component.name.set('typo');
+    harness.editor.name.set('typo');
     [...html().querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Cancel')
       ?.click();
@@ -425,52 +440,52 @@ describe('ModelCatalog', () => {
     expect(html().querySelector('[role="dialog"]')).toBeNull();
     expect(harness.saved).toHaveLength(0);
     // Reopening must not show the abandoned edit.
-    expect(harness.component.name()).toBe('');
+    expect(harness.editor.name()).toBe('');
   });
 
   it('refuses a price that is not an amount', () => {
-    const { component } = setup();
-    component.name.set('m-1');
-    component.inputPrice.set('teuer');
-    component.outputPrice.set('1.00');
-    expect(component.formError()).toContain('amounts per 1,000,000 tokens');
-    expect(component.canSave()).toBe(false);
+    const { editor } = setup();
+    editor.name.set('m-1');
+    editor.inputPrice.set('teuer');
+    editor.outputPrice.set('1.00');
+    expect(editor.formError()).toContain('amounts per 1,000,000 tokens');
+    expect(editor.canSave()).toBe(false);
   });
 
   it('refuses a model priced in only one direction', () => {
-    const { component } = setup();
-    component.name.set('m-1');
-    component.inputPrice.set('1.00');
-    expect(component.formError()).toContain('both');
+    const { editor } = setup();
+    editor.name.set('m-1');
+    editor.inputPrice.set('1.00');
+    expect(editor.formError()).toContain('both');
   });
 
   it('accepts a model with no price at all', () => {
     const harness = setup();
-    const { component, saved } = harness;
-    component.name.set('m-1');
+    const { editor, saved } = harness;
+    editor.name.set('m-1');
     harness.lookFirst();
-    component.save();
+    editor.save();
     expect(saved[0]).toMatchObject({ name: 'm-1', input_price_per_million: null });
   });
 
   it('sends prices as strings and normalises a comma', () => {
     const harness = setup();
-    const { component, saved } = harness;
-    component.name.set('m-1');
-    component.inputPrice.set('0,075');
-    component.outputPrice.set('0.30');
+    const { editor, saved } = harness;
+    editor.name.set('m-1');
+    editor.inputPrice.set('0,075');
+    editor.outputPrice.set('0.30');
     harness.lookFirst();
-    component.save();
+    editor.save();
     expect(saved[0].input_price_per_million).toBe('0.075');
     expect(typeof saved[0].input_price_per_million).toBe('string');
   });
 
   it('loads a row into the form for correction', () => {
-    const { component } = setup();
+    const { component, editor } = setup();
     component.edit(FLASH);
-    expect(component.name()).toBe('gemini-2.0-flash');
-    expect(component.inputPrice()).toBe('0.075');
-    expect(component.showAdd()).toBe(true);
+    expect(editor.name()).toBe('gemini-2.0-flash');
+    expect(editor.inputPrice()).toBe('0.075');
+    expect(editor.showAdd()).toBe(true);
   });
 
   it('asks before removing a model', () => {
@@ -481,21 +496,21 @@ describe('ModelCatalog', () => {
     const accepted = setup();
     accepted.component.remove(FLASH);
     expect(accepted.removed).toEqual(['gemini-2.0-flash']);
-    expect(accepted.component.notice()).toContain('removed');
+    expect(accepted.feedback.notice()).toContain('removed');
   });
 
   it('reports a failed load and a failed save', () => {
     const failedLoad = setup({ models: throwError(() => ({ status: 500 })) });
-    expect(failedLoad.component.error()).toBe('Could not load the model catalog.');
+    expect(failedLoad.feedback.error()).toBe('Could not load the model catalog.');
     expect(failedLoad.component.loading()).toBe(false);
 
     const failedSave = setup({
       save: throwError(() => ({ status: 403, error: { error: { message: 'Not an admin.' } } })),
     });
-    failedSave.component.name.set('m-1');
+    failedSave.editor.name.set('m-1');
     failedSave.lookFirst();
-    failedSave.component.save();
-    expect(failedSave.component.error()).toBe('Not an admin.');
+    failedSave.editor.save();
+    expect(failedSave.feedback.error()).toBe('Not an admin.');
   });
 
   it('shows a loading state rather than an empty catalog', () => {
@@ -515,10 +530,8 @@ describe('ModelCatalog interactions', () => {
     const html = () => harness.fixture.nativeElement as HTMLElement;
 
     expect(html().querySelector('#model-name')).toBeNull();
-    // **Through the one entrance there is.** There were two buttons and the empty form was one of
-    // them; adding now starts by saying where the model lives, and only a platform that cannot be
-    // listed reaches a form to type into. Driven through the DOM the whole way, because the point
-    // of the change is what a person can click.
+    // **Through the one entrance there is**: adding starts by saying where the model lives. Driven
+    // through the DOM the whole way, because what matters is what a person can click.
     html().querySelector<HTMLButtonElement>('[data-testid="add-model"]')!.click();
     harness.fixture.detectChanges();
     harness.component.browseProvider.set('vertex');
@@ -532,17 +545,16 @@ describe('ModelCatalog interactions', () => {
 
     const name = html().querySelector<HTMLInputElement>('#model-name');
     expect(name).not.toBeNull();
-    // The prices moved behind their own tab: eighteen fields in one column had the input price
-    // sitting between the provider and the publisher. A reader looking for what a model *costs*
-    // now opens the tab that says so, and this follows them there.
+    // The prices live behind their own tab; a reader looking for what a model *costs* opens the
+    // tab that says so, and this follows them there.
     html().querySelector<HTMLButtonElement>('[data-testid="tab-price"]')!.click();
     harness.fixture.detectChanges();
     expect(html().querySelector('label[for="model-input"]')).not.toBeNull();
     expect(html().querySelector('label[for="model-output"]')).not.toBeNull();
 
-    harness.component.name.set('m-1');
-    harness.component.inputPrice.set('1.00');
-    harness.component.outputPrice.set('2.00');
+    harness.editor.name.set('m-1');
+    harness.editor.inputPrice.set('1.00');
+    harness.editor.outputPrice.set('2.00');
     harness.fixture.detectChanges();
 
     // Save is unavailable until the model has been checked — the gate asserted through the DOM
@@ -564,13 +576,13 @@ describe('ModelCatalog interactions', () => {
       output_price_per_million: '2.00',
     });
     // A successful save clears and closes the window.
-    expect(harness.component.showAdd()).toBe(false);
-    expect(harness.component.name()).toBe('');
+    expect(harness.editor.showAdd()).toBe(false);
+    expect(harness.editor.name()).toBe('');
   });
 
   it('disables the submit button while the form is invalid', () => {
     const harness = setup();
-    harness.component.showAdd.set(true);
+    harness.editor.showAdd.set(true);
     harness.fixture.detectChanges();
     const html = harness.fixture.nativeElement as HTMLElement;
 
@@ -600,7 +612,7 @@ describe('ModelCatalog interactions', () => {
       .querySelector<HTMLButtonElement>('[data-testid="edit-gemini-2.0-flash"]')
       ?.click();
     harness.fixture.detectChanges();
-    expect(harness.component.name()).toBe('gemini-2.0-flash');
+    expect(harness.editor.name()).toBe('gemini-2.0-flash');
     expect(
       (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>('#model-name')
         ?.value,
@@ -640,17 +652,17 @@ describe('ModelCatalog — declarations (FRD-114)', () => {
 
   it('sends the declaration with the price', () => {
     const page = setup();
-    page.component.showAdd.set(true);
-    page.component.name.set('claude-1');
-    page.component.toggleCapability('thinking', true);
-    page.component.toggleCapability('generate', true);
-    page.component.publisher.set('anthropic');
-    page.component.hosting.set('managed');
-    page.component.maxOutput.set(64000);
-    page.component.defaultOutput.set(4096);
-    page.component.deprecated.set(true);
+    page.editor.showAdd.set(true);
+    page.editor.name.set('claude-1');
+    page.editor.toggleCapability('thinking', true);
+    page.editor.toggleCapability('generate', true);
+    page.editor.publisher.set('anthropic');
+    page.editor.hosting.set('managed');
+    page.editor.maxOutput.set(64000);
+    page.editor.defaultOutput.set(4096);
+    page.editor.deprecated.set(true);
     page.lookFirst();
-    page.component.save();
+    page.editor.save();
 
     const sent = page.saved[page.saved.length - 1];
     expect(sent.capabilities?.sort()).toEqual(['generate', 'thinking']);
@@ -663,39 +675,32 @@ describe('ModelCatalog — declarations (FRD-114)', () => {
 
   it('offers the context window, and sends what was typed into it', async () => {
     /**
-     * `FRD-132` §11, and the half `test_every_model_control_is_reachable.py` cannot see: that guard
-     * asserts a writable serializer field has a payload key, this one asserts the control reaches
-     * it. Neither alone would have caught `numeric_id`, which had no control *and* no key.
-     *
-     * The field exists because a client has nowhere else to learn the figure — an assistant's
-     * "12% of the context used" divides by it, and with nothing declared OpenCode showed 0%.
+     * `FRD-132` §11. `test_every_model_control_is_reachable.py` asserts a writable field has a
+     * payload key; this asserts the control reaches it. A client has nowhere else to learn the
+     * window — an assistant's "12% of the context used" divides by it.
      */
     const page = setup();
-    page.component.showAdd.set(true);
-    page.component.name.set('qwen3:0.6b');
-    page.component.toggleCapability('generate', true);
-    page.component.contextWindow.set(40960);
-    page.component.maxOutput.set(4096);
+    page.editor.showAdd.set(true);
+    page.editor.name.set('qwen3:0.6b');
+    page.editor.toggleCapability('generate', true);
+    page.editor.contextWindow.set(40960);
+    page.editor.maxOutput.set(4096);
     page.lookFirst();
-    page.component.save();
+    page.editor.save();
 
     expect(page.saved[page.saved.length - 1].context_window).toBe(40960);
   });
 
   it('offers the KIRA id, and sends what was typed into it', async () => {
-    /** The field the form never had. `numeric_id` is how a KIRA client names a model — that
-     *  surface identifies models by integer, not by name — and the API has always accepted it, so
-     *  every model catalogued from this screen went in with `NULL`: approvable, releasable, and
-     *  invisible to `/kira/api/external/chat`, which answers `MODEL_NOT_FOUND` and names nothing
-     *  that would tell the reader why. The detail panel even printed "KIRA id —", so the field was
-     *  visible and unsettable.
+    /** `numeric_id` is how a KIRA client names a model (`FRD-107`): without a control, a model
+     *  catalogued here is invisible to `/kira/api/external/chat`.
      *
      *  Typed into the real input rather than set on the signal: the defect being guarded against is
      *  a control that renders and sends nothing, and a signal set from a test renders nothing. */
     const page = setup();
-    page.component.showAdd.set(true);
-    page.component.name.set('legacy-1');
-    page.component.toggleCapability('generate', true);
+    page.editor.showAdd.set(true);
+    page.editor.name.set('legacy-1');
+    page.editor.toggleCapability('generate', true);
     page.lookFirst();
     // `ngModel` inside a `<form>` registers its control on a microtask, so a value typed before
     // that flush reaches nothing. The wait is the test being a real interaction, not a signal set.
@@ -703,9 +708,9 @@ describe('ModelCatalog — declarations (FRD-114)', () => {
 
     expect(page.testid('model-kira-id')).not.toBeNull();
     page.type('model-kira-id', '4711');
-    expect(page.component.kiraId()).toBe(4711);
+    expect(page.editor.kiraId()).toBe(4711);
 
-    page.component.save();
+    page.editor.save();
     expect(page.saved[page.saved.length - 1].numeric_id).toBe(4711);
   });
 
@@ -714,43 +719,43 @@ describe('ModelCatalog — declarations (FRD-114)', () => {
      *  a thought about KIRA is still addressable there. What must not be sent is a `0` or an empty
      *  string, which the server would have to refuse. */
     const page = setup();
-    page.component.showAdd.set(true);
-    page.component.name.set('plain-1');
-    page.component.toggleCapability('generate', true);
+    page.editor.showAdd.set(true);
+    page.editor.name.set('plain-1');
+    page.editor.toggleCapability('generate', true);
     page.lookFirst();
-    page.component.save();
+    page.editor.save();
 
     expect(page.saved[page.saved.length - 1].numeric_id).toBeNull();
   });
 
   it('refuses a default output cap above the maximum before sending it', () => {
     const page = setup();
-    page.component.showAdd.set(true);
-    page.component.name.set('impossible-1');
-    page.component.maxOutput.set(1024);
-    page.component.defaultOutput.set(4096);
+    page.editor.showAdd.set(true);
+    page.editor.name.set('impossible-1');
+    page.editor.maxOutput.set(1024);
+    page.editor.defaultOutput.set(4096);
 
-    expect(page.component.formError()).toContain('cannot exceed the maximum');
-    expect(page.component.canSave()).toBe(false);
+    expect(page.editor.formError()).toContain('cannot exceed the maximum');
+    expect(page.editor.canSave()).toBe(false);
   });
 
   it('loads a declaration into the form so it can be corrected in place', () => {
     const page = setup({ models: of([DECLARED]) });
     page.component.edit(DECLARED);
 
-    expect(page.component.hasCapability('thinking')).toBe(true);
-    expect(page.component.hasCapability('embed')).toBe(false);
-    expect(page.component.publisher()).toBe('anthropic');
-    expect(page.component.maxOutput()).toBe(64000);
-    expect(page.component.deprecated()).toBe(true);
+    expect(page.editor.hasCapability('thinking')).toBe(true);
+    expect(page.editor.hasCapability('embed')).toBe(false);
+    expect(page.editor.publisher()).toBe('anthropic');
+    expect(page.editor.maxOutput()).toBe(64000);
+    expect(page.editor.deprecated()).toBe(true);
   });
 
   it('unticking a capability removes it rather than leaving it in the list', () => {
     const page = setup();
-    page.component.capabilities.set(['generate', 'thinking']);
-    page.component.toggleCapability('thinking', false);
+    page.editor.capabilities.set(['generate', 'thinking']);
+    page.editor.toggleCapability('thinking', false);
 
-    expect(page.component.capabilities()).toEqual(['generate']);
+    expect(page.editor.capabilities()).toEqual(['generate']);
   });
 });
 
@@ -862,15 +867,10 @@ describe('ModelCatalog — finding one among many', () => {
 
   it('checks reachability from inside the editor, and never blocks saving on it', () => {
     /**
-     * The design question this answers, asked directly: *"warum machen wir check reachability
-     * nicht im Window, und wenn reachability false ist, dann kein Anlegen?"*
-     *
-     * In the window: yes. Blocking: **no**, and deliberately. Declaring a model before its
-     * credential exists is the ordinary order of work — you write the catalog, then configure the
-     * platform — and an adapter is registered only once the credential is there. A hard gate would
-     * make it impossible to declare anything on a fresh installation, and impossible to declare a
-     * model for a platform this deployment has not been given a key for yet. `FRD-114`'s rule:
-     * deprecation warns, revocation blocks. A verdict is information.
+     * In the window, and **never blocking**: a model is often declared before its credential
+     * exists, and an adapter is registered only once it does — a hard gate would make a fresh
+     * installation undeclarable. `FRD-114`: deprecation warns, revocation blocks. A verdict is
+     * information.
      */
     const harness = setup({
       check: of({
@@ -881,8 +881,8 @@ describe('ModelCatalog — finding one among many', () => {
         detail: 'No upstream serves this model.',
       }),
     });
-    harness.component.add();
-    harness.component.name.set('new-model');
+    harness.editor.add();
+    harness.editor.name.set('new-model');
     harness.fixture.detectChanges();
 
     harness.html().querySelector<HTMLElement>('[data-testid="editor-check"]')?.click();
@@ -892,19 +892,19 @@ describe('ModelCatalog — finding one among many', () => {
       'nothing serves it',
     );
     // The point of the test: Save is still available.
-    expect(harness.component.canSave()).toBe(true);
+    expect(harness.editor.canSave()).toBe(true);
   });
 
   it('does not carry a verdict from one model into the next window', () => {
     const harness = setup();
-    harness.component.add();
-    harness.component.name.set('a-model');
+    harness.editor.add();
+    harness.editor.name.set('a-model');
     harness.fixture.detectChanges();
     harness.html().querySelector<HTMLElement>('[data-testid="editor-check"]')?.click();
     harness.fixture.detectChanges();
     expect(harness.html().querySelector('[data-testid="editor-verdict"]')).not.toBeNull();
 
-    harness.component.add();
+    harness.editor.add();
     harness.fixture.detectChanges();
 
     expect(harness.html().querySelector('[data-testid="editor-verdict"]')).toBeNull();
@@ -920,7 +920,7 @@ describe('ModelCatalog — finding one among many', () => {
     harness.fixture.detectChanges();
 
     expect(harness.html().querySelector('[data-testid="check-verdict"]')).toBeNull();
-    expect(harness.component.error()).toBeTruthy();
+    expect(harness.feedback.error()).toBeTruthy();
   });
 
   // ---- only an approved model may be used (`FRD-307`) --------------------------------------
@@ -929,10 +929,10 @@ describe('ModelCatalog — finding one among many', () => {
     /** A model appearing on an upstream is not the same event as somebody deciding it may be used
      *  here. The default is the decision. */
     const harness = setup();
-    harness.component.add();
-    harness.component.name.set('brand-new');
+    harness.editor.add();
+    harness.editor.name.set('brand-new');
     harness.lookFirst();
-    harness.component.save();
+    harness.editor.save();
 
     expect(harness.saved[0]).toMatchObject({ name: 'brand-new', approved: false });
   });
@@ -950,7 +950,7 @@ describe('ModelCatalog — finding one among many', () => {
     const harness = setup({ models: of([{ ...FLASH, approved: true }]) });
     harness.component.edit({ ...FLASH, approved: true });
 
-    expect(harness.component.approved()).toBe(true);
+    expect(harness.editor.approved()).toBe(true);
   });
 
   it('says a reachable model is reachable, and an unreachable one is not', () => {
@@ -1020,10 +1020,8 @@ describe('ModelCatalog — finding one among many', () => {
           default_max_output_tokens: 512,
           thinking: { modes: ['disabled'] },
           embedding: { supports_batch: true },
-          // An **object**, keyed by media type, with an optional per-type estimate. It was a
-          // list here, which the server refuses ("media_types must be a non-empty object") —
-          // invisible while the field was typed `Record<string, unknown>`, and named by the
-          // compiler the moment the declaration got a real type.
+          // An **object**, keyed by media type, with an optional per-type estimate — the server
+          // refuses a list.
           attachments: { media_types: { 'application/pdf': { tokens: 258 } } },
           is_priced: true,
           input_price_per_million: '1.2345',
@@ -1056,12 +1054,9 @@ describe('ModelCatalog — finding one among many', () => {
       expect(shown, `the panel does not show ${value}`).toContain(value);
     }
 
-    // **And two it must not show.** `underlying_model` and `addressing` are stored, carried to the
-    // gateway, and read by no dispatch decision. Printed among Provider, Platform and Hosting they
-    // read as configuration — the same misreading that made "KIRA id —" look like a field somebody
-    // had left blank rather than one nobody could fill. Either a reader appears and they get a
-    // control (which `test_every_model_control_is_reachable.py` then requires), or they stay off
-    // the panel.
+    // **And two it must not show**: `underlying_model` and the raw `addressing` block. Printed
+    // among Provider, Platform and Hosting they read as configuration; a field that steers a
+    // request gets a control instead (`test_every_model_control_is_reachable.py`).
     expect(shown).not.toContain('underlying-q');
     expect(shown).not.toContain('dep-42');
   });
@@ -1080,11 +1075,9 @@ describe('ModelCatalog — finding one among many', () => {
   });
 
   it('shows everything on file, so the panel answers what the row abbreviates', () => {
-    /** Replaces "keeps a row and its buttons in the same row" (2026-08-09). That test guarded a
-     *  `display: flex` on a `<td>`, and this table no longer has an actions cell — the property
-     *  did not weaken, its subject left. Four other tables still carry `.table__actions`, and
-     *  `console-usability.spec.ts` measures the geometry on one of them in a real browser, which
-     *  is the only place `getComputedStyle` means anything. */
+    /** The opened panel answers what the row's columns abbreviate. (Row geometry is measured in a
+     *  real browser by `console-usability.spec.ts`, the only place `getComputedStyle` means
+     *  anything.) */
     const harness = setup({ models: of(models(1)) });
     harness.openFirst();
     const panel = harness.html();
@@ -1097,16 +1090,16 @@ describe('ModelCatalog — finding one among many', () => {
 
 describe('ModelCatalog — importing what the gateway serves (`FRD-507`)', () => {
   it('asks only when asked, and separates catalogued from not', () => {
-    /** A list of everything an endpoint offers, loaded on every visit and sitting beside an "Add"
-     *  button, reads as a to-do list — one key here answered with 50 models. It is an action. */
-    const { component } = setup();
-    expect(component.served()).toBeNull();
+    /** A list of everything an endpoint offers, loaded on every visit beside an "Add" button,
+     *  reads as a to-do list. It is an action. */
+    const { discovery } = setup();
+    expect(discovery.served()).toBeNull();
 
-    component.discover();
+    discovery.discover();
 
-    expect(component.served()?.length).toBe(2);
-    expect(component.alreadyCatalogued()).toBe(1);
-    expect(component.notCatalogued().map((m) => m.name)).toEqual(['gemini-3.1-flash-lite']);
+    expect(discovery.served()?.length).toBe(2);
+    expect(discovery.alreadyCatalogued()).toBe(1);
+    expect(discovery.notCatalogued().map((m) => m.name)).toEqual(['gemini-3.1-flash-lite']);
   });
 
   it('copies where a model lives and nothing else', () => {
@@ -1114,33 +1107,33 @@ describe('ModelCatalog — importing what the gateway serves (`FRD-507`)', () =>
      *  configured with. A capability is a claim (`FRD-131` found a model that lists `tools` and
      *  answers in prose) and a price nobody set is not zero (`FRD-403`) — so the editor still asks,
      *  and an administrator who does not know the price has not declared the model free. */
-    const { component } = setup();
-    component.discover();
+    const { component, editor, discovery } = setup();
+    discovery.discover();
 
-    component.importServed(component.notCatalogued()[0]);
+    component.importServed(discovery.notCatalogued()[0]);
 
     // The bare name, never Google's `models/…` resource form — that would catalogue an entry no
     // request can match, and it looks right in the table. The service strips it at the edge; this
     // asserts the value that reaches the form.
-    expect(component.name()).toBe('gemini-3.1-flash-lite');
-    expect(component.name()).not.toContain('models/');
-    expect(component.provider()).toBe('generative-language');
-    expect(component.publisher()).toBe('google');
-    expect(component.inputPrice()).toBe('');
-    expect(component.capabilities()).toEqual([]);
-    expect(component.approved()).toBe(false);
+    expect(editor.name()).toBe('gemini-3.1-flash-lite');
+    expect(editor.name()).not.toContain('models/');
+    expect(editor.provider()).toBe('generative-language');
+    expect(editor.publisher()).toBe('google');
+    expect(editor.inputPrice()).toBe('');
+    expect(editor.capabilities()).toEqual([]);
+    expect(editor.approved()).toBe(false);
   });
 
   it('says so when the catalog already has everything the gateway serves', () => {
     /** "Nothing to import" and "the gateway serves nothing" are different facts, and only one of
      *  them is good news. The empty state names which. */
-    const { component, text, fixture } = setup({
+    const { discovery, text, fixture } = setup({
       served: of([{ name: 'flash', airaDeclared: true }]),
     });
 
-    component.discover();
+    discovery.discover();
     fixture.detectChanges();
-    expect(component.notCatalogued()).toEqual([]);
+    expect(discovery.notCatalogued()).toEqual([]);
     expect(text()).toContain('Every model the gateway serves is in the catalog');
   });
 });
@@ -1149,46 +1142,45 @@ describe('ModelCatalog — discovery when things are missing', () => {
   it('reports a gateway that cannot be asked, instead of an empty list', () => {
     /** An empty list and an unreachable gateway look identical and are fixed differently — the
      *  same distinction `FRD-603` drew between "nothing happened" and "not yours to see". */
-    const { component } = setup({ served: throwError(() => ({ status: 503 })) });
+    const { discovery, feedback } = setup({ served: throwError(() => ({ status: 503 })) });
 
-    component.discover();
+    discovery.discover();
 
-    expect(component.served()).toBeNull();
-    expect(component.error()).toBeTruthy();
-    expect(component.discovering()).toBe(false);
+    expect(discovery.served()).toBeNull();
+    expect(feedback.error()).toBeTruthy();
+    expect(discovery.discovering()).toBe(false);
   });
 
   it('shows an em dash where an adapter has declared no provenance', () => {
     /** A self-hosted server may name no region, and the mock names nothing at all. Blank stays
      *  blank: an adapter that declared nothing has not made a claim, and rendering an empty string
      *  as a value would turn silence into an assertion. */
-    const { component, text, fixture } = setup({
+    const { component, editor, discovery, text, fixture } = setup({
       served: of([{ name: 'mock-1', airaDeclared: false }]),
     });
 
-    component.discover();
+    discovery.discover();
     fixture.detectChanges();
 
-    expect(component.notCatalogued().map((m) => m.name)).toEqual(['mock-1']);
+    expect(discovery.notCatalogued().map((m) => m.name)).toEqual(['mock-1']);
     expect(text()).toContain('—');
 
-    component.importServed(component.notCatalogued()[0]);
-    expect(component.name()).toBe('mock-1');
-    expect(component.provider()).toBe('');
+    component.importServed(discovery.notCatalogued()[0]);
+    expect(editor.name()).toBe('mock-1');
+    expect(editor.provider()).toBe('');
   });
 });
 
 describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)', () => {
   it('offers what the gateway is configured with, in the DOM, rather than a typed string', () => {
-    /** The field was a text box, so a model was declared under whatever somebody typed — and the
-     *  two refusals a typo produces (`not in the model catalog`, `has not been approved`) are both
-     *  correct and neither names the string that was wrong.
+    /** Chosen from what the gateway has rather than typed: a typo produces two correct refusals
+     *  (`not in the model catalog`, `has not been approved`) and neither names the string.
      *
      *  Asserted on the rendered `<option>`s: a component that held the list and rendered a text
      *  input would pass every signal assertion in this file. */
-    const { component, fixture, html } = setup();
+    const { editor, fixture, html } = setup();
 
-    component.add();
+    editor.add();
     fixture.detectChanges();
 
     const select = html().querySelector<HTMLSelectElement>('[data-testid="provider-select"]');
@@ -1198,18 +1190,18 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
     expect(options).toContain('vertex');
     // The escape hatch is always there: declaring a model before its platform is configured is
     // the ordinary order of work, and a closed list would forbid it.
-    expect(options).toContain(component.OTHER);
+    expect(options).toContain(editor.OTHER);
   });
 
   it('names the vendor and keeps the identifier visible', () => {
-    /** `generative-language` beside `local` names neither vendor — reported from the running
-     *  console. The label leads and the name stays in brackets, because the name is what gets
-     *  written into the catalog and onto every audit row. */
-    const { component } = setup();
+    /** `generative-language` beside `local` names neither vendor. The label leads and the name
+     *  stays in brackets, because the name is what gets written into the catalog and onto every
+     *  audit row. */
+    const { editor } = setup();
 
-    expect(component.providerLabel(STUDIO)).toContain('Google AI Studio');
-    expect(component.providerLabel(STUDIO)).toContain('generative-language');
-    expect(component.providerLabel(VERTEX)).toContain('europe-west1');
+    expect(editor.providerLabel(STUDIO)).toContain('Google AI Studio');
+    expect(editor.providerLabel(STUDIO)).toContain('generative-language');
+    expect(editor.providerLabel(VERTEX)).toContain('europe-west1');
   });
 
   it('says whether cataloguing the model will be enough to reach it', () => {
@@ -1217,14 +1209,14 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
      *  decoration. Where the model name is not the whole addressing, the model must also be named
      *  in the gateway's configuration — and an administrator who is not told finds out from a
      *  caller. */
-    const { component, fixture, text } = setup();
+    const { editor, fixture, text } = setup();
 
-    component.add();
-    component.chooseProvider('generative-language');
+    editor.add();
+    editor.chooseProvider('generative-language');
     fixture.detectChanges();
     expect(text()).toContain('is enough to reach it');
 
-    component.chooseProvider('vertex');
+    editor.chooseProvider('vertex');
     fixture.detectChanges();
     expect(text()).toContain("named in the gateway's configuration");
   });
@@ -1234,26 +1226,26 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
      *  of work, so a gateway that cannot be reached degrades to the text box it replaced rather
      *  than locking somebody out of their own catalog — `FRD-114`'s rule that deprecation warns
      *  and revocation blocks, one screen over. */
-    const { component, fixture, html, text } = setup({
+    const { editor, fixture, html, text } = setup({
       providers: throwError(() => ({ status: 503 })),
     });
 
-    component.add();
+    editor.add();
     fixture.detectChanges();
 
-    expect(component.providerIsCustom()).toBe(true);
+    expect(editor.providerIsCustom()).toBe(true);
     expect(text()).toContain('Type the provider name instead');
     expect(html().querySelector('[data-testid="provider-select"]')).toBeNull();
     expect(html().querySelector('[data-testid="provider-typed"]')).not.toBeNull();
   });
 
   it('lets a provider be typed and taken back to the list', () => {
-    const { component, fixture, html } = setup();
+    const { editor, fixture, html } = setup();
 
-    component.add();
-    component.chooseProvider(component.OTHER);
+    editor.add();
+    editor.chooseProvider(editor.OTHER);
     fixture.detectChanges();
-    expect(component.provider()).toBe('');
+    expect(editor.provider()).toBe('');
     expect(html().querySelector('[data-testid="provider-typed"]')).not.toBeNull();
 
     html().querySelector<HTMLButtonElement>('[data-testid="provider-back-to-list"]')!.click();
@@ -1264,42 +1256,37 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
   it('keeps a publisher the administrator typed when the provider declares none', () => {
     /** A provider that states no publisher has not said the field is empty. Overwriting a value
      *  somebody entered with a blank is the import rule inverted: silence becoming a decision. */
-    const { component } = setup({
+    const { editor } = setup({
       providers: of([{ ...STUDIO, publisher: '', region: '', label: '' }]),
     });
 
-    component.add();
-    component.publisher.set('google');
-    component.chooseProvider('generative-language');
+    editor.add();
+    editor.publisher.set('google');
+    editor.chooseProvider('generative-language');
 
-    expect(component.publisher()).toBe('google');
+    expect(editor.publisher()).toBe('google');
     // And a provider with neither label nor region is named by itself rather than trailed by a
     // separator or wrapped in brackets around its own name.
-    expect(component.providerLabel(component.providers()![0])).toBe('generative-language');
+    expect(editor.providerLabel(editor.providers()![0])).toBe('generative-language');
   });
 
   it('shows a configured provider as chosen even when the list arrives after the form', async () => {
     /** Opening the editor is what fetches the list, so a form carrying a provider is laid out
-     *  before the answer comes back. A one-way rule left a perfectly configured provider stuck in
-     *  the text box it was supposed to replace, for every model opened faster than the gateway
-     *  answered.
+     *  before the answer comes back, and the field has to settle in both directions on arrival.
      *
      *  The **arrival has to be late**, or this proves nothing: a stubbed `of()` answers inside the
-     *  call that started it, so the editor's own guess is what the assertion would be reading and
-     *  the deferred rule would never run. Written first with `of()`, where it passed against the
-     *  broken code — the failure this project keeps recording as *a test that never reached the
-     *  path it was named after*. */
+     *  call that started it, so the deferred rule would never run. */
     const late = new Subject<GatewayProvider[]>();
-    const { component, fixture, html } = setup({ providers: late });
+    const { component, editor, fixture, html } = setup({ providers: late });
 
     component.edit({ ...FLASH, provider: 'vertex' });
     // A row on file states where the model lives, so the editor summarises it rather than asking
     // again. This test is about the select's behaviour, so it opens the block the way a reader
     // correcting the provenance would.
-    component.openProvenance();
+    editor.openProvenance();
     fixture.detectChanges();
     // Nothing is known yet, so the field is the text box it degrades to.
-    expect(component.providerIsCustom()).toBe(true);
+    expect(editor.providerIsCustom()).toBe(true);
 
     late.next([STUDIO, VERTEX]);
     late.complete();
@@ -1308,7 +1295,7 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
     // interpolation.
     await fixture.whenStable();
 
-    expect(component.providerIsCustom()).toBe(false);
+    expect(editor.providerIsCustom()).toBe(false);
     expect(html().querySelector<HTMLSelectElement>('[data-testid="provider-select"]')!.value).toBe(
       'vertex',
     );
@@ -1317,28 +1304,23 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
   it('leaves the provider select alone for a model that has no provider at all', () => {
     /** An older catalog row, or one added before this field meant anything. Blank is not a typed
      *  value: the select simply shows nothing chosen. */
-    const { component } = setup();
+    const { component, editor } = setup();
 
     component.edit({ ...UNPRICED });
 
-    expect(component.provider()).toBe('');
-    expect(component.providerIsCustom()).toBe(false);
+    expect(editor.provider()).toBe('');
+    expect(editor.providerIsCustom()).toBe(false);
   });
 });
 
 describe('ModelCatalog — one entrance, and what it stops asking', () => {
   /**
-   * The owner's verdict on the two buttons that used to sit here: *"the options for adding a
-   * model are too complex … if somebody other than me is to add one, that person will not
-   * understand the screen"*, and *"the Add model button, where you have to type everything
-   * yourself, is by now unnecessary — we have adding from a provider."*
-   *
-   * Both halves are one property: **a model lives somewhere, and the software already knows
-   * where.** The empty form asked eight questions and five of them — provider, publisher,
-   * platform, hosting, the KIRA id — were answered when the provider was chosen.
+   * **A model lives somewhere, and the software already knows where.** Adding starts with the
+   * provider, and the five facts it answers — provider, publisher, platform, hosting, the KIRA id —
+   * are stated rather than asked again.
    */
   it('offers one way in, and it starts with the provider', () => {
-    const { component, html } = setup();
+    const { component, editor, html } = setup();
 
     const buttons = [...html().querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
       /add a model|add model/i.test(button.textContent ?? ''),
@@ -1348,16 +1330,16 @@ describe('ModelCatalog — one entrance, and what it stops asking', () => {
     buttons[0].click();
     // The browse window, not the editor: nothing is typed before it is known where it goes.
     expect(component.showBrowse()).toBe(true);
-    expect(component.showAdd()).toBe(false);
+    expect(editor.showAdd()).toBe(false);
   });
 
   it('states where the model lives instead of asking, once something knows', () => {
-    const { component, fixture, html } = setup();
+    const { component, editor, fixture, html } = setup();
 
     component.addManually();
-    component.provider.set('vertex');
-    component.publisher.set('google');
-    component.platform.set('vertex');
+    editor.provider.set('vertex');
+    editor.publisher.set('google');
+    editor.platform.set('vertex');
     fixture.detectChanges();
 
     const summary = html().querySelector('[data-testid="provenance-summary"]');
@@ -1379,29 +1361,27 @@ describe('ModelCatalog — one entrance, and what it stops asking', () => {
   it('asks where the model lives when nothing knows', () => {
     /** The empty form is the one case where those fields really are the reader's to answer, so
      *  there it opens by itself. Hiding a question nobody else can answer is not simplicity. */
-    const { component, fixture, html } = setup();
+    const { component, editor, fixture, html } = setup();
 
     component.addByName();
     fixture.detectChanges();
 
-    expect(component.provenanceKnown()).toBe(false);
+    expect(editor.provenanceKnown()).toBe(false);
     expect(html().querySelector('[data-testid="provenance-fields"]')).not.toBeNull();
     expect(html().querySelector('[data-testid="provenance-summary"]')).toBeNull();
   });
 
   it('keeps the fields on screen while the reader is using them', () => {
-    /** **The defect this test was written after.** Without a latch, the empty form opened the
-     *  fields (nothing was known), the reader picked a provider from the select — and "a provider
-     *  is now known" collapsed the block, taking the select out of the DOM under the pointer that
-     *  had just used it. A rule about what a form knows, applied while somebody is telling it. */
-    const { component, fixture, html } = setup();
+    /** Without a latch, picking a provider makes one "known" and collapses the block, taking the
+     *  select out of the DOM under the pointer that just used it. */
+    const { component, editor, fixture, html } = setup();
 
     component.addByName();
     fixture.detectChanges();
-    component.chooseProvider('vertex');
+    editor.chooseProvider('vertex');
     fixture.detectChanges();
 
-    expect(component.provenanceKnown()).toBe(true);
+    expect(editor.provenanceKnown()).toBe(true);
     expect(html().querySelector('[data-testid="provenance-fields"]')).not.toBeNull();
   });
 
@@ -1418,10 +1398,8 @@ describe('ModelCatalog — one entrance, and what it stops asking', () => {
   });
 
   it('does not carry one model’s reachability verdict onto a form for another', () => {
-    /** **The second defect this pass found.** Two entrances to one window and only one of them
-     *  swept the floor: `add()` clears the verdict with a comment saying why, and the manual route
-     *  opened the same window beside it. Checking a row and then adding a model showed a green
-     *  badge about a different model — the wrong answer wearing a right one's clothes. */
+    /** Every entrance to the editor starts without a verdict: a green badge about the row that was
+     *  checked, on a form for a new model, is the wrong answer wearing a right one's clothes. */
     const harness = setup({
       check: of({
         model: 'gemini-2.0-flash',
@@ -1431,7 +1409,7 @@ describe('ModelCatalog — one entrance, and what it stops asking', () => {
         detail: 'gemini-2.0-flash answered',
       }),
     });
-    const { component, fixture, html } = harness;
+    const { component, editor, fixture, html } = harness;
 
     harness.openFirst();
     html().querySelector<HTMLElement>('[data-testid^="check-gemini"]')!.click();
@@ -1440,16 +1418,15 @@ describe('ModelCatalog — one entrance, and what it stops asking', () => {
 
     component.addManually();
     fixture.detectChanges();
-    expect(component.check()).toBeNull();
+    expect(editor.check()).toBeNull();
     expect(html().querySelector('[data-testid="editor-verdict"]')).toBeNull();
   });
 
   it('leaves a way forward when there is no provider to choose', () => {
-    /** The empty form is still reachable, from the one place it is the honest option rather than
-     *  the tempting one: a gateway with no upstream configured has nothing to fill anything in
-     *  from. Removing the button without this would have removed the only way to declare a model
-     *  on a fresh installation. */
-    const { component, fixture, html } = setup({ providers: of([]) });
+    /** The empty form stays reachable where it is the honest option: a gateway with no upstream
+     *  has nothing to fill anything in from, and this is how a fresh installation declares a
+     *  model at all. */
+    const { component, editor, fixture, html } = setup({ providers: of([]) });
 
     component.openBrowse();
     fixture.detectChanges();
@@ -1459,20 +1436,16 @@ describe('ModelCatalog — one entrance, and what it stops asking', () => {
     fixture.detectChanges();
 
     expect(component.showBrowse()).toBe(false);
-    expect(component.showAdd()).toBe(true);
+    expect(editor.showAdd()).toBe(true);
     expect(html().querySelector('#model-name')).not.toBeNull();
   });
 });
 
 describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)', () => {
   it('lists every provider, and says which one publishes no list', () => {
-    /** `canEnumerate` is stated rather than discovered by trying, and a capability gap must never
-     *  be reported as a fault — those send a reader to two different systems.
-     *
-     *  **But it was reported as nothing at all.** A provider without a listing was filtered out of
-     *  this window, and somebody who had just configured Agent Platform opened *Add from provider*
-     *  and found no mention of it: indistinguishable from a credential that had not worked. It is
-     *  listed now, marked, with the way in beside it — no error, and no silence either.
+    /** `canEnumerate` is stated rather than discovered by trying, and a capability gap is never a
+     *  fault. Nor is it silence: a provider without a listing is listed and marked, because an
+     *  absent entry is indistinguishable from a credential that did not work.
      */
     const { fixture, html } = setup();
 
@@ -1491,7 +1464,7 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
     /** "Type everything" is not an answer. What the platform tells us about itself is filled in,
      *  and the reader names the model — which is what choosing an offered one does, one step
      *  earlier. */
-    const { component, fixture, html } = setup();
+    const { component, editor, fixture, html } = setup();
 
     html().querySelector<HTMLButtonElement>('[data-testid="add-model"]')!.click();
     fixture.detectChanges();
@@ -1502,7 +1475,7 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
     html().querySelector<HTMLButtonElement>('[data-testid="add-manually"]')!.click();
     fixture.detectChanges();
 
-    expect(component.provider()).toBe('vertex');
+    expect(editor.provider()).toBe('vertex');
     expect(html().querySelector('#model-name')).not.toBeNull();
   });
 
@@ -1519,16 +1492,12 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
   });
 
   /**
-   * Reported from the console: open the listing, click *Catalogue…*, cancel, open it again — the
-   * provider is still selected and nothing loads.
-   *
-   * `catalogueOffered` closes the dialog **without** clearing the provider, deliberately: it needs
-   * it afterwards to record where the model came from. `openBrowse` then asked for the offerings
-   * only where no provider was chosen, so a remembered one skipped the fetch. Half the state kept
-   * and half dropped — the select said AI Studio and there was nothing under it, with no error.
+   * `catalogueOffered` closes the window **without** clearing the provider (it records where the
+   * model came from), so reopening must ask for the remembered provider again — or the select
+   * names it with nothing under it.
    *
    * Asserted on **what was asked of the gateway**, not on what is on screen: an empty list and a
-   * list that was never requested render identically, which is exactly why nobody caught this.
+   * list that was never requested render identically.
    */
   it('asks again for a provider that is still selected when the picker reopens', () => {
     const harness = setup({
@@ -1593,13 +1562,15 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
 
   it('reports a provider that would not answer, inside the window it was asked in', () => {
     /** A red bar on the page behind an open modal is a report about nothing. */
-    const { component, fixture, text } = setup({ offerings: throwError(() => ({ status: 502 })) });
+    const { component, feedback, fixture, text } = setup({
+      offerings: throwError(() => ({ status: 502 })),
+    });
 
     component.openBrowse();
     fixture.detectChanges();
 
     expect(component.offeringsError()).toBeTruthy();
-    expect(component.error()).toBeNull();
+    expect(feedback.error()).toBeNull();
     expect(text()).toContain('Could not ask this provider');
   });
 
@@ -1631,7 +1602,7 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
      *  Not copied: the price (a price nobody set is not zero), and `thinking` — the vendor's flag
      *  says a model reasons and `FRD-114` needs the modes and the budgets, which no listing
      *  publishes. */
-    const { component, fixture, html, text } = setup();
+    const { component, editor, fixture, html, text } = setup();
 
     component.openBrowse();
     fixture.detectChanges();
@@ -1640,39 +1611,34 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
 
     // One window at a time: the list is a choice, made once.
     expect(component.showBrowse()).toBe(false);
-    expect(component.showAdd()).toBe(true);
+    expect(editor.showAdd()).toBe(true);
 
-    expect(component.name()).toBe('gemini-flash-latest');
-    expect(component.displayName()).toBe('Gemini Flash Latest');
-    expect(component.maxOutput()).toBe(65536);
-    expect(component.provider()).toBe('generative-language');
-    expect(component.publisher()).toBe('google');
-    expect(component.platform()).toBe('generative-language');
-    expect(component.capabilities().sort()).toEqual(['generate', 'prompt_caching']);
+    expect(editor.name()).toBe('gemini-flash-latest');
+    expect(editor.displayName()).toBe('Gemini Flash Latest');
+    expect(editor.maxOutput()).toBe(65536);
+    expect(editor.provider()).toBe('generative-language');
+    expect(editor.publisher()).toBe('google');
+    expect(editor.platform()).toBe('generative-language');
+    expect(editor.capabilities().sort()).toEqual(['generate', 'prompt_caching']);
 
-    expect(component.inputPrice()).toBe('');
-    expect(component.outputPrice()).toBe('');
-    expect(component.approved()).toBe(false);
-    expect(component.hasCapability('thinking')).toBe(false);
-    expect(component.hasCapability('tools')).toBe(false);
+    expect(editor.inputPrice()).toBe('');
+    expect(editor.outputPrice()).toBe('');
+    expect(editor.approved()).toBe(false);
+    expect(editor.hasCapability('thinking')).toBe(false);
+    expect(editor.hasCapability('tools')).toBe(false);
 
-    // And it says which half is which, because an import that silently fills six fields and
-    // silently leaves five is indistinguishable from one that failed at the other five.
-    //
-    // Two statements, deliberately not one: the **sentence** says what is now known — that half
-    // used to be six empty boxes — and the **note** says what the import left alone. They said
-    // the same thing for a while, one line apart, which reads as two facts and sends a reader
-    // looking for the difference.
+    // And it says which half is which: the **sentence** states what is now known, the **note**
+    // what the import left alone — each once, or a reader looks for the difference.
     expect(text()).toContain('Lives on Google AI Studio (generative-language)');
     expect(text()).toContain('a price nobody set is not zero');
     expect(text()).not.toContain('Filled in from');
-    expect(component.vendorSaid().join(' ')).toContain('it reasons');
+    expect(editor.vendorSaid().join(' ')).toContain('it reasons');
   });
 
   it('opens the existing declaration for a model the catalog already has', () => {
     /** Corrected, never added a second time — and never as a blank form carrying the vendor's
      *  answer, which would replace a measured capability or a price with a claim. */
-    const { component, fixture, html } = setup({
+    const { component, editor, fixture, html } = setup({
       offerings: of([{ ...OFFERED_FLASH, name: 'gemini-2.0-flash' }]),
     });
 
@@ -1680,34 +1646,34 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
     fixture.detectChanges();
     html().querySelector<HTMLButtonElement>('[data-testid="offered-gemini-2.0-flash"]')!.click();
 
-    expect(component.editing()).toBe('gemini-2.0-flash');
-    expect(component.inputPrice()).toBe('0.075');
+    expect(editor.editing()).toBe('gemini-2.0-flash');
+    expect(editor.inputPrice()).toBe('0.075');
   });
 
   it('turns a vendor saying nothing into no declaration at all', () => {
     /** `null` is a third answer, not a missing one. An OpenAI-compatible listing publishes bare
      *  ids, and `false` would be a *statement* that the model cannot generate — pre-filled into a
      *  form somebody is about to save, it becomes their decision (`FRD-114` FR-7). */
-    const { component } = setup({ offerings: of([OFFERED_EMBED]) });
+    const { component, editor } = setup({ offerings: of([OFFERED_EMBED]) });
 
     component.openBrowse();
     component.catalogueOffered(component.offerings()![0]);
 
-    expect(component.name()).toBe('text-embedding-004');
-    expect(component.capabilities()).toEqual([]);
-    expect(component.maxOutput()).toBeNull();
+    expect(editor.name()).toBe('text-embedding-004');
+    expect(editor.capabilities()).toEqual([]);
+    expect(editor.maxOutput()).toBeNull();
   });
 
   it('adds capabilities and never removes one the administrator ticked', () => {
     /** A vendor's silence must not untick a box somebody ticked from a measurement they made —
      *  which is the direction that matters, since the catalog is where measurements are kept. */
-    const { component } = setup();
+    const { component, editor } = setup();
 
     component.openBrowse();
-    component.capabilities.set(['tools']);
-    component.useOffered(OFFERED_FLASH);
+    editor.capabilities.set(['tools']);
+    editor.useOffered(OFFERED_FLASH);
 
-    expect(component.capabilities().sort()).toEqual(['generate', 'prompt_caching', 'tools']);
+    expect(editor.capabilities().sort()).toEqual(['generate', 'prompt_caching', 'tools']);
   });
 
   it('counts a live listing as having looked — but only where cataloguing is enough', () => {
@@ -1718,28 +1684,28 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
     const enough = setup();
     enough.component.openBrowse();
     enough.component.catalogueOffered(OFFERED_FLASH);
-    expect(enough.component.mustCheck()).toBe(false);
+    expect(enough.editor.mustCheck()).toBe(false);
 
     const notEnough = setup({
       providers: of([{ ...STUDIO, name: 'half-wired', cataloguedIsEnough: false }]),
     });
     notEnough.component.openBrowse();
     notEnough.component.catalogueOffered(OFFERED_FLASH);
-    expect(notEnough.component.mustCheck()).toBe(true);
+    expect(notEnough.editor.mustCheck()).toBe(true);
   });
 
   it('closes without touching the form behind it', () => {
     /** The browse window has its own provider signal. Looking at a list must not edit a
      *  half-finished declaration underneath — and the two would otherwise be one field. */
-    const { component, fixture } = setup();
+    const { component, editor, fixture } = setup();
 
-    component.add();
-    component.chooseProvider('vertex');
+    editor.add();
+    editor.chooseProvider('vertex');
     component.openBrowse();
     fixture.detectChanges();
     component.closeBrowse();
 
-    expect(component.provider()).toBe('vertex');
+    expect(editor.provider()).toBe('vertex');
     expect(component.offerings()).toBeNull();
     expect(component.browseProvider()).toBe('');
   });
@@ -1785,18 +1751,18 @@ describe('ModelCatalog — the browse window when things are half-there', () => 
     /** `catalogueOffered` reads the provider for the provenance it copies, and a window opened
      *  against a list that never arrived has none. The model is still the model: the form opens
      *  with the name and without a claim about where it lives. */
-    const { component } = setup({ providers: throwError(() => ({ status: 503 })) });
+    const { component, editor } = setup({ providers: throwError(() => ({ status: 503 })) });
 
     component.openBrowse();
     component.catalogueOffered(OFFERED_FLASH);
 
-    expect(component.showAdd()).toBe(true);
-    expect(component.name()).toBe('gemini-flash-latest');
-    expect(component.provider()).toBe('');
+    expect(editor.showAdd()).toBe(true);
+    expect(editor.name()).toBe('gemini-flash-latest');
+    expect(editor.provider()).toBe('');
   });
 
   it("carries an embedding verb and the vendor's own description", () => {
-    const { component, fixture, text } = setup({
+    const { component, editor, fixture, text } = setup({
       offerings: of([
         {
           ...OFFERED_EMBED,
@@ -1810,7 +1776,7 @@ describe('ModelCatalog — the browse window when things are half-there', () => 
     component.catalogueOffered(component.offerings()![0]);
     fixture.detectChanges();
 
-    expect(component.capabilities()).toEqual(['embed']);
+    expect(editor.capabilities()).toEqual(['embed']);
     expect(text()).toContain('distributed representation');
   });
 
@@ -1818,13 +1784,13 @@ describe('ModelCatalog — the browse window when things are half-there', () => 
     /** `useOffered` is reachable from the editor too, and "is cataloguing enough to reach this"
      *  has to be answered about the provider on the *form* then — not about a window that is not
      *  open. */
-    const { component } = setup();
+    const { editor } = setup();
 
-    component.add();
-    component.chooseProvider('generative-language');
-    component.useOffered(OFFERED_FLASH);
+    editor.add();
+    editor.chooseProvider('generative-language');
+    editor.useOffered(OFFERED_FLASH);
 
-    expect(component.mustCheck()).toBe(false);
+    expect(editor.mustCheck()).toBe(false);
   });
 });
 
@@ -1864,18 +1830,10 @@ describe('ModelCatalog — what a reader is looking for comes first', () => {
 });
 
 /**
- * The three declaration blocks (`FRD-114`).
- *
- * The API has accepted `thinking`, `embedding` and `attachments` since they existed and the
- * console could not write any of them: it *showed* them in the opened row as JSON, and offered no
- * field. So `all-minilm` listed with a batch flag and no width — a Global Administrator could tick
- * "embed" and had nowhere to say how wide the vectors are, and the seed was the only way in.
- * `FRD-206` inverted: a capability with no way in announces itself through nothing, because an
- * absent control reads as a design decision.
- *
- * Nothing is lost by editing a model without them — measured against the running stack before this
- * was built, since the API upserts and leaves omitted fields alone. That is why this was a gap
- * rather than a defect, and why the tests below are about what the form can now *say*.
+ * The three declaration blocks (`FRD-114`): `thinking`, `embedding` and `attachments`, which the
+ * API accepts and the console must be able to write — a capability with no way in reads as a
+ * design decision. The API upserts and leaves omitted fields alone, so these tests are about what
+ * the form can *say*.
  */
 describe('ModelCatalog — declaration blocks', () => {
   const DECLARED: CatalogModel = {
@@ -1899,17 +1857,12 @@ describe('ModelCatalog — declaration blocks', () => {
   };
 
   it('keeps approval out of the tabs, where pressing Save cannot miss it', () => {
-    /** The decision the split turned on.
-     *
-     *  `approved` is not a property of the model — it is what makes the model callable
-     *  (`FRD-307`), and it starts **off**. Behind a tab, somebody fills in three screens, presses
-     *  Save, and creates a model nothing can call, with the switch they never opened sitting at
-     *  its default. It belongs beside Save, visible on every tab, which is the only place its
-     *  state cannot be missed at the moment it takes effect. Deprecation keeps it company: both
-     *  are statements about the model's standing rather than about what it is.
+    /** `approved` is what makes a model callable (`FRD-307`), and it starts **off**. Behind a tab,
+     *  somebody fills in three screens, saves, and creates a model nothing can call — so it sits
+     *  beside Save on every tab, with deprecation: both are about the model's standing.
      */
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.showAdd.set(true);
 
     for (const tab of ['identity', 'capabilities', 'price'] as const) {
@@ -1928,7 +1881,7 @@ describe('ModelCatalog — declaration blocks', () => {
      *  The grouping is the feature; asserting it stops the next field being appended wherever the
      *  file happens to end. */
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.showAdd.set(true);
     catalog.capabilities.set(['thinking']);
 
@@ -1952,7 +1905,7 @@ describe('ModelCatalog — declaration blocks', () => {
 
   it('shows a block only where its capability is ticked', () => {
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.showAdd.set(true);
     // The three declaration blocks live on the tab that answers "what can it do" — which is also
     // where the capability checkboxes are, so a reader never ticks a box on one screen and looks
@@ -1975,7 +1928,7 @@ describe('ModelCatalog — declaration blocks', () => {
 
   it('loads what a model already declares into the form', () => {
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
 
     expect(catalog.thinkingModes()).toEqual(['disabled']);
@@ -1991,7 +1944,7 @@ describe('ModelCatalog — declaration blocks', () => {
 
   it('sends all three blocks in the shape the validator takes', () => {
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
     catalog.save();
 
@@ -2015,14 +1968,11 @@ describe('ModelCatalog — declaration blocks', () => {
   });
 
   it('a ticked media type with no estimate reserves nothing, and says so', async () => {
-    /** The second field of the KIRA-id shape: the estimate was **displayed** beside a media type
-     *  whenever the API had put one there, and no control could set it. Every declaration written
-     *  in the console therefore sent `{"image/png": null}`, and the gateway reads a missing
-     *  estimate as zero — `attachment_tokens` sums only the entries that are objects. A request
-     *  carrying a 20 000-token document was reserved for as if it were a sentence, which reopens
-     *  under documents the race `FRD-405` closed for text. */
+    /** An estimate nobody gave is sent as `null`, which the gateway reserves nothing for
+     *  (`attachment_tokens` sums only objects) — why the form must be able to set one
+     *  (`FRD-405`). */
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
     catalog.toggleMediaType('image/png', true);
     catalog.save();
@@ -2034,7 +1984,7 @@ describe('ModelCatalog — declaration blocks', () => {
     /** Typed into the rendered input rather than set through the component: what is being
      *  prevented is a control that renders and sends nothing. */
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
     catalog.editorTab.set('capabilities');
     catalog.toggleMediaType('image/png', true);
@@ -2054,7 +2004,7 @@ describe('ModelCatalog — declaration blocks', () => {
     /** A number that is no longer on screen must not come back on a re-tick — that is a value
      *  nobody can see being sent, which is the whole defect. */
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
     catalog.toggleMediaType('application/pdf', false);
     catalog.toggleMediaType('application/pdf', true);
@@ -2071,7 +2021,7 @@ describe('ModelCatalog — declaration blocks', () => {
    */
   it('removes a block when its capability is unticked', () => {
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
     catalog.toggleCapability('embed', false);
     catalog.toggleCapability('attachments', false);
@@ -2080,9 +2030,8 @@ describe('ModelCatalog — declaration blocks', () => {
 
     const sent = harness.saved[0];
 
-    // All three, and `null` rather than "falsy": replacing the thinking block with `{}` left this
-    // green when it named only two of them, and an empty object is precisely the wrong answer —
-    // it saves, the model keeps the capability, and nothing is declared about it.
+    // All three, and `null` rather than "falsy": an empty object saves, the model keeps the
+    // capability, and nothing is declared about it.
     expect(sent.embedding).toBeNull();
     expect(sent.attachments).toBeNull();
     expect(sent.thinking).toBeNull();
@@ -2095,7 +2044,7 @@ describe('ModelCatalog — declaration blocks', () => {
    */
   it('drops a default naming a mode that is unticked, or a level that is removed', () => {
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
 
     catalog.thinkingDefault.set('disabled');
@@ -2120,7 +2069,7 @@ describe('ModelCatalog — declaration blocks', () => {
    */
   it('sends a default width only while it is one of the declared ones', () => {
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
     catalog.dimensions.set('768');
     catalog.save();
@@ -2136,7 +2085,7 @@ describe('ModelCatalog — declaration blocks', () => {
    */
   it('carries a media type’s token estimate through an edit that never touched it', () => {
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit(DECLARED);
     catalog.toggleMediaType('image/png', true);
     catalog.save();
@@ -2149,7 +2098,7 @@ describe('ModelCatalog — declaration blocks', () => {
 
   it('offers no width the form has not declared', () => {
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.showAdd.set(true);
     catalog.capabilities.set(['embed']);
     catalog.dimensions.set('384, nonsense, 768, -1');
@@ -2159,33 +2108,26 @@ describe('ModelCatalog — declaration blocks', () => {
 });
 
 /**
- * The thinking levels, after `ADR-0021` turned a token table into the vendor's own words.
- *
- * The owner's objection, cataloguing a real model: *"If I now pick medium or low, you ask me how
- * many tokens that should be. You do not even find these parameters on the vendors' own pages.
- * How am I supposed to know?"* Nobody publishes it — and a guess did not merely sit in a database,
- * it went upstream as a **ceiling on the model's reasoning**, so a typed `medium = 2000` truncates
- * an agentic run that needed twenty thousand.
- *
- * What replaced it has to earn the free text: if the words are unconstrained, something other than
- * a rule in this repository must say whether one works. That is the model itself.
+ * The thinking levels are the vendor's own words (`ADR-0021`), not a token table: no vendor
+ * publishes a budget per level, and a guessed one goes upstream as a **ceiling on the model's
+ * reasoning**. Free text has to earn its place, so the model itself says whether a word works.
  */
 describe('ModelCatalog — thinking levels are the vendor’s own words', () => {
   it('takes a word, lower-cases it, and refuses a duplicate quietly', () => {
-    const { component } = setup();
-    component.add();
+    const { editor } = setup();
+    editor.add();
 
-    component.levelDraft.set('Low');
-    component.addLevel();
-    component.levelDraft.set('  low  ');
-    component.addLevel();
-    component.levelDraft.set('high');
-    component.addLevel();
+    editor.levelDraft.set('Low');
+    editor.addLevel();
+    editor.levelDraft.set('  low  ');
+    editor.addLevel();
+    editor.levelDraft.set('high');
+    editor.addLevel();
 
     // `Low` and `low` are the same instruction to every vendor, so two chips saying so would be
     // two chips the reader has to reconcile.
-    expect(component.thinkingLevels()).toEqual(['low', 'high']);
-    expect(component.levelDraft()).toBe('');
+    expect(editor.thinkingLevels()).toEqual(['low', 'high']);
+    expect(editor.levelDraft()).toBe('');
   });
 
   it('refuses a thinking mode typed as though it were a vendor word', () => {
@@ -2193,72 +2135,70 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
      *  a vendor takes. A model listing one as a level would send that string upstream and mean
      *  something else by it — and it is a mistake somebody makes precisely because the two lists
      *  sit one above the other. */
-    const { component } = setup();
-    component.add();
+    const { editor, feedback } = setup();
+    editor.add();
 
-    component.levelDraft.set('auto');
-    component.addLevel();
+    editor.levelDraft.set('auto');
+    editor.addLevel();
 
-    expect(component.thinkingLevels()).toEqual([]);
-    expect(component.error()).toContain('thinking mode');
+    expect(editor.thinkingLevels()).toEqual([]);
+    expect(feedback.error()).toContain('thinking mode');
   });
 
   it('offers modes and levels together as a default', () => {
     /** A default is whatever the model does when nobody says, and that is as likely to be a level
      *  as a mode. Offering only the modes would make a level undeclarable without saying so. */
-    const { component } = setup();
-    component.add();
-    component.toggleThinkingMode('auto', true);
-    component.levelDraft.set('high');
-    component.addLevel();
+    const { editor } = setup();
+    editor.add();
+    editor.toggleThinkingMode('auto', true);
+    editor.levelDraft.set('high');
+    editor.addLevel();
 
-    expect(component.declarableDefaults()).toEqual(['auto', 'high']);
+    expect(editor.declarableDefaults()).toEqual(['auto', 'high']);
   });
 
   it('asks the model and marks each word with what it answered', async () => {
     const harness = setup();
-    const { component } = harness;
+    const { component, editor } = harness;
     component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
-    component.thinkingLevels.set(['low']);
+    editor.thinkingLevels.set(['low']);
     // Typed but not committed: pressing the button without leaving the box would otherwise check
     // everything *except* the word the reader is looking at.
-    component.levelDraft.set('medium');
-    component.checkLevels();
+    editor.levelDraft.set('medium');
+    editor.checkLevels();
 
-    // **With where the form says it lives.** Both checks ask about the editor's state rather than
-    // the saved row: correcting a provider and pressing a check used to answer about the
-    // declaration being replaced, which is right about the wrong thing.
+    // **With where the form says it lives**: both checks ask about the editor's state, not the
+    // saved row being replaced.
     expect(harness.askedLevels).toEqual([
       {
         model: 'gemini-2.5-flash',
         levels: ['low', 'medium'],
         where: { provider: FLASH.provider ?? '', publisher: '', region: '' },
-        modes: component.thinkingModes(),
+        modes: editor.thinkingModes(),
       },
     ]);
-    expect(component.levelVerdict('low')).toEqual({ ok: true, detail: 'The model accepted it.' });
+    expect(editor.levelVerdict('low')).toEqual({ ok: true, detail: 'The model accepted it.' });
     // **The provider's own words**, which is the whole value of the button: no rule here could
     // have said `thinking_level is not supported by this model` as precisely, or stayed as true.
-    expect(component.levelVerdict('medium')?.ok).toBe(false);
-    expect(component.levelVerdict('medium')?.detail).toContain('thinking_level is not supported');
+    expect(editor.levelVerdict('medium')?.ok).toBe(false);
+    expect(editor.levelVerdict('medium')?.detail).toContain('thinking_level is not supported');
   });
 
   it('marks a thinking mode the model’s own dialect cannot express', () => {
-    // Measured against the running stack on 2026-08-20: `auto` ticked here for a model served by
-    // an OpenAI-dialect endpoint was accepted in silence, and every thinking request afterwards
-    // answered `500 Internal error`. Every adapter had always declared which modes its wire
-    // format can express — and **nothing on any path read that declaration**.
-    const { component } = setup();
+    // `auto` ticked for a model on an OpenAI-dialect endpoint would be accepted in silence and fail
+    // every thinking request after. The adapters declare which modes their wire format can
+    // express; this reads that declaration.
+    const { component, editor } = setup();
     component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
-    component.thinkingModes.set(['disabled', 'auto']);
+    editor.thinkingModes.set(['disabled', 'auto']);
 
-    component.checkLevels();
+    editor.checkLevels();
 
-    expect(component.modeVerdicts()['disabled'].ok).toBe(true);
-    expect(component.modeVerdicts()['auto'].ok).toBe(false);
+    expect(editor.modeVerdicts()['disabled'].ok).toBe(true);
+    expect(editor.modeVerdicts()['auto'].ok).toBe(false);
     // The sentence says what declaring it would *do*. The reader is deciding whether to leave a
     // box ticked, and "unsupported" alone does not tell them.
-    expect(component.modeVerdicts()['auto'].detail).toContain('never reached');
+    expect(editor.modeVerdicts()['auto'].detail).toContain('never reached');
   });
 
   it('shows the verdict beside the box it is about, and the sentence only for a refusal', () => {
@@ -2266,7 +2206,7 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
     // one needs no explanation under it — a red one is the whole point, so its sentence is
     // rendered rather than hidden in a tooltip.
     const harness = setup();
-    const catalog = harness.component;
+    const catalog = harness.editor;
     catalog.edit({ ...FLASH, name: 'gemini-2.5-flash', capabilities: ['generate', 'thinking'] });
     catalog.thinkingModes.set(['disabled', 'auto']);
     catalog.editorTab.set('capabilities');
@@ -2297,21 +2237,18 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
       name: 'gemini-2.5-flash',
       capabilities: ['generate', 'thinking'],
     });
-    harness.component.thinkingModes.set(['disabled', 'auto']);
-    harness.component.editorTab.set('capabilities');
+    harness.editor.thinkingModes.set(['disabled', 'auto']);
+    harness.editor.editorTab.set('capabilities');
     harness.fixture.detectChanges();
 
     expect(harness.html().querySelector('[data-testid^="mode-verdict-"]')).toBeNull();
   });
 
   it('clears the marks when a later question fails, rather than leaving stale ones', () => {
-    // `FRD-506`'s rule, and it applies to the modes for the same reason it applies to the words: a
-    // red mark says "this model refuses it", and an unreachable gateway says nothing about it.
-    //
-    // **The first press has to succeed**, or this asserts nothing: written without it, the test
-    // passed while the clearing line was deleted — there were no marks to leave behind. Found by
-    // breaking the property by hand, which is the whole reason that is done.
-    const { component } = setup({
+    // `FRD-506`: a red mark says "this model refuses it", and an unreachable gateway says nothing
+    // about it. **The first press has to succeed**, or there are no marks to leave behind and this
+    // asserts nothing.
+    const { component, editor } = setup({
       levelChecks: [
         of({
           model: 'gemini-2.5-flash',
@@ -2322,26 +2259,22 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
       ],
     });
     component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
-    component.thinkingModes.set(['auto']);
+    editor.thinkingModes.set(['auto']);
 
-    component.checkLevels();
-    expect(component.modeVerdicts()['auto'].ok).toBe(false);
+    editor.checkLevels();
+    expect(editor.modeVerdicts()['auto'].ok).toBe(false);
 
-    component.checkLevels();
+    editor.checkLevels();
 
-    expect(component.modeVerdicts()).toEqual({});
+    expect(editor.modeVerdicts()).toEqual({});
   });
 
   it('clears the previous answers when the question itself fails', () => {
-    /** A red chip says *the model refused this word*. The gateway being unreachable says nothing
-     *  about the word at all, and leaving the **last** answers standing beside a failed question
-     *  is worse than either — a verdict about a request that did not happen, which is the shape
-     *  `LESSONS.md` records as unknown rendered as a number.
+    /** A red chip says *the model refused this word*; an unreachable gateway says nothing about
+     *  the word, and the **last** answers must not stand beside a failed question.
      *
-     *  **Asked twice on purpose.** Written first with a single failing call, where the assertion
-     *  passed against code that cleared nothing: there was nothing to clear. A test that never
-     *  reaches the path it is named after is this project's most-repeated defect, and this is the
-     *  mutation run catching it rather than a reviewer. */
+     *  **Asked twice on purpose**: with a single failing call there is nothing to clear, and the
+     *  assertion would pass against code that clears nothing. */
     const harness = setup({
       levelChecks: [
         of({
@@ -2351,87 +2284,80 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
         throwError(() => ({ status: 503 })),
       ],
     });
-    const { component } = harness;
+    const { component, editor, feedback } = harness;
     component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
-    component.thinkingLevels.set(['low']);
+    editor.thinkingLevels.set(['low']);
 
-    component.checkLevels();
-    expect(component.levelVerdict('low')?.ok).toBe(true);
+    editor.checkLevels();
+    expect(editor.levelVerdict('low')?.ok).toBe(true);
 
-    component.checkLevels();
-    expect(component.levelVerdict('low')).toBeNull();
-    expect(component.error()).toContain('Could not ask');
+    editor.checkLevels();
+    expect(editor.levelVerdict('low')).toBeNull();
+    expect(feedback.error()).toContain('Could not ask');
   });
 
   it('removes a word, its verdict, and a default naming it', () => {
     const harness = setup();
-    const { component } = harness;
+    const { component, editor } = harness;
     component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
-    component.thinkingLevels.set(['low']);
-    component.checkLevels();
-    component.thinkingDefault.set('low');
-    expect(component.levelVerdict('low')).not.toBeNull();
+    editor.thinkingLevels.set(['low']);
+    editor.checkLevels();
+    editor.thinkingDefault.set('low');
+    expect(editor.levelVerdict('low')).not.toBeNull();
 
-    component.removeLevel('low');
+    editor.removeLevel('low');
 
-    expect(component.thinkingLevels()).toEqual([]);
-    expect(component.levelVerdict('low')).toBeNull();
+    expect(editor.thinkingLevels()).toEqual([]);
+    expect(editor.levelVerdict('low')).toBeNull();
     // Or the save fails against a validator refusing a default nothing declares, for a reason the
     // reader cannot see on screen.
-    expect(component.thinkingDefault()).toBe('');
+    expect(editor.thinkingDefault()).toBe('');
   });
 });
 
 /**
  * Residency, refused where the region is typed rather than where it is used (`ADR-0012` §6).
  *
- * The gateway has always enforced `AIRA_ALLOWED_REGIONS` — at the moment it *addresses* a request,
- * which is correct and late: a model is catalogued here, and whoever did it hears nothing until a
- * caller gets a 4xx, possibly weeks later. Measured on the running installation on 2026-08-19: two
- * requests had been processed at `global`, a region that names no place and guarantees none, and
- * nothing anywhere said so.
- *
- * The console can only refuse earlier if it knows the list — and it must not know it by holding a
- * copy. One policy, published by the plane that owns it.
+ * The gateway enforces `AIRA_ALLOWED_REGIONS` when it *addresses* a request — correct, and weeks
+ * late for whoever catalogued the model. The console refuses earlier from the list the gateway
+ * publishes, never from a copy of its own: one policy, owned by one plane.
  */
 describe('ModelCatalog — a region this installation does not permit', () => {
   it('refuses one that is not on the gateway’s list, and names what is', () => {
-    const { component } = setup({ allowedRegions: ['eu', 'europe-west1'] });
-    component.add();
-    component.name.set('gemini-3.5-flash');
-    component.regions.set(['global']);
+    const { editor } = setup({ allowedRegions: ['eu', 'europe-west1'] });
+    editor.add();
+    editor.name.set('gemini-3.5-flash');
+    editor.regions.set(['global']);
 
-    expect(component.regionAllowed('global')).toBe(false);
-    expect(component.forbiddenRegions()).toEqual(['global']);
-    expect(component.formError()).toContain(
-      "Region 'global' is not permitted by this installation",
-    );
+    expect(editor.regionAllowed('global')).toBe(false);
+    expect(editor.forbiddenRegions()).toEqual(['global']);
+    expect(editor.formError()).toContain("Region 'global' is not permitted by this installation");
     // The remedy names where the policy lives, because it is not changed here.
-    expect(component.formError()).toContain('AIRA_ALLOWED_REGIONS');
-    expect(component.canSave()).toBe(false);
+    expect(editor.formError()).toContain('AIRA_ALLOWED_REGIONS');
+    expect(editor.canSave()).toBe(false);
   });
 
   it('permits one that is on the list', () => {
-    const { component } = setup({ allowedRegions: ['eu', 'europe-west1'] });
-    component.add();
-    component.regions.set(['europe-west1']);
+    const { editor } = setup({ allowedRegions: ['eu', 'europe-west1'] });
+    editor.add();
+    editor.regions.set(['europe-west1']);
 
-    expect(component.regionAllowed('europe-west1')).toBe(true);
-    expect(component.forbiddenRegions()).toEqual([]);
-    expect(component.formError()).not.toContain('permits');
+    expect(editor.regionAllowed('europe-west1')).toBe(true);
+    expect(editor.forbiddenRegions()).toEqual([]);
+    expect(editor.formError()).not.toContain('permits');
   });
 
   it('has no opinion about an empty region', () => {
     /** Empty is the correct answer for a platform addressed by model name alone — AI Studio, an
      *  OpenAI-compatible server — where a region would be a claim about routing nothing acts on. */
-    const { component } = setup({ allowedRegions: ['eu'] });
-    component.add();
-    component.regionDraft.set('   ');
-    component.addRegion();
+    const { editor } = setup({ allowedRegions: ['eu'] });
+    editor.add();
+    editor.regionDraft.set('   ');
+    editor.addRegion();
 
-    expect(component.regions()).toEqual([]);
-    expect(component.forbiddenRegions()).toEqual([]);
-    expect(component.formError()).not.toContain('permits');
+    expect(editor.regions()).toEqual([]);
+    expect(editor.forbiddenRegions()).toEqual([]);
+    expect(editor.formError()).not.toContain('permits');
   });
 
   it('has no opinion when the gateway did not say', () => {
@@ -2443,22 +2369,22 @@ describe('ModelCatalog — a region this installation does not permit', () => {
      *  Absence means *this gateway did not say*. The console declines to have an opinion and the
      *  gateway refuses at request time exactly as it always did: informing where it can, never
      *  blocking on its own ignorance (`FRD-506`'s rule, one screen over). */
-    const { component } = setup({ allowedRegions: [] });
-    component.add();
-    component.name.set('m');
-    component.regions.set(['somewhere-else']);
+    const { editor } = setup({ allowedRegions: [] });
+    editor.add();
+    editor.name.set('m');
+    editor.regions.set(['somewhere-else']);
 
-    expect(component.regionAllowed('somewhere-else')).toBeNull();
-    expect(component.forbiddenRegions()).toEqual([]);
-    expect(component.formError()).toBeNull();
+    expect(editor.regionAllowed('somewhere-else')).toBeNull();
+    expect(editor.forbiddenRegions()).toEqual([]);
+    expect(editor.formError()).toBeNull();
   });
 
   it('offers the permitted regions without confining the field to them', () => {
     /** A `datalist`, not a `<select>`: somebody widening the policy on the gateway should be able
      *  to type the new region before this console has been reloaded, and a region the list does
      *  not carry deserves the refusal above rather than silent absence. */
-    const { component, fixture, html } = setup({ allowedRegions: ['eu', 'europe-west1'] });
-    component.add();
+    const { editor, fixture, html } = setup({ allowedRegions: ['eu', 'europe-west1'] });
+    editor.add();
     fixture.detectChanges();
 
     const offered = [...html().querySelectorAll('#allowed-regions option')].map(
@@ -2469,9 +2395,9 @@ describe('ModelCatalog — a region this installation does not permit', () => {
   });
 
   it('says so beside the field, not only in the footer', () => {
-    const { component, fixture, html } = setup({ allowedRegions: ['eu'] });
-    component.add();
-    component.regions.set(['global']);
+    const { editor, fixture, html } = setup({ allowedRegions: ['eu'] });
+    editor.add();
+    editor.regions.set(['global']);
     fixture.detectChanges();
 
     const note = html().querySelector('[data-testid="region-not-permitted"]');
@@ -2481,36 +2407,33 @@ describe('ModelCatalog — a region this installation does not permit', () => {
 });
 
 /**
- * Several regions, in the order they should be tried (`FRD-609`).
- *
- * *"In the catalogue I would like to be able to enter several regions, and they should also be
- * checkable — whether the model is reachable, and the same for the thinking methods."*
+ * Several regions, in the order they should be tried, each checkable (`FRD-609`).
  *
  * Order is the meaning, not the presentation: the first entry is where an ordinary request goes,
  * and the rest are what the gateway falls back to when a region cannot serve.
  */
 describe('ModelCatalog — a model in several regions', () => {
   it('keeps the order they were typed in', () => {
-    const { component } = setup();
-    component.add();
+    const { editor } = setup();
+    editor.add();
 
     for (const region of ['europe-west4', 'europe-west1', 'eu']) {
-      component.regionDraft.set(region);
-      component.addRegion();
+      editor.regionDraft.set(region);
+      editor.addRegion();
     }
 
-    expect(component.regions()).toEqual(['europe-west4', 'europe-west1', 'eu']);
+    expect(editor.regions()).toEqual(['europe-west4', 'europe-west1', 'eu']);
   });
 
   it('drops a repeat rather than queueing the same failure twice', () => {
-    const { component } = setup();
-    component.add();
-    component.regionDraft.set('eu');
-    component.addRegion();
-    component.regionDraft.set('  eu  ');
-    component.addRegion();
+    const { editor } = setup();
+    editor.add();
+    editor.regionDraft.set('eu');
+    editor.addRegion();
+    editor.regionDraft.set('  eu  ');
+    editor.addRegion();
 
-    expect(component.regions()).toEqual(['eu']);
+    expect(editor.regions()).toEqual(['eu']);
   });
 
   it('sends them as a list, and null when there are none', () => {
@@ -2518,21 +2441,21 @@ describe('ModelCatalog — a model in several regions', () => {
      *  OpenAI-compatible server, AI Studio — sends `null`, because an empty object would be a
      *  claim about routing that nothing acts on. */
     const harness = setup({ allowedRegions: ['europe-west1', 'europe-west4'] });
-    const { component } = harness;
-    component.add();
-    component.name.set('m');
-    component.regions.set(['europe-west1', 'europe-west4']);
+    const { editor } = harness;
+    editor.add();
+    editor.name.set('m');
+    editor.regions.set(['europe-west1', 'europe-west4']);
     harness.lookFirst();
-    component.save();
+    editor.save();
 
     expect(harness.saved[0].addressing).toEqual({
       regions: ['europe-west1', 'europe-west4'],
     });
 
-    component.add();
-    component.name.set('m2');
+    editor.add();
+    editor.name.set('m2');
     harness.lookFirst();
-    component.save();
+    editor.save();
     expect(harness.saved[1].addressing).toBeNull();
   });
 
@@ -2540,10 +2463,10 @@ describe('ModelCatalog — a model in several regions', () => {
     /** Rows written before a model could name several still carry `{region: "x"}`, and a
      *  redelivered event can carry it after a rollback. One reader for both spellings, in the same
      *  place the gateway has one. */
-    const { component } = setup();
+    const { component, editor } = setup();
     component.edit({ ...FLASH, addressing: { region: 'europe-west3' } });
 
-    expect(component.regions()).toEqual(['europe-west3']);
+    expect(editor.regions()).toEqual(['europe-west3']);
   });
 
   it('marks each region with what the gateway said about it', () => {
@@ -2563,25 +2486,25 @@ describe('ModelCatalog — a model in several regions', () => {
         ],
       }),
     });
-    const { component } = harness;
+    const { component, editor } = harness;
     component.edit({ ...FLASH, name: 'gemini-2.5-pro' });
-    component.regions.set(['europe-west1', 'europe-west4']);
+    editor.regions.set(['europe-west1', 'europe-west4']);
     harness.lookFirst();
 
-    expect(component.regionVerdict('europe-west1')).toEqual({
+    expect(editor.regionVerdict('europe-west1')).toEqual({
       ok: false,
       detail: 'Vertex returned 404.',
     });
-    expect(component.regionVerdict('europe-west4')?.ok).toBe(true);
+    expect(editor.regionVerdict('europe-west4')?.ok).toBe(true);
   });
 
   it('asks about every region it holds', () => {
     const harness = setup();
-    const { component } = harness;
+    const { component, editor } = harness;
     component.edit({ ...FLASH, name: 'gemini-2.5-pro' });
-    component.regions.set(['europe-west1', 'europe-west4']);
-    component.thinkingLevels.set(['low']);
-    component.checkLevels();
+    editor.regions.set(['europe-west1', 'europe-west4']);
+    editor.thinkingLevels.set(['low']);
+    editor.checkLevels();
 
     // Comma-separated on the wire, because a query parameter is a string; one shape, split by the
     // one reader that knows what it means.
@@ -2589,27 +2512,27 @@ describe('ModelCatalog — a model in several regions', () => {
   });
 
   it('refuses only the regions the installation does not permit, and names them', () => {
-    const { component } = setup({ allowedRegions: ['eu', 'europe-west1'] });
-    component.add();
-    component.name.set('m');
-    component.regions.set(['europe-west1', 'global', 'us-central1']);
+    const { editor } = setup({ allowedRegions: ['eu', 'europe-west1'] });
+    editor.add();
+    editor.name.set('m');
+    editor.regions.set(['europe-west1', 'global', 'us-central1']);
 
-    expect(component.forbiddenRegions()).toEqual(['global', 'us-central1']);
-    expect(component.formError()).toContain("'global', 'us-central1'");
-    expect(component.formError()).toContain('are not permitted');
+    expect(editor.forbiddenRegions()).toEqual(['global', 'us-central1']);
+    expect(editor.formError()).toContain("'global', 'us-central1'");
+    expect(editor.formError()).toContain('are not permitted');
     // The permitted one is not implicated.
-    expect(component.regionAllowed('europe-west1')).toBe(true);
+    expect(editor.regionAllowed('europe-west1')).toBe(true);
   });
 
   it('removes a region and the verdict that was about it', () => {
-    const { component } = setup();
-    component.add();
-    component.regions.set(['eu', 'europe-west1']);
-    component.regionVerdicts.set({ eu: { ok: true, detail: 'answered' } });
+    const { editor } = setup();
+    editor.add();
+    editor.regions.set(['eu', 'europe-west1']);
+    editor.regionVerdicts.set({ eu: { ok: true, detail: 'answered' } });
 
-    component.removeRegion('eu');
+    editor.removeRegion('eu');
 
-    expect(component.regions()).toEqual(['europe-west1']);
-    expect(component.regionVerdict('eu')).toBeNull();
+    expect(editor.regions()).toEqual(['europe-west1']);
+    expect(editor.regionVerdict('eu')).toBeNull();
   });
 });

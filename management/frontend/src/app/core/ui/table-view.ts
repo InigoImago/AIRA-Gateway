@@ -6,9 +6,8 @@ export const PAGE_SIZE = 25;
 /**
  * What a pager needs to know, without knowing what the rows are.
  *
- * `TableView<T>` cannot be handed to a component typed `TableView<unknown>` — its search function
- * takes a `T`, which makes the type invariant. This is the part that is genuinely row-agnostic,
- * so the pager takes this and every table keeps its own row type.
+ * `TableView<T>` is invariant in `T` (its search function takes a `T`), so the pager takes this
+ * row-agnostic part and every table keeps its own row type.
  */
 export interface PagedView {
   readonly matches: Signal<unknown[]>;
@@ -22,22 +21,14 @@ export interface PagedView {
 }
 
 /**
- * A list somebody has to find something in: filtered, then paged.
+ * A list somebody has to find something in: filtered, then paged, in the browser.
  *
- * Every list in this console is unbounded in principle — a live round found **801** use cases in
- * one installation, which made the overview useless without touching a single line of it. The
- * answer to a list that grows is not a taller page; it is a way to ask for the row you want.
+ * - **Searching resets to page one**, or a filter applied on page 4 shows an empty table and the
+ *   reader concludes there are no matches.
+ * - **The reader is told what they are not seeing**: "25 of 801", never a silent truncation.
  *
- * Two rules this encodes, both learned the hard way elsewhere in the project:
- *
- * - **Searching resets to page one.** A filter applied on page 4 that leaves you on page 4 shows
- *   an empty table, and the reader concludes there are no matches when there are five.
- * - **The reader is told what they are not seeing.** "25 of 801" is the difference between a list
- *   and a list that looks complete. A silent truncation reads as "that is everything".
- *
- * Client-side, deliberately: these lists come back in one response already, so paging them in the
- * browser needs no endpoint and cannot disagree with what was fetched. The trace view is the
- * exception and pages by cursor at the server, because it is unbounded *in time* (`FRD-502` §4.2).
+ * Client-side because these lists arrive in one response already; a list unbounded in time pages
+ * at the server instead (`ServerTableView`, `FRD-502` §4.2).
  */
 export class TableView<T> implements PagedView {
   readonly query = signal('');
@@ -70,8 +61,8 @@ export class TableView<T> implements PagedView {
     );
 
     this.rows = computed(() => {
-      // Clamped rather than trusted: the row count changes underneath a live view, and a page
-      // number that outlives its rows shows an empty table with no explanation.
+      // Clamped: the row count changes underneath a live view, and a page number that outlives its
+      // rows shows an empty table with no explanation.
       const page = Math.min(this.page(), this.pageCount());
       const start = (page - 1) * this.pageSize();
       return this.matches().slice(start, start + this.pageSize());

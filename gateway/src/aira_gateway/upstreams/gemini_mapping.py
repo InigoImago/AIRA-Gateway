@@ -1,7 +1,6 @@
-"""Canonical ⇄ Google Gemini API mappers (FRD-304).
+"""Canonical ⇄ the Google Gemini wire format (`FRD-304`).
 
-Pure functions (no I/O) that translate between the canonical schema and the real Gemini
-request/response bodies. Unit-tested independently of the HTTP client.
+Pure functions, no I/O, tested without HTTP. Shared by Google AI Studio and Vertex's Gemini adapter.
 """
 
 from __future__ import annotations
@@ -27,23 +26,34 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.upstreams.base import DialectUnsupported
 
+#: Google's `GenerationConfig` names all six sampling controls (`FRD-124`) — the one dialect that
+#: can express everything the canonical request carries.
+SAMPLING = frozenset(
+    {"top_p", "top_k", "seed", "presence_penalty", "frequency_penalty", "stop_sequences"}
+)
+
+_SAMPLING_WIRE = {
+    "top_p": "topP",
+    "top_k": "topK",
+    "seed": "seed",
+    "presence_penalty": "presencePenalty",
+    "frequency_penalty": "frequencyPenalty",
+}
+
+
+# == canonical → Gemini ===========================================================================
+
 
 def _wire_parts(message: CanonicalMessage) -> list[dict[str, Any]]:
-    """Canonical parts → Gemini parts, in order.
-
-    The two formats agree, which is why this direction is cheap — and preserving the order is the
-    part that is not merely cosmetic: "this image, then this question" and "this question, then
-    this image" are different prompts.
-    """
+    """Canonical parts → Gemini parts, **in order**: "this image, then this question" and the
+    reverse are different prompts."""
     wire: list[dict[str, Any]] = []
     for part in message.parts:
         if isinstance(part, TextPart):
             wire.append({"text": part.text})
             continue
         if isinstance(part, ToolCallPart):
-            # Google carries no call id and matches a result to a call by **name**, so the id the
-            # canonical model holds is simply not sent. It is not lost: it came from here in the
-            # first place, or was generated at the surface precisely so the other dialects have one.
+            # Google matches a result to a call by name and carries no call id, so none is sent.
             wire.append({"functionCall": {"name": part.name, "args": part.arguments}})
             continue
         if isinstance(part, ToolResultPart):
@@ -65,11 +75,10 @@ def _wire_parts(message: CanonicalMessage) -> list[dict[str, Any]]:
 
 
 def _result_object(content: str) -> dict[str, Any]:
-    """Google's ``functionResponse.response`` is an **object**, not a string.
+    """A tool result as the **object** ``functionResponse.response`` requires.
 
-    The canonical model keeps a tool result as text because two of the three dialects want one.
-    Here it is parsed back if it is JSON, and wrapped otherwise — a plain string sent where an
-    object is expected is rejected by the API, and wrapping is the only lossless answer.
+    The canonical model keeps a result as text; JSON is parsed back, anything else is wrapped —
+    the API rejects a plain string, and wrapping is the only lossless answer.
     """
     try:
         parsed = json.loads(content)
@@ -120,37 +129,18 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         if request.thinking is not None:
             thinking_config.update(thinking_fields(request.thinking))
         if request.include_reasoning:
-            # Asked for only where the **use case** allows it (`FRD-135` FR-3). Google returns
-            # nothing extra without this, so a use case that turned reasoning on and never saw any
-            # would be looking at a switch that changed nothing — the shape `FRD-125` is named for.
+            # Only where the use case allows it (`FRD-135` FR-3); without it Google returns none.
             thinking_config["includeThoughts"] = True
         generation_config["thinkingConfig"] = thinking_config
     if request.response_schema is not None:
-        # Both fields, always together: `responseSchema` without `responseMimeType` is ignored by
-        # the API, which would return prose to a caller expecting a document — the silent-wrong
-        # answer this feature exists to prevent, produced by our own request body.
+        # Both fields, always together: the API ignores `responseSchema` without the MIME type
+        # and would return prose to a caller expecting a document.
         generation_config["responseMimeType"] = "application/json"
         generation_config["responseSchema"] = request.response_schema.to_wire()
     _add_sampling(generation_config, request)
     if generation_config:
         body["generationConfig"] = generation_config
     return body
-
-
-#: Google's `GenerationConfig` names all six (`FRD-124`). This is the one dialect that can express
-#: everything the canonical request carries, which is exactly why the others must say so when they
-#: cannot: the difference is invisible in the response.
-SAMPLING = frozenset(
-    {"top_p", "top_k", "seed", "presence_penalty", "frequency_penalty", "stop_sequences"}
-)
-
-_SAMPLING_WIRE = {
-    "top_p": "topP",
-    "top_k": "topK",
-    "seed": "seed",
-    "presence_penalty": "presencePenalty",
-    "frequency_penalty": "frequencyPenalty",
-}
 
 
 def _add_sampling(config: dict[str, Any], request: CanonicalRequest) -> None:
@@ -163,19 +153,12 @@ def _add_sampling(config: dict[str, Any], request: CanonicalRequest) -> None:
 
 
 def thinking_fields(setting: Thinking) -> dict[str, Any]:
-    """Google's thinking config: a **budget** for our three settings, a **level** for a level.
+    """Google's thinking config: a **budget** for our three modes, a **level** for a level word.
 
-    Google itself moved from the first to the second. ``thinkingBudget`` is a token count where
-    ``0`` is off and ``-1`` is the model's choice; ``thinkingLevel`` is a word, and Gemini 3 takes
-    it while Gemini 2.5 answers *"thinking_level is not supported by this model"* — measured on
-    2026-08-19, which is why which one a model takes is **declared per model** rather than decided
-    by a version check here.
-
-    A level word therefore goes out as the word. It used to arrive here already turned into a
-    number, from a ``level → token count`` table in the model's catalog entry — a number no vendor
-    publishes, invented by whoever catalogued the model, and then sent as a **ceiling on the
-    model's reasoning**. `ADR-0021` retired it: an agentic run that needs twenty thousand thinking
-    tokens must not be truncated by somebody's guess at what "medium" means.
+    ``thinkingBudget`` is a token count (``0`` off, ``-1`` the model's choice); ``thinkingLevel`` is
+    a word that Gemini 3 takes and 2.5 refuses, which is why it is declared per model rather than
+    decided by a version check here. A level goes out as the word, never as an invented token
+    ceiling (`ADR-0021`).
     """
     if setting.mode == ThinkingMode.DISABLED:
         return {"thinkingBudget": 0}
@@ -199,8 +182,8 @@ def canonical_to_gemini_embedding(request: CanonicalEmbeddingRequest) -> dict[st
 def batch_embedding_body(request: CanonicalEmbeddingRequest, model: str) -> dict[str, Any]:
     """A ``batchEmbedContents`` body: one entry per text, each naming the model as Google requires.
 
-    The order of ``requests`` is the order of the returned embeddings, which is the contract
-    `FRD-113` FR-1 makes to the caller — so this must never reorder or deduplicate.
+    The order of ``requests`` is the order of the returned embeddings — the contract `FRD-113` FR-1
+    makes to the caller — so this must never reorder or deduplicate.
     """
     return {
         "requests": [
@@ -211,6 +194,9 @@ def batch_embedding_body(request: CanonicalEmbeddingRequest, model: str) -> dict
             for text in request.texts
         ]
     }
+
+
+# == Gemini → canonical ===========================================================================
 
 
 def embedding_values(data: dict[str, Any]) -> list[list[float]]:
@@ -224,13 +210,8 @@ def embedding_values(data: dict[str, Any]) -> list[list[float]]:
 
 
 def _text_of(candidate: dict[str, Any]) -> str:
-    """The answer, **without** the reasoning.
-
-    Google returns thoughts as ordinary text parts flagged `thought: true`, in the same array. This
-    used to join everything, which is exactly why `includeThoughts` was refused: asking for
-    reasoning would have delivered it glued to the front of the answer, and a caller could not tell
-    which was which (`FRD-135` §5).
-    """
+    """The answer, **without** the reasoning: Google flags thoughts as `thought: true` text parts in
+    the same array, and joining everything would glue them to the answer (`FRD-135` §5)."""
     parts = candidate.get("content", {}).get("parts", [])
     return "".join(part.get("text", "") for part in parts if not part.get("thought"))
 
@@ -243,19 +224,15 @@ def _reasoning_of(candidate: dict[str, Any]) -> str:
 
 def _usage_of(data: dict[str, Any]) -> CanonicalUsage:
     meta = data.get("usageMetadata") or {}
-    # **Thinking is output, and Google bills it as output** (`FRD-135` FR-1). `candidatesTokenCount`
-    # counts only the visible answer, so adding thoughts here is what makes `completion_tokens` mean
-    # "what this response cost" rather than "what of it was printed". Read from nowhere until
-    # 2026-08-17: a measured request counted 143 thought tokens against 1 candidate token, and 85%
-    # of what the provider charged for was invisible to every budget and every report.
+    # Thinking is output and billed as output (`FRD-135` FR-1); `candidatesTokenCount` counts only
+    # the visible answer, so the thoughts are added to make `completion_tokens` the full cost.
     thoughts = int(meta.get("thoughtsTokenCount", 0) or 0)
     return CanonicalUsage(
         prompt_tokens=int(meta.get("promptTokenCount", 0)),
         completion_tokens=int(meta.get("candidatesTokenCount", 0)) + thoughts,
         reasoning_tokens=thoughts,
-        # Implicit caching is on by default from Gemini 2.5 and needs nothing sent; this count is
-        # the only evidence it happened (`FRD-133` §4a). `promptTokenCount` already includes it,
-        # so this is a subset and not an addition — the same invariant every dialect keeps.
+        # Implicit caching needs nothing sent; this count is its only evidence (`FRD-133` §4a).
+        # A subset of `promptTokenCount`, never an addition.
         cached_input_tokens=int(meta.get("cachedContentTokenCount", 0) or 0),
     )
 
@@ -263,9 +240,8 @@ def _usage_of(data: dict[str, Any]) -> CanonicalUsage:
 def _calls_of(candidate: dict[str, Any]) -> tuple[ToolCallPart, ...]:
     """The function calls in one candidate, in order.
 
-    Google sends no id, so one is generated from the name and position — deterministically, so a
-    caller that echoes it back in the next turn still matches, and so the other two dialects have
-    the id they require.
+    Google sends no id, so one is derived from name and position — deterministically, so a caller
+    echoing it back still matches, and the other dialects get the id they require.
     """
     calls: list[ToolCallPart] = []
     for index, part in enumerate(candidate.get("content", {}).get("parts", []) or []):
@@ -309,14 +285,15 @@ def gemini_response_to_canonical(data: dict[str, Any], model: str) -> CanonicalR
 
 
 def gemini_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk:
-    """Parse one Gemini stream chunk into a canonical chunk."""
+    """Parse one Gemini stream chunk into a canonical chunk.
+
+    Google sends a function call whole inside one chunk, so, unlike the OpenAI dialect, there is
+    nothing to reassemble.
+    """
     candidates = data.get("candidates") or []
     text = _text_of(candidates[0]) if candidates else ""
     finish = candidates[0].get("finishReason") if candidates else None
     usage = _usage_of(data) if data.get("usageMetadata") else None
-    # **Whole, never in pieces.** Unlike the OpenAI dialect, Google sends a function call complete
-    # inside one chunk — there is nothing to reassemble here, and writing an accumulator anyway
-    # would be a mechanism defending against a problem this wire format does not have.
     calls = _calls_of(candidates[0]) if candidates else ()
     return CanonicalChunk(
         text_delta=text,

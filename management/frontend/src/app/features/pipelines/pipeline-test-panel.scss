@@ -1,0 +1,164 @@
+/* No box of its own: the card inside is a flex item of the builder's left column. */
+:host {
+  display: contents;
+}
+
+/* ---- the dry run's trace -------------------------------------------------------- */
+
+.trace {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.trace__step {
+  border: 1px solid var(--aira-border);
+  border-radius: var(--aira-radius-sm);
+  padding: 0.6rem 0.7rem;
+  background: var(--aira-surface);
+  min-width: 0;
+
+  /* The connector between two steps, drawn on the second so the last has no dangling tail — the
+   * same shape as the graph, so the result reads against it. */
+  & + .trace__step {
+    margin-top: 18px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: -18px;
+      width: 2px;
+      height: 18px;
+      background: var(--aira-border-strong);
+    }
+  }
+}
+
+.trace__step--end {
+  background: #fafafa;
+}
+
+/* Configured but never reached: dashed and faded, the graph's idiom for "not on this path". */
+.trace__step--skipped {
+  border-style: dashed;
+  background: #fafafa;
+}
+/* Ran only in simulation (production refused before it): dashed like a not-reached step. */
+.trace__step--simulated {
+  border-style: dashed;
+}
+.trace__n--skipped {
+  color: var(--aira-text-muted);
+  background: #f3f4f6;
+}
+
+.trace__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.trace__n {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--aira-brand-strong);
+  background: var(--aira-brand-soft);
+  border-radius: 50%;
+}
+.trace__n--stop {
+  color: var(--aira-danger);
+  background: var(--aira-danger-soft);
+}
+.trace__n--go {
+  color: #f9fafb;
+  background: #111827;
+}
+
+.trace__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.trace__summary {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.trace__asked {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+}
+
+.trace__label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--aira-text-muted);
+  margin-bottom: 0.15rem;
+}
+
+/* A model's reply, wrapped rather than scrolled: the gateway caps its length, and this page has no
+ * scroll containers inside it. */
+.trace__said pre,
+.trace__diff pre {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--aira-radius-sm);
+  background: #f6f7f9;
+  border: 1px solid var(--aira-border);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trace__said {
+  margin-top: 0.5rem;
+}
+
+.trace__diff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+
+  @media (max-width: 720px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The rewritten half, the one that goes on. The label says which is which; colour only
+ * distinguishes. */
+.trace__after {
+  border-color: var(--aira-success) !important;
+  background: var(--aira-success-soft) !important;
+}
+
+.trace-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--aira-border);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.trace-row:last-child {
+  border-bottom: none;
+}

@@ -1,15 +1,11 @@
-"""The OpenAI wire dialect, and the servers reached through it (FRD-123).
+"""The OpenAI wire dialect, and the servers reached through it (`FRD-123`).
 
-Azure OpenAI speaks it (`FRD-120`), Model Garden's self-deploy side serves it (`ADR-0012`), and
-Ollama exposes it — so one dialect reaches all three. What differs between them is the transport:
-where the endpoint is, what credential it takes, where it runs.
+Azure OpenAI (`FRD-120`), Model Garden's self-deployed models (`ADR-0012`) and Ollama all speak it;
+what differs between them is the transport.
 
-**An Ollama server is a system in its own right, not a test fixture.** A deployment can attach
-several — a GPU box in one data centre, a second beside it, a workstation for a team that needs a
-model nobody else does — and each is configured, addressed, priced and *audited* separately. That
-is why the configuration is a list of named servers rather than one URL: with a single endpoint
-setting, "which machine answered this request" has no answer, and for a self-hosted fleet that is
-exactly the question an audit exists to answer.
+A self-hosted server is a system in its own right: a deployment can attach several, each
+configured, priced and **audited** separately. That is why the configuration is a list of named
+servers rather than one URL — with a single endpoint, "which machine answered" has no answer.
 """
 
 from __future__ import annotations
@@ -38,9 +34,8 @@ __all__ = [
 class ServerSpecInvalid(Exception):
     """A server declaration that cannot be read.
 
-    A **startup** failure, like every other configuration error in this layer. A gateway that
-    starts with half its servers silently dropped answers "model not found" for the rest, which
-    reads as a catalog problem and sends whoever debugs it to the wrong place.
+    A **startup** failure: a gateway that starts with some servers silently dropped answers "model
+    not found" for them, which sends whoever debugs it to the catalog.
     """
 
 
@@ -48,9 +43,8 @@ class ServerSpecInvalid(Exception):
 class OpenAIServer:
     """One machine speaking the OpenAI dialect, and everything that distinguishes it.
 
-    ``name`` is not decoration. It reaches the audit row as the provider, so a fleet of local
-    servers is separable in a report — "which box served this, and how much did that box cost us"
-    is unanswerable when every one of them logs as `ollama`.
+    ``name`` reaches the audit row as the provider, so a fleet is separable in a report. There is
+    deliberately no credential field (`FRD-123` §8).
     """
 
     name: str
@@ -58,8 +52,6 @@ class OpenAIServer:
     models: tuple[str, ...] = ()
     embedding_models: tuple[str, ...] = ()
     region: str = ""
-    #: No credential, and that is `FRD-123` §8 rather than an omission — see `OpenAITransport`,
-    #: which used to take one that nothing ever passed.
     timeout: float = 300.0
 
     @property
@@ -74,9 +66,8 @@ def _split(value: str, separator: str = ",") -> list[str]:
 def parse_servers(spec: str, *, default_timeout: float = 300.0) -> list[OpenAIServer]:
     """Read ``name=url|models|embeddings|region`` entries, one per server, separated by `;`.
 
-    Chosen over JSON because this is set in a `.env` file and a shell, where a quoted JSON blob is
-    a well-known way to lose a character and get an error that names a byte offset. The separators
-    are positional and the message on a bad entry names the entry.
+    Not JSON: this is set in a `.env` file and a shell, where a quoted JSON blob loses characters
+    and fails with a byte offset. A bad entry's message names the entry.
 
     ::
 
@@ -95,8 +86,7 @@ def parse_servers(spec: str, *, default_timeout: float = 300.0) -> list[OpenAISe
                 "'name=url|models|embedding_models|region'."
             )
         if name in seen:
-            # Two servers under one name would each overwrite the other's audit rows, and the
-            # figures would be wrong in a way nothing reports.
+            # Two servers under one name would share their audit rows, wrong in a way nothing shows.
             raise ServerSpecInvalid(f"Two servers are declared as '{name}'.")
         seen.add(name)
 
@@ -123,11 +113,8 @@ def parse_servers(spec: str, *, default_timeout: float = 300.0) -> list[OpenAISe
 
 
 def _legacy_server(settings: GatewaySettings) -> list[OpenAIServer]:
-    """The single-endpoint settings, read as a server named ``ollama``.
-
-    Kept because a one-machine setup is the common one and making it write a list would be
-    ceremony. It is exactly equivalent to one entry in `AIRA_OPENAI_SERVERS`.
-    """
+    """The single-endpoint settings, read as a server named ``ollama`` — exactly equivalent to one
+    entry in `AIRA_OPENAI_SERVERS`, for the common one-machine setup."""
     if not settings.ollama_url:
         return []
     server = OpenAIServer(
@@ -144,23 +131,10 @@ def _legacy_server(settings: GatewaySettings) -> list[OpenAIServer]:
 def build_openai_upstreams(settings: GatewaySettings) -> list[Upstream]:
     """One adapter per declared server, or an empty list when none are configured.
 
-    Registered **only** when something is configured, exactly like the Vertex and Generative
-    Language adapters — a system that appears in a deployment nobody asked for it in eventually
-    serves production traffic.
-
-    **A declared region is enforced exactly like a cloud one**, and the correction is worth
-    recording because the first draft of this function claimed the opposite. It said the region
-    was "recorded, not checked" — and then the first real request to a local server came back
-    *"runs in 'on-premises', and this request may only be processed in [...]"*, because
-    `RegionAllowed` quite correctly checks every model that declares one. The comment described an
-    intention; the system had a rule. The rule was right.
-
-    So there is no asymmetry, only a default: a server declares **no** region unless the operator
-    names one. No claim, nothing to enforce, and a laptop keeps working. Naming one is opting in to
-    the evidence — the audit row then says where the request went — and opting in to the check,
-    which happens **here, at startup**, rather than as a 400 on every request. A gateway that
-    starts and then refuses everything looks like an upstream outage; one that will not start names
-    the setting to fix.
+    A declared region is enforced exactly like a cloud one, against the same allow-list and at
+    startup (`ADR-0012` §6): a gateway that starts and then refuses everything looks like an
+    upstream outage. A server declares **no** region unless the operator names one, so a laptop
+    keeps working; naming one opts in to the evidence on the audit row and to the check.
     """
     servers = parse_servers(
         settings.openai_servers, default_timeout=settings.ollama_timeout_seconds
@@ -169,12 +143,7 @@ def build_openai_upstreams(settings: GatewaySettings) -> list[Upstream]:
     if not servers:
         return []
 
-    # Same rule and the same list as every other transport (`ADR-0012` §6): "which regions may we
-    # use" is one policy question, and a per-cloud list would mean a per-cloud audit. A locally
-    # named region has to be in it too — that is what makes it a claim somebody permitted rather
-    # than a label somebody typed.
     allowed = parse_allowed(settings.allowed_regions)
-
     upstreams: list[Upstream] = []
     for server in servers:
         if server.region:
@@ -192,7 +161,3 @@ def build_openai_upstreams(settings: GatewaySettings) -> list[Upstream]:
             )
         )
     return upstreams
-
-
-#: The old name, kept so a single-endpoint setup reads the same. It always built a list.
-build_local_upstream = build_openai_upstreams

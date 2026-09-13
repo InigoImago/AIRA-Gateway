@@ -58,30 +58,10 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
     def _effective(self, attrs: dict[str, Any], field: str, default: Any = None) -> Any:
         """What this field will hold **after** the save: the incoming value, or the stored one.
 
-        Every check below is about a *rule*, and a `PATCH` carries an *edit*. Reading the edit
-        alone made each check answer about a rule nobody has: `kind` fell back to `refusal_rate`
-        and `action` to `alert` whatever the row said, which is the failure this project names as
-        *a default on a discriminator stops discriminating* — here on the two discriminators that
-        decide every other check in the method.
-
-        Three consequences, all measured on 2026-08-26:
-
-        - **Every** partial edit was refused, with a message about `min_sample` — a field the
-          caller had not sent — because the defaulted kind demanded a sample the body did not
-          carry. `PATCH` is what the console's own client method is built on, and its docstring
-          says so: *"a rule has thirteen fields and most edits touch one of them"*.
-        - A partial edit that did carry `min_sample` **cleared `action_minutes`**, because a
-          `throttle` rule read as an `alert` falls into the branch that removes an expiry which
-          would be meaningless on an alert. The gateway then refuses to enforce a rule with no
-          expiry — correctly, `service._act` answers `detected_not_enforced` — so an automatic
-          throttle became a detect-only rule that the console still displays as throttling. The
-          badge-wearing absent control, arriving through a rename.
-        - A `spend_spike` threshold below 100 was accepted, because the ratio check asked about a
-          rate. That rule then fires every window forever, which is the alert people mute.
-
-        The console sends the whole object and works around this — `rule-form.ts` says *"sent
-        whether or not it was editable, because … a PATCH that omitted it would be checked against
-        the default instead"*. A workaround in one client is not a property of the endpoint.
+        Every check below is about the resulting *rule*, and a `PATCH` carries an *edit*. Read from
+        the edit alone, `kind` and `action` — the discriminators every other check depends on —
+        would fall back to their defaults whatever the row says, refusing valid partial edits and
+        clearing a throttle's expiry.
         """
         if field in attrs:
             return attrs[field]

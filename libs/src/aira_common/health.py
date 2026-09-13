@@ -1,9 +1,4 @@
-"""Lightweight readiness checks shared by AIRA services.
-
-The skeleton uses TCP reachability probes (stdlib only, no driver dependencies) to
-gate ``/readyz``. As real clients (DB driver, Kafka client) are introduced, dedicated
-checks can replace or augment these.
-"""
+"""Lightweight readiness checks shared by AIRA services: TCP reachability, stdlib only."""
 
 from __future__ import annotations
 
@@ -40,9 +35,8 @@ async def tcp_reachable(host: str, port: int, *, timeout: float = 1.0) -> bool:
 async def check_tcp(name: str, host: str, port: int, *, timeout: float = 1.0) -> CheckResult:
     """Run :func:`tcp_reachable` and wrap the outcome in a :class:`CheckResult`.
 
-    ``/readyz`` is unauthenticated, so the failure detail names only the dependency, never the
-    host and port it lives on — internal topology is not something a probe should hand out
-    (ADR-0007). The full address goes to the service log instead.
+    ``/readyz`` is unauthenticated, so the failure detail names only the dependency, never its host
+    and port (`ADR-0007`); the full address goes to the service log.
     """
     ok = await tcp_reachable(host, port, timeout=timeout)
     if ok:

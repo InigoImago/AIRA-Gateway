@@ -1,20 +1,12 @@
 """The register as a spreadsheet (`FRD-608` §2.2).
 
-A **renderer over the register that already exists**, never a second query — the shape `FRD-602`
-settled for the usage report and for the reason it gives: the visibility rule is one function, and
-a second entry point is a second chance to forget it. By the time any of this runs, the scope
-decision has already happened.
+A **renderer over the register that already exists**, never a second query (`FRD-602`): the scope
+decision has happened by the time this runs. The CSV is read by people — often ones who never open
+the console — so its columns are wordier than the JSON's.
 
-The CSV is the deliverable rather than a convenience. Printed, one row per use case with purpose,
-recipients, third-country transfer and erasure deadline is close to a *Verzeichnis von
-Verarbeitungstätigkeiten* — assembled from configuration the gateway enforces rather than from a
-spreadsheet somebody maintains beside it. That is also why the columns are wide and wordy where the
-JSON is compact: the JSON is read by a script and the CSV by a person, and often by a person who
-has never opened this console.
-
-The conventions come from `csv_export.py` — BOM, CRLF, commas — and so does the one that is not a
-convention: **every cell goes through `safe_cell`**, because a cell beginning with `=` is a formula
-to the spreadsheet all of the above is for, and half of these columns are text somebody typed.
+The conventions are `csv_export.py`'s — BOM, CRLF, commas — and so is the one that is not a
+convention: **every cell goes through `safe_cell`**, because a cell starting with `=` is a formula
+and half of these columns are text somebody typed.
 """
 
 from __future__ import annotations
@@ -53,31 +45,22 @@ COLUMNS = (
 
 
 def filename(start: str, end: str) -> str:
-    """``aira-register_<from>_<to>.csv`` — sortable, and it says what it contains.
-
-    Dates trimmed to the day, like the usage export: a filename carrying a full timestamp is one
-    nobody can type, and the window is in the file's own header row anyway.
-    """
+    """``aira-register_<from>_<to>.csv``, dates trimmed to the day — the window is in the file."""
     return f"aira-register_{start[:10]}_{end[:10]}.csv"
 
 
 def _models(entry: Entry) -> str:
     """The released models, one per line inside the cell.
 
-    A separator rather than a column per model: a use case may release one or twenty, and a table
-    whose width depends on its widest row is a table no spreadsheet can sort. Newline rather than
-    a comma because the file's delimiter is a comma, and quoting a comma-joined list is how a
-    reader ends up with one cell they cannot read.
+    Not a column per model — a table whose width depends on its widest row cannot be sorted — and
+    not commas, which are the file's delimiter.
     """
     return "\n".join(model.name for model in entry.models)
 
 
 def _provenance(entry: Entry) -> str:
-    """Where the catalogue says each model lives — the third-country-transfer column.
-
-    A model whose name is its whole address contributes its provider and no region, and says so:
-    an empty region here means *this platform does not have one*, not *nobody checked*.
-    """
+    """Where the catalogue says each model lives — the third-country-transfer column. A model
+    addressed by name says so rather than leaving its region blank."""
     lines = []
     for model in entry.models:
         where = ", ".join(model.regions) if model.regions else "no region (addressed by name)"
@@ -88,10 +71,8 @@ def _provenance(entry: Entry) -> str:
 def _unreleased(entry: Entry) -> str:
     """Models this use case names that the installation will not serve.
 
-    Two different faults with one consequence, kept apart because they need different actions:
-    *not catalogued* is a disagreement between the two planes, and *not approved* is a decision
-    somebody has to take (`FRD-307`). Both mean the same thing to a reader of the register — a
-    model in the configuration that no request will ever reach.
+    *Not catalogued* (the two planes disagree) and *not approved* (a decision is pending,
+    `FRD-307`) are kept apart because they need different actions.
     """
     faults = []
     for model in entry.models:
@@ -110,8 +91,7 @@ def _processed(entry: Entry) -> str:
 
 
 def _yes_no(value: bool) -> str:
-    """Words, not `True`/`False`. This file is read by people, and half of them in a spreadsheet
-    that would helpfully turn `TRUE` into a checkbox."""
+    """Words, not `True`/`False`, which a spreadsheet would turn into checkboxes."""
     return "yes" if value else "no"
 
 
@@ -120,8 +100,7 @@ def render(register: Register, start: str, end: str) -> str:
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL)
 
-    # The window, before the table. A register printed without the period its measured half covers
-    # is a document whose second half cannot be checked against anything.
+    # The window first: the measured half of the register cannot be checked without it.
     writer.writerow([safe_cell(f"# AIRA register of processing activities, {start} to {end}")])
     writer.writerow([])
     writer.writerow(list(COLUMNS))
@@ -138,8 +117,7 @@ def render(register: Register, start: str, end: str) -> str:
                 safe_cell(_provenance(entry)),
                 safe_cell(_unreleased(entry)),
                 safe_cell(_yes_no(entry.prompts_stored)),
-                # Empty rather than a number where nothing is stored: an erasure deadline for data
-                # that was never written is a claim about nothing.
+                # Empty where nothing is stored: a deadline for data never written claims nothing.
                 safe_cell("" if entry.retention_days is None else str(entry.retention_days)),
                 safe_cell(_yes_no(entry.own_requests_only)),
                 safe_cell(_yes_no(entry.tools)),
@@ -155,8 +133,7 @@ def render(register: Register, start: str, end: str) -> str:
         )
 
     if register.last_erasure is not None:
-        # **Evidence, under the deadlines it is evidence for.** Every row above states a retention
-        # period; this states that the sweep enforcing them ran, when, and how much it took.
+        # The evidence, under the deadlines it is evidence for.
         erasure = register.last_erasure
         writer.writerow([])
         writer.writerow([safe_cell("# the last retention pass")])
@@ -169,9 +146,7 @@ def render(register: Register, start: str, end: str) -> str:
             ]
         )
     else:
-        # Said out loud rather than left off. A missing section reads as "not applicable"; the
-        # sentence reads as what it is, which is that the erasure this document promises has no
-        # record of having happened.
+        # Said rather than left off: a missing section reads as "not applicable".
         writer.writerow([])
         writer.writerow(
             [
@@ -183,9 +158,8 @@ def render(register: Register, start: str, end: str) -> str:
         )
 
     if register.processed_in:
-        # The installation's own total, including traffic that names no use case. Below the table
-        # rather than as a row in it: it is not a use case, and a row that looks like one in a
-        # register of use cases is exactly the kind of thing somebody later cites as one.
+        # The installation's own total, including traffic that names no use case — below the
+        # table, so it is never read as a use case.
         writer.writerow([])
         writer.writerow([safe_cell("# where this installation processed requests in this period")])
         writer.writerow(["region", "provider", "requests"])

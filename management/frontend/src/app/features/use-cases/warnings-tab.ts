@@ -8,17 +8,16 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 const REFRESH_SECONDS = 20;
 
 /**
- * The findings about *this* use case, for the people who run it (`FRD-502` FR-6–8).
+ * The findings about this use case, for the people who run it (`FRD-502` FR-6–8).
  *
- * A warning that only IT Security can see is a warning nobody who could fix the cause ever reads.
- * The people who would change a prompt, a limit or a client are the members, so they get the same
- * numbers the console shows — scoped to their own use case by the server, not by this component.
+ * The members are who would change a prompt, a limit or a client, so they see the same numbers as
+ * IT Security — scoped to their use case by the server, not by this component.
  */
 @Component({
   selector: 'app-warnings-tab',
   imports: [DatePipe],
   templateUrl: './warnings-tab.html',
-  // On the component, so the poll ends with the panel. See `traces-tab.ts` for the whole reason.
+  // On the component, so the poll ends with the panel (see `traces-tab.ts`).
   providers: [Live],
 })
 export class WarningsTab implements OnInit {
@@ -31,14 +30,8 @@ export class WarningsTab implements OnInit {
   protected readonly live = inject(Live);
 
   protected readonly events = signal<AnomalyEvent[]>([]);
-  /**
-   * False when the gateway says this caller cannot see this use case at all.
-   *
-   * Membership reaches the gateway from the identity provider's **groups** (`FRD-102`), not from
-   * this console's member list, so an administrator of a use case created here can read "nothing
-   * has crossed a threshold" while having no visibility whatsoever. Those are different facts and
-   * the screen says which.
-   */
+  /** False when the gateway says this caller cannot see this use case: membership comes from the
+   *  identity provider's groups (`FRD-102`), and "nothing found" would be the wrong fact. */
   protected readonly inScope = signal(true);
   protected readonly suspensions = signal<Suspension[]>([]);
   protected readonly loading = signal(true);
@@ -64,8 +57,7 @@ export class WarningsTab implements OnInit {
         this.loading.set(false);
       },
     );
-    // Suspensions need an incident role to list. A member gets a 403, which is a real answer:
-    // the banner simply does not appear, and nothing on the page claims it should have.
+    // Listing suspensions needs an incident role. A member's 403 is a real answer: no banner.
     this.service.suspensions().subscribe({
       next: (page) => this.suspensions.set(page.suspensions),
       error: () => undefined,

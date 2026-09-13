@@ -11,12 +11,8 @@
   }
 
   <div class="card" style="padding: 0">
-    <!--
-      The search box lives **outside** the loading branch, and that is the whole of a bug report:
-      it used to be inside the `@else`, so the first keystroke that fired a query destroyed the
-      block, took the input with it, and rebuilt a new one — the reader lost focus mid-word and had
-      to click back in. A control that starts a request must survive that request.
-    -->
+    <!-- Outside the loading branch: a control that starts a request must survive it, or the
+         search box is rebuilt mid-word and loses focus. -->
     @if (!isEmpty() || view.query()) {
       <div class="table-tools" style="padding: 0.9rem 1rem 0">
         <label class="search">
@@ -30,8 +26,7 @@
             autocomplete="off"
           />
         </label>
-        <!-- Busy is a word beside the box, not a screen that replaces it. `FRD-207`: the page
-             holds still while it works. -->
+        <!-- Busy is a word beside the box; the page holds still while it works (`FRD-207`). -->
         @if (loading()) {
           <span class="muted" data-testid="use-case-searching">searching…</span>
         }
@@ -71,8 +66,7 @@
             <thead>
               <tr>
                 <th scope="col">Name</th>
-                <!-- "Slug" is our word, not the reader's. What it *is* to them is the identifier
-                   their systems will quote. -->
+                <!-- "Slug" is our word; to the reader it is the id their systems quote. -->
                 <th scope="col">Technical id</th>
               </tr>
             </thead>
@@ -99,13 +93,8 @@
   </div>
 </div>
 
-<!--
-  Creating a use case is a step, not a form parked under the list.
-
-  It also ends somewhere: a new use case has no members, no budget and no limits, and leaving the
-  creator back on the list makes an unconfigured use case look finished. Saving goes straight to
-  its settings.
--->
+<!-- Creating is a window that ends on the new use case's settings: an unconfigured use case left
+     on the list would look finished. -->
 @if (showCreate()) {
   <div class="modal-backdrop" (click)="closeCreate()"></div>
   <div

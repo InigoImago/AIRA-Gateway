@@ -1,6 +1,6 @@
 """Every audit row is assembled from the same fields, whichever surface produced it.
 
-**Why this is structural rather than a behaviour test.** `api/serving.py` extracted *"everything
+**Why this is structural rather than a behaviour test.** `api/serving` extracted *"everything
 below the surface"* — the pre-dispatch gate, the pipeline, the dispatch chain, the audit writer —
 and that boundary is right. What it left to each surface is what sits *at* the surface: parsing,
 the error envelope, and the two places a row is written for a request the shared path never
@@ -42,21 +42,21 @@ SOURCE = Path(__file__).resolve().parents[1] / "src" / "aira_gateway"
 
 #: The site every other one is compared against: the shared success path, which both surfaces and
 #: every verb reach through `accounting`.
-REFERENCE = "api/serving.py:_settle_and_record"
+REFERENCE = "api/serving/accounting.py:_settle_and_record"
 
 #: Fields a site may legitimately omit, and why. **Not decoration** — an omission with no entry
 #: here is the defect, and an entry that stops being true is one somebody has to notice.
 ALLOWED_OMISSIONS: dict[str, dict[str, str]] = {
-    "api/serving.py:record_pipeline_calls": {
+    "api/serving/pipeline_run.py:record_pipeline_calls": {
         "model_selection": "a classifier call is not routed and falls back to nothing",
         "pipeline_decisions": "the decisions belong to the caller's row, not to the step's own",
         "tool_calls": "a classifier is asked for a word, never for a function",
     },
-    "api/gemini/routes.py:_write_refusal": {
+    # Both surfaces' refusals, through `record_refusal`.
+    "api/serving/accounting.py:_write_refusal": {
         "cost_nanos": "nothing was served, so nothing is priced — and unpriced is not zero",
     },
-    "api/kira/routes.py:_record": {},
-    "api/incidents.py:_record_diagnostic": {
+    "api/incidents/diagnostics.py:_record_diagnostic": {
         # An administrator asking a model about itself (`FRD-610`). Four fields are not omitted so
         # much as **inapplicable**, and each for its own reason rather than as a group:
         "model_selection": (

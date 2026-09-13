@@ -3,16 +3,9 @@ import { Component, ElementRef, effect, input, output, viewChild } from '@angula
 /**
  * A window: one thing to do, one way out, and nothing editable behind it.
  *
- * Written as a shared control after the third screen needed one. The model catalog had hand-rolled
- * two, and budgets, rate limits and anomaly rules were about to make five — at which point the
- * Escape handler, the focus move and the backdrop exist in five places and differ in four.
- *
- * Why a window at all, rather than a form that unfolds in place: an inline form scrolls the page to
- * a control far from the row it is about, leaves the list behind it clickable, and says nothing
- * about what it is editing. `FRD-206` recorded that with the model editor, where a second Edit
- * silently replaced the first one's unsaved changes.
- *
- * Three properties it owns so no caller has to remember them:
+ * A window rather than a form that unfolds in place, because an inline form scrolls the page away
+ * from the row it is about, leaves the list behind it clickable, and says nothing about what it is
+ * editing (`FRD-206`). Three properties it owns so no caller has to remember them:
  *
  * - **Escape closes.** A window whose only exit is the mouse is one somebody gets stuck in.
  * - **The keyboard moves in.** Otherwise Tab and Escape still belong to the page underneath.

@@ -1,10 +1,12 @@
-"""SQLAlchemy async engine/session plumbing for the gateway (FRD-101).
+"""SQLAlchemy async engine and session plumbing for the gateway (`FRD-101`).
 
-Phase 1 creates tables with ``create_all``; Alembic migrations arrive with FRD-103.
+The schema is owned by the Alembic migrations. :func:`create_all` is for SQLite — the tests, demo
+mode and the CLI — which has no migration history to disagree with.
 """
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from sqlalchemy import event
@@ -24,6 +26,11 @@ class Base(DeclarativeBase):
     """Declarative base for all gateway ORM models."""
 
 
+def new_id() -> str:
+    """A random UUID as text: the primary key of every row that has no natural one."""
+    return str(uuid.uuid4())
+
+
 def build_engine(url: str) -> AsyncEngine:
     """Create an async engine; in-memory SQLite shares one connection across sessions."""
     if url.startswith("sqlite"):
@@ -39,21 +46,10 @@ def build_engine(url: str) -> AsyncEngine:
 def watch_connections(engine: AsyncEngine) -> AsyncEngine:
     """Say when a physical connection is opened, and when one cannot be (`FRD-617` §3.3).
 
-    **Connections, not statements.** A line per query is not integration debugging, it is a second
-    slow-query log with none of the tooling — and the statements are already in the trace, with
-    their placeholders and without their bound values (`FRD-117` §5.3). What is *not* anywhere is
-    the moment the pool reaches for the database and finds a wrong host, a closed port, a rejected
-    password or a certificate it does not trust, which is the whole of what the first day of an
-    integration consists of.
-
-    Errors are filtered to the ones that are about **reaching** the database — SQLAlchemy's
-    `is_disconnect`, plus anything raised with no connection in hand. A unique-violation on a busy
-    gateway is a correct answer from a working database, and reporting it here would bury the four
-    lines that matter under thousands that do not.
-
-    The address is rendered by SQLAlchemy with `hide_password=True` rather than by us: it knows
-    where the password is in every dialect it supports, and a redaction that has to be re-derived
-    per URL scheme is one that is eventually wrong for the scheme nobody tested.
+    Connections, not statements: statements are already in the trace (`FRD-117` §5.3). Errors are
+    filtered to the ones about **reaching** the database — a unique violation is a correct answer
+    from a working one. The address is rendered by SQLAlchemy with ``hide_password=True``, which
+    knows where the password sits in every dialect.
     """
     target = engine.url.render_as_string(hide_password=True)
     sync_engine = engine.sync_engine
@@ -85,6 +81,6 @@ def build_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 async def create_all(engine: AsyncEngine) -> None:
-    """Create all tables (Phase 1; replaced by migrations in FRD-103)."""
+    """Create every table from the models, bypassing the migrations."""
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)

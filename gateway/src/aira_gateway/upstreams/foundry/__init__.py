@@ -1,19 +1,11 @@
-"""Microsoft Foundry / Azure OpenAI: the third platform (FRD-120).
+"""Microsoft Foundry / Azure OpenAI: the third platform (`FRD-120`).
 
-    FoundryTransport   resource URL, credential, api-version, Azure error shapes
-    └── OpenAIAdapter  unchanged — the dialect was written for this before Azure existed here
+    FoundryTransport   resource URL, credential, api-version
+    └── OpenAIAdapter  unchanged — the dialect needed nothing for this platform
         └── AzureRoutes   the deployment in the path, no model in the body
 
-**The diff for this platform does not leave `upstreams/`, and that was the test.** `ADR-0011`
-claims transport × dialect × model identity is enough structure for a third vendor; a change that
-had reached into the canonical core, the pipeline or a surface would have falsified it. The dialect
-gained nothing, the mappers gained nothing, and the routing axis was the one piece genuinely
-missing — which is what §5.1 predicted.
-
-Two credentials are supported and the choice is not stylistic. An **API key** is what a developer
-has on day one; **Entra** (a bearer token from the shared :class:`TokenSource`) is what an
-organisation with a key-rotation policy actually deploys, and building only the first is how a
-system ends up with a static secret in production because nothing else was possible.
+The change for this platform did not leave `upstreams/`, which is the test of `ADR-0011`'s claim
+that transport × dialect × model identity is enough structure for a new vendor.
 """
 
 from __future__ import annotations
@@ -22,13 +14,12 @@ from dataclasses import dataclass
 
 import httpx
 
-from aira_common.tokens import TokenSource
 from aira_gateway.config import GatewaySettings
 from aira_gateway.residency import check_region, parse_allowed
 from aira_gateway.upstreams.base import Upstream
 from aira_gateway.upstreams.foundry.routes import AzureRoutes, UnknownDeployment
+from aira_gateway.upstreams.foundry.transport import FoundryTransport
 from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
-from aira_gateway.upstreams.openai.transport import OpenAITransport
 
 __all__ = [
     "AzureRoutes",
@@ -40,17 +31,9 @@ __all__ = [
     "parse_deployments",
 ]
 
-#: Azure requires an explicit API version on every call, and the default is pinned rather than
-#: "latest": a version that moves on its own changes response shapes without a deploy, and the
-#: first sign is a mapper reading a field that stopped being sent.
-#:
-#: **This is the value, and it was not.** `GatewaySettings.foundry_api_version` carried the same
-#: literal and nothing read this constant, so there were two definitions of one pinned version and
-#: the one a request actually used was the settings default. Bumping the version here would have
-#: changed nothing on the wire while reading, in the module that owns the adapter, as though it
-#: had. Repeated in the settings class for the reason `DEFAULT_GEMINI_BASE_URL` is — a default has
-#: to live where `pydantic-settings` can see it, and the adapter must not import the settings class
-#: — and the two are now held together by `test_foundry.py` rather than by memory.
+#: Azure requires an API version on every call. Pinned, not "latest": a moving version changes
+#: response shapes without a deploy. The settings class repeats the value (the adapter must not
+#: import the settings default), and `test_foundry.py` holds the two together.
 DEFAULT_API_VERSION = "2024-10-21"
 
 
@@ -71,9 +54,8 @@ class FoundryDeployment:
 def parse_deployments(spec: str) -> list[FoundryDeployment]:
     """Read ``model=deployment[|region][|embed]`` entries, separated by ``;``.
 
-    The same shape as `FRD-123`'s server list and for the same reason: this is set in a `.env` and
-    a shell, where a quoted JSON blob is a well-known way to lose a character and get an error that
-    names a byte offset.
+    The same shape as `FRD-123`'s server list, and for the same reason: it is set in a `.env` and a
+    shell, where a quoted JSON blob loses characters.
     """
     deployments: list[FoundryDeployment] = []
     seen: set[str] = set()
@@ -87,8 +69,7 @@ def parse_deployments(spec: str) -> list[FoundryDeployment]:
                 "'model=deployment[|region][|embed]'."
             )
         if model in seen:
-            # Two deployments for one caller-facing name is a silent choice of which one served a
-            # request — invisible in every log, and the spend attaches to the same model either way.
+            # Two deployments for one caller-facing name would be a silent choice of which served.
             raise FoundrySpecInvalid(f"Model '{model}' is declared twice.")
         seen.add(model)
 
@@ -104,42 +85,11 @@ def parse_deployments(spec: str) -> list[FoundryDeployment]:
     return deployments
 
 
-class FoundryTransport(OpenAITransport):
-    """Azure's endpoint and credential, over the dialect's own transport contract.
-
-    Subclassed rather than rewritten because everything about *sending* is already right — the
-    retries, the streamed-error ordering, the status pass-through that keeps a 429 meaning
-    "capacity" rather than being flattened to a 502. What differs is one header.
-    """
-
-    def __init__(
-        self,
-        *,
-        client: httpx.AsyncClient,
-        api_key: str = "",
-        tokens: TokenSource | None = None,
-        timeout: float | None = None,
-    ) -> None:
-        super().__init__(client=client, timeout=timeout)
-        self._azure_key = api_key
-        self._tokens = tokens
-
-    async def headers(self) -> dict[str, str]:
-        # Azure's key goes in `api-key`, **not** in `Authorization` — sending an Azure key as a
-        # bearer token produces a 401 that says nothing about which of the two was wrong.
-        if self._azure_key:
-            return {"api-key": self._azure_key}
-        if self._tokens is not None:
-            return {"Authorization": f"Bearer {await self._tokens.token()}"}
-        return {}
-
-
 def build_foundry_upstreams(settings: GatewaySettings) -> list[Upstream]:
-    """Build the Foundry adapter from settings, or an empty list when unconfigured.
+    """Build the Foundry adapters from settings, or an empty list when unconfigured.
 
-    Registered only when an endpoint *and* a credential *and* at least one deployment are
-    configured. Half a configuration is a gateway that starts and answers 401 for every request,
-    which reads as a broken credential rather than as a missing one.
+    An endpoint with deployments but no credential refuses to start: it would answer 401 for every
+    request, which reads as a broken credential rather than a missing one.
     """
     if not settings.foundry_endpoint or not settings.foundry_deployments:
         return []
@@ -154,9 +104,7 @@ def build_foundry_upstreams(settings: GatewaySettings) -> list[Upstream]:
     allowed = parse_allowed(settings.allowed_regions)
     for entry in declared:
         if entry.region:
-            # The same list every transport is measured against (`ADR-0012` §6): Azure's
-            # `westeurope` beside Google's `europe-west1`, because "which regions may we use" is
-            # one policy question and a per-cloud list would mean a per-cloud audit.
+            # The same allow-list every transport is measured against (`ADR-0012` §6).
             check_region(entry.region, allowed)
 
     client = httpx.AsyncClient(base_url=settings.foundry_endpoint.rstrip("/"), verify=True)
@@ -165,16 +113,14 @@ def build_foundry_upstreams(settings: GatewaySettings) -> list[Upstream]:
     )
     routes = AzureRoutes(
         {entry.model: entry.deployment for entry in declared},
-        # Empty means unset, not "no version": Compose passes optional variables as `${VAR:-}`, and
-        # Azure refuses a call carrying `api-version=` with nothing after it. The same fallback
-        # `build_gemini_upstream` makes with its base URL, for the same reason.
+        # Empty means unset: Compose passes optional variables as `${VAR:-}`, and Azure refuses
+        # `api-version=` with nothing after it.
         settings.foundry_api_version or DEFAULT_API_VERSION,
     )
 
-    # **One adapter per region**, not one adapter with a region. Provenance is recorded per model
-    # (`FRD-115` FR-10), so a deployment fleet spread across two regions must not be flattened into
-    # whichever one happened to be declared first — that would put a residency claim on the audit
-    # row that the request did not satisfy, which is worse than recording none.
+    # **One adapter per region**: provenance is recorded per model (`FRD-115` FR-10), and a fleet
+    # across two regions flattened into one would put a residency claim on the audit row that the
+    # request did not satisfy.
     by_region: dict[str, list[FoundryDeployment]] = {}
     for entry in declared:
         by_region.setdefault(entry.region, []).append(entry)

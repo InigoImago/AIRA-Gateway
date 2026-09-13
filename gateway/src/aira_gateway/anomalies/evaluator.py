@@ -1,9 +1,8 @@
 """Measuring one rule against the audit trail (`FRD-501`).
 
 Pure evaluation: given a session, a rule and a moment, say whether the rule is crossed and by how
-much. No writing, no scheduling, no actions — those are :mod:`aira_gateway.anomalies.service` and
-`FRD-503`. Kept separate because every interesting question here is arithmetic over rows, and
-arithmetic is worth being able to test without a clock or a queue.
+much. Writing, scheduling and actions are :mod:`aira_gateway.anomalies.service` and `FRD-503`;
+kept apart so the arithmetic over rows can be tested without a clock or a queue.
 """
 
 from __future__ import annotations
@@ -22,6 +21,28 @@ from aira_gateway.db.models import AnomalyRuleRead, RequestLog
 
 _log = get_logger("aira_gateway.anomalies")
 
+#: Who a `subject` rule is about: the username where recorded (`FRD-606`), else the subject —
+#: :func:`aira_gateway.scopes.person` asked of a stored row, so one person's key and browser
+#: traffic count together. `nullif` because SQL reads `""` as a value and `person` as absence.
+_PERSON = func.coalesce(func.nullif(RequestLog.username, ""), RequestLog.subject)
+
+#: The column each target groups by. A rule's target is what its action lands on, so it is also
+#: what the measurement is *per* — a rate averaged over a use case hides the caller producing it.
+_GROUP_BY = {
+    RuleTarget.SUBJECT: _PERSON,
+    RuleTarget.CREDENTIAL: RequestLog.credential,
+    RuleTarget.USE_CASE: RequestLog.use_case,
+}
+
+#: Which outcomes each rate kind counts, from the closed `Outcome` vocabulary (`FRD-122`) rather
+#: than a second list. ``None`` means anything not `served`, `client_gone` included: one hang-up is
+#: not our failure, a thousand is what a detector exists to surface.
+_COUNTED_OUTCOMES: dict[RuleKind, frozenset[str] | None] = {
+    RuleKind.REFUSAL_RATE: None,
+    RuleKind.ERROR_RATE: frozenset({Outcome.UPSTREAM_ERROR.value}),
+    RuleKind.BLOCKED_PROMPT_RATE: frozenset({Outcome.BLOCKED_BY_PIPELINE.value}),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class Finding:
@@ -33,63 +54,29 @@ class Finding:
     detail: str
 
 
-#: **Who a `subject` rule is about**, in the one alphabet a person has.
-#:
-#: `RequestLog.subject` is what the credential called itself: a directory id for an OIDC token, the
-#: owner's username for an API key. Grouping by it filed one human under two names, so a person
-#: doing sixty refusals — thirty through their key, thirty through their browser — never crossed a
-#: rule set at fifty, and the two halves of them were invisible to each other. `RequestLog.username`
-#: is the name recorded beside the subject (`FRD-606`); reading the name where there is one and the
-#: subject otherwise is :func:`aira_gateway.scopes.person` asked of a stored row, which is already
-#: how a per-head budget, the trace list and the payload gate decide who somebody is.
-#:
-#: `nullif` because SQL reads an empty string as a value and `person` reads it as absence: no writer
-#: produces one today (`auth/oidc.py` stores `None` for a blank claim), and the two spellings of one
-#: rule have to agree for reasons that do not depend on that staying true.
-_PERSON = func.coalesce(func.nullif(RequestLog.username, ""), RequestLog.subject)
-
-#: The column each target groups by. A rule's target is what its action lands on, so it is also
-#: what the measurement has to be *per* — a refusal rate averaged over a whole use case says
-#: nothing about the one caller producing it.
-_GROUP_BY = {
-    RuleTarget.SUBJECT: _PERSON,
-    RuleTarget.CREDENTIAL: RequestLog.credential,
-    RuleTarget.USE_CASE: RequestLog.use_case,
-}
-
-#: Which outcomes each rate kind counts. Taken from the closed vocabulary in
-#: :class:`aira_gateway.audit.Outcome` rather than restated: `FRD-122` made that enum the one place
-#: a control's existence is recorded, and a second list here would go stale the first time somebody
-#: added a control.
-#:
-#: ``None`` means "anything that is not `served`" — `client_gone` included, deliberately. One caller
-#: hanging up is not our failure; a thousand is exactly the shape a detector exists to surface.
-_COUNTED_OUTCOMES: dict[RuleKind, frozenset[str] | None] = {
-    RuleKind.REFUSAL_RATE: None,
-    RuleKind.ERROR_RATE: frozenset({Outcome.UPSTREAM_ERROR.value}),
-    RuleKind.BLOCKED_PROMPT_RATE: frozenset({Outcome.BLOCKED_BY_PIPELINE.value}),
-}
-
-
 def _group_by(rule: AnomalyRuleRead) -> Any | None:
-    """The column this rule measures per, or ``None`` if its target is not one this build has.
-
-    One reader of :data:`_GROUP_BY` rather than the three that each spelled
-    ``_GROUP_BY[RuleTarget(rule.target)]`` out again: a coercion repeated at three call sites is
-    three places to remember that a stored word may not be in the enum, and it was remembered at
-    none of them.
-    """
+    """The column this rule measures per, or ``None`` if its target is not one this build has."""
     try:
         return _GROUP_BY[RuleTarget(rule.target)]
     except ValueError:
         return None
 
 
-def _scoped(stmt: Any, rule: AnomalyRuleRead) -> Any:
-    """Narrow a query to the rule's reach. A global rule (``use_case`` NULL) narrows to nothing."""
+def _column(rule: AnomalyRuleRead) -> Any:
+    """:func:`_group_by` for a rule `evaluate_rule` has admitted — the only way in."""
+    group = _group_by(rule)
+    assert group is not None, f"rule {rule.id} targets {rule.target!r}, which has no column"
+    return group
+
+
+def _scoped(stmt: Any, rule: AnomalyRuleRead, group: Any) -> Any:
+    """Narrow a query to the rule's reach and to rows that have a target.
+
+    A global rule (``use_case`` NULL) is not narrowed to a use case.
+    """
     if rule.use_case is not None:
         stmt = stmt.where(RequestLog.use_case == rule.use_case)
-    return stmt
+    return stmt.where(group.is_not(None))
 
 
 def _window(rule: AnomalyRuleRead, now: datetime) -> tuple[datetime, datetime]:
@@ -101,35 +88,20 @@ def _window(rule: AnomalyRuleRead, now: datetime) -> tuple[datetime, datetime]:
 async def evaluate_rule(
     session: AsyncSession, rule: AnomalyRuleRead, now: datetime | None = None
 ) -> list[Finding]:
-    """Return every target of ``rule`` that crosses its threshold right now."""
+    """Return every target of ``rule`` that crosses its threshold right now.
+
+    A kind or target this build does not implement (a newer Management; `consumer.apply` writes both
+    verbatim) measures nothing and **says so** in the log: passing would be a statement about the
+    traffic, and raising would abort the whole tick — `service.tick` has no per-rule boundary — and
+    stop every other rule for good.
+    """
     moment = now or datetime.now(UTC)
     try:
         kind = RuleKind(rule.kind)
     except ValueError:
-        # A newer Management can publish a kind this gateway does not implement. Measuring nothing
-        # is the forward-compatible answer, and the *only* safe one: passing would report a rule as
-        # having found nothing, which is a statement about traffic rather than about this version.
-        #
-        # **Said out loud**, which is the rule `consumer.apply` reached on 2026-08-18 about exactly
-        # this shape: tolerance does not require silence. A rule that measures nothing is a control
-        # an operator believes is watching and is not, and the only symptom is the console showing
-        # it as enabled — one log line makes that a search instead of an investigation.
         _log.warning("anomaly_rule_kind_not_implemented", rule_id=rule.id, kind=rule.kind)
         return []
     if _group_by(rule) is None:
-        # **The same rule as the kind above, on the field beside it.** `consumer.apply` writes
-        # `target` and `action` verbatim out of the Kafka payload — no enum, no default that
-        # discards an unknown — so a newer Management, a hand-written event or a direct row can put
-        # a word here that this gateway has no column for. It reached `_GROUP_BY[RuleTarget(...)]`
-        # as an unguarded `ValueError`, four frames below the loop in `service.tick`, which is not
-        # where it looked like it came from.
-        #
-        # The consequence was the one this branch's neighbour exists to prevent, an order of
-        # magnitude larger: `tick` has no per-rule boundary, so the raise took the whole round with
-        # it — the watermark stays put by design, every *other* rule in the installation goes
-        # unevaluated, and the next tick re-reads the same rule and dies again. One unreadable row
-        # switched off detection for everybody, permanently, with `anomaly_tick_failed` in the log
-        # and a console still showing every rule as enabled.
         _log.warning("anomaly_rule_target_not_implemented", rule_id=rule.id, target=rule.target)
         return []
     if kind in _COUNTED_OUTCOMES:
@@ -140,9 +112,7 @@ async def evaluate_rule(
         return await _evaluate_ratio(session, rule, kind, moment)
     if kind is RuleKind.NEW_SOURCE_IP:
         return await _evaluate_new_source(session, rule, moment)
-    # A kind the engine does not implement measures nothing, and says so by measuring nothing —
-    # never by passing. `FRD-500`'s vocabulary is closed precisely so this branch stays empty, and
-    # a rule that reaches it is announced for the same reason as the one above.
+    # `FRD-500`'s vocabulary is closed so this stays unreachable; a rule reaching it is announced.
     _log.warning("anomaly_rule_kind_not_measured", rule_id=rule.id, kind=rule.kind)
     return []
 
@@ -170,12 +140,11 @@ async def _evaluate_payload_size(
 ) -> list[Finding]:
     """Share of requests at least ``parameter`` bytes.
 
-    Rows with no byte count are excluded from **both** sides: they predate `FRD-501` and their size
-    is unknown, and counting an unknown as small would make an old use case look innocent.
+    Rows with no byte count (older than `FRD-501`) are excluded from **both** sides: counting an
+    unknown as small would make an old use case look innocent.
     """
     if not rule.parameter:
-        # A `payload_size` rule with no byte figure measures nothing. Management refuses to create
-        # one; an older event could still carry one, and measuring nothing beats guessing.
+        # Management refuses such a rule; an older event could still carry one.
         return []
     return await _share(
         session,
@@ -200,14 +169,12 @@ async def _share(
 ) -> list[Finding]:
     """Percentage of rows in the window matching ``matches``, per target."""
     since, _ = _window(rule, now)
-    group = _group_by(rule)
-    # `evaluate_rule` is the only way in and refuses a target this build has no column for.
-    assert group is not None, f"rule {rule.id} targets {rule.target!r}, which has no column"
+    group = _column(rule)
     hits = func.sum(func.cast(matches, Integer)).label("hits")
     stmt = select(group, func.count().label("total"), hits).where(RequestLog.created_at >= since)
     if known_only is not None:
         stmt = stmt.where(known_only)
-    stmt = _scoped(stmt, rule).where(group.is_not(None)).group_by(group)
+    stmt = _scoped(stmt, rule, group).group_by(group)
 
     findings: list[Finding] = []
     for value, total, matched in (await session.execute(stmt)).all():
@@ -233,9 +200,7 @@ async def _evaluate_ratio(
 ) -> list[Finding]:
     """This window as a percentage of the one before it."""
     since, before = _window(rule, now)
-    group = _group_by(rule)
-    # `evaluate_rule` is the only way in and refuses a target this build has no column for.
-    assert group is not None, f"rule {rule.id} targets {rule.target!r}, which has no column"
+    group = _column(rule)
     measure = (
         func.coalesce(func.sum(RequestLog.cost_nanos), 0)
         if kind is RuleKind.SPEND_SPIKE
@@ -246,7 +211,7 @@ async def _evaluate_ratio(
         stmt = select(group, measure, func.count()).where(
             RequestLog.created_at >= start, RequestLog.created_at < end
         )
-        stmt = _scoped(stmt, rule).where(group.is_not(None)).group_by(group)
+        stmt = _scoped(stmt, rule, group).group_by(group)
         return {
             str(value): (int(amount or 0), int(rows))
             for value, amount, rows in (await session.execute(stmt)).all()
@@ -260,9 +225,8 @@ async def _evaluate_ratio(
         if rows < max(rule.min_sample, 1):
             continue
         was, _ = previous.get(value, (0, 0))
-        # Growth from nothing is not a multiple of anything. Treating it as infinite would make
-        # every use case's first hour an incident, and the alert that fires on arrival is the one
-        # people switch off before it ever says anything true.
+        # Growth from nothing is not a multiple of anything: treating it as infinite would make
+        # every use case's first hour an incident.
         if was <= 0:
             continue
         share = round(amount * 100 / was)
@@ -288,9 +252,7 @@ async def _evaluate_new_source(
 ) -> list[Finding]:
     """Addresses seen in the window that were not seen in the window before it."""
     since, before = _window(rule, now)
-    group = _group_by(rule)
-    # `evaluate_rule` is the only way in and refuses a target this build has no column for.
-    assert group is not None, f"rule {rule.id} targets {rule.target!r}, which has no column"
+    group = _column(rule)
 
     async def seen(start: datetime, end: datetime) -> dict[str, set[str]]:
         stmt = select(group, RequestLog.source_ip).where(
@@ -298,7 +260,7 @@ async def _evaluate_new_source(
             RequestLog.created_at < end,
             RequestLog.source_ip.is_not(None),
         )
-        stmt = _scoped(stmt, rule).where(group.is_not(None)).distinct()
+        stmt = _scoped(stmt, rule, group).distinct()
         found: dict[str, set[str]] = {}
         for value, ip in (await session.execute(stmt)).all():
             found.setdefault(str(value), set()).add(str(ip))
@@ -309,9 +271,8 @@ async def _evaluate_new_source(
 
     findings: list[Finding] = []
     for value, addresses in current.items():
-        # Nothing to compare against: on the first evaluation after deployment every address is
-        # new, and reporting that would be reporting the deployment. The reference is one window
-        # long, so the warm-up clears itself.
+        # No reference yet: right after deployment every address is new, and reporting that would
+        # be reporting the deployment. The reference is one window long, so this clears itself.
         if value not in known:
             continue
         fresh = sorted(addresses - known[value])

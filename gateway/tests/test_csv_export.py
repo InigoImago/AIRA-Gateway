@@ -453,4 +453,10 @@ def test_every_endpoint_here_resolves_the_visible_scope_exactly_once() -> None:
             "zero shows more than it should, twice will drift"
         )
 
-    assert "def render" not in inspect.getsource(module), "the CSV path grew its own query"
+    from pathlib import Path
+
+    sources = [
+        path.read_text() for path in sorted(Path(inspect.getfile(module)).parent.glob("*.py"))
+    ]
+    assert sources, "no modules found — the assertion would pass by describing nothing"
+    assert all("def render" not in source for source in sources), "the CSV path grew its own query"

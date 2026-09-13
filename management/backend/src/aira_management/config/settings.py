@@ -1,7 +1,6 @@
 """Django settings for the AIRA Management backend.
 
-Values are derived from :class:`ManagementSettings` (env-driven, 12-factor). This is a
-skeleton for Phase 0; RBAC apps, Keycloak OIDC, and domain models arrive in Phase 2.
+Values are derived from :class:`ManagementSettings` (env-driven, 12-factor).
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ configure_logging(_settings.log_level, json_output=_settings.log_json)
 configure_integration_debug(_settings.debug_integrations)
 set_payload_rendering(_settings.debug_otel_payload)
 # The **providers** only. Django is instrumented from `apps.api.ApiConfig.ready()`, because
-# that instrumentation inserts a middleware and `MIDDLEWARE` is assigned forty lines below.
+# that instrumentation inserts a middleware and `MIDDLEWARE` is assigned below.
 setup_observability(_settings)
 
 # Refuse to boot a non-local deployment that still carries the development defaults (ADR-0007).
@@ -115,44 +114,19 @@ USE_TZ = True
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
-    # **`BoundedJSONParser`, not DRF's own** (2026-09-08). `JSONParser` hands the document to
-    # `json.load`, whose decoder recurses as far as the *caller* asks — so a body nesting
-    # 200 000 levels, well inside Django's 2.5 MB upload ceiling, answered `500` on every
-    # endpoint this plane publishes. `RecursionError` is not a `ValueError`, so nothing caught
-    # it. The bound lives in `aira_common.nesting` and the gateway reads the same constant, so
-    # the two planes cannot come to disagree about what a body may be.
-    #
-    # Still a list of one: JSON only was a deliberate decision before this and stays one — a
-    # control plane whose API is a console's has no reason to accept a form post.
+    # JSON only, through the parser that bounds nesting depth (`apps.api.parsers`): a control
+    # plane whose API is a console's has no reason to accept a form post.
     "DEFAULT_PARSER_CLASSES": ["aira_management.apps.api.parsers.BoundedJSONParser"],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "aira_management.apps.api.authentication.KeycloakJWTAuthentication"
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "EXCEPTION_HANDLER": "aira_management.apps.api.exceptions.exception_handler",
-    # A bound on how fast one caller may ask (2026-08-15). There was none at all: the gateway has
-    # had one on **failed authentications** since `ADR-0015` — because *"every limit `FRD-405`
-    # built is keyed by use case or member, so it needs a verified identity and cannot bound the
-    # traffic of somebody who has none"* — and this plane, whose every request verifies a token
-    # against a JWKS and then reconciles the caller's groups, had nothing.
-    #
-    # `user` only, and **deliberately not `AnonRateThrottle`**: DRF runs `check_permissions` before
-    # `check_throttles`, and every view here requires authentication — so an anonymous request is
-    # refused at the permission check and an anon throttle never runs. Measured: two anonymous
-    # requests against a rate of one per minute, both `401`, the second never counted. A throttle
-    # that cannot fire is the badge-wearing absent control this project keeps naming.
-    #
-    # The unauthenticated half is bounded where the failure actually is — in the authentication
-    # class, counting **refusals only** (`apps.api.attempts`, `AIRA_THROTTLE_AUTH_FAILURES`), which
-    # is the shape the gateway settled on in `ADR-0015` for the same reason.
-    #
-    # `user` is generous: a console screen loads five panels at once and a person walking a paged
-    # list is doing exactly what the product is for, so this is sized to stop a script rather than
-    # to shape ordinary use.
-    #
-    # Throttled requests answer `429` through the same envelope as everything else
-    # (`_STATUS_CODES` maps it to `rate_limited`), so a console reader is told to wait rather than
-    # shown "Request failed."
+    # How fast one authenticated caller may ask. `user` only, **not `AnonRateThrottle`**: DRF checks
+    # permissions before throttles and every view requires authentication, so an anonymous
+    # throttle would never run. The unauthenticated half is bounded in the authentication class,
+    # counting refusals only (`apps.api.attempts`, `ADR-0015`). A throttled request answers `429`
+    # through the usual error envelope.
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.UserRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {"user": _settings.throttle_user},
 }

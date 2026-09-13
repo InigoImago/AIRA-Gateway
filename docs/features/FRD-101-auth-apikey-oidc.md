@@ -95,7 +95,7 @@ request ─▶ extract credential (Bearer / x-goog-api-key / ?key=) ─▶ Princ
 - Reuse FRD-001: span attributes for the method and the subject. No secrets in spans/logs.
 - **The counter for auth failures by reason was not built**, and is named here as unbuilt rather
   than left as a requirement somebody assumes is met. This project defines **no custom OTel
-  instruments at all** — `libs/src/aira_common/observability.py` sets a meter provider and the rest
+  instruments at all** — `libs/src/aira_common/observability/providers.py` sets a meter provider and the rest
   is auto-instrumentation, so what exists is request latency/count/error per service and nothing
   per feature. Repeated auth failure *is* acted on, by a different mechanism: `auth/attempts.py`
   rate-limits it (`AIRA_MAX_AUTH_FAILURES_PER_MINUTE`), and every failure is logged.

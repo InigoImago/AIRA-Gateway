@@ -45,10 +45,13 @@ so existing behavior is unchanged.
 
 ## 4. Design
 - `pipeline/config.py` — `Pipeline`, `PipelineStep`, `StepType`; `Pipeline.from_dict` parses read-model JSON.
-- `pipeline/classifiers.py` — `InjectionClassifier` protocol; `HeuristicInjectionClassifier`,
-  `LlmInjectionClassifier(provider, model)`.
-- `pipeline/engine.py` — `PipelineEngine(registry)`; `run(request, ctx) -> PipelineOutcome` or raises
-  `PipelineRejected`.
+- `pipeline/classifiers/` — one module per question a step asks a model: `injection`
+  (`InjectionClassifier` protocol; `HeuristicInjectionClassifier`, `LlmInjectionClassifier`),
+  `routing` (`LlmCategoryRouter`), `redaction` (`LlmRedactor`), and `prompts` (instructions,
+  markers, output allowances).
+- `pipeline/engine/` — `runner.PipelineEngine(registry)`; `run(request, ctx) -> PipelineOutcome` or
+  raises `PipelineRejected`. `steps.StepEvaluator` evaluates one step; `texts` runs the steps over
+  an embedding's batch; `outcomes` holds the result types.
 - `pipeline/store.py` — loads a `Pipeline` from `pipeline_configs` by use case.
 - Dispatch: `dispatch_with_fallback(registry, request, fallbacks)` for non-stream generate.
 - Distribution: `aira.pipelines` topic; `pipeline.upserted/deleted` → `PipelineConfigRead`.

@@ -1,15 +1,11 @@
 """What an installation considers abnormal, said out loud (FRD-500).
 
-The gateway records everything (`FRD-122`) and nobody is watching. This is the rule: what to
-watch, over what window, above what threshold, and what to do then. `FRD-501` evaluates it;
-`FRD-503` acts on it.
+A rule says what to watch, over what window, above what threshold, and what to do then; `FRD-501`
+evaluates it and `FRD-503` acts on it. Authored here, distributed over Kafka, evaluated by the
+gateway — the same path as budgets and rate limits, so a rolling deploy has one mechanism to get
+right.
 
-Authored here, distributed over Kafka, evaluated by the gateway — the same path as budgets
-(`FRD-400`) and rate limits (`FRD-405`), deliberately, because a second distribution mechanism
-would be a second thing to get wrong during a rolling deploy.
-
-**Absence means no detection.** An installation that authors no rule behaves exactly as it does
-today; this must never begin refusing traffic somebody was already serving.
+**Absence means no detection**: an installation with no rule never starts refusing traffic.
 """
 
 from __future__ import annotations

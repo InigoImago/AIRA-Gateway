@@ -1,4 +1,11 @@
-"""Vertex AI / Model Garden: one transport, two dialects (FRD-115, FRD-119)."""
+"""Vertex AI / Model Garden: one transport, two dialects (`FRD-115`, `FRD-119`).
+
+transport          endpoint, region check, credential, errors
+auth               the service-account token exchange
+regions            where a model runs, and failover across regions (`FRD-609`)
+anthropic_mapping  the Anthropic Messages dialect (the Gemini one is `upstreams.gemini_mapping`)
+adapters           the two `Upstream` adapters
+"""
 
 from __future__ import annotations
 
@@ -7,12 +14,9 @@ import httpx
 from aira_gateway.config import GatewaySettings
 from aira_gateway.residency import RegionNotAllowed, check_region, parse_allowed
 from aira_gateway.upstreams.base import Upstream
-from aira_gateway.upstreams.vertex.adapters import (
-    VertexAnthropicAdapter,
-    VertexGeminiAdapter,
-    VertexModel,
-)
+from aira_gateway.upstreams.vertex.adapters import VertexAnthropicAdapter, VertexGeminiAdapter
 from aira_gateway.upstreams.vertex.auth import CredentialsInvalid, build_token_source
+from aira_gateway.upstreams.vertex.regions import VertexModel
 from aira_gateway.upstreams.vertex.transport import VertexTransport
 
 __all__ = [
@@ -29,10 +33,9 @@ __all__ = [
 def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     """Build the Vertex adapters from settings, or an empty list when unconfigured.
 
-    Every failure here is a **startup** failure: unusable credentials, a model in a region this
-    deployment does not permit, or a malformed model spec. A gateway that starts and then fails
-    every request looks like an upstream outage, and a gateway that starts and quietly serves a
-    non-EU region is worse than one that will not start at all.
+    Every failure here is a **startup** failure — unusable credentials, a model in a region this
+    deployment does not permit, a malformed model spec: a gateway that starts and quietly serves a
+    non-EU region is worse than one that will not start.
     """
     if not settings.vertex_project or not (settings.vertex_credentials or settings.vertex_api_key):
         return []
@@ -43,15 +46,10 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     for model in models:
         check_region(model.region, allowed)
 
-    # TLS verification stays on (FR-7). Named here rather than left to the default, because a
-    # place where compatibility must not soften a security setting is worth stating where it is
-    # decided.
+    # TLS verification stays on (FR-7), stated where it is decided.
     client = httpx.AsyncClient(timeout=settings.vertex_timeout_seconds, verify=True)
-    # **The service account wins where both are set** (`FRD-115` FR-3a): a deployment that has one
-    # has made the more deliberate choice, and silently preferring a key left in the environment
-    # would be a downgrade nobody asked for. `build_token_source` also *validates* the JSON here,
-    # at startup, which is why it is not called at all on the API-key path — there is nothing to
-    # validate, and calling it with an empty string would refuse a perfectly configured gateway.
+    # The service account wins where both are set (FR-3a): silently preferring a key left in the
+    # environment would be a downgrade. The JSON is validated here, at startup, and only when set.
     transport = VertexTransport(
         project=settings.vertex_project,
         tokens=(
@@ -64,14 +62,8 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
         allowed_regions=allowed,
     )
 
-    # **Both dialects, whether or not anything is configured.** They used to be built only for the
-    # models named in `AIRA_VERTEX_MODELS`, which made cataloguing a Vertex model impossible on a
-    # fresh deployment: there was no adapter to claim the provider, so the entry an administrator
-    # created had nothing behind it and the console had to say so.
-    #
-    # An adapter with an empty configured list is a shape this registry already knows — Google AI
-    # Studio's is exactly that — and it is what lets the catalogue be the only list. The credential
-    # above is what decides whether this platform is available at all; the model list is not.
+    # Both dialects, even with nothing configured: the credential decides whether this platform is
+    # available, and an adapter with an empty list is what lets the catalogue be the only list.
     google = [model for model in models if model.publisher == "google"]
     anthropic = [model for model in models if model.publisher == "anthropic"]
     upstreams: list[Upstream] = [

@@ -1,15 +1,10 @@
 """Exact money arithmetic shared by both planes (FRD-403).
 
-Money is never a float here. A single request can cost a fraction of a cent, and a month's
-budget is the sum of millions of them — binary floating point would drift, and the drift would
-land in a figure someone is accountable for.
-
-Amounts are therefore integers in **nano-units** of the configured currency (1 unit = 10⁻⁹, so
-1 EUR = 1_000_000_000). Integers are exact, they compare and accumulate without surprises, and
-they behave identically on Postgres and on the SQLite the tests use — unlike ``NUMERIC``, which
-SQLite stores as a float.
-
-Prices are quoted the way providers quote them: per **one million tokens**.
+Money is never a float: a month's budget sums millions of fractions of a cent, and binary floating
+point would drift in a figure somebody is accountable for. Amounts are integers in **nano-units** of
+the configured currency (1 EUR = 1_000_000_000) — exact, and identical on Postgres and on the SQLite
+the tests use, unlike ``NUMERIC``. Prices are quoted per **one million tokens**, as providers quote
+them.
 """
 
 from __future__ import annotations
@@ -19,7 +14,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 NANOS_PER_UNIT = 1_000_000_000
 TOKENS_PER_PRICE_UNIT = 1_000_000
 
-# Enough precision to state any realistic per-million price exactly (e.g. "0.075", "10.00").
+#: Enough precision to state any realistic per-million price exactly (e.g. "0.075", "10.00").
 _QUANTUM = Decimal("0.000000001")
 
 
@@ -34,18 +29,14 @@ def to_nanos(amount: Decimal | int | str) -> int:
     except (InvalidOperation, ValueError) as exc:
         raise ValueError(f"not a valid amount: {amount!r}") from exc
     if not value.is_finite():
-        # **`Decimal` accepts what money does not.** `Decimal("Infinity")` and `Decimal("NaN")`
-        # construct happily and then make `quantize` raise `InvalidOperation` — an
-        # `ArithmeticError`, from a function whose one documented refusal is a `ValueError`, so a
-        # caller following the contract does not catch it. That is the same value `LESSONS.md` §1
-        # records costing an audit row: JSON has no `Infinity`, Python's parser produces one
-        # anyway, and it travels as the string `"Infinity"` through exactly this door.
+        # `Decimal("Infinity")` and `Decimal("NaN")` construct, and `quantize` then raises
+        # `InvalidOperation` — not the `ValueError` this function promises. JSON carries them in
+        # as the strings Python's parser produces.
         raise ValueError(f"not a valid amount: {amount!r}")
     try:
         return int(value.quantize(_QUANTUM, rounding=ROUND_HALF_UP) * NANOS_PER_UNIT)
     except InvalidOperation as exc:
-        # Finite and still not statable to the nano-unit — `1e400` is the shape. Refused in the
-        # one word this function promises rather than raised as arithmetic nobody is catching.
+        # Finite and still not statable to the nano-unit (`1e400`).
         raise ValueError(f"amount is out of range: {amount!r}") from exc
 
 
@@ -63,9 +54,8 @@ def format_amount(nanos: int, places: int = 2) -> str:
 def format_display(nanos: int, places: int = 2) -> str:
     """Render an amount for a human, never showing a non-zero amount as zero.
 
-    Two decimals is what people expect to read, but a small amount rounded to "0.00" says
-    exactly the wrong thing — that nothing was spent. Where that would happen, show as many
-    decimals as it takes to be truthful.
+    A small amount rounded to "0.00" says that nothing was spent; where that would happen, show as
+    many decimals as it takes to be truthful.
     """
     rendered = format_amount(nanos, places)
     if nanos == 0 or Decimal(rendered) != 0:
@@ -80,8 +70,8 @@ def format_display(nanos: int, places: int = 2) -> str:
 def cost_nanos(tokens: int, price_per_million_nanos: int) -> int:
     """Cost of ``tokens`` at a price quoted per one million tokens, in nano-units.
 
-    Integer arithmetic throughout: the division truncates below one nano-unit, which is nine
-    orders of magnitude below a cent and therefore cannot accumulate into a visible difference.
+    Integer arithmetic throughout: the division truncates below one nano-unit, nine orders of
+    magnitude below a cent, so it cannot accumulate into a visible difference.
     """
     if tokens <= 0 or price_per_million_nanos <= 0:
         return 0
@@ -96,9 +86,8 @@ def request_cost_nanos(
 ) -> int:
     """Cost of one request, priced per direction.
 
-    Input and output tokens are billed at different rates by every provider AIRA talks to, which
-    is why the gateway keeps the two apart all the way from the upstream response to here — a
-    single ``total_tokens`` figure cannot be priced correctly at all.
+    Input and output tokens are billed at different rates by every provider, which is why the two
+    are kept apart from the upstream response to here — a single total cannot be priced.
     """
     return cost_nanos(prompt_tokens, input_price_per_million_nanos) + cost_nanos(
         completion_tokens, output_price_per_million_nanos

@@ -5,14 +5,9 @@ import { errorMessage } from '../api/error-message';
 /**
  * The outcome of the last thing the user asked for, and whether something is still in flight.
  *
- * One page shows **one** banner: several screens each announcing their own outcome is how a
- * user ends up reading three messages and acting on the wrong one. So the state lives here,
- * provided once per page, and every panel on that page reports into it rather than keeping its
- * own copy — which is what lets a page be split into panels without splitting its banner.
- *
- * `run` exists because every mutation on every panel needs the same four steps, and the one that
- * gets forgotten is always the error branch. A load or a save whose failure is silent is worse
- * than one that fails loudly: the user believes it worked.
+ * One page shows **one** banner, so the state lives here, provided once per page, and every panel
+ * reports into it — which is what lets a page be split into panels without splitting its banner
+ * (`CLAUDE.md` §3).
  */
 @Injectable()
 export class PageFeedback {
@@ -39,10 +34,8 @@ export class PageFeedback {
   }
 
   /**
-   * Run a mutation, reporting its outcome either way.
-   *
-   * `failure` is the fallback wording: where the backend sends its error envelope that message
-   * is preferred, because it says what actually went wrong rather than what the caller guessed.
+   * Run a mutation, reporting its outcome either way — the error branch is the one that gets
+   * forgotten. `failure` is the fallback wording; the backend's own message is preferred.
    */
   run<T>(request: Observable<T>, handlers: { failure: string; success: (value: T) => void }): void {
     this.busy.set(true);

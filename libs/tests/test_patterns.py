@@ -58,7 +58,7 @@ def test_the_rule_is_the_same_object_both_planes_read() -> None:
     them was tightened, and the plane that kept the looser copy is the one on the request path."""
     from aira_management.apps.pipelines import serializers as management
 
-    from aira_gateway.pipeline import classifiers as gateway
+    from aira_gateway.pipeline.classifiers import injection as gateway
 
     assert management.catastrophic_reason is catastrophic_reason
     assert gateway.catastrophic_reason is catastrophic_reason

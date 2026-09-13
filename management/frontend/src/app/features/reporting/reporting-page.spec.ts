@@ -64,10 +64,8 @@ function setup(response: Observable<Report> = of(report()), csv?: Observable<Blo
       exports.push({ from, to, breakdown });
       return csv ?? of(new Blob(['key,requests\n'], { type: 'text/csv' }));
     },
-    // The installation-budget card is a child of this page and loads on its own. Answered with an
-    // empty list rather than left undefined: this page's tests are about the report, and the card
-    // has its own spec — but a child that throws would take the page down with it, which is a
-    // failure of this page and should be visible here.
+    // The installation-budget card is a child and loads on its own; answered so it cannot throw
+    // and take the page down with it.
     installationBudgets: () => of([] as Budget[]),
   };
   TestBed.configureTestingModule({
@@ -103,8 +101,7 @@ describe('ReportingPage', () => {
 
     expect(testid('total-cost')?.textContent).toContain('3.75');
     expect(testid('total-requests')?.textContent).toContain('4');
-    // Use case is where the page starts, and only that table is on screen: four stacked
-    // breakdowns made the page long enough that its own export control scrolled out of sight.
+    // Use case is where the page starts, and only that table is on screen.
     expect(text()).toContain('demo-uc');
     expect(text()).not.toContain('mock-1');
   });
@@ -133,8 +130,8 @@ describe('ReportingPage', () => {
   });
 
   it('counts refusals apart from successes, so a wall being hit is a number', () => {
-    // A use case grinding against its budget all day used to look like a quiet one: the
-    // refusals were 429s and nothing said which control produced them (FRD-122).
+    // Refusals are counted apart, so a use case grinding against a limit is not a quiet one
+    // (FRD-122).
     const { testid } = setup(
       of(
         report({
@@ -157,9 +154,8 @@ describe('ReportingPage', () => {
   });
 
   it('shows the outcome breakdown, and says plainly that it is not exported', () => {
-    // The CSV renderer takes three breakdowns (`FRD-602`). A download button that looked ready
-    // and answered 400 is the defect `FRD-206` was written about — so the button is replaced by
-    // the reason, naming the three that do work.
+    // The CSV renderer takes three breakdowns (`FRD-602`), so the button is replaced by the
+    // reason rather than answering 400 (`FRD-206`).
     const harness = setup(of(report({ by_outcome: [row({ key: 'rate_limited', requests: 7 })] })));
     harness.component.exportBreakdown.set('outcome');
     harness.fixture.detectChanges();
@@ -171,8 +167,7 @@ describe('ReportingPage', () => {
   });
 
   it('downloads the table that is on screen, never a different one', () => {
-    // Two ideas of "which table" — one for the screen and one for the file — is one more than
-    // there should be, and is how an export comes to disagree with the report it came from.
+    // One idea of "which table" for the screen and the file, so the two cannot disagree.
     const harness = setup();
     harness.component.exportBreakdown.set('member');
     harness.fixture.detectChanges();
@@ -228,8 +223,7 @@ describe('ReportingPage', () => {
     page.component.applyPreset('custom');
     page.fixture.detectChanges();
     // `ngModel` writes into a newly created control on a microtask, not during the pass that
-    // creates it. Asserting straight after `detectChanges` would read an empty field and call
-    // that a bug in the component.
+    // creates it — so wait before reading the field.
     await page.fixture.whenStable();
     page.fixture.detectChanges();
 
@@ -259,11 +253,7 @@ describe('ReportingPage', () => {
   });
 
   describe('the CSV export (FRD-602)', () => {
-    /**
-     * The download needs the bearer token, so it is a fetch plus an object URL rather than a
-     * plain `<a href>` — a link that 401s looks like a broken export rather than like a browser
-     * that cannot authenticate.
-     */
+    /** The download needs the bearer token, so it is a fetch plus an object URL, not a link. */
     function captureDownload() {
       const clicks: Array<{ download: string; href: string }> = [];
       const created: string[] = [];
@@ -304,8 +294,7 @@ describe('ReportingPage', () => {
 
         expect(exports.length).toBe(1);
         expect(exports[0].breakdown).toBe('model');
-        // The same window as the screen — an export of a *different* period than the one being
-        // looked at is the kind of thing nobody notices until the numbers are in a meeting.
+        // The same window as the screen.
         expect(exports[0].from).toBe(component.from());
         expect(exports[0].to).toBe(component.to());
       } finally {
@@ -343,9 +332,7 @@ describe('ReportingPage', () => {
         const failing = throwError(() => ({ status: 500 }));
         const { component, text, fixture } = setup(of(report()), failing as Observable<Blob>);
         component.download();
-        // Zoneless: the banner is a signal, and a signal changed from code renders on the next
-        // pass. Asserting without one is how a component "has no error message" in a test while
-        // showing one perfectly well in a browser.
+        // Zoneless: the banner is a signal, and renders only on the next pass.
         fixture.detectChanges();
 
         expect(component.exporting()).toBe(false);
@@ -415,8 +402,7 @@ describe('isoDay', () => {
 
 describe('ReportingPage — what each figure counts', () => {
   it('shows the explanation on hover, and hides it again on leaving', () => {
-    // What anybody reaching for an "i" expects. The first version needed a click; the one before
-    // that was a `title` attribute and showed nothing at all.
+    // What anybody reaching for an "i" expects.
     const { fixture, testid } = setup();
     const button = testid('info-stat-refused')!;
 

@@ -30,7 +30,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sqlalchemy import text
 
-import aira_gateway.app as app_module
+import aira_gateway.config as config_module
 from aira_common.observability import attribute_model_calls_to
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
@@ -59,8 +59,8 @@ def traced(instrumentation_restored: None) -> Iterator[tuple[FastAPI, InMemorySp
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-    original_configure = app_module.configure_observability
-    app_module.configure_observability = lambda **_kwargs: True  # type: ignore[assignment]
+    original_configure = config_module.configure_observability
+    config_module.configure_observability = lambda **_kwargs: True  # type: ignore[assignment]
     previous = trace._TRACER_PROVIDER
     trace._TRACER_PROVIDER = provider
     try:
@@ -77,7 +77,7 @@ def traced(instrumentation_restored: None) -> Iterator[tuple[FastAPI, InMemorySp
         # the way **in** — a test earlier in the session that leaves them on would otherwise make
         # `create_app` here a no-op and this exporter empty.
         trace._TRACER_PROVIDER = previous
-        app_module.configure_observability = original_configure  # type: ignore[assignment]
+        config_module.configure_observability = original_configure  # type: ignore[assignment]
 
 
 def _client_spans(exporter: InMemorySpanExporter) -> list[Any]:

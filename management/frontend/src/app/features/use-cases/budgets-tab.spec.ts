@@ -263,11 +263,8 @@ describe('BudgetsTab', () => {
   });
 
   it('shows no figure for a per-person budget it cannot attribute to the reader', () => {
-    /** One configured row is N counters, so the gateway answers with the reader's own figure — and
-     *  with nothing at all for a reader the row does not bind. Drawn as an empty bar that would
-     *  read as a full, untouched allowance: a confident claim about the wrong thing, which is
-     *  `FRD-603`'s rule (unknown is never rendered as zero) in the one place where zero is also a
-     *  plausible real answer. */
+    // One row is a counter per head, and the gateway answers nothing for a reader it does not bind.
+    // An empty bar would claim an untouched allowance; unknown is never rendered as zero (`FRD-603`).
     const usage: Record<number, BudgetUsage> = {
       1: {
         id: 1,
@@ -323,9 +320,7 @@ describe('BudgetsTab', () => {
   });
 
   it('names the actual Keycloak group, not a rendered signal', () => {
-    // `slug` is an input signal here, so `{{ slug }}` renders the *function* — the panel would
-    // then tell an administrator to add someone to a group whose name is a minified closure.
-    // Every unit test passed through that; only the browser showed it.
+    // `slug` is an input signal, so `{{ slug }}` would render the function, not the group name.
     const harness = setup({
       budgets: [{ id: 1, scope: 'use_case', period: 'month', limit_tokens: 10 }],
       usageUnavailable: true,
@@ -337,12 +332,10 @@ describe('BudgetsTab', () => {
   });
 
   it('distinguishes a gateway that refused from one that could not be reached', () => {
-    // Two different problems with two different remedies: join the Keycloak group, or find out
-    // why the gateway is down. One message for both would send people the wrong way.
+    // Two problems, two remedies: join the Keycloak group, or find out why the gateway is down.
     const budgets: Budget[] = [{ id: 1, scope: 'use_case', period: 'month', limit_tokens: 10 }];
     const refused = setup({ budgets, usageUnavailable: true, usageRefused: true });
-    // Naming the Keycloak group is the whole remedy — and saying it *is not* the member list on
-    // this page, because a reader looking at their own name there reads "not a member" as a bug.
+    // The remedy names the Keycloak group, which is not the member list on this page.
     expect(refused.text()).toContain('/use-cases/demo-uc');
     expect(refused.text()).toContain('not');
     expect(refused.text()).toContain('member list on this page');
@@ -469,10 +462,8 @@ describe('BudgetsTab — a reader', () => {
 
 describe('BudgetsTab — a budget per person, and a window to make one in', () => {
   it('offers a limit that applies to everybody separately, without naming anybody', () => {
-    /** The one an administrator wants far more often than either of the others: a fair share per
-     *  head, without a list of heads to keep up to date, and it keeps applying to people who join
-     *  later. Not a variant of "the whole use case" — that is a **shared pot**, where the first
-     *  caller to arrive can spend all of it. */
+    // A fair share per head, with no list of heads to maintain — unlike the shared pot of "the whole
+    // use case", where the first caller can spend all of it.
     const harness = setup();
     harness.component.showForm.set(true);
     harness.fixture.detectChanges();
@@ -490,16 +481,8 @@ describe('BudgetsTab — a budget per person, and a window to make one in', () =
   });
 
   it('says which currency a spend limit is in, and takes it from the installation', () => {
-    /**
-     * Reported: *"Spend Limit ist nicht klar in welcher Währung das ist"*, and answered with the
-     * literal `USD` — on the argument that every provider prices in dollars, which is a claim
-     * about vendors rather than about an installation. Meanwhile `AIRA_CURRENCY` labelled the same
-     * numbers in every CSV export and defaults to `EUR`.
-     *
-     * Asserted with a currency that is **neither** of those, because a test on `USD` would have
-     * passed against the hard-coded string it replaced and a test on `EUR` would pass against a
-     * default.
-     */
+    // The installation's `AIRA_CURRENCY`. Asserted with neither `USD` nor the `EUR` default, so
+    // neither a hard-coded label nor a default can pass.
     const harness = setup({ currency: 'CHF' });
     harness.component.showForm.set(true);
     harness.fixture.detectChanges();
@@ -534,25 +517,9 @@ describe('BudgetsTab — a budget per person, and a window to make one in', () =
   });
 });
 
-/**
- * The fact a per-head figure means something different depending on how people reach the gateway.
- *
- * Measured on the live stack (a limit of one per head): a person's API keys share **one** allowance
- * — a key's subject is its owner's name, so every key they own counts to the same place — while the
- * same person signed in through Keycloak gets a *separate* one. The two credentials answer "who is
- * this" in different alphabets, and nothing reconciles them since the scope that named a person by
- * hand was removed.
- *
- * A warning on the screen rather than a note in a document, because the number somebody types is
- * wrong by a factor of two for anybody running an agent with a key while also working in a browser
- * — and they have no way to know that from the form.
- */
+/** How a per-head figure is counted (`ADR-0019`), stated where the reader sizes a limit. */
 describe('BudgetsTab — the per-head warning', () => {
-  /**
-   * Reported: *"where do I find these notes? there is nothing in budgets or rate limits"* — and
-   * that was true. The warning lived in the creation window, so anybody **reading** the
-   * configuration never met it. A warning nobody meets is a warning that was not given.
-   */
+  // Also for somebody reading the configuration, not only in the creation window.
   it('shows the warning on the tab wherever such a row already exists', () => {
     const empty = setup();
     expect(empty.fixture.nativeElement.querySelector('[data-testid="budget-two-pots"]')).toBeNull();
@@ -566,12 +533,7 @@ describe('BudgetsTab — the per-head warning', () => {
     ).not.toBeNull();
   });
 
-  /**
-   * The qualifier, and it matters as much as the warning: a use-case-wide budget or limit binds
-   * **both** credentials — measured with a cap of four requests exhausted, after which the key and
-   * the bearer token were each refused. A reader told only the first half concludes the governance
-   * is broken by a factor of two.
-   */
+  // A use-case-wide budget or limit binds every credential together.
   it('says that a use-case-wide figure still bounds both allowances', () => {
     const harness = setup({
       budgets: [{ id: 1, scope: 'each_member', period: 'day', limit_requests: 10 }],
@@ -596,8 +558,7 @@ describe('BudgetsTab — the per-head warning', () => {
 
     const warning = harness.fixture.nativeElement.querySelector('[data-testid="budget-two-pots"]');
     expect(warning).not.toBeNull();
-    // It said "counted per credential" until `ADR-0019` keyed the counter on the person. A
-    // note that is *false* is worse than none — somebody sizes a limit around it.
+    // `ADR-0019` keys the counter on the person; a false note is worse than none.
     expect(warning?.textContent).toContain('Counted per person');
     expect(warning?.textContent).toContain('Keycloak');
     expect(warning?.textContent).not.toContain('two separate');
@@ -615,10 +576,7 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
   };
 
   it('offers a switch for a flag the card never even showed', () => {
-    /** `enabled` has been on the model, on the wire and **obeyed by the gateway** since budgets
-     *  existed — it selects only enabled ones — and this card neither displayed it nor could
-     *  change it. A use case could be spending against a budget the console showed and the data
-     *  plane ignored. */
+    // The gateway obeys only enabled budgets, so the card must show and set the flag.
     const page = setup({ budgets: [BUDGET] });
 
     expect(page.testid('toggle-budget-3')).not.toBeNull();

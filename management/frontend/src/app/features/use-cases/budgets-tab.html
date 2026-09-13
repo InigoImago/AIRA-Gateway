@@ -148,10 +148,7 @@
   @if (usageUnavailable() && budgets().length) {
     <p class="callout callout--warning" style="margin-top: 1rem">
       @if (usageRefused()) {
-        <!--
-          Two different membership lists, and saying only "you are not a member" while the reader
-          is looking at their own name in the Members tab reads as a broken screen.
-        -->
+        <!-- Two membership lists: the gateway's is the Keycloak group, not the Members tab. -->
         The limits below are in force; what has been consumed is not shown. Consumption comes from
         the gateway, which takes membership from the Keycloak group
         <code>/use-cases/{{ slug() }}</code> — <strong>not</strong> from the member list on this
@@ -163,9 +160,7 @@
     </p>
   }
 
-  <!-- Where somebody *reading* the configuration meets it, rather than only somebody creating
-       one. The report was that there was nothing to find on either tab — which was true: the
-       warning lived in the window. -->
+  <!-- Also shown to somebody reading the configuration, not only to somebody creating it. -->
   @if (hasPerHead()) {
     <ng-container [ngTemplateOutlet]="twoPots" />
   }
@@ -176,12 +171,10 @@
         <div class="spread">
           <div class="row">
             <strong>{{ labelFor(budget) }}</strong>
-            <!-- Inert until that name turns up; said as what the console knows (`FRD-209`). -->
             <span class="badge badge--muted">{{ budget.period }}</span>
           </div>
           <div class="row">
-            <!-- The gateway skips a budget whose `enabled` is false, and this card never said so
-                 and could not change it — a limit could be off while the page showed a limit. -->
+            <!-- The gateway skips a budget whose `enabled` is false, so the card shows and sets it. -->
             @if (canManage()) {
               <button
                 type="button"
@@ -305,15 +298,8 @@
         }
 
         <!--
-          **What this scope consumed, whether or not the budget limits it** (`FRD-606` FR-1).
-          Reported from the console: *"I am missing a display of how much money was used up — at
-          the moment it is only the requests."* A budget that limits requests showed `0 / 500` and
-          nothing else, while the same period's tokens and money were in the very object rendering
-          the bar. `FRD-603` fixed this exact shape one level up: consumption used to be visible
-          only as a fraction of a limit, so whatever had no limit had no figure.
-
-          No bar, because there is no denominator — and inventing one would turn "what this cost"
-          into "how close to a limit nobody set".
+          What this scope consumed that the budget does not limit (`FRD-606` FR-1). No bar: there
+          is no denominator, and inventing one would mean "how close to a limit nobody set".
         -->
         @if (measured(budget) && alsoUsed(budget).length) {
           <p class="muted" style="margin: 0.6rem 0 0; font-size: 0.82rem">
@@ -331,29 +317,11 @@
 </div>
 
 <!--
-  Measured on the live stack (2026-08-14): a person's API keys share one allowance — a key's subject
-  is its owner's name — while the same person over Keycloak gets a separate one, because the two
-  credentials answer "who is this" in different alphabets and nothing reconciles them since the
-  scope that named a person by hand was removed. Also measured, and the reason the second sentence
-  is here: a use-case-wide figure binds **both**, so the doubling is of the per-head allowance and
-  not of what the use case can spend.
-
-  **Stated, not warned.** It was written as a warning and read as one — "too strong, make it
-  informative". Nothing here is broken; a reader simply has to know how the figure is counted, and
-  a callout that sounds like an alarm about a working system is the wrong kind of accurate.
-
-  Rendered from one definition in two places: in the window while the scope is being chosen, and on
-  the tab wherever such a row exists — the report that produced the second was "where do I find
-  these notes?", which a warning living only in a creation window earns.
+  How a per-person budget is counted (`ADR-0019`: an API key is its owner, so keys and sign-ins share
+  one allowance). Stated, not warned — nothing is broken. One definition, rendered in the window
+  while the scope is chosen and on the tab wherever such a row exists.
 -->
 <ng-template #twoPots>
-  <!--
-    **It used to say the opposite**, and it was true: an API key and a Keycloak sign-in were two
-    separate budgets for the same person, because the two credentials answer "who is this" in
-    different alphabets and the counter was keyed on that answer. `ADR-0019` made the key the
-    person, so the warning became false — and a warning that is false is worse than none, because
-    somebody sizes a limit around it.
-  -->
   <p class="callout" data-testid="budget-two-pots" role="status">
     <strong>Counted per person.</strong> One budget per member, however they call: an API key and a
     Keycloak sign-in by the same person share it, and so do all of their keys. A budget for the

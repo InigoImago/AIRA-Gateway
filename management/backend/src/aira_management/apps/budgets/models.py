@@ -22,30 +22,16 @@ from aira_management.apps.usecases.models import UseCase
 
 class Budget(models.Model):
     USE_CASE = "use_case"
-    #: **Each member, individually** — one row, one counter per person (2026-08-11).
-    #:
-    #: The answer to "everybody, but separately" — a fair share per head without listing the
-    #: heads, and it keeps applying to people who join afterwards.
-    #:
-    #: Not a variant of `USE_CASE`: that one is a **shared pot**, where the first caller to arrive
-    #: can spend all of it. Two different governance decisions, and neither substitutes for the
-    #: other.
+    #: **Each member, individually** — one row, one counter per person: a fair share per head that
+    #: keeps applying to people who join later. `USE_CASE` is a **shared pot** instead; neither
+    #: substitutes for the other.
     EACH_MEMBER = "each_member"
-    # A ``member`` scope naming one person **was removed on the owner's decision (2026-08-14)**:
-    # singling somebody out is not a governance decision this product wants to make easy. What is
-    # left says everything an administrator needs — a shared pot, or the same allowance for
-    # everybody — and neither substitutes for the other. Existing rows are deleted by migration
-    # rather than left in place: a stored scope that no longer resolves is a rule enforced by
-    # nothing and visible in nothing. (A plain comment, not a `#:` one: it documents a scope that
-    # no longer exists, and a doc-comment attaches to whatever name follows it.)
+    # There is no scope naming one person (owner's decision): singling somebody out is not a
+    # governance decision this product makes easy.
 
-    #: **The installation's own spend** (`FRD-610`). The residual bucket for what belongs to no use
-    #: case: the console's model checks, break-glass keys, demo traffic. Measured on a running
-    #: installation, 59 audit rows carried no use case and no allowance could ever see them.
-    #:
-    #: Not a global cap. A use case's traffic keeps booking against its own budgets; this takes
-    #: what the others cannot, which is what turns *"nothing spends outside a bucket"* into a
-    #: sentence with a subject for **every** request rather than for most of them.
+    #: **The installation's own spend** (`FRD-610`): the residual bucket for what belongs to no use
+    #: case — the console's model checks, break-glass keys, demo traffic. Not a global cap: a use
+    #: case's traffic keeps booking against its own budgets.
     INSTALLATION = "installation"
     SCOPE_CHOICES = [
         (USE_CASE, "Use case"),
@@ -86,19 +72,15 @@ class Budget(models.Model):
             models.UniqueConstraint(
                 fields=["use_case", "scope", "subject", "period"], name="uq_budget"
             ),
-            # **A NULL is not equal to itself in SQL**, so the constraint above stops policing the
-            # moment `use_case` may be null: two installation budgets for the same period would
-            # both be accepted, and the gateway would enforce whichever it read first. A second,
-            # partial constraint covers exactly the rows the first cannot see.
+            # **A NULL is not equal to itself in SQL**, so the constraint above cannot see
+            # installation budgets; this partial one covers exactly those rows.
             models.UniqueConstraint(
                 fields=["scope", "period"],
                 condition=models.Q(use_case__isnull=True),
                 name="uq_installation_budget",
             ),
-            # A scope and an owner that disagree, refused where they are stored rather than only
-            # where they are typed: `clean()` runs for the API and not for a fixture, a shell, or a
-            # migration, and a row whose scope says *installation* while naming a use case is a
-            # budget the gateway would match against traffic nobody meant.
+            # Scope and owner must agree, enforced where the row is stored: `clean()` does not run
+            # for a fixture, a shell or a migration.
             models.CheckConstraint(
                 condition=(
                     models.Q(scope="installation", use_case__isnull=True)

@@ -1,18 +1,12 @@
 """Validating an embedding request against the model that will serve it (FRD-113).
 
-Three caller-visible options — batch, task type, dimensionality — and each is refused rather than
-approximated when the model does not offer it, for the same reason throughout: every one of them
-fails *silently* if got wrong.
+Three caller-visible options — batch, task type, dimensionality — each refused rather than
+approximated when the model does not offer it, because each fails *silently* if got wrong: the
+wrong task type retrieves measurably worse, an unsupported batch split into single calls bypasses
+the rate limit (§5.3), and the wrong dimensionality does not fit the consumer's index.
 
-- The wrong **task type** produces vectors that work, sit in the right space, and retrieve
-  measurably worse. Nothing about the response shows it; the symptom is a search that is subtly
-  bad months later.
-- An unsupported **batch** embedded one text at a time would cost N requests of quota against a
-  limit of one — the control bypass §5.3 is about, arriving through the back door of politeness.
-- The wrong **dimensionality** does not fit the index the consumer already built.
-
-Metering lives with the caller (``units`` on the pre-dispatch gate); what is here is the decision
-about whether the request is answerable at all.
+Metering lives with the caller (``units`` on the pre-dispatch gate); this module only decides
+whether the request is answerable at all.
 """
 
 from __future__ import annotations
@@ -58,11 +52,10 @@ class EmbeddingRejected(Exception):
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingBounds:
-    """FR-5, and the two figures have to be chosen together with the rate limits.
+    """FR-5: chosen together with the rate limits.
 
-    A batch bound larger than any configured bucket makes large batches fail permanently — the
-    request is admissible here and refused two lines later by a limit it can never satisfy. So the
-    default is deliberately modest, and the refusal names which of the two said no.
+    A batch bound larger than any configured bucket makes large batches fail permanently, so the
+    default is modest and the refusal names which of the two said no.
     """
 
     max_batch: int = 256
@@ -78,19 +71,15 @@ def validate(
 ) -> CanonicalEmbeddingRequest:
     """Return the request with defaults applied, or raise :class:`EmbeddingRejected`.
 
-    ``default_task_type`` is a *surface's* compatibility default — the KIRA surface passes the
-    predecessor's ``RETRIEVAL_QUERY``, the Gemini surface passes nothing. It is applied only where
-    the model declares it, which is the difference between a default and a request: a caller who
-    named a type we cannot verify is refused, a caller who named nothing is served exactly as
-    before. Refusing the *implicit* one would break every existing embedding call against a model
-    nobody has declared task types for, which is most of them.
+    ``default_task_type`` is a *surface's* compatibility default (KIRA passes ``RETRIEVAL_QUERY``,
+    Gemini nothing), applied only where the model declares it: a named type we cannot verify is
+    refused, an implicit one is simply not sent.
     """
     bounds = bounds or EmbeddingBounds()
 
     if not declaration.can(Capability.EMBED):
-        # Refused here, before dispatch, rather than by an adapter raising deep in the stack:
-        # Anthropic models have no embedding endpoint at all, and with cross-vendor routing a
-        # chain can send an embedding to one of them (`FRD-113` FR-6a).
+        # Refused before dispatch: Anthropic models have no embedding endpoint, and a cross-vendor
+        # chain can send an embedding to one (`FRD-113` FR-6a).
         raise EmbeddingRejected(
             NO_EMBEDDING_CAPABILITIES,
             f"Model '{declaration.name}' does not support embedding.",
@@ -98,8 +87,7 @@ def validate(
 
     texts = request.texts
     if not texts or any(not text.strip() for text in texts):
-        # All three forms the predecessor refuses — an empty string, an empty list, and a list
-        # containing an empty string. It prevents a class of accidental no-op billing.
+        # An empty string, an empty list, or a list containing one — accidental no-op billing.
         raise EmbeddingRejected(
             EMPTY_EMBEDDING_INPUT, "Embedding input must be a non-empty text, or a list of them."
         )
@@ -133,9 +121,8 @@ def _task_type(
 ) -> str | None:
     declared = declaration.embedding_task_types
     if requested is None:
-        # The surface's default, and **only where the model declares it**. Sending a task type a
-        # model has not declared would be guessing on the caller's behalf; sending none is what
-        # every embedding AIRA serves today already does, so nobody's existing vectors move.
+        # The surface's default, **only where the model declares it** — never a guess on the
+        # caller's behalf, so nobody's existing vectors move.
         return default if default is not None and default in declared else None
 
     normalised = requested.strip().upper()
@@ -145,9 +132,7 @@ def _task_type(
             f"'{requested}' is not an embedding task type. Known: {sorted(TASK_TYPES)}.",
         )
     if not declared:
-        # "Unknown is not permission": a model nobody has declared task types for is served with
-        # the default, and an explicit one is refused naming the catalog rather than sent upstream
-        # to fail — or worse, accepted and quietly ignored.
+        # Unknown is not permission: refused naming the catalog, not sent upstream to be ignored.
         raise EmbeddingRejected(
             INVALID_EMBEDDING_TASK_TYPE,
             f"The model catalog declares no embedding task types for '{declaration.name}', so "
@@ -184,8 +169,7 @@ def _dimensions(requested: int | None, declaration: ModelDeclaration) -> int | N
 def estimated_tokens(request: CanonicalEmbeddingRequest) -> int:
     """What the batch is expected to cost in input tokens.
 
-    Unlike generation, this is knowable up front — the input is the whole request. Four characters
-    per token is the usual coarse approximation and it is wrong in the safe direction for short
-    texts, which is what a reservation wants.
+    Knowable up front — the input is the whole request. Four characters per token errs in the safe
+    direction for short texts, which is what a reservation wants.
     """
     return max(1, sum(len(text) for text in request.texts) // 4)

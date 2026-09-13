@@ -1,28 +1,14 @@
-"""Where secrets come from (FRD-116).
+"""Where secrets come from: HashiCorp Vault, read once at start-up (`FRD-116`).
 
-`CLAUDE.md` §2 has said "secrets only in HashiCorp Vault" since Phase 0, and Vault has been in the
-Compose stack for as long — with **no code reading from it**. Every credential this system holds
-has been an environment variable, which is the state the policy exists to prevent.
+One loader for both planes, so "where do secrets come from" cannot diverge between them.
 
-One loader, used by both planes, for the reason `aira_common.roles` is shared: two implementations
-of "where do secrets come from" diverge, and the divergence is discovered in whichever plane was
-not under test.
-
-Three rules shape everything here.
-
-**Fail closed.** The tempting behaviour when Vault is unreachable is to fall back to the
-environment and carry on. That turns a broken secret store into a *silent downgrade* — and in that
-scenario the environment usually holds a stale or development value, so the service starts, looks
-healthy, and is wrong. `ADR-0007` already established the principle for `SECRET_KEY`; this extends
-it.
-
-**Never a request-path dependency.** Secrets are read once, at startup. Vault going down an hour
-later must not affect a running gateway, which is also why there is no live re-read (§5.4: rotation
-is a restart, recorded as a decision so its absence is not later read as an oversight).
-
-**Values never surface.** Not in logs, spans, errors, `/readyz`, or a traceback. What is logged is
-the *names* resolved and where each came from — enough to answer "did it pick up the new one?"
-without ever answering "what is it?".
+- **Fail closed.** A configured Vault that cannot be reached or read is a start-up failure, never a
+  fallback to the environment — that would be a silent downgrade to stale or development values
+  (`ADR-0007`).
+- **Never a request-path dependency.** Secrets are read once; Vault going down later does not
+  affect a running service, and rotation is a restart (§5.4).
+- **Values never surface** — not in logs, spans, errors, `/readyz` or a traceback. Only the *names*
+  resolved, and where each came from, are reported.
 """
 
 from __future__ import annotations
@@ -43,18 +29,17 @@ from aira_common.integration_debug import (
 )
 from aira_common.logging import configure_logging, get_logger
 
-_log = get_logger("aira_common.secrets")
-
-#: Where a secret-id may come from, in the order it is looked for. The awkward part of AppRole is
-#: that the secret-id is *itself* a secret, so it has to arrive by a path Vault did not provide.
-#: The order reflects how deployments actually work: an environment variable (CI, simple
-#: deployments), a mounted file (a Kubernetes projected volume puts it on a tmpfs rather than in a
-#: manifest), and a token for local development.
+#: Where an AppRole secret-id may come from, in lookup order: an environment variable (CI, simple
+#: deployments), a mounted file (a Kubernetes projected volume keeps it out of the manifest), and a
+#: token for local development. The secret-id is itself a secret, so it must arrive by a path Vault
+#: did not provide.
 SECRET_ID_ENV = "VAULT_SECRET_ID"
 SECRET_ID_FILE_ENV = "VAULT_SECRET_ID_FILE"
 DEV_TOKEN_ENV = "VAULT_TOKEN"
 
 DEFAULT_TIMEOUT = 10.0
+
+_log = get_logger("aira_common.secrets")
 
 
 class VaultUnavailable(Exception):
@@ -64,9 +49,8 @@ class VaultUnavailable(Exception):
 class SecretMissing(Exception):
     """A key the deployment requires is not at the configured path.
 
-    Distinct from :class:`VaultUnavailable` on purpose: "Vault is down" and "nobody has written
-    that key yet" call for different actions by different people, and one message covering both
-    sends whoever reads it to the wrong one.
+    Distinct from :class:`VaultUnavailable`: "Vault is down" and "nobody has written that key yet"
+    call for different actions by different people.
     """
 
 
@@ -89,10 +73,9 @@ class VaultConfig:
     def from_env(cls, env: dict[str, str] | None = None) -> VaultConfig:
         """Read the Vault settings themselves from the environment.
 
-        These are *not* secrets — an address and a role id identify, they do not authorise — so
-        they come from the environment like any other configuration. The one value that is a
-        secret, the secret-id, is handled by :func:`_secret_id` and never stored on this object,
-        so it cannot reach a repr, a log line, or a pickled settings object.
+        They identify rather than authorise, so they are ordinary configuration. The one secret,
+        the secret-id, is read by :func:`_secret_id` and never stored here, so it cannot reach a
+        repr, a log line or a pickled settings object.
         """
         source = env if env is not None else dict(os.environ)
         return cls(
@@ -101,12 +84,23 @@ class VaultConfig:
             path=source.get("VAULT_PATH", "aira").strip() or "aira",
             role_id=source.get("VAULT_ROLE_ID", "").strip(),
             namespace=source.get("VAULT_NAMESPACE", "").strip(),
-            # An **empty** value means unset, not "parse this". A compose file writing
-            # `${VAULT_TIMEOUT:-}` produces an empty string, and `float("")` raises — which is how
-            # a boot failed the day these variables were first passed through. The same trap
-            # `BaseAiraSettings._empty_means_unset` was written for, one module over.
+            # Empty means unset: compose's `${VAULT_TIMEOUT:-}` yields "" and `float("")` raises.
             timeout=float(source.get("VAULT_TIMEOUT", "").strip() or DEFAULT_TIMEOUT),
         )
+
+
+class VaultSourceCache:
+    """The names loaded at startup, so `/readyz` never re-reads Vault to answer a health check."""
+
+    _keys: tuple[str, ...] = ()
+
+    @classmethod
+    def remember(cls, secrets: dict[str, str]) -> None:
+        cls._keys = tuple(sorted(secrets))
+
+    @classmethod
+    def keys(cls) -> tuple[str, ...]:
+        return cls._keys
 
 
 def _dev_token() -> str:
@@ -114,12 +108,7 @@ def _dev_token() -> str:
 
 
 def _secret_id() -> tuple[str, str]:
-    """The AppRole secret-id and **the name of where it came from**.
-
-    The name is returned so the caller can log which path was taken. "Which of the three did it
-    use" is exactly the question asked when a deployment picks up an unexpected credential, and it
-    is answerable without ever logging the value.
-    """
+    """The AppRole secret-id and **the name of where it came from**, which is logged instead."""
     direct = os.environ.get(SECRET_ID_ENV, "").strip()
     if direct:
         return direct, SECRET_ID_ENV
@@ -129,9 +118,8 @@ def _secret_id() -> tuple[str, str]:
         try:
             return Path(path).read_text(encoding="utf-8").strip(), SECRET_ID_FILE_ENV
         except OSError as exc:
-            # Named, not swallowed: a projected volume that failed to mount is a deployment
-            # problem, and falling through to the next source would start the service with the
-            # wrong credential rather than with none.
+            # Named, not swallowed: falling through to the next source would start the service
+            # with the wrong credential rather than with none.
             raise VaultUnavailable(
                 f"{SECRET_ID_FILE_ENV} points at '{path}', which cannot be read "
                 f"({type(exc).__name__})."
@@ -145,19 +133,14 @@ class VaultClient:
     def __init__(self, config: VaultConfig, client: httpx.Client | None = None) -> None:
         self._config = config
         self._client = client or httpx.Client(timeout=config.timeout, verify=True)
-        #: Whether this object made the client and therefore owes it a `close()`. An injected one
-        #: belongs to the caller — the tests pass a `MockTransport` client and reuse it — and
-        #: closing somebody else's is a harder bug to find than leaking one's own.
+        #: Whether this object made the client and owes it a `close()`. An injected one belongs to
+        #: the caller.
         self._owns_client = client is None
 
     def close(self) -> None:
-        """Release the connection pool, if this object opened one.
+        """Release the connection pool, if this object opened one. Idempotent.
 
-        Secrets are read **once, at startup** (§"never a request-path dependency"), so the socket
-        this holds is used for two requests and then never again. Leaving it open is a small leak
-        and a lasting one: the pool outlives the only work it was created for, and in a process
-        that reads a second path it becomes one pool per read. Idempotent, because a `finally` that
-        can run twice is easier to get right than one that must not.
+        Secrets are read once, so an open pool would outlive the only work it was created for.
         """
         if self._owns_client:
             self._client.close()
@@ -169,11 +152,10 @@ class VaultClient:
         return headers
 
     def login(self) -> str:
-        """Exchange the AppRole credentials for a client token, or a dev token as-is.
+        """Exchange the AppRole credentials for a client token, or return a dev token as-is.
 
-        A development token is accepted **only** because `make up` runs Vault in dev mode with a
-        root token; it is the same escape hatch `ADR-0007` allows for `local` and it is logged, so
-        a deployment that reached production on one is visible rather than merely possible.
+        A dev token is accepted only because `make up` runs Vault in dev mode (the escape hatch
+        `ADR-0007` allows for `local`); it is logged, so a deployment running on one is visible.
         """
         token = _dev_token()
         if token and not self._config.role_id:
@@ -199,8 +181,8 @@ class VaultClient:
                     if self._config.namespace
                     else {},
                 )
-                # The **status**, never the body: a Vault error response echoes the request, and
-                # this request carries a secret-id.
+                # The status, never the body: a Vault error echoes the request, which carries the
+                # secret-id.
                 call.note(status=response.status_code)
                 if response.status_code != httpx.codes.OK:
                     call.failed(f"HTTP {response.status_code}")
@@ -210,7 +192,6 @@ class VaultClient:
             ) from exc
 
         if response.status_code != httpx.codes.OK:
-            # The body may echo the request. Only the status is reported.
             raise VaultUnavailable(
                 f"Vault refused the AppRole login with {response.status_code}. The secret-id came "
                 f"from {source}; check that it is current and that the role may read "
@@ -227,9 +208,8 @@ class VaultClient:
     def read(self, token: str) -> dict[str, str]:
         """Read the KV-v2 path and return its data, as strings.
 
-        Values are coerced to `str` because every consumer is a settings field parsed from text —
-        letting a JSON number through would make the same key behave differently depending on how
-        somebody happened to type it into Vault.
+        Coerced to `str` because every consumer is a settings field parsed from text; a JSON number
+        would otherwise behave differently from the same value typed as a string.
         """
         url = f"{self._config.address}/v1/{self._config.mount}/data/{self._config.path}"
         try:
@@ -265,32 +245,16 @@ class VaultClient:
 
 
 def _say_something_before_the_settings_exist() -> None:
-    """Configure logging and the `FRD-617` channel, here, because nothing else can have.
+    """Configure logging and the `FRD-617` channel, because nothing else can have yet.
 
-    **Vault is read while the settings object is being built.** `VaultSource` is a settings
-    *source*, so `load_secrets` runs inside `GatewaySettings()` — and every entry point calls
-    `configure_logging` and `configure_integration_debug` with the *finished* settings, a step
-    later. So the one system whose entire life is start-up was the one system neither could
-    describe.
-
-    Measured on the running stack rather than reasoned about: a gateway pointed at a dead Vault
-    port failed closed exactly as `FRD-116` says it must, and with `AIRA_DEBUG_INTEGRATIONS=all`
-    the channel said **nothing at all**, while `vault_dev_token_used` came out in structlog's
-    unconfigured console format instead of the JSON everything else in that container emits. Two
-    correct halves and no wire (`LESSONS.md` §1), in the feature written to find exactly that.
-
-    Only on the path where Vault is genuinely configured — after the `configured` check above — so
-    a laptop, the hermetic suite and every settings object built without a Vault are untouched.
-
-    The channel's setting is read from the **environment**, because settings are what is being
-    built. A value this build cannot parse is left off rather than raised on: the settings
-    validator refuses the process a moment later, with the better message, and a secret loader is
-    the wrong place to report a typo in a debug switch.
+    Vault is read while the settings object is being built (`VaultSource` is a settings source),
+    before any entry point has called `configure_logging` or `configure_integration_debug`. The
+    channel's setting is therefore read from the environment, and a value that does not parse is
+    left off here: the settings validator refuses the process a moment later, with a better
+    message. Runs only when Vault is configured.
     """
-    # **Only if nobody has**, which is the whole intent: defaults for a process that has not got
-    # to its own `configure_logging` yet, and never an override of one that has. Without the guard
-    # this reconfigures structlog underneath whatever is already running — `structlog.testing.
-    # capture_logs` in the suite, and in principle any caller that reads secrets after start-up.
+    # Only if nobody has: never reconfigure a structlog that is already running (including
+    # `structlog.testing.capture_logs` in the suite).
     if not structlog.is_configured():
         configure_logging()
     with contextlib.suppress(UnknownIntegration):
@@ -302,10 +266,7 @@ def load_secrets(
 ) -> dict[str, str]:
     """Every secret at the configured path, or an empty mapping when Vault is not configured.
 
-    **The empty mapping is only ever returned for "no Vault configured"** (FR-7 — a laptop and the
-    hermetic suite behave exactly as before). Every other outcome raises: a configured Vault that
-    cannot be reached or read is a boot failure, because the alternative is a service that runs on
-    the environment's stale values and looks healthy doing it.
+    The empty mapping means only "no Vault configured" (FR-7). Every other outcome raises.
     """
     config = config or VaultConfig.from_env()
     if not config.configured:
@@ -316,12 +277,9 @@ def load_secrets(
     try:
         secrets = vault.read(vault.login())
     finally:
-        # In a `finally`, so a failed login or read releases the pool as well. Every path out of
-        # here except "no Vault configured" is a startup failure, and a process on its way down
-        # holding an open connection to a secret store is the one moment it should not.
+        # In a `finally`, so a failed login or read releases the pool as well.
         vault.close()
-    # Names only. Answering "did it pick up the new key?" must never require answering "what is
-    # it?" — and a log line is the single most likely place for a secret to escape.
+    # Names only: a log line is the likeliest place for a secret to escape.
     VaultSourceCache.remember(secrets)
     _log.info(
         "vault_secrets_loaded",
@@ -338,14 +296,9 @@ def resolve(
 ) -> dict[str, str]:
     """Merge Vault over the environment, in the prefix the settings classes expect (FR-3).
 
-    Vault wins where a key exists in both, and the environment fills the rest. There is **no
-    silent third source**: a key in neither is absent, and whatever requires it says so at startup
-    rather than proceeding with an empty string — which is the failure this whole module exists to
-    prevent, since an empty credential authenticates as nobody and reads as a permissions problem.
-
-    Keys are matched case-insensitively and with or without the prefix, because a human writing
-    them into Vault will use whichever form they read in the documentation, and a secret that is
-    present but spelled differently is indistinguishable from one that is missing.
+    Vault wins where a key is in both; there is no third source, so a key in neither is absent and
+    whatever requires it says so at start-up. Keys match case-insensitively and with or without the
+    prefix, because a key that is present but spelled differently looks exactly like a missing one.
     """
     source = dict(env if env is not None else os.environ)
     merged = dict(source)
@@ -358,13 +311,8 @@ def resolve(
 def secrets_state(config: VaultConfig | None = None) -> dict[str, Any]:
     """Where this process's secrets came from — **names only, never values**.
 
-    Exists because its absence cost three days. `FRD-116` shipped Vault reading, the compose stack
-    never passed `VAULT_ADDR`, and every credential quietly came from the environment while the
-    feature was recorded as done. Nothing reported the difference, so there was nothing to notice:
-    a configured secret store and an unconfigured one looked identical from outside.
-
-    `source` is the answer to "is Vault actually being used?", which should never have required
-    reading a compose file to find out.
+    `source` answers "is Vault actually being used?", which a configured and an unconfigured
+    secret store otherwise do not distinguish from outside.
     """
     config = config or VaultConfig.from_env()
     if not config.configured:
@@ -374,24 +322,8 @@ def secrets_state(config: VaultConfig | None = None) -> dict[str, Any]:
         "vault_configured": True,
         "address": config.address,
         "path": f"{config.mount}/{config.path}",
-        # Which keys Vault supplied, so "did it pick up the new one?" is answerable without ever
-        # answering "what is it?".
+        # Which keys Vault supplied: "did it pick up the new one?" without "what is it?".
         "keys": sorted(VaultSourceCache.keys()),
-        # A root token standing in for an AppRole is a local convenience and a production
-        # accident; saying so here means it cannot pass unnoticed.
+        # A root token standing in for an AppRole is a local convenience and a production accident.
         "dev_token": bool(_dev_token()),
     }
-
-
-class VaultSourceCache:
-    """The names loaded at startup, so `/readyz` never re-reads Vault to answer a health check."""
-
-    _keys: tuple[str, ...] = ()
-
-    @classmethod
-    def remember(cls, secrets: dict[str, str]) -> None:
-        cls._keys = tuple(sorted(secrets))
-
-    @classmethod
-    def keys(cls) -> tuple[str, ...]:
-        return cls._keys

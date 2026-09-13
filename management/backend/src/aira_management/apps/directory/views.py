@@ -1,18 +1,9 @@
 """Searching for whoever should get access (`FRD-209` §3).
 
-One endpoint returning **groups and users together**, because the question a person is asking is
-"who should get this", not "am I about to name a group or a person". The kind is in the answer.
-
-Two properties this is careful about:
-
-**It never writes.** AIRA does not create groups, does not put people in them, does not delete
-them. The identity provider is the source of truth about who works where.
-
-**It says where the answer came from.** Without an admin client configured the search still works,
-against what Management already knows — everybody who has signed in, and every group path already
-granted somewhere. That is enough to run the demo and to re-grant an existing group, and it cannot
-invent a group nobody has ever used. "No results" from a degraded directory and "no such group" are
-different answers, so the response carries `source` and the console shows which it got.
+One endpoint returning **groups and users together**, because the question is "who should get
+this"; the kind is in the answer. It **never writes** to the identity provider. Without an admin
+client it answers from what Management already knows — people who have signed in, group paths
+already granted — and the response's `source` says which answer the reader got.
 """
 
 from __future__ import annotations
@@ -35,14 +26,12 @@ from aira_management.rbac import IsGlobalAdminOrUseCaseAdministrator
 
 _log = get_logger("aira_management.directory")
 
+#: The shortest query answered; a picker that dumps the directory on focus is one nobody reads.
+MIN_QUERY_LENGTH = 2
+
 
 def _known_locally(query: str) -> list[DirectoryEntry]:
-    """What Management can answer on its own.
-
-    Deliberately limited to things somebody has already used: people who have signed in, and group
-    paths already granted on some use case. It can re-offer what exists and cannot invent what does
-    not — which is the honest shape of a degraded directory.
-    """
+    """What Management can answer on its own: it can re-offer what exists, not invent groups."""
     needle = query.strip()
     entries: list[DirectoryEntry] = []
 
@@ -87,17 +76,11 @@ class DirectorySearchView(APIView):
 
     def get(self, request: Request) -> Response:
         query = str(request.query_params.get("q", "")).strip()
-        # An empty query is answered with an empty list rather than with everybody: a picker that
-        # dumps the whole directory the moment it is focused is a picker nobody reads, and on a
-        # real realm it is thousands of rows.
-        if len(query) < 2:
+        if len(query) < MIN_QUERY_LENGTH:
             return Response({"results": [], "source": "none", "hint": "Type at least two letters."})
 
-        # A directory search reads other people's names and email addresses. Narrowing *who* may
-        # do it is not available — granting access is a use-case admin's job and they have to be
-        # able to find the person — so the answer is the one this project keeps arriving at: an
-        # action nobody can see is not governed. Walking the alphabet is still possible and is now
-        # a hundred log lines with one username on them.
+        # A search reads other people's names and addresses, and the people who grant access must
+        # be able to run it — so every search is logged instead.
         _log.info(
             "directory.search",
             actor=request.user.get_username(),
@@ -110,9 +93,7 @@ class DirectorySearchView(APIView):
                 entries = directory.search(query)
                 return Response({"results": [_as_dict(e) for e in entries], "source": "keycloak"})
             except DirectoryUnavailable:
-                # Falls back rather than failing: a console that cannot search is a console where
-                # nobody can grant access, and the local answer is a real subset rather than a
-                # guess. The reader is told which one they are looking at.
+                # Fall back to the local answer — a real subset — rather than fail.
                 pass
 
         return Response(

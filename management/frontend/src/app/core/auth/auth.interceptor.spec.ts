@@ -65,10 +65,8 @@ describe('authInterceptor', () => {
   });
 
   it('sends an expired session to the login instead of reporting invalid credentials', () => {
-    // A 401 on a first-party call means the session is over — the token expired while the tab sat
-    // open, or Keycloak was restarted and took the session with it. Reported as an error it read
-    // as "the backend is rejecting you", which in a console whose purpose is evidence makes
-    // somebody doubt the *figures* rather than the session.
+    // A 401 on a first-party call means the session is over. Reported as an error it would read as
+    // "the backend is rejecting you", which makes somebody doubt the figures rather than the session.
     const { reauthenticated, seen } = runFailing('/api/v1/use-cases/', 401);
 
     expect(reauthenticated).toBe(1);

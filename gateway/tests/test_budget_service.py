@@ -311,18 +311,18 @@ def test_the_period_boundary_is_utc_and_the_console_says_so() -> None:
     from datetime import UTC, datetime, timedelta, timezone
     from pathlib import Path
 
-    from aira_gateway.budgets.service import _period_key
+    from aira_gateway.budgets.keys import period_key
 
     # **Handed a moment in another zone**, not a UTC one. A test that passes `datetime.now(UTC)`
     # cannot tell a UTC key from a local one on a machine whose clock is UTC — which every CI
     # runner's is, so the first version of this passed while the conversion was removed. Berlin
     # summer time is +02:00, so 00:30 on the 20th there is 22:30 on the 19th here.
     berlin = timezone(timedelta(hours=2))
-    assert _period_key("day", datetime(2026, 8, 20, 0, 30, tzinfo=berlin)) == "2026-08-19"
+    assert period_key("day", datetime(2026, 8, 20, 0, 30, tzinfo=berlin)) == "2026-08-19"
     # And 00:30 in Berlin on 1 September is still August's budget.
-    assert _period_key("month", datetime(2026, 9, 1, 0, 30, tzinfo=berlin)) == "2026-08"
+    assert period_key("month", datetime(2026, 9, 1, 0, 30, tzinfo=berlin)) == "2026-08"
     # A UTC moment is unchanged by the conversion, which is the whole point of doing it here.
-    assert _period_key("day", datetime(2026, 8, 19, 22, 30, tzinfo=UTC)) == "2026-08-19"
+    assert period_key("day", datetime(2026, 8, 19, 22, 30, tzinfo=UTC)) == "2026-08-19"
 
     console = (
         Path(__file__).resolve().parents[2]

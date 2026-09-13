@@ -1,8 +1,7 @@
-"""KIRA's error vocabulary.
+"""KIRA's error envelope and vocabulary.
 
-A different envelope from Gemini's and a different set of codes. Both are kept faithfully, because
-a compatibility surface whose errors a client cannot match is not compatible — the whole point is
-that a consumer changes a base URL and nothing else.
+A different envelope and different codes from Gemini's, both kept faithfully: a migrating client
+changes a base URL and nothing else, so its error handling has to keep matching.
 """
 
 from __future__ import annotations
@@ -10,6 +9,39 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+
+# The contract's codes this surface emits. A code nothing raises is not declared here.
+NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
+INVALID_TOKEN = "INVALID_TOKEN"
+ADMIN_PERMISSION_REQUIRED = "ADMIN_PERMISSION_REQUIRED"
+STANDARD_USER_PERMISSION_REQUIRED = "STANDARD_USER_PERMISSION_REQUIRED"
+MISSING_QUERY_PARAM = "MISSING_QUERY_PARAM"
+INVALID_TIME_RANGE = "INVALID_TIME_RANGE"
+MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
+NO_CHAT_CAPABILITIES = "NO_CHAT_CAPABILITIES"
+NO_EMBEDDING_CAPABILITIES = "NO_EMBEDDING_CAPABILITIES"
+INVALID_MAX_TOKENS = "INVALID_MAX_TOKENS"
+MAX_TOKENS_EXCEEDS_CAP = "MAX_TOKENS_EXCEEDS_CAP"
+VALIDATION_ERROR = "VALIDATION_ERROR"
+EXTERNAL_KI_API_TOO_MANY_REQUEST = "EXTERNAL_KI_API_TOO_MANY_REQUEST"
+EXTERNAL_KI_API_ERROR = "EXTERNAL_KI_API_ERROR"
+INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
+
+#: Not a KIRA code: the contract has none for "this gateway does not do that yet", because the
+#: predecessor always did (`FRD-107` FR-2a).
+NOT_YET_SUPPORTED = "NOT_YET_SUPPORTED"
+
+#: A refusal raised *before* a KIRA route ran — by a dependency or middleware — in this surface's
+#: vocabulary. Only the statuses that can arrive that way; a route catches and renders its own.
+STATUS_CODES: dict[int, str] = {
+    401: NOT_AUTHENTICATED,
+    403: STANDARD_USER_PERMISSION_REQUIRED,
+    # The body ceiling, refused in ASGI before any route (`middleware.py`).
+    413: VALIDATION_ERROR,
+    # The bound on failed authentications (`ADR-0015`).
+    429: EXTERNAL_KI_API_TOO_MANY_REQUEST,
+}
 
 
 class KiraError(Exception):
@@ -37,84 +69,33 @@ def kira_error_response(
     return JSONResponse(status_code=status, content=body)
 
 
-# The codes from the compatibility contract that Stage A can produce. The ones belonging to
-# features that
-# do not exist yet (thinking bounds, embedding task types) arrive with those features rather than
-# being declared here as constants nothing raises.
-NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
-INVALID_TOKEN = "INVALID_TOKEN"
-ADMIN_PERMISSION_REQUIRED = "ADMIN_PERMISSION_REQUIRED"
-STANDARD_USER_PERMISSION_REQUIRED = "STANDARD_USER_PERMISSION_REQUIRED"
-# `INVALID_JSON_BODY` stood here until 2026-08-12. The predecessor declares it and never
-# raises it — malformed JSON reaches its FastAPI validation handler and answers `422
-# VALIDATION_ERROR` — so this surface now answers the same, and the constant had nothing
-# left to name. A code defined and emitted by nothing is the defect this file fixed on the
-# authentication side the same day; leaving a second one behind would be odd.
-MISSING_QUERY_PARAM = "MISSING_QUERY_PARAM"
-INVALID_TIME_RANGE = "INVALID_TIME_RANGE"
-MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
-NO_CHAT_CAPABILITIES = "NO_CHAT_CAPABILITIES"
-NO_EMBEDDING_CAPABILITIES = "NO_EMBEDDING_CAPABILITIES"
-INVALID_MAX_TOKENS = "INVALID_MAX_TOKENS"
-MAX_TOKENS_EXCEEDS_CAP = "MAX_TOKENS_EXCEEDS_CAP"
-VALIDATION_ERROR = "VALIDATION_ERROR"
-EXTERNAL_KI_API_TOO_MANY_REQUEST = "EXTERNAL_KI_API_TOO_MANY_REQUEST"
-EXTERNAL_KI_API_ERROR = "EXTERNAL_KI_API_ERROR"
-INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
-
-#: Stage A refuses what it cannot yet honour, in the predecessor's own vocabulary rather than in
-#: ours (`FRD-107` FR-2a). Not a KIRA code — the contract has none for "this gateway does not
-#: do that yet", because it always did. A new code is the honest answer to a new situation.
-NOT_YET_SUPPORTED = "NOT_YET_SUPPORTED"
-
-
-#: How a refusal raised **outside** a KIRA route body is named in this surface's vocabulary.
-#:
-#: The routes catch their own refusals and render them themselves; what reaches the application's
-#: exception handler is what a *dependency* raised before the route ran — in practice
-#: authentication, which raises a `GeminiHTTPError` because that is the shared refusal type.
-#:
-#: Found by sending a KIRA request with no credential on 2026-08-12: `401` in the **Gemini**
-#: envelope, `{"error": {"code": …, "status": "UNAUTHENTICATED"}}`, on the surface whose entire
-#: purpose is that a client migrates by changing a URL. `401` is among the most commonly handled
-#: statuses a client has, and `NOT_AUTHENTICATED` was already in this file — a code defined and
-#: emitted by nothing, while the real refusal went out in a foreign shape.
-#: Only the statuses that can actually arrive this way, and only codes this file already declares.
-#: A 404 is not here: an unroutable path is a `StarletteHTTPException` and already answers in this
-#: envelope, and every 404 a route raises is caught by the route.
-STATUS_CODES: dict[int, str] = {
-    401: NOT_AUTHENTICATED,
-    403: STANDARD_USER_PERMISSION_REQUIRED,
-    # The body ceiling refuses in pure ASGI, before any route (`middleware.py`). Named as a
-    # validation failure because that is what it is to the caller: the request was too large.
-    413: VALIDATION_ERROR,
-    # The bound on failed authentications (`ADR-0015`), which also answers before a route.
-    429: EXTERNAL_KI_API_TOO_MANY_REQUEST,
-}
-
-
 def code_for_status(status: int) -> str:
     """This surface's code for a status raised before any route saw the request.
 
-    Anything unmapped is `INTERNAL_SERVER_ERROR`, which is what an unexpected status *is* from a
-    caller's side: not something they can act on. Guessing a more specific code would tell them to
-    fix something that is not theirs.
+    Unmapped is `INTERNAL_SERVER_ERROR`: a more specific guess would tell the caller to fix
+    something that is not theirs.
     """
     return STATUS_CODES.get(status, INTERNAL_SERVER_ERROR)
 
 
 def code_for_unauthenticated(credential_presented: bool) -> str:
-    """`INVALID_TOKEN` when something was offered and rejected, `NOT_AUTHENTICATED` when nothing
-    was offered at all.
+    """`INVALID_TOKEN` for a credential offered and rejected, `NOT_AUTHENTICATED` for none at all.
 
-    The predecessor draws that line and this surface did not: both answered `NOT_AUTHENTICATED`,
-    so `INVALID_TOKEN` sat in this file as a **declared code nothing raised** — the same defect
-    `INVALID_JSON_BODY` was removed for, seen from the other side, and the one this module's own
-    docstring complains about two paragraphs up.
-
-    It is not cosmetic. The two mean different things to whoever is on call: *this client forgot
-    to send its key* is a deployment mistake, and *this client's key was rejected* is a rotation
-    that did not reach somebody, a revoked credential, or an attempt worth looking at. Collapsing
-    them puts a security signal and a configuration slip in one bucket.
+    They mean different things to whoever is on call: a client that forgot its key is a deployment
+    slip; a rejected key may be a missed rotation, a revoked credential, or an attempt worth a look.
     """
     return INVALID_TOKEN if credential_presented else NOT_AUTHENTICATED
+
+
+def validation_details(exc: ValidationError) -> list[dict[str, Any]]:
+    """The predecessor's ``details`` array: location and message, nothing else.
+
+    `errors()` can carry the raising exception in ``ctx``, which does not serialise (a custom
+    validator's refusal became a 500), and echoing ``input`` back can reflect a prompt or a
+    misplaced credential into a response. The comprehension copies two named fields; the flags are
+    belt and braces.
+    """
+    return [
+        {"loc": [str(part) for part in error.get("loc", ())], "msg": str(error.get("msg", ""))}
+        for error in exc.errors(include_url=False, include_context=False, include_input=False)
+    ]

@@ -1,7 +1,6 @@
 <div class="card" role="tabpanel">
   <div class="spread">
-    <!-- Says which requests, not merely "requests": on the standalone screen the page is
-         already called that, and two identical headings tell a reader nothing twice. -->
+    <!-- The standalone screen is already titled "Requests"; the heading says which ones. -->
     <h3 class="section-title" style="margin: 0">
       {{ slug() ? 'Requests' : 'Across all use cases' }}
     </h3>
@@ -15,8 +14,7 @@
         />
         Live
       </label>
-      <!-- Fixed width, and the busy state is a dot rather than a word of a different length: a
-           stamp that changes width moves everything after it once a tick. -->
+      <!-- Fixed width, busy shown as a dot: a stamp that changes width shifts the row every tick. -->
       <span class="muted live__stamp" data-testid="traces-stamp">
         <span class="live__dot" [class.is-busy]="live.refreshing()" aria-hidden="true"></span>
         updated {{ ago() }}
@@ -33,24 +31,12 @@
     <strong>Prompts and responses are not shown here</strong>, whatever the retention settings say.
   </p>
 
-  <!--
-    No error banner here: failures report through the page's single `PageFeedback`, which the parent
-    renders at the top. One banner per page — a panel that grows its own turns a page with six
-    panels into a page with six places to look.
-  -->
+  <!-- No error banner here: failures go to the page's single `PageFeedback`. -->
 
   <!--
-    A filter row, not a centred one. `form-row--spaced` centres its children, and a bare checkbox
-    beside a field with a label above its control ends up on a different line from the control it
-    is read as a pair with. This aligns on the bottom, where the controls are, and both items
-    carry a heading so the top line matches too.
-  -->
-  <!--
-    Order matters here, not only content. Six controls do not fit on one line, so the row wraps —
-    and where it wraps is the whole question: a checkbox and the selector it is read beside must
-    not end up 80px apart on different lines (`FRD-207`). The three checkboxes and the outcome
-    selector are one group and stay together; the two lookup fields are the second and wrap as a
-    pair. A seventh control goes in the second group, never between the first one's members.
+    A bottom-aligned filter row, so a checkbox lines up with the control it is read beside. The row
+    wraps, and where it wraps matters (`FRD-207`): the checkboxes and the outcome selector are one
+    group, the two lookup fields a second. A new control goes in the second group.
   -->
   <div class="filter-row" style="margin-top: 0.75rem">
     <label class="checkline">
@@ -115,11 +101,8 @@
       />
     </div>
     @if (mayInvestigate()) {
-      <!--
-        Which machine. The first question of an incident, and the last thing a use case's own
-        members need — the server answers `403` for anyone else, so offering the field to them
-        would be `FRD-206`'s defect: a control that refuses the moment it is used.
-      -->
+      <!-- The server answers 403 to anyone without an incident role, so only they see the field
+           (`FRD-206`). -->
       <div class="field field--narrow">
         <label for="trace-source-ip">
           Source address
@@ -146,14 +129,8 @@
       Loading requests…
     </p>
   } @else if (!inScope()) {
-    <!--
-      A different empty from "nothing has happened yet", and it must say which. The gateway reads
-      membership from the identity provider's groups, not from this console's members list, so a
-      use case created here can be perfectly busy and still show its own administrator nothing.
-      Naming the cause is the difference between "somebody has to add me to a group" and "the
-      recording is broken" — and a reader who concludes the second stops trusting every other
-      figure on the page.
-    -->
+    <!-- A different empty from "nothing happened yet": the gateway reads membership from the
+         identity provider's groups, not this console's member list, so the cause is named. -->
     <p class="empty" data-testid="not-in-scope">
       <strong>Your account is not a member of this use case in the identity provider</strong>, so
       the gateway shows you none of its requests. Membership for reading requests comes from the SSO
@@ -170,13 +147,8 @@
       <table class="table">
         <thead>
           <tr>
-            <!--
-              Four columns, and that is the whole design. The table carried eleven and scrolled
-              sideways; a reader cannot scan eleven, and the control that opened a row was off the
-              right-hand edge. What stays is what somebody scans a list *for* — when, from where,
-              what, and how it ended. Everything else is a detail *about* a request, and details
-              belong to the request you opened, not to the list you are still reading.
-            -->
+            <!-- Only what a list is scanned for — when, from where, what, how it ended. Every
+                 other detail belongs to the row that is opened. -->
             <th scope="col"><span class="sr-only">Open</span></th>
             <th scope="col">When</th>
             @if (mayInvestigate()) {
@@ -207,8 +179,7 @@
                   {{ openPayload() === row.id ? '▾' : '▸' }}
                 </button>
               </td>
-              <!-- Day first. This console is read in Europe, and `9/8/26` means two different days
-                   depending on who is looking at it. -->
+              <!-- Day first: `9/8/26` is ambiguous, and this console is read in Europe. -->
               <td class="nowrap">{{ row.created_at | date: 'dd.MM.yyyy HH:mm:ss' }}</td>
               @if (mayInvestigate()) {
                 <td class="nowrap">
@@ -217,19 +188,13 @@
               }
               <td>
                 {{ row.operation }}
-                <!-- The caller under the operation, and — when the table spans use cases — which
-                     use case. A sub-line rather than two more columns: it is context for the row
-                     you are reading, not something you scan a list by. -->
+                <!-- The caller, and the use case when the table spans several: context for the
+                     row, not a column to scan by. -->
                 <div class="muted" style="font-size: 0.78rem">
                   {{ row.subject }}
-                  <!--
-                    **Whose name this is.** For an API key the caller is the person the key was
-                    issued to, which is who answers for it — not who wrote the request. Without
-                    this marker an investigator reads a colleague's name beside an agent's traffic
-                    and concludes a human typed it. The words carry the meaning rather than a
-                    tooltip, because a marker nobody can hover is a marker on a touch screen
-                    (`FRD-207`). An OIDC caller has no marker: there the name *is* the person.
-                  -->
+                  <!-- For an API key the name is whoever the key was issued to — who answers for
+                       it, not who wrote the request. Words rather than a tooltip, which a touch
+                       screen cannot hover (`FRD-207`). -->
                   @if (row.credential) {
                     <span class="badge badge--muted" data-testid="trace-via-key">via API key</span>
                   }
@@ -240,8 +205,8 @@
               </td>
               <td>
                 @if (row.flagged) {
-                  <!-- Red, because it is the one an oversight role came to find: a pipeline step
-                       objected. A *served* flagged request looks like every other 200 otherwise. -->
+                  <!-- A pipeline step objected; without this a served flagged request looks like
+                       any other 200. -->
                   <span class="badge badge--danger" data-testid="flagged">flagged</span>
                 }
                 @if (served(row)) {
@@ -249,8 +214,7 @@
                 } @else if (row.outcome) {
                   <span class="badge badge--danger">{{ row.outcome }}</span>
                 } @else {
-                  <!-- A non-2xx row from before `FRD-122`: the status is all that was recorded,
-                       and calling it by a name nobody wrote down would be an invention. -->
+                  <!-- A non-2xx row from before `FRD-122`: the status is all that was recorded. -->
                   <span class="badge badge--warning">{{ row.status }}</span>
                 }
               </td>
@@ -258,10 +222,7 @@
             @if (openPayload() === row.id) {
               <tr class="row-detail">
                 <td [attr.colspan]="20">
-                  <!--
-                    Everything the columns no longer carry. It is not less information — it is the
-                    same information, attached to the one request somebody chose to look at.
-                  -->
+                  <!-- The details the columns leave out, for the one request that was opened. -->
                   <dl class="detail-grid">
                     <div>
                       <dt>Model</dt>
@@ -325,8 +286,8 @@
                           @if (tools.called.length) {
                             {{ tools.called.join(', ') }}
                           } @else {
-                            <!-- "offered ten and asked for none" and "offered none" are different
-                                 events, and only one of them is a model behaving oddly. -->
+                            <!-- "Offered some, called none" is a different event from "offered
+                                 none". -->
                             {{ tools.declared }} offered, none called
                           }
                         } @else {
@@ -349,9 +310,8 @@
                     </p>
                   } @else if (payload(); as content) {
                     @if (content.available) {
-                      <!-- Content, not metadata. The reader is entitled to it, and the server has
-                           already recorded that they looked — that record is the condition on
-                           which ADR-0009 was reopened, not a log line beside it. -->
+                      <!-- The server has already recorded this read; that record is the condition
+                           on which ADR-0009 was reopened. -->
                       <p class="muted" style="font-size: 0.78rem" data-testid="payload-recorded">
                         Opening this was recorded, with your name and the time.
                       </p>
@@ -370,8 +330,8 @@
                         </div>
                       </div>
                     } @else {
-                      <!-- Three different facts, never one message: a setting somebody can change,
-                           a clock that has run out, and a request that never reached a model. -->
+                      <!-- The server's own reason: storage off, retention expired, or no model was
+                           reached — three different facts. -->
                       <p class="empty" data-testid="payload-unavailable">{{ content.message }}</p>
                     }
                   }

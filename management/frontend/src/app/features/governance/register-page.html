@@ -101,11 +101,8 @@
   </div>
 
   @if (register(); as compiled) {
-    <!--
-      The two facts a reader needs before the table: whether they are looking at the whole
-      installation, and whether the erasure this document promises has actually been happening.
-      The second is the one an auditor asks for and the one nothing surfaced before `FRD-608`.
-    -->
+    <!-- Before the table: whether this is the whole installation, and whether the erasure this
+         document promises has actually been running (`FRD-608`). -->
     <div class="card">
       <p class="muted" style="margin: 0" data-testid="register-scope">
         @if (seesEverything()) {
@@ -133,12 +130,8 @@
 
   @if (hasDrift()) {
     @if (catalogueDrift(); as drift) {
-      <!--
-        `FRD-608` §4. Both planes keep a catalogue and one feeds the other over Kafka, so the two
-        lists should be the same list — and nothing compared them until this screen did. Shown only
-        when they disagree: a panel that is always there saying "in agreement" is a panel nobody
-        reads on the day it stops saying that.
-      -->
+      <!-- `FRD-608` §4. Shown only when the planes disagree: a panel always saying "in agreement"
+           is one nobody reads on the day it stops. -->
       <div class="card" data-testid="register-drift">
         <h3 class="section-title" style="margin: 0">The two planes disagree about the catalogue</h3>
         @if (drift.onlyInGateway.length) {
@@ -169,27 +162,13 @@
         }
       </p>
     } @else {
-      <!--
-        **Four columns and a caret**, where this table began with nine and was reported as
-        cluttered before anybody had used it in anger. Nine columns is not more information; it is
-        the same information arranged so that none of it can be scanned — and the register exists
-        to be scanned, because governance is a comparison activity. What stays on the row is what
-        a reader compares rows *by*: which use case, what for, whether prompts are kept and for how
-        long, and whether anything disagrees. Everything else is a detail *about* one use case,
-        and belongs to the use case somebody opened.
-
-        The mechanic is the request list's (`FRD-505`), for the reason that list gives: opened in
-        place rather than in a drawer, so the row that made somebody open it stays on screen.
-      -->
+      <!-- Four columns and a caret: the row carries what rows are compared *by*; everything else
+           is detail, opened in place as in the request list (`FRD-505`) so the row stays on
+           screen. -->
       <div class="table-wrap">
         <table class="table table--register" data-testid="register-table">
-          <!--
-            The widths, declared once. An automatic table sizes its columns from the rows it is
-            currently holding, so paging to twenty-five different use cases moved every column —
-            measured at up to 26px on the demo installation. Stated here, they stop depending on
-            which rows happen to be on screen. `table-layout: fixed` on the class above is what
-            makes them authoritative; see the stylesheet for which half does what.
-          -->
+          <!-- Declared widths (made authoritative by `table-layout: fixed` on the class above), so
+               the columns do not move with the rows on the current page. -->
           <colgroup>
             <col class="reg-col--open" />
             <col class="reg-col--case" />
@@ -231,12 +210,8 @@
                 [attr.data-testid]="'register-row-' + entry.slug"
               >
                 <td class="table__open">
-                  <!--
-                    One glyph rotated, never two glyphs swapped. `▸` and `▾` are different widths
-                    in most of the fonts a console is read in, so a table that swaps them moves
-                    every cell on the row by a pixel or two each time somebody opens it — the
-                    small, constant jiggle nobody can point at.
-                  -->
+                  <!-- One glyph rotated, never two swapped: `▸` and `▾` differ in width in most
+                       fonts, and swapping them shifts the row on every open. -->
                   <button
                     type="button"
                     class="btn btn--sm btn--ghost row-open"
@@ -256,11 +231,7 @@
                     <span class="badge badge--warning" data-testid="retired">retired</span>
                   }
                 </td>
-                <!--
-                  One line, cut where it runs out. The whole of it is in the detail a click away,
-                  which is what makes cutting it honest — every collapsed row is the same height,
-                  and forty of them can be read down the page.
-                -->
+                <!-- One line, cut where it runs out; the whole of it is in the detail. -->
                 <td class="reg-clamp">{{ entry.purpose || '—' }}</td>
                 <td>
                   @if (entry.prompts_stored) {
@@ -377,12 +348,8 @@
 
   @if (register(); as compiled) {
     @if (compiled.processed_in.length) {
-      <!--
-        The installation's own total, including traffic that names no use case: break-glass keys,
-        the console's own model checks, demo traffic. A summary that only added up the rows above
-        would omit exactly the traffic nobody owns, which is the traffic this is most likely to be
-        asked about.
-      -->
+      <!-- The installation's own total, including traffic that names no use case (break-glass
+           keys, the console's model checks, demo traffic) — the traffic nobody owns. -->
       <div class="card">
         <h3 class="section-title" style="margin: 0">Where this installation processed requests</h3>
         <p class="muted" style="margin: 0.25rem 0 0.6rem">

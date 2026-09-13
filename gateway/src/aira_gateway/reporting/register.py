@@ -1,43 +1,17 @@
-"""The register of processing activities (`FRD-608`).
+"""The register of processing activities (`FRD-608`): one row per use case, for governance.
 
-The owner's question was *"there is still no overview for IT Steuerung where they can list use
-cases, the description in them, the models used, all the controls like how many days data is
-stored, and generally how the data processing happens."* Read against the code, two thirds of it
-already existed: IT Steuerung already sees every use case, and every field it needs is already
-stored. What was missing was the **shape**.
+Governance is a **comparison** activity — which use cases store prompts, which keep them longest,
+which were processed outside the EU — so this reads data the system already holds into one row per
+use case. Nothing here writes and nothing here is authored.
 
-That distinction is the whole design. Governance is a **comparison** activity — *which use cases
-store prompts? which keep them longer than thirty days? which were processed outside the EU?* —
-and none of those is answered by opening forty detail pages one at a time. So this is a reading of
-data the system already holds, in one row per use case, and **not a new datapath**: nothing here
-writes, nothing here is authored, and no field below exists because this module wanted it.
+Two halves. The **configuration** says what the installation decided — purpose, released models,
+retention, controls — close to a *Verzeichnis von Verarbeitungstätigkeiten*, assembled from what the
+gateway enforces. The **measurement** says what happened: every audit row carries the region the
+request really went to (`FRD-115` FR-10). Where the two disagree is the finding a governance role
+exists to make.
 
-**Two halves, and the second is the point.**
-
-The configuration half says what the installation has *decided*: purpose, processing notes, which
-models are released, whether prompts are kept and for how long, which controls are on. Printed, it
-is close to a *Verzeichnis von Verarbeitungstätigkeiten* — purpose, recipients, third-country
-transfer, erasure deadlines — assembled from configuration the gateway actually enforces rather
-than from a spreadsheet somebody maintains beside it.
-
-The measured half says what *happened*: every audit row carries the region the request really went
-to (`FRD-115` FR-10), so the register can put "where processing actually happened over this period"
-beside "where the configuration says it may". **When those two disagree, that is the finding a
-governance role exists to make** — and it was already there to be made: asked of a running
-installation, two requests had been processed at `global`, in a log nothing surfaced.
-`FRD-611` has since made that region unconfigurable, which closes the *configuration* door and
-says nothing about the *measurement*; a model catalogued in a permitted region and served from
-another would still be invisible without this.
-
-**Unknown is not a violation.** A request whose row carries no region is not evidence of anything:
-most dialects address a model by name alone, and the mock and local providers run in the container.
-Those are reported under their provider with no region rather than counted as a transfer — the same
-rule `FRD-403` applies to an unpriced request, one column along.
-
-Served from the gateway rather than from Management, although Management authors the configuration.
-The gateway is where the two halves meet: its read-model already carries every field of the first
-(`UseCaseRead`), and the audit trail is the second. Assembling it in Management would mean shipping
-the audit trail across the planes to reach the half that is already here.
+**Unknown is not a violation.** A row with no region — a dialect that addresses a model by name, a
+provider in the container — is reported under its provider, never counted as a transfer.
 """
 
 from __future__ import annotations
@@ -58,18 +32,13 @@ from aira_gateway.db.models import (
     UseCaseRead,
 )
 
-#: What a row says about a use case that Management has retired (`FRD-607`).
-#:
-#: In the register by default rather than behind a filter, and that is a decision the FRD argues
-#: for: a retired use case is still a processing record for as long as its stored prompts exist,
-#: and a register that omitted it would be a register that quietly stops describing the data it is
-#: about. The status column is what keeps it honest.
+#: A use case's status. A retired one (`FRD-607`) stays in the register by default: it is still a
+#: processing record for as long as its stored prompts exist.
 LIVE = "live"
 RETIRED = "retired"
 
-#: How a region-less row is named. Not an empty cell: a reader has to be able to tell "processed
-#: somewhere this column cannot express" from "nobody asked". The provider beside it is what makes
-#: it benign or not.
+#: How a region-less row is named. Not an empty cell, so "processed somewhere this column cannot
+#: express" stays distinguishable from "nobody asked".
 NO_REGION = "(not applicable)"
 
 
@@ -81,12 +50,10 @@ class ReleasedModel:
     provider: str
     publisher: str
     regions: tuple[str, ...]
-    #: Whether the installation has approved it at all (`FRD-307`). A released-but-unapproved model
-    #: is a real state and a governance-relevant one: the use case's configuration names it and no
-    #: request will ever reach it.
+    #: Whether the installation approved it at all (`FRD-307`). Released but unapproved means the
+    #: configuration names a model no request will ever reach.
     approved: bool
-    #: False when the catalogue holds no row for it. A released model nobody catalogued is exactly
-    #: the disagreement between the two planes this register is for.
+    #: False when the catalogue holds no row for it — a disagreement between the two planes.
     catalogued: bool
 
     def as_dict(self) -> dict[str, Any]:
@@ -123,8 +90,7 @@ class Entry:
     processing: str
     models: tuple[ReleasedModel, ...]
     prompts_stored: bool
-    #: ``None`` where prompts are not stored at all — there is no erasure deadline for data that
-    #: was never written, and printing the configured number beside "not stored" would read as one.
+    #: ``None`` where prompts are not stored: there is no erasure deadline for data never written.
     retention_days: int | None
     own_requests_only: bool
     tools: bool
@@ -135,9 +101,8 @@ class Entry:
     groups: int
     requests: int
     processed_in: tuple[Processed, ...]
-    #: Regions traffic actually reached that no released model's catalogue entry names. **The
-    #: finding.** Empty is the ordinary answer and is not the same as "nothing ran" — `requests`
-    #: says that.
+    #: **The finding**: regions traffic reached that no released model's catalogue entry names.
+    #: Empty is the ordinary answer, and is not "nothing ran" — `requests` says that.
     unexpected_regions: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
@@ -165,12 +130,8 @@ class Entry:
 
 @dataclass(frozen=True, slots=True)
 class Erasure:
-    """The last retention pass, and what it removed (`FRD-608` §2.4).
-
-    **Evidence rather than a setting.** Every row above states an erasure *deadline*; this states
-    that the sweep which enforces them ran, when, and how much it took. A register that printed
-    only the deadlines would be describing an intention.
-    """
+    """The last retention pass, and what it removed (`FRD-608` §2.4) — evidence that the deadlines
+    every entry states are enforced, rather than a setting."""
 
     ran_at: datetime
     payloads_cleared: int
@@ -190,25 +151,13 @@ class Register:
 
     entries: tuple[Entry, ...] = ()
     #: The same measurement across everything in scope, including traffic that names no use case —
-    #: break-glass keys, the console's own model checks, demo traffic. A register that only summed
-    #: its rows would omit exactly the traffic `FRD-610` exists to make visible.
+    #: break-glass keys, the console's model checks, demo traffic (`FRD-610`).
     processed_in: tuple[Processed, ...] = field(default_factory=tuple)
-    #: Every model **the gateway** holds in its read-model, for a reader who oversees the
-    #: installation. Empty for anybody else: an installation-wide list is not a member's to see.
-    #:
-    #: Here so the console can answer the question `FRD-608` §4 says this whole screen is for —
-    #: *is what we think is configured what is actually running*. Both planes keep a catalogue, one
-    #: feeds the other over Kafka, and **nothing compared them**: a model the gateway could serve
-    #: sat in its read-model with no row in Management, so no console screen showed it and no role
-    #: could remove it. It came from a test run and was harmless; the shape is not.
-    #:
-    #: The names alone. What each plane says *about* a model is already comparable through the
-    #: catalogue screen; what was missing is whether the same models are there at all.
+    #: The model names **the gateway's** read-model holds, for an oversight reader only, so the
+    #: console can compare the two planes' catalogues (`FRD-608` §4). Empty for anybody else.
     catalogue: tuple[str, ...] = ()
-    #: ``None`` when the sweep has not run since this was recorded at all — which is a fact about
-    #: the installation and is reported as one. Rendering it as "0 cleared" would be the *unknown
-    #: is not zero* mistake in the column where it matters most: it would read as "the sweep ran
-    #: and there was nothing to remove".
+    #: ``None`` when the sweep has no recorded pass — never "0 cleared", which would read as a sweep
+    #: that ran and found nothing.
     last_erasure: Erasure | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -231,10 +180,9 @@ class RegisterService:
     ) -> Register:
         """The register for ``scope`` over ``[start, end)``.
 
-        ``scope`` follows `visible_scope`: ``None`` is every use case, a tuple is exactly those,
-        and the empty tuple is none — three answers, and folding the first into the third is the
-        one mistake here that would show an installation's whole register to somebody entitled to
-        one use case.
+        ``scope`` follows `visible_scope`: ``None`` is every use case, a tuple exactly those, and
+        the empty tuple none. Folding the first into the last would show the whole register to
+        somebody entitled to one use case.
         """
         async with self._sessionmaker() as session:
             use_cases = await self._use_cases(session, scope)
@@ -265,9 +213,8 @@ class RegisterService:
         released = tuple(
             self._released(name, catalogue) for name in sorted(row.allowed_models or [])
         )
-        # Where the configuration says this use case may be processed. A model whose name is its
-        # whole address contributes none, which is why an empty set means "nothing to compare"
-        # rather than "nowhere permitted" — see `_unexpected`.
+        # Where the configuration says this use case may be processed; see `_unexpected` for why an
+        # empty set means "nothing to compare".
         configured = {region for model in released for region in model.regions}
         return Entry(
             slug=row.slug,
@@ -294,9 +241,8 @@ class RegisterService:
     def _released(name: str, catalogue: dict[str, ModelRead]) -> ReleasedModel:
         record = catalogue.get(name)
         if record is None:
-            # Released and not catalogued. Reported rather than dropped: a use case naming a model
-            # the catalogue does not have is a disagreement between the two planes, and hiding it
-            # would make the register agree with itself by omission.
+            # Released and not catalogued: reported, not dropped, or the register would agree with
+            # itself by omission.
             return ReleasedModel(name, "", "", (), approved=False, catalogued=False)
         return ReleasedModel(
             name=name,
@@ -359,10 +305,7 @@ class RegisterService:
     async def _last_erasure(self, session: AsyncSession) -> Erasure | None:
         """The most recent pass of the retention sweep.
 
-        Not filtered by the window: *"has the erasure this register promises actually been
-        happening"* is a question about now, and a register for last March that reported no sweep
-        because none ran **in March** would be answering a question nobody asked with a figure that
-        reads as an alarm.
+        Not filtered by the window: whether erasure has been happening is a question about now.
         """
         row = (
             await session.execute(
@@ -372,11 +315,8 @@ class RegisterService:
         if row is None:
             return None
         return Erasure(
-            # **UTC on both databases.** SQLite hands back a naive datetime and Postgres does not,
-            # so without this the same pass serialises as `03:00` on one and `03:00+00:00` on the
-            # other — a timestamp in a register whose meaning depends on which database is behind
-            # it, which is exactly the thing a register may not have. The same normalisation
-            # `SuspensionService` makes, for the same reason.
+            # UTC on both databases: SQLite hands back a naive datetime and Postgres does not, and
+            # a register timestamp may not depend on which one is behind it.
             ran_at=row.ran_at if row.ran_at.tzinfo else row.ran_at.replace(tzinfo=UTC),
             payloads_cleared=row.payloads_cleared,
             rows_deleted=row.rows_deleted,
@@ -391,9 +331,8 @@ class RegisterService:
     ) -> tuple[Processed, ...]:
         """The same question of everything in scope, **including traffic that names no use case**.
 
-        Only for a reader who sees every use case: for anybody else, unattributed traffic is not
-        theirs to see, and folding it into their summary would be the widening `visible_scope`
-        exists to prevent.
+        Only for a reader who sees every use case: for anybody else unattributed traffic is not
+        theirs to see, and including it would be the widening `visible_scope` exists to prevent.
         """
         if scope is not None:
             return ()
@@ -421,14 +360,9 @@ def _busiest(where: Processed) -> tuple[int, str, str]:
 def _unexpected(measured: tuple[Processed, ...], configured: set[str]) -> tuple[str, ...]:
     """Regions traffic reached that no released model's catalogue entry names.
 
-    Empty when the configuration names no region at all: a use case whose models are addressed by
-    name alone has nothing to disagree with, and reporting every region as unexpected there would
-    make the column noise — which is the reliable way to have a finding ignored.
-
-    A row with no region is never unexpected. It is not a transfer; it is a dialect that addresses
-    a model by name, or a provider running in the container. **Absence of information is not
-    evidence of a violation**, which is the same rule this project applies to an unpriced request
-    and to an undeclared capability, read in the direction that matters here.
+    Empty when the configuration names no region: models addressed by name alone leave nothing to
+    disagree with, and flagging every region there would make the column noise. A row with no
+    region is never unexpected — absence of information is not evidence of a violation.
     """
     if not configured:
         return ()
@@ -446,11 +380,9 @@ def _unexpected(measured: tuple[Processed, ...], configured: set[str]) -> tuple[
 def _regions(addressing: Any) -> tuple[str, ...]:
     """The catalogue's regions for one model, in both spellings.
 
-    The third reader of this shape, and deliberately not a fourth definition: `ModelDeclaration
-    .regions` and `vertex/adapters._declared_regions` say the same thing for the request path.
-    `test_the_two_readers_of_a_region_list_agree` pins the format; this one is a *reading* of the
-    same field for a document, and it answers `()` rather than raising for anything it cannot
-    parse — a register must describe a malformed entry, not fail to print because of one.
+    The same field `ModelDeclaration.regions` reads for the request path
+    (`test_the_two_readers_of_a_region_list_agree` pins the format), but answering ``()`` for
+    anything it cannot parse: a register must describe a malformed entry, not fail on it.
     """
     block = addressing if isinstance(addressing, dict) else {}
     raw = block.get("regions")

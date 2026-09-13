@@ -1,11 +1,9 @@
-"""Helper that records a dispatched request from a route (FRD-103, FRD-405).
+"""Recording a dispatched request from a route (`FRD-103`, `FRD-405`).
 
-Resolves everything that can only be read from the live request — attribution, source IP, trace
-context — and hands the result to the :class:`~aira_gateway.persistence.writer.RequestLogWriter`,
-which writes it after the response has gone out.
-
-Span attributes are set *here* rather than in the writer: they belong to the request's own span,
-which no longer exists by the time the row is written.
+Resolves everything only the live request can tell — attribution, source IP, trace context — and
+hands the row to the :class:`~aira_gateway.persistence.writer.RequestLogWriter`, which writes it
+after the response has gone out. Span attributes are set here, because the request's span no
+longer exists by the time the row is written.
 """
 
 from __future__ import annotations
@@ -22,12 +20,11 @@ from aira_gateway.state import settings_of, writer_of
 
 
 def _tool_attributes(tool_calls: dict[str, Any] | None) -> dict[str, object]:
-    """The tool figures, as span attributes. Empty when the request offered and called nothing.
+    """The tool figures as span attributes; empty when the request offered and called nothing.
 
-    Absent rather than zero for a request with no tools at all: `aira.tools.offered = 0` on every
-    ordinary chat request would put three attributes on the overwhelming majority of spans to say
-    nothing, and it would make *"which traffic uses tools"* a comparison rather than an existence
-    check. A request that offered functions always carries them, including one that was refused.
+    Absent rather than zero for a request without tools, so "which traffic uses tools" is an
+    existence check. **Names, never arguments**: arguments are caller content, and a span has no
+    retention clock (`FRD-131` FR-7, `FRD-406`).
     """
     if not tool_calls:
         return {}
@@ -37,32 +34,19 @@ def _tool_attributes(tool_calls: dict[str, Any] | None) -> dict[str, object]:
         "aira.tools.called": len(called),
     }
     if called:
-        # Joined, because a span attribute is a primitive here (`set_span_attributes` takes
-        # `str | int | float | bool`) and the one question an investigator asks of a flagged agent
-        # turn is *which* function it reached for.
+        # Joined, because a span attribute is a primitive here.
         attributes["aira.tools.names"] = ", ".join(called)
     return attributes
 
 
 def client_ip(request: Request) -> str | None:
-    """Return the client IP for the audit trail (FRD-105, PRD FR-GW-9).
+    """The client IP for the audit trail (`FRD-105`, PRD FR-GW-9).
 
-    ``X-Forwarded-For`` is honoured **only** when ``trust_forwarded_for`` is set, and then it is
-    read ``trusted_proxy_hops`` entries **from the right** — never from the left.
-
-    The left end is whatever the caller sent. A proxy *appends*: the nginx this repository ships
-    uses ``$proxy_add_x_forwarded_for``, so ``X-Forwarded-For: 10.9.9.9`` from a client arrives
-    here as ``10.9.9.9, <real address>``. Reading the leftmost entry — which this did until
-    2026-08-09, on a docstring that assumed a proxy which *overwrites* — let a caller choose:
-
-    - the address written onto every audit row,
-    - the address `FRD-505`'s incident view filters by, so a search for the real one finds nothing,
-    - and the key the failed-authentication bound counts against, so rotating the header made the
-      brute-force bound unreachable.
-
-    A chain shorter than the configured number of hops did not traverse them, so its header is
-    ignored in favour of the socket peer. That is the safe direction: an unspoofable address that
-    is merely the proxy's beats a spoofable one that claims to be the client's.
+    ``X-Forwarded-For`` is honoured **only** when ``trust_forwarded_for`` is set, and then read
+    ``trusted_proxy_hops`` entries **from the right**. A proxy appends, so the left end is whatever
+    the caller sent: reading it would let a caller choose the address on every audit row, evade the
+    incident view's filter and rotate past the failed-authentication bound. A chain shorter than
+    the configured hops did not traverse them, and the socket peer is used instead.
     """
     settings = settings_of(request)
     if settings.trust_forwarded_for:
@@ -76,34 +60,22 @@ def client_ip(request: Request) -> str | None:
 
 
 def _degradation_snapshot(request: Request) -> dict[str, str] | None:
-    """Which controls were running on a fallback while this request was handled (FRD-122 FR-6).
+    """Which controls were running on a fallback while this request was handled (`FRD-122` FR-6).
 
-    Read here, at the end of handling, from the gateway-wide log — the controls update it as they
-    run, so this captures what they experienced during this request. It is a snapshot of a shared
-    state, not a per-request guarantee: under concurrency a neighbour's degradation can appear on
-    this row. That imprecision is worth stating and worth keeping, because the alternative —
-    threading the status back out of every control — buys exactness for a question ("was this
-    request under the full guarantee?") that is asked about periods far more often than about
-    single requests.
-
-    ``None`` when there is no degradation log at all, ``{}`` when there is one and nothing is
-    degraded: "we did not look" and "nothing was wrong" are different answers.
+    A snapshot of the gateway-wide log, so under concurrency a neighbour's degradation can appear
+    on this row — accepted, since the question is asked of periods rather than single requests.
+    ``None`` when there is no log, ``{}`` when nothing is degraded: "we did not look" and "nothing
+    was wrong" are different answers.
     """
     degradation = getattr(request.app.state, "degradation", None)
     return None if degradation is None else dict(degradation.features)
 
 
 def _request_bytes(request: Request) -> int | None:
-    """How many bytes the caller sent, or ``None`` when nothing counted them.
+    """How many bytes the caller sent, as counted by the body-size middleware, or ``None``.
 
-    The middleware puts it on the ASGI scope's state. Never a 0 default: `FRD-501`'s
-    `payload_size` rule excludes rows of unknown size from **both** sides of its share, and an
-    unknown that arrived as a zero would make a large request look small.
-
-    Wired here because it was not wired at all — the column existed, the middleware wrote the
-    count, and nothing carried it between them, so the whole `payload_size` kind measured a column
-    that was always NULL. Two correct halves and no wire, invisible to coverage; found by posting
-    a 4 kB body at the running gateway and reading the row.
+    Never a 0 default: `FRD-501`'s `payload_size` rule leaves rows of unknown size out of both
+    sides of its share, and an unknown read as zero would make a large request look small.
     """
     value = getattr(request.state, "request_bytes", None)
     return int(value) if isinstance(value, int) else None
@@ -130,15 +102,9 @@ async def record_request(
 ) -> None:
     """Queue a request/response record with its attribution for persistence.
 
-    ``outcome`` defaults to ``served`` so every existing call site keeps its meaning; a refusal
-    passes its own value from the closed vocabulary in :mod:`aira_gateway.audit`.
-
-    ``api`` deliberately has **no default**. It used to default to ``"gemini"``, which made a
-    caller that forgot it right on one surface and silently wrong on every other — measured on
-    2026-08-13, when a KIRA request's pipeline classifier row (`FRD-125b`) turned up filed under
-    the Gemini surface. A discriminator with a default is a discriminator that stops discriminating
-    at the first call site somebody adds in a hurry; it now travels on the :class:`AuditTrail`, set
-    once by the surface that owns the request.
+    ``outcome`` defaults to ``served``; a refusal passes its own from :mod:`aira_gateway.audit`.
+    ``api`` has **no default**: it travels on the :class:`AuditTrail`, set once by the surface
+    that owns the request, because a discriminator with a default stops discriminating.
     """
     attribution = request.state.attribution
     source_ip = client_ip(request)
@@ -146,36 +112,17 @@ async def record_request(
         {
             "aira.model": model,
             "aira.operation": operation,
-            # **Which surface answered** (`FRD-107` §9). The audit row and the reporting breakdown
-            # have carried it since that surface shipped and the span never did, so a trace could
-            # not tell the two apart at all and *"which of my clients have migrated"* was a
-            # question for the database only. Here rather than in `prepare_for_dispatch`, because
-            # this function runs for a **refused** request too and that is a request that had a
-            # surface.
+            # Which surface answered (`FRD-107` §9) — set here, which refused requests pass too.
             "aira.api.surface": api,
             "aira.status": status,
             "aira.outcome": str(outcome),
             "aira.source_ip": source_ip,
             "aira.total_tokens": usage.total_tokens if usage else None,
             "aira.cost_nanos": cost_nanos,
-            # **How many functions this request offered, and how many the model asked for.**
-            #
-            # Both numbers are already in the audit row (`audit.tool_summary`) and neither was on
-            # the span, so the question an agent deployment is actually judged by — *this thing is
-            # handed forty tools and uses two* — could be asked of one request in a database and
-            # not of the traffic in a trace view. `offered` is set before anything can refuse, so
-            # a request that offered ten functions and was then stopped by a budget still says so;
-            # that is the whole difference between **offered none** and **offered ten, asked for
-            # none** (`FRD-131` FR-7).
-            #
-            # Names, never arguments: a function name is declared by the client application, an
-            # argument is the caller's content and belongs under `store_payloads`, the retention
-            # clock and `FRD-406`. The audit column has drawn that line since it was written and
-            # this is the same line, one surface out — a span attribute has no retention clock at
-            # all.
+            # Functions offered and called (`FRD-131` FR-7): "offered ten, asked for none" and
+            # "offered none" are different events.
             **_tool_attributes(tool_calls),
-            # Residency, per request. A configuration claim that nothing records is a claim
-            # nobody can check afterwards (FRD-115 FR-10).
+            # Residency, per request (`FRD-115` FR-10).
             "aira.upstream.provider": provenance[0] if provenance else None,
             "aira.upstream.publisher": provenance[1] if provenance else None,
             "aira.upstream.region": provenance[2] if provenance else None,
@@ -185,7 +132,6 @@ async def record_request(
     await writer_of(request).submit(
         PendingLog(
             subject=attribution.subject,
-            # A name for grouping a display, never the identity (`FRD-606`).
             username=attribution.username,
             auth_method=attribution.method,
             use_case=attribution.use_case,
@@ -205,10 +151,7 @@ async def record_request(
             requested_model=requested_model,
             model_selection=model_selection,
             pipeline_decisions=pipeline_decisions,
-            # Derived **here**, from the argument every caller already passes, rather than at the
-            # three call sites that build it. `FRD-122` learned this once: a fact repeated at every
-            # exit is a fact eventually missing from one of them, and a fourth surface would have
-            # to remember. The rule is one site or none.
+            # Derived once, here, rather than at each call site that records a request.
             flagged=was_flagged(pipeline_decisions, outcome),
             tool_calls=tool_calls,
             degraded=_degradation_snapshot(request),
@@ -216,10 +159,6 @@ async def record_request(
             publisher=provenance[1] if provenance else None,
             region=provenance[2] if provenance else None,
             api=api,
-            # What the caller sent, as counted by the body-size middleware while it enforced the
-            # ceiling. Read here rather than recomputed: the body has already been consumed by the
-            # time a row is written, and re-reading it would be the second copy of a number the
-            # process already has.
             request_bytes=_request_bytes(request),
         )
     )

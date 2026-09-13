@@ -1,8 +1,7 @@
-"""Real Google Gemini upstream provider (FRD-304).
+"""Google AI Studio: the Generative Language API (`FRD-304`).
 
-Calls the Generative Language API (``generativelanguage.googleapis.com/v1beta``). The HTTP
-client is injectable so the mapping/error handling is hermetically tested with a
-``MockTransport``; the API key is sent as a query param and never logged.
+The HTTP client is injectable, so mapping and error handling are tested hermetically with a
+``MockTransport``. The API key is sent as a query parameter and never logged.
 """
 
 from __future__ import annotations
@@ -42,39 +41,24 @@ _METHODS = (
     "batchEmbedContents",
 )
 
-
-#: Where Google AI Studio lives. Repeated from the settings default on purpose: this is the value
-#: an empty configuration falls back to, and the fallback has to exist somewhere the adapter can
-#: reach without importing the settings class's own default.
+#: The fallback for an empty `AIRA_GEMINI_BASE_URL`. Repeated from the settings default because the
+#: adapter must not import the settings class's own default.
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-#: What the Google AI Studio endpoint is, in the residency vocabulary.
-#:
-#: `generativelanguage.googleapis.com` names no region and gives no regional guarantee — which is
-#: precisely the difference from Vertex, where the region is in the URL and the data stays in it.
-#: Calling that `global` is the honest answer, and it is a value an EU allow-list does not contain,
-#: so a deployment has to say `global` out loud to use it.
+#: This endpoint in the residency vocabulary. It names no region and guarantees none — unlike
+#: Vertex, where the region is in the URL — so it is `global`, which an EU allow-list does not
+#: contain: a deployment has to name `global` to use it.
 GENERATIVE_LANGUAGE_REGION = "global"
 
-#: How many entries to ask for per listing page, and how many pages to accept.
-#:
-#: The ceiling is not tuning, it is a bound on a loop somebody else drives: `nextPageToken` comes
-#: from the vendor, and a listing that always returns one would hold the request open forever. Ten
-#: pages of a thousand is far beyond any credential's catalogue and still finite.
+#: Listing page size, and a bound on pages: `nextPageToken` comes from the vendor, and a listing
+#: that always returned one would hold the request open forever.
 LISTING_PAGE_SIZE = 1000
 MAX_LISTING_PAGES = 10
 
-#: Which listed method means which capability.
-#:
-#: These are **facts rather than claims**, which is the distinction that decides what a catalog
-#: import may pre-fill: the API answers 404 for a method a model does not list, so the list is the
-#: interface. What a model is *good* at — tools, structured output, attachments — is a measurement
-#: and stays the administrator's to declare (`FRD-131` found a model advertising `tools` that
-#: returns the JSON as prose).
-#:
-#: `createCachedContent` is how prompt caching appears. The word "caching" is nowhere in the
-#: response, so an implementation reading the obvious field finds nothing and declares no caching
-#: for a model that has it (`FRD-133`).
+#: Which listed method means which capability. These are **facts**, which is what a catalog import
+#: may pre-fill: the API answers 404 for a method a model does not list. What a model is *good* at
+#: stays the administrator's to declare (`FRD-131`). Prompt caching appears only as
+#: `createCachedContent` (`FRD-133`).
 _GENERATE_METHODS = frozenset({"generateContent", "streamGenerateContent"})
 _EMBED_METHODS = frozenset({"embedContent", "batchEmbedContents"})
 _CACHE_METHODS = frozenset({"createCachedContent"})
@@ -83,13 +67,9 @@ _CACHE_METHODS = frozenset({"createCachedContent"})
 def _offered_model(entry: dict[str, Any]) -> OfferedModel:
     """One entry of Google's listing, in the vendor-neutral shape a console can read.
 
-    The ``models/`` prefix is stripped here, at the edge where Google's resource form stops. Every
-    other layer — the catalog, the audit row, the caller's own request — uses the bare name, and a
-    prefixed entry reaching the catalog is a declaration **no request can ever match** while
-    looking perfectly right in the table.
-
-    ``supportedGenerationMethods`` present but empty is still an answer (nothing is supported);
-    absent is not, which is why the capabilities stay ``None`` in that case.
+    The ``models/`` prefix is stripped here: every other layer uses the bare name, and a prefixed
+    catalog entry is a declaration no request can ever match. ``supportedGenerationMethods``
+    present but empty is an answer (nothing); absent is not, so the capabilities stay ``None``.
     """
     methods = entry.get("supportedGenerationMethods")
     listed = frozenset(methods) if isinstance(methods, list) else None
@@ -111,24 +91,33 @@ def _positive(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
+def _unreachable(exc: httpx.HTTPError) -> UpstreamError:
+    return UpstreamError(f"Gemini upstream error: {type(exc).__name__}.")
+
+
+def _refused(response: httpx.Response) -> UpstreamError:
+    return UpstreamError(f"Gemini upstream returned {response.status_code}.", response.status_code)
+
+
 class GeminiUpstream:
-    #: The provider name this adapter owns (`FRD-507`). A model catalogued under it is served here
-    #: even when nobody named it in `AIRA_GEMINI_MODELS` — the endpoint takes the model name in the
-    #: URL and needs no list of its own, so the configured list was only ever a second place to
-    #: type what the catalog already says.
-    #: What to call this upstream on a screen. The provider *name* is an identifier — it goes in
-    #: the catalog, on the audit row and into routing — and `generative-language` tells a reader
-    #: nothing about which vendor they are choosing. Declared per adapter rather than mapped in the
-    #: console, because a second vocabulary in TypeScript is one more thing to forget (`FRD-206`).
+    """Models reached through Google AI Studio with an API key."""
+
+    #: What to call this upstream on a screen; the provider name is an identifier (`FRD-206`).
     platform_label = "Google AI Studio"
-
+    #: The provider name this adapter owns (`FRD-507`): a model catalogued under it is served here
+    #: without being named in `AIRA_GEMINI_MODELS`, since the endpoint takes the model in the URL.
     serves_provider = "generative-language"
-
-    #: Where this adapter reaches its models, for a catalogued model that names no configured one
-    #: (`FRD-507`). The same three values every `UpstreamModel` here carries — stated once so the
-    #: audit row is complete even when the configured list is empty, which is the whole point of
-    #: cataloguing being enough.
+    #: Where a catalogued model is reached, so its audit row is complete with an empty model list.
     provenance = (serves_provider, "google", GENERATIVE_LANGUAGE_REGION)
+    #: The listing's ids are the names a caller uses (`FRD-507` stage C).
+    enumerates = True
+    sampling_controls = GEMINI_SAMPLING
+    #: A token budget (`0` off, `-1` the model's choice), so every mode has a wire value.
+    thinking_modes = frozenset(ThinkingMode)
+    #: `thinkingLevel`. Whether a model takes it is a fact about the model, in its catalogue entry.
+    expresses_thinking_levels = True
+    #: A schema parameter and a tools field are separate here.
+    tools_with_schema = True
 
     def __init__(self, api_key: str, models: list[str], client: httpx.AsyncClient) -> None:
         self._api_key = api_key
@@ -140,32 +129,14 @@ class GeminiUpstream:
             for name in models
         ]
 
-    sampling_controls = GEMINI_SAMPLING
-    #: A token budget: `0` off, `-1` the model's choice, otherwise a count — so every mode in the
-    #: vocabulary has a wire value, including `limited`.
-    thinking_modes = frozenset(ThinkingMode)
-    #: `thinkingLevel` — Gemini 3 takes it; 2.5 answers *"not supported by this model"*, which is
-    #: a fact about the **model** and lives in its catalogue entry rather than here.
-    expresses_thinking_levels = True
-    #: A schema parameter and a tools field are separate here.
-    tools_with_schema = True
-
     def models(self) -> list[UpstreamModel]:
         return list(self._models)
 
-    #: This endpoint publishes a listing whose ids are the names a caller uses (`FRD-507` stage C).
-    enumerates = True
-
     async def available_models(self) -> list[OfferedModel]:
-        """What this credential can actually reach, asked of Google rather than typed by hand.
+        """What this credential can reach, asked of Google.
 
-        The listing is **paged**, and one key here answered with 50 entries. A loop that read only
-        the first page would leave models out of the console's picker with nothing on screen saying
-        anything had been cut off — the same silence as a truncated fallback chain, and an
-        administrator would conclude their key does not include the model they are looking for.
-
-        Bounded anyway, because the loop is driven by a token the *vendor* controls: an unbounded
-        remote loop is not a slow response, it is one that never arrives.
+        The listing is **paged**: reading only the first page would silently leave models out of
+        the console's picker. Bounded by `MAX_LISTING_PAGES` because the vendor drives the loop.
         """
         offered: list[OfferedModel] = []
         page_token = ""
@@ -181,12 +152,7 @@ class GeminiUpstream:
         return offered
 
     async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
-        """The cheapest remote question there is (`FRD-117` §5.2).
-
-        A **GET of the listing**, never a generation. This adapter had none at all until the
-        listing existed, so `/readyz` and `FRD-506`'s reachability check both reported it as
-        *unprobed* — honestly, but with nothing behind the honesty.
-        """
+        """The cheapest remote question there is (`FRD-117` §5.2): a GET of the listing."""
         count = len(await self.available_models())
         return f"{count} model(s) listed" if count else "endpoint answered"
 
@@ -218,25 +184,20 @@ class GeminiUpstream:
                 json=body,
             ) as response:
                 if response.status_code != httpx.codes.OK:
-                    raise UpstreamError(
-                        f"Gemini upstream returned {response.status_code}.",
-                        response.status_code,
-                    )
+                    raise _refused(response)
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
                         yield gemini_chunk_to_canonical(json.loads(line[len("data: ") :]))
         except httpx.HTTPError as exc:
-            raise UpstreamError(f"Gemini upstream error: {type(exc).__name__}.") from exc
+            raise _unreachable(exc) from exc
 
     async def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         try:
             response = await self._client.get(path, params={**params, "key": self._api_key})
         except httpx.HTTPError as exc:
-            raise UpstreamError(f"Gemini upstream error: {type(exc).__name__}.") from exc
+            raise _unreachable(exc) from exc
         if response.status_code != httpx.codes.OK:
-            raise UpstreamError(
-                f"Gemini upstream returned {response.status_code}.", response.status_code
-            )
+            raise _refused(response)
         result: dict[str, Any] = response.json()
         return result
 
@@ -244,11 +205,9 @@ class GeminiUpstream:
         try:
             response = await self._client.post(path, params={"key": self._api_key}, json=body)
         except httpx.HTTPError as exc:
-            raise UpstreamError(f"Gemini upstream error: {type(exc).__name__}.") from exc
+            raise _unreachable(exc) from exc
         if response.status_code != httpx.codes.OK:
-            raise UpstreamError(
-                f"Gemini upstream returned {response.status_code}.", response.status_code
-            )
+            raise _refused(response)
         result: dict[str, Any] = response.json()
         return result
 
@@ -260,36 +219,17 @@ class GeminiUpstream:
 def build_gemini_upstream(settings: GatewaySettings) -> GeminiUpstream | None:
     """Build the Gemini provider from settings, or None when no API key is configured.
 
-    **Residency is checked here too, as of 2026-08-10.** It was not, and this was the one adapter
-    family of four that was not: Vertex, the OpenAI servers and Foundry all measure their region
-    against `AIRA_ALLOWED_REGIONS` at startup, and this one declared `global` on every model —
-    honestly, so it reached the audit row — while nothing compared it to the policy.
-
-    That is the shape this project keeps naming: an **enforced control that one path bypasses**,
-    the same as `:embedContent` skipping the pre-dispatch gate. The record was right and the
-    control was absent, which is worse than a control that is missing everywhere, because the
-    evidence says the deployment is compliant.
-
-    `FRD-115`'s rule applies unchanged: a model in a region this deployment does not permit is a
-    **startup** failure. A gateway that sometimes leaves the EU is not a smaller problem than one
-    that will not start — it is the same problem, discovered later and by somebody else.
-
-    AI Studio remains entirely usable, and deliberately: name `global` in `AIRA_ALLOWED_REGIONS`.
-    That turns "may we send data there" from something a person remembers into a line in the
-    configuration and a region on every audit row.
+    Residency is checked at startup like every other adapter family (`FRD-115`): this endpoint is
+    `global`, so a deployment must name `global` in `AIRA_ALLOWED_REGIONS` to use it, and one that
+    does not refuses to start rather than sending data somewhere it did not permit.
     """
     if not settings.google_api_key:
         return None
     allowed = parse_allowed(settings.allowed_regions)
     check_region(GENERATIVE_LANGUAGE_REGION, allowed)
     models = [name.strip() for name in settings.gemini_models.split(",") if name.strip()]
-    # **Empty means "use the default", for this field only.** Compose passes optional variables as
-    # `${VAR:-}`, which expands to an empty string, and `_empty_means_unset` deliberately leaves
-    # `str` fields alone — there an empty value is often a real answer (`AIRA_CORS_ORIGINS=` means
-    # none). A base URL is not one of those: the empty string is not an endpoint, it is the absence
-    # of one, and passing it produced `UnsupportedProtocol` from httpx — an upstream error message
-    # about our own configuration. Same rule as the Vault provisioning found earlier the same day:
-    # absent and empty are different answers, and here only one of them can be meant.
+    # Empty means the default, for this field: Compose passes optional variables as `${VAR:-}`,
+    # and an empty string is not an endpoint (httpx would answer `UnsupportedProtocol`).
     base_url = settings.gemini_base_url or DEFAULT_GEMINI_BASE_URL
     client = httpx.AsyncClient(base_url=base_url, timeout=60.0)
     return GeminiUpstream(settings.google_api_key, models, client)

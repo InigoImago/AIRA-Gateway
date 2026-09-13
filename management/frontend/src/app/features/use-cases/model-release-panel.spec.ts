@@ -184,8 +184,7 @@ describe('ModelReleasePanel', () => {
   });
 
   it('shows a reader who cannot change it what is released, without dead controls', () => {
-    /** Read-only means **inert, not un-saveable** (`FRD-206`): the list is worth reading, and
-     *  disabled checkboxes would be a row of controls that do nothing. */
+    // Read-only means inert (`FRD-206`): the selection is readable, with no Save and no checkboxes.
     const { html, text } = setup({ canManage: false, released: ['gemini-2.5-flash'] });
 
     expect(text()).toContain('gemini-2.5-flash');

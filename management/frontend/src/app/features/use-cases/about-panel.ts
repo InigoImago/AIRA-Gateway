@@ -5,22 +5,11 @@ import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
 /**
- * What this use case is for, and how its data is handled.
+ * What this use case is for, and how its data is handled (`FRD-206`).
  *
- * Both fields have existed since the use case did: the API accepts them, they travel to the
- * gateway's read-model on the config event, and the overview **prints them** — *"No description."*
- * where there is none, and a *Processing:* line where there is. No screen ever offered a way to
- * write either, so every installation's overview said "No description." forever and the processing
- * line was reachable only through the API or a seed.
- *
- * The same shape as the KIRA id: displayed, unsettable. Unlike `addressing` on a model — which
- * nothing reads and is therefore off the panel — these two exist **to be read by people**, which
- * is an argument for the control rather than against the display. `processing_notes` in particular
- * is the sentence somebody writes for a data-protection review, and a governance record nobody can
- * author is a governance record nobody has.
- *
- * Its own panel rather than a form in the parent: the page is a parent plus panels, the parent owns
- * loading and the tab bar, and a child owns its form state and its mutation.
+ * Both fields are printed on the overview and carried to the gateway, so they need a way to be
+ * written: `processing_notes` is the sentence a data-protection review asks for, and a governance
+ * record nobody can author is one nobody has.
  */
 @Component({
   selector: 'app-about-panel',
@@ -38,14 +27,13 @@ export class AboutPanel {
   private readonly service = inject(UseCaseService);
   protected readonly feedback = inject(PageFeedback);
 
-  /** Whether the two fields are showing as text or as inputs. Text until somebody asks. */
+  /** Whether the two fields show as text or as inputs. Text until somebody asks. */
   protected readonly editing = signal(false);
 
   protected readonly description = signal('');
   protected readonly processingNotes = signal('');
 
-  /** Whether the form has been touched since it was last filled from the server. Without it, the
-   *  effect below would overwrite what somebody is typing every time the parent reloads. */
+  /** Touched since last filled from the server — so a parent reload does not overwrite typing. */
   private readonly touched = signal(false);
 
   constructor() {
@@ -62,9 +50,8 @@ export class AboutPanel {
   }
 
   /**
-   * Leave the form **and forget what was typed** — the values come back from the use case the
-   * parent holds. A cancel that kept the draft would leave the read view showing text that is not
-   * stored, which is the same lie as an unsaved field looking saved.
+   * Leave the form and forget what was typed, restoring the parent's values: a kept draft would
+   * make the read view show text that is not stored.
    */
   protected cancelEditing(): void {
     this.editing.set(false);

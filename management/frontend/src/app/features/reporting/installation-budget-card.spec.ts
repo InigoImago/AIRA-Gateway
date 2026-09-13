@@ -58,9 +58,8 @@ function setup(options: Options = {}) {
     },
   };
   const me = {
-    // The double carries every member the real service has. One that is *less* capable than what
-    // it stands in for fails as a template error in every test in the file at once, which is a
-    // long way from the thing being tested.
+    // The double carries every member the real service has; a less capable one fails as a
+    // template error in every test at once.
     currency: signal(''),
     get: () =>
       options.me ??
@@ -124,9 +123,8 @@ describe('InstallationBudgetCard', () => {
   });
 
   it('draws nothing at all for a reader the server answered with an empty list', () => {
-    // The server answers `[]` both to "nothing is configured" and to "not your business", and
-    // this component cannot tell them apart — so it must not claim the first. A use-case user
-    // reading "no limit is set" would be told something nobody verified.
+    // The server answers `[]` both to "nothing is configured" and to "not your business", so the
+    // card must not claim the first.
     const { testid, text } = setup({ roles: ['use-case-user'], budgets: [] });
 
     expect(testid('installation-budget')).toBeNull();
@@ -157,8 +155,8 @@ describe('InstallationBudgetCard', () => {
   });
 
   it('saves the scope the gateway binds on, and says enabled out loud', () => {
-    // `scope: 'installation'` with an empty use case is what selects the residual bucket in the
-    // gateway; and an upsert silent about `enabled` used to re-arm a budget somebody had lifted.
+    // `scope: 'installation'` with an empty use case selects the residual bucket in the gateway;
+    // an upsert silent about `enabled` would re-arm a budget somebody had lifted.
     const { component, calls } = setup();
     component.cost.set('20,00');
     component.save();

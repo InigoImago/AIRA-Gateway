@@ -1,10 +1,9 @@
 """Carrying out a decision to stop traffic (`FRD-503`).
 
-Read on every request and written a handful of times a week, so this is a **cache** problem rather
-than a shared-state one — see `FRD-503` §4.1, which amends `ADR-0014` §2 on exactly this point. The
-authority is Postgres, which the gateway cannot serve a request without anyway; a suspension held
-only in Redis would disappear when Redis did, and `FRD-405` already settled that the moment a
-control stops working is the worst moment to stop applying it.
+Read on every request and written a handful of times a week, so a **cache** over Postgres rather
+than shared state (`FRD-503` §4.1, amending `ADR-0014` §2). Postgres is the authority because the
+gateway cannot serve without it anyway; a suspension held only in Redis would vanish with Redis
+(`FRD-405`: the moment a control stops working is the worst moment to stop applying it).
 """
 
 from __future__ import annotations
@@ -24,9 +23,8 @@ from aira_gateway.db.models import AccessSuspension
 _log = get_logger(__name__)
 
 #: How long a loaded set of suspensions is trusted. A lift takes up to this long to reach every
-#: instance, and for a control that *removes* a restriction, being slightly late is the harmless
-#: direction. Applying one is not delayed: the rule that creates it writes and the next reload sees
-#: it, which is the same few seconds.
+#: instance — the harmless direction to be late in. A new suspension is not delayed: the rule that
+#: writes it invalidates this instance's cache.
 CACHE_TTL_SECONDS = 5.0
 
 
@@ -76,8 +74,8 @@ class SuspensionService:
                 self._cached = await _load(session)
             self._loaded_at = now
         moment = datetime.now(UTC)
-        # Expiry is applied on read, not by a sweeper: a row that has run out must stop refusing
-        # people the moment it does, without waiting for anything to tidy up.
+        # Expiry is applied on read, not by a sweeper: a row that has run out stops refusing the
+        # moment it does.
         return [row for row in self._cached if _still_applies(row, moment)]
 
     async def check(
@@ -89,17 +87,9 @@ class SuspensionService:
     ) -> list[Throttle]:
         """Raise :class:`Suspended` if this caller is blocked; return any throttles that apply.
 
-        ``person`` is the name the same human is known by whichever credential they used
-        (:func:`aira_gateway.scopes.person`), and it is here because **a kill switch aimed at a
-        person was stopping half of them**. The two credentials answer "who is this" in different
-        alphabets — an OIDC token's subject is a directory id, an API key's is its owner's
-        username — so a suspension typed from a trace row stopped exactly the kind of credential
-        that row happened to come from. Measured on 2026-08-30: `target_value: "alice"` blocked
-        her key and served her browser.
-
-        A **credential** target still matches the credential alone, and that separation is the
-        point of having three targets: *"block this leaked key"* must not stop the person holding
-        it, and *"stop this person"* must not depend on which of their credentials they reach for.
+        A **subject** target matches the subject or ``person`` (:func:`aira_gateway.scopes.person`),
+        so a suspension aimed at a person stops every credential they hold. A **credential** target
+        matches that credential alone: blocking a leaked key must not stop the person holding it.
         """
         if not self._enforce:
             return []
@@ -126,11 +116,8 @@ class SuspensionService:
                 author=row.author,
             )
             raise Suspended(
-                # The message names the author, and it is now a **name**. It was
-                # `user:{principal.subject}` — a directory id for a console user, which answers the
-                # caller's first question ("who did this, so I can ask them") with a string nobody
-                # can look anybody up by. Every other record of a person's act here already keeps
-                # the name: `granted_by`, `deleted_by`, `issued_by`, `RequestLog.username`.
+                # Names the author as a name the caller can ask for, like every other record of a
+                # person's act here (`granted_by`, `issued_by`, `RequestLog.username`).
                 f"Access for this {row.target.replace('_', ' ')} is suspended ({row.author}).",
                 retry_after=retry_after,
                 reason=row.reason or row.author,
@@ -151,12 +138,17 @@ async def _load(session: AsyncSession) -> list[AccessSuspension]:
     return list((await session.execute(stmt)).scalars().all())
 
 
+def _aware(moment: datetime) -> datetime:
+    """SQLite hands back naive datetimes; Postgres does not. Compare in UTC either way."""
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
 def _still_applies(row: AccessSuspension, moment: datetime) -> bool:
     if row.lifted_at is not None:
         return False
     if row.expires_at is None:
         return True
-    expires = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=UTC)
+    expires = _aware(row.expires_at)
     return expires > moment
 
 
@@ -172,10 +164,7 @@ def _matches(
         return False
     target = RuleTarget(row.target)
     if target is RuleTarget.SUBJECT:
-        # **Either alphabet.** The same widening `payloads.own_requests` and the findings list
-        # already make, applied to the control that actually stops traffic — an identity read in
-        # two alphabets has as many readers as there are comparisons, and this was the one where a
-        # miss meant a caller kept being served (`LESSONS.md` §1).
+        # Either alphabet, as `payloads.own_requests` does: a miss here keeps a caller served.
         return row.target_value in {name for name in (subject, person) if name}
     if target is RuleTarget.CREDENTIAL:
         return credential is not None and row.target_value == credential
@@ -187,8 +176,7 @@ def _retry_after(row: AccessSuspension) -> str:
     a client told to come back in a week simply stops, and a person will lift this one."""
     if row.expires_at is None:
         return "60"
-    expires = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=UTC)
-    seconds = int((expires - datetime.now(UTC)).total_seconds())
+    seconds = int((_aware(row.expires_at) - datetime.now(UTC)).total_seconds())
     return str(max(seconds, 1))
 
 

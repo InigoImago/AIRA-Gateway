@@ -61,7 +61,7 @@ ACCOUNTED: dict[str, str] = {
         "`Accounting`, which is what `test_a_kira_request_is_audited_exactly_like_a_gemini_one` "
         "compares row for row."
     ),
-    "api/incidents.py:generate": (
+    "api/incidents/thinking_check.py:generate": (
         "The console's *Ask the model* and *Check reachability* buttons (`ADR-0021`, `FRD-609`), "
         "and they **are** accounted now — `_record_diagnostic` writes a row per probe with the "
         "real usage and the real price, under `Outcome.DIAGNOSTIC` (`FRD-610`).\n\n"
@@ -73,11 +73,19 @@ ACCOUNTED: dict[str, str] = {
         "case, and this call belongs to none by construction, so there is nothing to book it "
         "against until an installation-level allowance exists (`FRD-610` §4)."
     ),
-    "pipeline/classifiers.py:generate": (
-        "The LLM injection classifier and the LLM router. Each returns a `ModelCall`, which "
-        "`record_pipeline_calls` turns into a `pipeline:<step>` row booked with `requests=0` — the "
-        "caller made one request, and a second would inflate the figures and could trip a request "
-        "limit for traffic nobody sent (`FRD-125b`)."
+    "pipeline/classifiers/injection.py:generate": (
+        "The LLM injection classifier. It returns a `ModelCall`, which `record_pipeline_calls` "
+        "turns into a `pipeline:<step>` row booked with `requests=0` — the caller made one "
+        "request, and a second would inflate the figures and could trip a request limit for "
+        "traffic nobody sent (`FRD-125b`)."
+    ),
+    "pipeline/classifiers/routing.py:generate": (
+        "The LLM router, on the same terms as the injection classifier: a `ModelCall` recorded as "
+        "`pipeline:model_route` with `requests=0` (`FRD-125b`)."
+    ),
+    "pipeline/classifiers/redaction.py:generate": (
+        "The PII filter's redactor (`FRD-309`), on the same terms: a `ModelCall` recorded as "
+        "`pipeline:pii_filter` with `requests=0` (`FRD-125b`)."
     ),
     "pipeline/dispatch.py:generate": (
         "The dispatch chain itself. Reached only from `serving.py`, inside `Accounting`, with the "

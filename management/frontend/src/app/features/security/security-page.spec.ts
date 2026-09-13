@@ -1,5 +1,6 @@
-import { signal } from '@angular/core';
+import { Type, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { Observable, Subject, of, throwError } from 'rxjs';
 import { AnomalyEvent, AnomalyRule, Me, Suspension } from '../../core/api/models';
@@ -7,6 +8,8 @@ import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { SecurityPage } from './security-page';
+import { SecurityRulesPanel } from './security-rules-panel';
+import { SuspensionsPanel } from './suspensions-panel';
 
 const EVENT: AnomalyEvent = {
   id: 'e1',
@@ -108,8 +111,7 @@ function setup(options: Options = {}) {
     },
     suspensions: () => options.suspensions ?? of({ suspensions: [SUSPENSION] }),
     globalRules: () => of(options.rules ?? [RULE]),
-    // The scope picker's source. A page that could not name a use case could only ever stop
-    // traffic everywhere, which is what this list exists to widen.
+    // The scope picker's source: without it a stop could only ever apply everywhere.
     list: () => of([{ slug: 'kundenservice' }, { slug: 'entwicklung' }]),
     suspend: (body: Record<string, unknown>) => {
       calls.push(
@@ -138,8 +140,7 @@ function setup(options: Options = {}) {
     imports: [SecurityPage],
     providers: [
       // The page links to a use case's rules panel, so it needs a router. No routes: what is
-      // asserted is the href the console offers, not that navigating it lands anywhere — that
-      // belongs to the browser layer.
+      // asserted is the href the console offers, not where navigating it lands.
       provideRouter([]),
       { provide: UseCaseService, useValue: service },
       {
@@ -160,6 +161,20 @@ function setup(options: Options = {}) {
   const fixture = TestBed.createComponent(SecurityPage);
   fixture.detectChanges();
   const element = fixture.nativeElement as HTMLElement;
+  /** Switch tabs through the signal: the tab strip has no test ids, and adding some would be a
+   *  second way to do one thing. */
+  const toTab = (name: string) => {
+    (fixture.componentInstance as unknown as { tab: { set: (v: string) => void } }).tab.set(name);
+    fixture.detectChanges();
+  };
+  /** A tab's panel, with its tab opened first: a panel renders its content only while shown. */
+  const panel = (name: string, type: Type<unknown>) => {
+    toTab(name);
+    return fixture.debugElement.query(By.directive(type)).componentInstance as Record<
+      string,
+      never
+    >;
+  };
   return {
     fixture,
     calls,
@@ -172,27 +187,18 @@ function setup(options: Options = {}) {
       element.querySelector<HTMLElement>(selector)?.click();
       fixture.detectChanges();
     },
-    /** Switch tabs the way the existing cases do — through the signal, since the tab strip has no
-     *  test ids and adding some for this would be a second way to do one thing. */
-    toRules: () => {
-      (fixture.componentInstance as unknown as { tab: { set: (v: string) => void } }).tab.set(
-        'rules',
-      );
-      fixture.detectChanges();
-    },
-    toSuspensions: () => {
-      (fixture.componentInstance as unknown as { tab: { set: (v: string) => void } }).tab.set(
-        'suspensions',
-      );
-      fixture.detectChanges();
-    },
+    toRules: () => toTab('rules'),
+    toSuspensions: () => toTab('suspensions'),
+    /** The suspensions tab's panel, which owns the kill switch. */
+    suspensionsPanel: () => panel('suspensions', SuspensionsPanel),
+    /** The rules tab's panel, which owns authoring and editing. */
+    rulesPanel: () => panel('rules', SecurityRulesPanel),
   };
 }
 
 describe('SecurityPage — findings', () => {
   it('shows a finding with the numbers it was drawn from', () => {
-    // A finding nobody can check is a finding nobody acts on, and the first question is "how bad,
-    // out of how many".
+    // A finding nobody can check is a finding nobody acts on: "how bad, out of how many".
     const { text } = setup();
 
     expect(text()).toContain('too many refusals');
@@ -239,8 +245,8 @@ describe('SecurityPage — suspensions and the kill switch', () => {
   });
 
   it('withholds it from a read-only governance role, and says who does it', () => {
-    // `it-steuerung` sees every use case and every figure and writes nothing anywhere (PRD §154).
-    // Offering a button that answers 403 is the defect `FRD-206` was written about.
+    // `it-steuerung` sees every use case and every figure and writes nothing anywhere (PRD §154);
+    // a button that answers 403 is the defect `FRD-206` names.
     const { component, fixture, testid } = setup({ roles: ['it-steuerung'] });
     (component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
     fixture.detectChanges();
@@ -251,32 +257,47 @@ describe('SecurityPage — suspensions and the kill switch', () => {
 
   it('stops traffic through the server, with a reason', () => {
     const harness = setup();
-    const component = harness.component as unknown as {
-      tab: { set: (v: string) => void };
+    const panel = harness.suspensionsPanel() as unknown as {
       showStop: { set: (v: boolean) => void };
       targetValue: { set: (v: string) => void };
       reason: { set: (v: string) => void };
       stop: () => void;
     };
-    component.tab.set('suspensions');
-    component.showStop.set(true);
-    component.targetValue.set('ada');
-    component.reason.set('probing');
+    panel.showStop.set(true);
+    panel.targetValue.set('ada');
+    panel.reason.set('probing');
     harness.fixture.detectChanges();
 
-    component.stop();
+    panel.stop();
 
     expect(harness.calls).toContain('suspend:subject:ada:null:block:null');
   });
 
-  it('scopes a stop to one use case, and holds a caller to a rate', () => {
-    /** Three fields the suspensions table has always **rendered** — a scope, a throttle and its
-     *  rate, because a *rule* can produce them — and the manual form could not. So every decision
-     *  a person made was a full block, everywhere: a credential bound to one use case was stopped
-     *  in all of them, and "hold this caller to ten a minute" could not be said at all. */
+  it('keeps a half-typed stop while the reader looks at another tab', () => {
+    // Looking a subject up under Findings mid-incident must not cost the form.
     const harness = setup();
-    const component = harness.component as unknown as {
-      tab: { set: (v: string) => void };
+    const panel = harness.suspensionsPanel() as unknown as {
+      showStop: { set: (v: boolean) => void };
+      targetValue: { set: (v: string) => void; (): string };
+    };
+    panel.showStop.set(true);
+    panel.targetValue.set('ada');
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('findings');
+    harness.fixture.detectChanges();
+    expect(harness.testid('stop-toggle')).toBeNull();
+
+    harness.toSuspensions();
+
+    expect(harness.suspensionsPanel()).toBe(panel as never);
+    expect(panel.targetValue()).toBe('ada');
+    expect(harness.testid('stop-toggle')?.textContent).toContain('Cancel');
+  });
+
+  it('scopes a stop to one use case, and holds a caller to a rate', () => {
+    /** A scope, a throttle and its rate: the table renders them (a *rule* can produce them), and a
+     *  person must be able to set them too, or every manual decision is a full block everywhere. */
+    const harness = setup();
+    const panel = harness.suspensionsPanel() as unknown as {
       showStop: { set: (v: boolean) => void };
       targetValue: { set: (v: string) => void };
       scope: { set: (v: string) => void };
@@ -285,32 +306,28 @@ describe('SecurityPage — suspensions and the kill switch', () => {
       canSubmit: () => boolean;
       stop: () => void;
     };
-    component.tab.set('suspensions');
-    component.showStop.set(true);
-    component.targetValue.set('ada');
-    component.action.set('throttle');
+    panel.showStop.set(true);
+    panel.targetValue.set('ada');
+    panel.action.set('throttle');
     harness.fixture.detectChanges();
 
-    // A throttle without a rate is refused by the server; the form must not spend an incident's
-    // first minute finding that out.
-    expect(component.canSubmit()).toBe(false);
+    // The server refuses a throttle without a rate; the form refuses it first.
+    expect(panel.canSubmit()).toBe(false);
 
-    component.throttleRpm.set(10);
-    component.scope.set('kundenservice');
+    panel.throttleRpm.set(10);
+    panel.scope.set('kundenservice');
     harness.fixture.detectChanges();
-    component.stop();
+    panel.stop();
 
     expect(harness.calls).toContain('suspend:subject:ada:kundenservice:throttle:10');
   });
 
   it('offers the scope and action controls, with the use cases it could load', () => {
     const harness = setup();
-    const component = harness.component as unknown as {
-      tab: { set: (v: string) => void };
+    const panel = harness.suspensionsPanel() as unknown as {
       showStop: { set: (v: boolean) => void };
     };
-    component.tab.set('suspensions');
-    component.showStop.set(true);
+    panel.showStop.set(true);
     harness.fixture.detectChanges();
 
     const html = harness.fixture.nativeElement as HTMLElement;
@@ -322,27 +339,32 @@ describe('SecurityPage — suspensions and the kill switch', () => {
   });
 
   it('says the decision takes a moment to reach every instance', () => {
-    // The cache is deliberately a few seconds behind (`FRD-503` §4.1). A console that implied
-    // "done" would have somebody testing it immediately and concluding it did not work.
+    // The cache is deliberately a few seconds behind (`FRD-503` §4.1); a console implying "done"
+    // would have somebody test it at once and conclude it did not work. Read from the page's
+    // banner, which the panel reports into.
     const harness = setup();
-    const component = harness.component as unknown as {
+    const panel = harness.suspensionsPanel() as unknown as {
       targetValue: { set: (v: string) => void };
       stop: () => void;
-      feedback: { notice: () => string | null };
     };
-    component.targetValue.set('ada');
-    component.stop();
+    panel.targetValue.set('ada');
+    panel.stop();
 
-    expect(component.feedback.notice()).toContain('few seconds');
+    const page = harness.component as unknown as { feedback: { notice: () => string | null } };
+    expect(page.feedback.notice()).toContain('few seconds');
   });
 
   it('asks before restoring access, and does nothing when declined', () => {
     const declined = setup({ confirmAnswer: false });
-    (declined.component as unknown as { lift: (row: Suspension) => void }).lift(SUSPENSION);
+    (declined.suspensionsPanel() as unknown as { lift: (row: Suspension) => void }).lift(
+      SUSPENSION,
+    );
     expect(declined.calls).toEqual([]);
 
     const accepted = setup({ confirmAnswer: true });
-    (accepted.component as unknown as { lift: (row: Suspension) => void }).lift(SUSPENSION);
+    (accepted.suspensionsPanel() as unknown as { lift: (row: Suspension) => void }).lift(
+      SUSPENSION,
+    );
     expect(accepted.calls).toContain('lift:s1');
   });
 
@@ -361,8 +383,8 @@ describe('SecurityPage — suspensions and the kill switch', () => {
   });
 
   it('does not report a refused suspension list as a page failure', () => {
-    // A caller who may see findings and not suspensions gets a 403. That is a real answer about a
-    // real permission, not a broken screen.
+    // A caller who may see findings and not suspensions gets a 403: an answer about a permission,
+    // not a broken screen.
     const harness = setup({
       roles: ['it-steuerung'],
       suspensions: throwError(() => ({ status: 403 })),
@@ -396,7 +418,6 @@ describe('SecurityPage — rules', () => {
 
 describe('SecurityPage — live', () => {
   it('shows that it is live, and lets the reader switch it off', () => {
-    // A screen that changes under somebody who did not ask it to is a screen they stop trusting.
     const { testid, element, fixture } = setup();
     const toggle = testid('live-toggle') as HTMLInputElement;
 
@@ -420,8 +441,7 @@ describe('SecurityPage — reading a suspension row', () => {
   }
 
   it('says what a throttle actually allows, not just that one exists', () => {
-    // "An enum member is not a specification" (`FRD-503` §7): a throttle without its rate is a
-    // decision nobody can review.
+    // A throttle without its rate is a decision nobody can review (`FRD-503` §7).
     const { text } = onSuspensions([{ ...SUSPENSION, action: 'throttle', throttle_rpm: 12 }]);
 
     expect(text()).toContain('12/min');
@@ -432,8 +452,7 @@ describe('SecurityPage — reading a suspension row', () => {
   });
 
   it('says when a stop applies everywhere rather than to one use case', () => {
-    // A global stop and a use-case-scoped one look identical without this, and they are very
-    // different decisions to review.
+    // A global stop and a scoped one are very different decisions to review.
     expect(onSuspensions([{ ...SUSPENSION, use_case: null }]).text()).toContain('everywhere');
   });
 
@@ -452,39 +471,38 @@ describe('SecurityPage — reading a suspension row', () => {
   });
 
   it('will not submit a stop with no target', () => {
-    // The server would refuse it, but a form that posts an empty target teaches the reader that
-    // the console is unreliable rather than that the input was.
-    const harness = onSuspensions([SUSPENSION]);
-    const component = harness.component as unknown as {
+    // The server would refuse it; a form that posts an empty target makes the console look
+    // unreliable rather than the input.
+    const harness = setup({ suspensions: of({ suspensions: [SUSPENSION] }) });
+    const panel = harness.suspensionsPanel() as unknown as {
       showStop: { set: (v: boolean) => void };
       targetValue: { set: (v: string) => void };
       stop: () => void;
     };
-    component.showStop.set(true);
-    component.targetValue.set('   ');
-    component.stop();
+    panel.showStop.set(true);
+    panel.targetValue.set('   ');
+    panel.stop();
 
     expect(harness.calls).toEqual([]);
   });
 
   it('clears the form once the stop is in force', () => {
     const harness = setup();
-    const component = harness.component as unknown as {
+    const panel = harness.suspensionsPanel() as unknown as {
       targetValue: { set: (v: string) => void; (): string };
       reason: { set: (v: string) => void; (): string };
       showStop: { set: (v: boolean) => void; (): boolean };
       stop: () => void;
     };
-    component.showStop.set(true);
-    component.targetValue.set('ada');
-    component.reason.set('probing');
-    component.stop();
+    panel.showStop.set(true);
+    panel.targetValue.set('ada');
+    panel.reason.set('probing');
+    panel.stop();
 
-    // A form that keeps its text after a successful submit is how the same decision gets made
-    // twice — the zoneless re-render bug this project already fixed once.
-    expect(component.targetValue()).toBe('');
-    expect(component.reason()).toBe('');
-    expect(component.showStop()).toBe(false);
+    // A form that keeps its text after a successful submit is how one decision gets made twice.
+    expect(panel.targetValue()).toBe('');
+    expect(panel.reason()).toBe('');
+    expect(panel.showStop()).toBe(false);
   });
 });
 
@@ -505,8 +523,7 @@ describe('SecurityPage — reading a rule', () => {
   });
 
   it('shows the second number a two-number rule needs', () => {
-    // `payload_size` needs a byte figure as well as a count; the kind that had nowhere to put it
-    // was the defect stage A shipped (`FRD-501` §7).
+    // `payload_size` needs a byte figure as well as a count (`FRD-501` §7).
     const { text } = onRules([
       { ...RULE, kind: 'payload_size', threshold: 10, parameter: 1_000_000 },
     ]);
@@ -547,8 +564,7 @@ describe('SecurityPage — reading a rule', () => {
 
 describe('SecurityPage — a finding opens', () => {
   it('shows what was measured, and what was done, in words', () => {
-    // A finding nobody can check is a finding nobody acts on. Six columns is as much as a table
-    // can be read at, so the rest goes under the row rather than into it.
+    // Six columns is as much as a table can be read at, so the rest goes under the row.
     const harness = setup();
     expect(harness.testid('event-detail-e1')).toBeNull();
 
@@ -590,8 +606,6 @@ describe('SecurityPage — a rule opens and can be changed', () => {
   }
 
   it('says what the rule does rather than printing its kind', () => {
-    // `new_source_ip` and two bare numbers is enough for whoever wrote the rule and nothing for
-    // whoever has to decide, at eleven at night, whether the alert in front of them matters.
     const harness = onRules();
     harness.click('[data-testid="rule-toggle-1"]');
 
@@ -613,9 +627,8 @@ describe('SecurityPage — a rule opens and can be changed', () => {
   });
 
   it('links a use-case rule to the panel where it is actually edited', () => {
-    // Object-level permission is not in the token, so this console cannot answer "may I edit
-    // this" for a use-case rule. It names where instead — and that place now exists: pointing at
-    // a screen that was not there is the `FRD-206` defect one level of indirection further out.
+    // Object-level permission is not in the token, so the console names where the rule is edited
+    // instead of answering "may I edit this" (`FRD-206`).
     const harness = onRules({ rules: [{ ...RULE, is_global: false, use_case: 'uc-a' }] });
     harness.click('[data-testid="rule-toggle-1"]');
 
@@ -625,21 +638,20 @@ describe('SecurityPage — a rule opens and can be changed', () => {
   });
 
   it('asks before deleting a rule, and says what stops being watched', () => {
-    const declined = onRules({ confirmAnswer: false });
-    (declined.component as unknown as { removeRule: (r: AnomalyRule) => void }).removeRule(RULE);
+    const declined = setup({ confirmAnswer: false });
+    (declined.rulesPanel() as unknown as { removeRule: (r: AnomalyRule) => void }).removeRule(RULE);
     expect(declined.calls).toEqual([]);
 
-    const accepted = onRules({ confirmAnswer: true });
-    (accepted.component as unknown as { removeRule: (r: AnomalyRule) => void }).removeRule(RULE);
+    const accepted = setup({ confirmAnswer: true });
+    (accepted.rulesPanel() as unknown as { removeRule: (r: AnomalyRule) => void }).removeRule(RULE);
     expect(accepted.calls).toContain('delete-rule:1');
   });
 });
 
 describe('SecurityPage — saying what a control is', () => {
   it('explains how far the kill switch reaches, and how far it does not', () => {
-    // "Stop traffic" is a verb with no object until you press it, and a reader has to know the
-    // object before they can decide whether to use it. There is deliberately no switch for the
-    // installation, and the explanation says so.
+    // A reader has to know what a stop reaches before deciding to use it, and there is
+    // deliberately no switch for the installation.
     const harness = setup();
     (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
     harness.fixture.detectChanges();
@@ -653,8 +665,7 @@ describe('SecurityPage — saying what a control is', () => {
   });
 
   it('describes the history in terms the reader shares', () => {
-    // It used to read: `kept, because "blocked for two hours last Tuesday" is what a review asks`
-    // — a note to whoever wrote the code, in the place where a sentence for the reader belongs.
+    // The summary is a sentence for the reader, not a note to whoever wrote the code.
     const lifted = { ...SUSPENSION, id: 's2', lifted_at: '2026-08-08T11:00:00Z' };
     const harness = setup({ suspensions: of({ suspensions: [lifted] }) });
     (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
@@ -668,9 +679,8 @@ describe('SecurityPage — saying what a control is', () => {
 });
 
 describe('SecurityPage — the rule editor is wired to the server', () => {
-  // The form's own behaviour — which fields appear, what it refuses, what it sends — lives in
-  // `rule-form.spec.ts`, because it is now one component used by two screens. What belongs here
-  // is that this screen opens it, and that what it emits reaches the right endpoint.
+  // The form's own behaviour lives in `rule-form.spec.ts`. What belongs here is that this screen
+  // opens it, and that what it emits reaches the right endpoint.
 
   function opened() {
     const harness = setup();
@@ -691,7 +701,7 @@ describe('SecurityPage — the rule editor is wired to the server', () => {
   it('sends what the form emits to that rule, and nothing else', () => {
     const harness = opened();
     (
-      harness.component as unknown as {
+      harness.rulesPanel() as unknown as {
         saveRule: (rule: AnomalyRule, changes: Partial<AnomalyRule>) => void;
       }
     ).saveRule(RULE, { threshold: 65, action: 'block' });
@@ -707,7 +717,7 @@ describe('SecurityPage — the rule editor is wired to the server', () => {
   it('says the change takes a moment to reach the gateway', () => {
     const harness = opened();
     (
-      harness.component as unknown as {
+      harness.rulesPanel() as unknown as {
         saveRule: (rule: AnomalyRule, changes: Partial<AnomalyRule>) => void;
       }
     ).saveRule(RULE, { threshold: 65 });
@@ -724,7 +734,9 @@ describe('SecurityPage — the rule editor is wired to the server', () => {
     const harness = opened();
     harness.click('[data-testid="rule-toggle-1"]');
 
-    expect((harness.component as unknown as { editing: () => number | null }).editing()).toBeNull();
+    expect(
+      (harness.rulesPanel() as unknown as { editing: () => number | null }).editing(),
+    ).toBeNull();
   });
 });
 
@@ -811,10 +823,8 @@ describe('SecurityPage — while older findings are in flight', () => {
   // ---- authoring a rule that applies everywhere (`FRD-500`, console side) ---------------------
 
   it('offers a role that may act a way to author a global rule', () => {
-    /** The server has accepted this since `FRD-500` — "a global rule is IT Security's to author" —
-     *  and the console never offered it, so the only global rules that existed anywhere were the
-     *  ones a seed had written straight into the database. `FRD-206`'s defect inverted: not a
-     *  control that refuses when used, but a capability nobody could reach. */
+    // A global rule is IT Security's to author (`FRD-500`); a capability with no way in is
+    // `FRD-206`'s defect inverted.
     const harness = setup({ roles: ['it-security'] });
     harness.toRules();
 
@@ -830,12 +840,10 @@ describe('SecurityPage — while older findings are in flight', () => {
 
   it('creates the rule it was given, and says where it applies', () => {
     const harness = setup({ roles: ['it-security'] });
-    harness.toRules();
-
-    const component = harness.component as unknown as {
+    const panel = harness.rulesPanel() as unknown as {
       createRule: (changes: Record<string, unknown>) => void;
     };
-    component.createRule({ name: 'spend doubled', kind: 'spend_spike', threshold: 2 });
+    panel.createRule({ name: 'spend doubled', kind: 'spend_spike', threshold: 2 });
     harness.fixture.detectChanges();
 
     expect(harness.calls.some((call) => call.startsWith('createGlobalRule:'))).toBe(true);
@@ -853,8 +861,7 @@ describe('SecurityPage — while older findings are in flight', () => {
   });
 
   it('pages what is stopped now and what was stopped before', () => {
-    /** A suspension is **kept** after it is lifted, because "blocked for two hours last Tuesday"
-     *  is what a review asks — so the second list only ever grows. */
+    // A suspension is kept after it is lifted, so the second list only ever grows.
     const harness = setup({ suspensions: manySuspensions(30) });
     harness.toSuspensions();
 
@@ -863,8 +870,7 @@ describe('SecurityPage — while older findings are in flight', () => {
   });
   it('searches the rules by name, kind and where they apply', () => {
     const harness = setup({ rules: manyRules(30) });
-    harness.toRules();
-    const view = harness.component as unknown as { ruleView: { search: (v: string) => void } };
+    const view = harness.rulesPanel() as unknown as { ruleView: { search: (v: string) => void } };
 
     view.ruleView.search('rule 7');
     harness.fixture.detectChanges();
@@ -874,35 +880,32 @@ describe('SecurityPage — while older findings are in flight', () => {
   });
 
   it('searches what is stopped now and what was stopped before with one box', () => {
-    /** "Has this caller ever been stopped?" is one question. A search that covered only the live
-     *  list would answer it wrongly and look like it had answered it. */
+    // "Has this caller ever been stopped?" is one question; a search over only the live list would
+    // answer it wrongly.
     const harness = setup({ suspensions: manySuspensions(30) });
-    harness.toSuspensions();
-    const page = harness.component as unknown as {
+    const panel = harness.suspensionsPanel() as unknown as {
       searchSuspensions: (v: string) => void;
       activeView: { matches: () => unknown[] };
       pastView: { matches: () => unknown[] };
     };
 
-    page.searchSuspensions('caller-3');
+    panel.searchSuspensions('caller-3');
     harness.fixture.detectChanges();
 
     // `caller-3` and `caller-30`…`caller-39`; what matters is that **both** lists narrowed.
-    expect(page.activeView.matches().length).toBeLessThan(15);
-    expect(page.pastView.matches().length).toBeLessThan(15);
+    expect(panel.activeView.matches().length).toBeLessThan(15);
+    expect(panel.pastView.matches().length).toBeLessThan(15);
   });
 
   it('finds a rule that applies everywhere by that word', () => {
-    /** A global rule has no use case, and the row says "everywhere" — so that is what somebody
-     *  types to find one. A haystack that read `null` there would make the word unsearchable. */
+    // A global rule's row says "everywhere", so that is what somebody types to find one.
     const harness = setup({
       rules: [
         { ...RULE, id: 1, name: 'global one', use_case: null, is_global: true },
         { ...RULE, id: 2, name: 'local one', use_case: 'uc-a', is_global: false },
       ],
     });
-    harness.toRules();
-    const view = harness.component as unknown as { ruleView: { search: (v: string) => void } };
+    const view = harness.rulesPanel() as unknown as { ruleView: { search: (v: string) => void } };
 
     view.ruleView.search('everywhere');
     harness.fixture.detectChanges();

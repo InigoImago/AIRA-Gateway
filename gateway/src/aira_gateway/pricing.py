@@ -1,12 +1,11 @@
 """What a request cost (FRD-403).
 
-The gateway is the only place that knows both halves of the calculation: the token split the
-upstream reported, and the price the catalog carries for that model. Everything downstream — the
-budget counters, the audit log, the consumption view — reads the number computed here.
+The gateway alone knows both halves: the token split the upstream reported and the price the
+catalog carries. Everything downstream — budget counters, audit log, consumption view — reads the
+number computed here.
 
-A model without a price yields ``None``, which is deliberately not ``0``: "we do not know what
-this cost" and "this was free" are different statements, and only one of them should be summed
-into a spend figure.
+A model without a price yields ``None``, never ``0``: "we do not know what this cost" and "this was
+free" are different statements, and only one belongs in a spend figure.
 """
 
 from __future__ import annotations
@@ -24,12 +23,9 @@ from aira_gateway.db.models import ModelRead
 class Price:
     """A model's price per one million tokens, in nano-units, split by direction.
 
-    Cached input and cache writes have their own rates where a provider publishes them
-    (`FRD-133`): a read is 0.1x base input on Anthropic, a five-minute write 1.25x and an hour-long
-    one 2x; Azure discounts reads and charges some writes. **Absent means the ordinary input
-    rate** — the behaviour before these fields existed, and the conservative direction: a read
-    priced at base over-states a little, where treating an unpriced write as free under-states in
-    the direction a cost control must never be wrong.
+    Cache reads and writes have their own rates where a provider publishes them (`FRD-133`).
+    **Absent means the ordinary input rate** — the conservative direction: a read priced at base
+    over-states a little, while an unpriced write treated as free would under-state.
     """
 
     input_per_million_nanos: int
@@ -80,11 +76,9 @@ class PricingService:
     async def cost_nanos(self, model: str, usage: CanonicalUsage | None) -> int | None:
         """Cost of one request in nano-units, or None when the model has no price.
 
-        Input and output tokens are priced separately, which is why the canonical usage keeps
-        them apart all the way from the upstream response instead of collapsing to a total — and
-        since `FRD-133` the input side is three rates, not one: ordinary, cache read, cache write.
-        A request that reports no cache tokens computes to exactly what it did before, because the
-        uncached remainder is then the whole of the input.
+        Input and output are priced separately, and the input side at three rates (ordinary, cache
+        read, cache write — `FRD-133`). A request reporting no cache tokens computes exactly as
+        before, since the uncached remainder is then the whole input.
         """
         if usage is None:
             return None

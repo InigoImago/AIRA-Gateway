@@ -342,10 +342,8 @@ describe('AccessPanel — revoking', () => {
   });
 
   it('names the credentials the removal revoked with it', () => {
-    // Ending somebody's access revokes the API keys of this use case that rested on it
-    // (`FRD-613`). A removal that silently deactivated two of somebody's credentials would be a
-    // control whose whole effect the screen cannot state — `FRD-206` read backwards — and the
-    // person doing it is often the one who has to tell somebody the key stopped working.
+    // Ending somebody's access revokes this use case's API keys that rested on it (`FRD-613`), and
+    // the person doing it must be told which.
     const harness = setup({ removeMember: of({ revoked_keys: ['aabb1122', 'ccdd3344'] }) });
     harness.click('[aria-label="Remove ada"]');
 

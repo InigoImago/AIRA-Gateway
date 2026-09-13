@@ -1,8 +1,8 @@
-"""Gemini-compatible routes (FRD-100).
+"""Gemini-compatible routes (`FRD-100`): ``POST /v1beta/models/{model}:{method}``.
 
-Mirrors Google's colon-verb convention: ``POST /v1beta/models/{model}:{method}``. Requests
-are validated against the Gemini schema, mapped to canonical, dispatched to the resolved
-provider, and mapped back. Errors use the Gemini error envelope.
+Requests are validated against the Gemini schema, mapped to canonical, run through the shared
+`api.serving` layer and mapped back; errors use the Gemini envelope. Every branch *raises* its
+refusals and :func:`generate` records them in one place, so no branch can forget to (`FRD-122`).
 """
 
 from __future__ import annotations
@@ -13,20 +13,22 @@ from typing import Any
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from aira_common.logging import get_logger
-from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.mapping import (
     canonical_to_gemini,
+    chunk_to_gemini,
     gemini_to_canonical,
     gemini_to_embedding,
     upstream_model_to_gemini,
 )
+from aira_gateway.api.gemini.refusals import refusal_response
 from aira_gateway.api.serving import (
+    EMBEDDING_METHODS,
     REFUSALS,
     Prepared,
     StreamedNotice,
@@ -36,184 +38,77 @@ from aira_gateway.api.serving import (
     check_structured_result,
     declared_routing,
     deprecation_headers,
-    elapsed_ms,
     ensure_body_is_encodable,
     json_body,
     prepare_for_dispatch,
-    provenance,
-    refusal_outcome,
-    registry_of,
+    record_refusal,
     requirements_for,
     resolve_direct_target,
     schema_bounds,
-    upstream_error,
     upstream_status,
 )
-from aira_gateway.attachments import AttachmentRejected
-from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
-from aira_gateway.budgets.errors import BudgetExceeded
-from aira_gateway.core.canonical import (
-    CanonicalChunk,
-    CanonicalEmbeddingRequest,
-    CanonicalRequest,
-)
-from aira_gateway.core.schema import SchemaRejected
-from aira_gateway.embedding import EmbeddingRejected
-from aira_gateway.persistence.recorder import record_request
-from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
-from aira_gateway.pipeline.errors import PipelineRejected
-from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.audit import AuditTrail, Outcome
+from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
+from aira_gateway.pipeline.dispatch import dispatch_with_fallback
+from aira_gateway.state import providers_of
 from aira_gateway.telemetry import model_call_chunks, model_call_span
-from aira_gateway.thinking import ThinkingRejected
-from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError
+from aira_gateway.upstreams.base import UpstreamError
 
 _log = get_logger("aira_gateway")
 
-
 router = APIRouter(tags=["gemini"])
 
-
-def split_resource(resource: str) -> tuple[str, str, str]:
-    """``model:method`` → the two parts, splitting at the **last** colon.
-
-    Not the first. Google's model names carry none, so `partition` was correct for as long as
-    Google was the only vendor — and then a self-hosted server arrived whose names are
-    `qwen3:0.6b` and `llama3.1:70b`. Splitting at the first colon turned that into the model
-    `qwen3` and the method `0.6b:generateContent`, which surfaced as **"Model \'qwen3\' not
-    found"**: a message naming a model the caller never asked for, pointing at the catalog
-    instead of at the parser.
-
-    The method never contains a colon and the model may, so the last one is the separator. Found
-    the first time a real request was sent to a real local model, which is the entire argument for
-    having one (`FRD-123`).
-    """
-    model, separator, method = resource.rpartition(":")
-    return (model, separator, method) if separator else ("", "", resource)
+#: The verbs that generate. The embedding verbs are `serving.EMBEDDING_METHODS`.
+GENERATION_METHODS = frozenset({"generateContent", "streamGenerateContent"})
 
 
-def _first_error(exc: ValidationError) -> str:
-    first = exc.errors()[0]
-    location = ".".join(str(part) for part in first.get("loc", ()))
-    return f"{location}: {first.get('msg', 'invalid')}".strip(": ")
-
-
-async def _described(request: Request, model: schemas.GeminiModel) -> schemas.GeminiModel:
-    """Attach what the catalog declares, so the list says what each model may be asked to do."""
-    declaration = await catalog_of(request).declaration(model.name.removeprefix("models/"))
-    return model.model_copy(
-        update={
-            # The standard pair first, then the extension that predates it and carries the same
-            # figure. Both come from the catalog: nothing here asks the upstream, because a
-            # declaration is what this installation decided and a vendor's claim is not (`FRD-131`).
-            "inputTokenLimit": declaration.context_window,
-            "outputTokenLimit": declaration.max_output_tokens,
-            "airaCapabilities": sorted(str(c) for c in declaration.capabilities),
-            "airaMaxOutputTokens": declaration.max_output_tokens,
-            "airaDeprecated": declaration.deprecated,
-            # Surfaced the same way an unpriced model is: visibly incomplete rather than absent,
-            # because an undeclared model silently does less than the list suggests.
-            "airaDeclared": declaration.declared,
-        }
-    )
+# == model listing ================================================================================
 
 
 @router.get("/v1beta/models")
 async def list_models(request: Request) -> JSONResponse:
     models = [
         await _described(request, upstream_model_to_gemini(m))
-        for m in registry_of(request).models()
+        for m in providers_of(request).models()
     ]
-    # `exclude_none`, so a model with no figure for a limit carries **no field** rather than a
-    # null — which is what Google does, and the difference matters: a client reading `0` sizes a
-    # conversation against a full context window. The streamed exit has done this since `FRD-100`;
-    # this one had not, which is the same fact at two exits disagreeing again.
+    # `exclude_none`: a limit nobody declared is an absent field, as with Google, never a null.
     return JSONResponse(schemas.ListModelsResponse(models=models).model_dump(exclude_none=True))
 
 
 @router.get("/v1beta/models/{model}")
 async def get_model(model: str, request: Request) -> Response:
-    upstream_model = registry_of(request).get_model(model)
+    upstream_model = providers_of(request).get_model(model)
     if upstream_model is None:
         return _error(404, f"Model '{model}' not found.", "NOT_FOUND")
     described = await _described(request, upstream_model_to_gemini(upstream_model))
     return JSONResponse(described.model_dump(exclude_none=True))
 
 
-#: How a refusal maps onto the closed outcome vocabulary. Anything unmapped is a bug in this
-#: table, not a reason to record nothing — see ``_refusal_outcome``.
+async def _described(request: Request, model: schemas.GeminiModel) -> schemas.GeminiModel:
+    """The model resource plus what the catalogue declares about it.
 
-
-def refusal_response(exc: Exception) -> JSONResponse:
-    """Every refusal in `REFUSALS`, in this surface's envelope.
-
-    **Public because a second endpoint speaks this envelope.** `pipeline:dryRun` is not a surface —
-    it parses its own small body and answers in Gemini's shape — and it needs the same three
-    statuses for the same three refusals. Restating them there would be a second definition of a
-    mapping that already exists, which is how a control comes to answer 403 on one endpoint and 429
-    on another for the same reason.
+    From the catalogue, never from the vendor: a declaration is this installation's decision
+    (`FRD-131`). An undeclared model is marked as such, the way an unpriced one is.
     """
-    if isinstance(exc, AttachmentRejected | SchemaRejected):
-        return _error(400, str(exc), "INVALID_ARGUMENT")
-    if isinstance(exc, ThinkingRejected | EmbeddingRejected):
-        # The code the predecessor uses travels in the message, because Google's envelope has no
-        # field for it and inventing one would make this surface non-Gemini. The KIRA surface,
-        # whose clients switch on the code, renders it as the code (`FRD-107`).
-        return _error(400, f"{exc.code}: {exc.message}", "INVALID_ARGUMENT")
-    if isinstance(exc, NoCapableModel):
-        # A 400, not the 502 this used to be. "Every candidate was excluded" is a configuration or
-        # capability problem somebody can fix; an upstream outage is not, and reporting them as the
-        # same status sends whoever reads it to the wrong place.
-        return _error(400, str(exc), "FAILED_PRECONDITION")
-    if isinstance(exc, Suspended):
-        # 429, not 403. The credential is valid and the membership is real; the caller is stopped
-        # *temporarily*, and "come back later" is what 429 means. A 403 would send a client off to
-        # fix permissions it has no problem with.
-        return _error(
-            429, exc.message, "RESOURCE_EXHAUSTED", headers={"Retry-After": exc.retry_after}
-        )
-    if isinstance(exc, RateLimited):
-        return _error(
-            429, exc.message, "RESOURCE_EXHAUSTED", headers={"Retry-After": exc.retry_after}
-        )
-    if isinstance(exc, BudgetExceeded):
-        return _error(429, exc.message, "RESOURCE_EXHAUSTED")
-    if isinstance(exc, PipelineRejected):
-        return _error(exc.code, exc.message, exc.status)
-    if isinstance(exc, DialectUnsupported):
-        # 400, and for the same reason `NoCapableModel` is one: the catalogue claims something
-        # this model's wire format cannot say, and that is a declaration somebody can correct. A
-        # 500 said the gateway had failed, which sent the reader to the logs of a service that was
-        # working exactly as designed.
-        return _error(400, str(exc), "FAILED_PRECONDITION")
-    if isinstance(exc, UpstreamError):
-        return upstream_error(exc)
-    assert isinstance(exc, GeminiHTTPError)
-    return exc.to_response()
+    declaration = await catalog_of(request).declaration(model.name.removeprefix("models/"))
+    return model.model_copy(
+        update={
+            "inputTokenLimit": declaration.context_window,
+            "outputTokenLimit": declaration.max_output_tokens,
+            "airaCapabilities": sorted(str(c) for c in declaration.capabilities),
+            "airaMaxOutputTokens": declaration.max_output_tokens,
+            "airaDeprecated": declaration.deprecated,
+            "airaDeclared": declaration.declared,
+        }
+    )
 
 
-def _asked_for_reasoning(parsed: schemas.GenerateContentRequest | None) -> bool:
-    """This surface's spelling of "give me the model's reasoning" (`FRD-135` FR-4).
-
-    Takes the **parsed** request, not the raw body: written against `body` first, which is still a
-    `dict` at that point, and 186 tests said so at once. A helper that names its type cannot be
-    handed the wrong thing twice.
-    """
-    if parsed is None or parsed.generationConfig is None:
-        return False
-    thinking = parsed.generationConfig.thinkingConfig
-    return bool(thinking is not None and thinking.includeThoughts)
+# == the verbs ====================================================================================
 
 
 @router.post("/v1beta/models/{resource}")
 async def generate(resource: str, request: Request) -> Response:
-    """Dispatch a Gemini verb — and record the request whether or not it was served.
-
-    Every refusal is written **here**, once. The obvious alternative is a ``record_request`` beside
-    each ``return _error(...)``; there are half a dozen of those, the next verb adds more, and one
-    of them will be forgotten. That is not hypothetical — it is exactly how ``:embedContent`` came
-    to bypass the pre-dispatch gate, because the gate lived inside one branch instead of on the
-    path every branch takes. So the branches *raise* and the boundary records (FRD-122 §5.1).
-    """
+    """Dispatch a Gemini verb, and record the request whether or not it was served."""
     model, _, method = split_resource(resource)
     trail = AuditTrail(operation=method or "unknown", requested_model=model, api="gemini")
     started = time.monotonic()
@@ -221,69 +116,17 @@ async def generate(resource: str, request: Request) -> Response:
         return await _generate(resource, request, trail)
     except REFUSALS as exc:
         response = refusal_response(exc)
-        await _record_refusal(request, trail, exc, status=response.status_code, started=started)
+        await record_refusal(request, trail, exc, status=response.status_code, started=started)
         return response
 
 
-async def _record_refusal(
-    request: Request, trail: AuditTrail, exc: Exception, *, status: int, started: float
-) -> None:
-    """Write the audit row for a request that was not served.
+def split_resource(resource: str) -> tuple[str, str, str]:
+    """``model:method`` → its parts, split at the **last** colon.
 
-    Deliberately not conditional on anything: a refusal that leaves no trace is a control nobody
-    can review, which is the whole reason `FRD-122` exists. The reason lives in ``outcome``; the
-    error's own message stays in the response and the log, because a free-text reason on the row
-    would be greppable and never groupable.
-
-    A request refused before the auth dependency resolved an attribution has nothing to attribute
-    and is not recorded here — a 401 is an authentication event, and writing a row per
-    unauthenticated request would make the audit table a denial-of-service target (FRD-122 §2).
+    A model name may contain a colon (`qwen3:0.6b` on a self-hosted server); a method never does.
     """
-    if getattr(request.state, "attribution", None) is None:
-        return
-    try:
-        await _write_refusal(request, trail, exc, status=status, started=started)
-    except Exception:  # noqa: BLE001 — see below
-        # The audit must never become a way to fail a request that was **correctly refused**.
-        # Turning a 429 into a 500 misinforms the client about what happened and invites the
-        # retry storm the limit exists to prevent. The row is lost and said to be lost, loudly.
-        #
-        # Deliberately not applied to the success path: there, a failed write means a served
-        # request went unrecorded, and failing loudly is the defensible answer to that.
-        _log.error(
-            "audit_refusal_not_recorded",
-            operation=trail.operation,
-            model=trail.served_model,
-            status=status,
-            outcome=str(refusal_outcome(exc)),
-            exc_info=True,
-        )
-
-
-async def _write_refusal(
-    request: Request, trail: AuditTrail, exc: Exception, *, status: int, started: float
-) -> None:
-    await record_request(
-        request,
-        operation=trail.operation,
-        model=trail.served_model,
-        status=status,
-        usage=None,
-        latency_ms=elapsed_ms(started),
-        request_payload=trail.body,
-        response_payload=None,
-        outcome=refusal_outcome(exc),
-        requested_model=trail.requested_model,
-        model_selection=trail.selection,
-        pipeline_decisions=decision_summary(trail.decisions),
-        provenance=await provenance(request, trail.served_model, trail.served_region),
-        # Stated rather than defaulted. It was right by accident here and wrong elsewhere.
-        api=trail.api,
-        # A refused request that *offered* functions recorded nothing about them, so "somebody
-        # keeps trying to use tools here" — a `FRD-122` question — had no answer. `declared`
-        # beside `called` is the whole point of the column (`FRD-131` FR-7).
-        tool_calls=tool_summary(trail),
-    )
+    model, separator, method = resource.rpartition(":")
+    return (model, separator, method) if separator else ("", "", resource)
 
 
 async def _generate(resource: str, request: Request, trail: AuditTrail) -> Response:
@@ -293,89 +136,27 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             400, f"Missing method in '{resource}' (expected model:method).", "INVALID_ARGUMENT"
         )
 
-    # The catalog decides who serves it, not just the configured list (`FRD-507`). Asking the
-    # registry alone answered `404 not found` for a model an administrator had just catalogued and
-    # released — which reads as a typo in the model name and is a second list nobody was told to
-    # keep. `check_declaration` further in still refuses an uncatalogued or unreleased model, by
-    # name and with the two reasons kept apart.
+    # The catalogue decides who serves a model, not only configuration (`FRD-507`); the publisher
+    # counts because one platform hosts several wire formats.
     declared = await catalog_of(request).declaration(model)
-    # Publisher as well: one platform can host two wire formats, and on Vertex the provider alone
-    # identifies neither dialect. This was the third of four resolution sites, and the one a real
-    # request actually goes through — the other two answered correctly while this one 404'd.
-    provider = registry_of(request).provider_for(model, declared.provider, declared.publisher)
+    provider = providers_of(request).provider_for(model, declared.provider, declared.publisher)
     if provider is None:
         raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
 
-    try:
-        body = await json_body(request)
-        ensure_body_is_encodable(body)
-    except ValueError:
-        raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from None
-    if not isinstance(body, dict):
-        # **Before `trail.body`, and that is the whole of it.** `[1, 2]` and `"text"` are valid
-        # JSON, so they got past the parse, were assigned to the trail, and were refused a few
-        # lines below by pydantic — correctly, with a `400`. The audit row then failed to write:
-        # the payload columns hold an object, `_maybe` ends in `dict(...)`, and a list is not a
-        # mapping. `TypeError`, `audit_refusal_not_recorded`, **no row** — a caller could leave no
-        # trace by sending two characters (`FRD-122`; the same door `ensure_body_is_encodable`
-        # closes for a value and `json_body` for a shape).
-        #
-        # Both of the other body readers in this gateway already refuse this — the KIRA surface
-        # ("Request body must be an object.") and `incidents._body_of` ("Send one JSON object.").
-        # Two of three, and the third is the one a real client posts to.
-        # `test_surfaces_record_refusals_alike.py` compares them now, because a rule stated per
-        # surface is a rule one surface will be missing.
-        raise GeminiHTTPError(400, "Send one JSON object.", "INVALID_ARGUMENT")
+    body = await _read_body(request)
     trail.body = body
 
-    # Before the branch, so **every** verb takes it: the controls that need no model. Below the
-    # branch is where a generate request runs its pipeline, and the pipeline can call a model —
-    # so a caller refused after that point has already been charged for the refusal.
-    #
-    # Parse and prepare per method, then run the pre-dispatch controls once for all of them.
     canonical: CanonicalRequest | None = None
-    fallbacks: tuple[str, ...] = ()
     embed_request: CanonicalEmbeddingRequest | None = None
-    # Bound only on the generate branch, and read below on every branch — an embedding request
-    # asks for no reasoning and must not trip over a name the other branch owns.
     gemini_request: schemas.GenerateContentRequest | None = None
-
-    if method in ("generateContent", "streamGenerateContent"):
-        try:
-            gemini_request = schemas.GenerateContentRequest.model_validate(body)
-        except ValidationError as exc:
-            raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
+    if method in GENERATION_METHODS:
+        gemini_request = _validated(schemas.GenerateContentRequest, body)
         canonical = gemini_to_canonical(model, gemini_request, bounds=schema_bounds(request))
-    elif method in ("embedContent", "batchEmbedContents"):
-        try:
-            entries = (
-                [schemas.EmbedContentRequest.model_validate(body)]
-                if method == "embedContent"
-                else schemas.BatchEmbedContentsRequest.model_validate(body).requests
-            )
-        except ValidationError as exc:
-            raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
-        # Carried by every SDK call and honoured by none: the URL chose the model and the
-        # pre-dispatch controls have already run against that choice. A *disagreement* is refused
-        # rather than dropped, because answering with another model's vector under a 200 is the
-        # failure `FRD-124` was written about (`schemas.names_the_same_model`).
-        for entry in entries:
-            if not schemas.names_the_same_model(entry.model, model):
-                raise GeminiHTTPError(
-                    400,
-                    f"An embedding request names model '{entry.model}' while the URL addresses "
-                    f"'{model}'. The URL decides which model serves a request; remove the field "
-                    "or address the model you meant.",
-                    "INVALID_ARGUMENT",
-                )
-        embed_request = gemini_to_embedding(model, entries)
+    elif method in EMBEDDING_METHODS:
+        embed_request = _embedding_request(model, method, body)
     else:
         raise GeminiHTTPError(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
 
-    # The whole pre-dispatch sequence, in the one place that owns its order (`serving.py`). This
-    # used to be six calls written out here and six more written out in the KIRA surface — the
-    # same order, twice, and a third surface would have been a third copy. Every guarantee this
-    # layer makes is a guarantee about that order, so the order is not a surface's to assemble.
     prepared = await prepare_for_dispatch(
         request,
         trail,
@@ -383,88 +164,62 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         canonical=canonical,
         embed=embed_request,
         requested_output=canonical.max_output_tokens if canonical is not None else None,
-        # This surface's spelling of "give me the reasoning" (`FRD-135` FR-4). The KIRA surface
-        # passes nothing: the predecessor's contract has no field for it, and inventing one is not
-        # compatibility.
         reasoning_asked_for=_asked_for_reasoning(gemini_request),
     )
+    headers = deprecation_headers(prepared.declaration)
+    if prepared.canonical is None:
+        return await _embed(request, model, method, prepared, trail, headers)
+    if method == "generateContent":
+        return await _generate_content(request, prepared, trail, headers)
+    return await _stream_response(
+        request,
+        prepared.canonical,
+        prepared,
+        trail,
+        sse=request.query_params.get("alt") == "sse",
+        headers=headers,
+    )
+
+
+async def _generate_content(
+    request: Request, prepared: Prepared, trail: AuditTrail, headers: dict[str, str]
+) -> Response:
     canonical = prepared.canonical
-    embed_request = prepared.embed
-    fallbacks = prepared.fallbacks
-    declaration = prepared.declaration
-
-    if canonical is not None:
-        if method == "generateContent":
-            started = time.monotonic()
-            # The post-dispatch sequence, in the one place that owns it. It holds the reservation
-            # and accounts for the request **however it ends** — including a caller who goes away
-            # while the model is still answering, which used to leave no row at all (`FRD-128`).
-            async with accounting(
-                request,
-                trail,
-                prepared,
-                api="gemini",
-                operation="generateContent",
-                started=started,
-            ) as acct:
-                dispatched = await dispatch_with_fallback(
-                    registry_of(request),
-                    canonical,
-                    fallbacks,
-                    permits=await requirements_for(request, canonical),
-                    routing_of=await declared_routing(request),
-                )
-                # What the caller is owed about their own prompt having been rewritten under them
-                # (`FRD-309`). Applied on the canonical answer, so the wire mapping and the audit
-                # payload below both carry it — and recorded even where it could not be shown,
-                # since a missing notice and an absent redaction look identical otherwise. One
-                # shared function, because three of the four exits had none.
-                canonical_response = annotate(canonical, dispatched.response, prepared, trail)
-                trail.served_by(canonical_response.model, dispatched.candidate_index)
-                trail.passed_over(dispatched.skipped)
-                # A truncated or unsatisfied document is not data (FRD-112 FR-6). Raised before
-                # the outcome is reported, so a refused answer is released rather than booked.
-                check_structured_result(canonical, canonical_response)
-                # `exclude_none`, and the **third** exit of this file to need saying so.
-                #
-                # `UsageMetadata.thoughtsTokenCount` documents itself as *"omitted when zero rather
-                # than sent as `0`, because Google omits it for a model that did not think and a
-                # compatibility surface should not invent a field the original leaves out"* — and
-                # this exit sent `"thoughtsTokenCount": null`, which is the same invention wearing
-                # a different value. The streamed exit has excluded nulls since `FRD-100` and the
-                # model list since `FRD-132` §11; a fact stated at one exit and missing from
-                # another is this file's oldest recurring shape.
-                #
-                # It reaches the rest of the response too, and every case is Google's own shape: a
-                # text part carries no `functionCall: null`, and a candidate that finished carries
-                # no key for what it did not do.
-                payload = canonical_to_gemini(canonical_response).model_dump(exclude_none=True)
-                acct.served(
-                    canonical_response.model,
-                    canonical_response.usage,
-                    payload,
-                    [call.name for call in canonical_response.tool_calls],
-                )
-            return JSONResponse(payload, headers=deprecation_headers(declaration))
-        sse = request.query_params.get("alt") == "sse"
-        # The adapter is **not** passed in any more: `_stream_response` resolves its own, because
-        # resolving it is what applies the conditions, and handing an already-chosen provider to a
-        # function that streams is how the two came apart in the first place.
-        return await _stream_response(
-            request,
+    assert canonical is not None
+    started = time.monotonic()
+    async with accounting(
+        request, trail, prepared, api="gemini", operation="generateContent", started=started
+    ) as acct:
+        dispatched = await dispatch_with_fallback(
+            providers_of(request),
             canonical,
-            body,
-            prepared,
-            trail,
-            sse=sse,
-            headers=deprecation_headers(declaration),
+            prepared.fallbacks,
+            permits=await requirements_for(request, canonical),
+            routing_of=await declared_routing(request),
         )
+        answer = annotate(canonical, dispatched.response, prepared, trail)
+        trail.served_by(answer.model, dispatched.candidate_index)
+        trail.passed_over(dispatched.skipped)
+        # Before the outcome is reported, so a refused answer is released rather than booked.
+        check_structured_result(canonical, answer)
+        # `exclude_none`: Google omits what did not happen (no `functionCall: null`, no zero
+        # `thoughtsTokenCount`), and a compatible surface must not invent those fields.
+        payload = canonical_to_gemini(answer).model_dump(exclude_none=True)
+        acct.served(answer.model, answer.usage, payload, [call.name for call in answer.tool_calls])
+    return JSONResponse(payload, headers=headers)
 
-    assert embed_request is not None  # the method dispatch above guarantees it
-    # Same as the streamed branch, and for the same reason: an embedding has no chain to carry the
-    # conditions, so it was reaching a provider with none of them asked — an unapproved and an
-    # unreleased model both answered 200. `canonical` is `None` here, which is what selects the
-    # three checks that are properties of the installation rather than of a generation body.
+
+async def _embed(
+    request: Request,
+    model: str,
+    method: str,
+    prepared: Prepared,
+    trail: AuditTrail,
+    headers: dict[str, str],
+) -> Response:
+    embed_request = prepared.embed
+    assert embed_request is not None
+    # An embedding has no chain to carry the conditions, so they are applied here.
     provider = await resolve_direct_target(request, str(embed_request.model))
     started = time.monotonic()
     async with accounting(
@@ -482,64 +237,22 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             ).model_dump()
         )
         acct.embedded(model, payload, units=embed_request.size)
-    return JSONResponse(payload, headers=deprecation_headers(declaration))
-
-
-def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateContentResponse:
-    usage = chunk.usage
-    # A chunk carries a text delta, or completed tool calls, or both. The calls arrive whole on
-    # the chunk that ends the message (`FRD-131` FR-6) — never in pieces, because half a function
-    # call is not a smaller function call. Without this the client sees the answer's *tokens*
-    # streamed and never the call itself, which for an assistant is the entire answer.
-    parts: list[schemas.Part] = []
-    if chunk.text_delta or not chunk.tool_calls:
-        parts.append(schemas.Part(text=chunk.text_delta))
-    parts.extend(
-        schemas.Part(
-            functionCall=schemas.FunctionCall(name=call.name, args=call.arguments, id=call.id)
-        )
-        for call in chunk.tool_calls
-    )
-    return schemas.GenerateContentResponse(
-        candidates=[
-            schemas.Candidate(
-                content=schemas.Content(role="model", parts=parts),
-                finishReason=(chunk.finish_reason.upper() if chunk.finish_reason else None),
-                index=0,
-            )
-        ],
-        usageMetadata=schemas.UsageMetadata(
-            promptTokenCount=usage.prompt_tokens if usage else 0,
-            candidatesTokenCount=usage.completion_tokens if usage else 0,
-            totalTokenCount=usage.total_tokens if usage else 0,
-            # The streamed exit too. This file has already paid for a fact recorded at one exit and
-            # missing from the other (`tool_calls`, `FRD-126`), so both are written together.
-            thoughtsTokenCount=(usage.reasoning_tokens or None) if usage else None,
-        ),
-        modelVersion=model,
-    )
+    return JSONResponse(payload, headers=headers)
 
 
 async def _stream_response(
     request: Request,
     canonical: CanonicalRequest,
-    body: dict[str, Any],
     prepared: Prepared,
     trail: AuditTrail,
     *,
     sse: bool,
     headers: dict[str, str] | None = None,
 ) -> StreamingResponse:
-    """Stream chunks as SSE (`?alt=sse`, for the google-genai SDK) or a JSON array (Gemini REST).
+    """Stream chunks as SSE (`?alt=sse`, the google-genai SDK) or as a JSON array (Gemini REST).
 
-    **Resolves its own adapter**, and that is the point rather than a convenience: getting
-    something to call and being allowed to call it are one act (`serving.resolve_direct_target`).
-    This function used to be handed a provider looked up from the model the *caller* named, before
-    the pipeline had run and with no condition asked — so it streamed from unapproved models, from
-    models the use case was never released, and from the wrong machine after routing.
-
-    Resolved **before** the generator is built, so a refusal is a status the caller can read
-    rather than an exception inside a response whose headers are already on the wire.
+    Resolves its adapter **before** the response exists: resolving is what applies the dispatch
+    conditions, and a refusal must still be a status rather than a stream that stops.
     """
     provider = await resolve_direct_target(request, canonical.model, canonical)
 
@@ -554,36 +267,12 @@ async def _stream_response(
             started=started,
         ) as acct:
             parts: list[str] = []
-            #: Names only, and accumulated across chunks because a provider may finish several
-            #: calls at different moments. `FRD-131` FR-7.
             streamed_calls: list[str] = []
             final_usage = None
             separator = ""
-            #: The status an **upstream failure** should be recorded under, and nothing else.
-            #:
-            #: It used to start at 200 and be assigned unconditionally below, on the reasoning that
-            #: a stream which dies half way still has 200 in its already-sent headers. That is an
-            #: argument about the **wire**, and `status` is not the wire: `499` appears exactly once
-            #: in this codebase, as `Accounting.status`'s default, with the comment *"Nobody is sent
-            #: it; it exists so the audit can tell that case from a served one"*.
-            #:
-            #: The cost was that the two surfaces recorded one event two ways. Measured on
-            #: 2026-08-13, both streams driven and hung up after the first chunk:
-            #:
-            #:     gemini  streamGenerateContent  status=200  outcome=client_gone
-            #:     kira    streaming-chat         status=499  outcome=client_gone
-            #:
-            #: The KIRA route never assigns `acct.status` at all — it calls `served()` or `failed()`
-            #: and otherwise leaves the default, which is why it was right. This one now does the
-            #: same, so a row saying `client_gone` says 499 whichever URL produced it.
-            #:
-            #: Google's own error model agrees, for whoever wants an external argument:
-            #: `google/rpc/code.proto` maps `CANCELLED` — *"the operation was cancelled, typically
-            #: by the caller"* — to **499 Client Closed Request**.
+            # Overridden only by an upstream failure. A caller who hangs up leaves the
+            # `Accounting` default (499), exactly as on the KIRA surface.
             status = 200
-            # `FRD-309`'s notice, in front of the first text that arrives. A stream has no
-            # finished answer to prefix, so it leads rather than follows — see `StreamedNotice`,
-            # which keeps the same rule `annotate` applies to a buffered answer.
             notice = StreamedNotice(
                 prepared.notices, structured=canonical.response_schema is not None
             )
@@ -597,17 +286,10 @@ async def _stream_response(
                         if chunk.usage is not None:
                             final_usage = chunk.usage
                         streamed_calls.extend(call.name for call in chunk.tool_calls)
-                        # The delta the caller actually receives, which is what the audit row has
-                        # to accumulate as well — otherwise the stored answer differs from the one
-                        # that was sent, which is the defect `_rewritten_body` exists to prevent
-                        # one layer down.
+                        # The audit row accumulates exactly what the caller receives.
                         led = notice.lead(chunk.text_delta)
                         parts.append(led)
-                        # `exclude_none`, so an unfinished chunk carries no `finishReason`
-                        # at all rather than
-                        # a null or an empty string — which is what Google sends and what the SDK
-                        # parses without complaint.
-                        payload = _chunk_to_gemini(
+                        payload = chunk_to_gemini(
                             chunk.model_copy(update={"text_delta": led}), canonical.model
                         ).model_dump_json(exclude_none=True)
                         if sse:
@@ -616,7 +298,7 @@ async def _stream_response(
                             yield f"{separator}{payload}"
                             separator = ","
                 except UpstreamError as exc:
-                    # Headers are already sent; log and terminate the stream cleanly.
+                    # Headers are already sent: log it and end the stream cleanly.
                     status = upstream_status(exc.status_code)[0]
                     _log.error(
                         "upstream_stream_error",
@@ -627,29 +309,75 @@ async def _stream_response(
                 if not sse:
                     yield "]"
             finally:
-                # Recorded whether or not it could be shown: "no notice shown" and "nothing was
-                # redacted" are different facts (`FRD-309`).
                 outcome_note = notice.outcome()
                 if outcome_note is not None:
                     trail.decisions.append(outcome_note)
-                # Reported into the shared sequence, which owns the shielded settle-and-record for
-                # every path — this one included. A stream that reported no usage produced nothing
-                # chargeable and is *released*: settling would still book one request, and a use
-                # case with a request limit would lose allowance to an upstream outage.
+                # No usage reported means nothing chargeable, so the reservation is released.
                 if final_usage is not None:
-                    # The names as well as the text. A streamed tool call has **no text delta** to
-                    # accumulate — the answer *is* the call — so a row built from `parts` alone
-                    # reads `{"text": ""}` and the audit trail has nothing about what the model
-                    # asked to have run. Measured on a real assistant turn before this line existed.
+                    # The call names too: a streamed tool call has no text to accumulate.
                     acct.served(
                         canonical.model, final_usage, {"text": "".join(parts)}, streamed_calls
                     )
                 if status != 200:
-                    # Only an upstream failure overrides. A finished stream was already recorded by
-                    # `served()` above, and a caller who left is recorded by neither — which leaves
-                    # the `Accounting` default standing, and the default is what says they left.
                     acct.status = status
                     acct.outcome = Outcome.UPSTREAM_ERROR
 
     media_type = "text/event-stream" if sse else "application/json"
     return StreamingResponse(generate_chunks(), media_type=media_type, headers=headers)
+
+
+# == parsing ======================================================================================
+
+
+async def _read_body(request: Request) -> dict[str, Any]:
+    try:
+        body = await json_body(request)
+        ensure_body_is_encodable(body)
+    except ValueError:
+        raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from None
+    if not isinstance(body, dict):
+        # Refused before it reaches the trail: the audit row stores an object, so a list or a
+        # string would fail the write and leave no row (`FRD-122`).
+        raise GeminiHTTPError(400, "Send one JSON object.", "INVALID_ARGUMENT")
+    return body
+
+
+def _validated[Model: BaseModel](schema: type[Model], body: dict[str, Any]) -> Model:
+    try:
+        return schema.model_validate(body)
+    except ValidationError as exc:
+        raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
+
+
+def _first_error(exc: ValidationError) -> str:
+    first = exc.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ()))
+    return f"{location}: {first.get('msg', 'invalid')}".strip(": ")
+
+
+def _embedding_request(model: str, method: str, body: dict[str, Any]) -> CanonicalEmbeddingRequest:
+    entries = (
+        [_validated(schemas.EmbedContentRequest, body)]
+        if method == "embedContent"
+        else _validated(schemas.BatchEmbedContentsRequest, body).requests
+    )
+    # The URL chooses the model. An entry naming a different one is refused rather than ignored,
+    # or the caller would get another model's vector under a 200 (`FRD-124`).
+    for entry in entries:
+        if not schemas.names_the_same_model(entry.model, model):
+            raise GeminiHTTPError(
+                400,
+                f"An embedding request names model '{entry.model}' while the URL addresses "
+                f"'{model}'. The URL decides which model serves a request; remove the field "
+                "or address the model you meant.",
+                "INVALID_ARGUMENT",
+            )
+    return gemini_to_embedding(model, entries)
+
+
+def _asked_for_reasoning(parsed: schemas.GenerateContentRequest | None) -> bool:
+    """This surface's spelling of "give me the model's reasoning" (`FRD-135` FR-4)."""
+    if parsed is None or parsed.generationConfig is None:
+        return False
+    thinking = parsed.generationConfig.thinkingConfig
+    return bool(thinking is not None and thinking.includeThoughts)

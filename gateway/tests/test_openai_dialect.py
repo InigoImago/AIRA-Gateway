@@ -357,7 +357,7 @@ async def test_a_streamed_refusal_carries_the_reason_the_server_gave() -> None:
     is not on the hot path: there is no stream to be had.
     """
     # **An `httpx.Response(400, json=...)` would not reach the path this test is named after.**
-    # Its content is already in hand, so `_reason()` can read it whether or not anybody called
+    # Its content is already in hand, so `upstream_reason` can read it whether or not anybody called
     # `aread()`, and the mutation that deletes the fix survives — the test passes for a reason
     # unrelated to the fix. A response built over a byte *stream* is unread until it is read, which
     # is what a real refusal from a real server is.

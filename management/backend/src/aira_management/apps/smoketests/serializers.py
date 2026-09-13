@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from rest_framework import serializers
 
-from .models import TestCase, TestResult, TestRun
+from aira_management.apps.smoketests.models import TestCase, TestResult, TestRun
+
+
+def verdict_counts(results: Iterable[TestResult]) -> dict[str, int]:
+    """How a run stands. **`unrated` is reported**, never folded into a total: a run nobody has
+    read yet is not a run with no failures."""
+    counts = {"total": 0, "unrated": 0, "pass": 0, "fail": 0, "unclear": 0}
+    for result in results:
+        counts["total"] += 1
+        counts[result.verdict] = counts.get(result.verdict, 0) + 1
+    return counts
 
 
 class TestCaseSerializer(serializers.ModelSerializer[TestCase]):
@@ -38,8 +49,7 @@ class TestResultSerializer(serializers.ModelSerializer[TestResult]):
             "rated_by_name",
             "rated_at",
         ]
-        # A rating names its author, and the author is whoever is signed in — never a field a
-        # caller may set. An attributable judgement the judged party could write is not one.
+        # A rating's author is whoever is signed in — never a field the caller may set.
         read_only_fields = ["run", "case", "rated_by_name", "rated_at"]
 
     def get_rated_by_name(self, result: TestResult) -> str:
@@ -61,31 +71,16 @@ class TestRunSerializer(serializers.ModelSerializer[TestRun]):
             "requested_by_name",
             "counts",
         ]
-        #: `model` is **writable**: it is where this run enters the pipeline, and the caller picks
-        #: it (owner's decision). It briefly came from a `start_model` on the pipeline, which took
-        #: away the point of releasing several models to a use case.
-        #:
-        #: Writable is not unbounded. `TestRunViewSet._entry_model` refuses a model that is not
-        #: **released** to the named use case — checked there rather than here because the answer
-        #: depends on the use case, which this serializer has no business resolving. Without that
-        #: bound the gateway refuses at dispatch and the run fills with 403s that say nothing.
+        #: `model` is **writable** — the caller picks where the run enters the pipeline — and
+        #: bounded by `TestRunViewSet._entry_model` to what is released to the use case, which
+        #: this serializer has no business resolving.
         read_only_fields = ["started_at", "requested_by_name", "counts"]
-        #: Optional on the wire, because "whichever" is a legitimate thing for a caller to mean and
-        #: the view then takes the first released model. The column itself is required — a run with
-        #: no recorded entry point is a result that cannot be compared with anything.
+        #: Optional on the wire: "whichever" is legitimate, and the view then takes the first
+        #: released model. The column itself is required.
         extra_kwargs = {"model": {"required": False, "allow_blank": True}}
 
     def get_requested_by_name(self, run: TestRun) -> str:
         return getattr(run.requested_by, "username", "") or ""
 
     def get_counts(self, run: TestRun) -> dict[str, Any]:
-        """How the run stands. **`unrated` is reported**, never folded into a total.
-
-        A run nobody has read yet is not a run with no failures, and the difference is the whole
-        reason somebody opens this screen.
-        """
-        counts: dict[str, Any] = {"total": 0, "unrated": 0, "pass": 0, "fail": 0, "unclear": 0}
-        for result in run.results.all():
-            counts["total"] += 1
-            counts[result.verdict] = counts.get(result.verdict, 0) + 1
-        return counts
+        return verdict_counts(run.results.all())

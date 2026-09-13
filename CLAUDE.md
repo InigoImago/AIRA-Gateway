@@ -54,11 +54,15 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   → `e2e/` (real browser, `make test-e2e`). Anything needing a user token belongs in `e2e/`: the
   dev realm has the password grant disabled, so a token only comes from the real code flow.
 - **Typed code**: Python type hints (mypy), TypeScript strict mode.
+- **A comment states the rule and its reason** (`ADR-0023`). How a rule was found — dates,
+  measurements, "used to" — goes in the DEVLOG entry and the FRD, not in the code. Constants sit at
+  the top of their module; a file that holds several concerns becomes a package, one module per
+  concern, with an `__init__` that re-exports its public names.
 - **A surface parses; the layer decides.** Both halves of the request path now have one owner —
   `prepare_for_dispatch` before dispatch (`FRD-126`) and `accounting` after it (`FRD-128`). The
   second was found by asking whether every path had been tested with a dropped connection: four of
   six lost the audit row when a caller went away mid-answer. A request that reached an upstream is
-  recorded however it ended, including `499`/`client_gone`. `api/serving.py` shared the *steps* of the pre-dispatch
+  recorded however it ended, including `499`/`client_gone`. `api/serving` shared the *steps* of the pre-dispatch
   path with both API surfaces and not their *order* — and every guarantee that layer makes is a
   guarantee about the order (rate limit before the pipeline, declaration and thinking after
   routing, reservation last). Both surfaces wrote the same six calls by hand until `FRD-126`;
@@ -166,7 +170,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | Where to look | For |
 | --- | --- |
 | [`docs/features/README.md`](docs/features/README.md) | every feature, its status, its document |
-| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (21 ADRs) |
+| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (23 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
 | [`docs/PRD.md`](docs/PRD.md) §1.1 | the owner's canonical feature list |

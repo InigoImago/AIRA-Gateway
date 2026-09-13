@@ -1,34 +1,15 @@
-"""Redaction applied to stored payloads (`FRD-103` hook, `FRD-406` content, 2026-08-08).
+"""Redaction applied to stored payloads (`FRD-103` hook, `FRD-406` content).
 
-The hook has existed since Phase 1 and did nothing. That was deliberate and it was also the gap
-`ADR-0007` left open: a stored prompt is a verbatim copy of whatever a caller sent, kept for as
-long as the use case's retention says, readable by anyone who can read the table — and callers
-paste credentials into prompts. "Here is our API key, write me a curl command" is not an exotic
-input, it is a Tuesday.
+Callers paste credentials into prompts, and a stored prompt is a verbatim copy kept for the use
+case's retention period. **Only credential-shaped strings are redacted**: never legitimate business
+content, and catastrophic to keep. Names, addresses and customer numbers are *the work* — a gateway
+that mangled them would store payloads nobody can use, and storage would be switched off instead.
 
-**What is redacted, and what deliberately is not.** Only things that are never legitimate business
-content and are catastrophic to keep: credential-shaped strings. Names, addresses, customer
-numbers and everything else a prompt might contain are *the work* — a gateway that mangles them
-produces a stored payload nobody can use for the debugging and evidence it exists for, and the
-deployment then switches storage off entirely, which is strictly worse than storing it.
+`AIRA_REDACT_PATTERNS` adds deployment-specific patterns, checked at construction: an invalid regex
+**stops the gateway** rather than redacting nothing, and a catastrophically backtracking one is
+refused by the shared rule in `aira_common.patterns`, because this runs over caller-supplied text.
 
-So the built-in set is narrow and each entry has an argument:
-
-- an AIRA key (`aira_<prefix>_<secret>`) — ours, and it grants use-case access
-- a Google API key (`AIza…`) and an OpenAI-style key (`sk-…`) — the upstream credentials a caller
-  is most likely to be holding when they ask a question about them
-- an `Authorization:` header value, wherever a caller has pasted one
-- a JWT — three base64 segments, which nothing else looks like
-- a PEM private key block
-
-`AIRA_REDACT_PATTERNS` adds deployment-specific ones (an internal token format, a personnel
-number). They are checked at construction: an invalid regex **stops the gateway** rather than
-silently redacting nothing, and a nested quantifier is refused for the same ReDoS reason
-`ADR-0007` refuses one in a pipeline config — this runs over caller-supplied text.
-
-**Structure is preserved.** Redaction walks the JSON and rewrites *strings*, so a stored payload
-stays the shape it was and remains readable next to the response it produced. A payload replaced
-wholesale would be a payload nobody looks at twice.
+Redaction rewrites strings and keeps the payload's structure, so it stays readable.
 """
 
 from __future__ import annotations
@@ -38,9 +19,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from aira_common.patterns import catastrophic_reason
 
-#: What replaces a match. Fixed-length and obviously not data, so a reader can tell "this was
-#: removed" from "the caller wrote that" — and so a redacted value cannot be confused for a short
-#: credential and tried.
+#: What replaces a match. Obviously not data, so "this was removed" is distinguishable from "the
+#: caller wrote that", and a redacted value cannot be mistaken for a short credential.
 PLACEHOLDER = "[REDACTED]"
 
 #: Credential shapes, each one something that is never legitimate business content.
@@ -59,18 +39,6 @@ BUILTIN_PATTERNS: tuple[str, ...] = (
     r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
 )
 
-#: Whether a pattern backtracks catastrophically — **the shared definition**, not a second one.
-#:
-#: This module carried its own copy: `\([^)]*[+*][^)]*\)\s*[+*]`, which is `aira_common.patterns`'
-#: rule minus the `{n,m}` form and minus alternation. The two had already drifted, so
-#: `AIRA_REDACT_PATTERNS="(a|b)+"` was refused by the pipeline filter and accepted here — and this
-#: one runs over every stored payload on the write path, which is caller-supplied text by
-#: definition.
-#:
-#: `aira_common.patterns` exists because "the protection sat at one end of a link and the other end
-#: trusted it" is the shape of three of the four findings in `ADR-0018`. A private copy of that
-#: protection is the same defect with the link inside one repository.
-
 
 class RedactionMisconfigured(Exception):
     """A configured pattern that would not work, or would not stop working."""
@@ -82,11 +50,7 @@ class Redactor(Protocol):
 
 
 class NoOpRedactor:
-    """Passes payloads through unchanged.
-
-    Kept, and it is what tests use to assert on an unmodified payload. It is **not** the default
-    the gateway runs with any more.
-    """
+    """Passes payloads through unchanged. What tests use; not the gateway's default."""
 
     def redact(self, payload: dict[str, Any]) -> dict[str, Any]:
         return payload
@@ -107,9 +71,8 @@ class PatternRedactor:
             try:
                 compiled.append(re.compile(pattern))
             except re.error as exc:
-                # Loudly, at startup. A pattern that silently compiles to nothing is a redaction
-                # rule that appears configured and removes nothing — an absent control wearing a
-                # present one's badge, the same failure `FRD-125` fixed in the injection filter.
+                # Loudly, at startup: a rule that appears configured and removes nothing is an
+                # absent control that looks present.
                 raise RedactionMisconfigured(
                     f"Redaction pattern {pattern!r} is not a valid regular expression: {exc}"
                 ) from exc
@@ -128,8 +91,7 @@ class PatternRedactor:
         if isinstance(value, str):
             return self.redact_text(value)
         if isinstance(value, dict):
-            # Keys are structure, not content: rewriting them would change the shape of a stored
-            # payload and break every reader that indexes into it.
+            # Keys are structure, not content: rewriting them would break every reader.
             return {key: self._walk(item) for key, item in value.items()}
         if isinstance(value, list):
             return [self._walk(item) for item in value]
@@ -139,9 +101,7 @@ class PatternRedactor:
 def build_redactor(extra_patterns: str = "") -> Redactor:
     """The built-in credential patterns plus any the deployment adds (newline- or ``;``-separated).
 
-    Additive, never replacing: a deployment naming its own token format must not thereby stop
-    redacting Google keys, which is exactly what a replacing setting would do the first time
-    somebody used it.
+    Additive, never replacing: naming an internal token format must not stop the built-in ones.
     """
     extra = tuple(
         piece.strip() for piece in extra_patterns.replace("\n", ";").split(";") if piece.strip()

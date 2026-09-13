@@ -4,7 +4,7 @@ What happens between a client sending a prompt and receiving an answer — every
 order it runs, and what each one costs if it is skipped.
 
 The order is not incidental. It is owned by one function, `prepare_for_dispatch` in
-[`gateway/src/aira_gateway/api/serving.py`](../gateway/src/aira_gateway/api/serving.py), because
+[`gateway/src/aira_gateway/api/serving/prepare.py`](../gateway/src/aira_gateway/api/serving/prepare.py), because
 **every guarantee this layer makes is a guarantee about the order**
 ([`FRD-126`](features/FRD-126-one-pre-dispatch-sequence.md)).
 

@@ -27,7 +27,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SEED = ROOT / "management/backend/src/aira_management/apps/seed/contributions/showcase.py"
+SEED = ROOT / "management/backend/src/aira_management/apps/seed/contributions/showcase_data.py"
 TRAFFIC = ROOT / "tools/demo_traffic.py"
 
 

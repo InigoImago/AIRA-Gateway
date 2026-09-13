@@ -16,11 +16,7 @@
       Loading the catalog…
     </p>
   } @else {
-    <!--
-      The empty case is the loudest thing here, and deliberately. A use case with nothing released
-      answers **every** request with a refusal, and this screen is where the cause is — a quiet
-      blank list would leave somebody reading gateway logs.
-    -->
+    <!-- Loud on purpose: with nothing released every request is refused, and the cause is here. -->
     @if (!count()) {
       <p
         class="callout callout--warning"
@@ -39,10 +35,8 @@
 
     @if (withdrawn().length) {
       <!--
-        Shown rather than dropped. The gateway refuses these anyway — approval is checked before
-        the release is — so a use case carrying one is already failing for a reason its own screen
-        would otherwise never mention. The picker marks them as chips too, so taking one out does
-        not mean finding it in a list that no longer offers it.
+        Shown, not dropped: the gateway already refuses these. The picker keeps them as chips, so
+        one can be taken out without finding it in a list that no longer offers it.
       -->
       <p class="callout callout--danger" data-testid="withdrawn-models" style="margin: 0 0 0.75rem">
         Released here but no longer approved for this installation:
@@ -54,16 +48,8 @@
 
     @if (!canManage()) {
       <!--
-        Read-only means **inert, not re-drawn**. This was a paragraph of `<code>` chips, and the
-        owner's objection is the one that matters: it does not look like a control, so a developer
-        scanning the page does not read it — the one piece of configuration they most need is the
-        one rendered as prose. The same picker, disabled, is unmistakably the same thing, in the
-        same place, showing the same selection, and its greyed state says *you may look, not
-        change* without a sentence having to say it.
-
-        The Save button is **absent** rather than disabled: hiding it alone was the earlier defect
-        (`FRD-206` — read-only means inert, not un-saveable), and with the picker itself inert
-        there is nothing left to save.
+        Read-only means inert, not re-drawn (`FRD-206`): the same picker, disabled, still reads as
+        the control it is. Save is absent, since an inert picker leaves nothing to save.
       -->
       <app-multi-select
         label="Models released to this use case"
@@ -83,10 +69,8 @@
       </p>
     } @else {
       <!--
-        A picker rather than a checkbox per row. The catalog only grows — one real credential
-        offered 50 models — and a table of checkboxes makes the reader scroll a list they cannot
-        search to find the four they want, with what is already chosen scattered through it. The
-        chips answer "what did I pick"; the search answers "what else is there".
+        A searchable picker, not a checkbox per row: the catalog only grows. The chips answer "what
+        did I pick"; the search answers "what else is there".
       -->
       <app-multi-select
         label="Models released to this use case"

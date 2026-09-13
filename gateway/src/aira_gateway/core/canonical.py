@@ -1,17 +1,12 @@
-"""Provider-agnostic canonical request/response schema (FRD-100, FRD-110).
+"""Provider-agnostic canonical request/response schema (`FRD-100`, `FRD-110`).
 
-Every API surface (Gemini now, KIRA per `ADR-0010`) maps to/from these models, and upstream
-providers speak only canonical. This is the single point the whole gateway agrees on.
+Every API surface maps to and from these models and every upstream speaks only canonical: this is
+the single point the whole gateway agrees on (`ADR-0010`).
 
-A message is an **ordered list of parts**: text, and inline binary data with a declared media type.
-Order is preserved end to end, because "this image, then this question" and "this question, then
-this image" are different prompts.
-
-``text=`` still constructs a message and ``.text`` still reads one — the great majority of the code
-legitimately wants "what does this message say", and keeping that working is what made `FRD-110` a
-change to one file rather than to twenty. It is also the one thing to be careful about: ``.text``
-used to be *total* and is now **lossy**. Anything that decides or persists on it must be reviewed
-rather than merely compiled, which is what `FRD-110` FR-9 (the pipeline's blind spot) is about.
+A message is an **ordered list of parts** — text, inline data, tool calls and tool results — and
+order is kept end to end, because "this image, then this question" is a different prompt from the
+reverse. ``.text`` reads what a message *says* and is **lossy**: anything that decides or persists
+on it must be reviewed for what it cannot see (`FRD-110` FR-9).
 """
 
 from __future__ import annotations
@@ -23,11 +18,27 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 from aira_gateway.core.schema import ResponseSchema
 
+#: The sampling controls a request can carry beyond `temperature` (`FRD-124`). Listed because **no
+#: dialect expresses all of them** — OpenAI has no `top_k`, Anthropic no `seed` and no penalties —
+#: so whether a candidate can honour a request must be answerable, and "it cannot" is a refusal
+#: rather than a dropped field (`ADR-0011` rule 3).
+SAMPLING_CONTROLS = (
+    "top_p",
+    "top_k",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
+    "stop_sequences",
+)
+
 
 class Role(StrEnum):
     SYSTEM = "system"
     USER = "user"
     MODEL = "model"
+
+
+# == parts ========================================================================================
 
 
 class TextPart(BaseModel):
@@ -37,8 +48,8 @@ class TextPart(BaseModel):
 class DataPart(BaseModel):
     """Inline binary content — a document or an image.
 
-    ``data`` is decoded bytes: base64 is a wire concern and does not belong in the canonical
-    model, where it would invite two representations of the same thing.
+    ``data`` is decoded bytes: base64 is a wire concern, and two representations of the same thing
+    do not belong in the canonical model.
     """
 
     media_type: str
@@ -52,29 +63,22 @@ class DataPart(BaseModel):
 class ToolCallPart(BaseModel):
     """The model asking for a function to be run — **by the caller, never by us** (`FRD-131`).
 
-    Nothing here is executed. `ADR-0013` allows a declaration to be carried through and forbids
-    running anything, and this part is the model's half of that: a name and arguments, forwarded to
-    whoever asked. The caller decides whether to run it, runs it on their own machine, and sends
-    the outcome back as a :class:`ToolResultPart` in the next turn.
-
-    ``id`` is the provider's correlation handle. Anthropic and OpenAI both require the result to
-    name the call it answers, and Gemini matches by function name instead — so an id is generated
-    where a provider does not supply one, rather than leaving the other two unable to reply.
+    Nothing here is executed (`ADR-0013`): the call is forwarded, and the caller sends the outcome
+    back as a :class:`ToolResultPart`. ``id`` correlates the two; one is generated where a provider
+    supplies none, because Anthropic and OpenAI require a result to name its call.
     """
 
     id: str
     name: str
-    #: Parsed, not raw text. Every dialect either sends an object or a JSON string of one, and
-    #: keeping both shapes would push that difference into every consumer.
+    #: Parsed, not raw text: every dialect sends an object or a JSON string of one.
     arguments: dict[str, Any] = {}
 
 
 class ToolResultPart(BaseModel):
-    """What running it produced, on its way back to the model.
+    """What running a tool produced, on its way back to the model.
 
-    **This is content the model reads**, and the injection filter cannot see it (`FRD-131` §8):
-    a file, a fetched page, a command's output — each is a route into a model that is about to
-    propose the next command. Named here so the risk sits beside the type that carries it.
+    **Content the model reads, which the injection filter cannot see** (`FRD-131` §8): a file, a
+    fetched page, a command's output — a route into a model about to propose the next command.
     """
 
     call_id: str
@@ -86,17 +90,18 @@ CanonicalPart = TextPart | DataPart | ToolCallPart | ToolResultPart
 
 
 class ToolDeclaration(BaseModel):
-    """A function the caller is offering, described so a model can decide to ask for it.
+    """A function the caller offers, described so a model can decide to ask for it.
 
-    ``parameters`` reuses :class:`ResponseSchema` rather than taking a free-form dict, for the same
-    three reasons `FRD-112` gives: the bounds need something to count, an unknown field becomes an
-    error naming the field at our boundary, and both surfaces map onto one model instead of each
-    inventing their own. It is likewise **forwarded, never executed**.
+    ``parameters`` reuses :class:`ResponseSchema`, so it is bounded and validated like a response
+    schema (`FRD-112`). Forwarded, never executed.
     """
 
     name: str
     description: str = ""
     parameters: ResponseSchema | None = None
+
+
+# == requests =====================================================================================
 
 
 class CanonicalMessage(BaseModel):
@@ -106,12 +111,7 @@ class CanonicalMessage(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _accept_plain_text(cls, data: Any) -> Any:
-        """Allow ``CanonicalMessage(role=..., text="…")``.
-
-        Not nostalgia: a text-only message is still the overwhelmingly common case, and a
-        constructor that forced every caller to wrap one string in a list would add ceremony to
-        the path that matters most while changing nothing about it.
-        """
+        """Allow ``CanonicalMessage(role=..., text="…")`` — text-only is still the common case."""
         if isinstance(data, dict) and "text" in data and "parts" not in data:
             data = {**data, "parts": [{"text": data.pop("text")}]}
         return data
@@ -119,12 +119,10 @@ class CanonicalMessage(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def text(self) -> str:
-        """What this message *says* — the text parts, concatenated.
+        """What this message *says*: the text parts, concatenated.
 
-        Deliberately excludes attachments, and that exclusion is the whole point of `FRD-110`
-        FR-9: the injection filter and the routing classifier read this, so they see the prompt
-        and **not** the document. A prompt injection inside a PDF is invisible to them, which is
-        stated in the pipeline builder rather than left to be discovered.
+        Excludes attachments on purpose (`FRD-110` FR-9): the injection filter and the routing
+        classifier read this, so they see the prompt and **not** the document.
         """
         return "".join(part.text for part in self.parts if isinstance(part, TextPart))
 
@@ -144,101 +142,52 @@ class CanonicalMessage(BaseModel):
 class Thinking(BaseModel):
     """How much reasoning effort a request asks for (`FRD-111` §5.1).
 
-    ``mode`` is either one of the gateway's three control words — ``disabled``, ``auto``,
-    ``limited`` — or a **level word the vendor itself accepts**: `low`, `high`, whatever it calls
-    them. It is
-    a plain string for that reason: a closed enum would make a vendor's new word a code change, and
-    the words are what the vendors have converged on (Gemini 3's ``thinkingLevel``, OpenAI's
-    ``reasoning_effort``) after starting with numbers.
-
-    ``tokens`` is **what goes upstream**, and only ``limited`` has one — the mode where the
-    *caller* named it. It used to double as the figure the pre-dispatch reservation was made
-    against, and that conflation is precisely what forced every model to carry a
-    ``level → token count`` table nobody could fill: a level had to invent a number so that the
-    reservation had one to read. The reservation asks the **declaration** now
-    (:func:`aira_gateway.thinking.reserved_tokens`), which is where the model's own ceiling
-    already lives, and a level sends no number at all.
+    ``mode`` is one of the gateway's control words — ``disabled``, ``auto``, ``limited`` — or a
+    **level word the vendor accepts** (`low`, `high`, …): a plain string, so a vendor's new word is
+    not a code change. ``tokens`` is what goes upstream, and only ``limited`` has one. The
+    reservation reads the model's declaration instead
+    (:func:`aira_gateway.thinking.reserved_tokens`), so a level needs no invented number.
     """
 
     mode: str
     tokens: int | None = None
 
 
-#: The sampling controls a request can carry beyond `temperature`, named canonically.
-#:
-#: They are listed rather than left implicit because **no dialect expresses all of them**, and the
-#: difference has to be answerable per candidate: OpenAI has no `top_k`, Anthropic has no `seed`
-#: and no penalties. `ADR-0011` rule 3 in its usual form — a flag says *whether*, the dialect says
-#: *how* — with the twist that here the honest answer is sometimes "it cannot", and that has to be
-#: a refusal rather than a dropped field.
-SAMPLING_CONTROLS = (
-    "top_p",
-    "top_k",
-    "seed",
-    "presence_penalty",
-    "frequency_penalty",
-    "stop_sequences",
-)
-
-
 class CanonicalRequest(BaseModel):
-    #: A misspelled field here would be accepted and do nothing, which is the same failure this
-    #: whole feature is about, one layer in — where it would be found by nobody.
+    #: Forbidden, so a misspelled field is an error rather than a setting that does nothing.
     model_config = ConfigDict(extra="forbid")
 
     model: str
-    #: How to reach this model on its platform, from the catalogue's `addressing` (`FRD-507`).
-    #:
-    #: **Opaque here on purpose.** A model name is the whole addressing on most platforms, and on
-    #: two of them it is not: Vertex needs a region, Azure a deployment. Those belong to the
-    #: adapter that speaks to the platform, not to a canonical request that every dialect reads —
-    #: so this carries what the catalogue said and only the adapter that needs it looks inside.
-    #:
-    #: Filled by the dispatch layer, which has already resolved the declaration. Empty for a model
-    #: whose name is its whole address, which is most of them.
+    #: How to reach the model on its platform, from the catalogue's `addressing` (`FRD-507`).
+    #: **Opaque here**: Vertex needs a region and Azure a deployment, and only the adapter for that
+    #: platform looks inside. Filled by the dispatch layer; empty for a model whose name is its
+    #: whole address.
     addressing: dict[str, Any] = Field(default_factory=dict)
     messages: list[CanonicalMessage]
     temperature: float | None = None
     max_output_tokens: int | None = None
     thinking: Thinking | None = None
-    #: Sampling controls (`FRD-124`). Every one of these changes the answer, and every one of them
-    #: was previously accepted at the surface and thrown away before dispatch — a caller who set a
-    #: `seed` for reproducibility got a 200 and a different answer each time, with nothing to say
-    #: why.
+    #: Sampling controls (`FRD-124`); see :data:`SAMPLING_CONTROLS`.
     top_p: float | None = None
     top_k: int | None = None
     seed: int | None = None
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
     stop_sequences: tuple[str, ...] = ()
-    #: A schema the answer must conform to (`FRD-112`). Parsed and bounded at the surface, then
-    #: **forwarded, never executed** — re-validating the response would mean running
-    #: caller-supplied regexes over provider output on the hot path.
+    #: A schema the answer must conform to (`FRD-112`). **Forwarded, never executed**: validating
+    #: the response would run caller-supplied regexes over provider output on the hot path.
     response_schema: ResponseSchema | None = None
-    #: Functions the caller is offering the model (`FRD-131`). Carried to the provider and back,
-    #: **never executed** (`ADR-0013`). Empty is the ordinary case and stays free of any cost: a
-    #: request that declares nothing behaves exactly as it did before this field existed.
+    #: Functions the caller offers the model (`FRD-131`), carried there and back and **never
+    #: executed** (`ADR-0013`).
     tools: tuple[ToolDeclaration, ...] = ()
-    #: Mark the stable prefix — the tool declarations and the system instruction — as cacheable
-    #: (`FRD-133`). Set by the layer, from the use case's configuration, never by the caller: an
-    #: assistant does not know AIRA exists, and the two regions this covers are boundaries the
-    #: provider's own API defines rather than a judgement about somebody's prompt.
-    #:
-    #: Measured before it was chosen: on real assistant traffic the tool declarations are **69 %**
-    #: of a turn and the system instruction **31 %**, while the conversation is 0.1–5 %. Marking
-    #: these two captures 99.1 % — and it is exactly Anthropic's cache hierarchy, which runs
-    #: `tools` → `system` → `messages`.
-    #:
-    #: False changes nothing on any dialect, so a request that does not opt in is byte-identical
-    #: to what it was before this field existed.
+    #: Mark the stable prefix — tool declarations and system instruction — as cacheable
+    #: (`FRD-133`). Set from the use case's configuration, never by the caller. False leaves a
+    #: request byte-identical on every dialect.
     cache_prefix: bool = False
-    #: Whether this use case wants the model's reasoning back (`FRD-135` FR-3). Decided by the use
-    #: case, never by the caller — a request that asks for thoughts in a use case that has not
-    #: enabled them is **refused by name** rather than served without them (`FRD-124`).
+    #: Whether the use case wants the model's reasoning back (`FRD-135` FR-3). Decided by the use
+    #: case: a request asking for thoughts where they are not enabled is refused by name.
     include_reasoning: bool = False
-    #: How long the provider should keep it: `5m` or `1h` (`FRD-133`). Only read when
-    #: `cache_prefix` is set, and defaulting to the cheap one — an hour costs 2x base input to
-    #: write against 1.25x, so the expensive choice has to be made rather than inherited.
+    #: `5m` or `1h` (`FRD-133`), read only with `cache_prefix`. The cheap one unless chosen.
     cache_ttl: str = "5m"
 
     def last_user_text(self) -> str:
@@ -261,8 +210,8 @@ class CanonicalRequest(BaseModel):
     def sampling_requested(self) -> frozenset[str]:
         """Which sampling controls this request actually sets.
 
-        Only what was *asked for* — a dialect that cannot express `top_k` must not refuse a request
-        that never mentioned it. An empty `stop_sequences` counts as unset for the same reason.
+        Only what was *asked for*: a dialect without `top_k` must not refuse a request that never
+        mentioned it. An empty `stop_sequences` counts as unset.
         """
         return frozenset(
             name
@@ -274,17 +223,9 @@ class CanonicalRequest(BaseModel):
     def is_empty(self) -> bool:
         """Whether this request asks anything at all.
 
-        `FRD-113` FR-7 already refuses an empty embedding input, and names the reason: it prevents
-        a class of accidental **no-op billing**. The same argument holds for generation and was
-        simply never applied — a request whose parts are all empty was served, charged, and
-        answered with whatever a model says to nothing. Found by sending `parts: []`.
-
-        Whitespace counts as empty on purpose: a caller whose template rendered to a newline has
-        the same bug as one that rendered to nothing.
-
-        **A tool result counts as content** (`FRD-131`). The second turn of an assistant's exchange
-        is often nothing but "here is what `read_file` returned" — no prose at all — and judging
-        that "asks nothing" would refuse the ordinary middle of every agent conversation.
+        An empty request would be served and billed for nothing — the argument `FRD-113` FR-7 makes
+        for embeddings. Whitespace counts as empty. **A tool result counts as content** (`FRD-131`):
+        it is the ordinary middle turn of an agent conversation.
         """
         return (
             not any(message.text.strip() for message in self.messages)
@@ -296,20 +237,15 @@ class CanonicalRequest(BaseModel):
 class CanonicalEmbeddingRequest(BaseModel):
     """One embedding call, however many texts it carries (`FRD-113` §5.1).
 
-    A single text is a list of one. Two code paths — one for a string, one for a list — is how a
-    batch ends up metered as a single request, and a batch that costs one token of a rate limit is
-    that limit with a hole in it.
+    A single text is a list of one: two code paths is how a batch ends up metered as one request.
     """
 
     model: str
-    #: The same platform addressing the generation request carries — see `CanonicalRequest`.
-    #: Embedding goes to the same URL shape, so a catalogued model needs it on both paths or it
-    #: works for one verb and refuses for the other.
+    #: Platform addressing, as on :class:`CanonicalRequest`; embedding uses the same URL shape.
     addressing: dict[str, Any] = Field(default_factory=dict)
     texts: list[str]
-    #: What the vectors are optimised for. Indexing a corpus with ``RETRIEVAL_QUERY`` instead of
-    #: ``RETRIEVAL_DOCUMENT`` produces vectors that work, sit in the right space, and retrieve
-    #: measurably worse — which is why this is an enum validated against the model, not a string.
+    #: What the vectors are optimised for. Validated against the model: the wrong one produces
+    #: vectors that work and retrieve measurably worse.
     task_type: str | None = None
     dimensions: int | None = None
 
@@ -318,46 +254,30 @@ class CanonicalEmbeddingRequest(BaseModel):
         return len(self.texts)
 
 
+# == responses ====================================================================================
+
+
 class CanonicalUsage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
 
-    #: **Of which** was served from a provider-side prompt cache, and **of which** was written
-    #: into one (`FRD-133`). Subsets of `prompt_tokens`, never additions to it: the total input a
-    #: request consumed is one number, and keeping it whole is what lets every existing budget,
-    #: report and index carry on meaning the same thing.
-    #:
-    #: They are apart because their **prices** are apart, by an order of magnitude in one direction
-    #: and 25–100 % in the other: a read costs 0.1× base input on Anthropic, a five-minute write
-    #: 1.25× and an hour-long one 2×. Folding them together — which is what the Anthropic mapping
-    #: did until 2026-08-10 — under-bills a write and over-bills a read, and a cost-control feature
-    #: that is wrong in the expensive direction is worse than one that is absent.
-    #:
-    #: Zero means "no cache was involved", which on a provider that reports nothing (a self-hosted
-    #: runtime) is also what "we cannot tell" looks like. `FRD-133` §4a keeps those apart at the
-    #: catalog: a model that does not declare `prompt_caching` is not expected to report any.
+    #: **Of which** was served from a provider-side prompt cache, and **of which** was written into
+    #: one (`FRD-133`). Subsets of `prompt_tokens`, never additions, so every figure built on it
+    #: keeps its meaning; apart because they are priced apart (a read 0.1x base input, a write 1.25x
+    #: or 2x). Zero also on a provider that reports nothing.
     cached_input_tokens: int = 0
     cache_write_tokens: int = 0
 
-    #: **Of which** the model spent thinking (`FRD-135`). A subset of `completion_tokens`, never an
-    #: addition — the same invariant the two cache fields keep above, and for the same reason: the
-    #: total a request consumed is one number, and every price, budget, report and index already
-    #: reads it.
-    #:
-    #: Counted unconditionally, and that is deliberate. An installation may decide whether it wants
-    #: to *see* reasoning (`FRD-135` FR-3); it does not get to decide whether it was *charged* for
-    #: it. Providers bill thinking at the output rate, and until 2026-08-17 this figure was read
-    #: from nowhere: one measured request against `gemini-2.5-flash` counted 25 prompt, 1 candidate
-    #: and **143 thought** tokens, of which AIRA recorded 26 of 169 — the number wrong by 85%, in
-    #: the expensive direction, on the feature whose whole purpose is that the number is right.
+    #: **Of which** the model spent thinking (`FRD-135`), a subset of `completion_tokens`. Counted
+    #: unconditionally: an installation decides whether to *see* reasoning, not whether it is
+    #: *charged* for it — providers bill thinking at the output rate.
     reasoning_tokens: int = 0
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def uncached_input_tokens(self) -> int:
-        """Input billed at the ordinary rate. Never negative: a provider that reported more cache
-        tokens than input tokens has contradicted itself, and clamping keeps one bad response from
-        producing a negative charge."""
+        """Input billed at the ordinary rate. Clamped at zero, so a provider reporting more cache
+        tokens than input tokens cannot produce a negative charge."""
         return max(0, self.prompt_tokens - self.cached_input_tokens - self.cache_write_tokens)
 
     @computed_field  # type: ignore[prop-decorator]
@@ -370,41 +290,23 @@ class CanonicalResponse(BaseModel):
     model: str
     text: str
     #: The model's reasoning, when the use case asked for it and the provider returned any
-    #: (`FRD-135`). Empty everywhere else — including for a provider that reports none, which is
-    #: not an error (FR-7).
-    #:
-    #: **Apart from `text`, and that is the whole point.** Google marks thought parts with
-    #: `thought: true` inside the same `parts` array; a mapper that joined them all — which is what
-    #: `_text_of` did — would hand the caller its reasoning as though it were the answer, which is
-    #: worse than dropping it. Kept separate here so each surface decides how to render it, and so
-    #: storage keeps them distinguishable.
+    #: (`FRD-135`). **Apart from `text`**: joined in, the caller would read reasoning as the answer.
     reasoning: str = ""
     finish_reason: str = "stop"
     usage: CanonicalUsage
-    #: What the model asked to have run (`FRD-131`). A turn can carry text, tool calls, or both —
-    #: several at once, because all three vendors can return more than one and a single-call field
-    #: would need replacing the first time one did.
+    #: What the model asked to have run (`FRD-131`). A turn may carry several, and text as well.
     tool_calls: tuple[ToolCallPart, ...] = ()
-    #: **Where this answer was actually produced** (`FRD-609`, `FRD-115` FR-10).
-    #:
-    #: Empty on every dialect that has one place, which is most of them. It exists because a model
-    #: may be catalogued in several regions and tried in order, so *"the configuration says
-    #: europe-west1"* and *"this request went to europe-west1"* stopped being the same sentence —
-    #: and `FRD-115`'s whole argument is that only the second is evidence.
-    #:
-    #: The audit row had a **static** answer before this: `provenance_for(provider)` returns the
-    #: region of the first *configured* model on that adapter, which is right for a configured
-    #: model and a guess for a catalogued one. With a failover chain it would have become a
-    #: confident, wrong residency claim on every request that used the second region.
+    #: **Where this answer was actually produced** (`FRD-609`, `FRD-115` FR-10). A catalogued
+    #: model may be tried in several regions in order, so the configuration is no evidence of
+    #: where one request went. Empty on dialects with one place.
     served_region: str = ""
 
 
 class CanonicalChunk(BaseModel):
     """A streaming delta. The final chunk carries ``finish_reason`` and ``usage``.
 
-    ``tool_calls`` appears on the chunk that **completes** them, never in pieces. The OpenAI dialect
-    streams a call's arguments fragmented across chunks (`FRD-131` FR-6), and a mapper that passed
-    each fragment on would emit several half-formed calls that no client could use.
+    ``tool_calls`` appears on the chunk that **completes** them, never in fragments (`FRD-131`
+    FR-6): half-formed calls are of no use to a client.
     """
 
     text_delta: str

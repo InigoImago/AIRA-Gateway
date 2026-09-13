@@ -1,13 +1,7 @@
-"""OIDC bearer (JWT) validation for the gateway (FRD-101 Slice B).
+"""OIDC bearer (JWT) validation for the gateway (`FRD-101`).
 
-Wraps the shared :class:`aira_common.oidc.JwtVerifier` and maps verified claims to a
-gateway :class:`Principal` (subject + use-case membership from Keycloak groups).
-
-**Roles come from groups (`ADR-0017`).** Until 2026-08-09 this read `realm_access.roles` while
-use-case membership came from the `groups` claim — two mechanisms answering "who is this". The
-gateway's whole role vocabulary is `is_governance`, `is_oversight` and `may_act_on_incidents`,
-all built from three organisation-wide roles, so the change is exactly this one call: the two
-use-case roles were never read here at all.
+Wraps the shared :class:`aira_common.oidc.JwtVerifier` and maps verified claims to a gateway
+:class:`Principal`. Roles and use-case membership both come from the `groups` claim (`ADR-0017`).
 """
 
 from __future__ import annotations
@@ -30,23 +24,20 @@ from aira_common.roles import Role, roles_from_groups
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 
+#: Bounds on claims that reach stored fields.
+_MAX_USERNAME = 150
+_MAX_CLIENT = 64
+
 
 class OidcValidator:
     """Validates Keycloak JWTs and resolves them to a gateway Principal.
 
-    **One realm or several** (`FRD-118` FR-1). A deployment usually has one; an organisation
-    migrating between realms, or running a second instance, has two for as long as the move takes,
-    and a gateway that accepts only one of them makes the migration a flag day for every client.
-
-    Routing is by the token's **own `iss` claim, read unverified** — a hint, never a trust
-    decision: the verifier it selects then checks `iss` for real, against the value it was
-    configured with, so a forged `iss` selects a verifier that refuses it. Where no configured
-    issuer matches, every verifier is tried in turn, which is the `kid` probe the predecessor
-    describes: each one asks its own JWKS for the key id and refuses a key it does not have.
-
-    Routing by `iss` first matters for more than speed. A probe makes each JWKS client refresh on a
-    key it will never hold, so a token from realm B would make realm A refetch its key set on every
-    single request — a remote call per request, added by a feature meant to be invisible.
+    **One realm or several** (`FRD-118` FR-1), so a migration between realms is not a flag day for
+    every client. Routing is by the token's **own `iss` claim, read unverified** — a hint, never a
+    trust decision: the selected verifier checks `iss` for real, so a forged `iss` selects a
+    verifier that refuses it. Where no issuer matches, each verifier is tried in turn (the `kid`
+    probe). Routing first matters: a probe makes each JWKS client refresh on a key it will never
+    hold, a remote call per request.
     """
 
     def __init__(
@@ -67,8 +58,7 @@ class OidcValidator:
             )
             for name, aud, keys in ((issuer, audience or "", jwks), *others)
         )
-        # An absent mapping grants no roles, which is the safe reading and the one an installation
-        # that has not configured `AIRA_ROLE_GROUPS` gets: oversight is withheld, never assumed.
+        # An absent mapping grants no roles: oversight is withheld, never assumed.
         self._role_groups = role_groups or {}
 
     def _claimed_issuer(self, token: str) -> str | None:
@@ -88,9 +78,8 @@ class OidcValidator:
             if claims is not None:
                 return self._principal(claims, issuer)
             if claimed is not None and issuer == claimed:
-                # It named this realm and this realm refused it. Trying the others would only
-                # produce the same refusal from every one of them, and each costs a JWKS refresh
-                # for a key id none of them will ever hold.
+                # The realm it named refused it; the others would refuse it too, each after a JWKS
+                # refresh for a key id they will never hold.
                 return None
         return None
 
@@ -99,41 +88,29 @@ class OidcValidator:
         if not subject:
             return None
         raw_groups = claims.get("groups")
-        # **Filtered once, here.** This kept the raw list and each of the three readers below
-        # decided for itself: two of them dropped non-strings and the third — the
-        # `/use-cases/<slug>` convention — called `.startswith` on whatever was in it. One realm
-        # emitting a group as an object was an `AttributeError` inside token validation, which is
-        # a 500 for every request that caller makes rather than a role they do not get.
+        # Filtered once, here, for every reader: a group emitted as an object must cost that caller
+        # a role, not raise inside token validation.
         groups = (
             [path for path in raw_groups if isinstance(path, str)]
             if isinstance(raw_groups, list)
             else []
         )
-        # `azp` (authorized party) is the client the token was issued to; `client_id` appears on
-        # client-credentials tokens. Either answers "which system", which is a different question
-        # from `sub` — the same person's token from two applications should not look identical in
-        # the audit trail.
+        # `azp` (authorized party) or, on client-credentials tokens, `client_id`: *which system*,
+        # so one person's tokens from two applications differ in the audit trail.
         client = claims.get("azp") or claims.get("client_id")
-        # The name a person is known by, carried **beside** `sub` and never instead of it: a
-        # username can be reassigned to somebody else, so keying anything on it would move one
-        # person's history onto another. Bounded like every other claim that reaches a stored
-        # field, and taken only when it is a non-empty string — an absent claim is not an empty
-        # name, it is no name.
+        # The name, carried **beside** `sub` and never instead of it. An absent or blank claim is
+        # no name, not an empty one.
         name = claims.get("preferred_username")
-        username = str(name)[:150] if isinstance(name, str) and name.strip() else None
+        username = str(name)[:_MAX_USERNAME] if isinstance(name, str) and name.strip() else None
         return Principal(
             subject=str(subject),
             method="oidc",
-            #: Which realm minted this token. Carried so an audit row answers "who issued the
-            #: credential this decision was made on" during a migration, when the answer is
-            #: genuinely two different systems.
             issuer=issuer,
             username=username,
-            credential=str(client)[:64] if client else None,
+            credential=str(client)[:_MAX_CLIENT] if client else None,
             # The `/use-cases/<slug>` convention, resolvable from the token alone (`FRD-102`).
-            # Group *grants* are added a layer out, where the read-model is — see
-            # `auth/grants.py`. Union, not replacement: this route keeps working, including when
-            # the read-model cannot be read.
+            # Group grants are added a layer out (`auth/grants.py`) — a union, so this route keeps
+            # working when the read-model cannot be read.
             use_cases=usecases_from_group_paths(groups),
             groups=tuple(groups),
             roles=roles_from_groups(groups, self._role_groups),
@@ -142,17 +119,19 @@ class OidcValidator:
 
 def build_oidc_validator(settings: GatewaySettings) -> OidcValidator | None:
     """Build an OidcValidator from settings, or None when OIDC is disabled/unconfigured."""
-    if not settings.oidc_enabled or not settings.issuers():
+    if not settings.oidc_enabled:
         return None
-    if any(not audience for _, audience, _ in settings.issuers()):
+    configured = settings.issuers()
+    if not configured:
+        return None
+    if any(not audience for _, audience, _ in configured):
         # Without an audience, *any* token the realm issued — including one minted for an
-        # unrelated client — is accepted here. Fine locally, a real weakness in production.
+        # unrelated client — is accepted. Fine locally, a real weakness in production.
         get_logger("aira_gateway").warning(
             "oidc_audience_unset",
-            issuer=", ".join(name for name, audience, _ in settings.issuers() if not audience),
+            issuer=", ".join(name for name, audience, _ in configured if not audience),
             detail="Set AIRA_OIDC_AUDIENCE so tokens issued for other clients are rejected.",
         )
-    configured = settings.issuers()
     first, *rest = configured
     return OidcValidator(
         issuer=first[0],

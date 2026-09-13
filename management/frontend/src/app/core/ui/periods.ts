@@ -1,10 +1,8 @@
 /**
- * What a named period means as a `[from, to)` pair of local days.
+ * What a named period means as a `[from, to)` pair of local days (`FRD-603`).
  *
- * Extracted from the reporting screen when a second screen needed the same answer (`FRD-603`).
- * It is a small thing to share and an expensive one to restate: the two rules below are both
- * off-by-one bugs that only appear at certain hours or on certain days, which is to say the kind
- * nobody reproduces from a bug report.
+ * Shared by the reporting screen and a use case's consumption panel, because both rules below are
+ * off-by-one bugs that only appear at certain hours or on certain days.
  */
 
 /** A period a person actually asks about, rather than two dates they have to compute. */
@@ -14,9 +12,8 @@ export type Preset =
 /**
  * A day as an `<input type="date">` writes it, in **local** time.
  *
- * Deliberately not `toISOString().slice(0, 10)`: that converts to UTC first, so for anyone east
- * of Greenwich "today" becomes yesterday for part of the day — an off-by-one in the period the
- * report covers, which is the kind of bug that is only ever noticed in the evening.
+ * Not `toISOString().slice(0, 10)`: that converts to UTC first, so east of Greenwich "today" is
+ * yesterday for part of the day.
  */
 export function isoDay(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0');
@@ -28,9 +25,8 @@ export function windowFor(preset: Preset, today: Date): { from: string; to: stri
   const day = (offset: number) =>
     new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset);
   switch (preset) {
-    // Not offered by the reporting screen's picker — it is what a use case's own consumption
-    // panel asks for beside the month, so that "we are burning through it right now" and "we
-    // have spent this much since the first" are two figures rather than one.
+    // Not in the reporting picker: the consumption panel shows it beside the month, so "burning
+    // through it right now" and "spent since the first" are two figures.
     case 'today':
       return { from: isoDay(day(0)), to: isoDay(day(1)) };
     case 'last-month': {

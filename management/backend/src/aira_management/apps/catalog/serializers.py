@@ -10,43 +10,28 @@ from rest_framework import serializers
 from aira_management.apps.catalog.models import Model
 from aira_management.apps.catalog.validation import validate_declaration
 
+#: The fields the declaration rules (`validation.validate_declaration`) are asked about.
+DECLARATION_FIELDS = (
+    "capabilities",
+    "hosting",
+    "thinking",
+    "embedding",
+    "attachments",
+    "context_window",
+    "max_output_tokens",
+    "default_max_output_tokens",
+)
+
 
 class ModelSerializer(serializers.ModelSerializer[Model]):
     is_priced = serializers.BooleanField(read_only=True)
     is_declared = serializers.BooleanField(read_only=True)
 
-    def validate_name(self, name: str) -> str:
-        """A model's name is its **identity**, and an identity is set once (2026-08-27).
-
-        The same shape as `UseCaseSerializer.validate_slug`, one table along, and with the same
-        cause: the name crosses a Kafka boundary into a database this plane does not own. It keys
-        the gateway's `model_catalog`, it is what a use case's release names (`FRD-308`), what a
-        pipeline step's `config.model` names, what a price attaches to and what every
-        `request_logs.model` records.
-
-        Measured on 2026-08-27 against the running stack: `PATCH` a catalogued model's name, and
-        the gateway ends up holding **both** — the old row intact and still `approved`, the new one
-        beside it — while Management answers `404` for the old. So a rename quietly doubles the
-        installation's approved catalogue and puts one of the two permanently beyond reach:
-        un-approving it, re-pricing it or deleting it can never arrive, because the plane that
-        emits those events has forgotten the name.
-
-        That reopens exactly the loophole `FRD-307` closed. Its own docstring records the first
-        version's mistake — *deleting a declaration made a model usable again* — and the answer was
-        that an uncatalogued model is refused. An orphan is worse than that: it is catalogued,
-        approved, and unreachable.
-
-        The upsert in `ModelViewSet.create` is unaffected: it re-posts the **same** name onto an
-        existing row, which is not a change.
-        """
-        if self.instance is not None and name != self.instance.name:
-            raise serializers.ValidationError(
-                f"A model's name is its identity and cannot be changed. '{self.instance.name}' is "
-                "what the gateway's catalog, every use case's release, every pipeline step and "
-                "every audit row already name. Catalogue the new name as its own model and "
-                "un-approve this one — `display_name` is the field for what people should read."
-            )
-        return name
+    #: Where auto-assigned KIRA ids start: above every id this repository ships or documents (the
+    #: demo seeds `9001`/`9002`, the showcase `9102`), so a console-created model cannot take a
+    #: number a later `make seed` wants. Lower ids stay free for installations migrating from the
+    #: predecessor, which set them explicitly.
+    KIRA_ID_BASE = 9500
 
     class Meta:
         model = Model
@@ -79,32 +64,37 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
             "updated_at",
         ]
         read_only_fields = ["updated_at"]
-        #: The unique constraint on `numeric_id` is enforced below with a sentence that names the
-        #: **other model**. DRF's generated `UniqueValidator` runs first and would answer "model
-        #: with this numeric id already exists" — true, and it leaves the reader to go and find
-        #: which one. Dropping it hands the check to `validate_numeric_id`; the database constraint
-        #: is still there underneath, so nothing is weakened by saying it better.
+        #: DRF's generated `UniqueValidator` is dropped so `validate_numeric_id` can name the other
+        #: model in its refusal; the database constraint still holds underneath.
         extra_kwargs: dict[str, dict[str, Any]] = {"numeric_id": {"validators": []}}
 
-    #: Where auto-assigned KIRA ids start: above everything this repository ships or documents
-    #: (the demo seeds `9001` and `9002`, the showcase catalogues `9102` by hand), so a machine's
-    #: first console-created model cannot take a number a later `make seed` wants. Everything below
-    #: is left free for an installation migrating from the predecessor, whose clients already send
-    #: particular ids — those are set explicitly, which is the whole point of the field.
-    KIRA_ID_BASE = 9500
+    def validate_name(self, name: str) -> str:
+        """A model's name is its **identity**, and an identity is set once.
+
+        The name crosses Kafka into the gateway's `model_catalog` and is what releases (`FRD-308`),
+        pipeline steps, prices and every `request_logs.model` name. A rename would leave the old row
+        approved in the gateway and unreachable from here — the loophole `FRD-307` closed. The
+        upsert in `ModelViewSet.create` re-posts the **same** name, which is not a change.
+        """
+        if self.instance is not None and name != self.instance.name:
+            raise serializers.ValidationError(
+                f"A model's name is its identity and cannot be changed. '{self.instance.name}' is "
+                "what the gateway's catalog, every use case's release, every pipeline step and "
+                "every audit row already name. Catalogue the new name as its own model and "
+                "un-approve this one — `display_name` is the field for what people should read."
+            )
+        return name
 
     def validate_numeric_id(self, value: int | None) -> int | None:
-        """The integer a KIRA client addresses this model by (`FRD-107`).
+        """The integer a KIRA client addresses this model by (`FRD-107`), refused when taken.
 
-        Uniqueness is a database constraint, and a constraint alone answers a caller with a 500 and
-        a sentence about a key name. The read side already treats a duplicate as unservable — two
-        entries claiming one id make the surface answer 503 rather than guess which model to bill —
-        so the write side says so where somebody can still fix it.
+        The gateway answers 503 for a duplicate rather than guess which model to bill, so the write
+        side says so where somebody can still fix it — rather than as a constraint's 500.
         """
         if value is None:
             return None
         if value < 1:
-            # Kept because taking DRF's validators off the field took its range check with them.
+            # Dropping DRF's validators also dropped the field's range check.
             raise serializers.ValidationError("A KIRA id is a positive integer.")
         clash = Model.objects.filter(numeric_id=value)
         if self.instance is not None:
@@ -121,17 +111,9 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
     def create(self, validated_data: dict[str, Any]) -> Model:
         """Assign a KIRA id when none was given.
 
-        **A model without one is addressable on the Gemini surface and invisible on the KIRA one.**
-        It can be catalogued, approved and released, and a KIRA client still cannot name it —
-        `by_numeric_id` finds nothing and the surface answers `MODEL_NOT_FOUND`. That is a control
-        displayed as working and doing nothing (`FRD-125`), and it was the state of every model
-        created through the console, because the field exists on the API and the form never offered
-        it.
-
-        Auto-assigned rather than required, because a number nobody chose is still better than no
-        number, and an installation that *does* care — one migrating from the predecessor, whose
-        clients already send particular ids — sets it explicitly and keeps its clients unchanged.
-        That is what the field is for (`FRD-107`).
+        A model without one is invisible on the KIRA surface (`MODEL_NOT_FOUND`) while looking
+        fully configured — a control displayed as working and doing nothing (`FRD-125`).
+        Auto-assigned rather than required: an installation that cares sets it explicitly.
         """
         if validated_data.get("numeric_id") is None:
             highest = Model.objects.aggregate(top=Max("numeric_id"))["top"]
@@ -141,26 +123,15 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
     def _effective(self, attrs: dict[str, Any], field: str) -> Any:
         """What the field will hold after the save: the incoming value, or the stored one.
 
-        The declaration block below already merges over the instance and says why — *"a PATCH that
-        touches only `max_output_tokens` would be validated against a thinking block it cannot
-        see"*. The price pair three lines above it did not, in the same method: on a partial edit
-        `attrs` carried the one price being changed and the other read as absent, so **every**
-        partial price edit was refused with a sentence about setting both — measured on
-        2026-08-26, `PATCH {"input_price_per_million": "3.00"}` against a model that already had
-        both.
-
-        The rule was stated one layer down and not held one layer up, which is the shape this
-        codebase keeps paying for. Named here so both readers share it.
+        Every rule here is about the resulting model, not the edit — a partial `PATCH` of one price
+        must be checked against the other price already on the row.
         """
         return attrs.get(field, getattr(self.instance, field, None))
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
-        # A half-priced model would bill one direction and silently ignore the other, which is
-        # worse than having no price at all: the figure would look complete and be wrong.
-        #
-        # Asked of the **resulting** model rather than of the edit — see `_effective`. Clearing one
-        # of the two is still refused, because `attrs` then carries an explicit `None` and that is
-        # the value the model ends up with.
+        # A half-priced model would bill one direction and ignore the other: a figure that looks
+        # complete and is wrong. Clearing one of the two is still refused — `attrs` then carries
+        # the explicit `None` the model ends up with.
         has_input = self._effective(attrs, "input_price_per_million") is not None
         has_output = self._effective(attrs, "output_price_per_million") is not None
         if has_input != has_output:
@@ -168,31 +139,13 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
                 "Set both the input and the output price, or neither — a model priced in only "
                 "one direction would report costs that look complete but are not."
             )
-        # The catalog is a runtime authority: what it says decides whether a request is accepted.
-        # A declaration that cannot work is refused where it is written rather than discovered
-        # where it is enforced (FRD-114 FR-3).
-        #
-        # Merged over the instance on a partial update, or a PATCH that touches only
-        # `max_output_tokens` would be validated against a thinking block it cannot see.
-        # The fallback is the *field's* empty value, not ``None``: DRF omits a field with a model
-        # default from ``attrs``, so a create that never mentions `capabilities` would otherwise be
-        # validated as "capabilities is None" and refused for saying nothing at all.
+        # Merged over the instance like `_effective`, but falling back to the field's *empty*
+        # value: DRF omits a field with a model default from `attrs`, so a create that never
+        # mentions `capabilities` must be validated as `[]`, not refused as `None` (FRD-114 FR-3).
         empty: dict[str, Any] = {"capabilities": [], "hosting": ""}
         declaration = {
             field: attrs.get(field, getattr(self.instance, field, empty.get(field)))
-            # Not `_effective`, because of the `empty` fallback above: a create that never mentions
-            # `capabilities` has no instance to read and must be validated as `[]` rather than as
-            # `None`, or it is refused for saying nothing at all.
-            for field in (
-                "capabilities",
-                "hosting",
-                "thinking",
-                "embedding",
-                "attachments",
-                "context_window",
-                "max_output_tokens",
-                "default_max_output_tokens",
-            )
+            for field in DECLARATION_FIELDS
         }
         errors = validate_declaration(declaration)
         if errors:

@@ -1,32 +1,14 @@
 """What lives on ``app.state``, said out loud so a type checker can read it.
 
-**Why this module exists.** `app.state` is a bag of attributes typed `Any`. Everything the request
-path needs hangs off it — the budget service, the rate limiter, the suspensions, the catalog, the
-pricing, the writer — so a large share of this codebase's calls between components are made through
-a boundary mypy cannot see. `mypy --strict` passes over 255 files and verifies **none** of them.
+`app.state` is typed `Any`, and most calls between the request path's components go through it —
+a boundary mypy cannot see. A `throttle` suspension once reached the rate limiter in the wrong
+shape and became a 500 for the caller it was meant to slow; an annotation would have been a build
+failure. `test_app_state_is_typed.py` requires every read outside this module to be annotated.
 
-That is not a theoretical exposure. On 2026-08-11 it cost a control: `SuspensionService.check`
-returns `Throttle`, `RateLimitService.check` consumes `BucketRequest`, and the gate passed the
-first straight into the second. The two share no field the limiter reads, so a `throttle`
-suspension raised `AttributeError` and became a **500** for every request from the caller it was
-meant to slow down — while the console showed the decision as active and enforcing. A one-line
-annotation would have made it a build failure.
-
-The pattern was already here and applied twice: `registry_of` and `catalog_of` in `serving.py`
-exist for exactly this reason, and `enforce_pre_dispatch` carries the comment *"`app.state` is
-untyped, so the annotation is what states the contract the route relies on"*. What was missing was
-finishing the thought — eighteen other attributes were read raw.
-
-**Accessors rather than a typed container.** Starlette builds `app.state` itself and hands the same
-object to every request, so replacing it would mean fighting the framework for no gain. A function
-per attribute costs one line, reads at the call site exactly as the attribute did, and gives mypy
-the one thing it needs: a declared return type. The names follow the two that already existed
-(`<thing>_of`), so nothing has to be learned.
-
-**A `Protocol`, not the concrete classes.** `AppServices` describes what the request path *uses*;
-`create_app` assembles the real objects and the tests substitute their own. Naming the concrete
-classes here would make every stand-in in the suite a type error and push the tests toward
-inheriting from production classes, which is how a test double stops standing in for anything.
+- **Accessors, not a typed container**: Starlette owns `app.state`, and a `<thing>_of` function per
+  attribute reads like the attribute while giving mypy a declared return type.
+- **Types imported for annotation only**: `create_app` assembles the real objects, and nothing is
+  checked at runtime, so tests substitute their own stand-ins freely.
 """
 
 from __future__ import annotations
@@ -45,6 +27,9 @@ if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
     from aira_gateway.pricing import PricingService
     from aira_gateway.ratelimit.service import RateLimitService
     from aira_gateway.upstreams.base import ProviderRegistry
+
+# The catalogue has no accessor here on purpose: readers use `api.serving.catalog_of`, which hands
+# back the **per-request** view (`ModelCatalog.per_request`) rather than `app.state.catalog`.
 
 
 def settings_of(request: Request) -> GatewaySettings:
@@ -74,8 +59,7 @@ def rate_limits_of(request: Request) -> RateLimitService:
 def suspensions_of(request: Request) -> SuspensionService:
     """The kill switch and its throttles (`FRD-503`).
 
-    The seam that proved why this module is worth having: the throttles this returns are not the
-    shape the rate limiter consumes, and nothing said so for as long as both sides were `Any`.
+    Its throttles are not the shape the rate limiter consumes — the seam this module exists for.
     """
     suspensions: SuspensionService = request.app.state.suspensions
     return suspensions
@@ -94,15 +78,6 @@ def writer_of(request: Request) -> RequestLogWriter:
 
 
 def providers_of(request: Request) -> ProviderRegistry:
-    """Every registered adapter. Also reachable as `serving.registry_of`, which predates this
-    module and is kept because both surfaces already read it under that name."""
+    """Every registered adapter."""
     registry: ProviderRegistry = request.app.state.providers
     return registry
-
-
-# `model_catalog_of(request)` stood here until 2026-08-20 and nothing called it;
-# `serving.catalog_of` is what every reader uses. Removed rather than kept, and this one was worse
-# than an ordinary unused helper: it handed back `app.state.catalog` directly, while `catalog_of`
-# hands back the **per-request** view (`ModelCatalog.per_request`) that exists so five readers
-# asking about one model are one query instead of five. A caller reaching for the obvious name
-# here would have silently opted out of that.

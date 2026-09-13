@@ -1,14 +1,9 @@
-"""Who may do what inside one use case — asked once, answered in one place.
+"""Who may do what inside one use case — asked once, answered in one place (`FRD-206`).
 
-The three predicates below are the *whole* authorisation vocabulary of the use-case surface. They
-were private methods on the viewset, which was fine while only the viewset asked. The console has
-to ask the same questions to decide what to put on screen, and a console that decides for itself
-is a console that offers a button the server refuses — which is exactly what happened: a use-case
-*user* saw "Add member" and "Remove", clicked one, and got a 403 from a screen that had just
-invited the click.
-
-So they live here, and both the enforcement and the presentation read them. Restating them in
-TypeScript would have been the same defect with an extra copy to forget.
+These predicates are the whole authorisation vocabulary of the use-case surface. The server
+enforces them and the console reads them (through `UseCaseSerializer.permissions`) to decide what to
+offer, so a screen never offers a button the server refuses. Restating them in TypeScript would be
+the same defect with an extra copy to forget.
 """
 
 from __future__ import annotations
@@ -23,8 +18,7 @@ from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, Use
 from aira_management.rbac import KEYCLOAK_GROUP_PREFIX, MANAGE_PERM, VIEW_PERM, has_role
 from aira_management.roles import Role
 
-#: Re-exported from `rbac`, which the role gates also read. Two spellings of one permission string
-#: is the drift this module was created to stop.
+#: Re-exported from `rbac`, which the role gates also read: one spelling per permission string.
 VIEW = VIEW_PERM
 CHANGE = "usecases.change_usecase"
 MANAGE = MANAGE_PERM
@@ -43,21 +37,13 @@ def may_manage(user: Any, usecase: UseCase) -> bool:
 def holds_a_grant(user: Any, usecase: UseCase) -> bool:
     """True if a **grant** puts this person inside the use case — no role blanket.
 
-    The two things that can be **taken away**: a membership row naming them, and a group grant
-    matching a path their last token carried. A group grant makes somebody a member without any row
-    naming them — that is the point of `FRD-209`, and asking only about direct rows here let the
-    console offer an API key to somebody the server would refuse, which is the `FRD-206` defect
-    wearing a new hat.
+    The two things that can be taken away: a membership row naming them, and a group grant
+    matching a path their last token carried (`FRD-209`). Separate from :func:`is_member`, whose
+    Global Administrator blanket is wrong wherever the question is *whose* the use case is:
 
-    Separate from :func:`is_member` because a Global Administrator may act everywhere, so that one
-    says yes for somebody who is a member of nothing. That is right where it is used and wrong
-    wherever the question is *whose* the use case is:
-
-    - a credential is owned by somebody the use case can be asked about, and an owner who is only
-      "allowed to act anywhere" is the accountability chain ending in a string that `FRD-604`
-      refuses one sentence earlier;
-    - when access ends, the keys that rested on it end with it — and a blanket that never ends
-      would keep every key alive (`FRD-613`).
+    - a credential's owner must be somebody the use case can be asked about (`FRD-604`);
+    - when access ends, the keys that rested on it end with it — a blanket that never ends would
+      keep every key alive (`FRD-613`).
     """
     if not getattr(user, "is_authenticated", False):
         return False
@@ -71,14 +57,8 @@ def holds_a_grant(user: Any, usecase: UseCase) -> bool:
 def is_member(user: Any, usecase: UseCase) -> bool:
     """True if the caller may act inside the use case — a grant, or a Global Administrator.
 
-    Deliberately *not* the same as "may see it": the oversight roles (global-admin, it-steuerung,
-    it-security) get organisation-wide read visibility through ``scope_queryset``, and read
-    visibility must never imply the right to act inside a use case (ADR-0007).
-
-    Written as the blanket **plus** :func:`holds_a_grant` rather than repeating its two queries.
-    They were two copies of one rule for as long as it took `test_mutation_anchors` to notice that
-    a mutation aimed at one of them matched both — which is the same finding this file's own
-    docstring opens with, arriving from the harness instead of from a reviewer.
+    Deliberately *not* "may see it": the oversight roles see every use case through
+    ``scope_queryset``, and read visibility must never imply the right to act (`ADR-0007`).
     """
     return has_role(user, Role.GLOBAL_ADMIN) or holds_a_grant(user, usecase)
 
@@ -86,25 +66,16 @@ def is_member(user: Any, usecase: UseCase) -> bool:
 def may_call_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCase]:
     """Narrow to the use cases this caller may attribute **gateway traffic** to.
 
-    This is a third question, and conflating it with either of the other two produced a live defect
-    on 2026-08-09. It is not `scope_queryset` (what may I *see*) and it is not `is_member` (what may
-    I *administer here*): it is **what will the gateway accept from my token**, and the gateway has
-    its own rule — the `/use-cases/<slug>` convention plus group grants, from `aira_common.access`.
+    A third question, neither `scope_queryset` (what may I *see*) nor `is_member` (what may I
+    *administer*): **what will the gateway accept from my token**. So:
 
-    Two consequences that are the whole point:
+    - **no Global Administrator blanket** — the gateway has no such rule, it reads a token's
+      groups, and a console offering a use case the gateway refuses is the `FRD-206` defect;
+    - **the rule is `aira_common.access.resolve`**, the function the gateway's
+      `GroupGrantResolver` calls, so the two planes cannot hold two definitions of it.
 
-    - **No global-admin blanket.** `is_member` grants a global administrator everything, because in
-      *Management* they may act anywhere. The gateway has no such rule: it reads a token's groups.
-      The first version of this function reused `is_member`, so the console offered a global admin
-      the alphabetically first of nine hundred use cases and the gateway answered
-      `Not a member of use case 'addr-1nn4ss'` — a control that fails the moment it is used, which
-      is the `FRD-206` defect this very screen had already had once.
-    - **The rule is `aira_common.access.resolve`**, the same function the gateway's
-      `GroupGrantResolver` calls. Restating it here in Django would be a second definition of an
-      access rule across two planes, which this project has paid for repeatedly.
-
-    An oversight role therefore gets an **empty** answer: it sees every use case and may call none
-    (`ADR-0007`). That is not a gap, it is the rule, and the screen says so in words.
+    An oversight role therefore gets an empty answer: it sees every use case and may call none
+    (`ADR-0007`).
     """
     if not getattr(user, "is_authenticated", False):
         return queryset.none()
@@ -114,11 +85,8 @@ def may_call_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCas
             "group_path", "use_case__slug", "role"
         )
     )
-    # **And the grants naming this person**, which is the third route `FRD-209` §2.1 describes and
-    # the one both planes were missing. The gateway keys a membership by username — that is the
-    # alphabet the event carries — so this passes the same thing, or the two answers to one
-    # question start to differ again in the direction that is hardest to see: the console would
-    # promise a dry run the gateway then refuses, which is the report this came from.
+    # And the memberships naming this person (`FRD-209` §2.1), keyed by username as the gateway
+    # keys them, so both planes answer this question alike.
     direct = list(UseCaseMembership.objects.filter(user=user).values_list("use_case__slug", "role"))
     return queryset.filter(slug__in=list(resolve(held, grants, direct)))
 
@@ -126,24 +94,14 @@ def may_call_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCas
 def may_run_tests_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCase]:
     """Narrow to the use cases this caller may put the question catalogue to (`FRD-504`).
 
-    **Two conditions, and both are necessary**, which is why this is a composition rather than a
-    fourth rule:
+    Two conditions, both necessary:
 
-    1. `may_call_queryset` — the *gateway* would accept this caller for it. A run is real traffic
-       sent with the signed-in person's own credentials, so a use case they cannot call is one
-       whose run would 403 on its first question.
-    2. **Administration, not membership.** A normal use-case *user* may not run the catalogue — the
-       owner's rule, 2026-08-16. Running it spends the use case's budget a hundred prompts at a
-       time and reads a catalogue that states what this installation tests for (§8), and both of
-       those are decisions about the use case rather than work inside it. So: an administrator of
-       *that* use case (`MANAGE`, which group grants and direct memberships both write), or one of
-       the two roles that answer for the installation.
-
-    IT Security is in the second clause by role because it is deliberately a member of nothing
-    (`ADR-0007`) — but note that clause 1 still applies to them: they reach the use case they
-    evaluate models in because somebody put them in its group, exactly like everybody else. A role
-    is not a bypass of the gateway's rule here, and if it were, the run would fail at dispatch and
-    the console would have promised something the server refuses.
+    1. `may_call_queryset` — a run is real traffic sent with the caller's own credentials, so a
+       use case they cannot call would refuse its first question. A role is no bypass of this.
+    2. **Administration, not membership**: running the catalogue spends the use case's budget a
+       hundred prompts at a time, a decision about the use case rather than work inside it. So an
+       administrator of *that* use case (`MANAGE`), or a Global Administrator or IT Security —
+       the latter by role, because it is deliberately a member of nothing (`ADR-0007`).
     """
     reachable = may_call_queryset(user, queryset)
     if has_role(user, Role.GLOBAL_ADMIN, Role.IT_SECURITY):
@@ -154,22 +112,15 @@ def may_run_tests_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[U
 
 
 def may_run_tests(user: Any, usecase: UseCase) -> bool:
-    """`may_run_tests_queryset` for one use case — asked through the queryset so there is one rule.
-
-    Written the other way round at first (the predicate, with the queryset filtering on it), and
-    that is the shape this project keeps paying for: two spellings of one rule, identical the day
-    they are written.
-    """
+    """`may_run_tests_queryset` for one use case — asked through the queryset, so one rule."""
     return may_run_tests_queryset(user, UseCase.objects.filter(pk=usecase.pk)).exists()
 
 
 def held_group_paths(user: Any) -> list[str]:
     """The Keycloak group paths this user's last token carried.
 
-    Read back out of the Django groups `sync_user_groups` writes, rather than from the token: the
-    predicates here are called from places that have a user and no request, and a permission that
-    can only be evaluated where the token happens to be in scope is a permission that gets
-    evaluated inconsistently.
+    Read back from the Django groups `sync_user_groups` writes rather than from the token, because
+    these predicates are called where there is a user and no request.
     """
     if not getattr(user, "is_authenticated", False):
         return []

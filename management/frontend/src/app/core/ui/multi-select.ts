@@ -21,19 +21,13 @@ export interface MultiSelectOption {
 /**
  * Pick several things out of a list that will get long.
  *
- * A checkbox per row is honest and stops working somewhere around thirty: the reader scrolls a
- * list they cannot search to find the four they want, and what is already chosen is scattered
- * through it. This shows the **chosen** set as removable chips and everything else behind a
- * search, so both questions — *what did I pick* and *what else is there* — have their own place.
+ * A checkbox per row stops working around thirty: the chosen items scatter through a list nobody
+ * can search. This shows the **chosen** set as removable chips and everything else behind a search,
+ * so "what did I pick" and "what else is there" each have their own place.
  *
- * Written as a shared control rather than inside the one screen that needed it first: the model
- * catalog is not the only list here that only grows, and the second copy is where the keyboard
- * handling drifts.
- *
- * **Keyboard first**, because a picker that only works with a mouse is one a keyboard user cannot
- * use at all — there is no fallback the way there is for a checkbox. Arrow keys move, Enter
- * toggles and **keeps the list open** (the whole point is picking several), Escape closes,
- * Backspace on an empty query takes the last chip back.
+ * **Keyboard first** — a picker has no fallback the way a checkbox does. Arrow keys move, Enter
+ * toggles and **keeps the list open**, Escape closes, Backspace on an empty query takes the last
+ * chip back.
  */
 @Component({
   selector: 'app-multi-select',
@@ -63,8 +57,8 @@ export class MultiSelect {
   private readonly field = viewChild<ElementRef<HTMLInputElement>>('field');
 
   constructor() {
-    // A stale active index points at a different option than the one under the highlight, so
-    // Enter picks something the reader was not looking at.
+    // A stale index points at a different option than the highlight, so Enter would pick
+    // something the reader was not looking at.
     effect(() => {
       this.query();
       this.active.set(0);
@@ -73,9 +67,8 @@ export class MultiSelect {
 
   protected readonly chosen = computed(() => {
     const known = new Map(this.options().map((option) => [option.value, option]));
-    // A value with no option behind it is still shown — as itself. It is usually the interesting
-    // one: something chosen earlier that the list no longer offers, and silently dropping it from
-    // the chips would hide a state somebody has to act on while leaving it in the saved set.
+    // A value with no option behind it is still shown, as itself: something chosen earlier that the
+    // list no longer offers is a state somebody has to act on, not one to hide.
     return this.selected().map(
       (value) => known.get(value) ?? { value, label: value, warning: 'not in the list' },
     );
@@ -119,8 +112,8 @@ export class MultiSelect {
     this.open.set(false);
   }
 
-  /** The chevron. Opening from it puts the keyboard in the field, because the next thing somebody
-   *  does after opening a list of fifty is type. */
+  /** The chevron. Opening from it puts the keyboard in the field: the next thing somebody does
+   *  after opening a list of fifty is type. */
   protected toggleList(): void {
     if (this.open()) {
       this.close();
@@ -130,8 +123,7 @@ export class MultiSelect {
     this.refocus();
   }
 
-  /** Clicking anywhere else closes it. A dropdown that stays open over the page it covers is one
-   *  the reader has to dismiss deliberately, having already moved on. */
+  /** Clicking anywhere else closes it. */
   protected onDocumentClick(event: Event): void {
     const root = this.root()?.nativeElement;
     if (root && !root.contains(event.target as Node)) this.close();
@@ -146,9 +138,8 @@ export class MultiSelect {
       if (!matches.length) return;
       const down = event.key === 'ArrowDown';
       if (!wasOpen) {
-        // **Opening is not moving.** The first draft advanced the index on the same keypress that
-        // opened the list, so ArrowDown into a closed picker landed on the *second* option and the
-        // first was unreachable without the mouse — a keyboard-only reader would never see it.
+        // Opening is not moving: advancing on the keypress that opened the list would make the
+        // first option unreachable without the mouse.
         this.active.set(down ? 0 : matches.length - 1);
         return;
       }
@@ -156,8 +147,7 @@ export class MultiSelect {
       return;
     }
     if (event.key === 'Enter') {
-      // Never submits the form it sits in: a picker inside a settings form would otherwise save
-      // the page every time somebody chose an option.
+      // Never submits the form it sits in, or choosing an option would save the page.
       event.preventDefault();
       const option = matches[this.active()];
       if (this.open() && option) this.toggle(option.value);
@@ -170,8 +160,8 @@ export class MultiSelect {
     }
   }
 
-  /** Put the keyboard back in the search field after a chip is removed, so a reader taking three
-   *  things out does not have to click back in between each one. */
+  /** Put the keyboard back in the search field after a chip is removed, so removing three things
+   *  does not need a click between each. */
   protected refocus(): void {
     this.field()?.nativeElement.focus();
   }

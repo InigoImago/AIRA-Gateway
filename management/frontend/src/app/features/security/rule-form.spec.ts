@@ -39,18 +39,15 @@ class Host {
 }
 
 /**
- * `ngModel` writes its value in a microtask, not during change detection — so a synchronous
- * `detectChanges()` reads the input before the rule has reached it, and would happily "prove" that
- * an edit form opens empty. Everything here awaits.
+ * `ngModel` writes its value in a microtask and the form fills its fields from an `effect`, so a
+ * synchronous `detectChanges()` reads the inputs before the rule has reached them and would "prove"
+ * that an edit form opens empty. Everything here awaits.
  */
 async function setup(rule: AnomalyRule = EXISTING) {
   TestBed.resetTestingModule();
   TestBed.configureTestingModule({ imports: [Host] });
   const fixture = TestBed.createComponent(Host);
   fixture.componentInstance.rule.set(rule);
-  // Twice: the form fills its fields from an `effect`, which runs *after* the first render. One
-  // pass would read the inputs before the rule had reached them — and would have "proved" that a
-  // form opens empty.
   fixture.detectChanges();
   await fixture.whenStable();
   const element = fixture.nativeElement as HTMLElement;
@@ -120,8 +117,7 @@ describe('RuleForm — what it offers', () => {
   });
 
   it('reloads its fields when it is pointed at another rule', async () => {
-    // Otherwise opening a second rule shows the first one's numbers — the zoneless form-state
-    // bug this project has already fixed once.
+    // Otherwise opening a second rule shows the first one's numbers.
     const harness = await setup();
     harness.host.rule.set({ ...EXISTING, id: 9, threshold: 99, window_minutes: 5 });
     harness.fixture.detectChanges();

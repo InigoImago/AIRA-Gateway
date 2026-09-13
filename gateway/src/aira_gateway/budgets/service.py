@@ -1,26 +1,19 @@
-"""Budget enforcement + usage accounting (FRD-401, FRD-403, FRD-405).
+"""Budget enforcement and usage accounting (`FRD-401`, `FRD-403`, `FRD-405`).
 
-``guard`` is called pre-dispatch: it loads the budgets applicable to the request's use case +
-subject and **reserves** what the request is expected to consume, refusing it with
-``BudgetExceeded`` if a limit is already met. ``settle`` is called once the outcome is known: it
-corrects the reservation to the real figure and books it to Postgres. ``release`` undoes the
-reservation when the request never produced anything. Usage is keyed by
-``(scope_key, period_key)`` so it resets naturally at each day/month boundary.
+- :meth:`BudgetService.guard` runs pre-dispatch: it **reserves** what the request is expected to
+  consume against every budget that binds it, or raises :class:`BudgetExceeded`.
+- :meth:`~BudgetService.settle` corrects the reservation to the real figure and books it to
+  Postgres; :meth:`~BudgetService.release` hands it back when nothing was produced.
 
-The reservation is what makes concurrency safe. Reading the usage and booking it afterwards left
-a window in which every in-flight request was invisible to every other one's check, so N parallel
-requests all passed a limit that only had room for one (FRD-405 §1). Reserving first closes it:
-the check and the reservation are a single atomic step in the shared counter store.
+Reserving first is what makes concurrency safe: check and reservation are one atomic step in the
+shared counter store (`budgets.ledger`), so in-flight requests see each other (`FRD-405` §1).
+Postgres stays the system of record (`budgets.store`); when Redis is unreachable the service falls
+back to read-then-book, which enforces but is racy — refusing all traffic would turn a cache outage
+into an outage, and skipping enforcement would make it free.
 
-Postgres remains the system of record. Redis holds a running counter seeded from it, so an outage
-costs the in-flight reservations and not the period's accounting — and when it is unreachable the
-service falls back to the old read-then-book path, which enforces but is racy. Refusing traffic
-instead would turn a cache outage into an outage; skipping enforcement would make it free.
-
-A budget may cap **cost**, tokens, or request count (FRD-403). Cost is the limit that answers
-what a budget is normally asked, because a token differs in price by more than an order of
-magnitude between models; the count limits remain available as a volume guard. Money is carried
-as integer nano-units throughout — see ``aira_common.money`` for why never as a float.
+A budget may cap cost, tokens or requests (`FRD-403`). Money is integer nano-units throughout.
+Counters are keyed by ``(scope_key, period_key)`` and reset at each UTC day or month
+(`budgets.keys`).
 """
 
 from __future__ import annotations
@@ -32,114 +25,38 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as postgres_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.counters import CountersUnavailable, DegradationLog
 from aira_common.logging import get_logger
 from aira_common.money import format_display
+from aira_gateway.budgets import keys
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger, Limits
-from aira_gateway.db.models import BudgetRead, BudgetUsage
-from aira_gateway.scopes import EACH_MEMBER, INSTALLATION, USE_CASE, Scope
+from aira_gateway.budgets.store import accumulate, applicable, read_usage
+from aira_gateway.db.models import BudgetRead
+from aira_gateway.scopes import EACH_MEMBER
+
+__all__ = ["Amounts", "BudgetExceeded", "BudgetService", "Reservation"]
 
 _log = get_logger("aira_gateway.budgets")
-
-_BREACH_MESSAGES = {
-    "cost": "Cost budget exhausted for {scope} ({period}).",
-    "requests": "Request budget exhausted for {scope} ({period}).",
-    "tokens": "Token budget exhausted for {scope} ({period}).",
-}
-
-
-@dataclass(frozen=True, slots=True)
-class _Usage:
-    """What has been consumed in one (scope, period) so far."""
-
-    tokens: int
-    requests: int
-    cost_nanos: int
-    unpriced_requests: int
-
-
-def _period_key(period: str, now: datetime) -> str:
-    """The counter key for this moment: the **UTC** calendar day or month.
-
-    One clock for an installation whose callers, models and operators sit in several, and a couple
-    of hours from the reader's own calendar in both directions — in central Europe, traffic at
-    00:30 local counts against yesterday, and a monthly budget that ran out goes on refusing for
-    the first hours of the new month. The console's Period control says so.
-
-    **The conversion is here rather than assumed of the caller.** This used to `strftime` whatever
-    it was handed, which is UTC only because every call site happens to pass `datetime.now(UTC)` —
-    a guarantee held by four call sites instead of by the one function that states it, and the
-    kind that a fifth quietly breaks. `astimezone(UTC)` is a no-op for an already-UTC moment, so
-    nothing changes today and the property stops depending on who calls.
-    """
-    moment = now.astimezone(UTC)
-    return moment.strftime("%Y-%m-%d") if period == "day" else moment.strftime("%Y-%m")
-
-
-def _scope_label(budget: BudgetRead) -> str:
-    """How the exhausted budget is named to the caller.
-
-    The stored value is a configuration word; a refusal is read by somebody who did not write the
-    configuration. `each_member` in particular would be reported to a caller as the name of a
-    setting rather than as what happened to them, which is that their own allowance is gone.
-    """
-    if budget.scope == INSTALLATION:
-        # Named, and not left to fall through to "member". A refusal that names the wrong owner
-        # sends somebody to edit a budget that was never involved — and this one has no use case to
-        # look in, so *"member (month)"* would send them somewhere that does not exist.
-        return "installation"
-    return "use case" if budget.scope == USE_CASE else "member"
-
-
-def _scope_key(budget: BudgetRead, caller: str | None = None) -> str:
-    """The key this budget's consumption is accounted under.
-
-    Applicability has already been decided by :meth:`_applicable`; this only asks under which key
-    the figures live.
-    """
-    scope = Scope.applying(
-        scope=budget.scope,
-        use_case=budget.use_case,
-        # `each_member` names nobody, so **the caller is the key** — one configured row, one
-        # counter per head. Reading the key off the row was right while every scope identified
-        # itself, and became a silent hole the moment one did not.
-        caller=caller,
-    )
-    assert scope is not None, (
-        f"budget {budget.id} ({budget.scope}) does not bind caller {caller!r} — it should never "
-        "have reached here, since _applicable resolves the same question"
-    )
-    return scope.usage_key
 
 
 @dataclass(slots=True)
 class Reservation:
     """What a request has set aside, and what must be corrected or released afterwards.
 
-    ``atomic`` records whether the shared counter store actually held the reservation. When it
-    did not, the request was admitted by the fallback path and there is nothing to correct in
-    Redis — only Postgres to book.
-
-    ``resolved`` records that the outcome has been accounted for, by either settling or
-    releasing. :meth:`BudgetService.hold` uses it to guarantee that no exit path can leave a
-    reservation behind, and it also makes a double resolution a no-op.
+    ``atomic`` records whether the shared counter store held the reservation; when it did not, the
+    request was admitted by the fallback path and only Postgres is booked. ``resolved`` records
+    that the outcome was accounted for, by settling or releasing — :meth:`BudgetService.hold` uses
+    it so no exit path leaves a reservation behind, and a second resolution is a no-op.
     """
 
     budgets: list[BudgetRead] = field(default_factory=list)
-    #: Who the request is from. Carried because a `each_member` budget's counter key **is** the
-    #: caller, and settle/release run long after the subject was resolved.
+    #: Who the request is from: an `each_member` budget's counter key **is** the caller, and
+    #: settle/release run long after the subject was resolved.
     subject: str | None = None
     #: What this request set aside, so `settle` can correct it and `release` can hand it back.
-    #:
-    #: (A `username` field stood above this line until the `member` scope was removed — it existed
-    #: so a rule naming a person could match either alphabet. Its comment outlived it by three
-    #: weeks and read as documentation for `reserved`, which is a smaller version of the dead
-    #: definition `LESSONS.md` §1 keeps finding: a reader takes a stray comment for a contract.)
     reserved: Amounts = Amounts()
     period_keys: dict[int, str] = field(default_factory=dict)
     atomic: bool = False
@@ -163,9 +80,10 @@ class BudgetService:
         self._sessionmaker = sessionmaker
         self._enforce = enforce
         self._ledger = ledger
-        # See the note in ratelimit/buckets.py: an empty log is falsy, so `or` would discard
-        # the caller's log every time.
+        # `is not None`, not `or`: an empty log is falsy and `or` would discard the caller's.
         self._degradation = degradation if degradation is not None else DegradationLog()
+
+    # == before dispatch ==========================================================================
 
     async def guard(
         self,
@@ -177,22 +95,16 @@ class BudgetService:
     ) -> Reservation:
         """Reserve against the applicable budgets, or raise ``BudgetExceeded``.
 
-        ``estimated`` is what the request is expected to consume. It cannot be exact — the cost
-        depends on how many tokens the model returns — so it is corrected by :meth:`settle` the
-        moment the response arrives. Erring high is the safe direction for a spend limit, and a
-        request that never completes releases its reservation in full.
+        ``estimated`` cannot be exact — cost depends on the answer — so :meth:`settle` corrects
+        it; erring high is the safe direction for a spend limit. A request naming no use case is
+        **not exempt**: it books against the installation budget, where one exists (`FRD-610`).
         """
-        # **A request naming no use case is not exempt** (`FRD-610`). It used to be: this returned
-        # an empty reservation for anything unattributed, so break-glass keys, demo traffic and the
-        # console's model checks spent without any allowance able to see them. They book against
-        # the installation budget now, and where none is configured `_applicable` finds nothing and
-        # the behaviour is what it always was.
         if not self._enforce:
             return Reservation()
         now = now or datetime.now(UTC)
         amounts = estimated or Amounts(requests=1)
         async with self._sessionmaker() as session:
-            budgets = await self._applicable(session, use_case, subject)
+            budgets = await applicable(session, use_case, subject)
             if not budgets:
                 return Reservation()
             if self._ledger is not None:
@@ -207,13 +119,10 @@ class BudgetService:
                     self._degradation.working(self.FEATURE)
                     return reserved
                 except CountersUnavailable:
-                    # Redis may have gone away *between* two budgets, leaving the ones already
-                    # reserved holding a request that nothing downstream still has a reference
-                    # to. Handing them back is what stops a counter being inflated by a request
-                    # that will never be settled or released.
+                    # Redis may have gone between two budgets: hand back the ones already
+                    # reserved, which nothing downstream holds a reference to.
                     await self.release(partial)
-                    # Enforce anyway, the old way: racy, but the alternatives are refusing all
-                    # traffic or handing out free spend while a cache is down (FRD-405 §4.3).
+                    # Enforce anyway, the racy way (`FRD-405` §4.3).
                     _log.warning("budget_reservation_degraded", use_case=use_case)
                     self._degradation.degraded(
                         self.FEATURE,
@@ -227,20 +136,16 @@ class BudgetService:
     ) -> Reservation:
         """Atomically reserve against every applicable budget.
 
-        A budget that refuses undoes the reservations already made for *this* request before
-        raising. Leaving them in place would let a refused request permanently consume headroom
-        on the budgets it did clear.
-
-        The reservation is passed in rather than created here so the caller still holds it if
-        this raises part-way through — otherwise the reservations already made become
-        unreachable, which is exactly how a counter ends up inflated with nobody able to clear it.
+        A budget that refuses first undoes this request's reservations on the others, or a refused
+        request would keep consuming their headroom. The reservation is passed in, not created
+        here, so the caller still holds it if this raises part-way through.
         """
         assert self._ledger is not None
         amounts = reservation.reserved
         for budget in reservation.budgets:
-            scope_key = _scope_key(budget, reservation.subject)
-            period_key = _period_key(budget.period, now)
-            seed = await self._usage(session, scope_key, period_key)
+            scope_key = keys.scope_key(budget, reservation.subject)
+            period_key = keys.period_key(budget.period, now)
+            seed = await read_usage(session, scope_key, period_key)
             breached = await self._ledger.reserve(
                 scope_key,
                 period_key,
@@ -254,11 +159,7 @@ class BudgetService:
             )
             if breached:
                 await self.release(reservation)
-                raise BudgetExceeded(
-                    _BREACH_MESSAGES[breached].format(
-                        scope=_scope_label(budget), period=budget.period
-                    )
-                )
+                raise keys.exceeded(budget, breached)
             reservation.period_keys[budget.id] = period_key
         reservation.resolved = False  # reserved; the outcome is still open
         return reservation
@@ -270,15 +171,14 @@ class BudgetService:
         now: datetime,
         caller: str | None = None,
     ) -> None:
-        """The pre-FRD-405 path: read the usage and refuse if a limit is already met.
+        """Read the usage and refuse if a limit is already met.
 
-        Used when no shared counter store is configured or it cannot be reached. It enforces,
-        but concurrent requests remain invisible to each other — which is the whole reason the
-        reservation path exists.
+        The path without a reachable counter store: it enforces, but concurrent requests stay
+        invisible to each other — the reason the reservation exists.
         """
         for budget in budgets:
-            usage = await self._usage(
-                session, _scope_key(budget, caller), _period_key(budget.period, now)
+            usage = await read_usage(
+                session, keys.scope_key(budget, caller), keys.period_key(budget.period, now)
             )
             breached = None
             if budget.limit_cost_nanos is not None and usage.cost_nanos >= budget.limit_cost_nanos:
@@ -288,21 +188,38 @@ class BudgetService:
             elif budget.limit_tokens is not None and usage.tokens >= budget.limit_tokens:
                 breached = "tokens"
             if breached:
-                raise BudgetExceeded(
-                    _BREACH_MESSAGES[breached].format(
-                        scope=_scope_label(budget), period=budget.period
-                    )
-                )
+                raise keys.exceeded(budget, breached)
+
+    async def refuse_if_exhausted(
+        self,
+        use_case: str | None,
+        subject: str | None,
+        now: datetime | None = None,
+    ) -> None:
+        """Refuse a use case that is **already** over a limit, before anything is spent on it.
+
+        Not a reservation and no substitute for :meth:`guard`: it answers the cheaper question
+        *has this use case spent its allowance?*, which needs no model and so can be asked before
+        routing and the pipeline — whose classifier calls would otherwise be billed for requests
+        that are then refused.
+        """
+        # No use case, no pipeline to protect (`FRD-125c`); `guard` bounds unattributed spend.
+        if not use_case:
+            return
+        now = now or datetime.now(UTC)
+        async with self._sessionmaker() as session:
+            budgets = await applicable(session, use_case, subject)
+            if budgets:
+                await self._check_only(session, budgets, now, subject)
+
+    # == after dispatch ===========================================================================
 
     @asynccontextmanager
     async def hold(self, reservation: Reservation) -> AsyncIterator[Reservation]:
         """Guarantee that a reservation is resolved, whatever happens inside the block.
 
-        Releasing at each failure site was one `except` clause short of correct: only
-        ``UpstreamError`` was handled, so a malformed upstream body, a database hiccup in the
-        pricing lookup or any outright bug left the reservation behind — and a budget that
-        shrinks a little with every defect is one nobody can reason about. Making the guarantee
-        structural means a future exit path cannot forget it.
+        Structural rather than a release at each failure site, so a malformed upstream body, a
+        database hiccup or a future exit path cannot leave a reservation behind.
         """
         try:
             yield reservation
@@ -324,15 +241,10 @@ class BudgetService:
         now: datetime | None = None,
         requests: int = 1,
     ) -> None:
-        """Book the real figure: correct the reservation and persist it.
+        """Book the real figure: persist it, and move the shared counter by the difference.
 
-        Postgres receives the actual consumption; the shared counter is moved by the difference
-        between what was reserved and what was really used, so it converges on the same total.
-
-        ``requests`` is what the call weighed — one for an ordinary request, and one **per text**
-        for an embedding batch (`FRD-113` FR-6). Settling a batch of 500 as a single request would
-        hand back 499 of the reservation and leave a request-count budget unable to see batched
-        traffic at all.
+        ``requests`` is what the call weighed — one, or one **per text** of an embedding batch
+        (`FRD-113` FR-6), or a request-count budget could not see batched traffic.
         """
         reservation.resolved = True
         if not reservation.budgets:
@@ -359,8 +271,7 @@ class BudgetService:
     async def release(self, reservation: Reservation) -> None:
         """Give a reservation back — the request produced nothing to charge for.
 
-        Without this an upstream failure would consume budget permanently, so a provider outage
-        would look to a use case exactly like having spent its month.
+        Otherwise a provider outage would look to a use case exactly like having spent its month.
         """
         reservation.resolved = True
         if not reservation.atomic or self._ledger is None:
@@ -375,15 +286,13 @@ class BudgetService:
                 continue  # never reserved against this budget (the one that refused)
             try:
                 await self._ledger.adjust(
-                    _scope_key(budget, reservation.subject),
+                    keys.scope_key(budget, reservation.subject),
                     period_key,
                     amounts=amounts,
                 )
             except CountersUnavailable:
-                # The counter keeps this request's estimate for now. It cannot be repaired from
-                # here — the store holding the stale figure is the store that is unreachable —
-                # but the damage is bounded: the counter expires well before its period does and
-                # is rebuilt from Postgres, which has the settled figure (COUNTER_TTL_SECONDS).
+                # The counter keeps this request's estimate until it expires and is rebuilt from
+                # Postgres, which has the settled figure (`COUNTER_TTL_SECONDS`).
                 _log.warning("budget_adjust_degraded", budget_id=budget.id)
 
     async def record(
@@ -398,16 +307,9 @@ class BudgetService:
     ) -> None:
         """Book a request — or a batch counted as the many it is — against every budget.
 
-        Both extra arguments are keyword-only on purpose: an amount of money and a timestamp
-        next to each other as positionals is exactly how a caller ends up booking the wrong
-        figure without anything failing.
-
-        ``cost_nanos`` is ``None`` when the model has no price on file. Such a request is
-        counted under ``unpriced_requests`` rather than as costing zero: a spend figure that
-        silently omits traffic is worse than one that admits what it does not know.
-
-        ``subject`` is who the request was from. It is required by a **per-person** budget, whose
-        counter key *is* the caller; a shared row ignores it.
+        Keyword-only, so an amount of money and a timestamp cannot be swapped as positionals.
+        ``cost_nanos`` of ``None`` is counted as unpriced, not as free (`FRD-403`). ``subject`` is
+        required by a per-person budget, whose counter key is the caller.
         """
         if not budgets:
             return
@@ -415,49 +317,16 @@ class BudgetService:
         async with self._sessionmaker() as session:
             for budget in budgets:
                 await session.execute(
-                    _accumulate(
+                    accumulate(
                         session,
-                        scope_key=_scope_key(budget, subject),
-                        period_key=_period_key(budget.period, now),
+                        scope_key=keys.scope_key(budget, subject),
+                        period_key=keys.period_key(budget.period, now),
                         tokens=tokens,
                         requests=requests,
                         cost_nanos=cost_nanos,
                     )
                 )
             await session.commit()
-
-    async def refuse_if_exhausted(
-        self,
-        use_case: str | None,
-        subject: str | None,
-        now: datetime | None = None,
-    ) -> None:
-        """Refuse a use case that is **already** over a limit, before anything is spent on it.
-
-        Not a reservation and not a substitute for `guard` — concurrent requests stay invisible to
-        each other here, which is the whole reason the reservation exists. This runs earlier and
-        answers a cheaper question: *has this use case already spent its allowance?* That question
-        needs no model, so it can be asked before routing, before the pipeline, before anything
-        costs money.
-
-        It exists because it turned out the answer was being paid for. A use case one request over
-        its cost limit kept running its LLM injection filter on every subsequent request — all of
-        them refused with a 429, all of them billed for the classifier call. Measured: a 20 000
-        limit, one served request, seven refused, and 72 400 spent. A client with a retry loop
-        spends without bound.
-        """
-        # Still exempt where there is no use case, and for a reason rather than for convenience:
-        # this check exists to stop a request *before the pipeline runs* (`FRD-125c`), and a
-        # pipeline is a use case's configuration. Unattributed traffic runs none, so there is
-        # nothing here for the installation budget to protect — `guard` already reserves against
-        # it, which is where its spend is bounded.
-        if not use_case:
-            return
-        now = now or datetime.now(UTC)
-        async with self._sessionmaker() as session:
-            budgets = await self._applicable(session, use_case, subject)
-            if budgets:
-                await self._check_only(session, budgets, now, subject)
 
     async def book_side_call(
         self,
@@ -468,46 +337,22 @@ class BudgetService:
         cost_nanos: int | None = None,
         now: datetime | None = None,
     ) -> None:
-        """Book tokens the **gateway** spent on the caller's behalf (`FRD-125`).
+        """Book tokens the **gateway** spent on the caller's behalf — a pipeline step (`FRD-125`).
 
-        A pipeline's classifier call is real money against the same use case, and it was counted as
-        nothing at all — which `FRD-403` names as the one thing worse than an unpriced request.
-
-        **Counted as a request** — the owner's decision (2026-08-15), reversing this method's
-        original `requests=0`.
-
-        The argument for zero was that the caller made one request and counting the classifier as
-        a second inflates every request figure and can trip a *request* limit for traffic nobody
-        sent. That consequence is now accepted deliberately, and the reason given for accepting it
-        is the honest one: a step's call reaches a model and costs money, so a use case that runs
-        two of them per request is doing three times the work its request budget was sized for, and
-        a budget that cannot see that is a budget about something other than what is happening.
-
-        **Rate limits are untouched**, and that is the same decision read the other way. A bucket
-        measures how fast requests *arrive*; the gate is taken once, before the pipeline, on the
-        one request that did arrive (`guard_before_work`). Refusing a caller because the gateway
-        made calls on their behalf would slow down exactly the traffic they did send — which is
-        what the original reasoning was protecting against, and it still applies there.
-
-        Not a reservation. These tokens are already spent by the time their size is known — the
-        pipeline runs before the reservation, because routing has to choose the model the
-        reservation is made against. Booking after the fact is the honest description of that.
-
-        **Both stores, not just Postgres.** The first version of this called ``record`` alone,
-        which writes the system of record — so reporting was right and *enforcement was not*: the
-        guard reads the shared counter (`FRD-405`/`ADR-0008`), and the classifier's spend reached
-        it only when that counter expired and rebuilt from Postgres, up to `COUNTER_TTL_SECONDS`
-        later. Found by setting a small cost cap and watching a use case sail past it: the counter
-        said 41 000 against a limit of 40 000 and the next request was served.
+        - **Counted as a request**, by the owner's decision: a step's call reaches a model and costs
+          money, and a request budget that cannot see it is sized for other work. **Rate limits
+          are untouched** — a bucket measures how fast requests arrive, and the gate is taken once.
+        - Not a reservation: the tokens are spent before their size is known, because the pipeline
+          runs before routing picks the model the reservation is made against.
+        - **Both stores**: the guard reads the shared counter, so booking Postgres alone would let
+          the spend reach enforcement only when the counter is rebuilt.
         """
-        # A **pipeline's** spend, which belongs to the use case whose pipeline ran. Unattributed
-        # traffic has no pipeline, so the `use_case` test stays: it is not an exemption, it is the
-        # absence of the thing this method books.
+        # Unattributed traffic has no pipeline, so there is nothing here to book.
         if not use_case or tokens <= 0:
             return
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
-            budgets = await self._applicable(session, use_case, subject)
+            budgets = await applicable(session, use_case, subject)
         await self.record(
             budgets,
             tokens,
@@ -522,15 +367,16 @@ class BudgetService:
         for budget in budgets:
             try:
                 await self._ledger.adjust(
-                    _scope_key(budget, subject),
-                    _period_key(budget.period, now),
+                    keys.scope_key(budget, subject),
+                    keys.period_key(budget.period, now),
                     amounts=amounts,
                 )
             except CountersUnavailable:
-                # Postgres has it, and the counter rebuilds from Postgres when it expires. The
-                # window is bounded and the direction is the safe one — the counter is *low*, so a
-                # caller is under-charged rather than refused for spend that never happened.
+                # Postgres has it and the counter rebuilds from Postgres; until then the counter is
+                # low, so a caller is under-charged rather than refused.
                 _log.warning("budget_side_call_adjust_degraded", budget_id=budget.id)
+
+    # == reporting ================================================================================
 
     async def usage(
         self,
@@ -539,18 +385,12 @@ class BudgetService:
         *,
         subject: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Current-period usage per budget for a use case (for the UI consumption view, FRD-402).
+        """Current-period usage per budget of a use case, for the consumption view (`FRD-402`).
 
-        Cost is reported both as an exact decimal string and as raw nano-units: the string is
-        what a human reads, the integer is what a progress bar can divide without a float
-        creeping into a monetary figure.
-
-        A **per-person** budget has no single figure — one configured row is N counters — so the
-        answer depends on who is asking, and ``measured_for`` says whose figure this is. A reader
-        the row does not bind (an oversight role, who is a member of nothing) gets ``None`` for
-        every figure rather than a zero: `FRD-603`'s rule, that *unknown is never rendered as
-        zero*, applies with more force here than anywhere, because zero is also what a real,
-        untouched allowance looks like.
+        Cost comes as a decimal string for people and as nano-units for a progress bar. A
+        **per-person** budget is one counter per head, so ``measured_for`` names whose figure it
+        is; a reader it does not bind gets ``None`` for every figure rather than a zero, which is
+        also what an untouched allowance looks like (`FRD-603`).
         """
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
@@ -571,23 +411,13 @@ class BudgetService:
                     )
                     out.append(row)
                     continue
-                # **Only `each_member` depends on who is reading.** A `member` row names its own
-                # subject and is keyed on that; a `use_case` row names nobody. Passing the reader
-                # as the caller for every row asked whether *they* are bound by a rule written
-                # about somebody else — which for a named member row they are not, so
-                # `Scope.applying` returned `None` and `_scope_key`'s assertion fired: a **500**
-                # on the use-case page, for any reader looking at a use case that has a member
-                # budget naming anyone but themselves.
-                #
-                # Introduced with the per-head scope (2026-08-11, `744337f`) and found the same
-                # day by opening the console as `admin`. `None` restores the pre-existing meaning
-                # — the row resolves to its own subject — while `each_member`, which genuinely
-                # has one counter per reader, still resolves to the caller.
+                # Only `each_member` depends on the reader. Any other row resolves to its own
+                # subject; passing the reader as its caller would fail `scope_key`'s assertion.
                 caller = subject if budget.scope == EACH_MEMBER else None
-                usage = await self._usage(
+                usage = await read_usage(
                     session,
-                    _scope_key(budget, caller),
-                    _period_key(budget.period, now),
+                    keys.scope_key(budget, caller),
+                    keys.period_key(budget.period, now),
                 )
                 row.update(
                     used_tokens=usage.tokens,
@@ -598,89 +428,3 @@ class BudgetService:
                 )
                 out.append(row)
             return out
-
-    async def _applicable(
-        self,
-        session: AsyncSession,
-        use_case: str | None,
-        subject: str | None,
-    ) -> list[BudgetRead]:
-        """Every enabled budget that binds this request.
-
-        **Two families in one query.** A request naming a use case reads that use case's rows; a
-        request naming none reads the installation's (`FRD-610`), which is the residual bucket for
-        spend no use case owns. `Scope.applying` decides which of the fetched rows actually bind —
-        it is the one place a scope is added, and both this path and the rate limiter follow it.
-        """
-        result = await session.execute(
-            select(BudgetRead).where(
-                BudgetRead.use_case == (use_case or ""), BudgetRead.enabled.is_(True)
-            )
-        )
-        return [
-            budget
-            for budget in result.scalars()
-            if Scope.applying(scope=budget.scope, use_case=budget.use_case, caller=subject)
-            is not None
-        ]
-
-    async def _usage(self, session: AsyncSession, scope_key: str, period_key: str) -> _Usage:
-        record = await session.get(BudgetUsage, (scope_key, period_key))
-        if record is None:
-            return _Usage(0, 0, 0, 0)
-        return _Usage(record.tokens, record.requests, record.cost_nanos, record.unpriced_requests)
-
-
-def _accumulate(
-    session: AsyncSession,
-    *,
-    scope_key: str,
-    period_key: str,
-    tokens: int,
-    requests: int,
-    cost_nanos: int | None,
-) -> Any:
-    """One statement that inserts the counter or adds to it. **Found by concurrency, twice.**
-
-    This was a read, then an insert-or-modify, then a commit, and both halves were racy:
-
-    - Two requests arriving as the *first* of a period both found no row and both inserted one.
-      One lost, with a ``UniqueViolation`` that reached the caller as a **500** for a request the
-      gateway had already served and charged for. Twenty concurrent requests against a fresh
-      budget produced two of them, every run.
-    - Two requests updating an *existing* row each read the old value and wrote an absolute new
-      one, so an increment was silently discarded. That failure has no error at all: the counter
-      that is supposed to be the system of record drifts **below** the truth, in the direction
-      that spends money, under exactly the load that makes a budget matter.
-
-    So the arithmetic moves into the database, where the row is locked for the statement's
-    duration. ``ON CONFLICT`` is spelled the same way by Postgres and SQLite and by nobody else,
-    which is why the dialect is dispatched on rather than assumed.
-
-    ``cost_nanos`` of ``None`` means the model had no price on file. It is counted under
-    ``unpriced_requests`` rather than as zero: a spend figure that silently omits traffic is worse
-    than one that admits what it does not know (`FRD-403`).
-    """
-    unpriced = requests if cost_nanos is None else 0
-    values = {
-        "scope_key": scope_key,
-        "period_key": period_key,
-        "tokens": tokens,
-        "requests": requests,
-        "cost_nanos": cost_nanos or 0,
-        "unpriced_requests": unpriced,
-    }
-    dialect = session.bind.dialect.name if session.bind is not None else "postgresql"
-    insert = postgres_insert if dialect == "postgresql" else sqlite_insert
-    statement = insert(BudgetUsage).values(**values)
-
-    columns = BudgetUsage.__table__.c
-    return statement.on_conflict_do_update(
-        index_elements=["scope_key", "period_key"],
-        set_={
-            "tokens": columns.tokens + tokens,
-            "requests": columns.requests + requests,
-            "cost_nanos": columns.cost_nanos + (cost_nanos or 0),
-            "unpriced_requests": columns.unpriced_requests + unpriced,
-        },
-    )

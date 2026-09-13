@@ -31,24 +31,36 @@ _REACHES_A_MODEL = frozenset({"providers_of", "pipeline_engine"})
 #: `prepare_for_dispatch`, which takes the gate for it; anything else calls the gate itself.
 _TAKES_THE_GATE = frozenset({"guard_before_work", "prepare_for_dispatch"})
 
-#: Modules that reach a provider and deliberately take no gate. Named with the reason, because a
-#: silent skip list is how the next spender comes to be exempt by accident.
+#: Modules that reach a provider and deliberately take no gate, as paths under `api/` (a trailing
+#: `/` names a package). Named with the reason, because a silent skip list is how the next spender
+#: comes to be exempt by accident.
 EXEMPT = {
-    # `serving.py` **is** the layer: it defines `guard_before_work` and calls it.
-    "serving.py",
+    # The serving layer **is** the gate: it defines `guard_before_work` and calls it.
+    "serving/",
     # Lists what is configured and served. Reads `upstream.models()` — an in-process property of an
     # adapter, no request to anybody, nothing spent.
     "providers.py",
+    # The KIRA surface's `/models`, for the same reason as `providers.py`.
+    "kira/info_routes.py",
     # `FRD-506`'s reachability check. Bounded by role rather than by use case because it describes
     # the *installation*, and it is **never a generation** (`FRD-117`): a self-deployed model must
     # not be woken and billed by the question "does this work". There is no use case to charge and
     # no budget to check.
-    "incidents.py",
+    "incidents/",
 }
 
 
 def _modules() -> list[Path]:
     return sorted(p for p in API.rglob("*.py") if p.name != "__init__.py")
+
+
+def _key(path: Path) -> str:
+    return path.relative_to(API).as_posix()
+
+
+def _exempt(path: Path) -> bool:
+    key = _key(path)
+    return any(key == entry or (entry.endswith("/") and key.startswith(entry)) for entry in EXEMPT)
 
 
 def _names(tree: ast.AST) -> set[str]:
@@ -63,16 +75,17 @@ def test_there_are_spenders_to_check() -> None:
     """A guard on the guard: a pattern that matches nothing passes the assertion below by checking
     nothing, and this repository has shipped two guards that could not fail."""
     reaching = {
-        path.name for path in _modules() if _names(ast.parse(path.read_text())) & _REACHES_A_MODEL
+        _key(path) for path in _modules() if _names(ast.parse(path.read_text())) & _REACHES_A_MODEL
     }
 
-    assert reaching >= {"serving.py", "pipeline.py"}, sorted(reaching)
+    assert "pipeline.py" in reaching, sorted(reaching)
+    assert any(key.startswith("serving/") for key in reaching), sorted(reaching)
 
 
 def test_everything_that_can_call_a_model_takes_the_early_gate() -> None:
     ungated: list[str] = []
     for path in _modules():
-        if path.name in EXEMPT:
+        if _exempt(path):
             continue
         names = _names(ast.parse(path.read_text()))
         if names & _REACHES_A_MODEL and not names & _TAKES_THE_GATE:

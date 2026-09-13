@@ -1,11 +1,9 @@
-"""Request-rate enforcement per use case and per member (FRD-405).
+"""Request-rate enforcement per use case and per member (`FRD-405`).
 
-Called pre-dispatch, before any upstream work is done and before the budget is touched: the
-point of a limit is to make the expensive part of the request never happen.
-
-Both scopes are checked where both exist and the stricter one wins, so a single member cannot
-consume a whole use case's allowance. A use case with no configured limit is unlimited, exactly
-as before this feature existed — this must never start rejecting traffic on upgrade.
+Called pre-dispatch, before any upstream work and before the budget is touched: the point of a
+limit is that the expensive part of the request never happens. Where both scopes apply both are
+checked, so one member cannot consume a whole use case's allowance. A use case with no configured
+limit is unlimited, as before this feature existed.
 """
 
 from __future__ import annotations
@@ -24,12 +22,8 @@ from aira_gateway.scopes import Scope
 
 _log = get_logger("aira_gateway.ratelimit")
 
-# How long a loaded set of limits is reused before re-reading it.
-#
-# This exists because the check is on the hot path and a request already costs six or seven
-# database round trips; adding a seventh for configuration that changes a few times a year would
-# work against the throughput this feature is meant to protect. Limits arrive over Kafka and are
-# rare, so a few seconds of staleness after an edit is not a meaningful property to give up.
+#: How long a loaded set of limits is reused before re-reading it. The check is on the hot path,
+#: and limits arrive over Kafka a few times a year; a few seconds of staleness costs nothing.
 CONFIG_CACHE_SECONDS = 5.0
 
 
@@ -44,13 +38,11 @@ class RateLimitService:
     ) -> None:
         self._sessionmaker = sessionmaker
         self._bucket = bucket
-        #: Read by the pre-authentication bound (`auth/attempts.py`), which needs the same bucket
-        #: implementation — and therefore the same Redis-or-per-instance degradation — without
-        #: needing a configured limit record to look up.
+        #: Read by the pre-authentication bound (`auth/attempts.py`), which needs the same bucket —
+        #: and the same Redis-or-per-instance degradation — without a configured limit.
         self.bucket = bucket
         self._enforce = enforce
-        # Injectable so the cache's *expiry* can be tested rather than only its manual
-        # invalidation — a TTL nothing ever crosses is a TTL nothing tests.
+        # Injectable so the cache's expiry can be tested, not only its invalidation.
         self._clock = clock
         self._cache: dict[str, tuple[float, list[RateLimitRead]]] = {}
 
@@ -64,14 +56,10 @@ class RateLimitService:
     ) -> None:
         """Raise :class:`RateLimited` if the caller is over its configured rate.
 
-        ``units`` is what the request weighs — one for an ordinary call, one per text for an
-        embedding batch (`FRD-113` FR-6). Admitting a batch of 500 as a single request would leave
-        a limit of 10 per minute allowing 5 000 texts per minute; the limit would be intact on
-        paper and gone in practice, which is a control bypass rather than an inaccuracy.
+        ``units`` is what the request weighs — one, or one per text of an embedding batch
+        (`FRD-113` FR-6). ``extra`` carries a `FRD-503` throttle: an added bucket, not a
+        replacement, taken together with the configured ones so the decision stays all-or-nothing.
         """
-        # A throttle from `FRD-503` is an *extra* bucket, not a replacement: a throttled caller
-        # is still subject to whatever limits already applied, and the two are taken together so
-        # the decision stays all-or-nothing (FR-4).
         if not self._enforce:
             return
         configured = (
@@ -81,10 +69,8 @@ class RateLimitService:
         if not buckets:
             return
 
-        # A batch larger than the bucket itself can never be admitted, however long the caller
-        # waits — so it is refused with a message that says so instead of a `Retry-After` that
-        # would still be wrong an hour later. `FRD-113` §11: the batch bound and the configured
-        # limits interact, and the failure has to name which of the two refused.
+        # A batch larger than a bucket can never be admitted, however long the caller waits, so it
+        # is refused by name rather than with a `Retry-After` that stays wrong (`FRD-113` §11).
         for bucket in buckets:
             if units > bucket.capacity:
                 raise RateLimited(
@@ -94,8 +80,7 @@ class RateLimitService:
                     retry_after="1",
                 )
 
-        # One call, all or nothing: a refused request must not have debited the buckets that
-        # would have granted it (FRD-405 FR-4).
+        # One call, all or nothing (`FRD-405` FR-4).
         decision = await self._bucket.take(buckets, units)
         if decision.allowed:
             return
@@ -119,12 +104,11 @@ class RateLimitService:
         use_case: str,
         subject: str | None,
     ) -> list[BucketRequest]:
-        """Turn the configured records into the buckets this request must pass.
+        """The buckets this request must pass: every enabled limit whose scope binds it.
 
-        Both the use-case and the member bucket are returned where both apply. Checking only the
-        narrower one would let a single member spend the whole use case's allowance; checking only
-        the wider one would make a per-member limit decorative. They are returned together rather
-        than checked one at a time so the decision can be all-or-nothing.
+        The use-case and the member bucket are both returned where both apply — only the narrower
+        would let one member spend the use case's allowance, only the wider would make a member
+        limit decorative.
         """
         buckets: list[BucketRequest] = []
         for record in records:
@@ -159,10 +143,3 @@ class RateLimitService:
             self._cache.clear()
         else:
             self._cache.pop(use_case, None)
-
-
-# `_capacity(record)` stood here until 2026-08-20, on a docstring saying "the tests and the refusal
-# message both ask how big this bucket is". Neither did: the refusal above reads `bucket.capacity`
-# off the `BucketRequest` it already holds, and no test ever imported it. A helper nothing reaches
-# is a rule the module appears to have and does not — the same reason `realm_roles` and
-# `_injection_verdict` were removed rather than kept.

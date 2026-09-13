@@ -6,7 +6,8 @@ import { map } from 'rxjs/operators';
 import { Me, UseCase } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { UseCaseList, slugify } from './use-case-list';
+import { UseCaseList } from './use-case-list';
+import { slugify } from './use-case-slug';
 
 const DEMO: UseCase = { slug: 'demo-uc', name: 'Demo', description: '', processing_notes: '' };
 

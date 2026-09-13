@@ -1,16 +1,9 @@
-"""Writing the request log off the request path (FRD-405 §4.4).
+"""Writing the request log off the request path (`FRD-405` §4.4).
 
-``record_request`` used to be awaited before the response was returned, so every caller waited
-for its own audit row to be committed. ``CLAUDE.md`` requires the opposite — *persistence and
-event emission must not block the gateway request path* — and the code had been contradicting it.
-
-The queue is **bounded**. An unbounded one would only move the exhaustion it is meant to prevent
-from the connection pool to memory, which is the same failure with a slower onset.
-
-A full queue writes **inline** rather than dropping the entry. That applies backpressure to the
-caller producing the load, which is the right place for it, and it keeps a property that matters
-more than latency: the request log never silently loses rows. The rows lost under pressure would
-be exactly the ones from the incident somebody later has to reconstruct.
+Persistence must not block the request path, so audit rows go through a **bounded** queue to a
+background worker — an unbounded one would only move the exhaustion from the connection pool to
+memory. A full queue writes **inline** rather than dropping the entry: backpressure lands on the
+caller producing the load, and the request log never silently loses rows.
 """
 
 from __future__ import annotations
@@ -27,7 +20,26 @@ from aira_gateway.attachments import strip_attachments
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.models import UseCaseRead
 from aira_gateway.persistence.redaction import Redactor
+from aira_gateway.persistence.sanitize import (
+    MAX_STORED_DEPTH,
+    NOT_AN_OBJECT_KEY,
+    TOO_DEEP,
+    as_object,
+    storable,
+    within_depth,
+)
 from aira_gateway.persistence.service import RequestLogService
+
+__all__ = [
+    "MAX_STORED_DEPTH",
+    "NOT_AN_OBJECT_KEY",
+    "TOO_DEEP",
+    "PendingLog",
+    "RequestLogWriter",
+    "as_object",
+    "storable",
+    "within_depth",
+]
 
 _log = get_logger("aira_gateway.persistence")
 
@@ -36,8 +48,8 @@ _log = get_logger("aira_gateway.persistence")
 class PendingLog:
     """One audit row, captured on the request path and written afterwards.
 
-    Everything that can only be read from the live request — attribution, the source IP, the
-    trace id — is resolved before this is handed over; the worker never touches the request.
+    Everything only the live request can tell — attribution, source IP, trace id — is resolved
+    before this is handed over; the worker never touches the request.
     """
 
     subject: str
@@ -53,26 +65,15 @@ class PendingLog:
     request_payload: dict[str, Any] | None
     response_payload: dict[str, Any] | None
     cost_nanos: int | None
-    #: Which surface this row belongs to. **No default, deliberately**, and the reason is
-    #: `record_request`'s own docstring: it used to default to `"gemini"`, which made a call site
-    #: that forgot it right on one surface and silently wrong on every other — a KIRA request's
-    #: classifier row filed under Gemini, so a use case's governance spend was reported against a
-    #: surface it never used.
-    #:
-    #: That rule was stated one layer up and **not held here**: this dataclass and
-    #: `RequestLogService.record` both kept the default, so anything building a row directly — the
-    #: body-size middleware does — was one forgetful edit away from the same defect. A
-    #: discriminator with a default is a discriminator that stops discriminating.
+    #: Which surface this row belongs to. **No default**: a discriminator with a default is right
+    #: on one surface and silently wrong on every other.
     api: str
-    # FRD-122. Defaulted so a caller that only knows the old facts still produces a valid row —
-    # which matters because a *refusal* often knows nothing else.
+    # Defaulted from here on: a refusal, or the body-size middleware's own row, often knows nothing
+    # more (`FRD-122`).
     credential: str | None = None
-    #: Which realm minted the token (`FRD-118`). Defaulted like the fields around it: a refusal
-    #: often knows no issuer, and the middleware's own row knows nothing at all.
+    #: Which realm minted the token (`FRD-118`).
     issuer: str | None = None
-    #: See `RequestLog.username`: a name for grouping a display, not an identity (`FRD-606`).
-    #: Defaulted for the same reason the fields around it are — a refusal often knows no name,
-    #: and the middleware's own row knows nothing at all.
+    #: A name for grouping a display, not an identity (`FRD-606`).
     username: str | None = None
     outcome: str | None = None
     requested_model: str | None = None
@@ -85,123 +86,9 @@ class PendingLog:
     provider: str | None = None
     publisher: str | None = None
     region: str | None = None
-    #: Bytes the caller sent, as counted by the body-size middleware (`FRD-501`). NULL where the
-    #: count is unknown, never 0 — an unknown size must not be able to look like a small one.
+    #: Bytes the caller sent (`FRD-501`). NULL where unknown, never 0: an unknown size must not
+    #: look like a small one.
     request_bytes: int | None = None
-
-
-#: How deep a payload may be before the writer flattens it.
-#:
-#: Above `MAX_JSON_DEPTH`, so a request body this gateway *accepted* is never truncated here —
-#: the two bounds are one rule seen from two ends, and a stored request that had been clipped by
-#: the recorder would be evidence that quietly disagreed with what was served. Below the
-#: interpreter's 1000-frame limit by an order of magnitude, because three walks run one after
-#: another (`strip_attachments`, the redactor, `storable`) from inside a request that already
-#: holds a stack.
-MAX_STORED_DEPTH = 100
-
-#: What stands in for a subtree too deep to walk. The same idiom as `storable`'s
-#: `<unrepresentable: …>`: a reader sees that something was there and what was wrong with it.
-TOO_DEEP = f"<unrepresentable: nested deeper than {MAX_STORED_DEPTH} levels>"
-
-
-def within_depth(value: Any, limit: int = MAX_STORED_DEPTH) -> Any:
-    """``value`` with anything below ``limit`` levels replaced by :data:`TOO_DEEP`.
-
-    **First of the three walks, because the other two cannot survive what this one is for.**
-    `strip_attachments`, the redactor and `storable` each recurse over a payload with no bound,
-    and the interpreter's recursion limit is a thing a *caller* can reach: measured on
-    2026-09-08, a body nesting ~1 000 levels — 12 kB — raised `RecursionError` inside
-    `strip_attachments` and cost the whole audit row, on a request that had been correctly
-    refused. The same body on a served request answered `500` **after** the model had been
-    called: spend, no answer, no record.
-
-    `aira_common.nesting` closes the caller's door (`FRD-124`'s rule, applied to structure rather
-    than to values). This closes the **upstream's**: a response payload is a provider's output,
-    nobody here chose its shape, and a model that answers with a thousand nested objects must not
-    be able to erase the record of its own answer. Exactly the argument `storable` makes about
-    `NaN`, one property along — *losing the value is a smaller failure than losing the row, and
-    replacing it with its name is smaller still*.
-
-    Recursion here is safe because it is the thing being bounded: at most ``limit`` frames.
-    """
-    if limit <= 0:
-        return TOO_DEEP
-    if isinstance(value, dict):
-        return {key: within_depth(item, limit - 1) for key, item in value.items()}
-    if isinstance(value, list):
-        return [within_depth(item, limit - 1) for item in value]
-    return value
-
-
-#: Where a payload that is not a JSON object is kept, so that the row can still be written.
-#:
-#: Every reader of these columns indexes into a mapping — the trace detail, `payloads.py`, the
-#: redactor — and the column is typed as one. A caller who sends `[1, 2]` or `"text"` is refused,
-#: and the refusal is recorded; what they sent goes here rather than being dropped or costing the
-#: row.
-NOT_AN_OBJECT_KEY = "payload"
-
-
-def as_object(value: Any) -> dict[str, Any]:
-    """``value`` as something a payload column can hold, wrapping it if it is not a mapping.
-
-    **This was `dict(value)`, and that is a coercion rather than a check.** The annotation said
-    `dict[str, Any]`, nothing enforced it at run time, and the Gemini surface assigned the caller's
-    body to the audit trail before validating its shape — so `POST … :generateContent` with a body
-    of `[1, 2]` was refused with a correct `400` and then lost its audit row to
-    `TypeError: cannot convert dictionary update sequence element #0 to a sequence`. Two characters,
-    and a request that left no trace (`FRD-122`).
-
-    The surface refuses that body by name now, and this stays for the reason `storable` states one
-    function down: **losing the row is the worst outcome available**, so the writer is defensive
-    about what it is handed rather than trusting a type annotation four modules away. A wrapper
-    keeps the shape every reader expects while keeping the evidence.
-    """
-    return value if isinstance(value, dict) else {NOT_AN_OBJECT_KEY: value}
-
-
-def storable(value: Any) -> Any:
-    """A payload the database can actually take, with the awkward values named rather than dropped.
-
-    `json` columns are **stricter than Python's parser**. `Infinity`, `-Infinity` and `NaN` are not
-    JSON (RFC 8259 has no such literals), Python emits them anyway, and Postgres refuses the insert
-    — so one such value anywhere in a payload costs the **whole audit row**. Measured on
-    2026-08-19: `maxTokens: 1e309` was correctly refused with a `422`, and the refusal was recorded
-    nowhere. A caller could choose not to be logged, with six characters.
-
-    The boundary now refuses such a body outright (`ensure_body_is_encodable`), which closes the
-    caller's door. This closes the **upstream's**: a response payload is a model's output, nobody
-    here chose its contents, and a provider that answers `NaN` in some field would otherwise erase
-    the record of its own answer. Losing the value is a smaller failure than losing the row, and
-    replacing it with its name is smaller still — a reader sees what was there.
-
-    A lone surrogate is the same shape and gets the same treatment: not encodable, so not storable.
-
-    **Keys as well as values**, which this walked straight past: ``{str(key): storable(item)}``
-    sanitised what a mapping held and copied its keys through untouched, so
-    ``{"k\\ud800ey": "v"}`` came out of the function that exists to make a payload storable still
-    unable to be encoded — and cost the whole row, which is the one outcome this is here to
-    prevent. The rule was applied at each recursion and missing from one of them, in a helper whose
-    two tests each pass a well-keyed dict: the shape `LESSONS.md` §1 names, on the smallest
-    possible scale.
-    """
-    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
-        return f"<unrepresentable: {value}>"
-    if isinstance(value, str):
-        try:
-            value.encode("utf-8")
-        except UnicodeEncodeError:
-            return "<unrepresentable: unpaired surrogate>"
-        return value
-    if isinstance(value, dict):
-        # `str(key)` first, because a `json` column has string keys and Python's mapping does not;
-        # `storable` after it, because the string that comes out is subject to exactly the same
-        # rule as any other string in the payload.
-        return {str(storable(str(key))): storable(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [storable(item) for item in value]
-    return value
 
 
 class RequestLogWriter:
@@ -221,19 +108,16 @@ class RequestLogWriter:
         self._max_queue = max_queue
         self._queue: asyncio.Queue[PendingLog] = asyncio.Queue(maxsize=max(1, max_queue))
         self._worker: asyncio.Task[None] | None = None
-        # Set the moment a shutdown begins, not when it finishes. `stop()` awaits the worker,
-        # and that await is a real yield point: a request landing in it would otherwise queue
-        # against a worker already being cancelled, and the row would be dropped by the very
-        # shutdown that promises not to discard anything.
+        # Set when a shutdown *begins*: `stop()` awaits the worker, and a row submitted during that
+        # await must be written inline rather than queued against a worker being cancelled.
         self._stopping = False
         self.written_inline = 0
 
     async def start(self) -> None:
         """Start the worker. A queue size of zero keeps writing on the request path.
 
-        That is a supported configuration, not only a test convenience: an operator who needs a
-        request to be durably logged *before* its response is returned can ask for it, at the
-        cost of the latency this feature exists to remove.
+        A supported configuration: an operator who needs each row durable before its response is
+        returned can ask for it, at the cost of the latency this removes.
         """
         if self._max_queue <= 0:
             return
@@ -248,26 +132,17 @@ class RequestLogWriter:
 
     @property
     def pending(self) -> int:
-        """Rows accepted but not yet written. A steadily rising figure means the database is
-        slower than the traffic, and the inline fallback is about to start applying backpressure."""
+        """Rows accepted but not yet written. A rising figure means the database is slower than
+        the traffic, and the inline fallback is about to apply backpressure."""
         return self._queue.qsize()
 
     async def stop(self) -> None:
         """Drain what is queued, then stop. A redeploy must not discard pending audit rows.
 
-        **The drain cannot outlive the worker.** `_queue.join()` returns when every entry has been
-        marked done, and only the worker marks them — so if the worker is gone, this waits for a
-        signal nobody will ever send. Shutdown then hangs until the orchestrator loses patience and
-        sends `SIGKILL`, and the whole queue is discarded by the very call that promises not to
-        discard it: the failure mode is the exact opposite of the guarantee.
-
-        `_run` catches `Exception`, so this needs something it does not catch — an outside
-        cancellation, or a `BaseException` from the write path. Rare, and the cost of being wrong
-        about it is every pending audit row from a shutdown that went badly, which is precisely
-        when the rows matter.
-
-        So the drain races the worker: whichever finishes first decides, and if it was the worker,
-        what is still queued is written **here** rather than waited for.
+        The drain **races the worker**: only the worker marks entries done, so if it has died — an
+        outside cancellation, a `BaseException` from the write path — `join()` would wait forever
+        and shutdown would end in `SIGKILL` with the queue lost. If the worker finishes first,
+        whatever is still queued is written here.
         """
         if self._worker is None:
             return
@@ -287,8 +162,7 @@ class RequestLogWriter:
     async def _write_remaining(self) -> None:
         """Write what is still queued, on this task, because the worker is not coming back.
 
-        Failures are logged rather than raised: this runs inside shutdown, and one bad row must not
-        stop the rest from being written — the same reasoning as the worker's own loop.
+        Failures are logged, not raised: one bad row must not stop the rest during shutdown.
         """
         while True:
             try:
@@ -342,15 +216,11 @@ class RequestLogWriter:
             def _maybe(payload: dict[str, Any] | None) -> dict[str, Any] | None:
                 if not store or payload is None:
                     return None
-                # Bound the *structure* first: the three walks below each recurse, and the
-                # interpreter's recursion limit is somewhere a caller — or an upstream — can
-                # reach. Before this, a payload nesting a thousand levels raised `RecursionError`
-                # inside `strip_attachments` and cost the row it was written to save.
+                # Bound the structure first: each walk below recurses (see `within_depth`).
                 bounded: dict[str, Any] = within_depth(payload)
-                # Strip first, then redact. A base64 PDF in a JSONB column would make each row
-                # megabytes, put binary the gateway never inspected inside the retention boundary,
-                # and hand redaction something it cannot process (FRD-110 §5.4). Unconditional,
-                # because a deployment that swaps the redactor must not be able to turn it off.
+                # Strip, then redact: binary the gateway never inspected stays out of the row and
+                # out of the redactor (`FRD-110` §5.4). Unconditional, so swapping the redactor
+                # cannot turn it off.
                 stripped: dict[str, Any] = strip_attachments(bounded)
                 # `storable` last, so it also covers whatever a redactor substitutes in.
                 redacted: dict[str, Any] = self._redactor.redact(stripped)
@@ -388,17 +258,15 @@ class RequestLogWriter:
             )
 
     async def _may_store_payloads(self, session: AsyncSession, use_case: str | None) -> bool:
-        """Whether this request's bodies may be written at all (FRD-404).
+        """Whether this request's bodies may be written at all (`FRD-404`).
 
-        Two levels, and the installation wins: ``AIRA_STORE_PAYLOADS`` is an operator kill switch,
-        so a use-case admin can decline storage but cannot re-enable it where the operator forbade
-        it. Requests without a use case fall back to the installation setting.
+        The installation wins: ``AIRA_STORE_PAYLOADS`` is an operator kill switch a use case cannot
+        override. Requests without a use case follow the installation setting.
         """
         if not self._settings.store_payloads:
             return False
         if use_case is None:
             return True
         record = await session.get(UseCaseRead, use_case)
-        # A use case the gateway has not heard of yet: store, matching the previous behaviour, and
-        # the retention pruner still applies the default period to it.
+        # A use case not yet heard of: store; the retention pruner applies the default period.
         return True if record is None else bool(record.store_payloads)

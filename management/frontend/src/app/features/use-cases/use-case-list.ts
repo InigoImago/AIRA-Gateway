@@ -11,37 +11,13 @@ import {
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/api/error-message';
-import { Me, UseCase } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
+import { Me, UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { runsTheInstallation } from '../../core/auth/roles';
 import { ServerTableView } from '../../core/ui/server-table-view';
 import { TablePager } from '../../core/ui/table-pager';
-import { runsTheInstallation } from '../../core/auth/roles';
-
-/** Mirrors the server-side slug validator, so the rule is stated before the request fails. */
-const SLUG_PATTERN = /^[a-z0-9-]+$/;
-
-/**
- * A name, as a technical id.
- *
- * People should not have to know what a slug is to create a use case, and the ones who do should
- * not have to type the same thing twice. Umlauts are transliterated rather than stripped: dropping
- * them turns "Prüfung" into "prfung", which reads as a typo forever after.
- */
-export function slugify(name: string): string {
-  const folded = name
-    .toLowerCase()
-    .replace(/ä/g, 'ae')
-    .replace(/ö/g, 'oe')
-    .replace(/ü/g, 'ue')
-    .replace(/ß/g, 'ss')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-  return folded
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-}
+import { SLUG_PATTERN, slugify } from './use-case-slug';
 
 @Component({
   selector: 'app-use-case-list',
@@ -55,30 +31,22 @@ export class UseCaseList implements OnInit {
   private readonly router = inject(Router);
 
   /**
-   * The list, searched and paged **at the server** (`FRD-208`).
+   * The list, searched and paged at the server (`FRD-208`).
    *
-   * Not a nicety: a live round found **801** use cases in one installation, which made this
-   * overview unusable without a single line of it being wrong. And not client-side either — this
-   * endpoint computes object-level permissions per row, so fetching everything and slicing it in
-   * the browser leaves every one of those computations happening on every load. The reader waits
-   * exactly as long and then sees twenty-five rows.
-   *
-   * Searchable by name *or* technical id: one is what a person calls it, the other is what their
-   * systems quote, and somebody arriving from a log line has only the second.
+   * Not client-side: the endpoint computes object-level permissions per row, so fetching everything
+   * would pay for every row on every load. Searchable by name or technical id — somebody arriving
+   * from a log line has only the second.
    */
   protected readonly view = new ServerTableView<UseCase>(
     (query, page) => this.service.listPage(query, page),
     (response) => this.error.set(errorMessage(response, 'Failed to load use cases.')),
   );
   protected readonly useCases = this.view.rows;
-  /** Whether a page is in flight. Owned by the view, since it is the thing doing the fetching. */
   protected readonly loading = this.view.loading;
   protected readonly creating = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly me = signal<Me | null>(null);
   protected readonly showCreate = signal(false);
-  // Signals, not plain fields: the app is zoneless, so clearing the form from the success
-  // callback has to schedule a re-render — otherwise the inputs keep the submitted text.
   protected readonly slug = signal('');
   protected readonly name = signal('');
   /** Whether the id was typed by hand. Once it was, the name stops overwriting it. */
@@ -91,29 +59,22 @@ export class UseCaseList implements OnInit {
     });
   }
 
-  /**
-   * Who may create one: a **Global Administrator**, and nobody else (`ADR-0017`).
-   *
-   * It read `global-admin || use-case-admin` while that was a realm role. It is not one any more,
-   * so the second clause could only ever be false — and a condition that cannot fire is worse than
-   * one that is wrong, because it reads as a rule somebody still relies on. The narrowing is the
-   * owner's: a Global Administrator creates a use case and names the group that administers it.
-   *
-   * Offering the action to somebody the backend will refuse is the same defect as showing member
-   * controls to a reader: the console says yes and the server says no.
-   */
+  /** Only a Global Administrator creates a use case (`ADR-0017`); the server refuses anyone else,
+   *  so nobody else is offered the action. */
   protected readonly canCreate = computed(() => runsTheInstallation(this.me()?.roles));
 
   /**
    * Whether this session carries no role at all.
    *
-   * `FRD-206`'s rule — an empty list must say *which* empty it is — applied to the case that keeps
-   * being reported as "the showcase loaded nothing": there are use cases, and this session may see
-   * none of them. Roles come from the token's groups (`ADR-0017`) and are worked out at sign-in,
-   * so a session that predates a group change is roleless and looks exactly like an empty
-   * installation. "No use cases yet" is then a confident statement about the wrong thing.
+   * Roles come from the token's groups at sign-in (`ADR-0017`), so a roleless session looks like
+   * an empty installation; the list says which empty it is (`FRD-206`).
    */
   protected readonly hasNoRole = computed(() => this.me() !== null && !this.me()?.roles?.length);
+
+  /** Nothing at all — as opposed to nothing matching, which the search says in its own words. */
+  protected readonly isEmpty = computed(
+    () => !this.loading() && this.view.total() === 0 && !this.view.filtered(),
+  );
 
   /** Why the form cannot be submitted yet — shown inline instead of failing silently. */
   protected slugError(): string | null {
@@ -136,11 +97,6 @@ export class UseCaseList implements OnInit {
     this.slug.set(value);
     this.slugEdited.set(true);
   }
-
-  /** Nothing at all — as opposed to nothing *matching*, which the search says in its own words. */
-  protected readonly isEmpty = computed(
-    () => !this.loading() && this.view.total() === 0 && !this.view.filtered(),
-  );
 
   ngOnInit(): void {
     this.meService.get().subscribe({ next: (me) => this.me.set(me), error: () => undefined });
@@ -178,8 +134,7 @@ export class UseCaseList implements OnInit {
         this.error.set(null);
         this.creating.set(false);
         this.closeCreate();
-        // Straight to its settings: a use case with no members, no budget and no limits is not
-        // finished, and returning to the list is what makes it look like it is.
+        // Straight to its settings: a use case with no members, budget or limits is not finished.
         void this.router.navigate(['/use-cases', slug]);
       },
       error: (response: unknown) => {

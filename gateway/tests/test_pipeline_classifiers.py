@@ -251,7 +251,7 @@ _TRAPS = [
         ("```code```", "code"),
         ("I would say: general.", "general"),
         ("one", "one"),
-        # `NONE` is this classifier's own word for "none clearly fit" (`_ROUTER_INSTRUCTION`).
+        # `NONE` is this classifier's own word for "none clearly fit" (`ROUTER_INSTRUCTION`).
         # It used to select `one`, which is inside it — the one answer reserved for *no category*
         # choosing a category, for any name that happens to sit in the letters of the word.
         ("NONE", None),

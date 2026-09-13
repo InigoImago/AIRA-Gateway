@@ -1,26 +1,11 @@
-"""Paging and searching, at the server (FRD-208).
+"""Paging and searching, at the server (`FRD-208`).
 
-The first version of the console's search and paging was **client-side**: the whole list came down
-in one response and the browser did the rest. That is defensible for a list that is small and
-already fetched — and it is exactly wrong for the two lists that grow without bound, because it
-fixes the only half of the problem that was never the expensive one.
+A page is a page the database produced: the use-case list computes object permissions per row
+(`access.py`), so paging in the browser would leave every one of those computations happening.
 
-The measurement that settles it: `GET /api/v1/use-cases/` on an installation with several hundred
-use cases takes **seconds**, because the serializer computes object-level permissions per row
-(`access.py`, `FRD-206`). Paging in the browser leaves every one of those computations happening,
-every load. The reader waits exactly as long and then sees twenty-five rows.
-
-So: a page is a page the database produced.
-
-Two decisions worth keeping:
-
-- **The envelope carries the total.** A list that does not say how much it is not showing reads as
-  complete, and a reader who cannot see a total cannot tell a filtered list from a whole one. It is
-  a `count` on every response, not a header somebody has to know to look for.
-- **A search is a filter, not a ranking.** `?q=` is a case-insensitive substring over the fields a
-  person would type. Nothing here scores or orders by relevance: a governance console listing use
-  cases must be predictable, and "why is this one first" is a question with no good answer when the
-  rows are equally valid.
+- **The envelope carries the total**, so a reader can tell a filtered list from a whole one.
+- **A search is a filter, not a ranking**: ``?q=`` is a case-insensitive substring over the
+  fields a person would type, so the order stays predictable.
 """
 
 from __future__ import annotations
@@ -33,12 +18,9 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-#: What one page holds. Matches the console's own page size so the two cannot disagree about what
-#: "next" means.
+#: What one page holds — the console's own page size, so the two agree on what "next" means.
 PAGE_SIZE = 25
-#: An upper bound, so a caller who mistyped a number cannot ask for the whole table. A script that
-#: genuinely wants everything walks the pages, which is also the only way it stays correct while
-#: the table is being written to.
+#: An upper bound, so a caller cannot ask for the whole table; a script walks the pages.
 MAX_PAGE_SIZE = 200
 
 
@@ -50,8 +32,8 @@ class ConsolePagination(PageNumberPagination):
     max_page_size = MAX_PAGE_SIZE
 
     def get_paginated_response(self, data: Any) -> Response:
-        # DRF types `page` and `request` as optional because they are only set once `paginate_
-        # queryset` has run — which is the only situation this method is ever called from.
+        # DRF types these as optional because they are set by `paginate_queryset`, which has
+        # always run by the time this is called.
         page = self.page
         request = self.request
         assert page is not None and request is not None, (
@@ -71,14 +53,10 @@ class ConsolePagination(PageNumberPagination):
 
 
 def apply_search(queryset: QuerySet[Any], request: Request, *fields: str) -> QuerySet[Any]:
-    """Filter ``queryset`` by ``?q=`` across ``fields``.
+    """Filter ``queryset`` by ``?q=`` across ``fields`` — substring, case-insensitive, in the DB.
 
-    Substring, case-insensitive, and **at the database**: the point of moving this off the browser
-    is that the rows a reader is not looking at are never built, serialised or sent.
-
-    An empty or whitespace-only ``q`` is not a filter. Treating it as one would answer "nothing
-    matches the empty string", which is both wrong and the sort of emptiness a reader reads as a
-    broken screen.
+    An empty or whitespace-only ``q`` is not a filter; "nothing matches the empty string" would
+    read as a broken screen.
     """
     needle = str(request.query_params.get("q", "")).strip()
     if not needle or not fields:

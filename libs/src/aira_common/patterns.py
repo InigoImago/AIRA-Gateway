@@ -1,45 +1,22 @@
 """Which operator-supplied regexes are safe to run on the request path.
 
-**Two shapes, not one.** Both make an engine try the same text many ways, and both stall a gateway
-worker for as long as they run — Python's `re` has no timeout, so the only defence is not
-compiling them.
+Python's `re` has no timeout, so a catastrophically backtracking pattern stalls a gateway worker —
+on an event loop every use case shares — for as long as it runs. The only defence is not compiling
+it. Two shapes are refused:
 
-*A repeated group whose body repeats* — `(a+)+`, `(a*)*`, `(ab|a)+` — is the textbook one, and the
-only one this module recognised until 2026-09-08.
+- *a repeated group whose body repeats* — `(a+)+`, `(a*)*`, `(ab|a)+`;
+- *repeated quantifiers in a row over the same characters* — `a*a*b`, `\\s*\\s*…` — as easy to
+  write by accident, by concatenating optional fragments, as on purpose.
 
-*Repeated quantifiers **in a row** over the same characters* — `a*a*a*…`, `\\s*\\s*\\s*…` — is the
-other one, and it was measured walking straight through this check:
+**Both planes ask.** Management refuses such a pattern at authoring time, and the gateway checks
+again whatever reaches its read-model (over Kafka, from a seed, a direct write or an older
+Management): the check is cheap and missing it is a hung worker (`ADR-0018`).
 
-    a*a*a*a*a*a*a*a*b        62 ms · 363 ms · 1 532 ms   (20, 26, 32 characters)
-    \\s*\\s* … \\s*x           229 ms · 1 733 ms · over 5 s
-    a*a*b                    152 ms at 1 000 · over 10 s at 5 000
-
-Every one of those was `is_catastrophic → False`. The last is the one that matters most: a *pair*
-costs a tenth of a millisecond on thirty characters and does not finish on five thousand, and this
-filter is handed up to `MAX_SCANNED_CHARS` — twenty thousand — of a **prompt**. A pattern like it is
-as easy to write by accident, by concatenating optional fragments, as on purpose; the author is a
-use-case administrator typing into the pipeline builder, and the stall is on an event loop every
-use case shares.
-
-**Both planes ask, because only one of them used to.** Management refused such a pattern at
-authoring time and the gateway compiled whatever reached its read-model — over Kafka, from a seed,
-from a direct database write, or from an older Management that predates the check. The protection
-sat at one end of a link and the other end trusted it, which is the shape of three of the four
-findings in `ADR-0018`. The check is cheap and the consequence of missing it is a hung worker, so
-it is asked twice on purpose.
-
-The detection is a **heuristic and says so**: it recognises the shapes that cause the problem in
-practice, not every regex that could backtrack. A precise answer would need to model the engine.
-Erring towards refusal is broadly safe here, because a rejected pattern can usually be written
-another way and an operator hears about it at the moment they write it.
-
-**Broadly, not always, and the difference decides the thresholds below.** The two callers do
-different things with a refusal: the pipeline filter *drops* the pattern and names it in a log
-line, so a use case is left with one rule fewer — degraded. `persistence/redaction.py` **raises at
-start-up**, so a false positive there is a gateway that will not boot, over a pattern somebody
-wrote to protect data. That is why the bound on a *constant* amount of ambiguity is measured
-rather than guessed at (`MAX_AMBIGUITY`): `\\+?[0-9]{2,4}[ -]?[0-9]{3,}` is a phone number, it
-costs 2.5 ms against a thousand digits, and an earlier draft of this rule refused it.
+The detection is a **heuristic**: it recognises the shapes that cause the problem in practice, not
+every regex that could backtrack. Erring towards refusal is broadly safe, but not always — the
+pipeline filter drops a refused pattern, while `persistence/redaction.py` **raises at start-up**,
+so a false positive there is a gateway that will not boot. Hence a measured bound on bounded
+ambiguity (`MAX_AMBIGUITY`): `\\+?[0-9]{2,4}[ -]?[0-9]{3,}` is a phone number and must pass.
 """
 
 from __future__ import annotations
@@ -47,17 +24,47 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-#: Quantifiers that can repeat a group enough times to matter. `?` is deliberately absent: it
-#: repeats at most once, so it cannot multiply the work of what it encloses.
+#: Quantifiers that can repeat a group enough times to matter. `?` repeats at most once, so it
+#: cannot multiply the work of what it encloses.
 _REPEATING = "*+"
+
+#: Escapes and anchors that consume no character, and therefore separate nothing.
+_ZERO_WIDTH = frozenset({r"\b", r"\B", r"\A", r"\Z", "^", "$"})
+
+#: How many ways a run of *bounded* repeats may divide the same text before it is refused.
+#:
+#: Measured against 20 000 characters, the length `classifiers.MAX_SCANNED_CHARS` hands the filter:
+#: `[0-9]{2,4}` × 3 is 27 ways and 8 ms, `a{0,10}` × 3 is 1 331 and 57 ms, `a{0,10}` × 4 is 14 641
+#: and 637 ms, and × 6 does not finish. The bound sits between the largest comfortable figure and
+#: the first that is not — a ceiling with a derivation, so nobody raises it blindly (`LESSONS.md`
+#: §3).
+MAX_AMBIGUITY = 10_000
+
+
+@dataclass(frozen=True, slots=True)
+class _Atom:
+    """One atom of a pattern, and what the adjacency rule asks about it."""
+
+    text: str
+    #: Its quantifier can run more than once, so the engine has choices to explore.
+    repeats: bool
+    #: It can match **nothing** — `?`, `*`, `{0,n}`, or a zero-width assertion — so it does not
+    #: separate what is either side of it.
+    optional: bool
+    #: Its quantifier has no upper limit (`*`, `+`, `{n,}`): the engine's choices grow with the
+    #: input rather than being a constant factor, as `[0-9]{2,4}`'s three are.
+    unbounded: bool = False
+    #: How many lengths a *bounded* quantifier can match — `{2,4}` is three, `{3}` is one.
+    #: Multiplied across a run, the number of ways to divide the same text. Meaningless when
+    #: :attr:`unbounded`.
+    choices: int = 1
 
 
 def _quantifier_at(pattern: str, index: int) -> tuple[bool, int]:
     """Whether a repeating quantifier starts at ``index``, and where it ends.
 
-    `{n}`, `{n,}` and `{n,m}` count as repeating when they can run a group more than once — which
-    `(a+){20}` does twenty times, at fifty-one seconds on a thirty-character input. The previous
-    detector looked for `[+*]` only, so every counted form walked past it.
+    `{n}`, `{n,}` and `{n,m}` count when they can run a group more than once: `(a+){20}` is as
+    catastrophic as `(a+)+`.
     """
     if index >= len(pattern):
         return False, index
@@ -81,10 +88,8 @@ def _quantifier_at(pattern: str, index: int) -> tuple[bool, int]:
 def _groups(pattern: str) -> list[tuple[int, int]]:
     """Every group's `(start, end)`, honouring escapes and character classes.
 
-    A scanner rather than a regex. The rule being checked is *"a repeating group whose body itself
-    repeats"*, which is a question about nesting — and `[^)]*` cannot see past the first `)`, so
-    `((a)*)*` slipped through the regex that asked it. A pattern language cannot describe its own
-    nesting; that is not a subtlety, it is the reason this function exists.
+    A scanner rather than a regex: the question is about nesting, which a pattern language cannot
+    describe (`[^)]*` cannot see past the first `)`).
     """
     spans: list[tuple[int, int]] = []
     stack: list[int] = []
@@ -107,61 +112,12 @@ def _groups(pattern: str) -> list[tuple[int, int]]:
     return spans
 
 
-#: Escapes that consume no character. One of these between two repeated atoms separates nothing,
-#: which is exactly what :func:`_ambiguous_run` has to know.
-_ZERO_WIDTH = frozenset({r"\b", r"\B", r"\A", r"\Z", "^", "$"})
-
-#: How many ways a run of *bounded* repeats may divide the same text before it is refused.
-#:
-#: Measured against 20 000 characters — the length `classifiers.MAX_SCANNED_CHARS` actually hands
-#: this filter — on 2026-09-08:
-#:
-#: | run | ways | cost |
-#: | --- | --- | --- |
-#: | `[0-9]{2,4}` × 3 | 27 | 8 ms |
-#: | `a{0,3}` × 5 | 1 024 | 108 ms |
-#: | `a{0,10}` × 3 | 1 331 | 57 ms |
-#: | `a{0,10}` × 4 | 14 641 | **637 ms** |
-#: | `a{0,10}` × 6 | 1 771 561 | did not finish |
-#:
-#: So the bound sits between the largest figure that is comfortable and the first that is not. It
-#: is a number with a derivation on purpose: *a ceiling nobody can account for is a number somebody
-#: raises* (`LESSONS.md` §3).
-MAX_AMBIGUITY = 10_000
-
-
-@dataclass(frozen=True, slots=True)
-class _Atom:
-    """One atom of a pattern, and the two things the adjacency rule asks about it."""
-
-    text: str
-    #: Its quantifier can run more than once, so the engine has choices to explore.
-    repeats: bool
-    #: It can match **nothing** — `?`, `*`, `{0,n}`, or a zero-width assertion. Such an atom does
-    #: not separate what is either side of it, however much it looks like it does.
-    optional: bool
-    #: Its quantifier has no upper limit — `*`, `+`, `{n,}`. **This is the difference between a
-    #: constant factor and one that grows with the prompt**: `[0-9]{2,4}` offers the engine three
-    #: choices whatever the input, and `[0-9]+` offers as many as there are characters.
-    unbounded: bool = False
-    #: How many lengths a *bounded* quantifier can match — `{2,4}` is three, `{3}` is one. Multiply
-    #: these across a run and you have the number of ways the engine can divide the same text.
-    #: Meaningless when :attr:`unbounded`, where the count is the length of the input.
-    choices: int = 1
-
-
 def _atoms(pattern: str) -> list[_Atom]:
-    """Every atom of ``pattern`` at this nesting level.
+    """Every atom of ``pattern`` at this level: an escape, a class, a group or one character.
 
-    An *atom* is what a quantifier applies to: an escape, a character class, a whole group, or one
-    literal character. `|`, `^` and `$` come out as ordinary atoms, which is all the adjacency rule
-    below needs: an atom that neither repeats nor is optional already breaks a run, so `a*|a*` is
-    two branches rather than a sequence without anything having to say so. (It *was* said, in a
-    branch of its own — removed once breaking it deliberately changed nothing, because a rule the
-    code appears to have and does not is worse than an absent one.)
-
-    A scanner, for the reason `_groups` is one: the question is about structure, and a pattern
-    language cannot describe its own nesting.
+    `|`, `^` and `$` come out as ordinary atoms. An atom that neither repeats nor is optional
+    already breaks a run, so `a*|a*` is two branches without a rule of its own. A scanner, for the
+    reason `_groups` is one.
     """
     found: list[_Atom] = []
     index = 0
@@ -221,19 +177,13 @@ def _is_lookaround(atom: str) -> bool:
 
 
 def _quantifier_run(pattern: str, index: int) -> tuple[bool, bool, bool, int, int]:
-    """:func:`_quantifier_at`, plus the forms that are quantifiers and do not repeat *ambiguously*.
+    """:func:`_quantifier_at`, plus the quantifier forms that do not repeat *ambiguously*.
 
-    `?` and the lazy/possessive suffix (`*?`, `+?`, `{2,3}?`) have to be **consumed** here even
-    though `?` says nothing about repetition, or the next loop reads them as atoms of their own and
-    the adjacency below is computed over a sequence that does not exist. Measured with the suffix
-    left unconsumed: `a*?a*?a*?a*?a*?a*?a*?a*?b` was not flagged, and it costs 130 ms · 937 ms ·
-    4 264 ms on 20, 26 and 32 characters — lazy backtracks exactly as greedy does.
-
-    A **possessive** quantifier is the one that genuinely cannot: it never gives characters back,
-    so two of them in a row have one way to match and nothing to explore. Measured, same chain with
-    `*+`: 0.1 ms flat at every length. Reported as not repeating, which matters because it is also
-    the rewrite the refusal advises — telling somebody to remove the ambiguity and then refusing
-    the pattern that does would make the advice useless.
+    `?` and the lazy/possessive suffixes (`*?`, `+?`, `{2,3}?`) must be **consumed** here, or the
+    next loop reads them as atoms and the adjacency is computed over a sequence that does not
+    exist; a lazy quantifier backtracks exactly as a greedy one does. A **possessive** one never
+    gives characters back, so it is reported as not repeating — it is also the rewrite the refusal
+    advises, and refusing it would make the advice useless.
     """
     repeats, after = _quantifier_at(pattern, index)
     if not repeats and after == index and index < len(pattern) and pattern[index] == "?":
@@ -251,9 +201,8 @@ def _quantifier_run(pattern: str, index: int) -> tuple[bool, bool, bool, int, in
 def _lengths(quantifier: str) -> int:
     """How many different lengths a bounded ``quantifier`` can match.
 
-    `{2,4}` is three; `{3}` is one, which is why `a{3}a{3}` is simply `a{6}` and nothing to worry
-    about. Unbounded forms answer 1 here and are handled by :attr:`_Atom.unbounded` instead — the
-    number that matters for them is the length of the prompt.
+    `{2,4}` is three and `{3}` one, so `a{3}a{3}` is simply `a{6}`. Unbounded forms answer 1: the
+    number that matters for them is the input's length (:attr:`_Atom.unbounded`).
     """
     if quantifier == "?":
         return 2
@@ -271,11 +220,8 @@ def _lengths(quantifier: str) -> int:
 def _has_no_upper_limit(quantifier: str) -> bool:
     """Whether ``quantifier`` can run as many times as the input allows.
 
-    The quantity the rule below is really about. Two unbounded repeats over the same characters
-    give the engine a number of splits that **grows with the prompt**; two bounded ones give a
-    constant, however awkward the pattern looks. Measured: `\\+?[0-9]{2,4}[ -]?[0-9]{3,}!` costs
-    2.5 ms against a thousand digits — and an earlier draft refused it, which would have stopped a
-    gateway from starting over a phone number somebody wanted redacted.
+    Two unbounded repeats over the same characters split the text in a number of ways that grows
+    with the prompt; two bounded ones give a constant (see `MAX_AMBIGUITY`).
     """
     if quantifier in ("*", "+"):
         return True
@@ -288,10 +234,7 @@ def _has_no_upper_limit(quantifier: str) -> bool:
 def _may_match_nothing(quantifier: str) -> bool:
     """Whether ``quantifier`` lets its atom match the empty string.
 
-    The half of the rule that `\\s*x?\\s*x?\\s*…` is about. `x?` looks like a separator and is not
-    one: it can match nothing, so the two `\\s*` either side of it are adjacent after all.
-    Measured on 2026-09-08 — 125 ms · 709 ms · 3 021 ms on 20, 26 and 32 spaces — against a check
-    that read the sequence literally and found nothing wrong with it.
+    `x?` looks like a separator and is not one: in `\\s*x?\\s*` the two `\\s*` are adjacent.
     """
     if quantifier in ("?", "*"):
         return True
@@ -304,14 +247,9 @@ def _may_match_nothing(quantifier: str) -> bool:
 def _overlap(first: str, second: str) -> bool:
     """Whether two adjacent atoms can match the same character — conservatively.
 
-    Identical atoms certainly can, and `.` can match anything. Anything cleverer would mean
-    computing the intersection of two character classes, which is a different program: this is a
-    heuristic and says so, and the shapes it is written for — a fragment concatenated with itself —
-    are textually identical by construction.
-
-    Being *narrow* here is what keeps the check honest in the other direction. `a+b+` and
-    `eyJ[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+` (a built-in) are unambiguous and must stay allowed —
-    a detector that refused one of the built-ins is not a fix, it is a gateway that will not start.
+    Identical atoms can, and `.` matches anything; intersecting character classes would be a
+    different program. Staying narrow keeps unambiguous patterns allowed — `a+b+`, and the
+    built-in `eyJ[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+`, whose refusal would stop the gateway.
     """
     return first == second or "." in (first, second)
 
@@ -319,50 +257,32 @@ def _overlap(first: str, second: str) -> bool:
 def _ambiguous_run(pattern: str) -> bool:
     """Whether two repeated quantifiers sit side by side over the same characters.
 
-    Checked at every level, because `(a*a*a*a*a*a*a*a*)` costs exactly what the same sequence costs
-    outside a group — and the group form is what somebody writes when they are trying to name a
-    fragment.
+    Checked at every nesting level: `(a*a*a*)` costs what the same sequence costs outside a group.
     """
-    # Every repeating atom since the last one that **must** consume a character. A list rather
-    # than the previous atom alone, because an optional repeat is both a candidate and transparent:
-    # in `\s*x{0,3}\s*`, the `x{0,3}` repeats *and* can match nothing, so it neither separates the
-    # two `\s*` nor stops being a candidate itself. Written as "the previous one" first, which
-    # answered False for exactly that pattern — measured at 601 ms on 32 characters.
+    # Every repeating atom since the last one that **must** consume a character. A list rather than
+    # the previous atom: an optional repeat (`x{0,3}` in `\s*x{0,3}\s*`) is both a candidate and
+    # transparent.
     run: list[_Atom] = []
     atoms = _atoms(pattern)
     for atom in atoms:
         if atom.repeats:
             overlapping = [earlier for earlier in run if _overlap(earlier.text, atom.text)]
-            # **Two questions, because two quantities grow differently**, and both thresholds are
-            # measured rather than chosen. Every figure below is against an input of the length
-            # this filter actually reads — `MAX_SCANNED_CHARS`, 20 000 characters of prompt — on
-            # 2026-09-08.
-            #
-            # *Two unbounded repeats* over the same characters divide the text in a number of ways
-            # that **grows with the input**: `a*a*b` costs 152 ms against a thousand characters and
-            # over ten seconds against five thousand. One is enough; a chain is worse.
+            # Two unbounded repeats: the ways to divide the text grow with the input.
             if atom.unbounded and any(earlier.unbounded for earlier in overlapping):
                 return True
-            # *Bounded repeats* multiply into a constant, and the constant is the whole question.
-            # `[0-9]{2,4}` three times over is 27 ways and 8 ms; `a{0,3}` five times is 1 024 and
-            # 108 ms; `a{0,10}` three times is 1 331 and 57 ms — all of them fine. `a{0,10}` four
-            # times is 14 641 and **637 ms**, six times is 1.8 million and does not finish. So the
-            # line is drawn between the largest figure that is comfortable and the first that is
-            # not, and a pattern under it is left alone: a phone number written as three groups
-            # with optional separators is exactly this shape, and `redaction.py` *raises* — a false
-            # positive there is a gateway that will not start.
+            # Bounded repeats multiply into a constant, refused only above `MAX_AMBIGUITY` — a
+            # phone number written as three groups with optional separators is this shape.
             ambiguity = atom.choices
             for earlier in overlapping:
                 ambiguity *= earlier.choices
             if ambiguity >= MAX_AMBIGUITY:
                 return True
-            # A repeat that is *required* consumes at least one character, so it separates
-            # everything before it from everything after — and is itself the only candidate left.
+            # A required repeat consumes a character, so it separates everything before it and
+            # is the only candidate left.
             run = [*run, atom] if atom.optional else [atom]
         elif not atom.optional:
-            # Something that must match at least one character. **That** is what separates two
-            # runs — and it is why `eyJ[…]+\.[…]+` is safe while `\s*x?\s*` is not: the `\.` has
-            # to be there and the `x?` does not.
+            # Something that must match a character separates two runs: why `eyJ[…]+\.[…]+` is
+            # safe and `\s*x?\s*` is not.
             run = []
     return any(
         atom.text.startswith("(") and atom.text.endswith(")") and _ambiguous_run(atom.text[1:-1])
@@ -373,14 +293,10 @@ def _ambiguous_run(pattern: str) -> bool:
 def catastrophic_reason(pattern: str) -> str | None:
     """Why ``pattern`` must not be compiled for use on a request, or ``None`` if it may be.
 
-    **A sentence rather than a flag**, because the three call sites each have to tell somebody what
-    to do about it, and until this returned a reason all three said *"nests a quantifier inside a
-    quantified group"* — which is one of the two shapes and would have been a wrong explanation for
-    the other, in a message the operator reads instead of the pattern.
-
-    A pattern that is not valid regex at all answers ``None``: the gateway matches those literally
-    (`classifiers._compile` falls back to `re.escape`), so they cannot backtrack and refusing them
-    would reject a plain string somebody wrote with a stray bracket.
+    A sentence rather than a flag: every call site tells an operator what to do about it, and the
+    two shapes need different explanations. A pattern that is not valid regex answers ``None`` —
+    the gateway matches those literally (`classifiers._compile` falls back to `re.escape`), so they
+    cannot backtrack.
     """
     try:
         re.compile(pattern)
@@ -392,13 +308,12 @@ def catastrophic_reason(pattern: str) -> str | None:
         if not repeats:
             continue
         body = pattern[start + 1 : end]
-        # An alternation inside a repeated group is the `(a|a)+` shape: two ways to match the same
-        # text, multiplied by the outer repetition.
+        # An alternation inside a repeated group is `(a|a)+`: two ways to match the same text,
+        # multiplied by the outer repetition.
         if "|" in body:
             return "it repeats a group that offers two ways to match the same text"
-        # And a quantifier inside one is `(a+)+`. `?` counts *here* — `(a?)*` blows up like the
-        # rest — while it does not count as the outer repetition, which is the asymmetry that
-        # makes this two questions rather than one.
+        # A quantifier inside one is `(a+)+`. `?` counts *here* — `(a?)*` blows up too — while it
+        # does not count as the outer repetition.
         inner = 0
         while inner < len(body):
             if body[inner] == "\\":
@@ -419,7 +334,6 @@ def catastrophic_reason(pattern: str) -> str | None:
 def is_catastrophic(pattern: str) -> bool:
     """True if ``pattern`` backtracks catastrophically and must not run on a request.
 
-    The boolean form of :func:`catastrophic_reason`, kept because two of the three call sites only
-    need to decide. One owner, so the two can never disagree about which patterns are refused.
+    The boolean form of :func:`catastrophic_reason`, so the two can never disagree.
     """
     return catastrophic_reason(pattern) is not None
