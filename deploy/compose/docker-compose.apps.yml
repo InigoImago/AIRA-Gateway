@@ -101,6 +101,8 @@ services:
       AIRA_POSTGRES_USER: ${AIRA_POSTGRES_USER:-${POSTGRES_USER:-aira}}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
       AIRA_KAFKA_BOOTSTRAP_SERVERS: ${AIRA_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      # `aira.<stage>.<entity>` on a cluster several stages share; empty keeps `aira.<entity>`.
+      AIRA_KAFKA_STAGE: ${AIRA_KAFKA_STAGE:-}
       # How this service authenticates to the broker. PLAINTEXT is the local default and is
       # **refused outside `local`**: the config topics are applied straight into the gateway's
       # read-model, so an unauthenticated broker grants access without a credential.
@@ -112,6 +114,14 @@ services:
       # Shared counters for rate limits and budget reservations. Empty disables
       # them: limits then hold per process and budgets use the racy read-then-book path.
       AIRA_REDIS_URL: ${AIRA_REDIS_URL:-redis://redis:6379/0}
+      # Redis Sentinel: the sentinels and the leader's name replace the URL when set. The
+      # passwords are secrets, from Vault in any real deployment.
+      AIRA_REDIS_SENTINELS: ${AIRA_REDIS_SENTINELS:-}
+      AIRA_REDIS_SENTINEL_SERVICE: ${AIRA_REDIS_SENTINEL_SERVICE:-}
+      AIRA_REDIS_USERNAME: ${AIRA_REDIS_USERNAME:-}
+      AIRA_REDIS_PASSWORD: ${AIRA_REDIS_PASSWORD:-}
+      AIRA_REDIS_SENTINEL_PASSWORD: ${AIRA_REDIS_SENTINEL_PASSWORD:-}
+      AIRA_REDIS_DB: ${AIRA_REDIS_DB:-}
       AIRA_OIDC_ENABLED: ${AIRA_OIDC_ENABLED:-true}
       # Two addresses for one server, and they are not interchangeable. The issuer must match
       # the token's `iss` claim exactly, which is whatever the *browser* obtained it from. The
@@ -238,6 +248,8 @@ services:
       AIRA_POSTGRES_USER: ${AIRA_POSTGRES_USER:-${POSTGRES_USER:-aira}}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
       AIRA_KAFKA_BOOTSTRAP_SERVERS: ${AIRA_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      # `aira.<stage>.<entity>` on a cluster several stages share; empty keeps `aira.<entity>`.
+      AIRA_KAFKA_STAGE: ${AIRA_KAFKA_STAGE:-}
       # How this service authenticates to the broker. PLAINTEXT is the local default and is
       # **refused outside `local`**: the config topics are applied straight into the gateway's
       # read-model, so an unauthenticated broker grants access without a credential.
@@ -272,14 +284,18 @@ services:
   kafka-topics:
     image: apache/kafka:3.9.0
     container_name: ${AIRA_STACK:-aira}-kafka-topics
+    environment:
+      AIRA_KAFKA_STAGE: ${AIRA_KAFKA_STAGE:-}
     entrypoint: ["/bin/sh", "-c"]
     # One physical line per command: a folded scalar would turn the continuations into arguments
     # of their own, which the topic tool then rejects.
     command:
       - |
         set -e
-        for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.rate-limits aira.models aira.anomaly-rules aira.roles; do
-          /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic "$$t" --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+        prefix="aira."
+        if [ -n "$${AIRA_KAFKA_STAGE:-}" ]; then prefix="aira.$${AIRA_KAFKA_STAGE}."; fi
+        for t in usecases memberships api-keys pipelines budgets rate-limits models anomaly-rules roles; do
+          /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic "$$prefix$$t" --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 --config cleanup.policy=compact
         done
     depends_on:
       kafka:

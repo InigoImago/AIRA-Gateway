@@ -130,6 +130,8 @@ NOT_IN_A_CONFIG_FILE = {
     "AIRA_OPENAI_API_KEY",
     "AIRA_KAFKA_SASL_PASSWORD",
     "AIRA_DIRECTORY_CLIENT_SECRET",
+    "AIRA_REDIS_PASSWORD",
+    "AIRA_REDIS_SENTINEL_PASSWORD",
     # Stamped by the build, not chosen by an installation.
     "AIRA_BUILD_NUMBER",
     "AIRA_BUILD_TIME",

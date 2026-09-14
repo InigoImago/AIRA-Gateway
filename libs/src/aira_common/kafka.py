@@ -7,6 +7,7 @@ fake. Trace context travels on message headers (`FRD-001`, `FRD-615`).
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -24,6 +25,63 @@ MODEL_TOPIC = "aira.models"
 ANOMALY_RULE_TOPIC = "aira.anomaly-rules"
 #: What each role may do and which group confers it (`FRD-614` FR-8).
 ROLE_TOPIC = "aira.roles"
+
+#: Every configuration topic, in the one list both planes read: Management publishes to them and
+#: the gateway subscribes to every one.
+CONFIG_TOPICS: tuple[str, ...] = (
+    USECASE_TOPIC,
+    MEMBERSHIP_TOPIC,
+    API_KEY_TOPIC,
+    PIPELINE_TOPIC,
+    BUDGET_TOPIC,
+    RATE_LIMIT_TOPIC,
+    MODEL_TOPIC,
+    ANOMALY_RULE_TOPIC,
+    ROLE_TOPIC,
+)
+
+#: The gateway's consumer group before any stage.
+CONSUMER_GROUP = "aira-gateway"
+
+#: One short segment of lower-case letters and digits. It becomes part of every topic name, so a dot
+#: would add a segment and a capital would make a second name for the same stage.
+_STAGE = re.compile(r"[a-z0-9]{1,16}")
+
+
+class KafkaStageError(ValueError):
+    """A stage that cannot be part of a topic name. Raised at start-up, never at request time."""
+
+
+def validate_stage(stage: str) -> str:
+    """``stage`` as it goes into a name, or empty for none; refused rather than repaired."""
+    cleaned = stage.strip()
+    if cleaned and not _STAGE.fullmatch(cleaned):
+        raise KafkaStageError(
+            f"'{stage}' is not a Kafka stage: one to sixteen lower-case letters or digits, "
+            "such as 't'."
+        )
+    return cleaned
+
+
+def staged(topic: str, stage: str) -> str:
+    """The topic for ``stage``: ``aira.usecases`` without one, ``aira.t.usecases`` for ``t``.
+
+    The stage follows `aira.`, so one prefixed ACL — `aira.t.` — covers one stage's topics and
+    nothing else on a cluster several stages share. The gateway builds its authorization from
+    these topics, so one stage must not be able to write another's.
+    """
+    cleaned = validate_stage(stage)
+    if not cleaned:
+        return topic
+    head, _, rest = topic.partition(".")
+    return f"{head}.{cleaned}.{rest}"
+
+
+def consumer_group(stage: str) -> str:
+    """The gateway's consumer group for ``stage``, named like its topics."""
+    cleaned = validate_stage(stage)
+    return f"{CONSUMER_GROUP}.{cleaned}" if cleaned else CONSUMER_GROUP
+
 
 #: The header naming a record's event type.
 EVENT_TYPE_HEADER = "event_type"

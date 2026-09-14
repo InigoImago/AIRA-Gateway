@@ -6,9 +6,12 @@ of them.
 
 from __future__ import annotations
 
+from pydantic import field_validator
+
 from aira_common.config import BaseAiraSettings
+from aira_common.counters import SentinelConfig, SentinelConfigError, parse_sentinels
 from aira_common.integration_debug import configure_integration_debug
-from aira_common.kafka import KafkaSecurity
+from aira_common.kafka import KafkaSecurity, validate_stage
 from aira_common.logging import configure_logging
 from aira_common.observability import configure_observability, set_payload_rendering
 from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
@@ -73,6 +76,17 @@ class GatewaySettings(BaseAiraSettings):
     # Shared counter store for rate limits and budget reservations (ADR-0008 / FRD-405). Empty
     # makes rate limits per process and budgets racy — documented degradations, not silent ones.
     redis_url: str = "redis://localhost:6379/0"
+    #: Redis Sentinel: the sentinels as `host:port,…`. Set, they replace ``redis_url``, and the
+    #: client asks them for the leader, which moves to another server on failover.
+    redis_sentinels: str = ""
+    #: The name the sentinels know the leader by (`sentinel monitor <name> …`).
+    redis_sentinel_service: str = ""
+    #: The data nodes' ACL user, if they have one, and its password; and the sentinels' own
+    #: password where they require one. The passwords are secrets, from Vault.
+    redis_username: str = ""
+    redis_password: str = ""
+    redis_sentinel_password: str = ""
+    redis_db: int = 0
 
     # Enforce per-use-case/per-member request rate limits pre-dispatch (FRD-405). A use case
     # without a configured limit stays unlimited regardless of this toggle.
@@ -97,6 +111,40 @@ class GatewaySettings(BaseAiraSettings):
     kafka_sasl_username: str = ""
     kafka_sasl_password: str = ""
     kafka_ssl_cafile: str = ""
+    #: The stage in every topic name and in the consumer group, on a cluster several stages share
+    #: (`aira.t.usecases`). Empty keeps today's names. Management must be given the same one.
+    kafka_stage: str = ""
+
+    @field_validator("kafka_stage")
+    @classmethod
+    def _one_stage(cls, value: str) -> str:
+        return validate_stage(value)
+
+    @field_validator("redis_sentinels")
+    @classmethod
+    def _sentinel_addresses(cls, value: str) -> str:
+        parse_sentinels(value)
+        return value.strip()
+
+    def redis_sentinel(self) -> SentinelConfig | None:
+        """The Sentinel setup, or ``None`` when the URL is used. Sentinels without the leader's
+        name are refused: they could only be asked about a leader nobody named."""
+        sentinels = parse_sentinels(self.redis_sentinels)
+        if not sentinels:
+            return None
+        if not self.redis_sentinel_service.strip():
+            raise SentinelConfigError(
+                "AIRA_REDIS_SENTINELS is set and AIRA_REDIS_SENTINEL_SERVICE is not: name the "
+                "leader the sentinels monitor."
+            )
+        return SentinelConfig(
+            sentinels=sentinels,
+            service=self.redis_sentinel_service.strip(),
+            username=self.redis_username,
+            password=self.redis_password,
+            sentinel_password=self.redis_sentinel_password,
+            db=self.redis_db,
+        )
 
     # Trust ``X-Forwarded-For`` for the recorded source IP. Off by default: the socket peer is
     # used (ADR-0007). Enable it only when this gateway sits behind a reverse proxy it controls.

@@ -166,6 +166,8 @@ dns:
 # ---------------------------------------------------------------------------------------------
 kafka:
   bootstrap_servers: kafka-1.internal:9093,kafka-2.internal:9093
+  # The stage in every topic name on a cluster several stages share: `aira.t.usecases`.
+  stage: t
   # `PLAINTEXT` is refused outside `local`: the gateway builds the read-model its authorization
   # comes from out of these topics.
   security_protocol: SASL_SSL
@@ -179,6 +181,12 @@ kafka:
 # ---------------------------------------------------------------------------------------------
 redis:
   url: redis://redis.internal.example.com:6379/0
+  # Redis Sentinel instead of `url`: the sentinels and the leader's name.
+  sentinels: redis-s1.internal:26379,redis-s2.internal:26379,redis-s3.internal:26379
+  sentinel_service: aira
+  username: ''
+  db: 0
+  # password: → Vault. sentinel_password: → Vault.
 
 # ---------------------------------------------------------------------------------------------
 # Model platforms. Configure the ones you have; an absent one is simply not offered.

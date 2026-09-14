@@ -521,8 +521,9 @@ migrate-gateway: ## Apply gateway DB migrations (Alembic)
 	cd gateway && uv run alembic upgrade head
 
 kafka-topics: ## Create the compacted config-distribution topics (idempotent)
-	@for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.rate-limits aira.models aira.anomaly-rules aira.roles; do \
-		docker exec $${AIRA_STACK:-aira}-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$t \
+	@prefix="aira."; if [ -n "$${AIRA_KAFKA_STAGE:-}" ]; then prefix="aira.$${AIRA_KAFKA_STAGE}."; fi; \
+	for t in usecases memberships api-keys pipelines budgets rate-limits models anomaly-rules roles; do \
+		docker exec $${AIRA_STACK:-aira}-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$prefix$$t \
 			--bootstrap-server $(KAFKA_ADDR) --partitions 1 --replication-factor 1 \
 			--config cleanup.policy=compact; \
 	done

@@ -25,12 +25,13 @@ from aira_common import kafka
 
 ROOT = Path(__file__).resolve().parents[2]
 
-#: Where the list is repeated. Each is a real thing an operator or a container relies on.
-PLACES = {
+#: Where the list is repeated as a creation loop over base names, staged when the loop runs.
+LOOPS = {
     "the Makefile target": ROOT / "Makefile",
     "the Compose topic-creation step": ROOT / "deploy/compose/docker-compose.apps.yml",
-    "the deployment documentation": ROOT / "docs/DEPLOYMENT.md",
 }
+#: Where it is written out in full, as an operator reads it.
+DOCUMENTS = {"the deployment documentation": ROOT / "docs/DEPLOYMENT.md"}
 
 
 def _declared_topics() -> set[str]:
@@ -41,29 +42,48 @@ def _declared_topics() -> set[str]:
     }
 
 
+def _looped(path: Path) -> set[str]:
+    """The topics a creation loop makes without a stage: `aira.` and each name it iterates."""
+    match = re.search(r"for t in ([a-z -]+);\s*do", path.read_text())
+    assert match, f"no topic-creation loop in {path.name} — has its shape changed?"
+    return {f"aira.{name}" for name in match.group(1).split()}
+
+
 def test_the_source_of_truth_actually_declares_topics() -> None:
     """A guard on the guard: if the naming convention changed, this file would otherwise pass by
     checking nothing."""
     assert len(_declared_topics()) >= 7
 
 
-@pytest.mark.parametrize("where", sorted(PLACES))
-def test_every_declared_topic_is_created(where: str) -> None:
-    text = PLACES[where].read_text()
-    missing = sorted(topic for topic in _declared_topics() if topic not in text)
-    assert not missing, (
-        f"{where} does not know about {', '.join(missing)}. A topic nothing creates fails "
-        "silently: the relay publishes, the broker drops it, and no error reaches anybody."
+def test_both_planes_read_one_list_of_every_topic() -> None:
+    """Management publishes to `CONFIG_TOPICS` and the gateway subscribes to it; a topic missing
+    from it is one side not knowing about the other."""
+    assert set(kafka.CONFIG_TOPICS) == _declared_topics()
+    assert len(kafka.CONFIG_TOPICS) == len(set(kafka.CONFIG_TOPICS))
+
+
+@pytest.mark.parametrize("where", sorted(LOOPS))
+def test_every_declared_topic_is_created_and_nothing_else(where: str) -> None:
+    """Both directions: a topic nothing creates fails silently — the relay publishes, the broker
+    drops it — and a topic left after a rename is a partition nobody reads."""
+    looped = _looped(LOOPS[where])
+    assert looped == _declared_topics(), (
+        f"{where} creates {sorted(looped)} and the code declares {sorted(_declared_topics())}"
     )
 
 
-def test_nothing_creates_a_topic_the_code_never_publishes_to() -> None:
-    """The other direction. A topic left behind after a rename is a partition nobody reads, and it
-    looks exactly like one that is simply quiet."""
+@pytest.mark.parametrize("where", sorted(DOCUMENTS))
+def test_every_declared_topic_is_documented(where: str) -> None:
+    text = DOCUMENTS[where].read_text()
+    missing = sorted(topic for topic in _declared_topics() if topic not in text)
+    assert not missing, f"{where} does not name {', '.join(missing)}"
+
+
+def test_the_documentation_names_no_topic_the_code_never_publishes_to() -> None:
     declared = _declared_topics()
-    for where, path in PLACES.items():
+    for where, path in DOCUMENTS.items():
         # The negative lookahead keeps `aira.example.com` out: a hostname is not a topic, and a
         # check that fails on documentation prose is a check somebody deletes.
         found = set(re.findall(r"aira\.[a-z-]+(?![a-z0-9.-])", path.read_text()))
         stray = sorted(found - declared)
-        assert not stray, f"{where} creates {', '.join(stray)}, which nothing publishes to"
+        assert not stray, f"{where} names {', '.join(stray)}, which nothing publishes to"

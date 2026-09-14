@@ -393,6 +393,9 @@ The symptom is a setting that appears saved in the UI and does nothing.
 | `aira.models`        | model catalog and prices (FRD-403)                           |
 | `aira.roles`         | what each stored role may do, and its group (FRD-614)        |
 
+On a cluster several stages share, set `AIRA_KAFKA_STAGE` on both planes: every name above becomes
+`aira.<stage>.<entity>` and the consumer group `aira-gateway.<stage>` (`FRD-623`).
+
 ```bash
 kafka-topics.sh --create --topic aira.usecases --config cleanup.policy=compact ...
 ```

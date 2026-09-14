@@ -5,6 +5,57 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A stage in every topic name, and a Redis leader that moves (2026-09-14)
+
+Operations prepared stage T and asked two things. Kafka runs as a development and a production
+cluster, so T, F and Q share one: should AIRA's topics carry the stage? Redis runs as Redis
+Sentinel: can AIRA's client follow a leader that moves? Neither was possible, and `FRD-623` builds
+both.
+
+**Kafka.** `AIRA_KAFKA_STAGE` names every configuration topic `aira.<stage>.<entity>` and the
+gateway's consumer group `aira-gateway.<stage>`. Empty keeps today's names.
+- **Why after `aira.` and not at the end** (`aira.usecases.t`, which operations suggested): Kafka's
+  prefixed ACLs match the start of a name. With the stage in front, one ACL, `aira.t.`, covers one
+  stage, including topics added later. With the stage at the end, each topic needs its own ACL.
+  The separation matters because the gateway builds its authorization from these topics.
+- **A stage is one to sixteen lower-case letters or digits**, checked when the settings load. A
+  typo must refuse to start rather than create a third set of topics.
+- **Both planes now read one list**, `CONFIG_TOPICS`. Management's outbox and the gateway's
+  subscriptions each had their own copy.
+- **Topic creation** in compose and in the Makefile loops over base names. The guard compares
+  those names with the list in both directions.
+
+**Redis.** `AIRA_REDIS_SENTINELS` and `AIRA_REDIS_SENTINEL_SERVICE` replace the URL. redis-py
+(8.1) already has the client; what was missing was the settings and the connection.
+- An ACL user, a data password, a sentinel password and a database number are supported.
+- Both passwords are secrets: Vault's list knows them, and the config renderer refuses them.
+- The log target names the sentinels and the service, never a password.
+- A failover is a short Redis outage, which the gateway already survives: rate limits hold per
+  instance and budgets use the Postgres path. Nothing new was needed there.
+
+**Measured live.**
+- **The first run proved nothing**, and looked as if it did. `--force-recreate` without `--build`
+  started the old images, which ignore both variables. The topics were created with the stage,
+  but every message still went to `aira.usecases`, and the Sentinel run exercised the default
+  Redis. Its failover "passed" because nothing in it had failed over. The rerun built the images
+  and printed each variable from inside the container before measuring.
+- **Stage `t`:**
+  - The nine `aira.t.*` topics were created.
+  - A use case created through the API went to `aira.t.usecases` and not to `aira.usecases`.
+  - Group `aira-gateway.t` was created, and the gateway applied the use case within 7 s.
+- **Sentinel.** The setup was a leader, a follower and three sentinels (quorum 2,
+  `down-after-milliseconds 3000`), with 128 MB as in stage T and `noeviction`.
+  - Three requests wrote four keys (budget and rate-limit counters) to the leader and none to the
+    default Redis.
+  - The leader was then stopped. The sentinels named the follower after 4 s, and readiness
+    reported the counters reachable on it at the same moment.
+  - Three more requests answered 200, and readiness listed no fallback.
+  - The old leader came back as a follower.
+- Afterwards the stack was restored, and the probe topics and containers were removed.
+
+Mutations KS1–KS5 (stage) and SN1–SN3 (Sentinel) are all caught. The Sentinel trial stays a
+script rather than a fourth compose file, which `tools/compose_files.py` rules out.
+
 ## The sweep that reported a stopped stack as a server error (2026-09-11)
 
 `test_no_query_parameter_answers_with_a_server_error` — written on 2026-09-08 to sweep every

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from aira_common.integration_debug import watch
@@ -27,6 +28,43 @@ RETRY_AFTER_FAILURE_SECONDS = 5.0
 type ScriptArg = str | int | float
 
 _log = get_logger("aira_common.counters")
+
+
+class SentinelConfigError(ValueError):
+    """A Sentinel setting that cannot be honoured. Raised at start-up, never at request time."""
+
+
+@dataclass(frozen=True, slots=True)
+class SentinelConfig:
+    """Where to find the leader through Redis Sentinel: the sentinels, the name they know the
+    leader by, and the credentials. The passwords are secrets and come from Vault."""
+
+    sentinels: tuple[tuple[str, int], ...]
+    service: str
+    username: str = ""
+    password: str = ""
+    sentinel_password: str = ""
+    db: int = 0
+
+    def target(self) -> str:
+        """For a log line: the sentinels and the service, never a password."""
+        hosts = ",".join(f"{host}:{port}" for host, port in self.sentinels)
+        return f"sentinel://{hosts}/{self.service}"
+
+
+def parse_sentinels(raw: str) -> tuple[tuple[str, int], ...]:
+    """``host:port,host:port`` as addresses; an entry that is not one is refused, not skipped."""
+    found: list[tuple[str, int]] = []
+    for entry in (part.strip() for part in raw.split(",")):
+        if not entry:
+            continue
+        host, sep, port = entry.rpartition(":")
+        if not sep or not host or not port.isdigit() or not 0 < int(port) < 65536:
+            raise SentinelConfigError(
+                f"'{entry}' is not a sentinel address: host:port, such as 'redis-a:26379'."
+            )
+        found.append((host, int(port)))
+    return tuple(found)
 
 
 class CountersUnavailable(RuntimeError):
@@ -96,12 +134,16 @@ class RedisRunner:
 
     def __init__(
         self,
-        url: str,
+        url: str = "",
         *,
+        sentinel: SentinelConfig | None = None,
         connect_timeout: float = 1.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._url = url
+        self._sentinel = sentinel
+        #: What a log line names: the URL, or the sentinels and the service — never a password.
+        self._target = sentinel.target() if sentinel is not None else url
         self._connect_timeout = connect_timeout
         # Injectable so the breaker's *reopening* can be tested, not only its closing.
         self._clock = clock
@@ -111,14 +153,41 @@ class RedisRunner:
 
     def _connect(self) -> Any:
         if self._client is None:
-            from redis.asyncio import Redis  # imported lazily so the dep stays optional at import
+            timeout = self._connect_timeout
+            if self._sentinel is not None:
+                from redis.asyncio.sentinel import Sentinel  # lazily, like `Redis` below
 
-            self._client = Redis.from_url(
-                self._url,
-                socket_connect_timeout=self._connect_timeout,
-                socket_timeout=self._connect_timeout,
-                decode_responses=True,
-            )
+                config = self._sentinel
+                sentinels = Sentinel(  # type: ignore[no-untyped-call]  # redis-py leaves it untyped
+                    list(config.sentinels),
+                    sentinel_kwargs={
+                        "socket_connect_timeout": timeout,
+                        "socket_timeout": timeout,
+                        "password": config.sentinel_password or None,
+                    },
+                    socket_connect_timeout=timeout,
+                    socket_timeout=timeout,
+                )
+                # The leader as the sentinels name it now. After a failover the pool's next
+                # connection asks them again, so the client follows the leader to its new server.
+                self._client = sentinels.master_for(
+                    config.service,
+                    username=config.username or None,
+                    password=config.password or None,
+                    db=config.db,
+                    decode_responses=True,
+                    socket_connect_timeout=timeout,
+                    socket_timeout=timeout,
+                )
+            else:
+                from redis.asyncio import Redis  # imported lazily so the dep stays optional
+
+                self._client = Redis.from_url(
+                    self._url,
+                    socket_connect_timeout=timeout,
+                    socket_timeout=timeout,
+                    decode_responses=True,
+                )
         return self._client
 
     async def run(self, script: str, keys: Sequence[str], args: Sequence[ScriptArg]) -> Any:
@@ -128,7 +197,7 @@ class RedisRunner:
         try:
             # Watched per call, successes included: how slowly Redis answers is the question
             # (`FRD-617` §3.3).
-            with watch("redis", "script", target=self._url, keys=len(keys)):
+            with watch("redis", "script", target=self._target, keys=len(keys)):
                 client = self._connect()
                 registered = self._scripts.get(script)
                 if registered is None:
@@ -151,8 +220,10 @@ class RedisRunner:
             self._scripts.clear()
 
 
-def build_runner(url: str) -> ScriptRunner:
-    """Return a runner for ``url``, or a disabled one when no URL is configured."""
+def build_runner(url: str, sentinel: SentinelConfig | None = None) -> ScriptRunner:
+    """A runner through ``sentinel`` when one is configured, else ``url``, else a disabled one."""
+    if sentinel is not None:
+        return RedisRunner(sentinel=sentinel)
     if not url.strip():
         return DisabledRunner()
     return RedisRunner(url)

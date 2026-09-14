@@ -40,6 +40,7 @@ AIRA_ROLE_GROUPS = _settings.role_groups
 AIRA_DIRECTORY_CLIENT_ID = _settings.directory_client_id
 AIRA_DIRECTORY_CLIENT_SECRET = _settings.directory_client_secret
 AIRA_DIRECTORY_URL = _settings.directory_url
+AIRA_KAFKA_STAGE = _settings.kafka_stage
 
 SECRET_KEY = _settings.secret_key
 DEBUG = effective_debug(_settings)

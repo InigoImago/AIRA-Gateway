@@ -324,6 +324,13 @@ Configuration flows Management → Kafka → gateway. **Nine compacted topics**,
 | `aira.anomaly-rules` | anomaly rules |
 | `aira.roles` | what each stored role may do, and the group that confers it (`FRD-614`) |
 
+**On a cluster several stages share**, give each installation a stage with `AIRA_KAFKA_STAGE`
+(both planes, the same value). The topics become `aira.<stage>.<entity>` — `aira.t.usecases`
+— and the gateway's consumer group `aira-gateway.<stage>` (`FRD-623`). The stage follows
+`aira.` on purpose: one prefixed ACL, `aira.t.`, then covers exactly one stage's topics,
+including a topic added later. A stage must not be able to write another's topics, because the
+gateway builds its authorization from them. Without a stage the names are the ones above.
+
 **What you provide**
 
 - `cleanup.policy=compact` on each. Compaction is what makes the read-model rebuildable: the latest
@@ -395,6 +402,17 @@ limit. Budgets fall back to the Postgres path, which enforces but is racy.
 
 **What you provide**: any Redis 6+ reachable at `AIRA_REDIS_URL`. No persistence is required —
 counters seed from Postgres on a miss and expire in five minutes so drift cannot outlive a period.
+
+- **Redis Sentinel** is supported (`FRD-623`). Set `AIRA_REDIS_SENTINELS` (`host:port,…`) and
+  `AIRA_REDIS_SENTINEL_SERVICE` (the name the sentinels monitor) instead of the URL. The
+  passwords, `AIRA_REDIS_PASSWORD` and `AIRA_REDIS_SENTINEL_PASSWORD`, are secrets for Vault.
+  On failover the gateway asks the sentinels for the new leader. While it moves, rate limits
+  hold per instance and budgets use the Postgres path, as for any Redis outage.
+- **Memory**: a few megabytes of small counters, each with a TTL; 128 MB is plenty. Set
+  `maxmemory-policy noeviction`, as the compose stack does. An evicting policy can drop a caller's
+  rate-limit bucket silently, which gives them a fresh allowance. With `noeviction` a full Redis
+  refuses writes, and the gateway falls back visibly.
+- **TLS**: `rediss://` in the URL. AIRA does not require TLS for Redis.
 
 > done one Redis, or accept per-instance limits and one gateway replica
 

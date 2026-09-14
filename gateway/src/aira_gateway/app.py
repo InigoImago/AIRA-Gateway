@@ -84,7 +84,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     sessionmaker = build_sessionmaker(engine)
     # Shared counters for rate limits and budget reservations (ADR-0008). An empty URL yields a
     # runner that reports itself unavailable, so both take their documented fallback.
-    counters = build_runner(settings.redis_url)
+    counters = build_runner(settings.redis_url, settings.redis_sentinel())
 
     app = FastAPI(
         title=settings.app_name,

@@ -8,8 +8,10 @@ Vault in real deployments (see PRD §9).
 
 from __future__ import annotations
 
+from pydantic import field_validator
+
 from aira_common.config import BaseAiraSettings
-from aira_common.kafka import KafkaSecurity
+from aira_common.kafka import KafkaSecurity, validate_stage
 from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
 
 #: The well-known development signing key. ``config.security`` refuses to start any non-local
@@ -73,6 +75,14 @@ class ManagementSettings(BaseAiraSettings):
     kafka_sasl_username: str = ""
     kafka_sasl_password: str = ""
     kafka_ssl_cafile: str = ""
+    #: The stage in every topic name this service publishes to (`aira.t.usecases`); the gateway
+    #: must be given the same one. Empty keeps today's names.
+    kafka_stage: str = ""
+
+    @field_validator("kafka_stage")
+    @classmethod
+    def _one_stage(cls, value: str) -> str:
+        return validate_stage(value)
 
     def kafka_security(self) -> KafkaSecurity:
         return KafkaSecurity(

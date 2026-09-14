@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings
+
 from aira_common.kafka import (
     ANOMALY_RULE_TOPIC,
     API_KEY_TOPIC,
@@ -19,6 +21,7 @@ from aira_common.kafka import (
     RATE_LIMIT_TOPIC,
     ROLE_TOPIC,
     USECASE_TOPIC,
+    staged,
 )
 from aira_common.observability import traceparent_from_context
 from aira_management.apps.outbox.models import OutboxEvent
@@ -69,9 +72,11 @@ _ALSO_IDENTIFIED_BY = {
 
 
 def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
-    topic = _TOPIC_FOR.get(event_type)
-    if topic is None:
+    base = _TOPIC_FOR.get(event_type)
+    if base is None:
         return
+    # Named for this installation's stage when it has one: `aira.t.usecases` on a shared cluster.
+    topic = staged(base, getattr(settings, "AIRA_KAFKA_STAGE", "") or "")
     # Compacted topics are keyed by the entity's natural key (budget id first, then prefix/slug).
     key = str(
         payload.get("id")

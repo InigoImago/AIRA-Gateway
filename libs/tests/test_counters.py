@@ -119,3 +119,94 @@ async def test_a_success_closes_the_breaker_immediately() -> None:
     assert await runner.run("return 1", [], []) == 1
     assert runner._unavailable_until == 0.0  # closed, so the next call is not short-circuited
     await runner.close()
+
+
+# ---- Redis Sentinel ------------------------------------------------------------------------------
+
+from aira_common.counters import SentinelConfig, SentinelConfigError, parse_sentinels  # noqa: E402
+
+
+def test_sentinel_addresses_are_parsed_and_a_bad_one_is_refused() -> None:
+    assert parse_sentinels("redis-a:26379, redis-b:26379,") == (
+        ("redis-a", 26379),
+        ("redis-b", 26379),
+    )
+    for bad in ("redis-a", "redis-a:", ":26379", "redis-a:port", "redis-a:70000"):
+        with pytest.raises(SentinelConfigError):
+            parse_sentinels(bad)
+
+
+def test_a_log_line_names_the_sentinels_and_never_a_password() -> None:
+    config = SentinelConfig(
+        sentinels=(("redis-a", 26379),),
+        service="aira",
+        password="data-secret",
+        sentinel_password="sentinel-secret",
+    )
+    assert config.target() == "sentinel://redis-a:26379/aira"
+    assert "secret" not in config.target()
+
+
+async def test_sentinels_are_chosen_over_a_url() -> None:
+    config = SentinelConfig(sentinels=(("redis-a", 26379),), service="aira")
+    runner = build_runner("redis://localhost:6379/0", config)
+    assert isinstance(runner, RedisRunner)
+    assert runner._target == "sentinel://redis-a:26379/aira"  # noqa: SLF001
+
+
+async def test_the_leader_is_asked_of_the_sentinels_with_the_credentials(monkeypatch) -> None:
+    """The client is the one the sentinels hand out for the service, with the data password and
+    database, and the sentinels are asked with their own password."""
+    seen: dict = {}
+
+    class Script:
+        async def __call__(self, keys, args):
+            return [keys, args]
+
+    class Leader:
+        def register_script(self, script):
+            seen["script"] = script
+            return Script()
+
+    class FakeSentinel:
+        def __init__(self, sentinels, sentinel_kwargs=None, **kwargs):
+            seen["sentinels"] = sentinels
+            seen["sentinel_kwargs"] = sentinel_kwargs
+            seen["connection"] = kwargs
+
+        def master_for(self, service, **kwargs):
+            seen["service"] = service
+            seen["leader"] = kwargs
+            return Leader()
+
+    import redis.asyncio.sentinel as sentinel_module
+
+    monkeypatch.setattr(sentinel_module, "Sentinel", FakeSentinel)
+    runner = RedisRunner(
+        sentinel=SentinelConfig(
+            sentinels=(("redis-a", 26379), ("redis-b", 26379)),
+            service="aira",
+            username="aira",
+            password="data-secret",
+            sentinel_password="sentinel-secret",
+            db=2,
+        )
+    )
+
+    assert await runner.run("return 1", ["k"], [1]) == [["k"], [1]]
+    assert seen["sentinels"] == [("redis-a", 26379), ("redis-b", 26379)]
+    assert seen["sentinel_kwargs"]["password"] == "sentinel-secret"
+    assert seen["service"] == "aira"
+    assert (seen["leader"]["username"], seen["leader"]["password"]) == ("aira", "data-secret")
+    assert (seen["leader"]["db"], seen["leader"]["decode_responses"]) == (2, True)
+
+
+async def test_sentinels_nobody_can_reach_report_unavailable_rather_than_raising() -> None:
+    """The promise a URL makes: callers catch `CountersUnavailable` and take their fallback."""
+    runner = RedisRunner(
+        sentinel=SentinelConfig(sentinels=(("127.0.0.1", 26390),), service="aira"),
+        connect_timeout=0.05,
+    )
+    with pytest.raises(CountersUnavailable):
+        await runner.run("return 1", [], [])
+    await runner.close()

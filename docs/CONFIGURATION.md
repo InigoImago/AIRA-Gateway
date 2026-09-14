@@ -41,6 +41,7 @@ environment ([§7](#7-secrets-from-vault)).
 | `AIRA_DEBUG_OTEL_PAYLOAD`                                      | `0`                                                        | Print this many items of each OTLP batch as OTLP/JSON on stdout. 0 is off. Expensive and loud; see [`INTEGRATIONS.md` §6](INTEGRATIONS.md#6-observability).                       |
 | `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / _(differs)_ / `aira` / `aira-local` | **Two different databases** — see the note below.                                                                                                                                 |
 | `AIRA_KAFKA_BOOTSTRAP_SERVERS`                                 | `localhost:29092`                                          |                                                                                                                                                                                   |
+| `AIRA_KAFKA_STAGE`                                             | _(empty)_                                                  | The stage in every topic name and in the gateway's consumer group, on a cluster several stages share: `t` gives `aira.t.usecases` and `aira-gateway.t`. **Both planes need the same one.** Empty keeps `aira.usecases`. One to sixteen lower-case letters or digits; anything else refuses to start. |
 
 ### 1a. Watching a call to another system
 
@@ -162,6 +163,12 @@ audit row. That is why the check is a startup refusal rather than a warning.
 | `AIRA_ANOMALY_INTERVAL_SECONDS`      | `60`                       | How often the detector wakes. It evaluates only scopes that saw traffic, so a longer interval costs findings _latency_, not accuracy.                                                    |
 | `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` | `1024`                     | What a reservation assumes an answer will cost when the caller sets no cap. Too low under-reserves and lets concurrent requests overshoot; too high refuses traffic that would have fit. |
 | `AIRA_REDIS_URL`                     | `redis://localhost:6379/0` | The shared counter store. See [§6](#6-what-happens-when-something-is-missing).                                                                                                           |
+| `AIRA_REDIS_SENTINELS`               | _(empty)_                  | Redis Sentinel: the sentinels as `host:port,…`. Set, they **replace** `AIRA_REDIS_URL`: the gateway asks them for the leader and follows it when it moves to another server. An entry that is not `host:port` refuses to start. |
+| `AIRA_REDIS_SENTINEL_SERVICE`        | _(empty)_                  | The name the sentinels know the leader by. Required with `AIRA_REDIS_SENTINELS`; without it the gateway refuses to start. |
+| `AIRA_REDIS_USERNAME`                | _(empty)_                  | The data nodes' ACL user, where they have one. |
+| `AIRA_REDIS_PASSWORD`                | _(empty)_                  | The data nodes' password. **A secret** — Vault. |
+| `AIRA_REDIS_SENTINEL_PASSWORD`       | _(empty)_                  | The sentinels' own password, where they require one. **A secret** — Vault. |
+| `AIRA_REDIS_DB`                      | `0`                        | The database number on the leader, with Sentinel. |
 
 ### Input bounds
 
