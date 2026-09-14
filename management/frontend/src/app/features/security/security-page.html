@@ -253,7 +253,7 @@
   <app-security-rules-panel
     [shown]="tab() === 'rules'"
     [rules]="rules()"
-    [canStop]="canStop()"
+    [canWriteGlobalRules]="canWriteGlobalRules()"
     (changed)="loadRules()"
   />
 </div>

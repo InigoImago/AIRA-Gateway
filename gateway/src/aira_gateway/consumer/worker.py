@@ -24,6 +24,7 @@ from aira_common.kafka import (
     MODEL_TOPIC,
     PIPELINE_TOPIC,
     RATE_LIMIT_TOPIC,
+    ROLE_TOPIC,
     USECASE_TOPIC,
 )
 from aira_common.logging import get_logger
@@ -152,6 +153,7 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
         RATE_LIMIT_TOPIC,
         ANOMALY_RULE_TOPIC,
         MODEL_TOPIC,
+        ROLE_TOPIC,
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=GROUP_ID,
         auto_offset_reset="earliest",

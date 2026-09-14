@@ -212,6 +212,8 @@ function setup(
     served?: Observable<unknown[]>;
     save?: Observable<CatalogModel>;
     roles?: string[];
+    /** What `/me` lists. Absent means the permission to maintain the catalog. */
+    permissions?: string[];
     confirm?: boolean;
     /** What `:check` answers (`FRD-506`). */
     check?: Observable<ModelCheck>;
@@ -242,6 +244,7 @@ function setup(
     username: 'admin',
     email: '',
     roles: options.roles ?? ['global-admin'],
+    permissions: options.permissions ?? ['catalog.write'],
     use_cases: [],
   };
 
@@ -396,19 +399,32 @@ describe('ModelCatalog', () => {
     expect(text()).toContain('left out of every spend figure');
   });
 
-  it('hides the editing surface from everyone but a global admin', () => {
+  it('hides the editing surface from everyone without `catalog.write`', () => {
     const admin = setup();
     admin.openFirst();
     expect(admin.component.canEdit()).toBe(true);
     expect(admin.html().querySelector('[data-testid^="edit-"]')).not.toBeNull();
 
-    const reader = setup({ roles: ['it-steuerung'] });
+    const reader = setup({ permissions: ['usecase.read_all', 'report.read_all'] });
     reader.openFirst();
     expect(reader.component.canEdit()).toBe(false);
     // The panel still opens — reading a declaration is not editing one — and carries no actions.
     expect(reader.html().querySelector('[data-testid^="detail-"]')).not.toBeNull();
     expect(reader.html().querySelector('[data-testid^="edit-"]')).toBeNull();
     expect(reader.text()).not.toContain('Add model');
+  });
+
+  it('asks the permission, never the role', () => {
+    // The server decides what a role holds, so the role alone offers nothing…
+    const roleOnly = setup({ roles: ['global-admin'], permissions: [] });
+    roleOnly.openFirst();
+    expect(roleOnly.html().querySelector('[data-testid^="edit-"]')).toBeNull();
+    expect(roleOnly.text()).not.toContain('Add model');
+
+    // …and the permission alone is enough.
+    const permissionOnly = setup({ roles: [], permissions: ['catalog.write'] });
+    permissionOnly.openFirst();
+    expect(permissionOnly.html().querySelector('[data-testid^="edit-"]')).not.toBeNull();
   });
 
   it('names the model it is editing, and leaving the window discards the edit', () => {

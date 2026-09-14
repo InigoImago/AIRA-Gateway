@@ -89,7 +89,7 @@ graph LR
     key --> bound["Key is bound to a use case<br/><i>no selector needed</i>"]
     oidc --> groups["Use cases from Keycloak groups<br/><i>/use-cases/&lt;slug&gt;</i>"]
 
-    bound --> attr["Attribution:<br/>subject · credential · use case<br/>roles from groups only"]
+    bound --> attr["Attribution:<br/>subject · credential · use case<br/>roles and permissions from groups only"]
     groups --> attr
 ```
 
@@ -97,7 +97,10 @@ graph LR
   `/uc` selector or `X-AIRA-Use-Case` header is a **403**, not a silent override.
 - An **OIDC bearer** carries **group memberships, and roles are read from those and from nothing
   else** ([`ADR-0017`](adr/ADR-0017-a-role-is-held-through-a-group.md)): `AIRA_ROLE_GROUPS` maps a
-  group path to a role, and a realm role assigned directly grants **nothing**. This line said
+  group path to a role, and a realm role assigned directly grants **nothing**. What a role allows is a
+  permission set (`FRD-614`): the gateway resolves the token's groups against its `roles` read
+  model, fed over `aira.roles` and cached for five seconds, and every installation-wide check asks
+  one permission. This line said
   *"carries realm roles and group memberships"* until 2026-08-31 — the same sentence
   `aira_common/roles.py` opens by naming as a defect it had already made, surviving in the document
   a reader reaches for first. Use-case membership comes from a group grant or from the
@@ -372,6 +375,6 @@ credentials, the caller cannot act on them, and the message may name one.
 | What happened to this request? | `request_logs`, by `trace_id` (also on the response as `x-trace-id`) |
 | Why was it refused?            | the `outcome` column, and `pipeline_decisions`                       |
 | Was a control degraded?        | the `degraded` column on that row                                    |
-| Is anything stopped right now? | `GET /v1beta/suspensions` (incident role)                            |
+| Is anything stopped right now? | `GET /v1beta/suspensions` (`incident.suspend`)                       |
 | What has the detector found?   | `GET /v1beta/anomalies`                                              |
 | Is the gateway healthy?        | `/healthz` (liveness), `/readyz` (readiness + upstream probes)       |

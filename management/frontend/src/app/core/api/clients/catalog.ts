@@ -60,8 +60,8 @@ export function withCatalog<T extends ApiClientClass>(Base: T) {
     /**
      * The models as the compatibility surface addresses them, with their integer ids (`FRD-107`).
      *
-     * Asked of the gateway: the catalog also holds `numeric_id`, but only the catalog roles may read
-     * it, and a use-case administrator setting a client up is not one of them.
+     * Asked of the gateway: the catalog also holds `numeric_id`, but only `catalog.write` may read
+     * it, and a use-case administrator setting a client up does not hold it.
      */
     kiraModels(): Observable<KiraModel[]> {
       return this.http.get<KiraModel[]>(`${GW}/kira/api/external/models`);

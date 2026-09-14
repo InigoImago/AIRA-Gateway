@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from aira_common.roles import may_catalogue
+from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -40,10 +40,11 @@ def _require_catalog_role(principal: Principal) -> None:
     if principal.method == "demo":
         # Authentication is switched off: there is no identity to authorise.
         return
-    if not may_catalogue(principal.roles):
+    if not principal.allows(Permission.CATALOG_WRITE):
         raise GeminiHTTPError(
             403,
-            "Only a Global Administrator may list what a provider offers.",
+            "Listing what a provider offers needs the permission to write the catalogue "
+            "(catalog.write).",
             "PERMISSION_DENIED",
         )
 

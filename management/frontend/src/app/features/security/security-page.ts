@@ -3,7 +3,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { AnomalyEvent, AnomalyRule, Me, Suspension } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { mayActOnIncidents } from '../../core/auth/roles';
+import { can } from '../../core/auth/roles';
 import { Live, agoLabel } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { describeAction, describeEvent, describeRule } from './rule-language';
@@ -23,10 +23,10 @@ function hasExpired(row: Suspension): boolean {
 /**
  * The IT Security console (`FRD-502`): findings, suspensions, and the rules that apply everywhere.
  *
- * Two permissions live on this page and it keeps them apart: **seeing** every use case is an
- * oversight role, **stopping** traffic is an incident role. A read-only governance role gets the
- * whole view and no kill switch, and the page says who has one rather than offering a button that
- * answers 403 (`FRD-206`).
+ * Three permissions live on this page and it keeps them apart: **seeing** every finding, **stopping**
+ * traffic (`incident.suspend`) and **authoring** the rules that apply everywhere
+ * (`anomaly.rule.global.write`). A reader who only sees gets the whole view and no kill switch, and
+ * the page says who has one rather than offering a button that answers 403 (`FRD-206`).
  *
  * The page loads what its tab strip counts and owns the live refresh and the findings; the
  * suspensions and rules tabs are panels owning their forms and mutations (`CLAUDE.md` §3).
@@ -57,12 +57,13 @@ export class SecurityPage implements OnInit {
   /** Slugs for the kill switch's scope picker. */
   protected readonly useCases = signal<string[]>([]);
 
-  /**
-   * Whether this caller may stop traffic — **not** whether they may see this page.
-   *
-   * `it-steuerung` sees every use case and every figure and writes nothing anywhere (PRD §154).
-   */
-  protected readonly canStop = computed(() => mayActOnIncidents(this.me()?.roles));
+  /** Whether this caller may stop and restore traffic — **not** whether they may see this page. */
+  protected readonly canStop = computed(() => can(this.me(), 'incident.suspend'));
+
+  /** Whether this caller may author and change a rule that applies to every use case. */
+  protected readonly canWriteGlobalRules = computed(() =>
+    can(this.me(), 'anomaly.rule.global.write'),
+  );
 
   protected readonly active = computed(() =>
     this.suspensions().filter((row) => !row.lifted_at && !hasExpired(row)),

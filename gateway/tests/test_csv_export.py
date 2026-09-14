@@ -447,7 +447,7 @@ def test_every_endpoint_here_resolves_the_visible_scope_exactly_once() -> None:
     endpoints = {route.endpoint for route in module.router.routes}
     assert endpoints, "no routes found — the assertion would pass by describing nothing"
     for endpoint in endpoints:
-        calls = inspect.getsource(endpoint).count("visible_scope(principal)")
+        calls = inspect.getsource(endpoint).count("visible_scope(principal,")
         assert calls == 1, (
             f"{endpoint.__name__} resolves the visible scope {calls} times; "
             "zero shows more than it should, twice will drift"

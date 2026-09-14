@@ -203,3 +203,21 @@ class ModelRead(Base):
     hosting: Mapped[str] = mapped_column(String(16), default="")
     deprecated: Mapped[bool] = mapped_column(Boolean, default=False)
     numeric_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+
+class RoleRead(Base):
+    """What a stored role may do and which group confers it (`FRD-614` FR-8).
+
+    The Global Administrator and IT Security are not here: they are fixed in code, so a read model
+    that cannot be read never takes them away.
+    """
+
+    __tablename__ = "roles"
+
+    slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(120), default="")
+    #: Empty for IT Steuerung, whose group is configuration (`AIRA_ROLE_GROUPS`).
+    group_path: Mapped[str] = mapped_column(String(255), default="")
+    permissions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

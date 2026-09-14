@@ -255,12 +255,18 @@ The trace list shows the name in its own column beside the subject, which is the
 This is not something the gateway can close for you: joining a directory id to a username needs a
 question put to the directory, and the request path may not ask one ([`FRD-204`](features/FRD-204-config-distribution-kafka.md)).
 
-#### Searching your directory (optional)
+#### Asking your directory (needed for custom roles)
 
-To let the console **search** your groups and users when granting access, give AIRA a read-only
-service account and set `AIRA_DIRECTORY_CLIENT_ID` / `AIRA_DIRECTORY_CLIENT_SECRET`. It needs
-`view-users` and `query-groups` on the realm — nothing else, and it is never used for anything but
-a search.
+To let the console **search** your groups and users when granting access, and to **check that a
+group exists before a role is bound to it** (`FRD-614`), give AIRA a read-only service account and
+set `AIRA_DIRECTORY_CLIENT_ID` / `AIRA_DIRECTORY_CLIENT_SECRET`. It needs `view-users` and
+`query-groups` on the realm — nothing else, and it is used for nothing but these lookups. Where
+Management reaches Keycloak by another address than the one in `AIRA_OIDC_ISSUER` (inside a
+container, usually), set `AIRA_DIRECTORY_URL` to it.
+
+**Binding a role to a group is refused without it.** A group nobody could check is not trusted: the
+console says the group could not be verified, and the three built-in roles keep working. The
+development realm ships such a client, `aira-directory`, and the compose stack uses it by default.
 
 Without it the console still works, with one real limit. It offers the people who have signed in
 and the groups already granted somewhere, and **says that is what it is showing**; it cannot invent
@@ -304,7 +310,7 @@ a group nobody has used, so on a fresh installation the first grant of a new gro
 
 ## 3. Apache Kafka
 
-Configuration flows Management → Kafka → gateway. **Eight compacted topics**, one per entity kind:
+Configuration flows Management → Kafka → gateway. **Nine compacted topics**, one per entity kind:
 
 | Topic | Carries |
 |---|---|
@@ -316,6 +322,7 @@ Configuration flows Management → Kafka → gateway. **Eight compacted topics**
 | `aira.rate-limits` | rate limits |
 | `aira.models` | the model catalog, prices and capabilities |
 | `aira.anomaly-rules` | anomaly rules |
+| `aira.roles` | what each stored role may do, and the group that confers it (`FRD-614`) |
 
 **What you provide**
 

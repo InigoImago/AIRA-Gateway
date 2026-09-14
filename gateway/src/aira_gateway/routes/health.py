@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from aira_common.counters import CountersUnavailable
 from aira_common.health import check_tcp
+from aira_common.permissions import Permission
 from aira_common.secrets import secrets_state
 from aira_gateway.auth.dependencies import resolve_principal
 from aira_gateway.auth.principal import Principal
@@ -64,13 +65,13 @@ async def version_info(request: Request) -> dict[str, object]:
 def _is_operator(principal: Principal) -> bool:
     """Whether this credential is an **operator's**. Two kinds, and no third:
 
-    - an **incident role** — Global Administrator or IT Security (`INCIDENT_ROLES`). Not
-      `is_oversight`: IT Steuerung gets every figure, and a deployment's topology is not a figure.
+    - `operations.diagnose` (`FRD-614`), not a reporting permission: a deployment's topology is
+      not a figure.
     - the **unbound break-glass key** (`ADR-0015`), minted for when the control plane is down —
       exactly when this body is needed. A key **bound** to a use case is a team's, and the weakest
       credential here.
     """
-    if principal.may_act_on_incidents:
+    if principal.allows(Permission.OPERATIONS_DIAGNOSE):
         return True
     return principal.method == "api_key" and not principal.use_cases
 

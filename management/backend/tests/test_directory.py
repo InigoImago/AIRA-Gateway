@@ -162,3 +162,19 @@ def test_an_unreachable_provider_falls_back_rather_than_failing(
 
     assert body["source"] == "local"
     assert body["results"][0]["id"] == "/ai/kundenservice"
+
+
+def test_the_directory_is_asked_at_its_own_address_before_the_issuers(settings) -> None:
+    """The issuer is the address a browser uses; inside a container it is rarely Keycloak."""
+    from aira_management.apps.directory.service import build_directory
+
+    settings.AIRA_OIDC_ISSUER_BASE = "http://localhost:8080"
+    settings.AIRA_OIDC_REALM = "aira"
+    settings.AIRA_DIRECTORY_CLIENT_ID = "aira-directory"
+    settings.AIRA_DIRECTORY_CLIENT_SECRET = "s3cret"
+
+    settings.AIRA_DIRECTORY_URL = "http://keycloak:8080"
+    assert build_directory()._base == "http://keycloak:8080"  # type: ignore[union-attr]
+
+    settings.AIRA_DIRECTORY_URL = ""
+    assert build_directory()._base == "http://localhost:8080"  # type: ignore[union-attr]

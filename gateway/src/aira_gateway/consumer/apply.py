@@ -29,6 +29,7 @@ from aira_gateway.db.models import (
     ModelRead,
     PipelineConfigRead,
     RateLimitRead,
+    RoleRead,
     UseCaseGroupRead,
     UseCaseMemberRead,
     UseCaseRead,
@@ -417,6 +418,29 @@ async def _delete_model(session: AsyncSession, payload: dict[str, Any]) -> None:
     await session.execute(delete(ModelRead).where(ModelRead.model == payload["name"]))
 
 
+# == roles ========================================================================================
+
+
+async def _upsert_role(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """What a stored role may do (`FRD-614` FR-8).
+
+    An absent ``permissions`` is an empty set: a role whose event names none grants nothing, rather
+    than keeping what an earlier event granted.
+    """
+    fields = {
+        "label": payload.get("label", ""),
+        "group_path": payload.get("group_path", ""),
+        "permissions": [name for name in payload.get("permissions") or [] if isinstance(name, str)],
+        "builtin": bool(payload.get("builtin", False)),
+        "updated_at": datetime.now(UTC),
+    }
+    await _upsert(session, RoleRead, fields, slug=payload["slug"])
+
+
+async def _remove_role(session: AsyncSession, payload: dict[str, Any]) -> None:
+    await session.execute(delete(RoleRead).where(RoleRead.slug == payload["slug"]))
+
+
 #: The event vocabulary: every configuration event this gateway applies, and its handler.
 HANDLERS: dict[str, Handler] = {
     "usecase.upserted": _upsert_usecase,
@@ -438,4 +462,6 @@ HANDLERS: dict[str, Handler] = {
     "anomaly_rule.deleted": _delete_anomaly_rule,
     "model.upserted": _upsert_model,
     "model.deleted": _delete_model,
+    "role.upserted": _upsert_role,
+    "role.removed": _remove_role,
 }

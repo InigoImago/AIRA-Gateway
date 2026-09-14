@@ -39,6 +39,7 @@ AIRA_OIDC_REALM = _settings.oidc_realm
 AIRA_ROLE_GROUPS = _settings.role_groups
 AIRA_DIRECTORY_CLIENT_ID = _settings.directory_client_id
 AIRA_DIRECTORY_CLIENT_SECRET = _settings.directory_client_secret
+AIRA_DIRECTORY_URL = _settings.directory_url
 
 SECRET_KEY = _settings.secret_key
 DEBUG = effective_debug(_settings)
@@ -62,6 +63,7 @@ INSTALLED_APPS = [
     "aira_management.apps.anomalies",
     "aira_management.apps.smoketests",
     "aira_management.apps.directory",
+    "aira_management.apps.roles",
     "aira_management.apps.outbox",
 ]
 

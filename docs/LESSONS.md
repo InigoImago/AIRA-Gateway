@@ -1493,6 +1493,12 @@ reading code.
 - **An action nobody can carry out is worse than an absent one.** Absent reads as a boundary;
   present-and-failing reads as a broken system, and the reader then distrusts the figures on the
   same page. Every withheld action names who performs it.
+  - **The same holds for a permission that cannot reach what it acts on**: it is a checkbox that
+    does nothing. The permission matrix (`FRD-614`) found two in one run —
+    `usecase.manage_all` administered no use case it could not see, and `payload.read_any` opened
+    no request without the request list. The built-in roles hid both, because they always held
+    each pair together. Only a role holding one without the other shows it, which is why the
+    matrix grows a role one permission at a time and withdraws in two patterns.
 - **Read-only means inert, not un-saveable.** Hiding Save alone lets somebody rearrange a pipeline
   for nothing.
 - **The console must not answer a question only the server can answer.** Object-level permission is

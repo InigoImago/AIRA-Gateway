@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from aira_common.apikeys import generate_api_key
+from aira_common.permissions import Permission
 from aira_gateway.app import create_app
 from aira_gateway.auth import keys
 from aira_gateway.auth.attribution import resolve_use_case
@@ -193,14 +194,42 @@ async def test_an_unbound_key_is_not_restricted(authed_client) -> None:
 def test_a_governance_role_is_recognised_and_a_use_case_role_is_not() -> None:
     """Oversight is not membership: a use-case admin administers their own use cases, a
     governance role sees every one of them and may act inside none."""
-    assert Principal(subject="s", method="oidc", roles=("it-steuerung",)).is_governance is True
-    assert Principal(subject="s", method="oidc", roles=("global-admin",)).is_governance is True
-    assert Principal(subject="s", method="oidc", roles=("use-case-admin",)).is_governance is False
-    assert Principal(subject="s", method="oidc", roles=()).is_governance is False
+    assert (
+        Principal(subject="s", method="oidc", roles=("it-steuerung",)).allows(
+            Permission.USECASE_READ_RETIRED
+        )
+        is True
+    )
+    assert (
+        Principal(subject="s", method="oidc", roles=("global-admin",)).allows(
+            Permission.USECASE_READ_RETIRED
+        )
+        is True
+    )
+    assert (
+        Principal(subject="s", method="oidc", roles=("use-case-admin",)).allows(
+            Permission.USECASE_READ_RETIRED
+        )
+        is False
+    )
+    assert (
+        Principal(subject="s", method="oidc", roles=()).allows(Permission.USECASE_READ_RETIRED)
+        is False
+    )
     # An API key is issued for a use case, not for a person with a standing in the organisation.
-    assert Principal(subject="s", method="api_key", use_cases=("uc",)).is_governance is False
+    assert (
+        Principal(subject="s", method="api_key", use_cases=("uc",)).allows(
+            Permission.USECASE_READ_RETIRED
+        )
+        is False
+    )
 
 
 def test_an_unknown_role_is_simply_not_governance() -> None:
     """A realm that grows a role this code has never heard of must not break authentication."""
-    assert Principal(subject="s", method="oidc", roles=("brand-new-role",)).is_governance is False
+    assert (
+        Principal(subject="s", method="oidc", roles=("brand-new-role",)).allows(
+            Permission.USECASE_READ_RETIRED
+        )
+        is False
+    )

@@ -22,7 +22,7 @@ from aira_common.directory import SEARCH_LIMIT, DirectoryEntry, DirectoryUnavail
 from aira_common.logging import get_logger
 from aira_management.apps.directory.service import build_directory as _build_directory
 from aira_management.apps.usecases.models import UseCaseGroupGrant
-from aira_management.rbac import IsGlobalAdminOrUseCaseAdministrator
+from aira_management.rbac import MaySearchDirectory
 
 _log = get_logger("aira_management.directory")
 
@@ -72,7 +72,7 @@ def _known_locally(query: str) -> list[DirectoryEntry]:
 class DirectorySearchView(APIView):
     """``GET /api/v1/directory/?q=`` — groups and users a grant could name."""
 
-    permission_classes = [IsAuthenticated, IsGlobalAdminOrUseCaseAdministrator]
+    permission_classes = [IsAuthenticated, MaySearchDirectory]
 
     def get(self, request: Request) -> Response:
         query = str(request.query_params.get("q", "")).strip()

@@ -35,6 +35,7 @@ function setup(
     list?: Observable<UseCase[]>;
     create?: Observable<UseCase>;
     roles?: string[];
+    permissions?: string[];
     open?: boolean;
   } = {},
 ) {
@@ -56,6 +57,7 @@ function setup(
               // A real caller: `use-case-admin` is not a role any more (`ADR-0017`), and a
               // harness whose default nobody can hold is a harness testing a different product.
               roles: options.roles ?? ['global-admin'],
+              permissions: options.permissions ?? ['usecase.create'],
               use_cases: [],
             } as unknown as Me),
         },
@@ -234,23 +236,32 @@ describe('UseCaseList', () => {
   });
 
   it('offers the action only to somebody the server would let through', () => {
-    /**
-     * **Narrowed with `ADR-0017`.** Creating a use case is a Global Administrator's act — they
-     * create it and name the group that administers it. `use-case-admin` used to pass this gate
-     * and is not a role at all any more, so the case that proves the narrowing is somebody who
-     * administers a use case and is refused here.
-     */
-    const reader = setup({ roles: [], open: false });
+    /** Creating a use case needs `usecase.create`; somebody who administers a use case, and
+     *  holds nothing installation-wide, is refused here. */
+    const reader = setup({ roles: [], permissions: [], open: false });
     expect(reader.component.canCreate()).toBe(false);
     expect(reader.text()).not.toContain('New use case');
 
-    // Oversight is not authority: IT Steuerung sees every use case and creates none.
-    const governance = setup({ roles: ['it-steuerung'], open: false });
+    // Oversight is not authority: seeing every use case creates none.
+    const governance = setup({
+      permissions: ['usecase.read_all', 'usecase.read_retired', 'usecase.manage_all'],
+      open: false,
+    });
     expect(governance.component.canCreate()).toBe(false);
 
-    const admin = setup({ roles: ['global-admin'], open: false });
+    const admin = setup({ permissions: ['usecase.create'], open: false });
     expect(admin.component.canCreate()).toBe(true);
     expect(admin.text()).toContain('New use case');
+  });
+
+  it('asks the permission, never the role', () => {
+    // The server decides what a role holds, so the role alone offers nothing…
+    const roleOnly = setup({ roles: ['global-admin'], permissions: [], open: false });
+    expect(roleOnly.text()).not.toContain('New use case');
+
+    // …and the permission alone is enough.
+    const permissionOnly = setup({ roles: [], permissions: ['usecase.create'], open: false });
+    expect(permissionOnly.text()).toContain('New use case');
   });
 
   it('fills the technical id from the name, and stops once it is typed by hand', () => {

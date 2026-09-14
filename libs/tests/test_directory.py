@@ -75,7 +75,7 @@ def test_a_nested_group_is_offered_as_well_as_its_parent() -> None:
                 }
             ]
         )
-    ).search("a")
+    ).search("ai")
 
     assert [entry.id for entry in entries] == ["/ai", "/ai/kundenservice"]
 
@@ -86,14 +86,14 @@ def test_a_top_level_group_reports_the_root_as_its_parent() -> None:
 
 
 def test_a_group_row_with_no_path_is_skipped_rather_than_offered_as_a_broken_grant() -> None:
-    entries = _directory(_ok(groups=[{"name": "odd"}, {"name": "ok", "path": "/ok"}])).search("o")
+    entries = _directory(_ok(groups=[{"name": "odd"}, {"name": "ok", "path": "/ok"}])).search("ok")
     assert [entry.id for entry in entries] == ["/ok"]
 
 
 def test_the_result_is_bounded() -> None:
     # A directory search is a picker, not a report: the answer to "too many" is a better term.
-    many = [{"name": f"g{i}", "path": f"/g{i}"} for i in range(SEARCH_LIMIT * 3)]
-    entries = _directory(_ok(groups=many)).search("g")
+    many = [{"name": f"grp{i}", "path": f"/grp{i}"} for i in range(SEARCH_LIMIT * 3)]
+    entries = _directory(_ok(groups=many)).search("grp")
     assert len([e for e in entries if e.kind is SubjectKind.GROUP]) == SEARCH_LIMIT
 
 
@@ -123,7 +123,7 @@ def test_the_address_distinguishes_two_people_of_the_same_name() -> None:
 
 
 def test_a_user_row_with_no_username_is_skipped() -> None:
-    entries = _directory(_ok(users=[{"firstName": "Nameless"}, {"username": "ok"}])).search("n")
+    entries = _directory(_ok(users=[{"firstName": "Nameless"}, {"username": "ok"}])).search("na")
     assert [entry.id for entry in entries] == ["ok"]
 
 
@@ -224,3 +224,101 @@ def test_a_search_that_answers_with_the_wrong_shape_is_empty_not_a_crash() -> No
         return httpx.Response(200, json={"unexpected": "object"})
 
     assert _directory(handler).search("kunden") == []
+
+
+# ---- whether a group exists (`FRD-614` FR-4) -----------------------------------------------------
+
+BY_PATH = "/admin/realms/aira/group-by-path"
+
+
+def _by_path(status: int, body: object = None, asked: list[str] | None = None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == TOKEN_PATH:
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if request.url.path.startswith(BY_PATH):
+            if asked is not None:
+                asked.append(request.url.raw_path.decode())
+            return httpx.Response(status, json=body)
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_a_group_exists_when_keycloak_returns_exactly_that_path() -> None:
+    directory = _directory(_by_path(200, {"name": "controlling", "path": "/finance/controlling"}))
+    assert directory.group_exists("/finance/controlling") is True
+
+
+def test_a_group_keycloak_answers_404_for_does_not_exist() -> None:
+    assert _directory(_by_path(404, {"error": "not found"})).group_exists("/finance/x") is False
+
+
+def test_a_group_with_another_path_in_the_answer_is_not_the_one_asked_for() -> None:
+    directory = _directory(_by_path(200, {"name": "x", "path": "/finance/other"}))
+    assert directory.group_exists("/finance/controlling") is False
+
+
+def test_a_refusal_to_look_is_not_a_no() -> None:
+    """A client without `query-groups` gets a 403: nobody could check, which is not "absent"."""
+    with pytest.raises(DirectoryUnavailable):
+        _directory(_by_path(403)).group_exists("/finance/controlling")
+
+
+def test_a_path_that_is_not_absolute_names_no_group_and_is_not_asked() -> None:
+    asked: list[str] = []
+    directory = _directory(_by_path(200, {"path": "finance"}, asked))
+    assert directory.group_exists("finance") is False
+    assert directory.group_exists("/") is False
+    assert asked == []
+
+
+def test_a_path_is_sent_escaped_and_whole() -> None:
+    asked: list[str] = []
+    _directory(_by_path(404, None, asked)).group_exists("/finance/über uns")
+    assert asked == ["/admin/realms/aira/group-by-path/finance/%C3%BCber%20uns"]
+
+
+# ---- a search is literal (`FRD-209`, found against a real Keycloak) ------------------------------
+
+
+def test_a_wildcard_is_a_literal_and_asks_for_nothing_on_its_own() -> None:
+    """Keycloak matches a search as a pattern: `%%` listed the whole directory."""
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        return _ok(groups=[{"name": "every", "path": "/every"}])(request)
+
+    directory = _directory(handler)
+    assert directory.search("%%") == []
+    assert directory.search("*a") == []
+    assert asked == []
+
+
+def test_a_wildcard_inside_a_search_is_dropped_before_it_is_sent() -> None:
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == GROUPS_PATH:
+            sent.append(request.url.params["search"])
+        return _ok()(request)
+
+    _directory(handler).search("kunden%")
+    assert sent == ["kunden"]
+
+
+def test_a_parent_that_does_not_match_is_not_offered() -> None:
+    """Keycloak returns the tree around a match. The parent is context, not a result."""
+    entries = _directory(
+        _ok(
+            groups=[
+                {
+                    "name": "abteilungen",
+                    "path": "/abteilungen",
+                    "subGroups": [{"name": "kundendienst", "path": "/abteilungen/kundendienst"}],
+                }
+            ]
+        )
+    ).search("kundendienst")
+
+    assert [entry.id for entry in entries] == ["/abteilungen/kundendienst"]

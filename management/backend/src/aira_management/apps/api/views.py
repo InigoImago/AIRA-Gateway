@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 
 from aira_common.access import usecases_from_group_paths
 from aira_management.config.runtime import get_settings
-from aira_management.rbac import MayRunTests
+from aira_management.rbac import MayRunTests, held_roles_of, permissions_of, role_definitions
 from aira_management.roles import ALL_ROLES
 
 
@@ -32,7 +32,12 @@ class MeView(APIView):
                 "subject": claims.get("sub"),
                 "username": request.user.get_username(),
                 "email": getattr(request.user, "email", ""),
-                "roles": [str(role) for role in ALL_ROLES if str(role) in held],
+                "roles": [str(role) for role in ALL_ROLES if str(role) in held]
+                + [role.slug for role in held_roles_of(request.user) if not role.builtin],
+                # Every role's name, so no screen restates one (`FRD-614` FR-10).
+                "role_labels": {role.slug: role.label for role in role_definitions()},
+                # What those roles may do (`FRD-614`): the console asks these, never the roles.
+                "permissions": sorted(str(p) for p in permissions_of(request.user)),
                 # Slugs, not raw group paths: the `groups` claim also carries the role groups.
                 "use_cases": list(usecases_from_group_paths(claims.get("groups") or [])),
                 # The key policy the server enforces, so the console states the same numbers.

@@ -2,18 +2,16 @@ import types
 
 import pytest
 from aira_management.rbac import (
-    IsGlobalAdmin,
-    IsGlobalAdminOrUseCaseAdministrator,
-    IsITSecurity,
-    has_governance_role,
-    has_oversight_role,
-    has_role,
+    MaySearchDirectory,
+    may,
+    requires,
     scope_queryset,
     sync_user_roles,
 )
-from aira_management.roles import Role
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser, Group
+
+from aira_common.permissions import Permission
 
 pytestmark = pytest.mark.django_db
 
@@ -68,7 +66,7 @@ def test_a_realm_role_confers_nothing(settings) -> None:
     sync_user_roles(user, {"realm_access": {"roles": ["global-admin", "it-security"]}})
 
     assert set(user.groups.values_list("name", flat=True)) == set()
-    assert has_role(user, Role.GLOBAL_ADMIN) is False
+    assert may(user, Permission.USECASE_CREATE) is False
 
 
 def test_a_group_the_configuration_does_not_name_confers_nothing() -> None:
@@ -89,24 +87,24 @@ def test_a_malformed_groups_claim_confers_nothing_rather_than_raising() -> None:
     assert set(user.groups.values_list("name", flat=True)) == set()
 
 
-def test_has_role_and_governance() -> None:
+def test_a_role_grants_what_the_engine_says_it_grants() -> None:
     admin = _user_with_roles("global-admin")
-    assert has_role(admin, Role.GLOBAL_ADMIN) is True
-    assert has_governance_role(admin) is True
+    assert may(admin, Permission.USECASE_CREATE) is True
+    assert may(admin, Permission.USECASE_READ_RETIRED) is True
 
     user = _user_with_roles()
-    assert has_governance_role(user) is False
+    assert may(user, Permission.USECASE_READ_RETIRED) is False
 
 
-def test_has_role_anonymous_is_false() -> None:
-    assert has_role(AnonymousUser(), Role.GLOBAL_ADMIN) is False
+def test_an_anonymous_user_may_nothing() -> None:
+    assert may(AnonymousUser(), Permission.USECASE_READ_ALL) is False
 
 
 def test_permission_classes_global_admin_implies_all() -> None:
     admin = _request(_user_with_roles("global-admin"))
-    assert IsGlobalAdmin().has_permission(admin, None) is True
-    assert IsITSecurity().has_permission(admin, None) is True
-    assert IsGlobalAdminOrUseCaseAdministrator().has_permission(admin, None) is True
+    assert requires(Permission.USECASE_CREATE)().has_permission(admin, None) is True
+    assert requires(Permission.SMOKETEST_AUTHOR)().has_permission(admin, None) is True
+    assert MaySearchDirectory().has_permission(admin, None) is True
 
 
 def test_permission_class_denies_somebody_with_no_role() -> None:
@@ -114,9 +112,9 @@ def test_permission_class_denies_somebody_with_no_role() -> None:
     now *is* at the organisation level: their authority is on a use case, not on the installation,
     so the role gates are all shut for them."""
     nobody = _request(_user_with_roles())
-    assert IsGlobalAdminOrUseCaseAdministrator().has_permission(nobody, None) is False
-    assert IsGlobalAdmin().has_permission(nobody, None) is False
-    assert IsITSecurity().has_permission(nobody, None) is False
+    assert MaySearchDirectory().has_permission(nobody, None) is False
+    assert requires(Permission.USECASE_CREATE)().has_permission(nobody, None) is False
+    assert requires(Permission.SMOKETEST_AUTHOR)().has_permission(nobody, None) is False
 
 
 def test_scope_queryset_governance_sees_all() -> None:
@@ -161,5 +159,5 @@ def test_security_oversight_is_still_not_a_spend_role() -> None:
     user = get_user_model().objects.create(username="itsec-spend")
     sync_user_roles(user, {"groups": ["/aira/it-security"]})
 
-    assert not has_governance_role(user)
-    assert has_oversight_role(user)
+    assert not may(user, Permission.USECASE_READ_RETIRED)
+    assert may(user, Permission.USECASE_READ_ALL)

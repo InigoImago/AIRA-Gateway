@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.access import GrantRole, strongest
+from aira_common.permissions import Permission
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import RequestLog, UseCaseMemberRead, UseCaseRead
 
@@ -58,8 +59,9 @@ AUTHORITY_REFUSALS = frozenset(
 MESSAGES = {
     PayloadRefusal.OUT_OF_SCOPE: "This request belongs to a use case you do not have access to.",
     PayloadRefusal.NOT_A_CONTENT_ROLE: (
-        "Prompts and responses are available to IT Security, Global Administrators, and the "
-        "members of the use case that produced them. Oversight roles see the figures."
+        "Reading prompts and responses needs the permission to read stored content "
+        "(payload.read_any), or membership of the use case that produced them. Seeing its "
+        "figures does not include it."
     ),
     PayloadRefusal.OTHERS_REQUEST: (
         "This use case shows each member their own requests only. Its administrator can change "
@@ -207,13 +209,13 @@ async def _authority(
     session: AsyncSession, principal: Principal, row: RequestLog
 ) -> str | PayloadRefusal:
     """The ground on which this caller may read content, or the reason they may not."""
-    if principal.may_act_on_incidents:
+    if principal.allows(Permission.PAYLOAD_READ_ANY):
         return "incident"
 
     if not row.use_case or row.use_case not in principal.use_cases:
         # An oversight role sees this request's figures on the same screen, so it is told what it
         # *is* rather than "not found".
-        if principal.is_oversight:
+        if principal.allows(Permission.TRACE_READ_ALL):
             return PayloadRefusal.NOT_A_CONTENT_ROLE
         return PayloadRefusal.OUT_OF_SCOPE
 
@@ -247,7 +249,7 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
     calling, how often and at what cost. An incident role is never restricted, nor is a use-case
     administrator inside their own use case; the rest is decided per use case.
     """
-    if principal.may_act_on_incidents or not principal.use_cases:
+    if principal.allows(Permission.INCIDENT_INVESTIGATE) or not principal.use_cases:
         return []
     slugs = list(principal.use_cases)
     restricted_slugs = {

@@ -12,8 +12,9 @@ from typing import Any
 
 from fastapi import Depends, Query, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 
+from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.incidents.common import router
 from aira_gateway.api.reporting.common import parse_cursor
@@ -67,19 +68,20 @@ async def content_reads(
     For the platform roles only: the log says who looked at whose requests, which a member of one
     use case is not entitled to know.
     """
-    if not (principal.is_oversight or principal.method == "demo"):
+    if not (principal.allows(Permission.CONTENT_READ_READ) or principal.method == "demo"):
         raise GeminiHTTPError(
             403,
-            "The content-read log is available to Global Administrators, IT Security and "
-            "IT Steuerung.",
+            "The content-read log needs the permission to read it (content_read.read).",
             "PERMISSION_DENIED",
         )
 
-    stmt = select(*(getattr(PayloadAccess, field) for field in READ_FIELDS))
+    # The filters without the cursor, so the total counts every page rather than what is left.
+    conditions: list[ColumnElement[bool]] = []
     if use_case:
-        stmt = stmt.where(PayloadAccess.use_case == use_case)
+        conditions.append(PayloadAccess.use_case == use_case)
     if reader:
-        stmt = stmt.where(or_(PayloadAccess.username == reader, PayloadAccess.subject == reader))
+        conditions.append(or_(PayloadAccess.username == reader, PayloadAccess.subject == reader))
+    stmt = select(*(getattr(PayloadAccess, field) for field in READ_FIELDS)).where(*conditions)
     if cursor:
         at, row_id = parse_cursor(cursor)
         # Written out: SQLite, which the hermetic tests run on, has no tuple comparison.
@@ -93,10 +95,18 @@ async def content_reads(
 
     async with sessionmaker_of(request)() as session:
         rows = list((await session.execute(stmt)).mappings().all())
+        total = (
+            await session.execute(
+                select(func.count()).select_from(PayloadAccess).where(*conditions)
+            )
+        ).scalar_one()
 
     has_more = len(rows) > limit
     rows = rows[:limit]
     next_cursor = (
         f"{rows[-1]['created_at'].isoformat()}|{rows[-1]['id']}" if has_more and rows else None
     )
-    return JSONResponse({"reads": [_row(row) for row in rows], "next_cursor": next_cursor})
+    # One page and the total, never the log: a reader pages through it at the server.
+    return JSONResponse(
+        {"reads": [_row(row) for row in rows], "next_cursor": next_cursor, "count": total}
+    )

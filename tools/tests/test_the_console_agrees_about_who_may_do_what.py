@@ -1,28 +1,12 @@
-"""The console's copies of the role sets, held to the shared definitions.
+"""The console asks the server's permissions, in the server's words (`FRD-614`, `ADR-0025`).
 
-`aira_common.roles` defines `INCIDENT_ROLES` and `OVERSIGHT_ROLES` as single definitions, and its
-own comment says why: on 2026-08-07 a live round found `it-steuerung` able to stop traffic in the
-gateway while Management refused it a global rule — **two planes, one question, two answers**,
-because the predicate had been written by hand in both.
+The console cannot import Python, so `core/auth/roles.ts` restates the permission catalogue, and
+this holds that copy to `aira_common.permissions` in both directions. A name the console asks that
+the server never lists withholds a control from everybody; a name the server lists that the console
+lacks is a capability with no way in. Neither announces itself (`FRD-206`).
 
-`core/auth/roles.ts` opens by naming that incident and then restates all three lists, because the
-console cannot import Python. Its own docstring says what that costs: *"A console that restates the
-list a third time is the same defect with a longer fuse: nothing fails when the server's list
-changes, the screen simply starts offering, or withholding, the wrong thing."*
-
-Nothing failed. The three lists happened to agree on 2026-08-20 and no test compared them, so the
-sentence describing the danger was the only thing standing between the console and it — and a rule
-only a reviewer enforces is one the next round breaks. This is the comparison, in the one language
-that can read both sides.
-
-**Both directions**, like the vocabulary check beside it: a role the console grants must be granted
-by the server, and a role the server grants must be offered by the console. One direction catches
-the console growing a permission the server refuses, which reads to a user as a broken button; the
-other catches the console withholding one the server allows, which is a capability with no way in —
-`FRD-206`'s defect, and the kind that does not announce itself.
-
-These stay *console* predicates: they decide what to **offer**, and the server decides what happens.
-That is the reason a disagreement is survivable, and not a reason to leave one in place.
+And no console file decides from a role slug: what a role may do is data on the server, so a role
+written into the console is a second definition that goes wrong silently the day a role changes.
 """
 
 from __future__ import annotations
@@ -34,51 +18,75 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "libs" / "src"))
 
-from aira_common.roles import INCIDENT_ROLES, OVERSIGHT_ROLES, Role  # noqa: E402
+from aira_common.permissions import CATALOGUE, Permission  # noqa: E402
 
 ROLES_TS = ROOT / "management" / "frontend" / "src" / "app" / "core" / "auth" / "roles.ts"
+APP = ROLES_TS.parents[2]
+
+ROLE_SLUGS = ("global-admin", "it-security", "it-steuerung")
+
+#: A role slug compared on the spot — in a component or a template alike.
+WRITTEN_OUT = re.compile(
+    r"""(includes|===|!==)\s*\(?\s*['"](""" + "|".join(ROLE_SLUGS) + r""")['"]"""
+)
 
 
-def _list(source: str, const: str) -> set[str]:
-    """The string members of a `const NAME = ['a', 'b'];` array."""
-    block = re.search(rf"const {const} = \[(.*?)\];", source, re.S)
-    assert block, f"{const} is no longer an array literal in roles.ts — move this check with it"
-    return set(re.findall(r"'([a-z-]+)'", block.group(1)))
+def _console_permissions() -> list[str]:
+    """The members of `export const PERMISSIONS = [...] as const;`, in order."""
+    source = ROLES_TS.read_text(encoding="utf-8")
+    block = re.search(r"export const PERMISSIONS = \[(.*?)\] as const;", source, re.S)
+    assert block, "PERMISSIONS is no longer an array literal in roles.ts — move this check with it"
+    found = re.findall(r"'([^']*)'", block.group(1))
+    assert found, "no permissions parsed from roles.ts — has the shape changed?"
+    return found
 
 
-def _slugs(roles: frozenset[Role]) -> set[str]:
-    return {str(role) for role in roles}
+def test_every_permission_the_console_asks_is_one_the_server_has() -> None:
+    known = {str(permission) for permission in Permission}
+    unknown = [name for name in _console_permissions() if name not in known]
+
+    assert not unknown, f"roles.ts names {unknown}, which the server has never heard of"
 
 
-def test_the_console_offers_the_kill_switch_to_exactly_the_incident_roles() -> None:
-    """The set the live round found wrong, in the plane that found it wrong."""
-    assert _list(ROLES_TS.read_text(), "INCIDENT_ROLES") == _slugs(INCIDENT_ROLES)
+def test_every_permission_the_server_has_is_one_the_console_knows() -> None:
+    console = set(_console_permissions())
+    missing = [str(permission) for permission in Permission if str(permission) not in console]
+
+    assert not missing, f"the server lists {missing}, and the console cannot ask for them"
 
 
-def test_the_console_shows_every_use_case_to_exactly_the_oversight_roles() -> None:
-    """Wider than governance by exactly IT Security, and the console has to know which — a role
-    that sees nothing is not a restricted view, it is an absent one."""
-    assert _list(ROLES_TS.read_text(), "OVERSIGHT_ROLES") == _slugs(OVERSIGHT_ROLES)
+def test_the_console_lists_them_in_the_catalogues_order() -> None:
+    """The order the console shows them in, grouped by area — and a duplicate shows up here too."""
+    assert _console_permissions() == [str(permission) for permission in CATALOGUE]
 
 
-def test_the_console_offers_standards_to_exactly_the_roles_that_may_write_them() -> None:
-    """`SECURITY_ROLES` mirrors Management's `IsITSecurity`, which is `INCIDENT_ROLES` today.
+def test_roles_ts_holds_no_role_and_no_role_set() -> None:
+    source = ROLES_TS.read_text(encoding="utf-8")
 
-    The console keeps it as a **separate** list on purpose — two questions with one answer — so the
-    check is separate too. Folding them together here would make this test unable to see the day
-    they stop coinciding, which is the only day either list matters.
-    """
-    from aira_management.roles import Role as ManagementRole  # noqa: PLC0415
-
-    expected = {str(role) for role in (ManagementRole.GLOBAL_ADMIN, ManagementRole.IT_SECURITY)}
-    assert _list(ROLES_TS.read_text(), "SECURITY_ROLES") == expected
+    assert not re.findall(r"\b[A-Z_]+_ROLES\b", source), "a role-set constant is back in roles.ts"
+    assert not [slug for slug in ROLE_SLUGS if slug in source], "roles.ts names a role"
 
 
-def test_every_role_the_console_names_is_a_role() -> None:
-    """A slug that is not in the vocabulary grants nothing and reads as though it did — the
-    `token_spike` shape, one screen over."""
-    named = set()
-    for const in ("INCIDENT_ROLES", "OVERSIGHT_ROLES", "SECURITY_ROLES"):
-        named |= _list(ROLES_TS.read_text(), const)
+def test_the_guard_sees_a_role_slug_in_either_form() -> None:
+    """A guard that cannot fail is the thing it guards against."""
+    assert WRITTEN_OUT.search("this.me()?.roles.includes('global-admin') ?? false")
+    assert WRITTEN_OUT.search("@if (me()?.roles?.includes('it-security')) {")
+    assert WRITTEN_OUT.search("role === 'it-steuerung'")
+    assert not WRITTEN_OUT.search("can(this.me(), 'catalog.write')")
 
-    assert named <= {str(role) for role in Role}
+
+def test_no_console_file_decides_from_a_role_slug() -> None:
+    """Every `.ts` and `.html` under the app, `roles.ts` included. A spec may name the role it is
+    about: that is the test being specific, not a second definition."""
+    offenders: list[str] = []
+    for path in sorted([*APP.rglob("*.ts"), *APP.rglob("*.html")]):
+        if path.name.endswith(".spec.ts"):
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if WRITTEN_OUT.search(line):
+                offenders.append(f"{path.relative_to(APP)}:{number}  {line.strip()[:90]}")
+
+    assert not offenders, (
+        "these decide authority from a role slug; ask `can()` from `core/auth/roles.ts` for the "
+        "permission instead:\n  " + "\n  ".join(offenders)
+    )

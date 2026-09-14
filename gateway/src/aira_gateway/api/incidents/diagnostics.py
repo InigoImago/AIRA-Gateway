@@ -10,6 +10,7 @@ from __future__ import annotations
 import structlog
 from fastapi import Request
 
+from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.serving import catalog_of
 from aira_gateway.audit import Outcome
@@ -29,10 +30,10 @@ _log = structlog.get_logger(__name__)
 
 def _require_a_checker(principal: Principal) -> None:
     """Only the roles that investigate an installation may ask a model about itself."""
-    if not principal.may_act_on_incidents:
+    if not principal.allows(Permission.OPERATIONS_DIAGNOSE):
         raise GeminiHTTPError(
             403,
-            "Checking a model is available to IT Security and Global Administrators.",
+            "Checking a model needs the permission to diagnose (operations.diagnose).",
             "PERMISSION_DENIED",
         )
 

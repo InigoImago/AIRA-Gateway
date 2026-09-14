@@ -198,21 +198,21 @@ def test_who_may_catalogue_is_one_definition_both_planes_read() -> None:
     guarded by a *visibility* predicate while Management correctly refused the same person, and
     the two planes disagreed for as long as nobody thought to ask them together. Asking a vendor
     what its credential offers is only useful to somebody who may act on the answer — which is
-    exactly this permission — and the gateway reads `CATALOG_ROLES` for it.
+    exactly this permission — and both ask `catalog.write` (`FRD-614`).
     """
     from aira_management.apps.catalog.views import ModelViewSet
-    from aira_management.rbac import MayCatalogueModels
+    from aira_management.rbac import requires, role_definitions
 
-    from aira_common.roles import CATALOG_ROLES, may_catalogue
+    from aira_common.permissions import Permission
+    from aira_common.roles import may_catalogue
 
     view = ModelViewSet()
     view.action = "create"
-    assert any(isinstance(p, MayCatalogueModels) for p in view.get_permissions())
-    assert set(MayCatalogueModels.roles) == set(CATALOG_ROLES)
-    # And the shared predicate agrees with the set, in both directions — the check that catches a
-    # role added to one and not the other.
-    for role in Role:
-        assert may_catalogue([str(role)]) is (role in CATALOG_ROLES), role
+    assert any(isinstance(p, requires(Permission.CATALOG_WRITE)) for p in view.get_permissions())
+    # And the gateway's predicate agrees with the engine, in both directions — the check that
+    # catches a role added to one and not the other.
+    for role in role_definitions():
+        assert may_catalogue([role.slug]) is (Permission.CATALOG_WRITE in role.permissions), role
 
 
 # ---- the KIRA id -----------------------------------------------------------------------

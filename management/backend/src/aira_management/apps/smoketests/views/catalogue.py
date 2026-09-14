@@ -8,9 +8,10 @@ from rest_framework import viewsets
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 
+from aira_common.permissions import Permission
 from aira_management.apps.smoketests.models import TestCase
 from aira_management.apps.smoketests.serializers import TestCaseSerializer
-from aira_management.rbac import IsITSecurity, MayRunTests
+from aira_management.rbac import MayRunTests, requires
 
 
 class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
@@ -23,7 +24,7 @@ class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
     def get_permissions(self) -> list[Any]:
         if self.request.method in ("GET", "HEAD", "OPTIONS"):
             return [IsAuthenticated(), MayRunTests()]
-        return [IsAuthenticated(), IsITSecurity()]
+        return [IsAuthenticated(), requires(Permission.SMOKETEST_AUTHOR)()]
 
     def perform_destroy(self, instance: TestCase) -> None:
         """Refuse to delete a question somebody has already answered, and say what to do instead.

@@ -4,6 +4,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from aira_common.permissions import Permission
 from aira_common.roles import parse_role_groups
 from aira_gateway.auth.oidc import OidcValidator, build_oidc_validator
 from aira_gateway.config import GatewaySettings
@@ -215,7 +216,7 @@ def test_a_configured_group_confers_its_role(role_groups) -> None:
 
     assert principal is not None
     assert principal.roles == ("it-steuerung",)
-    assert principal.is_governance is True
+    assert principal.allows(Permission.USECASE_READ_RETIRED) is True
 
 
 def test_a_realm_role_on_the_token_confers_nothing(role_groups) -> None:
@@ -229,8 +230,8 @@ def test_a_realm_role_on_the_token_confers_nothing(role_groups) -> None:
 
     assert principal is not None
     assert principal.roles == ()
-    assert principal.is_governance is False
-    assert principal.is_oversight is False
+    assert principal.allows(Permission.USECASE_READ_RETIRED) is False
+    assert principal.allows(Permission.USECASE_READ_ALL) is False
 
 
 def test_a_group_the_configuration_does_not_name_confers_nothing(role_groups) -> None:
@@ -265,7 +266,7 @@ def test_a_token_without_groups_yields_a_principal_with_no_roles() -> None:
 
     assert principal is not None
     assert principal.roles == ()
-    assert principal.is_governance is False
+    assert principal.allows(Permission.USECASE_READ_RETIRED) is False
 
 
 # ---- required claims (2026-08-08) -----------------------------------------------------------

@@ -4,7 +4,7 @@ import { errorMessage } from '../../core/api/error-message';
 import { CatalogModel, Me, ModelCheck, OfferedModel, ServedModel } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { mayCatalogue } from '../../core/auth/roles';
+import { can } from '../../core/auth/roles';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { TablePager } from '../../core/ui/table-pager';
@@ -62,8 +62,9 @@ export class ModelCatalog implements OnInit {
     (model) => `${model.name} ${model.display_name ?? ''} ${model.provider ?? ''}`,
   );
 
-  /** Only a Global Administrator maintains prices — they follow the provider contract. */
-  protected readonly canEdit = computed(() => mayCatalogue(this.me()?.roles));
+  /** Declaring, pricing and releasing a model needs `catalog.write` — prices follow the provider
+   *  contract, and a release changes what every use case may call. */
+  protected readonly canEdit = computed(() => can(this.me(), 'catalog.write'));
 
   /** Models in the catalog that would make consumption unaccountable. */
   protected readonly unpriced = computed(() => this.models().filter((m) => !m.is_priced));

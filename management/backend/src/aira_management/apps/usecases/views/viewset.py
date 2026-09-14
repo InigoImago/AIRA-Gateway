@@ -15,6 +15,7 @@ from rest_framework import viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 
+from aira_common.permissions import Permission
 from aira_management.apps.usecases.access import VIEW as _VIEW
 from aira_management.apps.usecases.access import may_call_queryset
 from aira_management.apps.usecases.events import emit
@@ -30,7 +31,7 @@ from aira_management.apps.usecases.views.pipeline import PipelineMixin
 from aira_management.apps.usecases.views.rate_limits import RateLimitsMixin
 from aira_management.apps.usecases.views.retirement import RetirementMixin
 from aira_management.pagination import ConsolePagination, apply_search
-from aira_management.rbac import IsGlobalAdmin, scope_queryset
+from aira_management.rbac import requires, scope_queryset
 
 
 class UseCaseViewSet(
@@ -78,7 +79,7 @@ class UseCaseViewSet(
         if self.action == "create":
             # A Global Administrator creates a use case and names the group administering it
             # (`ADR-0017`); administering one use case is no licence to create another.
-            return [IsAuthenticated(), IsGlobalAdmin()]
+            return [IsAuthenticated(), requires(Permission.USECASE_CREATE)()]
         return [IsAuthenticated()]
 
     def perform_create(self, serializer: Any) -> None:

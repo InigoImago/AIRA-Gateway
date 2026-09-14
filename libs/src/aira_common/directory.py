@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -17,6 +18,10 @@ from aira_common.access import SubjectKind
 #: How many of each kind one search returns. A search is a picker, not a report: the answer to
 #: "too many" is a better search term.
 SEARCH_LIMIT = 25
+
+#: The shortest literal a search sends. Keycloak's search is a pattern match, so what is left after
+#: its wildcards are removed has to be a search on its own.
+MIN_LITERAL = 2
 
 #: Long enough for a slow identity provider, short enough that a directory that is down says so
 #: quickly.
@@ -96,10 +101,47 @@ class KeycloakDirectory:
                 return _user_entry(row, found)
         return None
 
-    def search(self, query: str) -> list[DirectoryEntry]:
-        """Groups and users matching ``query``, groups first — granting to a group is the point."""
+    def group_exists(self, path: str) -> bool:
+        """Whether ``path`` is a group in the realm — exactly this path, as a token carries it.
+
+        Asked by path rather than by search: a search matches names and substrings, and binding a
+        role needs the one group whose full path this is (`FRD-614` FR-4). A path that is not
+        absolute names no group Keycloak can emit, so it is answered without asking.
+        """
+        wanted = path.strip()
+        if not wanted.startswith("/") or wanted == "/":
+            return False
         token = self._token()
-        return [*self._groups(token, query), *self._users(token, query)]
+        try:
+            response = self._http.get(
+                f"{self._base}/admin/realms/{self._realm}/group-by-path{quote(wanted, safe='/')}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        except httpx.HTTPError as exc:
+            raise DirectoryUnavailable("the identity provider could not be reached") from exc
+        if response.status_code == 404:
+            return False
+        if response.status_code != 200:
+            # A refusal to *look* (403 without `query-groups`) is not a "no": nobody could check.
+            raise DirectoryUnavailable("the identity provider could not be asked")
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise DirectoryUnavailable("the identity provider answered unreadably") from exc
+        return isinstance(body, dict) and body.get("path") == wanted
+
+    def search(self, query: str) -> list[DirectoryEntry]:
+        """Groups and users matching ``query``, groups first — granting to a group is the point.
+
+        The query is taken literally. Keycloak matches it as a pattern, so a `%` or `*` a caller
+        types would list the whole directory; both are removed, and what is left must still be
+        :data:`MIN_LITERAL` characters.
+        """
+        needle = query.replace("%", "").replace("*", "").strip()
+        if len(needle) < MIN_LITERAL:
+            return []
+        token = self._token()
+        return [*self._groups(token, needle), *self._users(token, needle)]
 
     def _token(self) -> str:
         try:
@@ -142,13 +184,16 @@ class KeycloakDirectory:
         )
         found: list[DirectoryEntry] = []
         # Flattened: Keycloak returns a tree, and a leaf is as grantable as its parent.
-        self._flatten(rows, found)
+        self._flatten(rows, found, query.lower())
         return found[:SEARCH_LIMIT]
 
-    def _flatten(self, rows: list[dict[str, Any]], into: list[DirectoryEntry]) -> None:
+    def _flatten(self, rows: list[dict[str, Any]], into: list[DirectoryEntry], needle: str) -> None:
         for row in rows:
             path = row.get("path")
-            if isinstance(path, str) and path:
+            # Only a group that matches itself is offered. Keycloak returns the parents of a
+            # match as the tree around it, and offering `/abteilungen` for "kundendienst" puts the
+            # wrong group first in the list a grant is picked from.
+            if isinstance(path, str) and path and needle in path.lower():
                 parent = path.rsplit("/", 1)[0] or "/"
                 into.append(
                     DirectoryEntry(
@@ -160,7 +205,7 @@ class KeycloakDirectory:
                 )
             children = row.get("subGroups")
             if isinstance(children, list):
-                self._flatten(children, into)
+                self._flatten(children, into, needle)
 
     def _users(self, token: str, query: str) -> list[DirectoryEntry]:
         rows = self._get(token, "/users", {"search": query, "max": SEARCH_LIMIT})

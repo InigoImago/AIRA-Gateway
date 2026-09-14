@@ -1,0 +1,132 @@
+<form class="form-stack" data-testid="role-editor" (ngSubmit)="save()">
+  @if (onlyPermissions()) {
+    <p class="callout" data-testid="builtin-notice">
+      {{ role()?.label }} is built in: its name and its group come from the installation's
+      configuration (<code>AIRA_ROLE_GROUPS</code>), so only what it may do can be changed here. It
+      cannot be deleted.
+    </p>
+    <p class="field__summary" data-testid="builtin-group">
+      Held through
+      @for (path of role()?.group_paths ?? []; track path) {
+        <code>{{ path }}</code>
+      } @empty {
+        no configured group
+      }
+    </p>
+  } @else {
+    <div class="form-inline">
+      <div class="field grow">
+        <label for="role-group">Keycloak group</label>
+        <div class="row">
+          <input
+            id="role-group"
+            name="group_path"
+            class="grow"
+            data-testid="role-group"
+            placeholder="/finance/controlling"
+            autocomplete="off"
+            [ngModel]="groupPath()"
+            (ngModelChange)="groupPath.set($event)"
+          />
+          <button
+            type="button"
+            class="btn"
+            data-testid="check-group"
+            [disabled]="!trimmedPath() || checking()"
+            (click)="checkGroup()"
+          >
+            {{ checking() ? 'Checking…' : 'Check group' }}
+          </button>
+        </div>
+        @if (currentCheck(); as result) {
+          <p
+            class="field__hint"
+            role="status"
+            data-testid="group-check-result"
+            [attr.data-verdict]="result.verdict"
+            [class.field__hint--error]="result.verdict !== 'confirmed'"
+          >
+            {{ result.message }}
+          </p>
+        } @else {
+          <p class="field__hint">
+            Everybody in this group holds the role. Keycloak is asked whether the group exists
+            before it is bound.
+          </p>
+        }
+      </div>
+      <div class="field grow">
+        <label for="role-label">Name</label>
+        <input
+          id="role-label"
+          name="label"
+          data-testid="role-label"
+          maxlength="120"
+          [ngModel]="label()"
+          (ngModelChange)="label.set($event)"
+        />
+      </div>
+    </div>
+  }
+
+  <fieldset class="role-permissions" data-testid="role-permission-boxes">
+    <legend class="field__legend">What the role may do</legend>
+    <p class="field__hint">
+      <span class="role-sensitive" aria-hidden="true">⚠</span> {{ sensitiveExplained }} Every change
+      to a role is recorded.
+    </p>
+    <div class="role-areas">
+      @for (area of areas(); track area.area) {
+        <div class="role-area" [attr.data-testid]="'area-' + area.area">
+          <h4 class="role-area__title">{{ area.area }}</h4>
+          @for (permission of area.permissions; track permission.name) {
+            <label class="checkline">
+              <input
+                type="checkbox"
+                [name]="permission.name"
+                [attr.data-testid]="'permission-' + permission.name"
+                [checked]="has(permission.name)"
+                (change)="toggle(permission.name, $any($event.target).checked)"
+              />
+              <span>
+                {{ permission.label }}
+                @if (permission.sensitive) {
+                  <span
+                    class="role-sensitive"
+                    [attr.data-testid]="'sensitive-' + permission.name"
+                    [title]="sensitiveExplained"
+                    >⚠ Sensitive</span
+                  >
+                }
+              </span>
+            </label>
+          }
+        </div>
+      }
+    </div>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn--primary" data-testid="save-role" [disabled]="!canSave()">
+      {{ feedback.busy() ? 'Saving…' : isNew() ? 'Create role' : 'Save' }}
+    </button>
+    <button type="button" class="btn" data-testid="cancel-role" (click)="cancelled.emit()">
+      Cancel
+    </button>
+    @if (blocker(); as why) {
+      <span class="field__hint" data-testid="save-blocked">{{ why }}</span>
+    }
+    <span class="form-actions__spacer"></span>
+    @if (role() && !onlyPermissions()) {
+      <button
+        type="button"
+        class="btn btn--danger"
+        data-testid="delete-role"
+        [disabled]="feedback.busy()"
+        (click)="remove()"
+      >
+        Delete role
+      </button>
+    }
+  </div>
+</form>

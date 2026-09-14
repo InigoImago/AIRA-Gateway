@@ -10,7 +10,7 @@ records the correction being made once:
 Two call sites were not carried with it, and both said "oversight" while asking "governance":
 
     api/usage.py         docstring: "Oversight reads; everybody else has to be a member"
-    kira ki_usage        message:   "This endpoint requires an oversight role."
+    kira ki_usage        message:   "This endpoint needs … (report.read_all)."
 
 IT Security is deliberately a member of nothing (`ADR-0007`), so the fallback in each case refused
 them every time. A message naming one rule while the code applies another is the worse of the two
@@ -96,4 +96,4 @@ def test_the_compatibility_surface_says_the_rule_it_applies() -> None:
         refusal = client.get(FIGURES["ki-usage"]).json()
 
     assert refusal["code"] == "ADMIN_PERMISSION_REQUIRED"
-    assert "oversight" in refusal["message"]
+    assert "report.read_all" in refusal["message"]

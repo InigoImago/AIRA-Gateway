@@ -30,6 +30,7 @@ from aira_gateway.api.usage import router as usage_router
 from aira_gateway.auth.dependencies import require_attribution
 from aira_gateway.auth.grants import GroupGrantResolver
 from aira_gateway.auth.oidc import build_oidc_validator
+from aira_gateway.auth.role_definitions import RoleResolver
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.budgets.ledger import BudgetLedger
 from aira_gateway.budgets.service import BudgetService
@@ -184,6 +185,8 @@ def _assemble_services(
     app.state.suspensions = SuspensionService(sessionmaker, enforce=settings.enforce_suspensions)
     # Which use cases a token's Keycloak groups were granted (`FRD-209`); the same cache shape.
     app.state.group_grants = GroupGrantResolver(sessionmaker)
+    # What each role may do (`FRD-614`); the same cache shape, refusing rather than admitting.
+    app.state.role_definitions = RoleResolver(sessionmaker, settings.parsed_role_groups())
     # Detection reads the rows the writer produces (`ADR-0014`), so every instance sees all the
     # traffic rather than its own share (`FRD-127`).
     app.state.anomalies = AnomalyService(

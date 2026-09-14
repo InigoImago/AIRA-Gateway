@@ -1,0 +1,153 @@
+<div class="stack">
+  <header class="spread">
+    <div>
+      <h2 class="card__title" style="margin: 0">Roles</h2>
+      <p class="muted" style="margin: 0.25rem 0 0">
+        What each role may do across the installation. Keycloak decides who holds a role, through
+        its group; AIRA decides what the role may do.
+      </p>
+    </div>
+    @if (canManage()) {
+      <button type="button" class="btn btn--primary" data-testid="new-role" (click)="startNew()">
+        New role
+      </button>
+    }
+  </header>
+
+  @if (feedback.error(); as error) {
+    <div class="callout callout--danger" role="alert">{{ error }}</div>
+  }
+  @if (feedback.notice(); as notice) {
+    <div class="callout" role="status">{{ notice }}</div>
+  }
+  @if (me() && !canManage()) {
+    <p class="callout" data-testid="roles-readonly">
+      Only a Global Administrator manages roles. You can see every role, what it may do, and every
+      change made to one.
+    </p>
+  }
+
+  @if (loading()) {
+    <p class="muted" data-testid="roles-loading">Loading…</p>
+  } @else if (!roles().length) {
+    <p class="empty" data-testid="no-roles">No roles to show.</p>
+  } @else {
+    <div class="table-wrap">
+      <table class="table" data-testid="roles-table">
+        <thead>
+          <tr>
+            <th scope="col">Role</th>
+            <th scope="col">Keycloak group</th>
+            <th scope="col">Permissions</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (role of roles(); track role.slug) {
+            <tr
+              [attr.data-testid]="'role-row-' + role.slug"
+              [class.is-open]="role.slug === selectedSlug()"
+            >
+              <td>
+                <div class="row">
+                  <button
+                    type="button"
+                    class="row-toggle"
+                    data-testid="role-open"
+                    [attr.aria-expanded]="role.slug === selectedSlug()"
+                    (click)="select(role.slug)"
+                  >
+                    {{ role.label }}
+                  </button>
+                  @if (role.fixed) {
+                    <span
+                      class="badge badge--muted"
+                      data-testid="badge-fixed"
+                      title="Defined in code, so that no change here can lock everybody out"
+                      ><span aria-hidden="true">🔒</span> Fixed</span
+                    >
+                  } @else if (role.builtin) {
+                    <span
+                      class="badge"
+                      data-testid="badge-builtin"
+                      title="Its name and group come from configuration; what it may do can change"
+                      >Built in</span
+                    >
+                  }
+                </div>
+              </td>
+              <td data-testid="role-groups">
+                @if (role.group_paths.length) {
+                  <code>{{ groups(role) }}</code>
+                } @else {
+                  <span class="muted">No group configured</span>
+                }
+              </td>
+              <td data-testid="role-count">{{ role.permissions.length }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+
+  @if (selected(); as role) {
+    <section class="card stack" data-testid="role-details">
+      <div class="spread">
+        <h3 class="card__title">{{ role.label }}</h3>
+        @if (canManage() && !role.fixed) {
+          <button type="button" class="btn" data-testid="edit-role" (click)="edit()">
+            Edit role
+          </button>
+        }
+      </div>
+      @if (role.fixed) {
+        <p class="callout" data-testid="role-fixed-notice">
+          The Global Administrator and IT Security are defined in code and cannot be changed, so
+          that no change here can lock everybody out. The Global Administrator holds every
+          permission, including any added later.
+        </p>
+      }
+      <div class="role-areas" data-testid="role-permissions">
+        @for (area of heldAreas(); track area.area) {
+          <div class="role-area">
+            <h4 class="role-area__title">{{ area.area }}</h4>
+            <ul class="role-held">
+              @for (permission of area.permissions; track permission.name) {
+                <li [attr.data-testid]="'held-' + permission.name">
+                  {{ permission.label }}
+                  @if (permission.sensitive) {
+                    <span class="role-sensitive" [title]="sensitiveExplained">⚠ Sensitive</span>
+                  }
+                </li>
+              }
+            </ul>
+          </div>
+        } @empty {
+          <p class="muted" style="margin: 0">This role may do nothing yet.</p>
+        }
+      </div>
+    </section>
+  }
+
+  @if (editor(); as mode) {
+    <app-modal
+      [open]="true"
+      [title]="mode === 'new' ? 'New role' : 'Change ' + (selected()?.label ?? '')"
+      testid="role-window"
+      [withFoot]="false"
+      (closed)="close()"
+    >
+      <div modal-body>
+        <app-role-editor
+          [role]="mode === 'new' ? null : selected()"
+          [catalogue]="catalogue()"
+          (saved)="onSaved($event)"
+          (deleted)="onDeleted()"
+          (cancelled)="close()"
+        />
+      </div>
+    </app-modal>
+  }
+
+  <app-role-changes [labels]="labels()" [catalogue]="catalogue()" />
+</div>

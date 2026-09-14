@@ -34,9 +34,9 @@
     </div>
   </div>
 
-  @if (loading()) {
+  @if (view.loading() && !view.rows().length) {
     <p class="muted" data-testid="reads-loading">Loading…</p>
-  } @else if (!reads().length) {
+  } @else if (!view.rows().length) {
     <p class="empty" data-testid="no-reads">
       @if (filtered()) {
         No reads match these filters.
@@ -58,7 +58,7 @@
           </tr>
         </thead>
         <tbody>
-          @for (row of reads(); track row.id) {
+          @for (row of view.rows(); track row.id) {
             <tr [attr.data-testid]="'read-' + row.id">
               <td>{{ row.created_at | date: 'dd.MM.yyyy HH:mm' }}</td>
               <td data-testid="read-who">{{ who(row) }}</td>
@@ -85,18 +85,6 @@
         </tbody>
       </table>
     </div>
-    @if (cursor()) {
-      <div class="row">
-        <button
-          type="button"
-          class="btn"
-          (click)="loadMore()"
-          [disabled]="loadingMore()"
-          data-testid="reads-load-more"
-        >
-          {{ loadingMore() ? 'Loading…' : 'Load more' }}
-        </button>
-      </div>
-    }
+    <app-table-pager [view]="view" noun="reads" testid="reads-pager" />
   }
 </div>

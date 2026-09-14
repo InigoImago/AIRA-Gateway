@@ -50,7 +50,7 @@ Later: `FRD-106-openai-api` (OpenAI-compatible surface on the same canonical sch
 **Goal:** The management app exists with SSO, RBAC, and use-case CRUD; Angular shell in place.
 
 Deliverables:
-- Django + DRF backend; Keycloak SSO (OIDC); the 5 roles as groups + object-level perms (guardian).
+- Django + DRF backend; Keycloak SSO (OIDC); roles held through groups (three built in, `ADR-0017`; more an installation defines, `ADR-0025`) + object-level perms (guardian).
 - **Use-case self-service**: create/edit use cases, assign members, membership → access.
 - Angular SPA shell: login (OIDC), role-aware navigation, use-case list/detail.
 - Config event schema (Management → Gateway) v1 over Kafka; Gateway read-model skeleton.

@@ -81,6 +81,8 @@ function manySuspensions(count: number) {
 }
 
 interface Options {
+  /** What `/me` lists. Absent means both of this page's powers: stopping and authoring. */
+  permissions?: string[];
   roles?: string[];
   events?: AnomalyEvent[];
   suspensions?: Observable<{ suspensions: Suspension[] }>;
@@ -150,7 +152,8 @@ function setup(options: Options = {}) {
           get: () =>
             of({
               username: 'itsec',
-              roles: options.roles ?? ['it-security'],
+              roles: options.roles ?? [],
+              permissions: options.permissions ?? ['incident.suspend', 'anomaly.rule.global.write'],
               use_cases: [],
             } as unknown as Me),
         },
@@ -235,8 +238,8 @@ describe('SecurityPage — suspensions and the kill switch', () => {
     expect(testid('active-banner')?.textContent).toContain('1');
   });
 
-  it('offers the kill switch to an incident role', () => {
-    const { component, fixture, testid } = setup({ roles: ['it-security'] });
+  it('offers the kill switch to whoever may suspend', () => {
+    const { component, fixture, testid } = setup({ permissions: ['incident.suspend'] });
     (component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
     fixture.detectChanges();
 
@@ -244,10 +247,10 @@ describe('SecurityPage — suspensions and the kill switch', () => {
     expect(testid('stop-readonly')).toBeNull();
   });
 
-  it('withholds it from a read-only governance role, and says who does it', () => {
-    // `it-steuerung` sees every use case and every figure and writes nothing anywhere (PRD §154);
-    // a button that answers 403 is the defect `FRD-206` names.
-    const { component, fixture, testid } = setup({ roles: ['it-steuerung'] });
+  it('withholds it from a reader who only sees, and says who does it', () => {
+    // Seeing every finding is not stopping anything; a button that answers 403 is the defect
+    // `FRD-206` names.
+    const { component, fixture, testid } = setup({ permissions: ['anomaly.read_all'] });
     (component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
     fixture.detectChanges();
 
@@ -386,7 +389,7 @@ describe('SecurityPage — suspensions and the kill switch', () => {
     // A caller who may see findings and not suspensions gets a 403: an answer about a permission,
     // not a broken screen.
     const harness = setup({
-      roles: ['it-steuerung'],
+      permissions: ['anomaly.read_all'],
       suspensions: throwError(() => ({ status: 403 })),
     });
     const component = harness.component as unknown as {
@@ -548,7 +551,10 @@ describe('SecurityPage — reading a rule', () => {
         },
         {
           provide: MeService,
-          useValue: { currency: signal(''), get: () => of({ roles: [] } as unknown as Me) },
+          useValue: {
+            currency: signal(''),
+            get: () => of({ roles: [], permissions: [] } as unknown as Me),
+          },
         },
         { provide: ConfirmService, useValue: { ask: () => true } },
       ],
@@ -615,12 +621,12 @@ describe('SecurityPage — a rule opens and can be changed', () => {
     expect(detail).toContain('60 minutes');
   });
 
-  it('offers Edit to an incident role and explains the absence to everyone else', () => {
-    const allowed = onRules({ roles: ['it-security'] });
+  it('offers Edit to whoever may write global rules and explains the absence to everyone else', () => {
+    const allowed = onRules({ permissions: ['anomaly.rule.global.write'] });
     allowed.click('[data-testid="rule-toggle-1"]');
     expect(allowed.testid('rule-edit-1')).not.toBeNull();
 
-    const readOnly = onRules({ roles: ['it-steuerung'] });
+    const readOnly = onRules({ permissions: ['anomaly.read_all'] });
     readOnly.click('[data-testid="rule-toggle-1"]');
     expect(readOnly.testid('rule-edit-1')).toBeNull();
     expect(readOnly.testid('rule-readonly-1')?.textContent).toContain('IT Security');
@@ -822,24 +828,23 @@ describe('SecurityPage — while older findings are in flight', () => {
   });
   // ---- authoring a rule that applies everywhere (`FRD-500`, console side) ---------------------
 
-  it('offers a role that may act a way to author a global rule', () => {
-    // A global rule is IT Security's to author (`FRD-500`); a capability with no way in is
-    // `FRD-206`'s defect inverted.
-    const harness = setup({ roles: ['it-security'] });
+  it('offers whoever may write global rules a way to author one', () => {
+    // A capability with no way in is `FRD-206`'s defect inverted.
+    const harness = setup({ permissions: ['anomaly.rule.global.write'] });
     harness.toRules();
 
     expect(harness.testid('new-global-rule')).not.toBeNull();
   });
 
-  it('withholds it from a role that sees everything and may stop nothing', () => {
-    const harness = setup({ roles: ['it-steuerung'] });
+  it('withholds it from a reader who sees everything and may author nothing', () => {
+    const harness = setup({ permissions: ['anomaly.read_all'] });
     harness.toRules();
 
     expect(harness.testid('new-global-rule')).toBeNull();
   });
 
   it('creates the rule it was given, and says where it applies', () => {
-    const harness = setup({ roles: ['it-security'] });
+    const harness = setup({ permissions: ['anomaly.rule.global.write'] });
     const panel = harness.rulesPanel() as unknown as {
       createRule: (changes: Record<string, unknown>) => void;
     };
@@ -912,5 +917,46 @@ describe('SecurityPage — while older findings are in flight', () => {
 
     expect(harness.text()).toContain('global one');
     expect(harness.text()).not.toContain('local one');
+  });
+});
+
+describe('SecurityPage — stopping and authoring are separate permissions', () => {
+  /** Everything permission-gated this page renders, with both tabs visited and the rule opened. */
+  function offered(options: Options): string[] {
+    const harness = setup(options);
+    const found: string[] = [];
+    harness.toSuspensions();
+    if (harness.testid('stop-toggle')) found.push('stop');
+    if (harness.element.querySelector('[aria-label="Restore access for ada"]'))
+      found.push('restore');
+    harness.toRules();
+    if (harness.testid('new-global-rule')) found.push('new-rule');
+    harness.click('[data-testid="rule-toggle-1"]');
+    if (harness.testid('rule-edit-1')) found.push('edit-rule');
+    return found;
+  }
+
+  it('offers the kill switch and restoring to `incident.suspend`, and no rule authoring', () => {
+    expect(offered({ permissions: ['incident.suspend'] })).toEqual(['stop', 'restore']);
+  });
+
+  it('offers rule authoring to `anomaly.rule.global.write`, and no kill switch', () => {
+    expect(offered({ permissions: ['anomaly.rule.global.write'] })).toEqual([
+      'new-rule',
+      'edit-rule',
+    ]);
+  });
+
+  it('offers nothing to a reader who investigates and does not stop or author', () => {
+    expect(offered({ permissions: ['anomaly.read_all', 'incident.investigate'] })).toEqual([]);
+  });
+
+  it('asks the permissions and never the roles', () => {
+    // The server decides what a role holds, so a role with nothing listed is offered nothing…
+    expect(offered({ roles: ['global-admin', 'it-security'], permissions: [] })).toEqual([]);
+    // …and the permissions are enough on their own.
+    expect(
+      offered({ roles: [], permissions: ['incident.suspend', 'anomaly.rule.global.write'] }),
+    ).toEqual(['stop', 'restore', 'new-rule', 'edit-rule']);
   });
 });

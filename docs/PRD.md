@@ -149,8 +149,11 @@ Three observations the table makes visible and prose would hide:
 
 ## 3. Stakeholders & Roles
 
-Five initial roles (mapped later to Keycloak groups + Django permissions, object-level via
-`django-guardian`):
+Five initial roles. Since `ADR-0017` the last two are **grants on one use case**, not roles. Since
+`ADR-0025` the first three are built-in **roles** — sets of permissions, held through a Keycloak
+group — and an installation may define further roles in the console, each bound to one checked
+group (`FRD-614`). The Global Administrator and IT Security are fixed; IT Steuerung's permissions
+may be changed. [`ROLES.md`](ROLES.md) is the current model.
 
 | Role | Description | Key capabilities |
 |------|-------------|------------------|

@@ -421,7 +421,7 @@ async def test_an_oversight_role_that_may_not_act_is_refused_the_content(
 
     assert listed["traces"], "the oversight role lost sight of the request as well"
     assert response.status_code == 403
-    assert "IT Security" in response.json()["error"]["message"]
+    assert "payload.read_any" in response.json()["error"]["message"]
 
 
 async def test_a_refused_read_leaves_no_access_record(

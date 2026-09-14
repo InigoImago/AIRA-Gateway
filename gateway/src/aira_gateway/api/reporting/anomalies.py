@@ -10,6 +10,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.anomalies import RuleTarget
+from aira_common.permissions import Permission
 from aira_gateway.api.reporting.common import parse_cursor, router, scope_label, visible_scope
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -67,7 +68,7 @@ async def anomalies(
     A global rule's findings are shown to whoever may see the use case the traffic belonged to; a
     finding with no use case is oversight-only, since there is nobody else it is about.
     """
-    scope = visible_scope(principal)
+    scope = visible_scope(principal, Permission.ANOMALY_READ_ALL)
     if use_case and scope is not None and use_case not in scope:
         # Emptiness rather than a refusal, with `in_scope` saying which empty this is.
         return JSONResponse(

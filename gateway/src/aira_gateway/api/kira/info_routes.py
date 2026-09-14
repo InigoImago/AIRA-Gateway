@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
 from aira_common.models import Capability
+from aira_common.permissions import Permission
 from aira_gateway.api.kira import BASE, errors, schemas
 from aira_gateway.api.kira.headers import surface_headers
 from aira_gateway.api.serving import catalog_of, served_models
@@ -172,12 +173,14 @@ async def version_info(request: Request) -> Response:
 async def ki_usage(request: Request, principal: Principal = Depends(require_principal)) -> Response:
     """Token consumption per user, from `FRD-601`'s report.
 
-    For oversight roles (`is_oversight`), the same visibility rule reporting applies — a second
+    For `report.read_all`, the same visibility rule reporting applies — a second
     entry point to the same data must not have a second rule (`FRD-602` §5.3).
     """
-    if not principal.is_oversight:
+    if not principal.allows(Permission.REPORT_READ_ALL):
         raise errors.KiraError(
-            403, errors.ADMIN_PERMISSION_REQUIRED, "This endpoint requires an oversight role."
+            403,
+            errors.ADMIN_PERMISSION_REQUIRED,
+            "This endpoint needs the permission to read every figure (report.read_all).",
         )
 
     start_raw = request.query_params.get("startDatum")

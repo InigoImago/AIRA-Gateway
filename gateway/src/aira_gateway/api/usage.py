@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from aira_common.permissions import Permission
 from aira_gateway.auth.dependencies import (
     authorize_use_case,
     require_principal,
@@ -27,9 +28,9 @@ async def usage(
     use_case: str, request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
     require_valid_use_case(use_case)
-    # Oversight reads; everybody else has to be a member (the `FRD-601` split). `is_oversight`, not
-    # `is_governance`: IT Security is a member of nothing (`ADR-0007`) and must still see it.
-    if not principal.is_oversight:
+    # `report.read_all` reads; everybody else has to be a member (the `FRD-601` split). A
+    # permission, not membership: IT Security is a member of nothing (`ADR-0007`) and must see it.
+    if not principal.allows(Permission.REPORT_READ_ALL):
         authorize_use_case(principal, use_case)
     service: BudgetService = budgets_of(request)
     # A per-person budget has one figure per person. The reader is shown their own, keyed by person

@@ -1,15 +1,16 @@
-"""Role-based access control (`FRD-201`, `ADR-0017`).
+"""Role-based access control (`FRD-201`, `ADR-0017`, `ADR-0025`).
 
 **Group membership is the source of truth.** On authentication the token's Keycloak groups are
 resolved through the configured mapping and synced onto the user's Django groups; a realm role on
 the same token is not read, so assigning one directly grants nothing.
 
-Only three roles arrive this way. `use-case-admin` and `use-case-user` are a group's relationship
-to *one* use case, held in `UseCaseGroupGrant` and enforced through guardian object permissions
-(`FRD-209`): a predicate that wants "administers a use case" asks the object, never the token.
+**What a role may do is the permission engine's answer** (`aira_common.permissions`, `FRD-614`).
+Every installation-wide check here asks :func:`may` with a `Permission`, never a role: a view that
+named a role would be a second place saying who may do what.
 
-DRF permission classes gate views by role, and ``scope_queryset`` narrows lists to what the caller
-may see.
+What somebody may do *inside* one use case is a grant on that use case, held in
+`UseCaseGroupGrant` and enforced through guardian object permissions (`FRD-209`): a predicate that
+wants "administers a use case" asks the object, never the token.
 """
 
 from __future__ import annotations
@@ -22,14 +23,15 @@ from django.db.models import QuerySet
 from guardian.shortcuts import get_objects_for_user
 from rest_framework.permissions import BasePermission
 
-from aira_common.roles import parse_role_groups, roles_from_groups
-from aira_management.roles import (
-    ALL_ROLES,
-    CATALOG_ROLES,
-    GOVERNANCE_ROLES,
-    OVERSIGHT_ROLES,
-    Role,
+from aira_common.permissions import (
+    Permission,
+    RoleDefinition,
+    allows,
+    builtin_roles,
+    parse_permissions,
 )
+from aira_common.roles import parse_role_groups, roles_from_groups
+from aira_management.roles import ALL_ROLES, Role
 
 #: The two object permissions a role gate asks about. Defined here rather than in
 #: `apps.usecases.access`, which imports this module and re-exports them.
@@ -48,6 +50,30 @@ def role_groups() -> dict[Role, tuple[str, ...]]:
     case.
     """
     return parse_role_groups(getattr(settings, "AIRA_ROLE_GROUPS", "") or "")
+
+
+def role_definitions() -> tuple[RoleDefinition, ...]:
+    """Every role this installation knows, with what each may do (`FRD-614`).
+
+    The fixed roles from code, IT Steuerung with its stored set (its default when none is stored),
+    and every role the installation defined, each conferred by its one group.
+    """
+    from aira_management.apps.roles.models import StoredRole
+
+    rows = list(StoredRole.objects.all())
+    steuerung = next((row for row in rows if row.slug == str(Role.IT_STEUERUNG)), None)
+    stored_set = parse_permissions(steuerung.permissions) if steuerung is not None else None
+    custom = tuple(
+        RoleDefinition(
+            slug=row.slug,
+            label=row.label,
+            group_paths=(row.group_path,) if row.group_path else (),
+            permissions=parse_permissions(row.permissions),
+        )
+        for row in rows
+        if not row.builtin
+    )
+    return builtin_roles(role_groups(), stored_set) + custom
 
 
 def _token_groups(claims: dict[str, Any]) -> list[str]:
@@ -123,80 +149,89 @@ def role_slugs(user: Any) -> set[str]:
     }
 
 
-def has_role(user: Any, *roles: Role) -> bool:
-    """True if the (authenticated) user holds any of ``roles``."""
-    if not user.is_authenticated:
-        return False
-    slugs = role_slugs(user)
-    return any(str(role) in slugs for role in roles)
+def held_roles_of(user: Any) -> tuple[RoleDefinition, ...]:
+    """The roles this user holds — every one of them through a Keycloak group.
 
-
-def has_governance_role(user: Any) -> bool:
-    return has_role(user, *GOVERNANCE_ROLES)
-
-
-def has_oversight_role(user: Any) -> bool:
-    """Whether this user may see every use case — a wider set than may see every figure.
-
-    IT Security's "restricted view" (PRD §154) restricts business content and spend, not knowing
-    which use cases exist: their retention, storage, filters and limits are what it oversees.
+    A built-in role through the Django group `sync_user_roles` keeps equal to the token; a stored
+    role through the mirror of its group `sync_user_groups` keeps. One read of the user's groups
+    answers both.
     """
-    return has_role(user, *OVERSIGHT_ROLES)
+    if not getattr(user, "is_authenticated", False):
+        return ()
+    names = list(user.groups.values_list("name", flat=True))
+    slugs = {name for name in names if not name.startswith(KEYCLOAK_GROUP_PREFIX)}
+    paths = {name[len(KEYCLOAK_GROUP_PREFIX) :] for name in names if name not in slugs}
+    return tuple(
+        role
+        for role in role_definitions()
+        if (role.slug in slugs if role.builtin else any(p in paths for p in role.group_paths))
+    )
+
+
+def permissions_of(user: Any) -> frozenset[Permission]:
+    """Everything this user may do across the installation: the union over their roles
+    (`FRD-614` FR-7). Nothing for an anonymous user."""
+    granted: frozenset[Permission] = frozenset()
+    for role in held_roles_of(user):
+        granted |= role.permissions
+    return granted
+
+
+def may(user: Any, permission: Permission) -> bool:
+    """The one installation-wide question every view asks."""
+    return allows(permissions_of(user), permission)
 
 
 def scope_queryset(user: Any, perm: str, queryset: QuerySet[Any]) -> QuerySet[Any]:
-    """Return only the objects the user may see: all for oversight, else guardian-permitted."""
-    if has_oversight_role(user):
+    """Return only the objects the user may see: all with `usecase.read_all` or
+    `usecase.manage_all`, else guardian-permitted.
+
+    Administering every use case includes seeing them — a use case nobody can reach is one nobody
+    can administer. The converse does not hold: seeing never implies acting (`ADR-0007`).
+    """
+    granted = permissions_of(user)
+    if Permission.USECASE_READ_ALL in granted or Permission.USECASE_MANAGE_ALL in granted:
         return queryset
     return get_objects_for_user(user, perm, klass=queryset)
 
 
-class _HasAnyRole(BasePermission):
-    roles: tuple[Role, ...] = ()
+class _Requires(BasePermission):
+    permission: Permission
 
-    def has_permission(self, request: Any, view: Any) -> bool:
-        return has_role(request.user, *self.roles)
-
-
-class IsGlobalAdmin(_HasAnyRole):
-    roles = (Role.GLOBAL_ADMIN,)
+    def has_permission(self, request: Any, view: Any) -> bool:  # noqa: ARG002
+        return may(request.user, self.permission)
 
 
-class MayCatalogueModels(_HasAnyRole):
-    """Who may declare a model, price it and release it for use (`FRD-307`).
-
-    The same set as `IsGlobalAdmin` today, and a separate name because the gateway guards a
-    question by the same rule and takes it from the same definition, `CATALOG_ROLES`
-    (`test_catalog_roles_are_one_definition`, `FRD-503`).
-    """
-
-    roles = tuple(sorted(CATALOG_ROLES))
+#: One DRF permission class per permission, made once so a view and a test name the same class.
+_REQUIRES: dict[Permission, type[_Requires]] = {
+    permission: type(f"Requires_{permission.name}", (_Requires,), {"permission": permission})
+    for permission in Permission
+}
 
 
-class IsITSecurity(_HasAnyRole):
-    roles = (Role.GLOBAL_ADMIN, Role.IT_SECURITY)
+def requires(permission: Permission) -> type[BasePermission]:
+    """The DRF permission class that lets a request through when its user holds ``permission``."""
+    return _REQUIRES[permission]
 
 
-class IsITSteuerung(_HasAnyRole):
-    roles = (Role.GLOBAL_ADMIN, Role.IT_STEUERUNG)
+class MaySearchDirectory(BasePermission):
+    """`directory.search`, or somebody who administers **at least one** use case (`ADR-0017`).
 
-
-class IsGlobalAdminOrUseCaseAdministrator(BasePermission):
-    """A Global Administrator, or somebody who administers **at least one** use case (`ADR-0017`).
-
-    Administering a use case is a grant on *that* use case, so this asks the object grants. Used
-    by the directory search: the people who add members need the person and group picker.
+    Administering a use case is a grant on *that* use case, so this asks the object grants. The
+    people who add members need the person and group picker.
     """
 
     def has_permission(self, request: Any, view: Any) -> bool:  # noqa: ARG002
         from aira_management.apps.usecases.models import UseCase
 
         user = request.user
-        if has_role(user, Role.GLOBAL_ADMIN):
+        if may(user, Permission.DIRECTORY_SEARCH):
             return True
         if not getattr(user, "is_authenticated", False):
             return False
-        return get_objects_for_user(user, MANAGE_PERM, klass=UseCase).exists()
+        # A live use case: retiring one ends every access it granted (`FRD-607`).
+        live = UseCase.objects.filter(deleted_at__isnull=True)
+        return get_objects_for_user(user, MANAGE_PERM, klass=live).exists()
 
 
 class MayRunTests(BasePermission):
@@ -207,9 +242,9 @@ class MayRunTests(BasePermission):
     `access.may_run_tests_queryset`, asked per object by every endpoint — a class-level permission
     cannot see an object.
 
-    A Global Administrator, IT Security, and an administrator of some use case. A normal use-case
-    user is deliberately not among them: a run spends the use case's budget a hundred prompts at a
-    time, a decision about the use case rather than work inside it.
+    `smoketest.run_any`, or an administrator of some use case. A normal use-case user is
+    deliberately not among them: a run spends the use case's budget a hundred prompts at a time, a
+    decision about the use case rather than work inside it.
     """
 
     def has_permission(self, request: Any, view: Any) -> bool:  # noqa: ARG002
@@ -219,6 +254,6 @@ class MayRunTests(BasePermission):
         user = request.user
         if not getattr(user, "is_authenticated", False):
             return False
-        if has_role(user, Role.GLOBAL_ADMIN, Role.IT_SECURITY):
+        if may(user, Permission.SMOKETEST_RUN_ANY):
             return True
         return may_run_tests_queryset(user, UseCase.objects.all()).exists()

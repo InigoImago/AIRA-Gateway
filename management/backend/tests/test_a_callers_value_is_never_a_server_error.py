@@ -89,7 +89,18 @@ WEIRD: list[str] = [
 #: Query parameters these views read. Derived by grepping `query_params` would be prettier and
 #: would miss the ones DRF reads for the view (`page`, `format`); this list is checked against the
 #: source by :func:`test_every_query_parameter_the_source_reads_is_swept`.
-QUERY = ["q", "may_call", "group_path", "use_case", "model", "page", "page_size", "format", "mine"]
+QUERY = [
+    "q",
+    "may_call",
+    "group_path",
+    "use_case",
+    "model",
+    "page",
+    "page_size",
+    "format",
+    "mine",
+    "role",
+]
 
 #: Bodies a console form could plausibly produce, each wrong in one way. Sent as **raw bytes**:
 #: `format="json"` routes them through the client's own encoder, which refuses `Infinity` and a

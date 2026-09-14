@@ -106,3 +106,28 @@ def test_the_document_says_where_a_role_comes_from() -> None:
         "docs/ROLES.md does not say that a Keycloak realm role grants nothing — which is the one "
         "thing a reader coming from a realm-role installation has to be told (ADR-0017)"
     )
+
+
+def _permission_rows() -> dict[str, list[str]]:
+    """`| `perm` | may | ⚠ | GA | SEC | STG |` rows of §2, by permission name."""
+    rows: dict[str, list[str]] = {}
+    for line in _text().splitlines():
+        match = re.match(r"\|\s*`([a-z_.]+)`\s*\|", line)
+        if match and "." in match.group(1):
+            rows[match.group(1)] = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    return rows
+
+
+def test_the_permission_table_is_the_engines() -> None:
+    """Every permission, and what each built-in role holds, as the engine defines it — the table
+    a reader copies from is the one that went stale last time, so it is compared, not trusted."""
+    from aira_common.permissions import CATALOGUE, builtin_roles
+
+    rows = _permission_rows()
+    assert set(rows) == {str(permission) for permission in CATALOGUE}, "§2 lists other permissions"
+    for role, column in zip(builtin_roles({}), (3, 4, 5), strict=True):
+        for permission in CATALOGUE:
+            ticked = rows[str(permission)][column] == "✓"
+            assert ticked == (permission in role.permissions), f"{role.slug} / {permission}"
+    for permission, info in CATALOGUE.items():
+        assert (rows[str(permission)][2] == "⚠") == info.sensitive, f"sensitive: {permission}"

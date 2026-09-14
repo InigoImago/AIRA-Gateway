@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
+from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.reporting.common import (
     csv_attachment,
@@ -52,7 +53,7 @@ async def reporting(
         )
 
     service: ReportingService = request.app.state.reporting
-    scope = visible_scope(principal)
+    scope = visible_scope(principal, Permission.REPORT_READ_ALL)
 
     # A filter narrows, never widens (`FRD-505` FR-3). Outside the caller's scope the report is
     # empty, and `in_scope` tells that empty apart from "nothing happened here".
@@ -93,7 +94,7 @@ async def register(
     """
     window_start, window_end = window(start, end, what="register")
     fmt = negotiate(request.headers.get("accept", ""))
-    scope = visible_scope(principal)
+    scope = visible_scope(principal, Permission.REPORT_READ_ALL)
     compiled = await RegisterService(sessionmaker_of(request)).compile(
         scope, window_start, window_end
     )

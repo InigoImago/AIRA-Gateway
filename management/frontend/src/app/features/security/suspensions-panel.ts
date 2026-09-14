@@ -37,7 +37,7 @@ export class SuspensionsPanel {
   readonly active = input<Suspension[]>([]);
   /** Lifted or expired — kept, because a review asks who stopped what, when and why. */
   readonly past = input<Suspension[]>([]);
-  /** Whether this caller may stop and restore traffic: an incident role, not an oversight one. */
+  /** Whether this caller may stop and restore traffic (`incident.suspend`), not only see it. */
   readonly canStop = input(false);
   /** Slugs for the scope picker — what this caller can see, which is what they can name. */
   readonly useCases = input<string[]>([]);

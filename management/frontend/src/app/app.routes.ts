@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/auth/auth.guard';
+import { platformLanding } from './features/platform/platform-landing';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'use-cases' },
@@ -54,11 +55,16 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./features/platform/platform-page').then((m) => m.PlatformPage),
     children: [
-      { path: '', pathMatch: 'full', redirectTo: 'content-reads' },
+      // The first page this caller may open, not always the first in the menu (`FRD-614`).
+      { path: '', pathMatch: 'full', redirectTo: platformLanding },
       {
         path: 'content-reads',
         loadComponent: () =>
           import('./features/platform/content-reads-page').then((m) => m.ContentReadsPage),
+      },
+      {
+        path: 'roles',
+        loadComponent: () => import('./features/platform/roles-page').then((m) => m.RolesPage),
       },
     ],
   },

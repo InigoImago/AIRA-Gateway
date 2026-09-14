@@ -22,6 +22,8 @@ BUDGET_TOPIC = "aira.budgets"
 RATE_LIMIT_TOPIC = "aira.rate-limits"
 MODEL_TOPIC = "aira.models"
 ANOMALY_RULE_TOPIC = "aira.anomaly-rules"
+#: What each role may do and which group confers it (`FRD-614` FR-8).
+ROLE_TOPIC = "aira.roles"
 
 #: The header naming a record's event type.
 EVENT_TYPE_HEADER = "event_type"

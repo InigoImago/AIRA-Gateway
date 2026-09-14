@@ -88,6 +88,10 @@ class ManagementSettings(BaseAiraSettings):
     # already knows, and says so.
     directory_client_id: str = ""
     directory_client_secret: str = ""
+    #: Where this service reaches Keycloak's admin API, when that is not the address in the
+    #: issuer. The issuer is the address *browsers* use; inside a container it is usually not
+    #: Keycloak at all, and every group check would then fail as "could not be asked".
+    directory_url: str = ""
 
     #: Which Keycloak group confers which AIRA role (`ADR-0017`), as
     #: ``role=/path[,/path];role=/path``. Group membership is the **only** source of a role — a

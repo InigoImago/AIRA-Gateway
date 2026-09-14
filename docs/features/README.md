@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**81 of 89 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**82 of 89 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -91,7 +91,7 @@ status that goes stale in the copy nobody opens.
 | [611](FRD-611-residency-refused-where-it-is-typed.md) | A region the policy forbids is refused where it is typed | 6 (governance) | ✅ Built |
 | [612](FRD-612-a-declaration-the-dialect-cannot-say.md) | A declaration the console accepts and the dialect cannot say | 6 | ✅ Built |
 | [613](FRD-613-one-person-one-identity.md) | One person, one identity, from the door to the audit row | 6 (governance) | ✅ Built |
-| [614](FRD-614-a-permission-is-a-row.md) | A permission is a row, not a predicate | 7 | ○ Draft |
+| [614](FRD-614-a-permission-is-a-row.md) | A permission is a row, not a predicate | 7 | ✅ Built |
 | [615](FRD-615-a-trace-crosses-the-bus.md) | A trace crosses the bus | 1 (observability) | ✅ Built |
 | [616](FRD-616-the-audit-trail-as-an-event-stream.md) | The audit trail as an event stream | 7 | ○ Draft |
 | [617](FRD-617-watching-the-wire-to-another-system.md) | Watching the wire to another system | 1 (observability) | ✅ Built |

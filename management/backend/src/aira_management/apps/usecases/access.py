@@ -14,9 +14,9 @@ from django.db.models import QuerySet
 from guardian.shortcuts import get_objects_for_user
 
 from aira_common.access import resolve
+from aira_common.permissions import Permission
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
-from aira_management.rbac import KEYCLOAK_GROUP_PREFIX, MANAGE_PERM, VIEW_PERM, has_role
-from aira_management.roles import Role
+from aira_management.rbac import KEYCLOAK_GROUP_PREFIX, MANAGE_PERM, VIEW_PERM, may
 
 #: Re-exported from `rbac`, which the role gates also read: one spelling per permission string.
 VIEW = VIEW_PERM
@@ -26,12 +26,12 @@ MANAGE = MANAGE_PERM
 
 def may_admin(user: Any, usecase: UseCase) -> bool:
     """May change or delete the use case itself."""
-    return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(CHANGE, usecase)
+    return may(user, Permission.USECASE_MANAGE_ALL) or user.has_perm(CHANGE, usecase)
 
 
 def may_manage(user: Any, usecase: UseCase) -> bool:
     """May change what happens inside it: members, keys, pipeline, budgets, limits."""
-    return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(MANAGE, usecase)
+    return may(user, Permission.USECASE_MANAGE_ALL) or user.has_perm(MANAGE, usecase)
 
 
 def holds_a_grant(user: Any, usecase: UseCase) -> bool:
@@ -55,12 +55,12 @@ def holds_a_grant(user: Any, usecase: UseCase) -> bool:
 
 
 def is_member(user: Any, usecase: UseCase) -> bool:
-    """True if the caller may act inside the use case — a grant, or a Global Administrator.
+    """True if the caller may act inside the use case — a grant, or `usecase.manage_all`.
 
-    Deliberately *not* "may see it": the oversight roles see every use case through
+    Deliberately *not* "may see it": `usecase.read_all` sees every use case through
     ``scope_queryset``, and read visibility must never imply the right to act (`ADR-0007`).
     """
-    return has_role(user, Role.GLOBAL_ADMIN) or holds_a_grant(user, usecase)
+    return may(user, Permission.USECASE_MANAGE_ALL) or holds_a_grant(user, usecase)
 
 
 def may_call_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCase]:
@@ -100,11 +100,13 @@ def may_run_tests_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[U
        use case they cannot call would refuse its first question. A role is no bypass of this.
     2. **Administration, not membership**: running the catalogue spends the use case's budget a
        hundred prompts at a time, a decision about the use case rather than work inside it. So an
-       administrator of *that* use case (`MANAGE`), or a Global Administrator or IT Security —
-       the latter by role, because it is deliberately a member of nothing (`ADR-0007`).
+       administrator of *that* use case (`MANAGE`), or `smoketest.run_any` — a permission rather
+       than a grant, because IT Security holds it and is deliberately a member of nothing
+       (`ADR-0007`).
     """
-    reachable = may_call_queryset(user, queryset)
-    if has_role(user, Role.GLOBAL_ADMIN, Role.IT_SECURITY):
+    # Only a live use case is run: retiring one ends every access it granted (`FRD-607`).
+    reachable = may_call_queryset(user, queryset.filter(deleted_at__isnull=True))
+    if may(user, Permission.SMOKETEST_RUN_ANY):
         return reachable
     if not getattr(user, "is_authenticated", False):
         return reachable.none()

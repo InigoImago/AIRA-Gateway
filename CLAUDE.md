@@ -25,8 +25,10 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 - **Toolchain** (see `ADR-0003`): **Python 3.14 + uv**, **Node 26** (Angular). Pin versions in
   `pyproject.toml`/`.python-version` and `package.json` `engines`/`.nvmrc`.
 - **AuthN**: Keycloak OIDC (bearer) **and** self-generated API keys (hashed at rest).
-- **Roles (initial)**: Global Administrator, IT Security, IT Steuerung (Governance),
-  Use Case Administrator, Use Case User. Least-privilege, object-scoped.
+- **Roles**: a role is a permission set held through one Keycloak group (`ADR-0025`). Three are
+  built in — Global Administrator and IT Security fixed, IT Steuerung editable — and an
+  installation may define more. Administering or using a use case is a grant on it (`ADR-0017`).
+  Least-privilege, object-scoped; every check asks one permission, never a role.
 - **Secrets**: only in **HashiCorp Vault** — never commit secrets.
 - **Observability**: OTLP → OpenTelemetry Collector → **Grafana `otel-lgtm`** locally (ADR-0004,
   supersedes the earlier SigNoz choice in ADR-0002).
@@ -43,7 +45,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **818 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **837 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -170,7 +172,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | Where to look | For |
 | --- | --- |
 | [`docs/features/README.md`](docs/features/README.md) | every feature, its status, its document |
-| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (24 ADRs) |
+| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (25 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
 | [`docs/PRD.md`](docs/PRD.md) §1.1 | the owner's canonical feature list |

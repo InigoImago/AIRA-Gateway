@@ -18,10 +18,10 @@
         }}</span>
       }
       <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
-      <!-- Platform administration (`FRD-622` FR-5), for the three platform roles: its own control
-           at the far right, set apart from who is signed in. A link, not a button: the area is a
-           place with its own address. -->
-      @if (hasOversight()) {
+      <!-- Platform administration (`FRD-622` FR-5), for whoever may read one of its pages — the
+           content-read log or the roles: its own control at the far right, set apart from who is
+           signed in. A link, not a button: the area is a place with its own address. -->
+      @if (may('content_read.read') || may('role.read')) {
         <span class="aira-user__divider" aria-hidden="true"></span>
         <a
           class="btn btn--sm aira-platform"
@@ -63,9 +63,9 @@
       >Pipeline tests</a
     >
   }
-  <!-- Cross-use-case requests (`FRD-505`), for the roles that may act on an incident. Not
-       `it-steuerung`: that role sees every figure and no content. -->
-  @if (mayInvestigate()) {
+  <!-- Cross-use-case requests (`FRD-505`), for whoever may investigate an incident. Seeing every
+       figure is a different permission and does not open this screen. -->
+  @if (may('incident.investigate')) {
     <a
       class="aira-nav__item"
       routerLink="/requests"
@@ -75,10 +75,11 @@
     >
   }
   <!--
-    The register of processing activities (`FRD-608`), for oversight roles. The gateway answers a
-    member with their own use cases too, but the screen's value is comparison across use cases.
+    The register of processing activities (`FRD-608`), for whoever reads every figure. The gateway
+    answers a member with their own use cases too, but the screen's value is comparison across use
+    cases.
   -->
-  @if (hasOversight()) {
+  @if (may('report.read_all')) {
     <a
       class="aira-nav__item"
       routerLink="/register"
@@ -87,8 +88,8 @@
       >Register</a
     >
   }
-  <!-- The security console (`FRD-502`), for oversight roles. -->
-  @if (hasOversight()) {
+  <!-- The security console (`FRD-502`), for whoever sees the findings of every use case. -->
+  @if (may('anomaly.read_all')) {
     <a
       class="aira-nav__item"
       routerLink="/security"

@@ -13,6 +13,7 @@ from dataclasses import replace
 from fastapi import Depends, Request
 
 from aira_common.observability import set_span_attributes
+from aira_common.permissions import effective, held_roles
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.attempts import record_failed_authentication
 from aira_gateway.auth.attribution import (
@@ -31,6 +32,7 @@ from aira_gateway.auth.grants import GroupGrantResolver
 from aira_gateway.auth.keys import is_aira_key
 from aira_gateway.auth.oidc import OidcValidator
 from aira_gateway.auth.principal import Principal
+from aira_gateway.auth.role_definitions import RoleResolver
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.persistence.recorder import client_ip
 from aira_gateway.state import sessionmaker_of
@@ -65,8 +67,25 @@ async def resolve_principal(request: Request) -> Principal | None:
         # a Keycloak that accepts connections and does not answer would stall every concurrent
         # request on the worker, API-key callers and `/readyz` included.
         principal = await asyncio.to_thread(validator.validate, token)
-        return await _with_group_grants(request, principal) if principal else None
+        if principal is None:
+            return None
+        return await _with_group_grants(request, await _with_permissions(request, principal))
     return None
+
+
+async def _with_permissions(request: Request, principal: Principal) -> Principal:
+    """What this caller may do across the installation: the roles their groups confer, stored ones
+    included (`FRD-614` FR-7, FR-8). Without a resolver the built-in roles the token resolved
+    decide, which is all a test app configures."""
+    resolver: RoleResolver | None = getattr(request.app.state, "role_definitions", None)
+    if resolver is None:
+        return principal
+    roles = held_roles(principal.groups, await resolver.definitions())
+    return replace(
+        principal,
+        roles=tuple(role.slug for role in roles),
+        permissions=effective(principal.groups, roles),
+    )
 
 
 async def _with_group_grants(request: Request, principal: Principal) -> Principal:

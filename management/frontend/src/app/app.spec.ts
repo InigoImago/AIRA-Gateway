@@ -13,11 +13,72 @@ const baseMe: Me = {
   email: 'demo@x',
   roles: [],
   use_cases: [],
+  // The server's names for every role (`FRD-614` FR-10), an installation's own role included.
+  role_labels: {
+    'global-admin': 'Global Administrator',
+    'it-security': 'IT Security',
+    'it-steuerung': 'IT Steuerung',
+    controlling: 'Controlling',
+  },
 };
 
 let loggedOut = false;
 
-function configure(authenticated: boolean, roles: string[] = []): void {
+/**
+ * What `/me` lists for each built-in role, as `aira_common.permissions` defines them. Used once, to
+ * show the navigation each built-in role sees did not change when the console stopped asking roles.
+ */
+const BUILTIN: Record<string, string[]> = {
+  'global-admin': [
+    'usecase.create',
+    'usecase.read_all',
+    'usecase.manage_all',
+    'usecase.read_retired',
+    'usecase.purge',
+    'catalog.write',
+    'budget.installation.write',
+    'report.read_all',
+    'trace.read_all',
+    'anomaly.read_all',
+    'anomaly.rule.global.write',
+    'incident.suspend',
+    'incident.investigate',
+    'payload.read_any',
+    'content_read.read',
+    'operations.diagnose',
+    'smoketest.author',
+    'smoketest.run_any',
+    'directory.search',
+    'role.read',
+    'role.manage',
+  ],
+  'it-security': [
+    'usecase.read_all',
+    'report.read_all',
+    'trace.read_all',
+    'anomaly.read_all',
+    'anomaly.rule.global.write',
+    'incident.suspend',
+    'incident.investigate',
+    'payload.read_any',
+    'content_read.read',
+    'operations.diagnose',
+    'smoketest.author',
+    'smoketest.run_any',
+    'role.read',
+  ],
+  'it-steuerung': [
+    'usecase.read_all',
+    'usecase.read_retired',
+    'report.read_all',
+    'trace.read_all',
+    'anomaly.read_all',
+    'content_read.read',
+    'role.read',
+  ],
+};
+
+function configure(authenticated: boolean, roles: string[] = [], permissions: string[] = []): void {
   TestBed.resetTestingModule();
   loggedOut = false;
   TestBed.configureTestingModule({
@@ -39,7 +100,7 @@ function configure(authenticated: boolean, roles: string[] = []): void {
       },
       {
         provide: MeService,
-        useValue: { currency: signal(''), get: () => of({ ...baseMe, roles }) },
+        useValue: { currency: signal(''), get: () => of({ ...baseMe, roles, permissions }) },
       },
     ],
   });
@@ -75,7 +136,23 @@ describe('App', () => {
     // `use-case-user`: a slug nobody can hold would make this assertion true for ever.
     expect(el.querySelector('[data-role="it-steuerung"]')).toBeNull();
     expect(el.textContent).toContain('IT Security');
-    expect(el.textContent).toContain('Global administrator');
+    expect(el.textContent).toContain('Global Administrator');
+  });
+
+  it('names every role the caller holds as the server does, an installation’s own included', () => {
+    // `FRD-614` FR-10: the labels come from `/me`, so a role created in the console has a chip in
+    // its own words, and a role the server names nowhere is shown by its slug rather than dropped.
+    configure(true, ['global-admin', 'controlling', 'unnamed']);
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const chip = (slug: string) => el.querySelector(`.aira-user__role[data-role="${slug}"]`);
+
+    expect(chip('controlling')?.textContent?.trim()).toBe('Controlling');
+    expect(chip('global-admin')?.textContent?.trim()).toBe('Global Administrator');
+    expect(chip('global-admin')?.getAttribute('title')).toContain('price a model');
+    expect(chip('unnamed')?.textContent?.trim()).toBe('unnamed');
+    expect(chip('controlling')?.getAttribute('title')).toBe('');
   });
   it('signs the user out from the header', async () => {
     configure(true);
@@ -98,25 +175,32 @@ describe('App', () => {
     await fixture.whenStable();
     expect((fixture.nativeElement as HTMLElement).querySelector('.aira-user')).toBeNull();
   });
-  // ---- the requests screen (`FRD-505`) -------------------------------------------------------
+  // ---- the navigation follows the permissions `/me` lists (`FRD-614`) -----------------------
 
-  function render(roles: string[]): HTMLElement {
-    configure(true, roles);
+  function render(permissions: string[], roles: string[] = []): HTMLElement {
+    configure(true, roles, permissions);
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     return fixture.nativeElement as HTMLElement;
   }
 
-  it('offers cross-use-case requests to a role that may act on an incident', () => {
-    const el = render(['it-security']);
+  /** Which of the permission-gated entries a rendered shell offers. */
+  function offered(el: HTMLElement): string[] {
+    return ['nav-requests', 'nav-register', 'nav-security', 'platform-admin'].filter(
+      (id) => el.querySelector(`[data-testid="${id}"]`) !== null,
+    );
+  }
+
+  it('offers cross-use-case requests to whoever may investigate an incident', () => {
+    const el = render(['incident.investigate']);
 
     expect(el.querySelector('[data-testid="nav-requests"]')).not.toBeNull();
   });
 
-  it('does not offer it to a role that sees figures and not content', () => {
-    /** `it-steuerung` sees every use case and reads no prompts. Offering the screen and refusing
-     *  on use is `FRD-206`'s defect; withholding the tab is the boundary stated plainly. */
-    const el = render(['it-steuerung']);
+  it('does not offer it to a reader who sees figures and not content', () => {
+    /** Offering the screen and refusing on use is `FRD-206`'s defect; withholding the tab is the
+     *  boundary stated plainly. */
+    const el = render(['anomaly.read_all', 'trace.read_all', 'report.read_all']);
 
     expect(el.querySelector('[data-testid="nav-requests"]')).toBeNull();
     expect(el.querySelector('[data-testid="nav-security"]')).not.toBeNull();
@@ -128,18 +212,56 @@ describe('App', () => {
     expect(el.querySelector('[data-testid="nav-requests"]')).toBeNull();
   });
 
+  it('gives each entry its own permission', () => {
+    // One permission, one entry: an entry that followed a neighbour's permission would still pass
+    // every case that grants both.
+    expect(offered(render(['report.read_all']))).toEqual(['nav-register']);
+    expect(offered(render(['anomaly.read_all']))).toEqual(['nav-security']);
+    expect(offered(render(['incident.investigate']))).toEqual(['nav-requests']);
+    expect(offered(render(['content_read.read']))).toEqual(['platform-admin']);
+    expect(offered(render(['role.read']))).toEqual(['platform-admin']);
+  });
+
+  it('shows each built-in role the navigation it had', () => {
+    expect(offered(render(BUILTIN['global-admin'], ['global-admin']))).toEqual([
+      'nav-requests',
+      'nav-register',
+      'nav-security',
+      'platform-admin',
+    ]);
+    expect(offered(render(BUILTIN['it-security'], ['it-security']))).toEqual([
+      'nav-requests',
+      'nav-register',
+      'nav-security',
+      'platform-admin',
+    ]);
+    // Every figure and no content: no Requests.
+    expect(offered(render(BUILTIN['it-steuerung'], ['it-steuerung']))).toEqual([
+      'nav-register',
+      'nav-security',
+      'platform-admin',
+    ]);
+  });
+
+  it('asks the permissions and never the roles', () => {
+    // The server decides what a role holds. A role with nothing listed is offered nothing, and a
+    // permission with no built-in role behind it is offered its entry.
+    expect(offered(render([], ['global-admin', 'it-security', 'it-steuerung']))).toEqual([]);
+    expect(offered(render(['incident.investigate'], []))).toEqual(['nav-requests']);
+  });
+
   // ---- platform administration (`FRD-622` FR-5) --------------------------------------------------
 
-  it('offers platform administration beside the name to each of the three platform roles', () => {
-    for (const role of ['global-admin', 'it-security', 'it-steuerung']) {
-      const link = render([role]).querySelector('.aira-user [data-testid="platform-admin"]');
+  it('offers platform administration beside the name to whoever may read one of its pages', () => {
+    for (const permission of ['content_read.read', 'role.read']) {
+      const link = render([permission]).querySelector('.aira-user [data-testid="platform-admin"]');
 
-      expect(link?.getAttribute('href'), role).toBe('/platform');
+      expect(link?.getAttribute('href'), permission).toBe('/platform');
     }
   });
 
   it('places platform administration at the far right, after Logout', () => {
-    const el = render(['global-admin']);
+    const el = render(BUILTIN['global-admin']);
     const controls = [...el.querySelectorAll('.aira-user a, .aira-user button')];
     const platform = el.querySelector('[data-testid="platform-admin"]');
 

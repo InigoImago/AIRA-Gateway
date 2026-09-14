@@ -14,7 +14,7 @@ import { errorMessage } from '../../core/api/error-message';
 import { MeService } from '../../core/api/me.service';
 import { Me, UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { runsTheInstallation } from '../../core/auth/roles';
+import { can } from '../../core/auth/roles';
 import { ServerTableView } from '../../core/ui/server-table-view';
 import { TablePager } from '../../core/ui/table-pager';
 import { SLUG_PATTERN, slugify } from './use-case-slug';
@@ -59,9 +59,9 @@ export class UseCaseList implements OnInit {
     });
   }
 
-  /** Only a Global Administrator creates a use case (`ADR-0017`); the server refuses anyone else,
-   *  so nobody else is offered the action. */
-  protected readonly canCreate = computed(() => runsTheInstallation(this.me()?.roles));
+  /** Creating a use case needs `usecase.create`; the server refuses anyone without it, so nobody
+   *  else is offered the action. */
+  protected readonly canCreate = computed(() => can(this.me(), 'usecase.create'));
 
   /**
    * Whether this session carries no role at all.

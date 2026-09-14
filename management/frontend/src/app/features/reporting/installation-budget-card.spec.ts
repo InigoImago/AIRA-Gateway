@@ -28,6 +28,8 @@ const httpError = (status: number) =>
   throwError(() => ({ status, error: { error: { message: 'refused' } } }));
 
 interface Options {
+  /** What `/me` lists. Absent means the permission to set the budget. */
+  permissions?: string[];
   roles?: string[];
   budgets?: Budget[];
   list?: Observable<Budget[]>;
@@ -68,6 +70,7 @@ function setup(options: Options = {}) {
         username: 'u',
         email: 'u@example.test',
         roles: options.roles ?? ['global-admin'],
+        permissions: options.permissions ?? ['budget.installation.write'],
         use_cases: [],
       } as Me),
   };
@@ -125,21 +128,39 @@ describe('InstallationBudgetCard', () => {
   it('draws nothing at all for a reader the server answered with an empty list', () => {
     // The server answers `[]` both to "nothing is configured" and to "not your business", so the
     // card must not claim the first.
-    const { testid, text } = setup({ roles: ['use-case-user'], budgets: [] });
+    const { testid, text } = setup({ roles: [], permissions: [], budgets: [] });
 
     expect(testid('installation-budget')).toBeNull();
     expect(text()).toBe('');
   });
 
   it('shows a governance reader the limit and offers no way to change it', () => {
-    // `ADR-0007`: IT Steuerung oversees and acts in nothing.
-    const { testid, text } = setup({ roles: ['it-steuerung'], budgets: [MONTHLY] });
+    // `ADR-0007`: reading every figure is not setting one.
+    const { testid, text } = setup({ permissions: ['report.read_all'], budgets: [MONTHLY] });
 
     expect(testid('installation-budget')).not.toBeNull();
     expect(text()).toContain('$20.000000');
     expect(testid('add-installation-budget')).toBeNull();
     expect(testid('toggle-installation-budget-7')).toBeNull();
     expect(testid('remove-installation-budget-7')).toBeNull();
+  });
+
+  it('asks the permission, never the role', () => {
+    // The server decides what a role holds, so the role alone offers nothing…
+    const roleOnly = setup({ roles: ['global-admin'], permissions: [], budgets: [MONTHLY] });
+    expect(roleOnly.testid('add-installation-budget')).toBeNull();
+    expect(roleOnly.testid('toggle-installation-budget-7')).toBeNull();
+    expect(roleOnly.testid('remove-installation-budget-7')).toBeNull();
+
+    // …and the permission alone is enough.
+    const permissionOnly = setup({
+      roles: [],
+      permissions: ['budget.installation.write'],
+      budgets: [MONTHLY],
+    });
+    expect(permissionOnly.testid('add-installation-budget')).not.toBeNull();
+    expect(permissionOnly.testid('toggle-installation-budget-7')).not.toBeNull();
+    expect(permissionOnly.testid('remove-installation-budget-7')).not.toBeNull();
   });
 
   it('requires at least one limit', () => {
@@ -239,7 +260,7 @@ describe('InstallationBudgetCard', () => {
     // A budget the gateway skips is a budget that is not in force, and a card showing its numbers
     // without saying so reads as protection that is not there.
     const { text } = setup({
-      roles: ['it-steuerung'],
+      permissions: ['report.read_all'],
       budgets: [{ ...MONTHLY, enabled: false }],
     });
 
@@ -249,7 +270,7 @@ describe('InstallationBudgetCard', () => {
   it('does not act for a reader who may not, even if the call is made', () => {
     // The buttons are not rendered for them; this is the second lock, on the method itself. A
     // console that offers nothing but would act if asked is one DOM edit away from acting.
-    const { component, calls } = setup({ roles: ['it-steuerung'], budgets: [MONTHLY] });
+    const { component, calls } = setup({ permissions: ['report.read_all'], budgets: [MONTHLY] });
 
     component.setEnabled(MONTHLY, false);
     component.remove(MONTHLY.id);
@@ -278,8 +299,8 @@ describe('InstallationBudgetCard', () => {
     expect(component.cost()).toBe('20.00');
   });
 
-  it('keeps the figure on screen when the roles cannot be read', () => {
-    // Losing the reader's roles costs them a form, not a figure — and the page's one banner
+  it('keeps the figure on screen when the permissions cannot be read', () => {
+    // Losing the reader's permissions costs them a form, not a figure — and the page's one banner
     // belongs to the report it is named after, not to this panel's side question.
     const { testid, feedback, text } = setup({ budgets: [MONTHLY], me: httpError(500) });
 

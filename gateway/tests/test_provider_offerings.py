@@ -112,7 +112,7 @@ def test_only_a_global_administrator_may_ask_a_provider_what_it_offers() -> None
     for principal in (IT_SECURITY, IT_STEUERUNG, NOBODY):
         response = _client(principal, _Offering()).get("/v1beta/providers")
         assert response.status_code == 403, principal.roles
-        assert "Global Administrator" in response.json()["error"]["message"]
+        assert "catalog.write" in response.json()["error"]["message"]
 
 
 def test_a_global_administrator_sees_the_configured_providers() -> None:

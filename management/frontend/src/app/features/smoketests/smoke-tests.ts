@@ -3,7 +3,7 @@ import { Component, OnInit, computed, inject, signal, viewChild } from '@angular
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { maySetStandards } from '../../core/auth/roles';
+import { can } from '../../core/auth/roles';
 import {
   TestAttribution,
   TestCase,
@@ -45,9 +45,9 @@ export class SmokeTests implements OnInit {
   protected readonly feedback = inject(PageFeedback);
   private readonly ratingWindow = viewChild.required(RatingWindow);
 
-  private readonly me = signal<{ roles: string[] } | null>(null);
-  /** Authoring the catalogue is IT Security's, matching the server's `IsITSecurity`. */
-  protected readonly mayAuthor = computed(() => maySetStandards(this.me()?.roles));
+  private readonly me = signal<{ permissions?: string[] } | null>(null);
+  /** Authoring the catalogue needs `smoketest.author`, the permission the server enforces. */
+  protected readonly mayAuthor = computed(() => can(this.me(), 'smoketest.author'));
 
   protected readonly tab = signal<'results' | 'runs' | 'catalogue'>('results');
   protected readonly cases = signal<TestCase[]>([]);

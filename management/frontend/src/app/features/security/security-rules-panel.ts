@@ -31,8 +31,8 @@ export class SecurityRulesPanel {
    */
   readonly shown = input(false);
   readonly rules = input<AnomalyRule[]>([]);
-  /** Whether this caller holds an incident role, which is what changing a global rule needs. */
-  readonly canStop = input(false);
+  /** Whether this caller holds `anomaly.rule.global.write`, which authoring a global rule needs. */
+  readonly canWriteGlobalRules = input(false);
   /** Raised after a create, a save or a delete, so the page reloads the rules it owns. */
   readonly changed = output<void>();
 
@@ -68,12 +68,12 @@ export class SecurityRulesPanel {
   /**
    * Whether this caller may change this rule.
    *
-   * A global rule needs an incident role, the predicate the server enforces. A use-case rule needs
-   * to manage that use case, which is object-level and not in the token, so rather than guess the
-   * panel says where it is edited (`FRD-206`).
+   * A global rule needs `anomaly.rule.global.write`, the permission the server enforces. A
+   * use-case rule needs to manage that use case, which is object-level and not in `/me`, so rather
+   * than guess the panel says where it is edited (`FRD-206`).
    */
   protected mayEdit(rule: AnomalyRule): boolean {
-    return rule.is_global && this.canStop();
+    return rule.is_global && this.canWriteGlobalRules();
   }
 
   protected toggleRule(id: number): void {

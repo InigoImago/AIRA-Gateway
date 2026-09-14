@@ -130,10 +130,13 @@ oidc:
   expiry_leeway_seconds: 0
 
 # A read-only Keycloak service account, so the console can *search* your groups and people when
-# granting access (`view-users`, `query-groups`, nothing else). Without it the console offers only
-# what it already knows — and says so.
+# granting access (`view-users`, `query-groups`, nothing else), and so a group is checked before a
+# role is bound to it (`FRD-614`). Without it the console offers only what it already knows — and
+# no custom role can be bound. `url` is where Management reaches Keycloak when that is not the
+# issuer's server; empty means the issuer's.
 directory:
-  client_id: ''
+  client_id: aira-directory
+  url: http://keycloak:8080
   # client_secret: → Vault.
 
 # ---------------------------------------------------------------------------------------------

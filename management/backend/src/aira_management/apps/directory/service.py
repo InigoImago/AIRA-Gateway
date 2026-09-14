@@ -13,7 +13,12 @@ from aira_common.directory import DirectoryEntry, DirectoryUnavailable, Keycloak
 
 def build_directory() -> KeycloakDirectory | None:
     """The configured Keycloak directory, or ``None`` when there is no admin client."""
-    base = getattr(settings, "AIRA_OIDC_ISSUER_BASE", "") or ""
+    # Its own address where one is set: the issuer names the server as browsers reach it.
+    base = (
+        getattr(settings, "AIRA_DIRECTORY_URL", "")
+        or getattr(settings, "AIRA_OIDC_ISSUER_BASE", "")
+        or ""
+    )
     realm = getattr(settings, "AIRA_OIDC_REALM", "") or ""
     client_id = getattr(settings, "AIRA_DIRECTORY_CLIENT_ID", "") or ""
     secret = getattr(settings, "AIRA_DIRECTORY_CLIENT_SECRET", "") or ""

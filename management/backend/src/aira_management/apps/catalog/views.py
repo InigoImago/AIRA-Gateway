@@ -17,10 +17,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from aira_common.permissions import Permission
 from aira_management.apps.catalog.models import Model
 from aira_management.apps.catalog.serializers import ModelSerializer
 from aira_management.apps.usecases.events import emit
-from aira_management.rbac import MayCatalogueModels
+from aira_management.rbac import requires
 
 
 def _price(value: Decimal | None) -> str | None:
@@ -75,7 +76,7 @@ class ModelViewSet(viewsets.ModelViewSet[Model]):
     def get_permissions(self) -> list[Any]:
         if self.action in ("list", "retrieve"):
             return [IsAuthenticated()]
-        return [IsAuthenticated(), MayCatalogueModels()]
+        return [IsAuthenticated(), requires(Permission.CATALOG_WRITE)()]
 
     def perform_create(self, serializer: Any) -> None:
         with transaction.atomic():

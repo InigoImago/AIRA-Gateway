@@ -1,0 +1,72 @@
+<section class="stack" data-testid="role-changes">
+  <header>
+    <h3 class="section-title">Change log</h3>
+    <p class="muted" style="margin: 0">
+      Every creation, change and deletion of a role: when, who, and what the role held before and
+      after.
+    </p>
+  </header>
+
+  @if (view.loading() && !view.rows().length) {
+    <p class="muted" data-testid="role-changes-loading">Loading…</p>
+  } @else if (!view.rows().length) {
+    <p class="empty" data-testid="no-role-changes">No role has been created or changed yet.</p>
+  } @else {
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Who</th>
+            <th scope="col">Role</th>
+            <th scope="col">Action</th>
+            <th scope="col">What changed</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (change of view.rows(); track change.id) {
+            @let diff = summary(change);
+            <tr [attr.data-testid]="'role-change-' + change.id">
+              <td class="nowrap">{{ change.at | date: 'dd.MM.yyyy HH:mm' }}</td>
+              <td data-testid="change-actor">{{ change.actor }}</td>
+              <td data-testid="change-role">{{ roleName(change) }}</td>
+              <td data-testid="change-action">{{ actions[change.action] }}</td>
+              <td>
+                <ul class="role-diff">
+                  @if (diff.label) {
+                    <li data-testid="change-label">Name: {{ diff.label }}</li>
+                  }
+                  @if (diff.group) {
+                    <li data-testid="change-group">
+                      Group: <code>{{ diff.group }}</code>
+                    </li>
+                  }
+                  @if (diff.added.length) {
+                    <li data-testid="change-added">
+                      Added:
+                      @for (name of diff.added; track name) {
+                        <code [title]="permissionLabel(name)">{{ name }}</code>
+                      }
+                    </li>
+                  }
+                  @if (diff.removed.length) {
+                    <li data-testid="change-removed">
+                      Removed:
+                      @for (name of diff.removed; track name) {
+                        <code [title]="permissionLabel(name)">{{ name }}</code>
+                      }
+                    </li>
+                  }
+                  @if (!diff.label && !diff.group && !diff.added.length && !diff.removed.length) {
+                    <li class="muted">Saved without a difference</li>
+                  }
+                </ul>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    <app-table-pager [view]="view" noun="changes" testid="role-changes-pager" />
+  }
+</section>

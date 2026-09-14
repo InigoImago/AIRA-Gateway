@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aira_common.roles import has_oversight, is_governance, may_act_on_incidents
+from aira_common.permissions import Permission, builtin_permissions
 from aira_gateway.scopes import person as person_key
 
 
@@ -14,8 +14,9 @@ class Principal:
 
     ``use_cases`` are the use-case slugs the principal may access (OIDC: from Keycloak groups and
     grants; a bound API key: its one use case, `FRD-205`). ``roles`` come from group membership
-    (`ADR-0017`) and answer what membership cannot — whether this caller oversees the whole
-    installation. Oversight is read-only: acting inside a use case stays with membership.
+    (`ADR-0017`); what they allow across the installation is ``permissions`` (`FRD-614`), which
+    every installation-wide check asks through :meth:`allows`. Acting inside a use case stays with
+    membership.
     """
 
     subject: str
@@ -40,6 +41,13 @@ class Principal:
     #: *group* grant writes no member row, so `payloads.grant_role_in` reads it from here. Empty
     #: where no resolver ran — an additional source, not a replacement.
     grants: tuple[tuple[str, str], ...] = ()
+    #: Everything this caller may do across the installation. Left out, it is what the built-in
+    #: ``roles`` confer; the resolver one layer out sets it once stored roles are read.
+    permissions: frozenset[Permission] | None = None
+
+    def __post_init__(self) -> None:
+        if self.permissions is None:
+            object.__setattr__(self, "permissions", builtin_permissions(self.roles))
 
     @property
     def person(self) -> str | None:
@@ -50,25 +58,6 @@ class Principal:
         """
         return person_key(self.subject, self.username)
 
-    @property
-    def is_governance(self) -> bool:
-        """Whether this caller oversees every use case rather than a set of them."""
-        return is_governance(self.roles)
-
-    @property
-    def is_oversight(self) -> bool:
-        """Whether this caller may **see** every use case.
-
-        Wider than :attr:`is_governance` by exactly IT Security (the `FRD-206` split): seeing every
-        use case and seeing every *figure* are two questions.
-        """
-        return has_oversight(self.roles)
-
-    @property
-    def may_act_on_incidents(self) -> bool:
-        """Whether this caller may **stop** traffic (`FRD-503` FR-6).
-
-        Narrower than :attr:`is_oversight`: IT Steuerung sees every figure and writes nothing
-        (PRD §154), so it may not use the kill switch.
-        """
-        return may_act_on_incidents(self.roles)
+    def allows(self, permission: Permission) -> bool:
+        """The one installation-wide question every check asks (`FRD-614`)."""
+        return permission in (self.permissions or frozenset())

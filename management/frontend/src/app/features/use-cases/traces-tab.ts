@@ -6,7 +6,7 @@ import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import { Trace, TracePayload } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { mayActOnIncidents } from '../../core/auth/roles';
+import { can } from '../../core/auth/roles';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Live, agoLabel } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -95,9 +95,9 @@ export class TracesTab implements OnInit {
   protected readonly payload = signal<TracePayload | null>(null);
   protected readonly payloadLoading = signal(false);
 
-  /** The same predicate the gateway enforces with, never a role list restated by hand. */
-  protected readonly mayInvestigate = computed(() => mayActOnIncidents(this.me()?.roles));
-  private readonly me = signal<{ roles: string[] } | null>(null);
+  /** The permission the gateway enforces the incident fields with, as `/me` lists it. */
+  protected readonly mayInvestigate = computed(() => can(this.me(), 'incident.investigate'));
+  private readonly me = signal<{ permissions?: string[] } | null>(null);
   private readonly typed = new Subject<void>();
 
   protected readonly outcomes = OUTCOMES;

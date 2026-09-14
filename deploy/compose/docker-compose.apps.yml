@@ -199,8 +199,13 @@ services:
       # without either, so passing only the id made `FRD-209`'s directory search unreachable
       # in any containerised deployment: the console silently fell back to what Management
       # already knows, whatever the operator put in `.env`. Prefer Vault for the secret.
-      AIRA_DIRECTORY_CLIENT_ID: ${AIRA_DIRECTORY_CLIENT_ID:-}
-      AIRA_DIRECTORY_CLIENT_SECRET: ${AIRA_DIRECTORY_CLIENT_SECRET:-}
+      # The development realm's read-only `aira-directory` client, like the other development
+      # defaults in this file: a role is bound only to a group this client confirms (`FRD-614`
+      # FR-4). The address is Keycloak as this container reaches it, not the issuer a browser
+      # uses. A real installation sets all three, the secret from Vault.
+      AIRA_DIRECTORY_CLIENT_ID: ${AIRA_DIRECTORY_CLIENT_ID:-aira-directory}
+      AIRA_DIRECTORY_CLIENT_SECRET: ${AIRA_DIRECTORY_CLIENT_SECRET:-aira-directory-dev-secret}
+      AIRA_DIRECTORY_URL: ${AIRA_DIRECTORY_URL:-http://keycloak:8080}
       AIRA_LOG_LEVEL: ${AIRA_LOG_LEVEL:-INFO}
       AIRA_OIDC_CLOCK_SKEW_SECONDS: ${AIRA_OIDC_CLOCK_SKEW_SECONDS:-60.0}
       AIRA_OIDC_EXPIRY_LEEWAY_SECONDS: ${AIRA_OIDC_EXPIRY_LEEWAY_SECONDS:-0.0}
@@ -273,7 +278,7 @@ services:
     command:
       - |
         set -e
-        for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.rate-limits aira.models aira.anomaly-rules; do
+        for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.rate-limits aira.models aira.anomaly-rules aira.roles; do
           /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic "$$t" --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 --config cleanup.policy=compact
         done
     depends_on:

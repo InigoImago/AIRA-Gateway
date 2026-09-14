@@ -13,6 +13,7 @@ from fastapi import Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import and_, or_, select
 
+from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.reporting.common import parse_cursor, router, scope_label, visible_scope
 from aira_gateway.audit import Outcome
@@ -106,10 +107,20 @@ async def traces(
     Not the prompt, not the response, not a snippet of either (§2). An oversight role sees every use
     case, a member their own, and anybody else an empty list rather than a refusal.
     """
-    scope = visible_scope(principal)
-    fields = TRACE_FIELDS + (INCIDENT_FIELDS if principal.may_act_on_incidents else ())
+    scope = visible_scope(principal, Permission.TRACE_READ_ALL)
+    investigating = principal.allows(Permission.INCIDENT_INVESTIGATE)
+    fields = TRACE_FIELDS + (INCIDENT_FIELDS if investigating else ())
     stmt = select(*(getattr(RequestLog, field) for field in fields))
 
+    if source_ip and not investigating:
+        # Refused rather than ignored, and before any early answer: a filter that silently does
+        # nothing lets somebody conclude an address made no requests.
+        raise GeminiHTTPError(
+            403,
+            "Filtering by source address needs the permission to investigate "
+            "(incident.investigate).",
+            "PERMISSION_DENIED",
+        )
     if scope is not None:
         allowed = list(scope)
         if not allowed:
@@ -128,15 +139,6 @@ async def traces(
     if subject:
         stmt = stmt.where(RequestLog.subject == subject)
     if source_ip:
-        if not principal.may_act_on_incidents:
-            # Refused rather than ignored. A filter that silently does nothing lets somebody
-            # conclude an address made no requests.
-            raise GeminiHTTPError(
-                403,
-                "Filtering by source address is available to IT Security and Global "
-                "Administrators.",
-                "PERMISSION_DENIED",
-            )
         stmt = stmt.where(RequestLog.source_ip == source_ip)
     if mine:
         # `own_requests` is the one definition of "my requests", shared with the restriction below.
@@ -205,7 +207,10 @@ async def trace_payload(
     storage switch and the retention clock meet. The access row is committed **before** the content
     is returned: if recording the read fails, the read does not happen (`ADR-0009`).
     """
-    scope = visible_scope(principal)
+    # Reading any use case's content includes reaching the request it belongs to (`FRD-614`
+    # FR-11); the list of requests stays with `trace.read_all`.
+    reach_any = principal.allows(Permission.PAYLOAD_READ_ANY)
+    scope = None if reach_any else visible_scope(principal, Permission.TRACE_READ_ALL)
     async with sessionmaker_of(request)() as session:
         row = (
             await session.execute(select(RequestLog).where(RequestLog.id == trace_row_id))

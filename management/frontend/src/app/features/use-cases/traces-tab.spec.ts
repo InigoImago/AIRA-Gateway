@@ -49,7 +49,8 @@ class Host {
 }
 
 interface Options {
-  /** What `/me` answers. Absent means a role with no incident authority. */
+  /** What `/me` lists. Absent means no incident authority. */
+  permissions?: string[];
   roles?: string[];
   pages?: TracePage[];
   /** What `GET /traces/{id}/payload` answers. */
@@ -71,7 +72,10 @@ function setup(options: Options = {}) {
       provideRouter([]),
       {
         provide: MeService,
-        useValue: { currency: signal(''), get: () => of({ roles: options.roles ?? [] }) },
+        useValue: {
+          currency: signal(''),
+          get: () => of({ roles: options.roles ?? [], permissions: options.permissions ?? [] }),
+        },
       },
       {
         provide: UseCaseService,
@@ -444,29 +448,48 @@ describe('TracesTab — while a page is in flight', () => {
 
   it('offers the source address only where the server would answer it', () => {
     /** `FRD-206`: an action nobody can carry out is worse than an absent one. The server refuses
-     *  this filter without an incident role, so the console must not put it on screen — and the
-     *  predicate is the shared one, not a role list retyped here. */
-    const investigator = setup({ roles: ['it-security'] });
+     *  this filter without `incident.investigate`, so the console must not put it on screen — and
+     *  the question is the permission `/me` lists, not a role list retyped here. */
+    const investigator = setup({ permissions: ['incident.investigate'] });
     expect(investigator.testid('trace-source-ip')).not.toBeNull();
 
-    const administrator = setup({ roles: [] });
+    const administrator = setup({ permissions: [] });
     expect(administrator.testid('trace-source-ip')).toBeNull();
     // …while everything an administrator *may* ask stays available to them.
     expect(administrator.testid('trace-credential')).not.toBeNull();
   });
 
-  it('withholds the incident field when the role could not be read', () => {
+  it('withholds the incident field when the permissions could not be read', () => {
     /** The safe direction. A failed `/me` that left the field on screen would produce a control
      *  that 403s, and the reader would conclude the recording is broken. */
-    const { testid } = setup({ roles: [] });
+    const { testid } = setup({ permissions: [] });
 
     expect(testid('trace-source-ip')).toBeNull();
+  });
+
+  it('asks the permission, never the role', () => {
+    // The server decides what a role holds: a senior role with nothing listed is offered nothing,
+    // and the permission alone is enough.
+    const roleOnly = setup({ roles: ['it-security', 'global-admin'], permissions: [] });
+    expect(roleOnly.testid('trace-source-ip')).toBeNull();
+
+    const permissionOnly = setup({ roles: [], permissions: ['incident.investigate'] });
+    expect(permissionOnly.testid('trace-source-ip')).not.toBeNull();
+  });
+
+  it('does not take a neighbouring permission for this one', () => {
+    // Every request's metadata and any request's content are other questions than an incident's.
+    const { testid, element } = setup({ permissions: ['trace.read_all', 'payload.read_any'] });
+
+    expect(testid('trace-source-ip')).toBeNull();
+    const headers = [...element.querySelectorAll('th')].map((th) => th.textContent?.trim());
+    expect(headers).not.toContain('From');
   });
 
   it('waits for a pause before asking, and asks with what was typed', async () => {
     /** Nine letters must not be nine round trips (`FRD-208`) — and the address has to arrive
      *  trimmed, or a trailing space asks about a machine that does not exist. */
-    const { tab, queries } = setup({ roles: ['it-security'] });
+    const { tab, queries } = setup({ permissions: ['incident.investigate'] });
     const before = queries.length;
 
     (tab as unknown as { setSourceIp: (v: string) => void }).setSourceIp(' 10.0.0.7 ');
@@ -485,7 +508,7 @@ describe('TracesTab — while a page is in flight', () => {
   it("opens a request's content in place, and says the read was recorded", () => {
     /** The record is the condition on which `ADR-0009` was reopened, not a log line beside it —
      *  so the reader is told, rather than it happening quietly behind them. */
-    const { fixture, testid, element } = setup({ roles: ['it-security'] });
+    const { fixture, testid, element } = setup({ permissions: ['incident.investigate'] });
     element.querySelector<HTMLElement>('[data-testid^="open-payload-"]')?.click();
     fixture.detectChanges();
 
@@ -495,7 +518,7 @@ describe('TracesTab — while a page is in flight', () => {
   });
 
   it("closes it again, so one request's content is open at a time", () => {
-    const { fixture, testid, element } = setup({ roles: ['it-security'] });
+    const { fixture, testid, element } = setup({ permissions: ['incident.investigate'] });
     const open = () => {
       element.querySelector<HTMLElement>('[data-testid^="open-payload-"]')?.click();
       fixture.detectChanges();
@@ -513,7 +536,7 @@ describe('TracesTab — while a page is in flight', () => {
      *  different facts about the installation, and two of them are somebody's to change. A single
      *  "not available" teaches the reader to distrust the screen. */
     const { fixture, testid } = setup({
-      roles: ['it-security'],
+      permissions: ['incident.investigate'],
       payload: {
         id: 't1',
         available: false,
@@ -535,7 +558,7 @@ describe('TracesTab — while a page is in flight', () => {
      *  banner per page is the rule, and the parent renders it. A first version of this test looked
      *  for the sentence inside the tab and failed for exactly that reason — which is the design
      *  working, not a gap. */
-    const { fixture, testid } = setup({ roles: [], payloadFails: true });
+    const { fixture, testid } = setup({ permissions: [], payloadFails: true });
     (fixture.nativeElement as HTMLElement)
       .querySelector<HTMLElement>('[data-testid^="open-payload-"]')
       ?.click();
@@ -555,14 +578,14 @@ describe('TracesTab — while a page is in flight', () => {
   it('shows the calling machine as a column, not only as a filter', () => {
     /** The defect this fixes: the address could be searched for and never seen, so the filter
      *  could not be populated from the screen that offered it. */
-    const { element } = setup({ roles: ['it-security'] });
+    const { element } = setup({ permissions: ['incident.investigate'] });
 
     const headers = [...element.querySelectorAll('th')].map((th) => th.textContent?.trim());
     expect(headers).toContain('From');
   });
 
-  it('withholds that column from a role that may not act on an incident', () => {
-    const { element } = setup({ roles: [] });
+  it('withholds that column from a reader who may not investigate', () => {
+    const { element } = setup({ permissions: [] });
 
     const headers = [...element.querySelectorAll('th')].map((th) => th.textContent?.trim());
     expect(headers).not.toContain('From');
@@ -607,7 +630,7 @@ describe('TracesTab — while a page is in flight', () => {
     /** It was last. The table scrolls sideways once it carries a use case and an address, so the
      *  control was **off screen** and a reader had no way to learn it existed — reported as "the
      *  button was hidden behind the scroll, I did not even know it was there". */
-    const { element } = setup({ roles: ['it-security'] });
+    const { element } = setup({ permissions: ['incident.investigate'] });
 
     const firstCell = element.querySelector('tbody tr td');
     expect(firstCell?.querySelector('[data-testid^="open-payload-"]')).not.toBeNull();
@@ -616,7 +639,7 @@ describe('TracesTab — while a page is in flight', () => {
   it('opens a request by clicking anywhere on its row', () => {
     /** A 2.5rem target at the far left of a wide table is a small target. The row is the whole
      *  width of the thing the reader is looking at. */
-    const { fixture, element, testid } = setup({ roles: ['it-security'] });
+    const { fixture, element, testid } = setup({ permissions: ['incident.investigate'] });
     element.querySelector<HTMLElement>('tbody tr')?.click();
     fixture.detectChanges();
 

@@ -142,7 +142,7 @@ graph TB
 
 The data plane must answer a request without asking anybody. So Management **owns** configuration
 and the gateway keeps a **read-model** of it: use cases, memberships, API keys, pipelines, budgets,
-rate limits, the model catalog and anomaly rules all arrive as events on compacted topics
+rate limits, the model catalog, anomaly rules and roles all arrive as events on compacted topics
 ([`FRD-204`](features/FRD-204-config-distribution-kafka.md)). The gateway never calls Management on
 the request path — not for a price, not for a capability, not for a rule.
 

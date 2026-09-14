@@ -238,8 +238,8 @@ export interface OfferedModel {
  * A model as the **compatibility surface** addresses it (`FRD-107`): by integer, which is what a
  * migrating client's configuration holds.
  *
- * Read from the gateway rather than the catalog: the catalog is readable only by `CATALOG_ROLES`,
- * and the use-case administrator setting a client up is not one of them.
+ * Read from the gateway rather than the catalog: the catalog is readable only with `catalog.write`,
+ * and the use-case administrator setting a client up does not hold it.
  */
 export interface KiraModel {
   id: number;

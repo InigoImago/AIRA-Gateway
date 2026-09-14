@@ -1,60 +1,46 @@
 /**
- * Who may do what, asked once.
+ * What the caller may do across the installation, as the server answers it (`FRD-614`).
  *
- * Each list is the server's single definition restated, and
- * `test_the_console_and_the_server_agree_about_roles.py` compares them: a predicate written by hand
- * in two planes gives one question two answers, and nothing fails when the server's list changes.
- * Lists that share an answer today keep separate names, because they are separate questions. These
- * decide what the console **offers**; the server decides what happens.
+ * The server's permission catalogue, in its order. `test_the_console_agrees_about_who_may_do_what.py`
+ * holds this list to `aira_common.permissions`, so a permission added or renamed on the server fails
+ * a test rather than leaving a screen that asks for a name nobody holds.
  */
+export const PERMISSIONS = [
+  'usecase.create',
+  'usecase.read_all',
+  'usecase.manage_all',
+  'usecase.read_retired',
+  'usecase.purge',
+  'catalog.write',
+  'report.read_all',
+  'budget.installation.write',
+  'trace.read_all',
+  'content_read.read',
+  'payload.read_any',
+  'anomaly.read_all',
+  'anomaly.rule.global.write',
+  'incident.suspend',
+  'incident.investigate',
+  'operations.diagnose',
+  'smoketest.author',
+  'smoketest.run_any',
+  'directory.search',
+  'role.read',
+  'role.manage',
+] as const;
 
-/** Roles allowed to stop traffic and to investigate an incident (the gateway's `INCIDENT_ROLES`). */
-const INCIDENT_ROLES = ['it-security', 'global-admin'];
-
-/** Roles that see every use case's figures, whether or not they may act (`OVERSIGHT_ROLES`). */
-const OVERSIGHT_ROLES = ['it-security', 'it-steuerung', 'global-admin'];
-
-/** Roles that write security-level configuration (the server's `IsITSecurity`). */
-const SECURITY_ROLES = ['it-security', 'global-admin'];
-
-/** Roles that may declare, price and release a model (the server's `CATALOG_ROLES`). */
-const CATALOG_ROLES = ['global-admin'];
-
-/** The single role that runs the installation (the server's `IsGlobalAdmin`). */
-const INSTALLATION_ROLES = ['global-admin'];
+export type Permission = (typeof PERMISSIONS)[number];
 
 /**
- * May this caller act on an incident — stop a caller, filter traffic by the machine it came from?
+ * Whether the server listed this permission for the caller in `/me`.
  *
- * **Visibility and authority are different answers** (`FRD-206`): `it-steuerung` sees every figure
- * and is offered no kill switch, which is why this is not `hasOversight`.
+ * The console decides only what to offer; the server decides what happens. It asks the permission
+ * and never a role, because a role list here would be a second definition of who may do what — one
+ * that goes wrong silently the day an installation changes what a role holds.
  */
-export function mayActOnIncidents(roles: readonly string[] | undefined): boolean {
-  return (roles ?? []).some((role) => INCIDENT_ROLES.includes(role));
-}
-
-/**
- * May this caller write the standards this installation holds itself to — a global anomaly rule,
- * the question catalogue models are judged against (the server's `IsITSecurity`)?
- */
-export function maySetStandards(roles: readonly string[] | undefined): boolean {
-  return (roles ?? []).some((role) => SECURITY_ROLES.includes(role));
-}
-
-/** May this caller declare a model and release it for use (the server's `MayCatalogueModels`)? */
-export function mayCatalogue(roles: readonly string[] | undefined): boolean {
-  return (roles ?? []).some((role) => CATALOG_ROLES.includes(role));
-}
-
-/**
- * May this caller change what the **installation** does — its own budget, and creating a use case
- * (the server's `IsGlobalAdmin`)?
- */
-export function runsTheInstallation(roles: readonly string[] | undefined): boolean {
-  return (roles ?? []).some((role) => INSTALLATION_ROLES.includes(role));
-}
-
-/** Does this caller see every use case, whether or not they may change anything in one? */
-export function hasOversight(roles: readonly string[] | undefined): boolean {
-  return (roles ?? []).some((role) => OVERSIGHT_ROLES.includes(role));
+export function can(
+  me: { permissions?: readonly string[] } | null | undefined,
+  permission: Permission,
+): boolean {
+  return me?.permissions?.includes(permission) ?? false;
 }

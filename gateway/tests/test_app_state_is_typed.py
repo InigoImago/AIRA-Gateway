@@ -64,6 +64,7 @@ SERVICES = frozenset(
         "rate_limits",
         "redactor",
         "reporting",
+        "role_definitions",
         "suspensions",
         "upstream_probe",
     }

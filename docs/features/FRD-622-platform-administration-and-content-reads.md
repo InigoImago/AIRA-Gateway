@@ -81,7 +81,10 @@ has kept since August. Until now nobody could see that record.
   - the ground, in words;
   - the reader's roles at the time.
 
-  It filters by use case and by reader, and pages with "Load more". An empty log says that no
+  It filters by use case and by reader, and is paged at the server: the console holds one page
+  of 50 and shows the total ("1–50 of 120 reads", previous and next). The API answers by cursor
+  with `count`, the reads the filters match across all pages, so a read recorded while somebody
+  pages cannot show a row twice as an offset would. An empty log says that no
   content has been read yet. The requests view takes the linked request from `?request=<id>` and
   asks the gateway for it (`request_id` on `/v1beta/traces`), inside the caller's scope and
   restriction. It says so when the request is no longer in the audit trail.

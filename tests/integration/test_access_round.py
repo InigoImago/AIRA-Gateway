@@ -650,10 +650,13 @@ async def test_47_the_directory_says_which_source_answered(admin_token) -> None:
     assert body["source"] in ("local", "keycloak")
 
 
-async def test_48_the_directory_finds_a_person_who_has_signed_in(admin_token, member_token) -> None:
-    me = (await _get("/api/v1/me", member_token)).json()["username"]
-    body = (await _get("/api/v1/directory/", admin_token, q=me[:6])).json()
-    assert any(row["id"] == me for row in body["results"])
+async def test_48_the_directory_finds_a_person_in_the_realm(admin_token) -> None:
+    """A person Keycloak has — the stack asks Keycloak through `aira-directory`. A service
+    account is not a person there, which is why this looks for a realm user; the answer Management
+    gives on its own, when no directory can be asked, is `test_directory.py`'s."""
+    body = (await _get("/api/v1/directory/", admin_token, q="ucuse")).json()
+    assert body["source"] == "keycloak"
+    assert any(row["id"] == "ucuser" and row["kind"] == "user" for row in body["results"])
 
 
 async def test_49_the_directory_returns_no_credential(admin_token, member_token) -> None:

@@ -14685,3 +14685,175 @@ Two things about the mutation checks:
     Mutation ET1.
 - **e2e, full run after both changes:** 164 passed, 1 skipped. The teardown retired 71 use
   cases and the purge removed all 71, leaving no register behind.
+
+## 2026-09-13 — the permission engine, and roles an installation defines
+
+`FRD-614` built, decided by `ADR-0025`: Keycloak decides who holds a role; AIRA decides what a role
+may do.
+
+- **The inventory.** More than forty authorisation checks: about fourteen in the gateway, about
+  thirty in Management, and more in the console. They used four role sets and several hand-written
+  Global Administrator tests. It also found:
+  - `Principal.is_governance` and `IsITSteuerung` were defined and never called;
+  - `docs/ROLES.md` said a use-case administrator may create a use case, and its own prose and the
+    code said only a Global Administrator may;
+  - demo mode passed some checks and not others;
+  - the console wrote role labels by hand in two places.
+- **The engine.** `aira_common.permissions` holds a closed catalogue of 21 permissions, the built-in
+  roles, and one decision, `allows()`.
+  - The Global Administrator holds everything by construction, and is the only holder of
+    `role.manage`.
+  - IT Security is fixed.
+  - IT Steuerung and custom roles are data.
+  - Permissions add up, with no deny.
+- **Stages 2–4 changed no answer.** Management, the console and the gateway now ask permissions.
+  - An equivalence table states, for every permission, who held it before and which check decided
+    it. Every built-in role must get exactly that answer.
+  - The role tests of each plane were rewritten onto `allows()`, and 23 mutations were re-anchored
+    onto the engine: SD2, G1, G3, B11, R26, R27, IB8, N2, N19, N40–N42, N46, N47, I1, RV4, RV5,
+    RD2 and CR1–CR4. All are still caught.
+  - The console's security page used one flag for the kill switch and for global rules. That flag
+    is split in two.
+- **Roles as data.**
+  - Management stores IT Steuerung's set and custom roles, with a change log.
+  - A group is bound only after Keycloak answers `group-by-path` for exactly that path. The
+    directory being unreachable is a 503, never a silent pass.
+  - Every change travels on `aira.roles`. The gateway's `RoleResolver` caches the table for five
+    seconds, and when it cannot read the table, stored roles confer nothing.
+  - The console has Platform → Roles. The editor opens in a window, because the console's rule for
+    anything created or edited is a window, and a guard enforces it. Role labels now come from the
+    server.
+- **What the permission matrix found.** The owner's acceptance test grows a custom role on a real
+  Keycloak group one permission at a time, then withdraws and changes it. It found three defects,
+  all hidden by the built-in roles, which always held the relevant permissions together:
+  1. `?source_ip=` from a caller who sees no use case got an empty 200, not a 403. The early "out of
+     scope" answer came before the refusal, so the filter was silently ignored. The refusal now
+     comes first. There is a new test, and N42 is re-anchored.
+  2. `usecase.manage_all` without `usecase.read_all` administered nothing, because it could not see
+     the use case. Acting now includes seeing (FR-11). Mutation RL11.
+  3. `payload.read_any` without `trace.read_all` got a 404, because the content endpoint checked the
+     request-list scope first. Reading any content now reaches the request by its id, while the
+     list stays with `trace.read_all` (FR-11). Mutation RL10.
+- **What wiring the stack found.**
+  - Management derived the directory's address from the issuer, which is the address a browser
+    uses. Inside the container that is `localhost`, so every group check would have been a 503. The
+    fix is the new setting `AIRA_DIRECTORY_URL`.
+  - The development realm had no directory client, and `keycloak-init` repaired only users, groups
+    and memberships, so an existing realm would never have received one. The fix:
+    - the realm gains `aira-directory`, with `query-groups` and `view-users` only;
+    - `keycloak-init` now counts clients too, and re-imported the running realm on its first run.
+  - Two ways of providing the client failed:
+    - A showcase override of Management's environment was refused by the guard that lets the
+      showcase file only add to a core service.
+    - `vault-init` provisions only when Vault is configured, and the default showcase has
+      `VAULT_ADDR` empty.
+
+    The client is now a development default in the app compose file, like its Django key and
+    Postgres password, and matches the realm the core stack imports. An existing `.env` needs
+    nothing.
+- **What the full suites found once the directory was configured.** The stack had never had a
+  directory client, so the `FRD-209` search had only ever answered from what Management already
+  knows. Asked against a real Keycloak for the first time, it had two defects:
+  - Keycloak matches a search as a pattern, so `%%` listed every group. The two-letter minimum
+    protected nothing, and the integration test that says so passed only because the fallback
+    takes `%` literally. The client now removes `%` and `*`, and asks nothing unless two
+    characters remain (RL12).
+  - Keycloak returns the tree around a match, and the client offered the parent as a result. A
+    search for "kundendienst" put `/abteilungen` first, and the browser test's first click
+    granted the wrong group. Only a group whose own path matches is offered now (RL13).
+
+  Four tests had been written for a stack with no client, and now describe the configured one:
+  two integration tests and two browser tests. The answer given without a client stays covered by
+  Management's and the console's own tests. Refusals that named roles now name the missing
+  permission, since a custom role may hold it, and the tests assert that name.
+- **Mutations.** RL1–RL13 and CR5 are new: 832 properties.
+- **Measured, on the final state:**
+  - hermetic: 3940 passed, coverage 96.57 %;
+  - frontend: 1043 passed;
+  - integration: 1056 passed, 15 skipped, the permission matrix included;
+  - e2e: 167 passed, 1 skipped; the teardown retired 71 use cases and the purge removed all 71;
+  - every new and re-anchored mutation was caught.
+
+## 2026-09-14 — both event logs page at the server, a page at a time
+
+The owner found no paging in the content-read log and the roles' change log, and asked for real
+paging at the API so the console does not receive every event.
+
+- **The finding.** Both APIs already paged, the gateway's content-read log by cursor (50) and
+  Management's change log by page number (25). But each list's "Load more" appended the next page
+  to the one on screen, so after a few clicks the whole log was in the browser anyway. The API was
+  paged, and the list effectively was not.
+- **The change.**
+  - Both lists now show one page and the console's pager: "1–50 of 120", previous and next, the
+    same strip the use-case list has.
+  - The change log uses `ServerTableView`, and a write returns it to the first page, where the new
+    entry is.
+  - The content-read log keeps its cursor: an offset page under a log that grows while it is read
+    shows a row twice. `CursorTableView` keeps the trail of cursors behind the current page, so
+    previous is a step back along it. The gateway adds `count`, the reads the filters match across
+    all pages.
+- **Tests.**
+  - A gateway test pages five reads in pages of two without a gap or a repeat, and checks that the
+    count honours the filter. Mutation RD4: 833 properties.
+  - Specs cover `CursorTableView` (forward, back, both ends, reset, a late answer, a failed page)
+    and both lists: the next page replaces the first, and a change goes back to page one.
+  - Three hand breaks, each turning a spec red before it was restored: pages appended again,
+    previous that stays, and a reload that keeps its page.
+
+## 2026-09-14 — two groups: exactly the union, pair by pair
+
+The owner asked whether merging the permissions of two Keycloak groups had been checked as a matrix
+of single permissions, so that nobody gets a permission they should not have. It had been checked
+for one combination only.
+
+- **Why a matrix is needed.** The engine forms a union and nothing else. What could still escalate
+  is an enforcement point that combines permissions, so that two of them together open something
+  neither opens alone. The built-in roles cannot show such a check: they hold fixed sets, and a
+  combination none of them holds is never exercised. The live matrix had already found two
+  combining checks (FR-11), both hidden this way.
+- **What was built.** `test_the_pairwise_permission_matrix.py`, once per plane, runs every probe
+  of that plane through the real enforcement: Management's views and `/me`; the gateway's read
+  model, `RoleResolver`, `_with_permissions` and endpoints. The cases:
+  - every grantable permission beside an empty role;
+  - every permission held by both roles;
+  - all 190 pairs;
+  - each built-in role beside each custom permission;
+  - a role beside an `admin` or `user` grant on another use case.
+
+  Every answer must be exactly the union plus FR-11's implications. An `admin` grant also opens
+  exactly the two doors it documents (the question catalogue and the directory) and no
+  permission.
+  - Management: 14 probes, 330 cases. Gateway: 9 probes, 330 cases. Together, about 6,000
+    decisions in about 20 seconds.
+  - The Management half first ran into its own request throttle, which counts in the cache across
+    tests, so the cache is cleared per case.
+- **The evidence it is needed.**
+  - PW1 lets the gateway's kill switch open for `catalog.write` together with `report.read_all`.
+  - PW2 lets Management's purge open for `smoketest.author` together with `directory.search`.
+  - No built-in role holds either pair. Applied by hand against the earlier tests of those
+    endpoints and of the engine, neither was noticed; the pairwise matrix catches both.
+- **Live samples** in `test_the_permission_matrix.py`, for what needs a real token and the change
+  travelling to the gateway:
+  - IT Security beside a custom role, and IT Steuerung beside a custom role;
+  - two roles holding the same permission;
+  - an empty role beside a full one;
+  - a role beside an admin grant on another use case, where `/me` still lists exactly the role's
+    permissions.
+- **What the live samples found.** IT Security beside a custom role was allowed to search the
+  directory, which neither role grants. In this development database the group `/aira/it-security`
+  administers four live use cases, left behind by an earlier version of an integration test. Such
+  a grant opens the documented doors, so the live samples now measure what a built-in group opens
+  alone and allow exactly that plus the custom permission.
+  - Looking for why led to a real defect. The "administers some use case" doors (the question
+    catalogue and the directory search) counted **retired** use cases too. So an admin grant on a
+    use case retired long ago still opened both, although retiring ends every access
+    (`FRD-607`).
+  - `may_run_tests_queryset`, which also decides which use cases may be run, and
+    `MaySearchDirectory` now count live use cases only.
+  - A hermetic test was red before the fix. Mutations RL14 and RL15.
+- **Measured:**
+  - hermetic: 4604 passed, coverage 96.57 %;
+  - frontend: 1051 passed;
+  - PW1, PW2, RL14 and RL15 caught: 837 properties.
+  - live, against the rebuilt stack: the whole permission-matrix file passed, including the
+    growing matrix, IT Steuerung narrowed and restored, and the union samples.

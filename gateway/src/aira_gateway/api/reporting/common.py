@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Response
 
+from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.principal import Principal
 from aira_gateway.reporting.service import Scope
@@ -20,15 +21,15 @@ MAX_WINDOW_DAYS = 366
 router = APIRouter(tags=["reporting"])
 
 
-def visible_scope(principal: Principal) -> Scope:
+def visible_scope(principal: Principal, permission: Permission) -> Scope:
     """Which use cases this caller may be shown.
 
     ``None`` means every one and is deliberately distinct from ``()``, which means none: returning
     the wrong one would show an installation's whole spend to somebody entitled to one use case.
-    `is_oversight`, not `is_governance` — the two differ by IT Security, whose job is investigating
-    incidents (`FRD-206`).
+    ``permission`` is what lets a caller see every use case on this surface (`FRD-614`): request
+    lists, figures and findings are separate permissions, so a role can hold one without the others.
     """
-    if principal.is_oversight:
+    if principal.allows(permission):
         return None
     if principal.method == "demo":
         # Authentication is switched off: there is no identity to scope by.

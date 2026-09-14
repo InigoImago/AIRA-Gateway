@@ -19,12 +19,12 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from aira_common.roles import Role
+from aira_common.permissions import Permission
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import PURGE_AFTER_DAYS, UseCase
 from aira_management.apps.usecases.serializers import RetiredUseCaseSerializer
 from aira_management.apps.usecases.views.base import UseCaseViewBase
-from aira_management.rbac import has_governance_role, has_role
+from aira_management.rbac import may
 
 
 class RetirementMixin(UseCaseViewBase):
@@ -54,8 +54,10 @@ class RetirementMixin(UseCaseViewBase):
         Not for the use-case administrator, including the one who retired it: the design assumes
         that person may be the reason the record matters.
         """
-        if not has_governance_role(request.user):
-            raise PermissionDenied("Retired use cases are visible to governance roles.")
+        if not may(request.user, Permission.USECASE_READ_RETIRED):
+            raise PermissionDenied(
+                "Retired use cases need the permission to see them (usecase.read_retired)."
+            )
         rows = UseCase.objects.filter(deleted_at__isnull=False).order_by("-deleted_at", "slug")
         return Response(RetiredUseCaseSerializer(rows, many=True).data)
 
@@ -63,14 +65,16 @@ class RetirementMixin(UseCaseViewBase):
     def purge(self, request: Request, slug: str | None = None) -> Response:
         """Remove a retired use case for good. Three conditions, each a separate defence:
 
-        1. a **Global Administrator** only — not the administrator who retired it, and not
-           `IT Steuerung`, which oversees and does not act;
+        1. `usecase.purge` — a Global Administrator by default, not the administrator who retired
+           it, and not `IT Steuerung`, which oversees and does not act;
         2. it must **already be retired**, or purging would rebuild the hole in one step;
         3. it must have been retired for **`PURGE_AFTER_DAYS`**, so erasing a record means waiting
            while its tombstone is visible in the retired list.
         """
-        if not has_role(request.user, Role.GLOBAL_ADMIN):
-            raise PermissionDenied("Only a Global Administrator may purge a retired use case.")
+        if not may(request.user, Permission.USECASE_PURGE):
+            raise PermissionDenied(
+                "Purging a retired use case needs the permission to purge (usecase.purge)."
+            )
         # Read around `get_queryset()`, which excludes retired rows, and without a retired filter,
         # so the one check below enforces condition 2 — a second copy would leave neither
         # load-bearing.

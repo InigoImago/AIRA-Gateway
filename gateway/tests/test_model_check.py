@@ -164,7 +164,7 @@ def test_who_may_ask(principal: Principal, expected: int) -> None:
 
     assert response.status_code == expected
     if expected == 403:
-        assert "IT Security" in response.json()["error"]["message"]
+        assert "operations.diagnose" in response.json()["error"]["message"]
 
 
 # ═══ only an approved model may be used (FRD-307) ══════════════════════════════════════════════

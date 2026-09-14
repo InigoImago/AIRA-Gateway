@@ -1876,3 +1876,60 @@ tr.is-open > * {
 .chip__remove:hover {
   color: var(--aira-danger);
 }
+
+/* ---- roles and what they may do (`FRD-614`) --------------------------------------------------- */
+
+/* The permission boxes: a fieldset for the grouping, not its default frame. */
+.role-permissions {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+/* One column per area on a wide screen, one below the other on a phone. `min()` keeps a track from
+   asking for more than the screen has, which would widen the document at 360px. */
+.role-areas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: 1rem 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.role-area {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.role-area__title {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--aira-text-muted);
+}
+
+/* A sensitive permission is marked where it is ticked and where it is read, in the warning colour,
+   so it cannot be granted by a person who did not see the mark. */
+.role-sensitive {
+  margin-left: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--aira-warning);
+  white-space: nowrap;
+}
+
+.role-held,
+.role-diff {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.role-diff code {
+  margin-right: 0.3rem;
+}

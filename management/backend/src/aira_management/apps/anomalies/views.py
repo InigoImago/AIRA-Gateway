@@ -17,13 +17,13 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from aira_common.roles import INCIDENT_ROLES
+from aira_common.permissions import Permission
 from aira_management.apps.anomalies.models import AnomalyRule
 from aira_management.apps.anomalies.serializers import AnomalyRuleSerializer
 from aira_management.apps.usecases.access import VIEW, may_manage
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase
-from aira_management.rbac import has_role, scope_queryset
+from aira_management.rbac import may, scope_queryset
 
 
 def rule_payload(rule: AnomalyRule) -> dict[str, Any]:
@@ -50,9 +50,9 @@ def rule_payload(rule: AnomalyRule) -> dict[str, Any]:
 
 
 def may_author_global(user: Any) -> bool:
-    """Who may write a rule that acts everywhere — the same set the gateway's kill switch asks
-    (`aira_common.roles.INCIDENT_ROLES`)."""
-    return has_role(user, *INCIDENT_ROLES)
+    """Who may write a rule that acts everywhere: its effects land on use cases its author cannot
+    otherwise touch, which is why it is a permission of its own."""
+    return may(user, Permission.ANOMALY_RULE_GLOBAL_WRITE)
 
 
 class AnomalyRuleViewSet(viewsets.ModelViewSet[AnomalyRule]):
@@ -72,8 +72,8 @@ class AnomalyRuleViewSet(viewsets.ModelViewSet[AnomalyRule]):
     def perform_create(self, serializer: Any) -> None:
         if not may_author_global(self.request.user):
             raise PermissionDenied(
-                "Only IT Security or a Global Administrator may author a global rule. "
-                "A rule for one use case is created on that use case."
+                "Authoring a global rule needs the permission for rules that apply everywhere "
+                "(anomaly.rule.global.write). A rule for one use case is created on that use case."
             )
         with transaction.atomic():
             rule = serializer.save(use_case=None)
@@ -98,7 +98,8 @@ class AnomalyRuleViewSet(viewsets.ModelViewSet[AnomalyRule]):
         if rule.use_case is None:
             if not may_author_global(self.request.user):
                 raise PermissionDenied(
-                    "Only IT Security or a Global Administrator may change a global rule."
+                    "Changing a global rule needs the permission for rules that apply everywhere "
+                    "(anomaly.rule.global.write)."
                 )
         elif not may_manage(self.request.user, rule.use_case):
             raise PermissionDenied("You cannot change the anomaly rules of this use case.")

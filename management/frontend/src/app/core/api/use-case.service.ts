@@ -6,6 +6,7 @@ import { withIncidents } from './clients/incidents';
 import { withLimits } from './clients/limits';
 import { withPipelines } from './clients/pipelines';
 import { withReporting } from './clients/reporting';
+import { withRoles } from './clients/roles';
 import { withSmokeTests } from './clients/smoke-tests';
 import { withUseCases } from './clients/use-cases';
 
@@ -18,8 +19,10 @@ export type { Provenance } from './clients/catalog';
  * token; the calls themselves live in the resource modules.
  */
 @Injectable({ providedIn: 'root' })
-export class UseCaseService extends withSmokeTests(
-  withIncidents(
-    withReporting(withCatalog(withLimits(withPipelines(withAccess(withUseCases(ApiClient)))))),
+export class UseCaseService extends withRoles(
+  withSmokeTests(
+    withIncidents(
+      withReporting(withCatalog(withLimits(withPipelines(withAccess(withUseCases(ApiClient)))))),
+    ),
   ),
 ) {}

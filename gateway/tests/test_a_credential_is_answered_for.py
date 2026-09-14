@@ -109,9 +109,7 @@ async def test_a_key_holds_no_organisation_wide_role(
         principal = await ApiKeyService(session).verify(full)
     assert principal is not None
     assert principal.roles == ()
-    assert not principal.is_oversight
-    assert not principal.is_governance
-    assert not principal.may_act_on_incidents
+    assert principal.permissions == frozenset()
 
 
 @pytest.mark.asyncio

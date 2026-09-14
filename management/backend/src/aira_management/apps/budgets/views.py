@@ -15,10 +15,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from aira_common.permissions import Permission
 from aira_management.apps.budgets.models import Budget
 from aira_management.apps.budgets.serializers import BudgetSerializer
 from aira_management.apps.usecases.events import emit
-from aira_management.rbac import IsGlobalAdmin, has_oversight_role
+from aira_management.rbac import may, requires
 
 
 def payload(budget: Budget) -> dict[str, Any]:
@@ -47,10 +48,10 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
     def get_permissions(self) -> list[Any]:
         if self.action == "list":
             return [IsAuthenticated()]
-        return [IsAuthenticated(), IsGlobalAdmin()]
+        return [IsAuthenticated(), requires(Permission.BUDGET_INSTALLATION_WRITE)()]
 
     def list(self, request: Request) -> Response:
-        if not has_oversight_role(request.user):
+        if not may(request.user, Permission.REPORT_READ_ALL):
             return Response([], status=status.HTTP_200_OK)
         rows = Budget.objects.filter(use_case__isnull=True).order_by("period")
         return Response(BudgetSerializer(rows, many=True).data)

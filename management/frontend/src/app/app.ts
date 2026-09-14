@@ -4,14 +4,7 @@ import { errorMessage } from './core/api/error-message';
 import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
-import { hasOversight, mayActOnIncidents } from './core/auth/roles';
-
-/** Role slug → what the header calls it. */
-const ROLE_LABELS: Record<string, string> = {
-  'global-admin': 'Global administrator',
-  'it-steuerung': 'IT Steuerung',
-  'it-security': 'IT Security',
-};
+import { Permission, can } from './core/auth/roles';
 
 /** Role slug → what the role may do, for the chip's tooltip. */
 const ROLE_EXPLANATIONS: Record<string, string> = {
@@ -69,18 +62,12 @@ export class App implements OnInit {
     window.location.reload();
   }
 
-  /** Whether this caller may see the security console — **seeing**, not acting (`FRD-206`). */
-  protected hasOversight(): boolean {
-    return hasOversight(this.me()?.roles);
-  }
-
   /**
-   * May this person act on an incident — and therefore read what was actually sent? Narrower than
-   * {@link hasOversight} by exactly `it-steuerung`, which sees every figure and no content
-   * (`FRD-505`).
+   * Whether the server listed this permission for the caller. The template names the permission
+   * each entry needs, so the navigation can be read against the server's catalogue (`FRD-614`).
    */
-  protected mayInvestigate(): boolean {
-    return mayActOnIncidents(this.me()?.roles);
+  protected may(permission: Permission): boolean {
+    return can(this.me(), permission);
   }
 
   /**
@@ -93,17 +80,17 @@ export class App implements OnInit {
   }
 
   /**
-   * One chip per role the token carries: the slug for machines, the words for people. Which role is
-   * asking is the first half of "why can I not do this".
+   * One chip per role the caller holds, an installation's own roles included: the slug for
+   * machines, the server's name for people (`FRD-614` FR-10). Which role is asking is the first half
+   * of "why can I not do this".
    */
   protected roleChips(): { slug: string; label: string; explains: string }[] {
-    return (this.me()?.roles ?? [])
-      .filter((slug) => slug in ROLE_LABELS)
-      .map((slug) => ({
-        slug,
-        label: ROLE_LABELS[slug],
-        explains: ROLE_EXPLANATIONS[slug] ?? '',
-      }));
+    const me = this.me();
+    return (me?.roles ?? []).map((slug) => ({
+      slug,
+      label: me?.role_labels?.[slug] ?? slug,
+      explains: ROLE_EXPLANATIONS[slug] ?? '',
+    }));
   }
 
   protected logout(): void {

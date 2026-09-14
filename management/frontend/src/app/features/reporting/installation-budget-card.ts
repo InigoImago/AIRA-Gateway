@@ -7,7 +7,7 @@ import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
-import { runsTheInstallation } from '../../core/auth/roles';
+import { can } from '../../core/auth/roles';
 
 /** A spend limit as typed: an amount with up to six decimals, either separator. */
 const AMOUNT = /^\d+([.,]\d{1,6})?$/;
@@ -16,8 +16,9 @@ const AMOUNT = /^\d+([.,]\d{1,6})?$/;
  * The cap on spend that belongs to no use case (`FRD-610`) — the `(none)` row of the report's
  * `By use case` table, which is why it lives on this page.
  *
- * Read is wider than write: `IT Steuerung` sees the figure and is offered no form (`ADR-0007`); a
- * Global Administrator sets it. The server enforces both — this decides only what to offer.
+ * Read is wider than write: whoever reads every figure sees it (`ADR-0007`), and only
+ * `budget.installation.write` is offered the form. The server enforces both — this decides only
+ * what to offer.
  */
 @Component({
   selector: 'app-installation-budget-card',
@@ -34,7 +35,7 @@ export class InstallationBudgetCard implements OnInit {
 
   protected readonly budgets = signal<Budget[]>([]);
   protected readonly loaded = signal(false);
-  private readonly roles = signal<string[]>([]);
+  private readonly me = signal<{ permissions?: string[] } | null>(null);
 
   protected readonly showForm = signal(false);
   protected readonly period = signal<'day' | 'month'>('month');
@@ -52,21 +53,21 @@ export class InstallationBudgetCard implements OnInit {
     return unit ? ` (${unit})` : '';
   });
 
-  protected readonly canManage = computed(() => runsTheInstallation(this.roles()));
+  protected readonly canManage = computed(() => can(this.me(), 'budget.installation.write'));
 
   /**
-   * Whether to draw the card at all. The server answers an empty list to a reader with no
-   * oversight role, so an empty list may mean *not your business* — never claim "no budget set" to
-   * a reader who cannot manage one.
+   * Whether to draw the card at all. The server answers an empty list to a reader who may not read
+   * every figure, so an empty list may mean *not your business* — never claim "no budget set" to a
+   * reader who cannot manage one.
    */
   protected readonly visible = computed(() => this.canManage() || this.budgets().length > 0);
 
   ngOnInit(): void {
     this.meService.get().subscribe({
-      next: (me) => this.roles.set(me.roles ?? []),
-      // Quiet: not knowing the roles costs a form, not a figure, and the page's banner belongs to
-      // the report.
-      error: () => this.roles.set([]),
+      next: (me) => this.me.set(me),
+      // Quiet: not knowing the permissions costs a form, not a figure, and the page's banner
+      // belongs to the report.
+      error: () => this.me.set(null),
     });
     this.load();
   }

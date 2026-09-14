@@ -147,4 +147,6 @@ export interface ContentReadPage {
   reads: ContentRead[];
   /** `null` on the last page. */
   next_cursor: string | null;
+  /** Every read the filters match, across all pages — what "of 120" refers to. */
+  count: number;
 }

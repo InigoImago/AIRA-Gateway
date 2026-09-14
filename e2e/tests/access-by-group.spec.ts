@@ -58,9 +58,8 @@ test.describe('Access by group', () => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('picker');
     await createUseCase(page, slug, 'Picker probe');
-    // The directory falls back to what the console already knows when no admin client is
-    // configured — which is this stack. Granting it somewhere first is what makes it findable,
-    // and is exactly the "re-grant an existing group" case the fallback is meant to cover.
+    // Granted somewhere first, so the group is findable whether the directory answers or the
+    // console falls back to what it already knows.
     const other = uniqueSlug('seed');
     await createUseCase(page, other, 'Seed for the directory');
     await grantGroup(page, other, DEPARTMENT);
@@ -140,20 +139,25 @@ test.describe('Access by group', () => {
     await expect(page.locator('[data-testid="access-grant"]')).toHaveCount(0);
   });
 
-  test('the directory says when it is answering from what the console already knows', async ({
+  test('the directory offers a group nobody has granted, and says when nothing matches', async ({
     page,
   }) => {
-    // "No results" from a directory nobody could reach reads exactly like "no such group", and
-    // those are different answers to act on. This stack has no admin client, so it is the
-    // degraded case — and it has to say so.
+    // This stack has a directory client (`aira-directory`), so the picker asks Keycloak itself: a
+    // group nobody has granted anywhere is offered, and a search that matches nothing says so
+    // rather than that the directory could not be asked. The console's answer without a client is
+    // covered by its specs and by Management's own tests.
     await login(page, USERS.globalAdmin);
-    const slug = uniqueSlug('degraded');
-    await createUseCase(page, slug, 'Degraded directory probe');
+    const slug = uniqueSlug('directory');
+    await createUseCase(page, slug, 'Directory probe');
 
     await page.goto(`/use-cases/${slug}?tab=members`);
-    await page.fill('[data-testid="access-search"]', 'zzz-no-such-thing');
+    await page.fill('[data-testid="access-search"]', 'entwicklung');
+    const results = page.locator('[data-testid="access-results"]');
+    await expect(results).toContainText('entwicklung', { timeout: 20_000 });
+    await expect(results).toContainText('abteilungen');
 
+    await page.fill('[data-testid="access-search"]', 'zzz-no-such-thing');
     await expect(page.locator('[data-testid="access-no-match"]')).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator('body')).toContainText('could not be searched');
+    await expect(page.locator('body')).not.toContainText('could not be searched');
   });
 });

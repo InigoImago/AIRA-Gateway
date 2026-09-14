@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from aira_common.money import to_nanos
+from aira_common.permissions import Permission
 from aira_gateway.api.reporting import visible_scope
 from aira_gateway.app import create_app
 from aira_gateway.auth.dependencies import require_principal
@@ -87,26 +88,32 @@ async def _log(
 
 
 def test_oversight_is_scoped_to_everything() -> None:
-    assert visible_scope(Principal(subject="s", method="oidc", roles=("it-steuerung",))) is None
+    assert (
+        visible_scope(
+            Principal(subject="s", method="oidc", roles=("it-steuerung",)),
+            Permission.REPORT_READ_ALL,
+        )
+        is None
+    )
 
 
 def test_a_member_is_scoped_to_their_own_use_cases() -> None:
     principal = Principal(subject="s", method="oidc", use_cases=("a", "b"))
-    assert visible_scope(principal) == ("a", "b")
+    assert visible_scope(principal, Permission.REPORT_READ_ALL) == ("a", "b")
 
 
 def test_neither_oversight_nor_membership_is_scoped_to_nothing() -> None:
     """The empty tuple and None must never be confused: one is "no use case", the other is
     "every use case", and swapping them shows an installation's whole spend to somebody entitled
     to one corner of it."""
-    scope = visible_scope(Principal(subject="s", method="oidc"))
+    scope = visible_scope(Principal(subject="s", method="oidc"), Permission.REPORT_READ_ALL)
     assert scope == ()
     assert scope is not None
 
 
 def test_an_api_key_is_scoped_to_the_use_case_it_was_issued_for() -> None:
     principal = Principal(subject="s", method="api_key", use_cases=("bound",))
-    assert visible_scope(principal) == ("bound",)
+    assert visible_scope(principal, Permission.REPORT_READ_ALL) == ("bound",)
 
 
 async def test_a_caller_with_no_memberships_gets_an_empty_report_not_an_error(

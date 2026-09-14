@@ -285,6 +285,18 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "aira-directory",
+      "name": "Directory lookups (dev only)",
+      "description": "Read-only service account Management asks whether a Keycloak group exists before a role is bound to it (FRD-614), and searches people and groups with when access is granted (FRD-209). query-groups and view-users, nothing else.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "aira-directory-dev-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect"
     }
   ],
   "users": [
@@ -458,6 +470,19 @@
         "/aira/global-admins"
       ],
       "id": "2fc398cc-717d-5350-a1db-c0d48a2bb4e1"
+    },
+    {
+      "username": "service-account-aira-directory",
+      "enabled": true,
+      "serviceAccountClientId": "aira-directory",
+      "realmRoles": [],
+      "clientRoles": {
+        "realm-management": [
+          "query-groups",
+          "view-users"
+        ]
+      },
+      "id": "864d318f-277e-5791-9ca1-efd60762bb40"
     }
   ],
   "roles": {

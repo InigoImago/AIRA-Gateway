@@ -364,7 +364,7 @@ async def test_the_address_filter_is_refused_for_a_role_that_may_not_act(governa
         response = await _traces(client, governance_token, source_ip="10.0.0.7")
 
     body = _check(response, 403)
-    assert "security" in str(body).lower()
+    assert "incident.investigate" in str(body)
 
 
 async def test_an_anonymous_caller_is_refused_before_any_filter_is_considered() -> None:

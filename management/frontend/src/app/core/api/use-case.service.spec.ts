@@ -58,6 +58,56 @@ describe('UseCaseService', () => {
     http.expectOne('/gw/v1beta/usage/a%2Fb').flush({ usage: [] });
   });
 
+  // ---- roles (`FRD-614`) -------------------------------------------------------------------------
+
+  it('reads the roles and the permission catalogue', () => {
+    service.roles().subscribe();
+    service.permissionCatalogue().subscribe();
+    http.expectOne('/api/v1/roles/').flush([]);
+    http.expectOne('/api/v1/roles/catalogue/').flush([]);
+  });
+
+  it('pages the change log of the roles, and filters it by role only when asked', () => {
+    service.roleChanges({}).subscribe();
+    http.expectOne('/api/v1/roles/changes/?page=1').flush({ results: [] });
+    service.roleChanges({ role: 'controlling', page: 2, pageSize: 25 }).subscribe();
+    http
+      .expectOne('/api/v1/roles/changes/?page=2&page_size=25&role=controlling')
+      .flush({ results: [] });
+  });
+
+  it('asks whether a group may be bound with POST', () => {
+    service.checkGroup('/finance/audit').subscribe();
+    const req = http.expectOne('/api/v1/roles/check-group/');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ group_path: '/finance/audit' });
+    req.flush({ group_path: '/finance/audit', exists: true });
+  });
+
+  it('creates, changes and deletes a role, encoding its slug', () => {
+    const draft = {
+      label: 'Audit',
+      group_path: '/finance/audit',
+      permissions: ['report.read_all'],
+    };
+    service.createRole(draft).subscribe();
+    const create = http.expectOne('/api/v1/roles/');
+    expect(create.request.method).toBe('POST');
+    expect(create.request.body).toEqual(draft);
+    create.flush({});
+
+    service.updateRole('a/b', { permissions: [] }).subscribe();
+    const update = http.expectOne('/api/v1/roles/a%2Fb/');
+    expect(update.request.method).toBe('PATCH');
+    expect(update.request.body).toEqual({ permissions: [] });
+    update.flush({});
+
+    service.deleteRole('audit').subscribe();
+    const remove = http.expectOne('/api/v1/roles/audit/');
+    expect(remove.request.method).toBe('DELETE');
+    remove.flush(null);
+  });
+
   it('fetches a single use case', () => {
     service.get('uc').subscribe();
     http.expectOne('/api/v1/use-cases/uc/').flush({ slug: 'uc', name: 'UC' });

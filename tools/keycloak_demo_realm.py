@@ -185,10 +185,17 @@ def _missing(token: str, realm: dict) -> list[str]:
             if path not in held:
                 missing_members.append(f"{wanted['username']} in {path}")
 
+    # **And the clients**, which a realm imported before one was added never gets: the directory
+    # client a role binding checks groups with (`FRD-614` FR-4) is the case that found this.
+    clients = _request("GET", f"/admin/realms/{name}/clients?max=500", token) or []
+    present_clients = {c["clientId"] for c in clients}  # type: ignore[index]
+    wanted_clients = {c["clientId"] for c in realm.get("clients", [])}
+
     return sorted(
         [f"user {u}" for u in wanted_users - present_users]
         + [f"group {g}" for g in missing_groups]
         + [f"membership {m}" for m in missing_members]
+        + [f"client {c}" for c in wanted_clients - present_clients]
     )
 
 

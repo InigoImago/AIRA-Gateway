@@ -11,3 +11,4 @@ export * from './types/catalog';
 export * from './types/smoke-tests';
 export * from './types/reporting';
 export * from './types/incidents';
+export * from './types/roles';

@@ -391,6 +391,7 @@ The symptom is a setting that appears saved in the UI and does nothing.
 | `aira.rate-limits`   | request-rate limits (FRD-405)                                |
 | `aira.anomaly-rules` | anomaly rules (FRD-500)                                      |
 | `aira.models`        | model catalog and prices (FRD-403)                           |
+| `aira.roles`         | what each stored role may do, and its group (FRD-614)        |
 
 ```bash
 kafka-topics.sh --create --topic aira.usecases --config cleanup.policy=compact ...

@@ -18,6 +18,16 @@ export interface Me {
   username: string;
   email: string;
   roles: string[];
+  /**
+   * The caller's installation-wide permissions, which the server enforces (`FRD-614`). The console
+   * asks these through `can()` in `core/auth/roles.ts`, never the roles.
+   */
+  permissions?: string[];
+  /**
+   * Every role's name, by slug (`FRD-614` FR-10), so no screen restates one. A slug missing here is
+   * shown as the slug.
+   */
+  role_labels?: Record<string, string>;
   use_cases: string[];
   /** The installation's key policy, so a form states what the server enforces (`ADR-0015`). */
   api_key_default_days?: number;

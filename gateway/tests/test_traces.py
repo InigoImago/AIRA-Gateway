@@ -18,6 +18,7 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aira_common.permissions import Permission
 from aira_gateway.app import create_app
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -449,3 +450,26 @@ def test_a_filter_cannot_widen_the_scope() -> None:
         rows = client.get("/v1beta/traces?credential=abcd1234").json()["traces"]
 
     assert rows == []
+
+
+def test_a_source_filter_is_refused_even_to_a_caller_who_sees_nothing() -> None:
+    """The refusal comes before the empty answer: a caller with no use case asked for an address
+    must not be told, by an empty list, that the address made no requests."""
+    nobody = Principal(subject="nobody", method="oidc")
+    with _client(nobody) as client:
+        response = client.get("/v1beta/traces", params={"source_ip": "192.0.2.1"})
+    assert response.status_code == 403
+
+
+def test_reading_any_content_includes_reaching_the_request() -> None:
+    """`payload.read_any` without the request list still opens a request's content: a permission
+    to read content nobody can reach is a checkbox that does nothing."""
+    auditor = Principal(
+        subject="auditor", method="oidc", permissions=frozenset({Permission.PAYLOAD_READ_ANY})
+    )
+    with _client(auditor) as client:
+        _fill(client, _row(id="req-far", use_case="uc-far"))
+        opened = client.get("/v1beta/traces/req-far/payload")
+        listed = client.get("/v1beta/traces", params={"use_case": "uc-far"}).json()
+    assert opened.status_code == 200, opened.text
+    assert listed["traces"] == []

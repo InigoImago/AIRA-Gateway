@@ -147,9 +147,7 @@ def test_the_log_is_refused_to_everybody_else(principal: Principal) -> None:
         response = client.get("/v1beta/content-reads")
 
     assert response.status_code == 403
-    assert (
-        "Global Administrators, IT Security and IT Steuerung" in response.json()["error"]["message"]
-    )
+    assert "content_read.read" in response.json()["error"]["message"]
 
 
 def test_the_log_lists_newest_first_and_only_what_it_allows() -> None:
@@ -200,3 +198,36 @@ def test_the_log_pages_by_cursor_without_repeating_or_skipping() -> None:
     assert [row["id"] for row in first["reads"]] == ["read-3", "read-2"]
     assert [row["id"] for row in second["reads"]] == ["read-1"]
     assert second["next_cursor"] is None
+
+
+# ═══ one page at a time, and the total (FR-6) ════════════════════════════════════════════════════
+
+
+def test_the_log_is_paged_and_counts_every_read_the_filters_match() -> None:
+    """The console holds one page and says "of 5"; it never receives the log. Pages follow each
+    other without a gap or a repeat, and the total counts every page the filters match, not what
+    is left after the cursor."""
+    with _client(IT_SECURITY) as client:
+        _seed_reads(client, *[_read(n) for n in range(1, 6)], _read(9, username="itgov"))
+        mine = {"limit": 2, "reader": "admin"}
+        first = client.get("/v1beta/content-reads", params=mine).json()
+        second = client.get(
+            "/v1beta/content-reads", params={**mine, "cursor": first["next_cursor"]}
+        ).json()
+        third = client.get(
+            "/v1beta/content-reads", params={**mine, "cursor": second["next_cursor"]}
+        ).json()
+        everyone = client.get("/v1beta/content-reads", params={"limit": 2}).json()
+
+    pages = (first, second, third)
+    assert [row["id"] for page in pages for row in page["reads"]] == [
+        "read-5",
+        "read-4",
+        "read-3",
+        "read-2",
+        "read-1",
+    ]
+    assert [page["count"] for page in pages] == [5, 5, 5]
+    assert third["next_cursor"] is None
+    assert everyone["count"] == 6
+    assert len(everyone["reads"]) == 2

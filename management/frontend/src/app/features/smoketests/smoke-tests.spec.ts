@@ -64,6 +64,8 @@ const RUN: TestRun = {
 };
 
 interface Options {
+  /** What `/me` lists. Absent means the permission to write the catalogue. */
+  permissions?: string[];
   roles?: string[];
   /** Which use cases the server says the catalogue can be run in, and why not where it cannot. */
   attribution?: {
@@ -115,7 +117,11 @@ function setup(options: Options = {}) {
         provide: MeService,
         useValue: {
           currency: signal(''),
-          get: () => of({ roles: options.roles ?? ['it-security'] }),
+          get: () =>
+            of({
+              roles: options.roles ?? [],
+              permissions: options.permissions ?? ['smoketest.author'],
+            }),
         },
       },
       {
@@ -516,7 +522,7 @@ describe('SmokeTests', () => {
       providers: [
         {
           provide: MeService,
-          useValue: { currency: signal(''), get: () => of({ roles: ['it-security'] }) },
+          useValue: { currency: signal(''), get: () => of({ permissions: ['smoketest.author'] }) },
         },
         {
           provide: UseCaseService,
@@ -728,7 +734,7 @@ describe('SmokeTests', () => {
       providers: [
         {
           provide: MeService,
-          useValue: { currency: signal(''), get: () => of({ roles: ['it-security'] }) },
+          useValue: { currency: signal(''), get: () => of({ permissions: ['smoketest.author'] }) },
         },
         {
           provide: UseCaseService,
@@ -904,7 +910,7 @@ describe('SmokeTests', () => {
       providers: [
         {
           provide: MeService,
-          useValue: { currency: signal(''), get: () => of({ roles: ['it-security'] }) },
+          useValue: { currency: signal(''), get: () => of({ permissions: ['smoketest.author'] }) },
         },
         {
           provide: UseCaseService,
@@ -944,18 +950,32 @@ describe('SmokeTests', () => {
     expect(topics).toEqual(['Weapons', 'PII']);
   });
 
-  it('offers authoring to IT Security and explains its absence to everybody else', () => {
+  it('offers authoring to whoever may write the catalogue and explains its absence to others', () => {
     /** `FRD-206`: a withheld action names who performs it. */
     expect(
-      setup({ tab: 'catalogue', roles: ['it-security'] }).testid('catalogue-add'),
+      setup({ tab: 'catalogue', permissions: ['smoketest.author'] }).testid('catalogue-add'),
     ).not.toBeNull();
 
-    // No organisation-wide role: what a person who only works inside use cases looks like since
-    // `ADR-0017`.
-    const member = setup({ tab: 'catalogue', roles: [] });
+    // Nothing installation-wide: what a person who only works inside use cases looks like.
+    const member = setup({ tab: 'catalogue', permissions: [] });
 
     expect(member.testid('catalogue-add')).toBeNull();
     expect(member.testid('catalogue-readonly')?.textContent).toContain('IT Security');
+  });
+
+  it('asks the permission, never the role', () => {
+    // Running the catalogue anywhere is not writing it, and a role alone offers nothing.
+    expect(
+      setup({ tab: 'catalogue', permissions: ['smoketest.run_any'] }).testid('catalogue-add'),
+    ).toBeNull();
+    expect(
+      setup({ tab: 'catalogue', roles: ['it-security'], permissions: [] }).testid('catalogue-add'),
+    ).toBeNull();
+    expect(
+      setup({ tab: 'catalogue', roles: [], permissions: ['smoketest.author'] }).testid(
+        'catalogue-add',
+      ),
+    ).not.toBeNull();
   });
 
   it('appends a new question rather than asking anybody to number it', () => {

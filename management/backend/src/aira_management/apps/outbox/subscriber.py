@@ -17,6 +17,7 @@ from aira_common.kafka import (
     MODEL_TOPIC,
     PIPELINE_TOPIC,
     RATE_LIMIT_TOPIC,
+    ROLE_TOPIC,
     USECASE_TOPIC,
 )
 from aira_common.observability import traceparent_from_context
@@ -48,6 +49,9 @@ _TOPIC_FOR = {
     "model.deleted": MODEL_TOPIC,
     "anomaly_rule.upserted": ANOMALY_RULE_TOPIC,
     "anomaly_rule.deleted": ANOMALY_RULE_TOPIC,
+    # What a role may do and which group confers it (`FRD-614` FR-8), keyed by the role's slug.
+    "role.upserted": ROLE_TOPIC,
+    "role.removed": ROLE_TOPIC,
 }
 
 

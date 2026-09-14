@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from aira_common.anomalies import RuleAction, RuleTarget
+from aira_common.permissions import Permission
 from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.incidents.common import _body_of, router
@@ -52,10 +53,11 @@ def _require_an_incident_role(principal: Principal) -> None:
     if principal.method == "demo":
         # Authentication is switched off: there is no identity to authorise.
         return
-    if not principal.may_act_on_incidents:
+    if not principal.allows(Permission.INCIDENT_SUSPEND):
         raise GeminiHTTPError(
             403,
-            "Only IT Security or a Global Administrator may suspend or restore access.",
+            "Suspending or restoring access needs the permission to stop traffic "
+            "(incident.suspend).",
             "PERMISSION_DENIED",
         )
 
