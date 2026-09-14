@@ -180,8 +180,9 @@ kafka:
 # Redis — rate limits that hold across several gateway instances. Without it they are per-process.
 # ---------------------------------------------------------------------------------------------
 redis:
-  url: redis://redis.internal.example.com:6379/0
-  # Redis Sentinel instead of `url`: the sentinels and the leader's name.
+  # Empty: the sentinels below replace it. A URL beside them would be ignored.
+  url: ''
+  # Redis Sentinel: the sentinels and the name they know the leader by.
   sentinels: redis-s1.internal:26379,redis-s2.internal:26379,redis-s3.internal:26379
   sentinel_service: aira
   username: ''
