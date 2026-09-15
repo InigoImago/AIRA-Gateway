@@ -2,6 +2,7 @@
 name = "aira-gateway"
 version = "0.1.0"
 description = "AIRA Gateway API — the data plane (FastAPI)."
+license = "Apache-2.0"
 requires-python = ">=3.14"
 dependencies = [
     "aira-common",

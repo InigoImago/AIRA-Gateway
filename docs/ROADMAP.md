@@ -141,7 +141,7 @@ logic is a named gap with no document behind it), `FRD-601-spend-and-usage-repor
 ---
 
 ## Phase 7 — Hardening & Production Readiness
-**Goal:** Enterprise polish and a path off the developer machine.
+**Goal:** Production polish and a path off the developer machine.
 
 Deliverables:
 - Security hardening & pen-test fixes; retention/redaction policies finalized.

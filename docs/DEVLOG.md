@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## No "enterprise" label on the front page, and the licence checked (2026-09-15)
+
+**The label.** The README's tagline and CLAUDE.md's first sentence called AIRA "enterprise"
+software. So did the PRD's headline, its vision and its goal G9, and the goal of Phase 7. That is a
+label, not a property of the system, and they now say what AIRA is. Some mentions stay unchanged:
+- third-party product names that contain the word (Gemini Enterprise Agent Platform, Vault
+  Enterprise, Splunk Enterprise) and Google's URLs;
+- quotes recorded in this log;
+- code comments.
+
+**The licence.**
+- `LICENSE` is the Apache License 2.0, unchanged: it matches a reference copy from an installed
+  package line for line.
+- The `Copyright [yyyy] [name of copyright owner]` placeholders in its appendix stay, as the
+  licence intends. They are the template for a file header, not a form to fill in.
+- `NOTICE` named "The AIRA Gateway Authors", which nothing defined, and now names Vadim Scheibe.
+- None of the Python or Node packages declared a licence; all five now declare `Apache-2.0`.
+
 ## Speech output on the Gemini surface (2026-09-14)
 
 The owner asked whether the text-to-speech models can be reached through AIRA. Measured first:

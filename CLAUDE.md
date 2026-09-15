@@ -9,7 +9,7 @@ Read this first, then `docs/PRD.md` and `docs/ROADMAP.md`.
 ---
 
 ## 1. What we are building
-An enterprise-grade AI gateway with two self-developed components + open-source infrastructure:
+An AI gateway with two self-developed components + open-source infrastructure:
 - **Gateway API** (data plane) — FastAPI.
 - **Management & Monitoring** (control plane) — Angular SPA + Django REST Framework.
 - Infra: PostgreSQL, Keycloak (SSO), Apache Kafka (event bus), HashiCorp Vault (secrets),

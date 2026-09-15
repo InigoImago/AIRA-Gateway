@@ -11,7 +11,7 @@
 
 ## 1. Purpose & Vision
 
-AIRA Gateway is an **enterprise-grade AI gateway** that provides a single, unified,
+AIRA Gateway is an **AI gateway** that provides a single, unified,
 provider-agnostic REST API in front of multiple upstream LLM platforms. It centralizes
 **authentication, authorization, routing, governance, observability, and security** for all
 AI traffic in the organization.
@@ -23,7 +23,7 @@ records **everything** (request + response persistence, tracing, audit) so that 
 IT security have full visibility and control.
 
 ### Vision statement
-> A governed, observable, and secure single point of entry for all enterprise AI usage — with
+> A governed, observable, and secure single point of entry for all AI usage in the organization — with
 > self-service for teams and strong central control for IT security and governance.
 
 ### Scope, in one sentence (ADR-0013)
@@ -134,7 +134,7 @@ Three observations the table makes visible and prose would hide:
   mark/block requests, and configure incident response (throttle / alert / block).
 - **G8 — Governance oversight**: IT Steuerung (IT Governance) sees all use cases, their processing
   logic, and aggregate statistics.
-- **G9 — Enterprise quality**: Full unit-test coverage, strong observability, secrets in Vault,
+- **G9 — Production quality**: Full unit-test coverage, strong observability, secrets in Vault,
   event-driven integration via Kafka.
 - **G10 — Demo mode**: The whole system can be run and demonstrated without real upstream
   credentials, with automatically seeded test data.

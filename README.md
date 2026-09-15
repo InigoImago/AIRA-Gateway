@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>An enterprise gateway for AI models.</strong><br>
+  <strong>A governed gateway for AI models.</strong><br>
   One API in front of several platforms, and a record of everything that passed through it.
 </p>
 

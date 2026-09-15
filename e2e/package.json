@@ -1,6 +1,7 @@
 {
   "name": "aira-e2e",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Browser-driven end-to-end tests for the AIRA stack (Playwright).",
   "scripts": {
     "test": "playwright test",
