@@ -144,9 +144,12 @@ jobs:
         run: npx playwright test
 
       # Container logs are the only way to explain a failure that happened inside the stack.
+      # Printed once: followed (`make logs-apps` locally), the step never ends and the job is
+      # cancelled at its timeout with the failure's cause scrolled away.
       - name: Container logs on failure
         if: failure()
-        run: make logs-apps || docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.apps.yml logs --tail=200
+        timeout-minutes: 5
+        run: make logs-apps FOLLOW= TAIL=500
 
       - name: Upload the Playwright report
         if: failure()

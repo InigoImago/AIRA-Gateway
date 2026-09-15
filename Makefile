@@ -373,8 +373,12 @@ down-full: down ## Stop the full containerised stack (keeps volumes) — an alia
 # target is a second place for the set to be wrong. `down` now covers everything either could
 # reach, so the name is kept for whoever's fingers know it and the body is not written twice.
 
-logs-apps: ## Tail logs of the application containers only
-	$(COMPOSE_FULL) logs -f --tail=100 gateway gateway-consumer management management-relay frontend
+# `FOLLOW=` prints once and returns, for a script or a CI step; followed, it never ends.
+FOLLOW ?= -f
+TAIL ?= 100
+
+logs-apps: ## Tail logs of the application containers only (FOLLOW= to print once and return)
+	$(COMPOSE_FULL) logs $(FOLLOW) --tail=$(TAIL) gateway gateway-consumer management management-relay frontend
 
 build-images: ## Build the three application images without starting anything
 	$(COMPOSE_FULL) build gateway management frontend

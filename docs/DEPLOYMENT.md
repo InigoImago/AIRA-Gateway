@@ -248,6 +248,7 @@ on them. Then open <http://localhost:4200> and log in as `ucadmin` / `demo-passw
 
 ```bash
 make logs-apps     # tail only the application containers
+make logs-apps FOLLOW= TAIL=500   # print once and return, as CI does on a failure
 make down-full     # stop everything (volumes are kept)
 make build-images  # build the images without starting anything
 ```
