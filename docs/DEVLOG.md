@@ -5,6 +5,26 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The last CI failure: a wait counted in calls, where only time would do (2026-09-15)
+
+With realm tokens fixed, CI failed once in 1,056 integration tests:
+`test_a_refused_request_is_a_trace_too` wrote a block and then asked the gateway 14 times,
+without a pause, whether it held. The gateway sees a suspension only after its cache expires,
+`CACHE_TTL_SECONDS` = 5 in `anomalies/suspensions.py`, which `FRD-503` §4.1 makes deliberate.
+Fourteen calls are therefore no span of time:
+- Locally each call reaches a small local model and takes long enough that the fourteen outlast
+  the cache.
+- In CI they finished inside the five seconds, and every one was served.
+
+The same test polled the trace view 20 times without a pause.
+
+Both waits are now measured by the clock and pause between attempts:
+- the block: three times the gateway's own cache lifetime, imported rather than restated;
+- the trace row: 20 seconds, because the audit write is off the request path.
+
+The anomaly tests that wait for a block already slept between attempts. That is why they passed
+in CI.
+
 ## Every realm token refused in CI, because the tests asked the bind address (2026-09-15)
 
 On GitHub the integration step failed with 246 failures and 81 errors. The CI job was then

@@ -18,10 +18,13 @@ Nothing here asserts an answer's content.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 import pytest
 from sqlalchemy import text
+
+from aira_gateway.anomalies.suspensions import CACHE_TTL_SECONDS
 
 from .conftest import GATEWAY_URL
 
@@ -33,6 +36,12 @@ MODEL = "qwen3:0.6b"
 #: `FRD-131` rule working, not a fixture problem.
 TOOL_MODEL = "qwen2.5:3b"
 SHORT = {"generationConfig": {"maxOutputTokens": 8}}
+#: How long the gateway may take to see a suspension: its cache lifetime, with margin for a loaded
+#: runner (`FRD-503` §4.1).
+BLOCK_SEEN_WITHIN = CACHE_TTL_SECONDS * 3
+#: How long a refused request may take to reach the trace view: the audit write is off the request
+#: path (`FRD-405`).
+TRACE_WRITTEN_WITHIN = 20.0
 
 
 async def _generate(client: httpx.AsyncClient, fixture, text_in: str = "Say OK") -> httpx.Response:
@@ -105,19 +114,22 @@ async def test_a_refused_request_is_a_trace_too(fixture, governance_token) -> No
     await fixture.suspend(target="use_case", target_value=fixture.slug, action="block")
 
     async with httpx.AsyncClient(timeout=180.0) as client:
-        # The suspension cache is a few seconds behind on purpose (`FRD-503` §4.1).
-        for _ in range(14):
+        # Waited for by the clock, not by a count of calls: the gateway sees a suspension only once
+        # its cache expires, and a fast model answers many calls before that.
+        deadline = time.monotonic() + BLOCK_SEEN_WITHIN
+        response = await _generate(client, fixture)
+        while response.status_code != 429 and time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
             response = await _generate(client, fixture)
-            if response.status_code == 429:
-                break
         assert response.status_code == 429, "the block never took effect"
 
-        for _ in range(20):
+        deadline = time.monotonic() + TRACE_WRITTEN_WITHIN
+        body = await _traces(client, governance_token, use_case=fixture.slug, refusals_only=True)
+        while not body["traces"] and time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
             body = await _traces(
                 client, governance_token, use_case=fixture.slug, refusals_only=True
             )
-            if body["traces"]:
-                break
 
     outcomes = {row["outcome"] for row in body["traces"]}
     assert "suspended" in outcomes, outcomes
