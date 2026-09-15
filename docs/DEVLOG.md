@@ -72,8 +72,9 @@ label, not a property of the system, and they now say what AIRA is. Some mention
 **The licence.**
 - `LICENSE` is the Apache License 2.0, unchanged: it matches a reference copy from an installed
   package line for line.
-- The `Copyright [yyyy] [name of copyright owner]` placeholders in its appendix stay, as the
-  licence intends. They are the template for a file header, not a form to fill in.
+- The `Copyright [yyyy] [name of copyright owner]` placeholders in its appendix now read
+  `Copyright 2026 Vadim Scheibe`, at the owner's request, matching `NOTICE`. The terms are
+  unchanged; the appendix is the notice to put at the head of a file.
 - `NOTICE` named "The AIRA Gateway Authors", which nothing defined, and now names Vadim Scheibe.
 - None of the Python or Node packages declared a licence; all five now declare `Apache-2.0`.
 
