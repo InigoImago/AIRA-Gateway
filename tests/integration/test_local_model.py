@@ -318,18 +318,35 @@ async def test_a_schema_request_comes_back_as_a_document(
     assert isinstance(document["colour"], str)
 
 
-async def test_thinking_is_billed_as_output_and_never_returned(
+async def test_thinking_is_billed_as_output_and_withheld_where_reasoning_is_off(
     engine: AsyncEngine, fixture: Fixture
 ) -> None:
     """`FRD-111` FR-6, the question that could only be answered here.
 
     Two things at once, because they are two halves of the same measurement: the thinking is
-    charged inside ``completion_tokens`` — so `FRD-403`'s pricing needs no special case, which was
-    an assumption until now — and **none of it reaches the caller or the database**. A one-word
-    answer from this model costs a hundred-odd output tokens; the reasoning behind it is the least
-    reviewed text the model produces and is dropped in the adapter (`FRD-111` §2).
+    charged inside ``completion_tokens`` — so `FRD-403`'s pricing needs no special case — and,
+    where the use case has turned reasoning off, **none of it reaches the caller or the database**.
+    Reasoning is on by default (`FRD-135` §5.6), so this turns it off: the property is the switch.
     """
+    from sqlalchemy import text
+
     await _require(CHAT_MODEL)
+
+    async def reasoning(on: bool) -> None:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE use_cases SET include_reasoning = :on WHERE slug = :slug"),
+                {"on": on, "slug": fixture.slug},
+            )
+
+    await reasoning(False)
+    try:
+        await _billed_and_withheld(engine, fixture)
+    finally:
+        await reasoning(True)
+
+
+async def _billed_and_withheld(engine: AsyncEngine, fixture: Fixture) -> None:
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=300.0) as client:
         response = await client.post(
@@ -346,7 +363,9 @@ async def test_thinking_is_billed_as_output_and_never_returned(
     if response.status_code != 200:
         pytest.skip(f"the model did not serve a thinking request ({response.status_code})")
 
-    answer = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    parts = response.json()["candidates"][0]["content"]["parts"]
+    assert not any(part.get("thought") for part in parts), "reasoning reached the caller"
+    answer = "".join(part.get("text", "") for part in parts)
     usage = response.json()["usageMetadata"]
     # Reported apart, as Google does: `candidatesTokenCount` the answer, `thoughtsTokenCount` the
     # reasoning. Together they are the billed output.

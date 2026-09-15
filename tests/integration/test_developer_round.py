@@ -80,6 +80,13 @@ def _gemini_body(text_in: str = "Say OK.", **config: object) -> dict:
     }
 
 
+def _answer(response: httpx.Response) -> str:
+    """The answer as Google's clients read it: the parts not marked `thought`. Reasoning comes back
+    first where a use case returns it (`FRD-135`)."""
+    parts = response.json()["candidates"][0]["content"]["parts"]
+    return "".join(part.get("text", "") for part in parts if not part.get("thought"))
+
+
 async def _post(fixture, path: str, body: dict, timeout: float = 300.0) -> httpx.Response:
     async with httpx.AsyncClient(timeout=timeout) as client:
         return await client.post(f"{GATEWAY_URL}{path}", headers=fixture.headers(), json=body)
@@ -403,7 +410,7 @@ async def test_a_seed_makes_the_answer_reproducible(fixture) -> None:
             f"/v1beta/models/{CHAT}:generateContent",
             _gemini_body(prompt, temperature=1.0, seed=4242),
         )
-        answers.add(response.json()["candidates"][0]["content"]["parts"][0]["text"])
+        answers.add(_answer(response))
 
     assert len(answers) == 1, f"the same seed produced {len(answers)} different answers"
 
@@ -414,7 +421,7 @@ async def test_a_stop_sequence_truncates_the_answer(fixture) -> None:
     free = await _post(
         fixture, f"/v1beta/models/{CHAT}:generateContent", _gemini_body(prompt, temperature=0.0)
     )
-    unconstrained = free.json()["candidates"][0]["content"]["parts"][0]["text"]
+    unconstrained = _answer(free)
     if "C" not in unconstrained:
         pytest.skip(f"the model did not produce the token to stop at: {unconstrained!r}")
 
@@ -424,7 +431,7 @@ async def test_a_stop_sequence_truncates_the_answer(fixture) -> None:
         _gemini_body(prompt, temperature=0.0, stopSequences=["C"]),
     )
 
-    assert "C" not in cut.json()["candidates"][0]["content"]["parts"][0]["text"]
+    assert "C" not in _answer(cut)
 
 
 async def test_thinking_switched_off_is_switched_off(fixture) -> None:
@@ -442,8 +449,8 @@ async def test_thinking_switched_off_is_switched_off(fixture) -> None:
         _gemini_body(prompt, maxOutputTokens=60, thinkingConfig={"mode": "high"}),
     )
 
-    direct = off.json()["candidates"][0]["content"]["parts"][0]["text"]
-    thinking = on.json()["candidates"][0]["content"]["parts"][0]["text"]
+    direct = _answer(off)
+    thinking = _answer(on)
     assert direct.strip(), "thinking was switched off and the model still returned nothing"
     assert len(direct) > len(thinking)
 
@@ -870,7 +877,7 @@ async def test_structured_output_returns_a_document(fixture, engine) -> None:
     )
 
     assert response.status_code == 200
-    body = json.loads(response.json()["candidates"][0]["content"]["parts"][0]["text"])
+    body = json.loads(_answer(response))
     assert "city" in body, "a schema was asked for and prose came back"
 
 

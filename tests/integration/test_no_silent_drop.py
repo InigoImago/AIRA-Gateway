@@ -42,7 +42,9 @@ async def _ask(fixture, prompt: str, **config: object) -> tuple[int, str]:
         )
     if response.status_code != 200:
         return response.status_code, response.json()["error"]["message"]
-    return 200, response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    # The answer as Google's clients read it: the parts not marked `thought` (`FRD-135`).
+    parts = response.json()["candidates"][0]["content"]["parts"]
+    return 200, "".join(part.get("text", "") for part in parts if not part.get("thought"))
 
 
 # == the controls take effect ====================================================================
