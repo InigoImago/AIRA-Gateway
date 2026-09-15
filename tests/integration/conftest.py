@@ -145,12 +145,11 @@ async def _token(client_id: str, secret: str) -> str:
     import httpx
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        # Requested through *localhost* on purpose: Keycloak derives the `iss` claim from the
-        # request host, and the gateway compares it against AIRA_OIDC_ISSUER. Asking via
-        # 127.0.0.1 yields a token the gateway rejects for a reason that looks nothing like the
-        # cause.
+        # Requested from the issuer both planes trust, never from the bind address: Keycloak
+        # writes `iss` from the host a token was requested through, and the example env file
+        # binds to 127.0.0.1, where every token would be refused (`stack_addresses.issuer`).
         response = await client.post(
-            f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token",
+            f"{stack_addresses.issuer()}/protocol/openid-connect/token",
             data={
                 "grant_type": "client_credentials",
                 "client_id": client_id,

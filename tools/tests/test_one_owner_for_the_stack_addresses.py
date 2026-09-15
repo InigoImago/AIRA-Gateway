@@ -273,3 +273,32 @@ def test_the_makefile_reads_no_variable_that_nothing_sets() -> None:
         "name, no settings class has it, no assignment defines it. Whatever default follows the "
         "`:-` is the only value that line can ever have."
     )
+
+
+def test_a_token_is_asked_of_the_issuer_whatever_the_bind_address(monkeypatch, tmp_path) -> None:
+    """The example env file binds to `127.0.0.1`, and Keycloak writes `iss` from the host a token
+    was requested through. A token fetched at the bind address is refused by both planes, so the
+    token is fetched from the issuer they trust, which Compose gives as `localhost`."""
+    env = tmp_path / ".env"
+    env.write_text("AIRA_BIND_HOST=127.0.0.1\n")
+    monkeypatch.setattr(stack_addresses, "ENV_FILE", env)
+    for name in ("AIRA_BIND_HOST", "AIRA_OIDC_ISSUER", "AIRA_PUBLISH_KEYCLOAK_PORT"):
+        monkeypatch.delenv(name, raising=False)
+
+    port = stack_addresses.port("keycloak")
+    assert stack_addresses.url("keycloak") == f"http://127.0.0.1:{port}"
+    assert stack_addresses.issuer() == f"http://localhost:{port}/realms/aira"
+
+
+def test_an_issuer_the_installation_names_is_the_one_asked(monkeypatch) -> None:
+    monkeypatch.setenv("AIRA_OIDC_ISSUER", "https://sso.example.com/realms/aira/")
+
+    assert stack_addresses.issuer() == "https://sso.example.com/realms/aira"
+
+
+def test_integration_tokens_come_from_the_trusted_issuer() -> None:
+    """The fixture that mints every realm token asks the issuer, not the bind address."""
+    conftest = (stack_addresses.ROOT / "tests" / "integration" / "conftest.py").read_text()
+
+    assert "stack_addresses.issuer()}/protocol/openid-connect/token" in conftest
+    assert "{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token" not in conftest

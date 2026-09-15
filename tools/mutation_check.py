@@ -7844,6 +7844,23 @@ MUTATIONS = [
         "    speaks = False\n\n    async def ping",
         "gateway/tests/test_speech.py",
     ),
+    # ---- integration tokens come from the issuer both planes trust (2026-09-15) ------------------
+    Mutation(
+        "IS1",
+        "the issuer is Compose's, not the bind address",
+        "tools/stack_addresses.py",
+        '    return _NESTED.sub(lambda match: _resolve(match.group(1), match.group(2)), default).rstrip("/")',
+        '    return url("keycloak") + "/realms/aira"',
+        "tools/tests/test_one_owner_for_the_stack_addresses.py",
+    ),
+    Mutation(
+        "IS2",
+        "integration tokens are requested from the trusted issuer",
+        "tests/integration/conftest.py",
+        '            f"{stack_addresses.issuer()}/protocol/openid-connect/token",',
+        '            f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token",',
+        "tools/tests/test_one_owner_for_the_stack_addresses.py",
+    ),
 ]
 
 

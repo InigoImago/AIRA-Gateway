@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Every realm token refused in CI, because the tests asked the bind address (2026-09-15)
+
+On GitHub the integration step failed with 246 failures and 81 errors. The CI job was then
+cancelled at its 40-minute timeout, because the failure step followed the container logs and
+never ended (fixed the same day). Locally the same suite passed.
+
+**The mechanism, reproduced locally:**
+- CI starts from a copy of `.env.example`, which sets `AIRA_BIND_HOST=127.0.0.1`. That is the
+  right default, because it keeps the published ports on loopback.
+- The integration tests took the Keycloak address from `stack_addresses.url("keycloak")`, whose
+  host follows the bind address, so they requested tokens from `http://127.0.0.1:8080`.
+- Keycloak writes `iss` from the host a token was requested through. Both planes compare `iss`
+  literally with `AIRA_OIDC_ISSUER`, which Compose gives as `http://localhost:8080/realms/aira`,
+  so every realm token was refused: the gateway logged `InvalidIssuerError` and Management
+  answered "Invalid or expired token".
+- Management bounds refused authentications per address, 60 a minute. All tests call from one
+  address, so the storm of 401s tripped the bound, and from then on every request answered 429,
+  valid ones included. Most of the remaining failures are that 429.
+- The local env file listed `AIRA_BIND_HOST` twice, and the second entry, `0.0.0.0`, resolves to
+  `localhost`. That is why the suite had passed here. Any developer who copied the example would
+  have seen what CI saw.
+
+**The conftest said the opposite of what it did.** Its comment read "requested through
+*localhost* on purpose", above a request to the bind address.
+
+**The fix.** `stack_addresses.issuer()` resolves `AIRA_OIDC_ISSUER` the way Compose does:
+the environment, then the env file, then the Compose default, read from the Compose file rather
+than restated. The conftest requests tokens there.
+
+**Measured.** Four OIDC tests were run with `AIRA_BIND_HOST=127.0.0.1` against the local stack:
+all four failed before the fix, and none after it, with the local env file as well.
+
+IS1 and IS2 are caught. CI itself proves it only on the next push.
+
 ## No "enterprise" label on the front page, and the licence checked (2026-09-15)
 
 **The label.** The README's tagline and CLAUDE.md's first sentence called AIRA "enterprise"

@@ -166,6 +166,55 @@ def netloc(service: str) -> str:
     return f"{host()}:{port(service)}"
 
 
+#: `${NAME:-default}` inside a Compose default, where that default holds no braces of its own.
+_NESTED = re.compile(r"\$\{([A-Z_][A-Z0-9_]*):-([^{}]*)\}")
+
+
+def issuer() -> str:
+    """The OIDC issuer the gateway and Management trust, resolved the way Compose resolves it.
+
+    A realm token is accepted only where its `iss` equals this value, and Keycloak writes `iss`
+    from the host the token was requested through. So a token is requested here, never at
+    `url("keycloak")`: that host follows `AIRA_BIND_HOST`, which the example env file sets to
+    `127.0.0.1`, and a token fetched there is refused by both planes.
+    """
+    for source in (os.environ, _env_file_values()):
+        value = source.get("AIRA_OIDC_ISSUER")
+        if value:
+            return value.rstrip("/")
+    default = _compose_default("AIRA_OIDC_ISSUER")
+    return _NESTED.sub(lambda match: _resolve(match.group(1), match.group(2)), default).rstrip("/")
+
+
+def _compose_default(variable: str) -> str:
+    """The default Compose gives `variable` in `${VARIABLE:-default}`, nested references kept."""
+    marker = "${" + variable + ":-"
+    for compose in COMPOSE_FILES:
+        if not compose.exists():
+            continue
+        for line in compose.read_text().splitlines():
+            start = line.find(marker)
+            if start < 0:
+                continue
+            value = line[start + len(marker) :].strip()
+            # The outer reference's closing brace; an empty default says nothing, so read on.
+            value = value[:-1] if value.endswith("}") else value
+            if value:
+                return value
+    raise KeyError(f"{variable} has no default in the Compose files.")
+
+
+def _resolve(name: str, default: str) -> str:
+    """A variable inside a Compose default: a published port by its own chain, else as written."""
+    services = {variable: service for service, variable in PUBLISHED.items()}
+    if name in services:
+        return str(port(services[name]))
+    for source in (os.environ, _env_file_values()):
+        if source.get(name):
+            return str(source[name])
+    return default
+
+
 def as_make() -> str:
     """Every address on one line, as `name=value` pairs, for a Makefile to slice up.
 
