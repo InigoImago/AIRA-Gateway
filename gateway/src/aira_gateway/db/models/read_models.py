@@ -42,8 +42,9 @@ class UseCaseRead(Base):
     #: Whether the use case may declare functions for the model to call (`FRD-131`). Default false:
     #: least privilege is the state a use case starts in.
     tools_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    #: Whether a model's reasoning is returned and stored (`FRD-135`). Default off.
-    include_reasoning: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Whether a model's reasoning is returned and stored (`FRD-135`). On unless an administrator
+    #: turned it off.
+    include_reasoning: Mapped[bool] = mapped_column(Boolean, default=True)
     #: Mark the stable prefix as cacheable (`FRD-133`). Off by default: on Vertex the cache scope is
     #: the **whole organisation**, so a confidential system prompt must be opted in deliberately.
     prompt_caching_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

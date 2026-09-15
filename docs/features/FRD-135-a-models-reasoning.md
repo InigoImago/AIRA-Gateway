@@ -1,6 +1,6 @@
 # FRD-135 — A model's reasoning: counted always, shown when a use case says so
 
-> Phase: 8 · Status: **Draft** · Owner: Vadim Scheibe
+> Phase: 8 · Status: **Done** — on by default (§5.6) · Owner: Vadim Scheibe
 > Related: `FRD-111` (thinking control), `FRD-119` §5.4 (the decision this revises),
 > `FRD-133` (cache tokens — the same invariant), `ADR-0016` (why stored content is gated),
 > `FRD-122` (the audit row), `FRD-406` (stored prompts)
@@ -34,12 +34,13 @@ and an installation watching its own agents has no way to see why a model did wh
 **Goals**
 - Thinking tokens are **counted and billed** wherever a provider reports them. Unconditional, not
   a setting: this is an accounting defect, not a preference.
-- A **use case** may switch reasoning on. When it is on, thoughts come back to the caller and are
-  stored **exactly like the answer** — same column, same retention, same role gate.
+- Reasoning comes back unless a **use case** switches it off. When it is on, thoughts come back to
+  the caller and are stored **exactly like the answer** — same column, same retention, same role
+  gate.
 - The switch is in the console, like every other use-case control.
 
 **Non-Goals**
-- Reasoning on by default. Off, everywhere, until somebody decides otherwise (`ADR-0016`).
+- Reasoning without an off switch. A use case whose reasoning must not be kept turns it off (§5.6).
 - A second storage path. If thoughts are stored, they are stored the way the response is; a
   parallel mechanism would be a parallel retention bug.
 - Reconstructing reasoning a provider does not return (self-hosted runtimes that report nothing).
@@ -49,8 +50,8 @@ and an installation watching its own agents has no way to see why a model did wh
   what it says.
 - As a **use-case administrator** running agents, I want to see the model's reasoning in a trace, so
   that "why did it call that tool" is answerable.
-- As **IT Security**, I want reasoning to be off unless somebody turned it on, and to be readable
-  only by whoever may read stored prompts.
+- As **IT Security**, I want reasoning to be readable only by whoever may read stored prompts, and
+  to turn it off for a use case whose reasoning must not be kept.
 
 ## 4. Functional Requirements
 
@@ -60,8 +61,8 @@ and an installation watching its own agents has no way to see why a model did wh
   it whole is what lets every existing budget, report and index carry on meaning the same thing.
   `completion_tokens` therefore *includes* thinking, which is what the provider bills.
 - **FR-2 On the audit row and in reporting**, beside the other token columns.
-- **FR-3 A use-case switch**, `include_reasoning`, default **off**. Carried to the gateway on the
-  config event like every other use-case setting.
+- **FR-3 A use-case switch**, `include_reasoning`, default **on** (§5.6). Carried to the gateway on
+  the config event like every other use-case setting.
 - **FR-4 Off means refused, not dropped.** With the switch off, `includeThoughts: true` is refused
   by name exactly as today (`FRD-124`): answering 200 with no thoughts is the silent drop. The same
   holds for a **stream**, whatever the switch says: streamed answers carry no reasoning (§5.4), so
@@ -70,9 +71,11 @@ and an installation watching its own agents has no way to see why a model did wh
   are written into the stored response payload — same column, same `store_payloads` gate, same
   retention, same role check on reading (`ADR-0016`, `FRD-406`). No second path. An explicit
   `includeThoughts: false` withholds them — Google's own meaning of the field, and a caller who
-  declined must not receive, or have stored, text it did not ask for. With thinking off, nothing is
-  asked for: Google refuses `includeThoughts` without thinking, which used to fail every request
-  with thinking off in a use case with the switch on.
+  declined must not receive, or have stored, text it did not ask for. Thoughts are asked for only
+  where thinking is on for the request, by the caller's setting or the model's declared default.
+  Google refuses `includeThoughts` whenever the model is not thinking: with thinking off, for a
+  speech model, and for a model that thinks only when given a budget. A model with no declared
+  thinking default therefore returns no reasoning unless the caller sets thinking.
 - **FR-6 The console offers it** on the use case, beside `store_payloads` and `tools_enabled`.
 - **FR-7 Where a provider returns no reasoning**, the switch changes nothing and says so: a use case
   with reasoning on, calling a model that reports none, is not an error.
@@ -141,13 +144,30 @@ channel for it, so there is nothing dialect-specific to state.
 
 ### 5.5 What this revises
 
-`FRD-119` §5.4 said reasoning is never returned, logged or persisted. It is now: **never, unless a
-use case says otherwise, and then like any other content.** The refusal of `includeThoughts` stays
+`FRD-119` §5.4 said reasoning is never returned, logged or persisted. It is now returned and stored
+**like any other content, unless a use case turns it off.** The refusal of `includeThoughts` stays
 exactly as it is wherever the switch is off — that behaviour was right and is kept, not softened.
+
+### 5.6 On by default (2026-09-14)
+
+The owner's decision: reasoning comes back unless a use case turns it off. Tool calling stays off
+by default, because the smallest set of use cases that may declare functions is the right set
+(`FRD-131`).
+
+- **What callers see.** A caller that says nothing about `includeThoughts` now receives the
+  reasoning: the gateway asks for it on the Gemini dialect, and the OpenAI dialect sends it anyway.
+  `includeThoughts: false` still withholds it.
+- **Where it is kept.** It is stored with the answer, so `store_payloads` off still keeps nothing.
+- **Existing use cases.** A stored `false` could not say whether it was chosen or inherited, so
+  every use case was switched on, on both planes. Management announced each live use case again
+  with a complete event.
+- **Requests without a use case.** They have no switch, so they get no reasoning, and
+  `includeThoughts: true` is refused by name.
 
 ## 6. Data Model
 
-- `usecases.include_reasoning` (boolean, default false) on both planes, on the config event.
+- `usecases.include_reasoning` (boolean, default true since §5.6) on both planes, on the config
+  event.
 - `request_logs.reasoning_tokens` (integer, nullable) — nullable because every row written before
   this existed knows nothing, and zero would claim the model did not think.
 
@@ -160,7 +180,8 @@ exactly as it is wherever the switch is off — that behaviour was right and is 
 
 ## 8. Security & Privacy
 
-- Off by default, per use case, and readable only through the paths stored prompts already use.
+- Per use case, on unless turned off, and readable only through the paths stored prompts already
+  use.
 - Reasoning can restate the prompt verbatim; nothing here may make it reachable to somebody who may
   not read the prompt itself.
 
@@ -173,7 +194,10 @@ exactly as it is wherever the switch is off — that behaviour was right and is 
 
 - A provider response carrying thoughts produces `completion_tokens` **including** them and
   `reasoning_tokens` equal to them; cost equals the output rate applied to the whole.
-- With the switch off, `includeThoughts: true` is refused by name.
+- A new use case returns reasoning and cannot declare functions. Turned off, `includeThoughts: true`
+  is refused by name, hermetically and on the live stack (`tests/integration/`).
+- The migration switches every live use case on and announces each with the complete event; a
+  retired one is not announced.
 - With it on, thoughts reach the caller and appear in the stored payload; with `store_payloads` off,
   they appear nowhere.
 - A model that reports no reasoning with the switch on is served normally.

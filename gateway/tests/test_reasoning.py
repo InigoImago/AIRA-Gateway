@@ -71,16 +71,38 @@ def test_thoughts_are_not_glued_to_the_answer() -> None:
 def test_the_provider_is_asked_for_thoughts_only_where_the_use_case_allows_it() -> None:
     """Google returns nothing extra unless asked, so a use case that turned reasoning on and never
     saw any would be looking at a switch that changed nothing (`FRD-125`)."""
+    from aira_gateway.core.canonical import Thinking
+
     base = CanonicalRequest(
         model="gemini-2.5-flash",
         messages=[CanonicalMessage(role=Role.USER, text="hallo")],
+        thinking=Thinking(mode="auto"),
     )
 
     off = canonical_to_gemini_request(base)
     on = canonical_to_gemini_request(base.model_copy(update={"include_reasoning": True}))
 
-    assert "thinkingConfig" not in off.get("generationConfig", {})
+    assert "includeThoughts" not in off["generationConfig"]["thinkingConfig"]
     assert on["generationConfig"]["thinkingConfig"]["includeThoughts"] is True
+
+
+def test_thoughts_are_not_asked_of_a_model_that_is_not_thinking() -> None:
+    """Google answers 400 to `includeThoughts` whenever the model is not thinking: a speech model,
+    a model that thinks only when given a budget, and any model with thinking switched off. With
+    reasoning on by default, asking regardless would fail every request to such a model."""
+    from aira_gateway.core.canonical import Thinking
+
+    unknown = CanonicalRequest(
+        model="gemini-2.5-flash-lite",
+        messages=[CanonicalMessage(role=Role.USER, text="hallo")],
+        include_reasoning=True,
+    )
+    off = unknown.model_copy(update={"thinking": Thinking(mode="disabled")})
+
+    assert "thinkingConfig" not in canonical_to_gemini_request(unknown).get("generationConfig", {})
+    assert canonical_to_gemini_request(off)["generationConfig"]["thinkingConfig"] == {
+        "thinkingBudget": 0
+    }
 
 
 def test_the_served_response_omits_the_thinking_count_rather_than_sending_null() -> None:

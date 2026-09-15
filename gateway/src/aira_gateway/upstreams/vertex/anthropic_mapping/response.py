@@ -128,8 +128,8 @@ def anthropic_to_canonical(
 ) -> CanonicalResponse:
     """This vendor's answer → canonical.
 
-    ``include_reasoning`` is the use case's switch (`FRD-135` FR-3) and defaults to **off**, so a
-    call site that forgets it withholds rather than discloses.
+    ``include_reasoning`` carries the use case's switch (`FRD-135` FR-3). The argument defaults to
+    **off**, so a call site that forgets it withholds rather than discloses.
     """
     text = answer_text(data.get("content"))
     reasoning = reasoning_text(data.get("content"), wanted=include_reasoning)

@@ -204,6 +204,7 @@ class Governed:
         """
         allowed = {
             "tools_enabled",
+            "include_reasoning",
             "prompt_caching_enabled",
             "prompt_cache_ttl",
             "store_payloads",

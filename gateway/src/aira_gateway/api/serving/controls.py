@@ -131,12 +131,15 @@ async def resolve_reasoning(
     record = await use_case_record(request, use_case) if use_case else None
     allowed = bool(record is not None and record.include_reasoning)
     if asked_for and not allowed:
+        why = (
+            "reasoning is a use-case setting, and this request names no use case"
+            if use_case is None
+            else f"an administrator of use case '{use_case}' has turned reasoning off"
+        )
         raise GeminiHTTPError(
             400,
-            "'includeThoughts' asks for the model's reasoning, and this use case does not return "
-            "it. An administrator of the use case can turn it on; it is off by default because "
-            "reasoning can restate the prompt verbatim and is stored with the answer when it is "
-            "on (FRD-135). Send it as false, or omit it.",
+            f"'includeThoughts' asks for the model's reasoning, and {why} (FRD-135). Send it as "
+            "false, or omit it.",
             "FAILED_PRECONDITION",
         )
     # An explicit no withholds them even where the use case allows them: Google's own meaning of

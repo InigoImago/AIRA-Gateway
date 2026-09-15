@@ -144,7 +144,9 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
         "store_payloads": bool(payload.get("store_payloads", True)),
         # Absent means **off**: a missing capability must not read as permission (`FRD-114` FR-7).
         "tools_enabled": bool(payload.get("tools_enabled", False)),
-        "include_reasoning": bool(payload.get("include_reasoning", False)),
+        # Absent reads as on, Management's default (`FRD-135` FR-3): reasoning is off only where an
+        # administrator turned it off.
+        "include_reasoning": bool(payload.get("include_reasoning", True)),
         # Off as well: the cache scope is shared across the organisation (`FRD-133` §4b).
         "prompt_caching_enabled": bool(payload.get("prompt_caching_enabled", False)),
         # The cheap TTL; reading silence as "1h" would double every write price.

@@ -9,6 +9,7 @@ type Writable<T> = { set: (v: T) => void; (): T };
 
 interface Panel {
   toolsEnabled: Writable<boolean>;
+  includeReasoning: Writable<boolean>;
   promptCaching: Writable<boolean>;
   cacheTtl: Writable<string>;
   saveCapabilities: () => void;
@@ -65,10 +66,11 @@ function setup(
 }
 
 /**
- * `tools_enabled` (`FRD-131`) and `prompt_caching_enabled` (`FRD-133`) must each have a way in: a
- * capability only the API can switch is one nobody notices is missing.
+ * `include_reasoning` (`FRD-135`), `tools_enabled` (`FRD-131`) and `prompt_caching_enabled`
+ * (`FRD-133`) must each have a way in: a capability only the API can switch is one nobody notices
+ * is missing.
  */
-describe('CapabilitiesPanel — the two switches', () => {
+describe('CapabilitiesPanel — the switches', () => {
   it('offers both switches to an administrator and sends them', () => {
     const harness = setup();
 
@@ -121,15 +123,39 @@ describe('CapabilitiesPanel — the two switches', () => {
     expect(help?.textContent).toContain('never executes');
   });
 
-  it('states both settings to a reader who cannot change them', () => {
+  it('starts with reasoning on and sends it when an administrator turns it off', () => {
+    const harness = setup({ useCase: { ...USE_CASE, include_reasoning: true } });
+
+    const reasoning = harness.html().querySelector<HTMLInputElement>('#include-reasoning');
+    expect(reasoning?.checked, 'reasoning should start on').toBe(true);
+
+    reasoning!.checked = false;
+    reasoning!.dispatchEvent(new Event('change'));
+    harness.fixture.detectChanges();
+    harness.component.saveCapabilities();
+
+    expect(sentUpdate(harness.calls)).toMatchObject({
+      include_reasoning: false,
+      tools_enabled: false,
+    });
+  });
+
+  it('states every setting to a reader who cannot change them', () => {
     const harness = setup({
-      useCase: { ...USE_CASE, tools_enabled: true, prompt_caching_enabled: false },
+      useCase: {
+        ...USE_CASE,
+        include_reasoning: false,
+        tools_enabled: true,
+        prompt_caching_enabled: false,
+      },
       canManage: false,
     });
 
     const readonly = harness.html().querySelector('[data-testid="capabilities-readonly"]');
     expect(harness.html().querySelector('#prompt-caching')).toBeNull();
-    expect(readonly?.textContent).toMatch(/Function calling is\s+on and prompt caching is\s+off/);
+    expect(readonly?.textContent).toMatch(
+      /Reasoning is\s+off, function\s+calling is\s+on and prompt caching is\s+off/,
+    );
   });
 });
 
@@ -173,8 +199,9 @@ describe('CapabilitiesPanel — tuning the cache', () => {
     expect(harness.calls).toEqual([]);
   });
 
-  it('reads a response that omits the capability fields as off', () => {
-    // Absent reads as off and the cheap lifetime: absence of information is not permission.
+  it('reads a response that omits the capability fields as their defaults', () => {
+    // What grants a capability reads as off and the cheap lifetime, because absence of information
+    // is not permission. Reasoning reads as on, the use-case default (`FRD-135`).
     const harness = setup({ update: of({ slug: 'demo-uc', name: 'Demo' } as UseCase) });
     harness.component.promptCaching.set(true);
     harness.component.cacheTtl.set('1h');
@@ -185,6 +212,7 @@ describe('CapabilitiesPanel — tuning the cache', () => {
     expect(harness.component.promptCaching()).toBe(false);
     expect(harness.component.cacheTtl()).toBe('5m');
     expect(harness.component.toolsEnabled()).toBe(false);
+    expect(harness.component.includeReasoning()).toBe(true);
   });
 
   it('says what the longer lifetime costs, not just that it is longer', () => {

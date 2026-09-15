@@ -386,6 +386,28 @@ def test_a_new_use_case_keeps_payloads_for_a_week_by_default() -> None:
     assert resp.json()["retention_days"] == 7
 
 
+def test_a_new_use_case_returns_reasoning_and_declares_no_functions() -> None:
+    """Reasoning is on until an administrator turns it off (`FRD-135`). Tool calling stays off until
+    one turns it on: only the use cases that need functions may declare them (`FRD-131`)."""
+    admin = _user("admin1", "global-admin")
+    body = _create(_client(admin), "demo-uc", "Demo").json()
+    assert body["include_reasoning"] is True
+    assert body["tools_enabled"] is False
+
+
+def test_turning_reasoning_off_reaches_the_gateway(captured_events) -> None:
+    admin = _user("admin1", "global-admin")
+    client = _client(admin)
+    _create(client, "demo-uc", "Demo")
+
+    resp = client.patch(f"{BASE}demo-uc/", {"include_reasoning": False}, format="json")
+
+    assert resp.status_code == 200, resp.content
+    assert UseCase.objects.get(slug="demo-uc").include_reasoning is False
+    upserted = [payload for kind, payload in captured_events if kind == "usecase.upserted"]
+    assert upserted[-1]["include_reasoning"] is False
+
+
 def test_an_admin_can_shorten_or_extend_the_period() -> None:
     admin = _user("admin1", "global-admin")
     _create(_client(admin), "demo-uc", "Demo")

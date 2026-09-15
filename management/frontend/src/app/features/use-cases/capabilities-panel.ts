@@ -35,8 +35,8 @@ export class CapabilitiesPanel implements OnInit {
   protected readonly feedback = inject(PageFeedback);
 
   protected readonly toolsEnabled = signal(false);
-  /** Off by default: reasoning can restate the prompt, so turning it on is a decision about content. */
-  protected readonly includeReasoning = signal(false);
+  /** On unless an administrator turns it off (`FRD-135`). */
+  protected readonly includeReasoning = signal(true);
   protected readonly promptCaching = signal(false);
   protected readonly cacheTtl = signal('5m');
 
@@ -47,7 +47,7 @@ export class CapabilitiesPanel implements OnInit {
   protected capabilitiesChanged(): boolean {
     return (
       this.toolsEnabled() !== (this.useCase()?.tools_enabled ?? false) ||
-      this.includeReasoning() !== (this.useCase()?.include_reasoning ?? false) ||
+      this.includeReasoning() !== (this.useCase()?.include_reasoning ?? true) ||
       this.promptCaching() !== (this.useCase()?.prompt_caching_enabled ?? false) ||
       this.cacheTtl() !== (this.useCase()?.prompt_cache_ttl ?? '5m')
     );
@@ -86,10 +86,13 @@ export class CapabilitiesPanel implements OnInit {
     );
   }
 
-  /** A field the server omits reads as off and the cheap lifetime: absence is not permission. */
+  /**
+   * A field the server omits reads as its default. Function calling and caching read as off and the
+   * cheap lifetime, because absence is not permission; reasoning reads as on, the use-case default.
+   */
   private fill(useCase: UseCase | null): void {
     this.toolsEnabled.set(useCase?.tools_enabled ?? false);
-    this.includeReasoning.set(useCase?.include_reasoning ?? false);
+    this.includeReasoning.set(useCase?.include_reasoning ?? true);
     this.promptCaching.set(useCase?.prompt_caching_enabled ?? false);
     this.cacheTtl.set(useCase?.prompt_cache_ttl ?? '5m');
   }

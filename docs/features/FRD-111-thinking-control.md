@@ -220,7 +220,8 @@ that names the bound and its value.
 
 - **Thoughts are never requested, returned, logged or persisted** (§2 Non-Goals). Should
   `includeThoughts` ever be wanted, it is a new decision with a data-protection review, not a
-  parameter.
+  parameter. That decision is `FRD-135`: reasoning is returned and stored like the answer, on
+  unless a use case turns it off.
 - A large thinking budget is a cost-amplification vector — one request, thirty thousand billed
   output tokens. FR-5 is what makes it a bounded one, and the per-model maximum (`FRD-114`) is the
   hard ceiling above the caller's own request.

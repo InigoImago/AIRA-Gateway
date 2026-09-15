@@ -2,14 +2,16 @@
   <div class="disclosure">
     <h3 class="section-title" style="margin-bottom: 0.25rem">What this use case may do</h3>
     <p class="muted" style="margin: 0 0 0.75rem">
-      Two capabilities, both off unless somebody turns them on. Neither changes what an answer says
-      — the first decides what a caller may ask for, the second only what it costs.
+      Reasoning comes back unless somebody turns it off. Function calling and prompt caching stay
+      off unless somebody turns them on: the first decides what a caller may ask for, the second
+      only what it costs.
     </p>
     @if (!canManage()) {
       <p data-testid="capabilities-readonly" style="margin: 0">
-        Function calling is
-        <strong>{{ useCase()?.tools_enabled ? 'on' : 'off' }}</strong> and prompt caching is
-        <strong>{{ useCase()?.prompt_caching_enabled ? 'on' : 'off' }}</strong
+        Reasoning is
+        <strong>{{ (useCase()?.include_reasoning ?? true) ? 'on' : 'off' }}</strong
+        >, function calling is <strong>{{ useCase()?.tools_enabled ? 'on' : 'off' }}</strong> and
+        prompt caching is <strong>{{ useCase()?.prompt_caching_enabled ? 'on' : 'off' }}</strong
         >. Only an administrator of this use case can change that.
       </p>
     } @else {
@@ -25,13 +27,13 @@
           />
           Return and keep the model's reasoning
           <app-info-hint label="Reasoning" testid="include-reasoning" [wide]="true">
-            A thinking model works through a problem before answering. Off, that reasoning is asked
-            for from nobody and a request for it is <strong>refused by name</strong> — never served
-            with the thoughts silently missing. On, it comes back with the answer and is
-            <strong>stored exactly like the answer</strong>: same payload, same retention, same role
-            needed to read it. Worth having when you are watching agents and want to know
-            <em>why</em> one called a tool. Worth leaving off otherwise: reasoning can restate the
-            prompt word for word, so turning it on is a decision about content, not about detail.
+            A thinking model works through a problem before answering.
+            <strong>On by default</strong>: the reasoning comes back with the answer and is
+            <strong>stored exactly like the answer</strong> — same payload, same retention, same
+            role needed to read it — and a caller who sends <code>includeThoughts: false</code> does
+            not get it. Off, it is asked for from nobody and a request for it is
+            <strong>refused by name</strong>, never served with the thoughts silently missing. Turn
+            it off where the reasoning must not be kept: it can restate the prompt word for word.
             The thinking tokens are counted and billed either way — that is not a choice, the
             provider charges for them.
           </app-info-hint>

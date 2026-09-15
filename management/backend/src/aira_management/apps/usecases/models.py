@@ -69,14 +69,16 @@ class UseCase(models.Model):
         ),
     )
 
-    #: Whether a model's reasoning comes back and is kept (`FRD-135`). Off, because reasoning is
-    #: content of the kind `ADR-0016` covers. On, it is stored exactly as the answer is — same
-    #: payload, `store_payloads` gate, retention and read check; there is no second storage path.
+    #: Whether a model's reasoning comes back and is kept (`FRD-135`). On unless an administrator
+    #: turns it off. It is stored exactly as the answer is — same payload, `store_payloads` gate,
+    #: retention and read check; there is no second storage path, so off is the choice for a use
+    #: case whose reasoning must not be kept.
     include_reasoning = models.BooleanField(
-        default=False,
+        default=True,
         help_text=(
             "Return the model's reasoning to callers and store it with the answer (FRD-135). "
-            "Off by default: reasoning can restate the prompt verbatim."
+            "On by default; turn it off where reasoning must not be kept, since it can restate "
+            "the prompt verbatim."
         ),
     )
 

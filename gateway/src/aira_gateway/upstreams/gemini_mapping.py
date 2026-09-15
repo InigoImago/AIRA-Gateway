@@ -124,18 +124,16 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         generation_config["temperature"] = request.temperature
     if request.max_output_tokens is not None:
         generation_config["maxOutputTokens"] = request.max_output_tokens
-    if request.thinking is not None or request.include_reasoning:
-        thinking_config: dict[str, Any] = {}
-        if request.thinking is not None:
-            thinking_config.update(thinking_fields(request.thinking))
-        # Only where the use case allows it (`FRD-135` FR-3), and never with thinking off: Google
-        # refuses `includeThoughts` without thinking, and there would be nothing to return.
-        thinking_off = (
-            request.thinking is not None and request.thinking.mode == ThinkingMode.DISABLED
-        )
-        if request.include_reasoning and not thinking_off:
-            thinking_config["includeThoughts"] = True
-        generation_config["thinkingConfig"] = thinking_config
+    # Thinking is on for this request only where a setting says so: the caller's, or the model's
+    # declared default. Google refuses `includeThoughts` whenever the model is not thinking — with
+    # thinking switched off, and for a model that never switched it on, such as a speech model or
+    # one that thinks only when given a budget.
+    thinking_on = request.thinking is not None and request.thinking.mode != ThinkingMode.DISABLED
+    if request.thinking is not None:
+        generation_config["thinkingConfig"] = thinking_fields(request.thinking)
+    # Only where the use case allows it (`FRD-135` FR-3).
+    if request.include_reasoning and thinking_on:
+        generation_config["thinkingConfig"]["includeThoughts"] = True
     if request.response_schema is not None:
         # Both fields, always together: the API ignores `responseSchema` without the MIME type
         # and would return prose to a caller expecting a document.

@@ -602,3 +602,25 @@ async def test_a_deleted_rule_is_gone(make_session) -> None:
         await apply_event(session, "anomaly_rule.deleted", {"id": 12})
 
     assert await _all(make_session, AnomalyRuleRead) == []
+
+
+async def test_an_event_that_omits_both_switches_returns_reasoning_and_declares_no_functions(
+    make_session,
+) -> None:
+    """Absent, reasoning reads as Management's default, on (`FRD-135`). Tool calling reads as off,
+    because a missing capability must not read as permission (`FRD-131`)."""
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+    (row,) = await _all(make_session, UseCaseRead)
+    assert row.include_reasoning is True
+    assert row.tools_enabled is False
+
+
+async def test_reasoning_turned_off_in_management_is_off_in_the_gateway(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+        await apply_event(
+            session, "usecase.upserted", {"slug": "uc", "name": "N", "include_reasoning": False}
+        )
+    (row,) = await _all(make_session, UseCaseRead)
+    assert row.include_reasoning is False

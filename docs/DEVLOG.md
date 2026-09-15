@@ -5,6 +5,68 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Reasoning on by default, tool calling still off (2026-09-14)
+
+The owner decided that a model's reasoning comes back unless a use case turns it off. Tool calling
+stays off until a use case turns it on, because the smallest set that may declare functions is the
+right set (`FRD-135` §5.6, `FRD-131`).
+
+**Checked first: both switches really switch.** Each one is a field on the use case, and each is
+writable through the API. Each has a checkbox in the console, travels on the config event, and is
+enforced in the gateway (`check_tools_permitted`, `resolve_reasoning`). What was missing was the
+console's read-only view: it named function calling and caching, and not reasoning. It names all
+three now.
+
+**Changed.**
+- **Default on in both planes:** the Management model, the gateway's read model and its consumer.
+  An event without the field reads as on.
+- **Existing use cases.** A stored `false` cannot say whether it was chosen or inherited, so
+  Management's migration switches every use case on. It then announces each live one again with
+  a complete `usecase.upserted`, because the consumer overwrites every field and fills an absent
+  one with its default. For the released models that default is unrestricted, so a partial event
+  would have opened every use case to every model. A retired use case is not announced.
+- **The gateway's own migration** switches its rows as well and sets the server default.
+- **The refusal** now says an administrator turned reasoning off, or that the request names no use
+  case. It no longer says reasoning is off by default.
+- **Callers see a change:** a caller that says nothing now receives the reasoning.
+  `includeThoughts: false` still withholds it. `MIGRATION-GEMINI.md` still said reasoning was
+  dropped and never stored, which had been wrong since `FRD-135` shipped. `FRD-135`'s header still
+  said *Draft* about a feature that was built.
+
+**Measured live.**
+- **Before:** 3 of 6890 use cases in the gateway had reasoning on.
+- **Management after its migration:** 5278 of 5278 use cases had reasoning on. It wrote exactly
+  one event per live use case, 2681 in all, and each carried all twelve fields. No retired use case
+  was announced.
+- **After the relay:** the outbox was empty, the consumer lag was 0, and the gateway had 6910 of
+  6910 on. Tool calling was unchanged at 4.
+- **Releases survived.** For every live use case, the released models match between the two
+  planes exactly. None of the gateway's 390 rows without a release list belongs to a live use case.
+- **The gateway gained 20 use cases,** all `itest-…`. An integration test writes them straight
+  into Management's database, so they had never been announced; the migration announced them. A
+  use case created through the API was announced when it was created, so an installation sees no
+  such rows.
+- **A new use case** made through the API has reasoning on and tools off, in both planes.
+- **The integration tests pass:** reasoning on until turned off, then refused by name
+  (`test_reasoning_is_on_until_an_administrator_turns_it_off`, new); tools taken away again; a
+  model without tools refused.
+
+Mutations RN1–RN5 are caught. QA26 was re-anchored to the new message, and it is caught too.
+
+**Found afterwards, while probing speech output on Vertex.** The Gemini mapper asked for thoughts
+whenever reasoning was on and thinking was not explicitly off. Google answers `400` to
+`includeThoughts` whenever the model is not thinking. Measured in europe-west1:
+- `gemini-2.5-flash-lite` without a budget: `400`. With `-1` or 512: served with thoughts.
+- `gemini-2.5-flash` with a budget of 0: `400`.
+- The speech model `gemini-2.5-flash-tts`: `400`.
+
+With reasoning on by default, every request to such a model would have failed. The live tests
+passed because they ran against a model on the OpenAI dialect, which has no such parameter. The
+mapper now asks only where a setting switches thinking on: the caller's, or the model's declared
+default. In the local catalogue, `gemini-2.5-flash` declares `auto` and keeps returning reasoning;
+`gemini-2.5-pro` declares no thinking and now returns none until somebody declares its default.
+RS1 was re-anchored and RS4 added; both are caught.
+
 ## A stage in every topic name, and a Redis leader that moves (2026-09-14)
 
 Operations prepared stage T and asked two things. Kafka runs as a development and a production

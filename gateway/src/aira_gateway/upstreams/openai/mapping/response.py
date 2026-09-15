@@ -106,9 +106,9 @@ def openai_to_canonical(
 ) -> CanonicalResponse:
     """This dialect's answer → canonical.
 
-    ``include_reasoning`` is the use case's switch (`FRD-135` FR-3) and defaults to **off**, so a
-    call site that forgets it withholds rather than discloses. Reasoning tokens are counted either
-    way: a use case pays for thinking whether or not it sees it.
+    ``include_reasoning`` carries the use case's switch (`FRD-135` FR-3). The argument defaults to
+    **off**, so a call site that forgets it withholds rather than discloses. Reasoning tokens are
+    counted either way: a use case pays for thinking whether or not it sees it.
     """
     choices = data.get("choices") or []
     first = choices[0] if choices else {}

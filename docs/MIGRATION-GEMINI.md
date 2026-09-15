@@ -177,8 +177,9 @@ So there are three answers, and never a silent one:
 
 Two that surprise people:
 
-* **`includeThoughts`** is refused. AIRA drops a model's reasoning and never stores it, so serving
-  the request would answer with no thoughts and say so nowhere.
+* **`includeThoughts`** follows the use case. Reasoning comes back by default and is stored with
+  the answer; `false` withholds it. A use case that has turned reasoning off refuses `true` by name
+  rather than answering without the thoughts (`FRD-135`).
 * **an incapable model is skipped, never sent a stripped request.** If a chain's next candidate
   cannot read the PDF you attached, it is passed over — and if none qualifies the request fails.
   A dropped attachment produces no error, it produces a confident wrong answer with a 200.

@@ -604,6 +604,20 @@ async def test_turning_tools_off_again_takes_the_capability_away(governed: Gover
     assert (await governed.generate({**_body(), "tools": [WEATHER]})).status_code == 400
 
 
+async def test_reasoning_is_on_until_an_administrator_turns_it_off(governed: Governed) -> None:
+    """`FRD-135`: a use case returns reasoning unless it was turned off. Off refuses a request for
+    it by name rather than answering without it."""
+    asked = _body(thinkingConfig={"includeThoughts": True})
+    assert (await governed.generate(asked)).status_code == 200
+
+    await governed.set_flag("include_reasoning", False)
+    refused = await governed.generate(asked)
+
+    assert refused.status_code == 400, refused.text[:300]
+    assert "includeThoughts" in _message(refused)
+    assert "turned reasoning off" in _message(refused)
+
+
 # ═══ 7. prompt caching and payload storage ═════════════════════════════════════════════════════
 
 
