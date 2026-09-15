@@ -193,7 +193,8 @@ def _verbs(declaration: ModelDeclaration, offered: tuple[str, ...]) -> tuple[str
     """The verbs an adapter offers, narrowed to what the model is declared to do — an undeclared
     model has the baseline — plus the batch verb where the declaration allows one."""
     allowed: set[str] = set()
-    if declaration.can(Capability.GENERATE):
+    # A speech model answers the same two verbs, with audio (`FRD-624`).
+    if declaration.can(Capability.GENERATE) or declaration.can(Capability.SPEECH):
         allowed.update(_GENERATION_VERBS)
     if declaration.can(Capability.EMBED):
         allowed.add("embedContent")

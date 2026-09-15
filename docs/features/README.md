@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**84 of 90 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**85 of 91 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -101,3 +101,4 @@ status that goes stale in the copy nobody opens.
 | [621](FRD-621-splunk-hec-as-a-recipe.md) | Splunk HEC, as a recipe | 1 (observability) | ✅ Built |
 | [622](FRD-622-platform-administration-and-content-reads.md) | Platform administration, and who read which content | 6 (reporting) | ✅ Built |
 | [623](FRD-623-shared-clusters-and-a-leader-that-moves.md) | Shared clusters, and a Redis leader that moves | 7 | ✅ Done |
+| [624](FRD-624-speech-output-on-the-gemini-surface.md) | Speech output on the Gemini surface | 8 | ✅ Done |

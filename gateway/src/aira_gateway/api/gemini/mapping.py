@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 
 from aira_common.models import ThinkingMode
@@ -23,6 +24,8 @@ from aira_gateway.core.canonical import (
     CanonicalResponse,
     DataPart,
     Role,
+    SpeakerVoice,
+    Speech,
     TextPart,
     Thinking,
     ToolCallPart,
@@ -155,6 +158,7 @@ def gemini_to_canonical(
             for tool in request.tools
             for declaration in tool.functionDeclarations
         ),
+        speech=speech_of(config) if config else None,
     )
 
 
@@ -169,6 +173,25 @@ def thinking_of(config: schemas.ThinkingConfig | None) -> Thinking | None:
     if config.mode is None:
         return None
     return Thinking(mode=mode_from(config.mode), tokens=config.tokens)
+
+
+def speech_of(config: schemas.GenerationConfig) -> Speech | None:
+    """Google's voice settings onto the canonical request (`FRD-624`), or ``None`` for text."""
+    settings = config.speechConfig
+    if not config.speaks or settings is None:
+        return None
+    if settings.multiSpeakerVoiceConfig is not None:
+        speakers = tuple(
+            SpeakerVoice(
+                speaker=entry.speaker, voice=entry.voiceConfig.prebuiltVoiceConfig.voiceName
+            )
+            for entry in settings.multiSpeakerVoiceConfig.speakerVoiceConfigs
+        )
+        return Speech(speakers=speakers, language=settings.languageCode)
+    assert settings.voiceConfig is not None  # the schema requires exactly one of the two
+    return Speech(
+        voice=settings.voiceConfig.prebuiltVoiceConfig.voiceName, language=settings.languageCode
+    )
 
 
 def gemini_to_embedding(
@@ -219,13 +242,16 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
     """Map a canonical response back to a Gemini ``GenerateContentResponse``.
 
     Parts in the order Google sends them: reasoning (marked ``thought``, `FRD-135`), then text,
-    then function calls. A response with only calls carries no empty text part.
+    then speech (`FRD-624`), then function calls. A response with only calls carries no empty text
+    part.
     """
     parts: list[schemas.Part] = []
     if response.reasoning:
         parts.append(schemas.Part(text=response.reasoning, thought=True))
     if response.text:
         parts.append(schemas.Part(text=response.text))
+    if response.audio is not None:
+        parts.append(_audio_part(response.audio))
     parts.extend(
         schemas.Part(
             functionCall=schemas.FunctionCall(name=call.name, args=call.arguments, id=call.id)
@@ -255,6 +281,15 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
     )
 
 
+def _audio_part(audio: DataPart) -> schemas.Part:
+    """Speech as Google returns it: one `inlineData` part, base64 on the wire (`FRD-624`)."""
+    return schemas.Part(
+        inlineData=schemas.InlineData(
+            mimeType=audio.media_type, data=base64.b64encode(audio.data).decode("ascii")
+        )
+    )
+
+
 def _candidates(completion: int, reasoning: int) -> int:
     """Google's `candidatesTokenCount`: the answer **without** the thoughts, which it reports apart
     as `thoughtsTokenCount`. `completion_tokens` holds both, since both are billed as output."""
@@ -269,8 +304,10 @@ def chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConten
     """
     usage = chunk.usage
     parts: list[schemas.Part] = []
-    if chunk.text_delta or not chunk.tool_calls:
+    if chunk.text_delta or not (chunk.tool_calls or chunk.audio_delta):
         parts.append(schemas.Part(text=chunk.text_delta))
+    if chunk.audio_delta is not None:
+        parts.append(_audio_part(chunk.audio_delta))
     parts.extend(
         schemas.Part(
             functionCall=schemas.FunctionCall(name=call.name, args=call.arguments, id=call.id)

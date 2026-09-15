@@ -23,6 +23,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
+    DataPart,
     ToolCallPart,
 )
 from aira_gateway.core.schema import ResponseSchema, SchemaType
@@ -30,6 +31,14 @@ from aira_gateway.upstreams.base import OfferedModel, UpstreamModel
 
 _STREAM_WORDS_PER_CHUNK = 3
 _DEFAULT_DIMENSIONS = 8
+
+#: What the mock's speech sounds like, in the numbers Google's speech models use (`FRD-624`):
+#: 24 kHz, 16-bit, one channel, and about 25 output tokens per second of audio.
+SPEECH_MEDIA_TYPE = "audio/L16;codec=pcm;rate=24000"
+_SPEECH_RATE = 24000
+_SPEECH_SECONDS_PER_WORD = 0.25
+_SPEECH_TOKENS_PER_SECOND = 25
+_SPEECH_CHUNK_BYTES = 4800
 
 
 class MockProvider:
@@ -51,6 +60,8 @@ class MockProvider:
     expresses_thinking_levels = True
     #: A schema and the caller's tools are kept apart, as Gemini and the OpenAI dialect do.
     tools_with_schema = True
+    #: Speaks deterministic PCM, so the speech path is tested without a cloud (`FRD-624`).
+    speaks = True
 
     def __init__(self, *models: str) -> None:
         """One adapter, however many models a test needs — two adapters claiming ``mock`` would be
@@ -92,6 +103,8 @@ class MockProvider:
         return f"{len(self._models)} model(s) listed"
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        if request.speech is not None:
+            return self._speech(request)
         if request.tools:
             return self._tool_call(request)
         if request.response_schema is not None:
@@ -116,6 +129,32 @@ class MockProvider:
         )
         return CanonicalResponse(
             model=request.model, text=" ".join(words), finish_reason=finish_reason, usage=usage
+        )
+
+    def _speech(self, request: CanonicalRequest) -> CanonicalResponse:
+        """Deterministic PCM whose length follows the text (`FRD-624`).
+
+        Derived from the voice and the text, so two prompts sound different and one prompt always
+        the same. The output cap truncates it and still says `stop`, as Google does.
+        """
+        assert request.speech is not None
+        text = request.last_user_text().strip()
+        voices = request.speech.voice or ",".join(entry.voice for entry in request.speech.speakers)
+        seconds = max(1, len(text.split())) * _SPEECH_SECONDS_PER_WORD
+        tokens = max(1, round(seconds * _SPEECH_TOKENS_PER_SECOND))
+        size = int(_SPEECH_RATE * seconds) * 2
+        limit = request.max_output_tokens
+        if limit is not None and limit < tokens:
+            size = size * limit // tokens // 2 * 2
+            tokens = limit
+        seed = hashlib.sha256(f"{voices}\x00{text}".encode()).digest()
+        data = bytes(seed[index % len(seed)] for index in range(size))
+        usage = CanonicalUsage(prompt_tokens=self._prompt_tokens(request), completion_tokens=tokens)
+        return CanonicalResponse(
+            model=request.model,
+            text="",
+            audio=DataPart(media_type=SPEECH_MEDIA_TYPE, data=data),
+            usage=usage,
         )
 
     def _tool_call(self, request: CanonicalRequest) -> CanonicalResponse:
@@ -168,6 +207,15 @@ class MockProvider:
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
         full = await self.generate(request)
+        # Speech arrives in pieces, as Google streams it, and the pieces join to the whole answer.
+        audio = full.audio.data if full.audio is not None else b""
+        for start in range(0, len(audio), _SPEECH_CHUNK_BYTES):
+            yield CanonicalChunk(
+                text_delta="",
+                audio_delta=DataPart(
+                    media_type=SPEECH_MEDIA_TYPE, data=audio[start : start + _SPEECH_CHUNK_BYTES]
+                ),
+            )
         words = full.text.split()
         for start in range(0, len(words), _STREAM_WORDS_PER_CHUNK):
             delta = " ".join(words[start : start + _STREAM_WORDS_PER_CHUNK])

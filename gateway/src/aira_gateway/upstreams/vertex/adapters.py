@@ -114,6 +114,9 @@ class VertexGeminiAdapter(_VertexAdapter):
     #: A schema *parameter*, so the caller's tools and a response schema travel together
     #: (`FRD-131` FR-5).
     tools_with_schema = True
+    #: The same wire as Google AI Studio, which carries `responseModalities` and a voice
+    #: (`FRD-624`).
+    speaks = True
 
     async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
         """The cheapest remote question this platform has (`FRD-117` §5.2): `:countTokens`.
@@ -203,6 +206,8 @@ class VertexAnthropicAdapter(_VertexAdapter):
     serves_publisher = "anthropic"
     _methods = ANTHROPIC_METHODS
     sampling_controls = ANTHROPIC_SAMPLING
+    #: Anthropic's API has no speech output (`FRD-624`).
+    speaks = False
     #: **No `auto`**: this dialect takes only `budget_tokens`, so `auto` resolves to the model's
     #: declared default budget (`FRD-111` §5.2), and without one there is nothing to send.
     thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.AUTO}

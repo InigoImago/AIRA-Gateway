@@ -48,6 +48,7 @@ from aira_gateway.api.serving import (
     schema_bounds,
     served_models,
 )
+from aira_gateway.audio import AudioDigest
 from aira_gateway.audit import AuditTrail
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback
@@ -275,6 +276,7 @@ async def _stream_response(
         ) as acct:
             parts: list[str] = []
             streamed_calls: list[str] = []
+            audio = AudioDigest()
             final_usage = None
             separator = ""
             # What stopped the stream after its headers were sent, if anything did.
@@ -295,6 +297,8 @@ async def _stream_response(
                         if chunk.usage is not None:
                             final_usage = chunk.usage
                         streamed_calls.extend(call.name for call in chunk.tool_calls)
+                        if chunk.audio_delta is not None:
+                            audio.add(chunk.audio_delta)
                         # The audit row accumulates exactly what the caller receives.
                         led = notice.lead(chunk.text_delta)
                         parts.append(led)
@@ -326,7 +330,11 @@ async def _stream_response(
                 if final_usage is not None:
                     # The call names too: a streamed tool call has no text to accumulate.
                     report = acct.served if delivered else acct.abandoned
-                    report(canonical.model, final_usage, {"text": "".join(parts)}, streamed_calls)
+                    stored: dict[str, Any] = {"text": "".join(parts)}
+                    if not audio.empty:
+                        # Described, never kept (`ADR-0026`); the hash covers every chunk.
+                        stored["audio"] = audio.describe()
+                    report(canonical.model, final_usage, stored, streamed_calls)
                 if failure is not None:
                     acct.failed(refusal_response(failure).status_code, refusal_outcome(failure))
 

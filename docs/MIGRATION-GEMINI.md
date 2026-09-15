@@ -171,7 +171,8 @@ So there are three answers, and never a silent one:
 
 * **carried** — portable across the models AIRA serves;
 * **refused by name, with the reason** — out of scope by design (`cachedContent` is provider-side
-  state; `responseModalities` would return prose where audio was asked for);
+  state; a `responseModalities` other than speech alone would return prose where images were
+  asked for);
 * **the candidate is skipped** — the model or its dialect has no word for it, so a fallback chain
   moves on rather than answering with less than was asked for.
 
@@ -180,6 +181,9 @@ Two that surprise people:
 * **`includeThoughts`** follows the use case. Reasoning comes back by default and is stored with
   the answer; `false` withholds it. A use case that has turned reasoning off refuses `true` by name
   rather than answering without the thoughts (`FRD-135`).
+* **speech is carried.** `responseModalities: ["AUDIO"]` with a `speechConfig` returns one
+  `inlineData` part of audio from a model the catalogue declares as speaking (`FRD-624`),
+  buffered or streamed. The audit trail keeps the audio's description and hash, not the audio.
 * **an incapable model is skipped, never sent a stripped request.** If a chain's next candidate
   cannot read the PDF you attached, it is passed over — and if none qualifies the request fails.
   A dropped attachment produces no error, it produces a confident wrong answer with a 200.

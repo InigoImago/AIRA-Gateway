@@ -14,7 +14,8 @@ export type Capability =
   | 'thinking'
   | 'attachments'
   | 'tools'
-  | 'prompt_caching';
+  | 'prompt_caching'
+  | 'speech';
 
 /** The closed capability vocabulary — `aira_common.models.Capability`. */
 export const CAPABILITIES: readonly Capability[] = [
@@ -25,6 +26,7 @@ export const CAPABILITIES: readonly Capability[] = [
   'attachments',
   'tools',
   'prompt_caching',
+  'speech',
 ];
 
 /**

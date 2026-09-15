@@ -32,6 +32,10 @@ export const CAPABILITY_HELP: Record<Capability, string> = {
       capability here that changes the **price** and not the answer — so a model without it is
       served normally rather than skipped. Needs the two cache prices above to show up in
       reporting.`,
+  speech: `The model answers with speech: text in, audio out. A speech model usually declares this
+      and **not** generate, so a text request to it is refused by name rather than sent to a
+      provider that refuses it without saying why. A model without it is skipped when a caller asks
+      for audio. The audit trail keeps a description and a hash of the audio, not the audio.`,
 };
 
 /**

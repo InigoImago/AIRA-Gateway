@@ -174,6 +174,28 @@ class ToolsSupported:
         )
 
 
+class SpeechSupported:
+    """The model must answer with speech, on a dialect that can ask for it (`FRD-624`).
+
+    A model that cannot would answer in prose, or its provider would refuse without saying why.
+    """
+
+    def __init__(self, registry: ProviderRegistry, catalog: ModelCatalog) -> None:
+        self._registry = registry
+        self._catalog = catalog
+
+    async def refusal(self, model: str) -> str | None:
+        declaration = await self._catalog.declaration(model)
+        if not declaration.can(Capability.SPEECH):
+            missing = "declares no speech output" if declaration.declared else "is undeclared"
+            return f"{missing}, so it cannot answer this request with audio"
+        provider = await adapter_for(self._registry, self._catalog, model)
+        # Undeclared means it cannot: a dialect that never said so has no field for a voice.
+        if provider is not None and not getattr(provider, "speaks", False):
+            return "the dialect serving this model has no way to ask for speech"
+        return None
+
+
 class MediaTypesSupported:
     """The model must be able to read every attachment the request carries (`ADR-0012` §3).
 

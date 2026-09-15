@@ -36,3 +36,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0023 | [A comment states the rule; the story lives in the DEVLOG](ADR-0023-a-comment-states-the-rule.md) | **Accepted** | 2026-09-12 |
 | 0024 | [The collector has a small core of variables; everything else is a recipe](ADR-0024-the-collector-has-a-core-and-recipes.md) | **Accepted** | 2026-09-13 |
 | 0025 | [Keycloak decides who holds a role; AIRA decides what a role may do](ADR-0025-aira-defines-what-a-role-may-do.md) | **Accepted** | 2026-09-13 |
+| 0026 | [Speech output is model access, and the audit trail describes its audio](ADR-0026-speech-is-model-access-and-its-audio-is-described.md) | **Accepted** | 2026-09-14 |

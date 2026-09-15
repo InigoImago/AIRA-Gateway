@@ -180,7 +180,7 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
 
 
 async def check_declaration(
-    request: Request, *, model: str, method: str, requested: int | None
+    request: Request, *, model: str, method: str, requested: int | None, speech: bool = False
 ) -> ModelDeclaration:
     """Every rule the catalogue decides, before anything expensive happens (FRD-114).
 
@@ -189,9 +189,16 @@ async def check_declaration(
     """
     declaration = await catalog_of(request).declaration(model)
 
-    if method not in EMBEDDING_METHODS and not declaration.can(Capability.GENERATE):
+    # A spoken answer is the speech capability's question, asked per hop (`SpeechSupported`).
+    if method not in EMBEDDING_METHODS and not speech and not declaration.can(Capability.GENERATE):
+        hint = (
+            " It answers only with speech: send 'responseModalities': ['AUDIO'] and a "
+            "'speechConfig' (FRD-624)."
+            if declaration.can(Capability.SPEECH)
+            else ""
+        )
         raise GeminiHTTPError(
-            400, f"Model '{model}' does not support generation.", "INVALID_ARGUMENT"
+            400, f"Model '{model}' does not support generation.{hint}", "INVALID_ARGUMENT"
         )
 
     if requested is not None and requested <= 0:

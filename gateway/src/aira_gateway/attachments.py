@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
+from aira_gateway.audio import duration
+
 #: The media types AIRA accepts: the **outer bound** across every provider, not a claim about any
 #: model. A type inside it must still be declared per model (`FRD-114` FR-7), and the two are
 #: intersected against the model about to be dispatched to.
@@ -200,8 +202,18 @@ def strip_attachments(payload: Any) -> Any:
             raw = inline.get("data")
             # The *decoded* size, because that is what an audit compares against a byte limit.
             size, digest = _measure(raw)
+            described: dict[str, Any] = {
+                "kind": "data",
+                "media_type": media_type,
+                "bytes": size,
+                "sha256": digest,
+            }
+            # How long a spoken answer was, where its format states a rate (`FRD-624`).
+            seconds = duration(media_type, size)
+            if seconds is not None:
+                described["seconds"] = seconds
             return {
                 **{k: strip_attachments(v) for k, v in payload.items() if k != key},
-                key: {"kind": "data", "media_type": media_type, "bytes": size, "sha256": digest},
+                key: described,
             }
     return {key: strip_attachments(value) for key, value in payload.items()}

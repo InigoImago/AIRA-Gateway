@@ -48,6 +48,8 @@ class OpenAIAdapter:
     """
 
     sampling_controls = OPENAI_SAMPLING
+    #: Speech is a separate endpoint in this dialect, not a field of a chat completion (`FRD-624`).
+    speaks = False
     #: **No `limited` and no `auto`**: `reasoning_effort` is a word with no token budget, so an
     #: explicit count cannot be honoured exactly and "you decide" cannot be said (`FRD-111` §5.2).
     thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.LIMITED, ThinkingMode.AUTO}

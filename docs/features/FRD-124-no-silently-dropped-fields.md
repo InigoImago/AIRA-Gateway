@@ -153,7 +153,8 @@ New in `generationConfig`: `topP`, `topK`, `seed`, `presencePenalty`, `frequency
 `stopSequences`, `candidateCount` (must be `1`).
 
 Refused with `400 INVALID_ARGUMENT`, each naming the field: `tools`, `toolConfig`, `cachedContent`,
-`safetySettings`, `responseModalities`, `speechConfig`, `responseLogprobs`, `logprobs`,
+`safetySettings`, a `responseModalities` other than speech alone (`FRD-624` carries
+`["AUDIO"]` with a `speechConfig`), `responseLogprobs`, `logprobs`,
 `mediaResolution`, `enableEnhancedCivicAnswers`, the `functionCall`/`functionResponse`/
 `executableCode`/`fileData` part shapes, `thinkingConfig` at the top level, and anything unknown.
 

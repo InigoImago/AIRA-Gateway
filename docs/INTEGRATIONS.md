@@ -558,6 +558,13 @@ array**, and the vendor reports **no stream usage** unless `stream_options.inclu
 a stream reporting none would be released rather than settled, and every streamed request would be
 silently free.
 
+**Speech models** (`FRD-624`), measured in this project on 2026-09-14:
+- `gemini-2.5-flash-tts`, `gemini-2.5-pro-tts` and `gemini-2.5-flash-lite-preview-tts` answer in
+  `europe-west1` and `europe-west4`. The `-preview-tts` names answer only in `us-central1`.
+- Catalogue a speech model with the capability `speech` and without `generate`. It then answers
+  only a request for audio, and a text request to it is refused by name.
+- The audit trail keeps a description and hash of the audio, not the audio (`ADR-0026`).
+
 ### Google AI Studio (the Gemini public API)
 
 An API key (`AIRA_GOOGLE_API_KEY`). Simplest to start with, and the one to avoid where residency

@@ -19,6 +19,7 @@ from aira_gateway.core.canonical import (
     CanonicalUsage,
     DataPart,
     Role,
+    Speech,
     TextPart,
     Thinking,
     ToolCallPart,
@@ -140,6 +141,11 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         generation_config["responseMimeType"] = "application/json"
         generation_config["responseSchema"] = request.response_schema.to_wire()
     _add_sampling(generation_config, request)
+    if request.speech is not None:
+        # Both, always together (`FRD-624`): the modality without a voice is refused without a
+        # reason, and a voice without the modality has nothing to speak.
+        generation_config["responseModalities"] = ["AUDIO"]
+        generation_config["speechConfig"] = speech_fields(request.speech)
     if generation_config:
         body["generationConfig"] = generation_config
     return body
@@ -169,6 +175,29 @@ def thinking_fields(setting: Thinking) -> dict[str, Any]:
     if setting.mode == ThinkingMode.LIMITED:
         return {"thinkingBudget": setting.tokens or -1}
     return {"thinkingLevel": setting.mode}
+
+
+def speech_fields(speech: Speech) -> dict[str, Any]:
+    """Google's `speechConfig`, in the camelCase its API documents (`FRD-624`)."""
+
+    def voice(name: str) -> dict[str, Any]:
+        return {"prebuiltVoiceConfig": {"voiceName": name}}
+
+    config: dict[str, Any] = (
+        {
+            "multiSpeakerVoiceConfig": {
+                "speakerVoiceConfigs": [
+                    {"speaker": entry.speaker, "voiceConfig": voice(entry.voice)}
+                    for entry in speech.speakers
+                ]
+            }
+        }
+        if speech.speakers
+        else {"voiceConfig": voice(speech.voice or "")}
+    )
+    if speech.language:
+        config["languageCode"] = speech.language
+    return config
 
 
 def canonical_to_gemini_embedding(request: CanonicalEmbeddingRequest) -> dict[str, Any]:
@@ -224,6 +253,20 @@ def _reasoning_of(candidate: dict[str, Any]) -> str:
     return "".join(part.get("text", "") for part in parts if part.get("thought"))
 
 
+def _audio_of(candidate: dict[str, Any]) -> DataPart | None:
+    """The spoken answer (`FRD-624`): every audio part, decoded and joined in order."""
+    pieces: list[bytes] = []
+    media_type = ""
+    for part in candidate.get("content", {}).get("parts", []) or []:
+        inline = part.get("inlineData") or {}
+        mime = str(inline.get("mimeType") or "")
+        if not mime.startswith("audio/"):
+            continue
+        media_type = media_type or mime
+        pieces.append(base64.b64decode(inline.get("data") or ""))
+    return DataPart(media_type=media_type, data=b"".join(pieces)) if pieces else None
+
+
 def _usage_of(data: dict[str, Any]) -> CanonicalUsage:
     meta = data.get("usageMetadata") or {}
     # Thinking is output and billed as output (`FRD-135` FR-1); `candidatesTokenCount` counts only
@@ -271,9 +314,11 @@ def gemini_response_to_canonical(data: dict[str, Any], model: str) -> CanonicalR
     finish_reason = "stop"
     calls: tuple[ToolCallPart, ...] = ()
     reasoning = ""
+    audio: DataPart | None = None
     if candidates:
         text = _text_of(candidates[0])
         reasoning = _reasoning_of(candidates[0])
+        audio = _audio_of(candidates[0])
         finish_reason = str(candidates[0].get("finishReason", "STOP")).lower()
         calls = _calls_of(candidates[0])
     return CanonicalResponse(
@@ -283,6 +328,7 @@ def gemini_response_to_canonical(data: dict[str, Any], model: str) -> CanonicalR
         finish_reason=finish_reason,
         usage=_usage_of(data),
         tool_calls=calls,
+        audio=audio,
     )
 
 
@@ -302,4 +348,5 @@ def gemini_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk:
         finish_reason=str(finish).lower() if finish else None,
         usage=usage,
         tool_calls=calls,
+        audio_delta=_audio_of(candidates[0]) if candidates else None,
     )

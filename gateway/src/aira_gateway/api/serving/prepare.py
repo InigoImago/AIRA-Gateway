@@ -58,6 +58,7 @@ from aira_gateway.requirements import (
     Requirement,
     SamplingExpressible,
     SchemaExpressible,
+    SpeechSupported,
     StructuredOutputSupported,
     ThinkingHonoured,
     ToolsSupported,
@@ -136,7 +137,11 @@ async def prepare_for_dispatch(
 
     served = canonical.model if canonical is not None else (embed.model if embed else "")
     declaration = await check_declaration(
-        request, model=served, method=method, requested=requested_output
+        request,
+        model=served,
+        method=method,
+        requested=requested_output,
+        speech=canonical is not None and canonical.speech is not None,
     )
 
     if canonical is not None:
@@ -205,6 +210,8 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
         checks.append(SamplingExpressible(registry, canonical.sampling_requested, catalog))
     if canonical is not None and canonical.tools:
         checks.append(ToolsSupported(catalog))
+    if canonical is not None and canonical.speech is not None:
+        checks.append(SpeechSupported(registry, catalog))
     return permits(checks)
 
 

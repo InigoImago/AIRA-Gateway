@@ -24,6 +24,12 @@ _STRICT = ConfigDict(extra="forbid")
 #: matches before a trailing newline, and this name reaches the audit row and span attributes.
 _FUNCTION_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 
+#: A voice is the provider's name for it (`FRD-624`), and a speaker a name the prompt uses. Bounded,
+#: because both reach the audit row and an error message.
+_VOICE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
+_SPEAKER_NAME = re.compile(r"^[\w .'-]{1,64}\Z")
+_LANGUAGE_CODE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}\Z")
+
 #: The roles a turn may carry. `system` and `function` are older spellings Google clients still send
 #: (a system turn; a function response). Anything else is refused: an `assistant` turn read as the
 #: user's own words changes the conversation, and nothing in the answer would show it.
@@ -44,11 +50,6 @@ _PART_NOT_SERVED = {
 
 #: `GenerationConfig` fields. Refused rather than dropped — every one of them changes the answer.
 _CONFIG_NOT_SERVED = {
-    "responseModalities": (
-        "this gateway returns text (ADR-0013). A request for audio or images would be answered "
-        "with prose and a 200"
-    ),
-    "speechConfig": "speech synthesis is not part of direct model access (ADR-0013)",
     "responseLogprobs": "log probabilities are not carried across the four supported dialects",
     "logprobs": "log probabilities are not carried across the four supported dialects",
     "mediaResolution": "media resolution is a Gemini-only control and would not apply uniformly",
@@ -204,6 +205,88 @@ class ThinkingConfig(BaseModel):
         return self
 
 
+#: Inside `speechConfig` the `google-genai` SDK writes snake_case, as it does inside
+#: `thinkingConfig`; Google's documentation writes camelCase. Both are accepted.
+_BOTH_SPELLINGS = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class PrebuiltVoiceConfig(BaseModel):
+    model_config = _BOTH_SPELLINGS
+    voiceName: str = Field(alias="voice_name")
+
+    @model_validator(mode="after")
+    def _a_voice_name(self) -> PrebuiltVoiceConfig:
+        if not _VOICE_NAME.match(self.voiceName):
+            raise ValueError(
+                f"'{self.voiceName[:64]}' is not a voice name: letters, digits, '_' and '-', up to "
+                "64 characters."
+            )
+        return self
+
+
+class VoiceConfig(BaseModel):
+    model_config = _BOTH_SPELLINGS
+    prebuiltVoiceConfig: PrebuiltVoiceConfig = Field(alias="prebuilt_voice_config")
+
+
+class SpeakerVoiceConfig(BaseModel):
+    model_config = _BOTH_SPELLINGS
+    speaker: str
+    voiceConfig: VoiceConfig = Field(alias="voice_config")
+
+    @model_validator(mode="after")
+    def _a_speaker_name(self) -> SpeakerVoiceConfig:
+        if not _SPEAKER_NAME.match(self.speaker):
+            raise ValueError(
+                f"'{self.speaker[:64]}' is not a speaker name: up to 64 letters, digits, spaces "
+                "and . ' _ -"
+            )
+        return self
+
+
+class MultiSpeakerVoiceConfig(BaseModel):
+    model_config = _BOTH_SPELLINGS
+    #: Bounded, because each entry reaches the audit row.
+    speakerVoiceConfigs: list[SpeakerVoiceConfig] = Field(
+        alias="speaker_voice_configs", min_length=1, max_length=8
+    )
+
+    @model_validator(mode="after")
+    def _distinct_speakers(self) -> MultiSpeakerVoiceConfig:
+        names = [entry.speaker for entry in self.speakerVoiceConfigs]
+        if len(set(names)) != len(names):
+            raise ValueError(
+                "A speaker is named twice in 'speakerVoiceConfigs', so their lines could not be "
+                "told apart."
+            )
+        return self
+
+
+class SpeechConfig(BaseModel):
+    """The voice of a spoken answer (`FRD-624`): one voice, or one per named speaker."""
+
+    model_config = _BOTH_SPELLINGS
+    voiceConfig: VoiceConfig | None = Field(default=None, alias="voice_config")
+    multiSpeakerVoiceConfig: MultiSpeakerVoiceConfig | None = Field(
+        default=None, alias="multi_speaker_voice_config"
+    )
+    languageCode: str | None = Field(default=None, alias="language_code")
+
+    @model_validator(mode="after")
+    def _one_way_to_name_a_voice(self) -> SpeechConfig:
+        if (self.voiceConfig is None) == (self.multiSpeakerVoiceConfig is None):
+            raise ValueError(
+                "'speechConfig' names the voice in exactly one of 'voiceConfig' and "
+                "'multiSpeakerVoiceConfig'. Without either the provider refuses the request "
+                "without saying why; with both it is not clear which applies."
+            )
+        if self.languageCode is not None and not _LANGUAGE_CODE.match(self.languageCode):
+            raise ValueError(
+                f"'{self.languageCode[:32]}' is not a language code such as 'de-DE' or 'en-US'."
+            )
+        return self
+
+
 class GenerationConfig(BaseModel):
     model_config = _STRICT
     temperature: float | None = None
@@ -222,6 +305,14 @@ class GenerationConfig(BaseModel):
     #: Accepted only as ``1``: this gateway returns one candidate, and answering a request for three
     #: with one, under a 200, would look like a complete answer.
     candidateCount: int | None = None
+    #: `["AUDIO"]` asks for the answer as speech (`FRD-624`); `["TEXT"]` is what happens without it.
+    responseModalities: list[str] | None = None
+    speechConfig: SpeechConfig | None = None
+
+    @property
+    def speaks(self) -> bool:
+        """Whether the answer is asked for as speech (`FRD-624`)."""
+        return [value.upper() for value in self.responseModalities or []] == ["AUDIO"]
 
     @model_validator(mode="before")
     @classmethod
@@ -235,6 +326,35 @@ class GenerationConfig(BaseModel):
             raise ValueError(
                 f"'candidateCount' must be 1; this gateway returns one candidate, and answering a "
                 f"request for {self.candidateCount} with one would look like a complete answer."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _speech_alone(self) -> GenerationConfig:
+        """Speech alone, or text (`FRD-624`). Anything else the provider refuses without a reason,
+        or answers in prose where images were asked for."""
+        modalities = [value.upper() for value in self.responseModalities or []]
+        if modalities not in ([], ["TEXT"], ["AUDIO"]):
+            raise ValueError(
+                f"'responseModalities' {self.responseModalities} is not served: this gateway "
+                "answers in text, or with speech alone (['AUDIO']). A speech model returns audio "
+                "only, and a request for images would be answered in prose."
+            )
+        if self.speaks and self.speechConfig is None:
+            raise ValueError(
+                "'responseModalities' ['AUDIO'] needs a 'speechConfig' naming the voice. Without "
+                "one the provider refuses the request without saying why."
+            )
+        if self.speechConfig is not None and not self.speaks:
+            raise ValueError(
+                "'speechConfig' sets the voice of a spoken answer; send it with "
+                "'responseModalities': ['AUDIO']."
+            )
+        if self.speaks and self.responseSchema is not None:
+            raise ValueError("A spoken answer cannot conform to a 'responseSchema'.")
+        if self.speaks and self.thinkingConfig is not None and self.thinkingConfig.includeThoughts:
+            raise ValueError(
+                "'includeThoughts' asks for reasoning, and a speech model returns audio only."
             )
         return self
 
@@ -341,6 +461,17 @@ class GenerateContentRequest(BaseModel):
                         "first."
                     )
                 seen.add(declaration.name)
+        return self
+
+    @model_validator(mode="after")
+    def _speech_reads_only_the_text(self) -> GenerateContentRequest:
+        """A speech model refuses a `systemInstruction` without saying why (`FRD-624`)."""
+        speaks = self.generationConfig is not None and self.generationConfig.speaks
+        if speaks and self.systemInstruction is not None:
+            raise ValueError(
+                "A speech model reads only the text it is to speak and refuses a "
+                "'systemInstruction'. Put the style in the text, such as 'Say cheerfully: …'."
+            )
         return self
 
     @model_validator(mode="before")

@@ -30,6 +30,10 @@ class Capability(StrEnum):
     #: correctly, only at a higher price, and skipping it would refuse a request over cost. Every
     #: other flag guards the answer; the difference is deliberate, not an inconsistency to fix.
     PROMPT_CACHING = "prompt_caching"
+    #: The model answers with speech: text in, audio out (`FRD-624`). A speech-only model declares
+    #: this and not `generate`, so a text request to it is refused by name rather than sent to a
+    #: provider that refuses it without saying why.
+    SPEECH = "speech"
 
 
 class ThinkingMode(StrEnum):

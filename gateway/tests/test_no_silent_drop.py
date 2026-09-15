@@ -96,8 +96,7 @@ def test_a_field_this_gateway_does_not_serve_is_refused_and_says_why(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("responseModalities", ["AUDIO"]),
-        ("speechConfig", {"voiceConfig": {}}),
+        ("responseModalities", ["IMAGE"]),
         ("responseLogprobs", True),
         ("logprobs", 5),
         ("mediaResolution", "MEDIA_RESOLUTION_LOW"),
@@ -553,6 +552,16 @@ def test_every_adapter_declares_its_thinking_support() -> None:
         # them have a field that takes a word and one has only a number.
         assert isinstance(getattr(adapter, "expresses_thinking_levels", None), bool), (
             f"{adapter.__name__} does not say whether it has a field for a level word"
+        )
+
+
+def test_every_adapter_says_whether_it_speaks() -> None:
+    """Speech is a property of the dialect as well as the model (`FRD-624`). A model the catalogue
+    declares as speaking, reached through a wire with no field for a voice, would be answered in
+    prose or refused without a reason. Declared per adapter, never defaulted."""
+    for adapter in _adapters():
+        assert isinstance(getattr(adapter, "speaks", None), bool), (
+            f"{adapter.__name__} does not say whether it can ask for speech"
         )
 
 

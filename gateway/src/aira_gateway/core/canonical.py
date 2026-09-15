@@ -154,6 +154,25 @@ class Thinking(BaseModel):
     tokens: int | None = None
 
 
+class SpeakerVoice(BaseModel):
+    """One named speaker and the voice that reads their lines (`FRD-624`)."""
+
+    speaker: str
+    voice: str
+
+
+class Speech(BaseModel):
+    """An answer as audio instead of text (`FRD-624`): one voice, or one per named speaker.
+
+    The voice is the provider's name for it and is not checked against a list here: the provider
+    validates it, and a list kept in the gateway would go stale.
+    """
+
+    voice: str | None = None
+    speakers: tuple[SpeakerVoice, ...] = ()
+    language: str | None = None
+
+
 class CanonicalRequest(BaseModel):
     #: Forbidden, so a misspelled field is an error rather than a setting that does nothing.
     model_config = ConfigDict(extra="forbid")
@@ -190,6 +209,9 @@ class CanonicalRequest(BaseModel):
     include_reasoning: bool = False
     #: `5m` or `1h` (`FRD-133`), read only with `cache_prefix`. The cheap one unless chosen.
     cache_ttl: str = "5m"
+    #: Answer with speech instead of text (`FRD-624`). Only a model that declares `speech`, on a
+    #: dialect that can ask for it, serves such a request.
+    speech: Speech | None = None
 
     def last_user_text(self) -> str:
         for message in reversed(self.messages):
@@ -321,6 +343,8 @@ class CanonicalResponse(BaseModel):
     #: model may be tried in several regions in order, so the configuration is no evidence of
     #: where one request went. Empty on dialects with one place.
     served_region: str = ""
+    #: The answer as speech (`FRD-624`): decoded audio and the media type the provider named.
+    audio: DataPart | None = None
 
 
 class CanonicalChunk(BaseModel):
@@ -334,3 +358,5 @@ class CanonicalChunk(BaseModel):
     finish_reason: str | None = None
     usage: CanonicalUsage | None = None
     tool_calls: tuple[ToolCallPart, ...] = ()
+    #: A piece of the spoken answer, in the order it was produced (`FRD-624`).
+    audio_delta: DataPart | None = None

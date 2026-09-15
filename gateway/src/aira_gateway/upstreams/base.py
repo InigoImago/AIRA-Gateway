@@ -171,6 +171,10 @@ class Upstream(Protocol):
     #: number, so a level there must be refused by name rather than dropped.
     expresses_thinking_levels: bool
 
+    #: Whether this dialect can ask for speech (`FRD-624`): a modality and a voice on the wire.
+    #: Which models speak is the catalogue's question; this is whether the wire has the words.
+    speaks: bool
+
     def models(self) -> list[UpstreamModel]: ...
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse: ...

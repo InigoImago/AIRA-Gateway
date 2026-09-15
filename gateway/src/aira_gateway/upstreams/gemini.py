@@ -118,6 +118,8 @@ class GeminiUpstream:
     expresses_thinking_levels = True
     #: A schema parameter and a tools field are separate here.
     tools_with_schema = True
+    #: Google's own wire, which carries `responseModalities` and a voice (`FRD-624`).
+    speaks = True
 
     def __init__(self, api_key: str, models: list[str], client: httpx.AsyncClient) -> None:
         self._api_key = api_key

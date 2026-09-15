@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Speech output on the Gemini surface (2026-09-14)
+
+The owner asked whether the text-to-speech models can be reached through AIRA. Measured first:
+neither surface could reach them.
+- **The Gemini surface** refused `responseModalities` and `speechConfig` with a `400` citing
+  `ADR-0013`. `ADR-0013` says nothing about audio, and its own test puts speech in scope: it is
+  model inference, and the gateway decides nothing about what is said.
+- **The KIRA surface** has no speech endpoint.
+
+`ADR-0026` records that decision, and a second one: the audit trail keeps a description and a hash
+of the audio, not the audio. `FRD-624` builds the Gemini surface.
+
+**Probed on Vertex before building**, to build against the provider rather than the documentation:
+- **Regions:** `gemini-2.5-flash-tts`, `gemini-2.5-pro-tts` and
+  `gemini-2.5-flash-lite-preview-tts` answer in `europe-west1` and `europe-west4`. The
+  `-preview-tts` names answer only in `us-central1`.
+- **Shape:** one `inlineData` part of `audio/L16;codec=pcm;rate=24000`, billed as output tokens at
+  about 25 a second.
+- **Streaming:** a paragraph arrived as 286 chunks.
+- **Silent failures:** a text request, `AUDIO` without a voice, and a `systemInstruction` each got
+  an unexplained `400`. `maxOutputTokens` cut the audio short and still said `STOP`.
+- **The SDK's spelling:** `google-genai` 2.17, captured on a local socket, writes snake_case inside
+  `speechConfig`, as it does inside `thinkingConfig`.
+- **A defect on the reasoning branch:** `includeThoughts` on a speech model is a `400`. That
+  finding is the fix recorded in the entry below.
+
+**Built:**
+- The surface carries both spellings, and refuses by name what the provider would refuse without
+  a reason.
+- A new capability, `speech`, and a per-hop requirement: the model declares it, and the dialect
+  must be able to ask for it (`speaks` on every adapter).
+- Both Gemini mappers carry the audio in both directions.
+- The mock speaks deterministic PCM.
+- The console offers the capability.
+
+**The audit trail already did the right thing, and the first version did it twice.** The writer
+replaces every inline datum in a stored payload with its description (`FRD-110` §5.4), responses
+included, so a buffered spoken answer was described without any new code. The route replaced the
+audio with its own description as well. The writer then described that description, and the test
+comparing the stored hash with the caller's audio caught a row claiming 3 bytes. The route now
+leaves the answer alone. The writer adds the duration for audio, and only a stream builds its
+description as its pieces pass.
+
+**Measured live** through the gateway, against Vertex in `europe-west1`
+(`tests/integration/test_speech_live.py`):
+- Buffered: 4.89 s of speech arrived after 3.93 s.
+- Streamed: 144 chunks; the first audio arrived after 0.63 s and the whole answer after 2.79 s.
+- Both audit rows name `europe-west1`, carry the output tokens (122 and 143), and store the
+  description, whose hash matches the audio the caller received. The stored responses were 426
+  and 200 characters, where the audio was about 310 KB as base64.
+- The rows were unpriced, because the probe catalogued the model without prices. A real catalogue
+  entry needs the output price for audio tokens, or `FRD-610` §3.2 applies.
+
+Mutations SP1–SP13 are caught, and E7 was re-anchored.
+
 ## Reasoning on by default, tool calling still off (2026-09-14)
 
 The owner decided that a model's reasoning comes back unless a use case turns it off. Tool calling
