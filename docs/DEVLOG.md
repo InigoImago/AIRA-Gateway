@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Authentication, drawn (2026-09-15)
+
+`ARCHITECTURE.md` §8 draws how each caller proves who it is, in five diagrams:
+- who signs in where;
+- the console's code flow with PKCE;
+- what the gateway does with a credential;
+- how an API key reaches the gateway;
+- the directory lookups.
+
+The diagrams follow the code, not the design documents:
+- The gateway decides by the credential's shape (`aira_` is a key, anything else a token,
+  `auth/dependencies.py`).
+- It asks Keycloak for nothing but signing keys.
+- Management's only admin-API calls are the four reads in `aira_common/directory.py`.
+
+Each diagram was rendered with `mermaid-cli` against a local Chromium before commit, because
+nothing in this repository checks Mermaid and GitHub renders a broken block as text.
+
 ## The last CI failure: a wait counted in calls, where only time would do (2026-09-15)
 
 With realm tokens fixed, CI failed once in 1,056 integration tests:

@@ -367,7 +367,131 @@ unknown.
 
 ---
 
-## 8. Reading further
+## 8. Authentication — who proves what, to whom
+
+Keycloak issues every token, and AIRA verifies each one itself against the realm's public signing
+keys. Nothing on the request path asks Keycloak anything. The one exception is Management's
+directory lookups, made with a read-only service account while access is granted in the console.
+
+```mermaid
+flowchart LR
+    person["Person<br/>in a browser"] -->|"signs in: code flow + PKCE"| kc["Keycloak<br/>realm aira"]
+    kc -->|"access token<br/>iss · aud · groups · preferred_username"| console["Console<br/>(SPA)"]
+    console -->|"Bearer · /api"| mgmt["Management API"]
+    console -->|"Bearer · /gw"| gw["Gateway API"]
+
+    app["Application<br/>with an API key"] -->|"x-goog-api-key: aira_…"| gw
+    machine["Machine client<br/>(service account)"] -->|"client_credentials"| kc
+    machine -->|"Bearer"| gw
+
+    mgmt -. "directory lookups<br/>aira-directory: view-users · query-groups" .-> kc
+    gw -. "signing keys (JWKS)" .-> kc
+    mgmt -. "signing keys (JWKS)" .-> kc
+    mgmt -- "API key hashes over Kafka" --> gw
+```
+
+**Signing in to the console** is Keycloak's authorization-code flow with PKCE, on a public client
+without a secret. The console sends the same token to both services:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor P as Person
+    participant C as Console (SPA)
+    participant K as Keycloak
+    participant M as Management API
+    participant G as Gateway API
+
+    P->>C: opens the console
+    C->>K: authorization request (code flow, PKCE S256)
+    K->>P: login page
+    P->>K: credentials, and MFA if the realm asks
+    K-->>C: authorization code
+    C->>K: code and PKCE verifier
+    K-->>C: access token with iss, aud, groups, preferred_username
+    C->>M: /api/v1/... with Authorization: Bearer
+    M->>M: verify signature (JWKS), iss, aud, exp
+    M->>M: groups to roles to permissions
+    M-->>C: only what the permissions allow
+    C->>G: /gw/v1beta/... with the same token
+    G->>G: the same verification, the same roles
+    G-->>C: answer
+```
+
+**A request to the gateway** carries one credential, and its shape decides the path:
+
+```mermaid
+sequenceDiagram
+    participant X as Caller
+    participant G as Gateway API
+    participant R as Read model (Postgres)
+    participant K as Keycloak (signing keys only)
+
+    X->>G: request with a credential
+    Note over G: from Authorization: Bearer, else x-goog-api-key, else ?key=
+    alt starts with aira_ (API key)
+        G->>R: find the key by its prefix, compare the hash
+        R-->>G: use case, owner, active, expiry
+        Note over G: a key belongs to exactly one use case
+    else anything else (Keycloak token)
+        G->>K: signing keys, cached
+        K-->>G: JWKS
+        G->>G: verify signature, iss, aud, exp
+        G->>R: roles and grants for the token's groups
+        R-->>G: permissions and the use cases they reach
+        Note over G: the use case comes from X-AIRA-Use-Case or /uc/{slug} and must be reachable
+    end
+    alt valid, and the use case is allowed
+        G->>G: suspension, rate limit, budget, pipeline, model
+        G-->>X: answer
+    else
+        G-->>X: 401 for a bad credential, 403 for a use case it may not use
+    end
+```
+
+**An API key** is issued in Management, shown once, and never stored in clear. The gateway learns
+of it over Kafka:
+
+```mermaid
+sequenceDiagram
+    actor A as Use-case administrator
+    participant M as Management API
+    participant Q as Kafka (aira.api-keys)
+    participant G as Gateway API
+
+    A->>M: issue a key for a use case (signed in)
+    M->>M: generate the key, store only its hash
+    M-->>A: the key, shown this once
+    M->>Q: api_key.created with hash, use case and owner
+    Q->>G: the consumer writes the read model
+    Note over G: from now on the key is accepted, and a revocation travels the same way
+```
+
+**Directory lookups** are the only calls AIRA makes to Keycloak's admin API, and they only read:
+
+```mermaid
+sequenceDiagram
+    participant M as Management API
+    participant K as Keycloak
+    M->>K: token with client_credentials (client aira-directory)
+    K-->>M: short-lived token, realm-management roles view-users and query-groups
+    M->>K: GET users, groups and group-by-path, searches only
+    K-->>M: matching users and groups
+    Note over M,K: while access is granted in the console, never on the request path
+```
+
+- **Roles come only from groups** ([`ADR-0017`](adr/ADR-0017-a-role-is-held-through-a-group.md),
+  [`ADR-0025`](adr/ADR-0025-aira-defines-what-a-role-may-do.md)); a Keycloak realm role grants
+  nothing.
+- **`iss` is compared literally**, with the URL the browser uses. Keycloak writes `iss` from the host
+  a token was requested through, so a token fetched through another address is refused.
+- **Management accepts only Keycloak tokens.** API keys reach the gateway and nothing else.
+- **Refused authentications are bounded** per address. Past 60 a minute, Management answers `429`.
+- What the realm has to provide, setting by setting, is [`INTEGRATIONS.md`](INTEGRATIONS.md) §2.
+
+---
+
+## 9. Reading further
 
 | For | Read |
 |---|---|

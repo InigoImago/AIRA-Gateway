@@ -101,6 +101,9 @@ dropped table and then failed every event against it.
 AIRA needs **one realm**, three role groups, whatever groups your organisation already uses, and
 two clients.
 
+How the pieces fit — signing in, API keys, what the gateway checks, the directory lookups — is drawn
+in [`ARCHITECTURE.md`](ARCHITECTURE.md) §8.
+
 ### Roles come from groups (`ADR-0017`)
 
 **Group membership is the only source of a role.** Three groups carry the organisation-wide roles,
