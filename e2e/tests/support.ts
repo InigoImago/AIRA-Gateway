@@ -1,4 +1,4 @@
-import { Page, expect } from '@playwright/test';
+import { Page, Response, expect } from '@playwright/test';
 import { rememberUseCase } from '../created';
 
 /** Demo accounts seeded into the Keycloak realm (deploy/compose/keycloak/realms). */
@@ -20,6 +20,13 @@ export const USERS = {
  * including the PKCE challenge the SPA generates.
  */
 export async function login(page: Page, user: { username: string; password: string }) {
+  // The console asks for the privacy notice as soon as it knows who is signed in (`FRD-625`).
+  // Listened for before the navigation, so a fast answer is not missed.
+  const notice = page.waitForResponse(
+    (response) =>
+      response.url().includes('/api/v1/privacy-notice') && response.request().method() === 'GET',
+    { timeout: 60_000 },
+  );
   await page.goto('/');
 
   // Either the app redirects to Keycloak (first visit) or an existing session lands straight in
@@ -37,6 +44,23 @@ export async function login(page: Page, user: { username: string; password: stri
   }
 
   await expect(userName).toHaveText(user.username, { timeout: 30_000 });
+  await acknowledgePrivacyNoticeIfDue(page, await notice);
+}
+
+/**
+ * Answer the privacy notice when the console opened it (`FRD-625`), as its reader would.
+ *
+ * Every spec signs in, and the window must be acknowledged before anything behind it can be
+ * clicked. Whether it is due is the server's answer, read from the response the console itself
+ * received — never assumed, so a spec that expects the window is not quietly dismissing it here.
+ */
+export async function acknowledgePrivacyNoticeIfDue(page: Page, response: Response) {
+  const body = (await response.json()) as { due: string | null };
+  if (!body.due) return;
+  const dialog = page.getByTestId('privacy-notice');
+  await expect(dialog).toBeVisible();
+  await dialog.getByTestId('privacy-acknowledge').click();
+  await expect(dialog).toBeHidden();
 }
 
 /** Log out so the next login starts from a clean Keycloak session. */

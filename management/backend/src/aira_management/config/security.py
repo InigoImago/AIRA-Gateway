@@ -72,6 +72,13 @@ def unsafe_settings(settings: ManagementSettings) -> list[str]:
             "AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;it-security=/aira/it-security;"
             "it-steuerung=/aira/it-steuerung"
         )
+    # Art. 13(1)(a) DSGVO: the notice every console user must acknowledge names the controller.
+    # Printed without one it is a form nobody filled in, acknowledged by everybody (`FRD-625`).
+    if not settings.privacy_controller.strip():
+        problems.append(
+            "AIRA_PRIVACY_CONTROLLER is unset — the privacy notice every console user is shown "
+            "would name no controller. Set the organisation's name, address and a contact."
+        )
     if settings.kafka_bootstrap_servers.strip() and settings.kafka_security().is_plaintext:
         problems.append(
             "AIRA_KAFKA_SECURITY_PROTOCOL is PLAINTEXT — every configuration change this service "

@@ -49,20 +49,9 @@ class GatewaySettings(BaseAiraSettings):
     # case is served outside every budget, limit and release; refused outside local/demo (ADR-0015).
     require_use_case: bool = True
 
-    # Persist request/response payloads (FRD-103). When False, only metadata is stored.
-    store_payloads: bool = True
-
     # Extra redaction patterns for stored payloads (`FRD-406`), ';'- or newline-separated regexes.
     # Additive to the built-in credential shapes; an invalid or backtracking pattern stops startup.
     redact_patterns: str = ""
-
-    # Payload retention in days for requests carrying no use case (FRD-404); use-case traffic
-    # follows its use case's period.
-    default_retention_days: int = 7
-
-    # Delete whole request_log rows older than this many days. 0 keeps them forever, which is
-    # what the cost reporting reads — opt in deliberately.
-    log_retention_days: int = 0
 
     # Enforce use-case/member usage budgets pre-dispatch (FRD-401).
     enforce_budgets: bool = True

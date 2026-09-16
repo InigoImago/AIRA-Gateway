@@ -4,6 +4,7 @@ import { errorMessage } from './core/api/error-message';
 import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
+import { PrivacyGate } from './core/privacy/privacy-gate';
 import { Permission, can } from './core/auth/roles';
 
 /** Role slug → what the role may do, for the chip's tooltip. */
@@ -17,7 +18,7 @@ const ROLE_EXPLANATIONS: Record<string, string> = {
   selector: 'app-root',
   // `RouterLinkActive` must be imported: an attribute that matches no directive is silently inert,
   // and the navigation could not say which area you were in.
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, PrivacyGate],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })

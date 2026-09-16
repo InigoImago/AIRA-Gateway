@@ -99,12 +99,13 @@ def test_production_rejects_dev_defaults() -> None:
     problems = unsafe_settings(settings)
     # Every reason at once, never the first one: a configuration review that reports one problem
     # per deploy attempt is four deploys (`ADR-0015`).
-    # secret key, wildcard hosts, debug, no global-admin group, plaintext Kafka
-    assert len(problems) == 5
+    # secret key, wildcard hosts, debug, no global-admin group, no controller, plaintext Kafka
+    assert len(problems) == 6
     assert any("SECRET_KEY" in problem for problem in problems)
     assert any("ALLOWED_HOSTS" in problem for problem in problems)
     assert any("AIRA_ROLE_GROUPS" in problem for problem in problems)
     assert any("AIRA_KAFKA_SECURITY_PROTOCOL" in problem for problem in problems)
+    assert any("AIRA_PRIVACY_CONTROLLER" in problem for problem in problems)
     assert effective_debug(settings) is False
 
 
@@ -116,6 +117,7 @@ def test_production_with_proper_settings_is_accepted() -> None:
         debug=False,
         role_groups="global-admin=/aira/global-admins",
         kafka_security_protocol="SASL_SSL",
+        privacy_controller="Example GmbH, Example Street 1, 12345 Example, privacy@example.com",
     )
     assert unsafe_settings(settings) == []
     assert settings.secret_key != DEV_SECRET_KEY
@@ -133,6 +135,7 @@ def test_a_deployment_with_no_global_admin_group_refuses_to_start() -> None:
         debug=False,
         role_groups="it-security=/aira/it-security",
         kafka_security_protocol="SASL_SSL",
+        privacy_controller="Example GmbH, Example Street 1, 12345 Example",
     )
 
     problems = unsafe_settings(settings)
@@ -341,3 +344,23 @@ def test_a_plaintext_vault_address_refuses_to_start(monkeypatch) -> None:
     )
 
     assert any("VAULT_ADDR" in problem for problem in problems)
+
+
+def test_a_deployment_whose_privacy_notice_names_no_controller_refuses_to_start() -> None:
+    """Art. 13(1)(a) DSGVO (`FRD-625`): every console user is made to acknowledge the notice, and
+    one that names no controller would be acknowledged by everybody while informing nobody. Local
+    is exempt, and prints the gap in the notice itself."""
+    settings = ManagementSettings(
+        environment="production",
+        secret_key="a-real-secret-from-vault",
+        allowed_hosts="aira.example.com",
+        debug=False,
+        role_groups="global-admin=/aira/global-admins",
+        kafka_security_protocol="SASL_SSL",
+        privacy_controller="   ",
+    )
+
+    problems = unsafe_settings(settings)
+
+    assert len(problems) == 1
+    assert "AIRA_PRIVACY_CONTROLLER" in problems[0]

@@ -236,6 +236,7 @@ was refused, so nobody was served and the database had it anyway.
 | `FRD-117` FR-7 — a second OpenAPI 3.0 document | Not built, stated rather than implied |
 | `FRD-307` — approved model catalog with pickers | **done** (2026-08-09), with the per-use-case release in `FRD-308` (2026-08-11) |
 | `FRD-600` — governance view of processing logic | Reporting exists; the read-only "what does each use case do" view does not |
+| `FRD-625` §11 — three things the privacy notice has to admit | Per-person figures visible to every member of a use case; IP addresses in finding details; no automatic deletion outside request content. Stated in the notice, open as decisions |
 | `FRD-118` — multiple identity backends | Need unclear; not scheduled |
 | `FRD-121` — document conversion for models that cannot read a type | Deliberately not built: the recommendation is to refuse rather than convert |
 | `FRD-106` — an OpenAI-compatible **surface** | **Withdrawn** 2026-08-07. The OpenAI *dialect* as an upstream is unaffected and is built |

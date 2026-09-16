@@ -140,6 +140,21 @@ class BaseAiraSettings(BaseSettings):
     conversion happens.
     """
 
+    store_payloads: bool = True
+    """Persist request/response payloads (FRD-103). When False, only metadata is stored.
+
+    Shared by both planes: the gateway obeys it, and Management's privacy notice (`FRD-625`) says
+    what it is set to — one definition, so the notice cannot describe a different installation.
+    """
+
+    default_retention_days: int = 7
+    """Payload retention in days for requests carrying no use case (FRD-404); use-case traffic
+    follows its use case's period. Shared for the same reason as ``store_payloads``."""
+
+    log_retention_days: int = 0
+    """Delete whole request_log rows older than this many days. 0 keeps them forever, which is
+    what the cost reporting reads — opt in deliberately. Printed in the privacy notice."""
+
     otel_enabled: bool = False
     """Enable OpenTelemetry export (traces/metrics/logs) via OTLP (see FRD-001)."""
 

@@ -1,0 +1,28 @@
+<article class="privacy-notice" [attr.lang]="notice().language" data-testid="privacy-notice-body">
+  @for (section of notice().sections; track section.key) {
+    <section class="privacy-notice__section" [attr.data-section]="section.key">
+      <h3 class="section-title">{{ section.title }}</h3>
+      @for (paragraph of section.paragraphs; track $index) {
+        <p>{{ paragraph }}</p>
+      }
+      @if (section.items.length) {
+        <ul class="privacy-notice__items">
+          @for (item of section.items; track $index) {
+            <li>{{ item }}</li>
+          }
+        </ul>
+      }
+      @for (activity of section.activities ?? []; track activity.key) {
+        <div class="privacy-notice__activity" [attr.data-activity]="activity.key">
+          <h4>{{ activity.title }}</h4>
+          <dl>
+            @for (field of activity.fields; track field.key) {
+              <dt>{{ field.label }}</dt>
+              <dd>{{ field.text }}</dd>
+            }
+          </dl>
+        </div>
+      }
+    </section>
+  }
+</article>

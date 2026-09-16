@@ -69,6 +69,12 @@ export const routes: Routes = [
     ],
   },
   {
+    // The privacy notice at its own address (`FRD-625`): linked from every page's footer.
+    path: 'privacy',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/privacy/privacy-page').then((m) => m.PrivacyPage),
+  },
+  {
     path: 'use-cases/:slug/pipeline',
     canActivate: [authGuard],
     loadComponent: () =>

@@ -19,6 +19,7 @@ import { Modal } from './modal';
       title="Add a budget"
       testid="budget-editor"
       [withFoot]="withFoot()"
+      [dismissible]="dismissible()"
       (closed)="open.set(false)"
     >
       <div modal-body><input id="first" /></div>
@@ -28,6 +29,7 @@ import { Modal } from './modal';
 class Host {
   readonly open = signal(true);
   readonly withFoot = signal(true);
+  readonly dismissible = signal(true);
 }
 
 function setup() {
@@ -105,5 +107,22 @@ describe('Modal', () => {
 
     expect(harness.q('.modal__foot')).toBeNull();
     expect(harness.q('.modal__body')).not.toBeNull();
+  });
+
+  it('offers no way out but its own action when it must be answered', () => {
+    /** The privacy notice (`FRD-625`): Escape and the backdrop do nothing, and there is no ✕ —
+     *  an ✕ that did nothing would be an exit that is not one. */
+    const harness = setup();
+    harness.host.dismissible.set(false);
+    harness.fixture.detectChanges();
+
+    expect(harness.q('[data-testid="budget-editor-close"]')).toBeNull();
+    harness.escape();
+    harness.q<HTMLElement>('.modal-backdrop')!.click();
+    harness.fixture.detectChanges();
+
+    expect(harness.host.open()).toBe(true);
+    expect(harness.q('[data-testid="budget-editor"]')).not.toBeNull();
+    expect(harness.q('#save')).not.toBeNull();
   });
 });

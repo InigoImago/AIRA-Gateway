@@ -15116,3 +15116,57 @@ for one combination only.
   - PW1, PW2, RL14 and RL15 caught: 837 properties.
   - live, against the rebuilt stack: the whole permission-matrix file passed, including the
     growing matrix, IT Steuerung narrowed and restored, and the union samples.
+
+## 2026-09-16 — the privacy notice, and a change to what is stored is a change to it
+
+The owner asked for a privacy notice for use inside companies. It must cover the processing and the
+regulatory side, including that the audit trail could be used to monitor employees. It is shown as
+a window at first sign-in or at the start of every month, can be forced on through configuration
+for review, is readable in several languages, and changes whenever the processing changes.
+`FRD-625`, `ADR-0027`.
+
+- **The inventory first.** Both planes were read for every processing of personal data: tables,
+  retention settings, who reads what, and what leaves the installation (OTLP, SIEM, model
+  providers). Twelve activities. Three findings the notice now states plainly and `FRD-625` §11
+  leaves as decisions:
+  - per-person figures are visible to every member of a use case, and "own requests only" does not
+    restrict reports;
+  - `new_source_ip` findings carry IP addresses in `detail`;
+  - nothing but request content is deleted automatically, and `AIRA_LOG_RETENTION_DAYS=0` keeps
+    records forever.
+  `FRD-616`'s events are not built; the SIEM receives spans and log lines.
+- **What was built.**
+  - `apps/privacy`:
+    - a register of activities with the columns each writes;
+    - one TOML file per language (`de`, `en`), refused whole when it differs from the others;
+    - rendering that fills in the controller, DPO, works agreement, content storage, both
+      retentions, key lifetimes, and what each role may do to other people's data;
+    - a version over every rendered language;
+    - `schedule.acknowledgement_due` for `once`, `monthly` and `always`;
+    - `NoticeAcknowledgement`;
+    - `GET /api/v1/privacy-notice` and `POST …/acknowledgements`, which answers `409` for a stale
+      version.
+  - Console: a non-dismissible window (`Modal` gained `dismissible`), `/privacy`, and a footer link
+    on every page.
+  - Settings: `AIRA_PRIVACY_NOTICE_MODE`, `_CONTROLLER` (required outside `local`),
+    `_DPO_CONTACT`, `_WORKS_AGREEMENT` and `_DEFAULT_LANGUAGE`. `AIRA_STORE_PAYLOADS` and the two
+    retention settings moved to `BaseAiraSettings`, so the notice states the gateway's values;
+    Compose passes them to Management.
+- **The guard.** `test_the_privacy_notice_names_every_column.py` reads both schemas. Every column
+  must be named by an activity or declared not personal. A person-shaped column in a "not
+  personal" table fails too. Every permission must be classified. On its first run it found
+  `usecases_usecase_allowed_models`, which the register had missed. `SOURCE_DIGEST` pins the
+  register and the texts to `EDITION`.
+- **Measured:**
+  - hermetic: 4774 passed, coverage 96.65 %;
+  - frontend: 1069 passed;
+  - mutations PN1–PN11 all caught: 877 properties;
+  - by hand, a dismissible gate turned `privacy-gate.spec.ts` red.
+  - live, against the rebuilt stack: `privacy-notice.spec.ts` and `auth.spec.ts` passed, 10 of
+    10. `login()` now acknowledges a due notice, read from the server's own answer.
+  - A combined run of four more specs had one failure: `use-cases.spec.ts` hit Management's
+    per-user throttle (`600/minute`) as `admin`. The spec passes alone. The gate adds one request
+    per page load, which brings a long run of one account closer to that bound.
+- **Not legal advice.** The texts follow what the code does. A deployment has them reviewed by its
+  DPO and, in Germany, agreed with the works council.
+

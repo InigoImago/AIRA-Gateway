@@ -1308,6 +1308,11 @@ reading code.
   fails when a second statement appears. **Mirror the owner's resolution exactly** — Compose's
   fallback is nested (`${AIRA_PUBLISH_X:-${AIRA_X:-8001}}`) and reading only the outer name
   reproduced the very bug the owner was written to remove.
+  **The same holds when the second place is a legal text** (`ADR-0027`). A privacy notice beside
+  the code is the copy nobody opens, and it carries the most weight. So it is rendered from a
+  register, the register is checked against both schemas, and the text is pinned to its date. On
+  its first run the schema check found a table the hand-written register had missed
+  (`usecases_usecase_allowed_models`).
 - **Documentation is configuration when it names a variable.** `docs/CONFIGURATION.md` listed seven
   `AIRA_VAULT_*` variables; the code reads `VAULT_ADDR` and friends, unprefixed. An operator
   following the reference to switch Vault on would have set names nothing reads, seen no error, and

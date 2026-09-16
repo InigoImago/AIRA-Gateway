@@ -6,6 +6,8 @@ import { App } from './app';
 import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
+import { PrivacyNoticeService } from './core/privacy/privacy-notice.service';
+import { privacyNotice } from './core/privacy/privacy-notice.fixture';
 
 const baseMe: Me = {
   subject: 's',
@@ -102,6 +104,8 @@ function configure(authenticated: boolean, roles: string[] = [], permissions: st
         provide: MeService,
         useValue: { currency: signal(''), get: () => of({ ...baseMe, roles, permissions }) },
       },
+      // Not due, so the shell's own assertions see the shell. The gate has its own spec.
+      { provide: PrivacyNoticeService, useValue: { get: () => of(privacyNotice({ due: null })) } },
     ],
   });
 }
@@ -415,5 +419,17 @@ describe('App when the console cannot find out who you are', () => {
     const el = fixture.nativeElement as HTMLElement;
 
     expect(el.querySelector('[data-testid="account-error"]')).toBeNull();
+  });
+
+  it('links the privacy notice from every page', () => {
+    configure(true);
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const link = (fixture.nativeElement as HTMLElement).querySelector<HTMLAnchorElement>(
+      '[data-testid="footer-privacy"]',
+    );
+
+    expect(link?.getAttribute('href')).toBe('/privacy');
+    expect(link?.textContent).toContain('Datenschutzhinweise');
   });
 });

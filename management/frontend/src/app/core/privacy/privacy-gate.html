@@ -1,0 +1,45 @@
+@if (loadError(); as message) {
+  <div
+    class="callout callout--danger privacy-gate__alert"
+    role="alert"
+    data-testid="privacy-load-error"
+  >
+    {{ message }}
+    <button type="button" class="btn btn--sm" [disabled]="busy()" (click)="load()">
+      Try again
+    </button>
+  </div>
+}
+
+@if (notice(); as current) {
+  <app-modal [open]="open()" [title]="current.title" testid="privacy-notice" [dismissible]="false">
+    <div modal-body [attr.lang]="current.language">
+      @if (reason()) {
+        <p class="callout privacy-gate__reason" data-testid="privacy-due">{{ reason() }}</p>
+      }
+      <div class="privacy-gate__meta">
+        <app-privacy-language-picker [notice]="current" [busy]="busy()" (chosen)="load($event)" />
+        <span class="muted" data-testid="privacy-edition"
+          >{{ current.labels['edition'] }}: {{ current.edition | date: 'mediumDate' }}</span
+        >
+      </div>
+      <app-privacy-notice-body [notice]="current" />
+    </div>
+    <div modal-foot>
+      @if (acknowledgeError(); as message) {
+        <span class="badge badge--danger" role="alert" data-testid="privacy-acknowledge-error">{{
+          message
+        }}</span>
+      }
+      <button
+        type="button"
+        class="btn btn--primary"
+        data-testid="privacy-acknowledge"
+        [disabled]="busy()"
+        (click)="acknowledge()"
+      >
+        {{ current.labels['acknowledge'] }}
+      </button>
+    </div>
+  </app-modal>
+}

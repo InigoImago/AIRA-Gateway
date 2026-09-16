@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "aira_management.apps.directory",
     "aira_management.apps.roles",
     "aira_management.apps.outbox",
+    "aira_management.apps.privacy",
 ]
 
 AUTHENTICATION_BACKENDS = [

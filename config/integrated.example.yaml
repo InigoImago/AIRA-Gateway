@@ -132,6 +132,16 @@ oidc:
 # role is bound to it (`FRD-614`). Without it the console offers only what it already knows — and
 # no custom role can be bound. `url` is where Management reaches Keycloak when that is not the
 # issuer's server; empty means the issuer's.
+# The privacy notice every console user acknowledges (`FRD-625`). `privacy.controller` is printed
+# as Art. 13(1)(a) DSGVO requires and **required outside `local`**; `notice_mode` is `once`,
+# `monthly` or `always` — the last for whoever is reviewing the notice, not for everyday use.
+privacy:
+  controller: 'Example GmbH, Example Street 1, 12345 Example, privacy@example.com'
+  dpo_contact: 'dpo@example.com'
+  works_agreement: ''
+  notice_mode: monthly
+  default_language: de
+
 directory:
   client_id: aira-directory
   url: ''

@@ -138,6 +138,16 @@
       <button type="button" class="btn" (click)="retryStartup()">Try again</button>
     </section>
   } @else {
+    <!-- The privacy notice (`FRD-625`): a window that must be acknowledged when it is due. Inside
+         this branch, because it needs the same token every screen does. -->
+    <app-privacy-gate />
     <router-outlet />
   }
 </main>
+
+<footer class="aira-footer">
+  <!-- Reachable from every page at any time (Art. 12 DSGVO), not only when the window is due. -->
+  <a routerLink="/privacy" routerLinkActive="is-active" data-testid="footer-privacy"
+    >Privacy notice · Datenschutzhinweise</a
+  >
+</footer>

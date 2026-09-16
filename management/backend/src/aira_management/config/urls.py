@@ -14,4 +14,5 @@ urlpatterns = [
     path("api/v1/", include("aira_management.apps.smoketests.urls")),
     path("api/v1/", include("aira_management.apps.directory.urls")),
     path("api/v1/", include("aira_management.apps.roles.urls")),
+    path("api/v1/", include("aira_management.apps.privacy.urls")),
 ]

@@ -1,5 +1,5 @@
 @if (open()) {
-  <div class="modal-backdrop" (click)="closed.emit()"></div>
+  <div class="modal-backdrop" (click)="closeIfOpen()"></div>
   <div
     #dialog
     class="modal"
@@ -11,15 +11,17 @@
   >
     <div class="modal__head">
       <h3 [id]="testid() + '-title'" style="margin: 0">{{ title() }}</h3>
-      <button
-        type="button"
-        class="btn btn--sm btn--ghost"
-        aria-label="Close"
-        [attr.data-testid]="testid() + '-close'"
-        (click)="closed.emit()"
-      >
-        ✕
-      </button>
+      @if (dismissible()) {
+        <button
+          type="button"
+          class="btn btn--sm btn--ghost"
+          aria-label="Close"
+          [attr.data-testid]="testid() + '-close'"
+          (click)="closed.emit()"
+        >
+          ✕
+        </button>
+      }
     </div>
 
     <div class="modal__body">

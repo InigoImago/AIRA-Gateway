@@ -1,0 +1,239 @@
+# Datenschutzhinweise für AIRA Gateway — deutsche Fassung (`FRD-625`).
+#
+# Jede Tabelle hier muss es in jeder Sprache geben, mit denselben Schlüsseln und denselben
+# {Platzhaltern}; `texts.parse` verweigert eine Datei, die davon abweicht. Wer hier etwas ändert,
+# ändert die Hinweise: `edition.py` verlangt danach ein neues Datum.
+
+[meta]
+name = "Deutsch"
+title = "Datenschutzhinweise"
+
+[labels]
+edition = "Stand"
+language = "Sprache"
+acknowledge = "Zur Kenntnis genommen"
+acknowledged = "Zuletzt zur Kenntnis genommen am"
+open_notice = "Datenschutzhinweise"
+load_failed = "Die Datenschutzhinweise konnten nicht geladen werden."
+acknowledge_failed = "Ihre Kenntnisnahme konnte nicht gespeichert werden."
+due_first = "Bevor Sie AIRA nutzen, lesen Sie bitte, wie Ihre Daten verarbeitet werden."
+due_changed = "Die Datenschutzhinweise haben sich geändert. Bitte lesen Sie die aktuelle Fassung."
+due_month = "Wie zu Beginn jedes Monats zeigen wir Ihnen die Datenschutzhinweise erneut."
+due_always = "Diese Installation zeigt die Datenschutzhinweise bei jedem Start der Konsole."
+data = "Welche Daten"
+purpose = "Zweck"
+legal_basis = "Rechtsgrundlage"
+retention = "Speicherdauer"
+recipients = "Wer sie erhält"
+
+[values]
+days = "{days} Tage"
+no_limit = "ohne zeitliche Begrenzung — diese Installation hat keine Frist festgelegt"
+content_stored = "Diese Installation erlaubt das Speichern von Inhalten; ob sie gespeichert werden, legt jeder Use Case fest."
+content_not_stored = "Diese Installation speichert keine Inhalte von Anfragen und Antworten, gleich was ein Use Case vorsieht."
+unset_controller = "[Nicht konfiguriert — die Installation hat den Verantwortlichen nicht angegeben (AIRA_PRIVACY_CONTROLLER).]"
+unset_dpo_contact = "Für diese Installation ist keine Kontaktadresse einer oder eines Datenschutzbeauftragten hinterlegt. Wenden Sie sich an den Verantwortlichen."
+unset_works_agreement = "Für diese Installation ist keine Betriebs- oder Dienstvereinbarung hinterlegt."
+
+[sections.controller]
+title = "Verantwortlicher und Kontakt"
+paragraphs = [
+  "Verantwortlich für die Verarbeitung Ihrer personenbezogenen Daten in AIRA (Art. 4 Nr. 7 DSGVO): {controller}",
+  "Datenschutzbeauftragte oder Datenschutzbeauftragter: {dpo_contact}",
+  "Betriebs- oder Dienstvereinbarung: {works_agreement}",
+]
+
+[sections.scope]
+title = "Worum es geht"
+paragraphs = [
+  "AIRA ist ein Gateway, über das Anwendungen und Beschäftigte KI-Modelle nutzen, und eine Konsole, in der diese Nutzung verwaltet und überwacht wird. Diese Hinweise erfüllen die Informationspflicht nach Art. 13 DSGVO für alle, die AIRA nutzen: über die Konsole, mit einem API-Schlüssel oder über eine Anwendung, die in Ihrem Namen anfragt.",
+  "Sie beschreiben, was diese Installation tatsächlich verarbeitet. Die Liste der Verarbeitungen wird aus dem Programmcode abgeleitet und gegen jede gespeicherte Spalte geprüft; eine neue Verarbeitung kann nicht ausgeliefert werden, ohne dass diese Hinweise sie nennen.",
+]
+
+[sections.activities]
+title = "Welche Daten wir zu welchem Zweck verarbeiten"
+paragraphs = [
+  "Jede Verarbeitung ist einzeln aufgeführt: welche Daten, wozu, auf welcher Rechtsgrundlage, wie lange und wer sie erhält.",
+]
+
+[sections.no_monitoring]
+title = "Keine Leistungs- und Verhaltenskontrolle"
+paragraphs = [
+  "AIRA zeichnet zu jeder Anfrage auf, wer sie gestellt hat, wann, von welcher Adresse, mit welchem Modell und zu welchen Kosten. Eine solche Aufzeichnung ist objektiv geeignet, Verhalten und Leistung von Beschäftigten zu überwachen. AIRA ist damit eine technische Einrichtung im Sinne des § 87 Abs. 1 Nr. 6 BetrVG, deren Einführung und Anwendung der Mitbestimmung unterliegt.",
+  "Die Daten werden ausschließlich zu den oben genannten Zwecken verarbeitet: Betrieb, Informationssicherheit, Kostenzuordnung und Budgetsteuerung sowie Aufklärung von Sicherheitsvorfällen. Eine Auswertung zur Kontrolle der Leistung oder des Verhaltens einzelner Beschäftigter findet nicht statt. Ausnahmen gelten nur, soweit eine Betriebs- oder Dienstvereinbarung sie regelt oder das Gesetz sie zulässt, etwa bei dokumentierten tatsächlichen Anhaltspunkten für eine Straftat (§ 26 Abs. 1 Satz 2 BDSG).",
+  "Technisch abgesichert wird das so:",
+]
+items = [
+  "Zugriff nur nach Berechtigung: Wer welche Daten sieht, ergibt sich aus der Rolle, die an eine Gruppe im Identitätsdienst gebunden ist, und aus der Zuordnung zu einem Use Case.",
+  "Inhalte von Anfragen und Antworten sieht nur, wer dazu berechtigt ist. Jeder einzelne Lesezugriff wird mit der lesenden Person, ihren Rollen und dem Anlass aufgezeichnet, bevor der Inhalt angezeigt wird. Diese Aufzeichnung wird nicht gelöscht.",
+  "Welche Rollen Inhalte lesen dürfen, steht unter „Wer innerhalb der Organisation Zugriff hat“. Ein Use Case kann festlegen, dass seine Mitglieder nur ihre eigenen Anfragen sehen.",
+  "Ob Inhalte überhaupt gespeichert werden und wie lange, legt jeder Use Case fest; eingestellt werden können 1 bis 3650 Tage. {content_storage}",
+  "Offen gesagt: Verbrauchszahlen je Person (Anfragen, Tokens, Kosten, Antwortzeiten) sind für die Mitglieder des jeweiligen Use Case sichtbar, und für Rollen mit Leserecht auf alle Berichte über alle Use Cases hinweg. Die Einstellung „nur eigene Anfragen“ schränkt diese Berichte derzeit nicht ein.",
+]
+
+[sections.access]
+title = "Wer innerhalb der Organisation Zugriff hat"
+paragraphs = [
+  "Zugriffe werden nach dem Grundsatz der geringsten Berechtigung vergeben. Eine Rolle wird über eine Gruppe im Identitätsdienst vergeben. Welche Rollen diese Installation kennt und was jede davon mit den Daten anderer Personen tun darf, steht hier so, wie es in dieser Installation eingestellt ist:",
+]
+items = [
+  "Administration und Mitglieder eines Use Case sehen dessen Mitglieder, Anfragen, Berichte und Befunde, Inhalte nur, soweit der Use Case es vorsieht. Jeder Lesezugriff auf Inhalte wird aufgezeichnet.",
+  "Ändert die Installation eine Rolle, ändern sich diese Hinweise mit ihr, und Sie werden gebeten, sie erneut zur Kenntnis zu nehmen. Jede Änderung einer Rolle wird protokolliert.",
+]
+
+[access]
+"usecase.read_all" = "Konfiguration und Mitglieder aller Use Cases sehen"
+"usecase.manage_all" = "Mitglieder und API-Schlüssel aller Use Cases verwalten"
+"trace.read_all" = "Anfrage-Protokolle aller Use Cases sehen"
+"report.read_all" = "Verbrauch je Person in allen Use Cases sehen, auch als Export"
+"anomaly.read_all" = "Sicherheitsbefunde aller Use Cases sehen, einschließlich darin genannter IP-Adressen"
+"incident.investigate" = "Anfragen use-case-übergreifend untersuchen, einschließlich Quell-IP-Adressen"
+"payload.read_any" = "Inhalte von Anfragen und Antworten aller Use Cases lesen, wobei jeder Zugriff aufgezeichnet wird"
+"content_read.read" = "das Protokoll der Zugriffe auf Inhalte einsehen"
+"incident.suspend" = "Personen, API-Schlüssel und Use Cases sperren oder drosseln"
+"directory.search" = "im Verzeichnis nach Namen und E-Mail-Adressen suchen"
+none = "keine Zugriffe auf Daten anderer Personen über die eigenen Use Cases hinaus"
+
+[sections.recipients]
+title = "Empfänger und Übermittlung in Drittländer"
+paragraphs = [
+  "Personenbezogene Daten werden nicht verkauft und nicht zu Werbezwecken weitergegeben. Empfänger außerhalb der berechtigten Personen im Unternehmen sind:",
+]
+items = [
+  "Anbieter der KI-Modelle, die ein Use Case freigegeben hat (etwa Google Cloud Vertex AI, Google AI Studio, Microsoft Azure AI Foundry oder ein vom Verantwortlichen betriebener Server), als Auftragsverarbeiter nach Art. 28 DSGVO. Sie erhalten den Inhalt der Anfrage, nicht Ihren Namen oder Ihre Kennung.",
+  "Die Installation lässt Modelle nur in freigegebenen Regionen zu; ohne abweichende Konfiguration sind das Regionen in der EU. Wo ein Anbieter oder dessen Konzernunternehmen außerhalb der EU und des EWR auf Daten zugreifen kann, stützt der Verantwortliche die Übermittlung auf einen Angemessenheitsbeschluss (Art. 45 DSGVO) oder auf geeignete Garantien wie Standardvertragsklauseln (Art. 46 DSGVO).",
+  "Betreiber der Infrastruktur, auf der AIRA läuft, und – soweit angebunden – des Beobachtungs- und SIEM-Systems, jeweils als Auftragsverarbeiter oder als interne Stellen des Verantwortlichen.",
+  "Behörden und Gerichte, soweit eine gesetzliche Pflicht besteht.",
+]
+
+[sections.automated_decisions]
+title = "Automatisierte Maßnahmen"
+paragraphs = [
+  "Regeln zur Erkennung von Auffälligkeiten können eine Person, einen API-Schlüssel oder einen Use Case automatisch vorübergehend drosseln oder sperren, etwa bei einer plötzlich stark steigenden Zahl von Anfragen oder einer neuen Quelladresse. Eine solche Maßnahme ist immer befristet, nennt die auslösende Regel und kann von berechtigten Personen vorzeitig aufgehoben werden.",
+  "Sie dient allein dem Schutz der Systeme und Budgets. Entscheidungen, die Ihnen gegenüber rechtliche Wirkung entfalten oder Sie in ähnlicher Weise erheblich beeinträchtigen (Art. 22 DSGVO), trifft AIRA nicht. Wenn Sie von einer Sperre betroffen sind, wenden Sie sich an die Administration Ihres Use Case oder an die für Informationssicherheit zuständige Stelle.",
+]
+
+[sections.ai]
+title = "Hinweise zur Nutzung von KI"
+paragraphs = [
+  "Antworten, die Sie über AIRA erhalten, werden von einem KI-Modell erzeugt. Sie können falsch, unvollständig oder veraltet sein und müssen vor einer Verwendung geprüft werden.",
+  "Geben Sie nur Daten ein, die der Zweck Ihres Use Case erfordert. Besondere Kategorien personenbezogener Daten (Art. 9 DSGVO), etwa Gesundheitsdaten, sowie Daten Dritter geben Sie nur ein, wenn der Use Case dafür ausdrücklich vorgesehen ist. Ein Use Case kann Inhalte vor dem Versand automatisch um personenbezogene Angaben bereinigen lassen; diese Bereinigung erfolgt durch ein KI-Modell und ist nicht fehlerfrei.",
+  "Setzt ein Use Case KI für Entscheidungen über Beschäftigte ein, etwa bei Einstellung, Beförderung oder Leistungsbewertung, gilt dafür die Verordnung (EU) 2024/1689 (KI-Verordnung) mit ihren Pflichten für Hochrisiko-Systeme; ein solcher Einsatz ist mit dem Verantwortlichen und der Interessenvertretung gesondert abzustimmen.",
+]
+
+[sections.browser_storage]
+title = "Speicherung in Ihrem Browser"
+paragraphs = [
+  "Die Konsole setzt keine Cookies zu Analyse- oder Werbezwecken und bindet keine Tracking-Dienste ein. Sie legt im Sitzungsspeicher Ihres Browsers die Anmeldetoken des Identitätsdienstes und einen Zähler für Anmeldeversuche ab; beides wird beim Schließen des Tabs gelöscht. Das ist für den von Ihnen gewünschten Dienst unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG).",
+]
+
+[sections.rights]
+title = "Ihre Rechte"
+paragraphs = [
+  "Sie haben das Recht auf Auskunft (Art. 15 DSGVO), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der Verarbeitung (Art. 18) und Datenübertragbarkeit (Art. 20).",
+  "Soweit eine Verarbeitung auf berechtigten Interessen beruht (Art. 6 Abs. 1 lit. f DSGVO), können Sie aus Gründen, die sich aus Ihrer besonderen Situation ergeben, jederzeit widersprechen (Art. 21 DSGVO).",
+  "Wenden Sie sich dazu an den Verantwortlichen oder die Datenschutzbeauftragte bzw. den Datenschutzbeauftragten. Sie können sich außerdem bei einer Datenschutz-Aufsichtsbehörde beschweren (Art. 77 DSGVO), insbesondere in dem Mitgliedstaat Ihres Aufenthaltsorts oder Arbeitsplatzes.",
+  "Die Nutzung von AIRA ist nicht gesetzlich vorgeschrieben. Ohne die Verarbeitung der zur Anmeldung und Protokollierung nötigen Daten kann AIRA jedoch nicht genutzt werden.",
+]
+
+[sections.changes]
+title = "Änderungen dieser Hinweise"
+paragraphs = [
+  "Ändert sich die Verarbeitung, ändern sich diese Hinweise und ihr Stand. Die Konsole zeigt Ihnen eine geänderte Fassung beim nächsten Start und bittet Sie, sie zur Kenntnis zu nehmen. Die jeweils aktuelle Fassung ist jederzeit über den Link „Datenschutzhinweise“ in der Konsole erreichbar.",
+]
+
+[activities.account]
+title = "Anmeldung und Benutzerkonto"
+data = "Kennung aus dem Identitätsdienst (Keycloak), Benutzername, E-Mail-Adresse, Gruppen und die daraus folgenden Rollen, Zeitpunkt der Kontoanlage, Mitgliedschaften und Berechtigungen in Use Cases, gegebenenfalls eine Einladung. Mitgliedschaften und Schlüssel-Inhaber werden über einen internen Ereigniskanal an das Gateway übertragen."
+purpose = "Sie anzumelden, Ihnen genau die Rechte zu geben, die Ihre Rollen und Use Cases vorsehen, und Mitglieder eines Use Case zu verwalten. Berechtigte Personen können im Verzeichnis nach Name und E-Mail suchen, um Mitglieder hinzuzufügen; jede Suche wird protokolliert."
+legal_basis = "Art. 6 Abs. 1 lit. b DSGVO (Durchführung des Beschäftigungs- oder Nutzungsverhältnisses); Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an einer sicheren, nachvollziehbaren Rechtevergabe); soweit eine Betriebs- oder Dienstvereinbarung besteht, zusätzlich Art. 88 DSGVO i. V. m. § 26 Abs. 4 BDSG."
+retention = "Solange das Konto besteht. AIRA löscht Konten nicht selbsttätig; der Verantwortliche löscht sie nach Ende der Berechtigung. Rollen werden bei jeder Anfrage aus Ihren aktuellen Gruppen neu abgeleitet."
+recipients = "Berechtigte Administration der Installation und Ihrer Use Cases; Mitglieder eines Use Case sehen dessen Mitgliederliste."
+
+[activities.administration]
+title = "Nachvollziehbarkeit von Verwaltungsänderungen"
+data = "Wer eine Rolle angelegt, geändert oder gelöscht hat (mit dem Zustand davor und danach), wer einen Use Case stillgelegt, eine Gruppe berechtigt, eine Person eingeladen oder einen Schlüssel für eine andere Person ausgestellt hat, jeweils mit Zeitpunkt; technische Kennungen zur Nachverfolgung interner Ereignisse."
+purpose = "Nachweis, wer welche Berechtigung vergeben oder geändert hat (Rechenschaftspflicht, Art. 5 Abs. 2 und Art. 32 DSGVO)."
+legal_basis = "Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 5 Abs. 2 und Art. 32 DSGVO; Art. 6 Abs. 1 lit. f DSGVO."
+retention = "Ohne automatische Löschung, damit die Historie von Berechtigungen vollständig bleibt."
+recipients = "Personen mit Leserecht auf Rollen bzw. auf den jeweiligen Use Case."
+
+[activities.api_keys]
+title = "API-Schlüssel"
+data = "Inhaberin oder Inhaber des Schlüssels, gegebenenfalls die ausstellende Person, Bezeichnung, Präfix, ein Hash des Schlüssels (nie der Schlüssel selbst), Use Case, Erstellungs-, Ablauf- und Widerrufszeitpunkt."
+purpose = "Anwendungen einen Zugang zuzuordnen, für den eine Person verantwortlich ist, und diesen Zugang befristen und widerrufen zu können."
+legal_basis = "Art. 6 Abs. 1 lit. b und lit. f DSGVO; Art. 32 DSGVO."
+retention = "Ein Schlüssel läuft ohne abweichende Angabe nach {key_lifetime} ab, spätestens nach {key_max_lifetime}. Der Datensatz bleibt nach Ablauf oder Widerruf ohne automatische Löschung erhalten, damit frühere Anfragen zuordenbar bleiben."
+recipients = "Die Inhaberin oder der Inhaber, die Administration des Use Case und Rollen, die Use Cases übergreifend verwalten oder Vorfälle untersuchen dürfen."
+
+[activities.request_record]
+title = "Protokoll jeder Anfrage"
+data = "Zu jeder Anfrage an ein Modell, auch zu abgelehnten: Kennung und Benutzername der anfragenden Person oder des Schlüssel-Inhabers, Anmeldeverfahren, Use Case, Quell-IP-Adresse, verwendeter Zugang (Schlüssel-Präfix oder Anwendung), Zeitpunkt, angefragtes und tatsächlich genutztes Modell, Anbieter und Region, Ergebnis und Statuscode, Entscheidungen der Prüfschritte, Namen aufgerufener Werkzeuge, Anzahl der Tokens, Größe, Antwortzeit, Kosten und eine Trace-Kennung."
+purpose = "Betrieb und Fehleranalyse, Kostenzuordnung und Budgetsteuerung, Nachweis der Datenresidenz je Anfrage, Erkennung und Aufklärung von Sicherheitsvorfällen."
+legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Betrieb, Sicherheit und Kostenkontrolle); Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 32 DSGVO."
+retention = "Protokollzeilen dieser Installation: {log_retention}."
+recipients = "Nach Rolle und Use Case (siehe „Wer innerhalb der Organisation Zugriff hat“). Quell-IP-Adressen zeigt die Anfrageliste nur Personen, die Vorfälle untersuchen dürfen."
+
+[activities.content]
+title = "Inhalte von Anfragen und Antworten"
+data = "Der Text der Anfrage und der Antwort, einschließlich der Begründung des Modells, sofern der Use Case sie anfordert. Angehängte Dateien werden nicht gespeichert. Zugangsdaten wie Schlüssel und Token werden vor dem Speichern entfernt; andere personenbezogene Angaben in Ihrem Text bleiben erhalten."
+purpose = "Aufklärung von Sicherheitsvorfällen und Fehlern sowie Nachvollziehbarkeit innerhalb des Use Case. {content_storage}"
+legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Informationssicherheit und Fehleranalyse); Art. 6 Abs. 1 lit. b DSGVO, soweit der Use Case der Erfüllung Ihrer Aufgaben dient."
+retention = "So lange, wie der Use Case festlegt (1 bis 3650 Tage), für Anfragen ohne Use Case {default_retention}. Danach werden die Inhalte gelöscht; das Protokoll der Anfrage bleibt nach der dafür geltenden Frist bestehen."
+recipients = "Nur berechtigte Personen: Rollen, die Inhalte aller Use Cases lesen dürfen, sowie Administration und – soweit zugelassen – Mitglieder des Use Case. Jeder Lesezugriff wird aufgezeichnet."
+
+[activities.content_reads]
+title = "Aufzeichnung von Zugriffen auf Inhalte"
+data = "Wer welchen gespeicherten Inhalt wann gelesen hat, mit Benutzername, den Rollen zu diesem Zeitpunkt und dem Anlass (Sicherheitsvorfall, Administration oder Mitgliedschaft im Use Case)."
+purpose = "Kontrolle der Zugriffe auf Inhalte, damit Inhalte nicht unbemerkt eingesehen werden können."
+legal_basis = "Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 5 Abs. 2 und Art. 32 DSGVO; Art. 6 Abs. 1 lit. f DSGVO."
+retention = "Ohne automatische Löschung: Der Inhalt läuft ab, die Tatsache des Zugriffs nicht."
+recipients = "Rollen, die das Protokoll der Zugriffe auf Inhalte einsehen dürfen (siehe „Wer innerhalb der Organisation Zugriff hat“)."
+
+[activities.consumption]
+title = "Verbrauch, Budgets und Ratenbegrenzung"
+data = "Zähler je Person und Use Case für Anfragen, Tokens und Kosten je Tag oder Monat; daraus erstellte Berichte je Person mit Anfragen, Fehlern, Tokens, Kosten und Antwortzeiten, auch als CSV-Export. Zur Abwehr von Angriffen werden fehlgeschlagene Anmeldungen je IP-Adresse kurzzeitig gezählt."
+purpose = "Kosten zuzuordnen, Budgets und Ratenbegrenzungen je Person durchzusetzen, damit niemand das Kontingent anderer aufbraucht, und die Verfügbarkeit zu schützen. Nicht: die Leistung einzelner Personen zu bewerten."
+legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Kostenkontrolle und Verfügbarkeit)."
+retention = "Zähler bleiben je Zeitraum ohne automatische Löschung erhalten; Zähler für Ratenbegrenzung und Anmeldeversuche verfallen nach Minuten. Berichte werden bei jedem Abruf aus dem Protokoll der Anfragen berechnet."
+recipients = "Mitglieder des jeweiligen Use Case sowie Rollen mit Leserecht auf alle Berichte; Ihre eigenen Verbrauchswerte sehen Sie selbst."
+
+[activities.security]
+title = "Erkennung von Auffälligkeiten und Sicherheitsvorfälle"
+data = "Befunde von Regeln, die eine Person, einen Schlüssel oder einen Use Case betreffen, mit Messwert, Schwelle und einer Beschreibung, die bei neuen Quelladressen diese IP-Adressen enthält; Sperren und Drosselungen mit Ziel, Grund, auslösender Regel oder Person, Befristung und Aufhebung."
+purpose = "Missbrauch, kompromittierte Zugänge und Kostenausreißer zu erkennen und einzudämmen."
+legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Informationssicherheit); Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 32 DSGVO."
+retention = "Ohne automatische Löschung; Sperren bleiben nach ihrer Aufhebung als Historie erhalten."
+recipients = "Rollen, die Sicherheitsbefunde aller Use Cases sehen dürfen, sowie Mitglieder des betroffenen Use Case. Die Beschreibung eines Befunds kann dabei IP-Adressen enthalten."
+
+[activities.model_providers]
+title = "Übermittlung an Modellanbieter"
+data = "Der Inhalt Ihrer Anfrage einschließlich Anhängen, gegebenenfalls nach automatischer Bereinigung um personenbezogene Angaben. AIRA übermittelt dabei keinen Namen, keine Benutzerkennung und keine IP-Adresse. Prüfschritte eines Use Case, etwa die Erkennung eingeschleuster Anweisungen, senden den Text ebenfalls an ein freigegebenes Modell."
+purpose = "Die Anfrage beantworten zu lassen, für die Sie AIRA nutzen."
+legal_basis = "Art. 6 Abs. 1 lit. b DSGVO; Art. 28 DSGVO für die Anbieter als Auftragsverarbeiter."
+retention = "AIRA selbst speichert dafür nichts über das Protokoll hinaus. Wie lange ein Anbieter Daten vorhält, regelt der Vertrag des Verantwortlichen mit ihm; ein Zwischenspeicher für Eingaben beim Anbieter ist nur aktiv, wenn der Use Case ihn einschaltet."
+recipients = "Die Anbieter der für den Use Case freigegebenen Modelle, in den freigegebenen Regionen (siehe „Empfänger und Übermittlung in Drittländer“)."
+
+[activities.telemetry]
+title = "Betriebstelemetrie"
+data = "Falls die Installation sie aktiviert hat: technische Messpunkte und Protokollzeilen je Anfrage mit Kennung der anfragenden Person, Use Case, Zugang, Quell-IP-Adresse, Browserkennung (User-Agent), Modell, Ergebnis, Tokens und Kosten — nie der Inhalt von Anfragen oder Antworten."
+purpose = "Überwachung von Verfügbarkeit und Leistung der Systeme, Fehleranalyse und Weiterleitung sicherheitsrelevanter Ereignisse an ein SIEM."
+legal_basis = "Art. 6 Abs. 1 lit. f DSGVO; Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 32 DSGVO."
+retention = "Nach den Fristen des Beobachtungs- oder SIEM-Systems, das der Verantwortliche angebunden hat; AIRA legt diese Fristen nicht fest."
+recipients = "Betrieb und Informationssicherheit des Verantwortlichen; Betreiber der angebundenen Systeme als Auftragsverarbeiter."
+
+[activities.pipeline_tests]
+title = "Tests von Modellen und Prüfschritten"
+data = "Wer einen Testlauf gestartet und wer ein Ergebnis bewertet hat, mit Zeitpunkt, Bewertung und Notiz, sowie die Antworten des Modells auf die Testfragen."
+purpose = "Die Qualität von Modellen und Prüfschritten vor ihrem Einsatz zu beurteilen."
+legal_basis = "Art. 6 Abs. 1 lit. f DSGVO."
+retention = "Ohne automatische Löschung."
+recipients = "Personen, die Tests ausführen oder deren Ergebnisse einsehen dürfen, auch als Export."
+
+[activities.acknowledgement]
+title = "Kenntnisnahme dieser Hinweise"
+data = "Welche Fassung dieser Hinweise Sie in welcher Sprache zur Kenntnis genommen haben, mit dem ersten und dem letzten Zeitpunkt."
+purpose = "Ihnen eine geänderte Fassung erneut zu zeigen und nachweisen zu können, dass Sie informiert wurden (Art. 5 Abs. 2 DSGVO)."
+legal_basis = "Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 5 Abs. 2, Art. 12 und Art. 13 DSGVO."
+retention = "Solange Ihr Konto besteht; mit dem Konto wird sie gelöscht."
+recipients = "Niemand außerhalb des Betriebs der Installation."

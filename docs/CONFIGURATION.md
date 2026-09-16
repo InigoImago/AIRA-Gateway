@@ -145,6 +145,8 @@ audit row. That is why the check is a startup refusal rather than a warning.
 
 ### Storage and retention
 
+Management reads the first three as well: the privacy notice states them (`FRD-625`).
+
 | Variable                      | Default | What it does                                                                                                                                                     |
 | ----------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AIRA_STORE_PAYLOADS`         | `true`  | Operator **kill switch** above the per-use-case setting: a use-case admin may decline storage but cannot re-enable it where the operator forbade it.             |
@@ -259,6 +261,23 @@ credential.
 | `AIRA_OIDC_ISSUER` / `_AUDIENCE` / `_JWKS_URI` | —             | Same shape as the gateway's. Management **requires** OIDC: there is no API-key path into the control plane. |
 | `AIRA_THROTTLE_AUTH_FAILURES`                  | `60/minute`   | Failed authentications one source address may collect. A presented token is verified against the issuer's JWKS **before** anything decides it is invalid, so probing is not free. Counts **refusals only**, so a working credential never touches it. `0` disables it. Not a DRF throttle — an `AnonRateThrottle` never fires here, because permissions are checked before throttles and every view requires authentication. |
 | `AIRA_THROTTLE_USER`                           | `600/minute`  | The same for a signed-in caller, sized to stop a script rather than to shape ordinary use — a console screen loads five panels at once. **Per process** (Django's `LocMemCache`), so N workers admit N × the rate; point `CACHES` at Redis to make it exact. |
+
+### The privacy notice (`FRD-625`)
+
+Every console user is shown the privacy notice as a window they acknowledge before working, and can
+open it at any time from the console's footer. What it states about retention and content storage
+is read from `AIRA_STORE_PAYLOADS`, `AIRA_DEFAULT_RETENTION_DAYS` and `AIRA_LOG_RETENTION_DAYS` —
+**pass Management the same values as the gateway**, or the notice describes a different
+installation. Changing any value the notice prints, or a role's access to other people's data, is a
+new version of the notice, and everybody is asked to read it again.
+
+| Variable                        | Default   | What it does |
+| ------------------------------- | --------- | ------------ |
+| `AIRA_PRIVACY_CONTROLLER`       | —         | The controller as printed: name, address, a contact (Art. 13(1)(a) DSGVO). **Refuses to boot** outside `local` when empty; locally the notice prints the gap instead. |
+| `AIRA_PRIVACY_DPO_CONTACT`      | —         | How to reach the data protection officer. Empty prints that no contact is recorded. |
+| `AIRA_PRIVACY_WORKS_AGREEMENT`  | —         | The works agreement (Betriebsvereinbarung) governing the system, by name or reference. Empty prints that none is recorded. |
+| `AIRA_PRIVACY_NOTICE_MODE`      | `monthly` | When the window opens: `once` per edition; `monthly` — per edition and at the first start of each calendar month (UTC); `always` — every start of the console, for whoever reviews the notice. Anything else refuses to boot. |
+| `AIRA_PRIVACY_DEFAULT_LANGUAGE` | `de`      | The language for a browser whose `Accept-Language` names none the notice exists in. Must be a language that has a text (`de`, `en`), or the process refuses to boot. |
 
 Management has no `AUTH_REQUIRED` switch on purpose — a control plane that can be opened is a
 control plane somebody opens.
@@ -520,12 +539,13 @@ operator would have a service that looks healthy and is not doing what they beli
 | `AIRA_DEBUG` is on | management | **no** |
 | `AIRA_ALLOWED_HOSTS` is `*` | management | **no** |
 | `AIRA_ROLE_GROUPS` names no global-admin group | management | **no** |
+| `AIRA_PRIVACY_CONTROLLER` is empty | management | **no** |
 
 **A demo is a gateway concession, not an installation-wide one**, and the difference is not
 cosmetic. `WAIVED_BY_A_DEMO` is a gateway list of six named settings; Management has no equivalent
 and waives *nothing* — its `is_local` is `environment == "local"` alone, while the gateway's is
 `environment == "local" or demo_mode`. Measured on `AIRA_ENVIRONMENT=production` with
-`AIRA_DEMO_MODE=true`: the gateway goes from three objections to none, and Management stays at six.
+`AIRA_DEMO_MODE=true`: the gateway goes from three objections to none, and Management keeps every one of its own.
 
 So **`AIRA_ENVIRONMENT=demo` gives you a stack whose gateway starts and whose control plane
 refuses.** The demo shape works on `local`, where both planes waive everything. This paragraph

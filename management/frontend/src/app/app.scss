@@ -155,3 +155,19 @@
   white-space: nowrap;
   cursor: help;
 }
+
+/* The privacy notice's link (`FRD-625`), on every page and quiet on all of them. */
+.aira-footer {
+  max-width: var(--aira-content-max, 960px);
+  margin: 0 auto;
+  padding: 0 1.75rem 1.75rem;
+  font-size: 0.85rem;
+
+  a {
+    color: var(--aira-text-muted);
+  }
+
+  @media (max-width: 640px) {
+    padding: 0 1rem 1rem;
+  }
+}

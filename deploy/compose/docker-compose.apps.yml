@@ -273,6 +273,18 @@ services:
       AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}
       # How many items of each OTLP batch to print as OTLP/JSON. 0 is off (`FRD-617` §3.10).
       AIRA_DEBUG_OTEL_PAYLOAD: ${AIRA_DEBUG_OTEL_PAYLOAD:-0}
+      # The privacy notice every console user acknowledges (`FRD-625`). The controller is
+      # **required outside `local`**; the mode is `once`, `monthly` or `always` (for reviewing it).
+      AIRA_PRIVACY_NOTICE_MODE: ${AIRA_PRIVACY_NOTICE_MODE:-monthly}
+      AIRA_PRIVACY_CONTROLLER: ${AIRA_PRIVACY_CONTROLLER:-}
+      AIRA_PRIVACY_DPO_CONTACT: ${AIRA_PRIVACY_DPO_CONTACT:-}
+      AIRA_PRIVACY_WORKS_AGREEMENT: ${AIRA_PRIVACY_WORKS_AGREEMENT:-}
+      AIRA_PRIVACY_DEFAULT_LANGUAGE: ${AIRA_PRIVACY_DEFAULT_LANGUAGE:-de}
+      # The same three the gateway obeys, so the notice states what the gateway does rather than
+      # a default Management assumed.
+      AIRA_STORE_PAYLOADS: ${AIRA_STORE_PAYLOADS:-true}
+      AIRA_DEFAULT_RETENTION_DAYS: ${AIRA_DEFAULT_RETENTION_DAYS:-7}
+      AIRA_LOG_RETENTION_DAYS: ${AIRA_LOG_RETENTION_DAYS:-0}
     depends_on:
       postgres:
         condition: service_healthy

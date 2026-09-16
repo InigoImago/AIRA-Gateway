@@ -100,6 +100,7 @@ QUERY = [
     "format",
     "mine",
     "role",
+    "language",
 ]
 
 #: Bodies a console form could plausibly produce, each wrong in one way. Sent as **raw bytes**:

@@ -1933,3 +1933,71 @@ tr.is-open > * {
 .role-diff code {
   margin-right: 0.3rem;
 }
+
+/* ---- privacy notice (`FRD-625`) --------------------------------------------------- */
+
+/* A legal text read top to bottom, in the window and on its page alike: a reading measure, and
+ * each activity's five statements as a definition list, because "Legal basis" beside its answer is
+ * how such a notice is scanned. */
+.privacy-notice {
+  line-height: 1.55;
+}
+.privacy-notice__section + .privacy-notice__section {
+  margin-top: 1.5rem;
+}
+.privacy-notice__section p {
+  margin: 0 0 0.6rem;
+}
+.privacy-notice__items {
+  margin: 0 0 0.6rem;
+  padding-left: 1.25rem;
+}
+.privacy-notice__items li + li {
+  margin-top: 0.35rem;
+}
+.privacy-notice__activity {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--aira-border);
+  border-radius: var(--aira-radius-sm);
+}
+.privacy-notice__activity h4 {
+  margin: 0 0 0.5rem;
+}
+.privacy-notice__activity dl {
+  display: grid;
+  grid-template-columns: minmax(8rem, 12rem) 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0;
+
+  @media (max-width: 640px) {
+    grid-template-columns: 1fr;
+  }
+}
+.privacy-notice__activity dt {
+  font-weight: 600;
+}
+.privacy-notice__activity dd {
+  margin: 0;
+}
+.privacy-gate__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0.5rem 0 1rem;
+}
+.privacy-gate__reason {
+  margin: 0 0 0.75rem;
+}
+.privacy-gate__alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.privacy-languages {
+  display: flex;
+  gap: 0.35rem;
+}

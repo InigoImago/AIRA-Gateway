@@ -112,6 +112,45 @@ class ManagementSettings(BaseAiraSettings):
     #: (`FRD-209`), and naming it here would grant somebody every use case at once.
     role_groups: str = ""
 
+    #: When the console makes somebody read the privacy notice before working (`FRD-625`):
+    #: ``once`` per edition of the notice, ``monthly`` — per edition and again at the first
+    #: sign-in of each calendar month — or ``always``, on every start of the console, which is
+    #: what lets whoever reviews the notice see the window without waiting a month.
+    privacy_notice_mode: str = "monthly"
+    #: The controller (Art. 13(1)(a) DSGVO) as it is printed: name, address and a contact.
+    #: **Required outside `local`** — a notice that names nobody informs nobody.
+    privacy_controller: str = ""
+    #: How to reach the data protection officer (Art. 13(1)(b)); empty prints that none is named.
+    privacy_dpo_contact: str = ""
+    #: The works agreement (Betriebsvereinbarung) that governs this system, by name or reference;
+    #: empty prints that none is recorded (`BetrVG` §87(1) no. 6).
+    privacy_works_agreement: str = ""
+    #: The language the notice is shown in when the browser asks for none this installation has.
+    privacy_default_language: str = "de"
+
+    @field_validator("privacy_notice_mode")
+    @classmethod
+    def _known_notice_mode(cls, value: str) -> str:
+        """A misspelled mode refuses the process rather than quietly never showing the notice."""
+        from aira_management.apps.privacy.schedule import NoticeMode
+
+        try:
+            return str(NoticeMode(value.strip().lower()))
+        except ValueError:
+            known = ", ".join(str(mode) for mode in NoticeMode)
+            raise ValueError(f"AIRA_PRIVACY_NOTICE_MODE must be one of {known}") from None
+
+    @field_validator("privacy_default_language")
+    @classmethod
+    def _known_default_language(cls, value: str) -> str:
+        """A default the notice has no text for would answer every browser with an error."""
+        from aira_management.apps.privacy.texts import LANGUAGES
+
+        code = value.strip().lower()
+        if code not in LANGUAGES:
+            raise ValueError(f"AIRA_PRIVACY_DEFAULT_LANGUAGE must be one of {', '.join(LANGUAGES)}")
+        return code
+
     @property
     def oidc_issuer_base(self) -> str:
         """The Keycloak root, derived from the issuer (`.../realms/<realm>`).

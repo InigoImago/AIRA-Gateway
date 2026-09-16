@@ -1,0 +1,34 @@
+<div class="stack">
+  @if (feedback.error(); as error) {
+    <div class="callout callout--danger" role="alert" data-testid="privacy-page-error">
+      {{ error }}
+    </div>
+  }
+
+  @if (notice(); as current) {
+    <header [attr.lang]="current.language">
+      <h2 class="card__title" style="margin: 0">{{ current.title }}</h2>
+      <div class="privacy-gate__meta">
+        <app-privacy-language-picker
+          [notice]="current"
+          [busy]="feedback.busy()"
+          (chosen)="load($event)"
+        />
+        <span class="muted" data-testid="privacy-edition"
+          >{{ current.labels['edition'] }}: {{ current.edition | date: 'mediumDate' }}</span
+        >
+        @if (current.acknowledged_at) {
+          <span class="muted" data-testid="privacy-acknowledged"
+            >{{ current.labels['acknowledged'] }}
+            {{ current.acknowledged_at | date: 'medium' }}</span
+          >
+        }
+      </div>
+    </header>
+    <div class="panel">
+      <app-privacy-notice-body [notice]="current" />
+    </div>
+  } @else if (feedback.busy()) {
+    <p class="muted" data-testid="privacy-loading">…</p>
+  }
+</div>

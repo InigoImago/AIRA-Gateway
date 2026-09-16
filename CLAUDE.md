@@ -45,7 +45,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **866 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **877 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -91,6 +91,12 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   halves were a rule the project stated and did not have — the shape `LESSONS.md` §5 lists, and the
   more embarrassing for sitting in the file every contributor reads first. Adding ESLint is a
   reasonable thing to want; asserting it while `npx eslint` exits 2 is not.
+- **A change to what is processed is a change to the privacy notice** (`ADR-0027`, `FRD-625`).
+  Every stored column of both planes is named in `apps/privacy/activities.py` or declared not
+  personal, and the suite fails otherwise; a changed register or text needs a new `EDITION` and
+  `SOURCE_DIGEST` (`apps/privacy/edition.py`) and is described in **every** `texts/*.toml`. A new
+  transmission, telemetry attribute or browser storage stores nothing the check can see — add it
+  to the register and the texts by hand. Say what the system does, gaps included.
 - **API contracts**: OpenAPI for HTTP; explicit, versioned schemas for Kafka events.
 - **Config over code**: behavior driven by use-case configuration, not hard-coded branches.
 - **Async on the hot path**: persistence and event emission must not block the gateway request path.
@@ -172,7 +178,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | Where to look | For |
 | --- | --- |
 | [`docs/features/README.md`](docs/features/README.md) | every feature, its status, its document |
-| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (26 ADRs) |
+| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (27 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
 | [`docs/PRD.md`](docs/PRD.md) §1.1 | the owner's canonical feature list |

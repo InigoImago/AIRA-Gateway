@@ -1,0 +1,239 @@
+# Privacy notice for AIRA Gateway — English version (`FRD-625`).
+#
+# Every table here must exist in every language, with the same keys and the same {placeholders};
+# `texts.parse` refuses a file that differs. Changing this file changes the notice: `edition.py`
+# then requires a new date.
+
+[meta]
+name = "English"
+title = "Privacy notice"
+
+[labels]
+edition = "Last updated"
+language = "Language"
+acknowledge = "I have read this notice"
+acknowledged = "Last acknowledged on"
+open_notice = "Privacy notice"
+load_failed = "The privacy notice could not be loaded."
+acknowledge_failed = "Your acknowledgement could not be saved."
+due_first = "Before you use AIRA, please read how your data is processed."
+due_changed = "The privacy notice has changed. Please read the current version."
+due_month = "As at the start of every month, we are showing you the privacy notice again."
+due_always = "This installation shows the privacy notice every time the console starts."
+data = "Which data"
+purpose = "Purpose"
+legal_basis = "Legal basis"
+retention = "How long it is kept"
+recipients = "Who receives it"
+
+[values]
+days = "{days} days"
+no_limit = "without a time limit — this installation has not set one"
+content_stored = "This installation allows content to be stored; each use case decides whether it is."
+content_not_stored = "This installation stores no request or response content, whatever a use case specifies."
+unset_controller = "[Not configured — the installation has not named the controller (AIRA_PRIVACY_CONTROLLER).]"
+unset_dpo_contact = "No contact for a data protection officer is recorded for this installation. Please contact the controller."
+unset_works_agreement = "No works agreement is recorded for this installation."
+
+[sections.controller]
+title = "Controller and contact"
+paragraphs = [
+  "Responsible for processing your personal data in AIRA (controller, Art. 4(7) GDPR): {controller}",
+  "Data protection officer: {dpo_contact}",
+  "Works agreement: {works_agreement}",
+]
+
+[sections.scope]
+title = "What this is about"
+paragraphs = [
+  "AIRA is a gateway through which applications and employees use AI models, and a console in which that use is managed and monitored. This notice fulfils the duty to inform under Art. 13 GDPR for everybody who uses AIRA: through the console, with an API key, or through an application that makes requests on your behalf.",
+  "It describes what this installation actually processes. The list of processing activities is derived from the program code and checked against every stored column; a new processing activity cannot ship unless this notice names it.",
+]
+
+[sections.activities]
+title = "What data we process, and why"
+paragraphs = [
+  "Each processing activity is listed on its own: which data, for what purpose, on what legal basis, for how long, and who receives it.",
+]
+
+[sections.no_monitoring]
+title = "No monitoring of performance or behaviour"
+paragraphs = [
+  "For every request, AIRA records who made it, when, from which address, with which model and at what cost. Such a record is objectively capable of monitoring employees' behaviour and performance. AIRA is therefore a technical system within the meaning of Section 87(1) no. 6 of the German Works Constitution Act (BetrVG), whose introduction and use are subject to co-determination.",
+  "The data is processed solely for the purposes stated above: operation, information security, cost allocation and budget control, and the investigation of security incidents. It is not analysed to monitor the performance or behaviour of individual employees. Exceptions apply only where a works agreement provides for them or the law permits them, for example where there are documented factual indications of a criminal offence (Section 26(1) sentence 2 BDSG).",
+  "This is safeguarded technically as follows:",
+]
+items = [
+  "Access by permission only: who sees which data follows from the role, which is bound to a group in the identity service, and from membership of a use case.",
+  "Request and response content is visible only to those permitted to see it. Every single read is recorded with the reader, their roles and the ground, before the content is shown. That record is not deleted.",
+  "Which roles may read content is stated under “Who has access within the organisation”. A use case can specify that its members see only their own requests.",
+  "Each use case decides whether content is stored at all and for how long, from 1 to 3650 days. {content_storage}",
+  "To be clear: per-person consumption figures (requests, tokens, costs, response times) are visible to the members of the use case concerned, and across all use cases to roles that may read every report. The “own requests only” setting does not currently restrict these reports.",
+]
+
+[sections.access]
+title = "Who has access within the organisation"
+paragraphs = [
+  "Access follows the principle of least privilege. A role is granted through a group in the identity service. The roles this installation defines, and what each may do with other people's data, are listed here as they are configured in this installation:",
+]
+items = [
+  "Administrators and members of a use case see its members, requests, reports and findings, and its content only where the use case allows it. Every read of content is recorded.",
+  "When the installation changes a role, this notice changes with it and you are asked to acknowledge it again. Every change to a role is logged.",
+]
+
+[access]
+"usecase.read_all" = "see the configuration and members of every use case"
+"usecase.manage_all" = "manage the members and API keys of every use case"
+"trace.read_all" = "see the request records of every use case"
+"report.read_all" = "see consumption per person in every use case, including as an export"
+"anomaly.read_all" = "see the security findings of every use case, including any IP addresses they name"
+"incident.investigate" = "investigate requests across use cases, including source IP addresses"
+"payload.read_any" = "read request and response content in every use case, with every read recorded"
+"content_read.read" = "see the record of reads of content"
+"incident.suspend" = "block or throttle people, API keys and use cases"
+"directory.search" = "search the directory for names and email addresses"
+none = "no access to other people's data beyond their own use cases"
+
+[sections.recipients]
+title = "Recipients and transfers to third countries"
+paragraphs = [
+  "Personal data is not sold and not passed on for advertising. Recipients other than authorised people within the organisation are:",
+]
+items = [
+  "Providers of the AI models a use case has released (for example Google Cloud Vertex AI, Google AI Studio, Microsoft Azure AI Foundry, or a server operated by the controller), as processors under Art. 28 GDPR. They receive the content of the request, not your name or identifier.",
+  "The installation admits models only in released regions; unless configured otherwise, those are regions in the EU. Where a provider or a company of its group outside the EU and EEA can access data, the controller bases the transfer on an adequacy decision (Art. 45 GDPR) or on appropriate safeguards such as standard contractual clauses (Art. 46 GDPR).",
+  "Operators of the infrastructure AIRA runs on and — where connected — of the observability and SIEM systems, each as a processor or as an internal function of the controller.",
+  "Authorities and courts, where there is a legal obligation.",
+]
+
+[sections.automated_decisions]
+title = "Automated measures"
+paragraphs = [
+  "Rules that detect anomalies can automatically throttle or block a person, an API key or a use case for a limited time, for example when the number of requests suddenly rises sharply or a new source address appears. Such a measure is always time-limited, names the rule that triggered it, and can be lifted early by authorised people.",
+  "It serves only to protect systems and budgets. AIRA takes no decisions that produce legal effects concerning you or similarly significantly affect you (Art. 22 GDPR). If you are affected by a block, contact the administrators of your use case or the function responsible for information security.",
+]
+
+[sections.ai]
+title = "Using AI"
+paragraphs = [
+  "Answers you receive through AIRA are generated by an AI model. They can be wrong, incomplete or out of date, and must be checked before they are used.",
+  "Enter only the data your use case's purpose requires. Enter special categories of personal data (Art. 9 GDPR), such as health data, or data about other people only if the use case is expressly intended for it. A use case can have content automatically cleaned of personal details before it is sent; that cleaning is done by an AI model and is not free of errors.",
+  "Where a use case employs AI for decisions about employees, for example in hiring, promotion or performance assessment, Regulation (EU) 2024/1689 (the AI Act) applies with its obligations for high-risk systems; such a use must be agreed separately with the controller and the employee representatives.",
+]
+
+[sections.browser_storage]
+title = "Storage in your browser"
+paragraphs = [
+  "The console sets no analytics or advertising cookies and embeds no tracking services. It keeps the identity service's sign-in tokens and a counter of sign-in attempts in your browser's session storage; both are deleted when the tab is closed. This is strictly necessary for the service you asked for (Section 25(2) no. 2 TDDDG).",
+]
+
+[sections.rights]
+title = "Your rights"
+paragraphs = [
+  "You have the right of access (Art. 15 GDPR), to rectification (Art. 16), to erasure (Art. 17), to restriction of processing (Art. 18) and to data portability (Art. 20).",
+  "Where processing is based on legitimate interests (Art. 6(1)(f) GDPR), you may object at any time on grounds relating to your particular situation (Art. 21 GDPR).",
+  "To exercise these rights, contact the controller or the data protection officer. You may also lodge a complaint with a data protection supervisory authority (Art. 77 GDPR), in particular in the Member State of your habitual residence or place of work.",
+  "Using AIRA is not required by law. Without processing the data needed for sign-in and record-keeping, however, AIRA cannot be used.",
+]
+
+[sections.changes]
+title = "Changes to this notice"
+paragraphs = [
+  "When the processing changes, this notice and its date change with it. The console shows you a changed version the next time it starts and asks you to acknowledge it. The current version is available at any time through the “Privacy notice” link in the console.",
+]
+
+[activities.account]
+title = "Sign-in and user account"
+data = "Identifier from the identity service (Keycloak), username, email address, groups and the roles they confer, when the account was created, memberships and permissions in use cases, and an invitation where there was one. Memberships and key owners are passed to the gateway over an internal event channel."
+purpose = "To sign you in, to give you exactly the rights your roles and use cases provide, and to manage the members of a use case. Authorised people can search the directory by name and email to add members; every search is logged."
+legal_basis = "Art. 6(1)(b) GDPR (performance of the employment or user relationship); Art. 6(1)(f) GDPR (legitimate interest in secure, traceable granting of rights); where a works agreement exists, additionally Art. 88 GDPR in conjunction with Section 26(4) BDSG."
+retention = "For as long as the account exists. AIRA does not delete accounts by itself; the controller deletes them once the entitlement ends. Roles are derived afresh from your current groups on every request."
+recipients = "Authorised administrators of the installation and of your use cases; members of a use case see its member list."
+
+[activities.administration]
+title = "Traceability of administrative changes"
+data = "Who created, changed or deleted a role (with its state before and after), who retired a use case, granted a group access, invited a person or issued a key for somebody else, each with the time; technical identifiers for tracing internal events."
+purpose = "Evidence of who granted or changed which permission (accountability, Art. 5(2) and Art. 32 GDPR)."
+legal_basis = "Art. 6(1)(c) GDPR in conjunction with Art. 5(2) and Art. 32 GDPR; Art. 6(1)(f) GDPR."
+retention = "Without automatic deletion, so that the history of permissions stays complete."
+recipients = "People who may read the roles or the use case concerned."
+
+[activities.api_keys]
+title = "API keys"
+data = "The key's owner, the person who issued it where that is somebody else, its label, prefix, a hash of the key (never the key itself), use case, and when it was created, expires and was revoked."
+purpose = "To tie an application's access to a person who is responsible for it, and to be able to limit and revoke that access."
+legal_basis = "Art. 6(1)(b) and (f) GDPR; Art. 32 GDPR."
+retention = "Unless specified otherwise a key expires after {key_lifetime}, and after {key_max_lifetime} at the latest. The record is kept without automatic deletion after expiry or revocation, so that earlier requests remain attributable."
+recipients = "The owner, the use case's administrators, and roles that may manage use cases across the installation or investigate incidents."
+
+[activities.request_record]
+title = "Record of every request"
+data = "For every request to a model, including refused ones: the identifier and username of the person making it or of the key's owner, sign-in method, use case, source IP address, the access used (key prefix or application), time, the model requested and the model actually used, provider and region, outcome and status code, the decisions of the checking steps, names of tools called, number of tokens, size, response time, cost and a trace identifier."
+purpose = "Operation and troubleshooting, cost allocation and budget control, evidence of data residency per request, detection and investigation of security incidents."
+legal_basis = "Art. 6(1)(f) GDPR (operation, security and cost control); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
+retention = "Request records in this installation: {log_retention}."
+recipients = "By role and use case (see “Who has access within the organisation”). The request list shows source IP addresses only to people who may investigate incidents."
+
+[activities.content]
+title = "Request and response content"
+data = "The text of the request and of the response, including the model's reasoning where the use case asks for it. Attached files are not stored. Credentials such as keys and tokens are removed before storage; other personal details in your text remain."
+purpose = "Investigating security incidents and errors, and traceability within the use case. {content_storage}"
+legal_basis = "Art. 6(1)(f) GDPR (information security and troubleshooting); Art. 6(1)(b) GDPR where the use case serves the performance of your duties."
+retention = "For as long as the use case specifies (1 to 3650 days), and for requests without a use case {default_retention}. The content is then deleted; the request record remains for the period that applies to it."
+recipients = "Authorised people only: roles that may read content in every use case, and the use case's administrators and — where allowed — its members. Every read is recorded."
+
+[activities.content_reads]
+title = "Record of reads of content"
+data = "Who read which stored content and when, with username, their roles at that moment and the ground (security incident, administration or membership of the use case)."
+purpose = "Control over access to content, so that content cannot be viewed unnoticed."
+legal_basis = "Art. 6(1)(c) GDPR in conjunction with Art. 5(2) and Art. 32 GDPR; Art. 6(1)(f) GDPR."
+retention = "Without automatic deletion: the content expires, the fact that it was read does not."
+recipients = "Roles that may see the record of reads of content (see “Who has access within the organisation”)."
+
+[activities.consumption]
+title = "Consumption, budgets and rate limits"
+data = "Counters per person and use case of requests, tokens and costs per day or month; reports built from them per person with requests, failures, tokens, costs and response times, including as a CSV export. To fend off attacks, failed sign-ins are counted briefly per IP address."
+purpose = "To allocate costs, and to enforce budgets and rate limits per person so that nobody uses up other people's allowance, and to protect availability. Not: to assess the performance of individuals."
+legal_basis = "Art. 6(1)(f) GDPR (cost control and availability)."
+retention = "Counters per period are kept without automatic deletion; counters for rate limits and sign-in attempts lapse after minutes. Reports are computed from the request record each time they are opened."
+recipients = "Members of the use case concerned and roles that may read every report; you see your own consumption yourself."
+
+[activities.security]
+title = "Anomaly detection and security incidents"
+data = "Findings of rules concerning a person, a key or a use case, with the measured value, threshold and a description which, for new source addresses, contains those IP addresses; blocks and throttles with their target, reason, the rule or person that set them, expiry and lifting."
+purpose = "To detect and contain misuse, compromised access and cost outliers."
+legal_basis = "Art. 6(1)(f) GDPR (information security); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
+retention = "Without automatic deletion; blocks are kept as history after they are lifted."
+recipients = "Roles that may see the security findings of every use case, and members of the use case concerned. A finding's description may contain IP addresses."
+
+[activities.model_providers]
+title = "Transfer to model providers"
+data = "The content of your request including attachments, cleaned of personal details automatically where the use case does so. AIRA sends no name, no user identifier and no IP address with it. A use case's checking steps, such as detecting injected instructions, also send the text to a released model."
+purpose = "To have the request answered that you use AIRA for."
+legal_basis = "Art. 6(1)(b) GDPR; Art. 28 GDPR for the providers as processors."
+retention = "AIRA itself stores nothing for this beyond the request record. How long a provider keeps data is governed by the controller's contract with it; a provider-side cache of inputs is active only if the use case switches it on."
+recipients = "The providers of the models released for the use case, in the released regions (see “Recipients and transfers to third countries”)."
+
+[activities.telemetry]
+title = "Operational telemetry"
+data = "Where the installation has enabled it: technical measurements and log lines per request with the identifier of the person making it, use case, access, source IP address, browser identification (user agent), model, outcome, tokens and cost — never the content of requests or responses."
+purpose = "Monitoring the availability and performance of the systems, troubleshooting, and forwarding security-relevant events to a SIEM."
+legal_basis = "Art. 6(1)(f) GDPR; Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
+retention = "According to the periods of the observability or SIEM system the controller has connected; AIRA does not set those periods."
+recipients = "The controller's operations and information security functions; operators of the connected systems as processors."
+
+[activities.pipeline_tests]
+title = "Tests of models and checking steps"
+data = "Who started a test run and who rated a result, with the time, rating and note, and the model's answers to the test questions."
+purpose = "To assess the quality of models and checking steps before they are used."
+legal_basis = "Art. 6(1)(f) GDPR."
+retention = "Without automatic deletion."
+recipients = "People who may run tests or see their results, including as an export."
+
+[activities.acknowledgement]
+title = "Acknowledgement of this notice"
+data = "Which version of this notice you acknowledged, in which language, with the first and the latest time."
+purpose = "To show you a changed version again and to be able to demonstrate that you were informed (Art. 5(2) GDPR)."
+legal_basis = "Art. 6(1)(c) GDPR in conjunction with Art. 5(2), Art. 12 and Art. 13 GDPR."
+retention = "For as long as your account exists; it is deleted with the account."
+recipients = "Nobody outside the operation of the installation."
