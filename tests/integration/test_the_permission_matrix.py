@@ -110,6 +110,18 @@ def _gateway(path: str, allowed: set[int], refused: set[int]):
     return ask
 
 
+def _gateway_write(path: str, allowed: set[int], refused: set[int], **body: Any):
+    """A write the permission opens. An empty body is the caller's mistake (400) once past the
+    permission check and a 403 before it, so the probe creates nothing either way."""
+
+    async def ask(client: httpx.AsyncClient, token: str, ctx: Context) -> bool:
+        url = f"{GATEWAY_URL}{path.format(ctx=ctx)}"
+        response = await client.post(url, headers=_auth(token), **body)
+        return _verdict(response, allowed, refused, f"POST {url}")
+
+    return ask
+
+
 def _in_scope(path: str):
     """A list that answers an empty 200 outside the caller's scope and says so in `in_scope`."""
 
@@ -209,10 +221,12 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # Stopping, not listing: every stop is listed to `anomaly.read_all` as well, whose findings
+        # already say what was done (`FRD-503` FR-6a).
         P.INCIDENT_SUSPEND,
         "gateway",
-        "list suspensions",
-        _gateway("/v1beta/suspensions", {200}, {403}),
+        "stop traffic",
+        _gateway_write("/v1beta/suspensions", {400}, {403}, json={}),
     ),
     Probe(
         P.INCIDENT_INVESTIGATE,

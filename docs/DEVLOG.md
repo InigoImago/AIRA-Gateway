@@ -15282,3 +15282,19 @@ with the `frontend-design` skill.
 - **State and action apart.** Budgets and rate limits said "Active — disable" on one button. Each
   now shows an Active/Disabled badge to every reader and, for a manager, a separate Disable/Enable
   button beside Remove.
+- **CI's integration stage found the half this repository keeps forgetting: the copy of a rule in
+  the layer above.** The hermetic pairwise matrix was corrected to probe `incident.suspend` by
+  *stopping* traffic; the **live** matrix still probed it by listing, so
+  `test_the_permission_matrix.py` failed twice against the running stack — once for the union with
+  `anomaly.read_all`, once for IT Steuerung. Both matrices now ask the same question, and
+  `test_f2` also asserts the new scoped answer (`200`, `in_scope: false`) beside the refusal it
+  already checked. Two suites state one rule, and only the one that was run said so.
+
+  So the two lists now have a counterpart:
+  `tools/tests/test_both_permission_matrices_ask_the_same_thing.py` compares, per permission, the
+  **method and path** each matrix probes on the gateway. Method included on purpose — the first
+  version compared paths alone and would have passed the very divergence it was written for, since
+  `GET` and `POST /v1beta/suspensions` are one path. Checked by putting the old probe back: it
+  fails, and passes again once both say `POST`.
+  - hermetic: 4777 → 4779 passed;
+  - live: 1060 passed, 15 skipped, against CI's 2 failures.

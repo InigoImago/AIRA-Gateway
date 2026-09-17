@@ -1063,6 +1063,7 @@ async def test_f1_an_incident_role_can_stop_and_restore(security_token: str) -> 
 
 async def test_f2_a_use_case_admin_cannot_stop_anybody(member_token: str) -> None:
     headers = {"Authorization": f"Bearer {member_token}", "content-type": "application/json"}
+    outside = f"outside-{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(timeout=30.0) as client:
         created = await client.post(
             f"{GATEWAY_URL}/v1beta/suspensions",
@@ -1070,9 +1071,17 @@ async def test_f2_a_use_case_admin_cannot_stop_anybody(member_token: str) -> Non
             json={"target": "subject", "target_value": "somebody"},
         )
         listed = await client.get(f"{GATEWAY_URL}/v1beta/suspensions", headers=headers)
+        scoped = await client.get(
+            f"{GATEWAY_URL}/v1beta/suspensions?use_case={outside}", headers=headers
+        )
 
     assert created.status_code == 403, created.text
+    # The whole list is not a member's (`FRD-503` FR-6a) …
     assert listed.status_code == 403
+    # … but what applies inside a use case is, and a use case they are not in answers the empty
+    # that says so rather than a refusal.
+    assert scoped.status_code == 200, scoped.text
+    assert scoped.json() == {"suspensions": [], "scope": "own", "in_scope": False}
 
 
 async def test_f2b_a_read_only_governance_role_cannot_stop_anybody(governance_token: str) -> None:
