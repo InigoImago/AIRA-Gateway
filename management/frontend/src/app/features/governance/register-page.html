@@ -235,7 +235,7 @@
                   }
                 </td>
                 <!-- One line, cut where it runs out; the whole of it is in the detail. -->
-                <td class="reg-clamp">{{ entry.purpose || '—' }}</td>
+                <td class="reg-clamp">{{ entry.purpose ? plain(entry.purpose) : '—' }}</td>
                 <td>
                   @if (entry.prompts_stored) {
                     kept {{ entry.retention_days }} day(s)
@@ -259,11 +259,23 @@
                     <dl class="detail-grid">
                       <div class="detail-grid__wide">
                         <dt>Purpose</dt>
-                        <dd>{{ entry.purpose || '—' }}</dd>
+                        <dd>
+                          @if (entry.purpose) {
+                            <app-markdown [source]="entry.purpose" />
+                          } @else {
+                            —
+                          }
+                        </dd>
                       </div>
                       <div class="detail-grid__wide">
                         <dt>How the processing happens</dt>
-                        <dd>{{ entry.processing || '—' }}</dd>
+                        <dd>
+                          @if (entry.processing) {
+                            <app-markdown [source]="entry.processing" />
+                          } @else {
+                            —
+                          }
+                        </dd>
                       </div>
                       <div class="detail-grid__wide">
                         <dt>

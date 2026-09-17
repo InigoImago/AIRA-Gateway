@@ -36,15 +36,21 @@ export class WarningsTab implements OnInit {
   protected readonly suspensions = signal<Suspension[]>([]);
   protected readonly loading = signal(true);
 
-  /** Whether this use case is stopped right now — the fact a member most needs, first. */
+  /** What is stopped here right now — the fact a member most needs, first. The server has already
+   *  narrowed the list to this use case, and for a member to what applies to them. */
   protected readonly stopped = computed(() =>
     this.suspensions().filter(
       (row) =>
-        !row.lifted_at &&
-        (!row.expires_at || new Date(row.expires_at).getTime() > Date.now()) &&
-        (row.use_case === this.slug() || row.target_value === this.slug()),
+        !row.lifted_at && (!row.expires_at || new Date(row.expires_at).getTime() > Date.now()),
     ),
   );
+
+  /** Whom a stop is on, in words: the use case itself, a person, or one API key. */
+  protected stoppedWhat(row: Suspension): string {
+    if (row.target === 'use_case') return 'This use case is stopped.';
+    if (row.target === 'credential') return `API key ${row.target_value} is stopped here.`;
+    return `${row.target_value} is stopped here.`;
+  }
 
   ngOnInit(): void {
     this.live.start(
@@ -57,8 +63,9 @@ export class WarningsTab implements OnInit {
         this.loading.set(false);
       },
     );
-    // Listing suspensions needs an incident role. A member's 403 is a real answer: no banner.
-    this.service.suspensions().subscribe({
+    // Asked for this use case, which a member may: whether it, or they, are stopped (`FRD-503`).
+    // A caller the gateway scopes out gets an empty list, and the findings say why.
+    this.service.suspensions(this.slug()).subscribe({
       next: (page) => this.suspensions.set(page.suspensions),
       error: () => undefined,
     });

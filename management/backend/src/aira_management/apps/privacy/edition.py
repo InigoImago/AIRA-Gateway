@@ -17,10 +17,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 #: The day the notice's content last changed, ISO 8601.
-EDITION = "2026-09-16"
+EDITION = "2026-09-17"
 
 #: `source_digest()` as of ``EDITION``.
-SOURCE_DIGEST = "8908738e3ec6fa5cd862d2209899a581bf15af72927d2309a1e27a7ce60581af"
+SOURCE_DIGEST = "7b76a7449935558770547c08cec47a57ff45c06d587adc83c33e324e4a2bbe05"
 
 #: What the notice is made of. The loader and the renderer decide how it reads, not what it says.
 SOURCES: tuple[Path, ...] = (HERE / "activities.py", *sorted((HERE / "texts").glob("*.toml")))

@@ -61,6 +61,23 @@ def _status(path: str, allowed: set[int], refused: set[int]) -> Callable[[TestCl
     return ask
 
 
+def _refuses_body(path: str) -> Callable[[TestClient], bool]:
+    """A write the permission opens: an empty body is the caller's mistake (400) once past the
+    permission check, and a 403 before it. Nothing is created either way."""
+
+    def ask(client: TestClient) -> bool:
+        response = client.post(path, json={})
+        if response.status_code == 400:
+            return True
+        if response.status_code == 403:
+            return False
+        raise AssertionError(
+            f"POST {path}: unexpected {response.status_code} {response.text[:200]}"
+        )
+
+    return ask
+
+
 def _in_scope(path: str) -> Callable[[TestClient], bool]:
     """A list that answers an empty 200 outside the caller's scope, and says so."""
 
@@ -87,7 +104,9 @@ PROBES: tuple[Probe, ...] = (
         "list a use case's findings",
         _in_scope("/v1beta/anomalies?use_case=probe"),
     ),
-    Probe(P.INCIDENT_SUSPEND, "list suspensions", _status("/v1beta/suspensions", {200}, {403})),
+    # Stopping, not listing: every stop is also listed to `anomaly.read_all`, whose findings already
+    # say what was done (`FRD-503` FR-8).
+    Probe(P.INCIDENT_SUSPEND, "stop traffic", _refuses_body("/v1beta/suspensions")),
     Probe(
         P.INCIDENT_INVESTIGATE,
         "filter requests by source address",

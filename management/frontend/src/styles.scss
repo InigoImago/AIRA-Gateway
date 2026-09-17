@@ -2088,3 +2088,21 @@ tr.is-open > * {
   display: flex;
   gap: 0.35rem;
 }
+
+/* ---- written text: a use case's description and processing notes ------------------------ */
+
+.markdown {
+  display: block;
+}
+.markdown p,
+.markdown ul,
+.markdown ol {
+  margin: 0 0 0.5rem;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 1.25rem;
+}

@@ -7844,6 +7844,39 @@ MUTATIONS = [
         "    speaks = False\n\n    async def ping",
         "gateway/tests/test_speech.py",
     ),
+    # ---- a member sees what stops their use case or them, and nobody else's (FRD-503) ----------
+    Mutation(
+        "SU1",
+        "a member is not shown a stop on a colleague",
+        "gateway/src/aira_gateway/api/incidents/suspensions.py",
+        "                AccessSuspension.target_value.in_(names),",
+        "                AccessSuspension.target_value.isnot(None),",
+        "gateway/tests/test_suspensions.py gateway/tests/test_the_pairwise_permission_matrix.py",
+    ),
+    Mutation(
+        "SU2",
+        "without naming a use case, only an incident or oversight role gets the list",
+        "gateway/src/aira_gateway/api/incidents/suspensions.py",
+        "        if not use_case:\n            _require_an_incident_role(principal)",
+        "        if False:\n            _require_an_incident_role(principal)",
+        "gateway/tests/test_suspensions.py gateway/tests/test_the_pairwise_permission_matrix.py",
+    ),
+    Mutation(
+        "SU3",
+        "a use case outside the caller's scope answers empty",
+        "gateway/src/aira_gateway/api/incidents/suspensions.py",
+        "        if scope is not None and use_case not in scope:",
+        "        if False:",
+        "gateway/tests/test_suspensions.py gateway/tests/test_the_pairwise_permission_matrix.py",
+    ),
+    Mutation(
+        "SU4",
+        "whoever reads every finding reads every stop",
+        "gateway/src/aira_gateway/api/incidents/suspensions.py",
+        "    oversight = principal.allows(Permission.INCIDENT_SUSPEND) or principal.allows(",
+        "    oversight = principal.allows(Permission.INCIDENT_SUSPEND) or False and principal.allows(",
+        "gateway/tests/test_suspensions.py gateway/tests/test_the_pairwise_permission_matrix.py",
+    ),
     # ---- the privacy notice, and a change to what is stored is a change to it (FRD-625) ---------
     Mutation(
         "PN1",

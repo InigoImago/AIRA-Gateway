@@ -86,9 +86,14 @@ export function withIncidents<T extends ApiClientClass>(Base: T) {
       return this.http.get<ContentReadPage>(`${GW}/v1beta/content-reads`, { params });
     }
 
-    /** Traffic that is currently stopped, and what was stopped before (`FRD-503`). */
-    suspensions(): Observable<{ suspensions: Suspension[] }> {
-      return this.http.get<{ suspensions: Suspension[] }>(`${GW}/v1beta/suspensions`);
+    /**
+     * Traffic that is stopped, and what was stopped before (`FRD-503`). With `useCase`, the stops
+     * that apply there: every one to whoever reads all findings, and to a member only the use case
+     * itself and their own name or key.
+     */
+    suspensions(useCase?: string): Observable<{ suspensions: Suspension[] }> {
+      const params = useCase ? { use_case: useCase } : undefined;
+      return this.http.get<{ suspensions: Suspension[] }>(`${GW}/v1beta/suspensions`, { params });
     }
 
     /** Stop a subject, a credential or a use case. Needs an incident role; the server decides. */

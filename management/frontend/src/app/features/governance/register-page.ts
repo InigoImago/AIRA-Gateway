@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { CatalogModel, Register, RegisterEntry } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
+import { Markdown, plainText } from '../../core/ui/markdown';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { Preset, windowFor } from '../../core/ui/periods';
 import { TableView } from '../../core/ui/table-view';
@@ -21,11 +22,14 @@ import { TablePager } from '../../core/ui/table-pager';
  */
 @Component({
   selector: 'app-register-page',
-  imports: [DatePipe, FormsModule, InfoHint, TablePager],
+  imports: [DatePipe, FormsModule, InfoHint, Markdown, TablePager],
   templateUrl: './register-page.html',
   providers: [PageFeedback],
 })
 export class RegisterPage implements OnInit {
+  /** One line of a purpose for the table, without its Markdown markers; the row opens to the rest. */
+  protected readonly plain = plainText;
+
   private readonly service = inject(UseCaseService);
   protected readonly feedback = inject(PageFeedback);
 

@@ -15252,3 +15252,33 @@ with the `frontend-design` skill.
     to show that first. The gateway lists stops only to `incident.suspend`;
   - use-case descriptions containing Markdown render it raw;
   - a status that is also a toggle ("Active — disable").
+
+## 2026-09-17 — the three things the UI review left open
+
+- **A member can see that their use case is stopped.** The Warnings tab was written to say it first
+  and never could: `GET /v1beta/suspensions` refused everybody without `incident.suspend`. It now
+  answers three audiences (`FRD-503` FR-6a):
+  - every stop to `incident.suspend` or `anomaly.read_all`. IT Steuerung's Security page shows
+    them again, instead of explaining their absence;
+  - with `?use_case=`, a member sees the use case's own stops and their own name or key, and
+    never a colleague's;
+  - nothing to anybody else.
+
+  The banner names whom a stop is on. "This use case is stopped" over a colleague's stop was false
+  for every reader. The pairwise matrix now probes `incident.suspend` by *stopping* traffic, since
+  listing is no longer that permission's alone. Mutations SU1–SU4.
+- **The privacy notice moved with it** (`ADR-0027`). What `anomaly.read_all` may see and who
+  receives a stop changed, so both texts say so. The edition is 2026-09-17, and everybody is asked
+  to read the notice again. The digest guard caught a stale `SOURCE_DIGEST` from the first attempt
+  at setting it.
+- **Descriptions read as Markdown** (`core/ui/markdown.ts`).
+  - Covered: paragraphs, `-` and `1.` lists, bold, italic, code, and `http(s)` links.
+  - Parsed into a tree the template walks, never passed to `innerHTML`. Typed markup is shown as
+    characters, and a `javascript:` link stays text.
+  - Used on the overview and in the register's detail. The register's table cell shows the words
+    without markers.
+  - A spec caught the template adding a space around every text piece ("bold , next"). Text now
+    renders inside its own element.
+- **State and action apart.** Budgets and rate limits said "Active — disable" on one button. Each
+  now shows an Active/Disabled badge to every reader and, for a manager, a separate Disable/Enable
+  button beside Remove.

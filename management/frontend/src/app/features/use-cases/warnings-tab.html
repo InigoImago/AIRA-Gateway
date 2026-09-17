@@ -21,7 +21,7 @@
   <!-- The fact a member most needs, and the one that explains everything else on the screen. -->
   @for (row of stopped(); track row.id) {
     <p class="callout callout--danger" role="alert" data-testid="stopped-banner">
-      <strong>This use case is stopped.</strong>
+      <strong>{{ stoppedWhat(row) }}</strong>
       {{ row.action === 'throttle' ? 'Throttled to ' + row.throttle_rpm + '/min' : 'Blocked' }} by
       <code>{{ row.author }}</code
       >{{ row.reason ? ' — ' + row.reason : '' }}.

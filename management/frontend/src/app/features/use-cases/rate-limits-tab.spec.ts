@@ -348,8 +348,9 @@ describe('RateLimitsTab — lifting a limit without losing it', () => {
      *  while the gateway obeys the flag (`if not record.enabled …`). */
     const page = setup([LIMIT]);
 
-    expect(page.testid('toggle-limit-7')).not.toBeNull();
-    expect(page.text()).toContain('Active — disable');
+    expect(page.testid('status-limit-7')?.textContent?.trim()).toBe('Active');
+    expect(page.testid('toggle-limit-7')?.textContent?.trim()).toBe('Disable');
+    expect(page.text()).not.toContain('Active — disable');
   });
 
   it('sends the whole row with the switch flipped', () => {
@@ -365,7 +366,8 @@ describe('RateLimitsTab — lifting a limit without losing it', () => {
 
   it('puts a lifted limit back', () => {
     const page = setup([{ ...LIMIT, enabled: false }]);
-    expect(page.text()).toContain('Disabled — enable');
+    expect(page.testid('status-limit-7')?.textContent?.trim()).toBe('Disabled');
+    expect(page.testid('toggle-limit-7')?.textContent?.trim()).toBe('Enable');
     page.click('toggle-limit-7');
 
     expect(page.calls).toEqual(['create:use_case::60:90:true']);
@@ -376,7 +378,7 @@ describe('RateLimitsTab — lifting a limit without losing it', () => {
     const page = setup([{ ...LIMIT, enabled: false }], {}, true, false);
 
     expect(page.testid('toggle-limit-7')).toBeNull();
-    expect(page.text()).toContain('Disabled');
+    expect(page.testid('status-limit-7')?.textContent?.trim()).toBe('Disabled');
   });
 
   it('states that a new limit is active rather than leaving it to a default', () => {

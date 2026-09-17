@@ -382,6 +382,20 @@ describe('UseCaseDetail rendering', () => {
     const shown = harness.html().querySelector('[data-testid="about-processing"]');
     expect(shown?.textContent).toContain('No personal data.');
   });
+
+  it('reads the description as Markdown on the overview', async () => {
+    const harness = setup({
+      get: of({ ...USE_CASE, description: '**Tools on** for\n\n- coding\n- review' }),
+    });
+    harness.component.selectTab('overview');
+    await Promise.resolve();
+    harness.fixture.detectChanges();
+
+    const shown = harness.html().querySelector('[data-testid="about-description"]');
+    expect(shown?.querySelector('strong')?.textContent).toBe('Tools on');
+    expect(shown?.querySelectorAll('li').length).toBe(2);
+    expect(shown?.textContent).not.toContain('**');
+  });
 });
 
 describe('UseCaseDetail interactions', () => {

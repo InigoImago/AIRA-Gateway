@@ -86,7 +86,7 @@ items = [
 "usecase.manage_all" = "Mitglieder und API-Schlüssel aller Use Cases verwalten"
 "trace.read_all" = "Anfrage-Protokolle aller Use Cases sehen"
 "report.read_all" = "Verbrauch je Person in allen Use Cases sehen, auch als Export"
-"anomaly.read_all" = "Sicherheitsbefunde aller Use Cases sehen, einschließlich darin genannter IP-Adressen"
+"anomaly.read_all" = "Sicherheitsbefunde und Sperren aller Use Cases sehen, einschließlich darin genannter IP-Adressen"
 "incident.investigate" = "Anfragen use-case-übergreifend untersuchen, einschließlich Quell-IP-Adressen"
 "payload.read_any" = "Inhalte von Anfragen und Antworten aller Use Cases lesen, wobei jeder Zugriff aufgezeichnet wird"
 "content_read.read" = "das Protokoll der Zugriffe auf Inhalte einsehen"
@@ -204,7 +204,7 @@ data = "Befunde von Regeln, die eine Person, einen Schlüssel oder einen Use Cas
 purpose = "Missbrauch, kompromittierte Zugänge und Kostenausreißer zu erkennen und einzudämmen."
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Informationssicherheit); Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 32 DSGVO."
 retention = "Ohne automatische Löschung; Sperren bleiben nach ihrer Aufhebung als Historie erhalten."
-recipients = "Rollen, die Sicherheitsbefunde aller Use Cases sehen dürfen, sowie Mitglieder des betroffenen Use Case. Die Beschreibung eines Befunds kann dabei IP-Adressen enthalten."
+recipients = "Rollen, die Sicherheitsbefunde aller Use Cases sehen dürfen, sowie Mitglieder des betroffenen Use Case. Die Beschreibung eines Befunds kann dabei IP-Adressen enthalten. Sperren sehen Mitglieder nur, soweit sie den Use Case als Ganzes oder sie selbst betreffen."
 
 [activities.model_providers]
 title = "Übermittlung an Modellanbieter"

@@ -61,6 +61,7 @@ interface Options {
 function setup(options: Options = {}) {
   TestBed.resetTestingModule();
   const asked: (string | undefined)[] = [];
+  const askedStops: (string | undefined)[] = [];
   TestBed.configureTestingModule({
     imports: [Host],
     providers: [
@@ -76,7 +77,10 @@ function setup(options: Options = {}) {
               ...(options.inScope === undefined ? {} : { in_scope: options.inScope }),
             });
           },
-          suspensions: () => options.suspensions ?? of({ suspensions: [SUSPENSION] }),
+          suspensions: (useCase?: string) => {
+            askedStops.push(useCase);
+            return options.suspensions ?? of({ suspensions: [SUSPENSION] });
+          },
         },
       },
     ],
@@ -88,6 +92,7 @@ function setup(options: Options = {}) {
     fixture,
     element,
     asked,
+    askedStops,
     host: fixture.componentInstance,
     text: () => element.textContent ?? '',
     testid: (id: string) => element.querySelector(`[data-testid="${id}"]`),
@@ -143,8 +148,8 @@ describe('WarningsTab', () => {
   });
 
   it('stays a working page when suspensions are refused', () => {
-    // Listing suspensions needs an incident role; a member gets a 403. That is a real answer about
-    // a real permission, and must not turn the whole tab into an error.
+    // A caller the gateway refuses gets a 403. That is a real answer about a real permission, and
+    // must not turn the whole tab into an error.
     const { text, testid } = setup({ suspensions: throwError(() => ({ status: 403 })) });
 
     expect(testid('stopped-banner')).toBeNull();
@@ -163,6 +168,25 @@ describe('WarningsTab — reading the stopped banner', () => {
   function stopped(over: Partial<Suspension>) {
     return setup({ suspensions: of({ suspensions: [{ ...SUSPENSION, ...over }] }) });
   }
+
+  it('asks for the stops of this use case, which a member may read', () => {
+    expect(setup().askedStops).toEqual(['uc-a']);
+  });
+
+  it('says whom a stop is on: the use case, a person, or one key', () => {
+    // The server hands a member only what applies to them and an oversight reader everything in
+    // the use case; "this use case is stopped" over a colleague's stop would be false for both.
+    expect(stopped({}).testid('stopped-banner')?.textContent).toContain(
+      'This use case is stopped.',
+    );
+    expect(
+      stopped({ target: 'subject', target_value: 'ada' }).testid('stopped-banner')?.textContent,
+    ).toContain('ada is stopped here.');
+    expect(
+      stopped({ target: 'credential', target_value: 'aira_7f2a' }).testid('stopped-banner')
+        ?.textContent,
+    ).toContain('API key aira_7f2a is stopped here.');
+  });
 
   it('says what a throttle allows and when it ends', () => {
     // A member reading "you are stopped" needs the two numbers that tell them whether to wait or

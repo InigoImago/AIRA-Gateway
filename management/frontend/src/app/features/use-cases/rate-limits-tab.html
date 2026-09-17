@@ -141,25 +141,31 @@
             <td>{{ limit.limit_rpm }}</td>
             <td>{{ effectiveBurst(limit) }}</td>
             <td>
-              <!-- A switch for a reader who may manage, a badge for one who may not. -->
-              @if (canManage()) {
-                <button
-                  type="button"
-                  class="btn btn--ghost"
-                  [disabled]="feedback.busy()"
-                  [attr.data-testid]="'toggle-limit-' + limit.id"
-                  (click)="setEnabled(limit, limit.enabled === false)"
-                >
-                  {{ limit.enabled === false ? 'Disabled — enable' : 'Active — disable' }}
-                </button>
-              } @else if (limit.enabled === false) {
-                <span class="badge">Disabled</span>
-              } @else {
-                <span class="badge badge--success">Active</span>
-              }
+              <!-- The state, for every reader; changing it is a named button among the actions. -->
+              <span
+                class="badge"
+                [class.badge--success]="limit.enabled !== false"
+                [class.badge--muted]="limit.enabled === false"
+                [attr.data-testid]="'status-limit-' + limit.id"
+                >{{ limit.enabled === false ? 'Disabled' : 'Active' }}</span
+              >
             </td>
             <td class="table__actions">
               @if (canManage()) {
+                <button
+                  type="button"
+                  class="btn btn--sm"
+                  [disabled]="feedback.busy()"
+                  [attr.data-testid]="'toggle-limit-' + limit.id"
+                  [attr.aria-label]="
+                    (limit.enabled === false ? 'Enable' : 'Disable') +
+                    ' the rate limit for ' +
+                    labelFor(limit)
+                  "
+                  (click)="setEnabled(limit, limit.enabled === false)"
+                >
+                  {{ limit.enabled === false ? 'Enable' : 'Disable' }}
+                </button>
                 <button
                   type="button"
                   class="btn btn--sm btn--danger"

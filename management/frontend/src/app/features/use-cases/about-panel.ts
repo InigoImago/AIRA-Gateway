@@ -1,5 +1,6 @@
 import { Component, effect, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Markdown } from '../../core/ui/markdown';
 import { UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -13,7 +14,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
  */
 @Component({
   selector: 'app-about-panel',
-  imports: [FormsModule],
+  imports: [FormsModule, Markdown],
   templateUrl: './about-panel.html',
 })
 export class AboutPanel {

@@ -461,3 +461,68 @@ def test_stopping_traffic_by_hand_needs_an_oversight_role() -> None:
         assert client.delete(f"/v1beta/suspensions/{allowed.json()['id']}").status_code == 403
 
     app.dependency_overrides.clear()
+
+
+def test_a_member_sees_what_stops_their_use_case_or_them_and_nobody_elses() -> None:
+    """The Warnings tab tells a member first whether their use case is stopped; the list used to
+    refuse every member, so it never could. What a member sees is what applies to them — a stop on
+    a colleague stays with the incident roles."""
+    from aira_gateway.auth.dependencies import require_principal
+    from aira_gateway.auth.principal import Principal
+
+    app = create_app(GatewaySettings(auth_required=False))
+    rows = [
+        _suspension(use_case=None, target="use_case", target_value="demo-uc", reason="whole"),
+        _suspension(use_case="demo-uc", target="subject", target_value="ada", reason="me here"),
+        _suspension(use_case=None, target="subject", target_value="ada", reason="me everywhere"),
+        _suspension(use_case="demo-uc", target="subject", target_value="bob", reason="colleague"),
+        _suspension(use_case="other-uc", target="subject", target_value="ada", reason="elsewhere"),
+        _suspension(use_case=None, target="use_case", target_value="other-uc", reason="other"),
+        _suspension(use_case="demo-uc", target="credential", target_value="aira_ada", reason="key"),
+    ]
+
+    def _member(**over):
+        values = {"subject": "ada", "method": "oidc", "roles": (), "use_cases": ("demo-uc",)}
+        values.update(over)
+        return lambda: Principal(**values)
+
+    with TestClient(app) as client, anyio.from_thread.start_blocking_portal() as portal:
+        for row in rows:
+            portal.call(_add, app.state.db_sessionmaker, row)
+
+        app.dependency_overrides[require_principal] = _member()
+        seen = client.get("/v1beta/suspensions?use_case=demo-uc").json()
+        assert seen["in_scope"] is True
+        assert sorted(row["reason"] for row in seen["suspensions"]) == [
+            "me everywhere",
+            "me here",
+            "whole",
+        ]
+
+        # Their own key, when they call with one.
+        app.dependency_overrides[require_principal] = _member(
+            subject="ada", method="api_key", credential="aira_ada"
+        )
+        with_key = client.get("/v1beta/suspensions?use_case=demo-uc").json()["suspensions"]
+        assert "key" in {row["reason"] for row in with_key}
+
+        # A use case they are not in answers empty, and says which empty.
+        app.dependency_overrides[require_principal] = _member()
+        outside = client.get("/v1beta/suspensions?use_case=other-uc").json()
+        assert outside == {"suspensions": [], "scope": "own", "in_scope": False}
+
+        # And without naming one, a member still gets nothing: the whole list is not theirs.
+        assert client.get("/v1beta/suspensions").status_code == 403
+
+        # Whoever reads every finding reads every stop.
+        app.dependency_overrides[require_principal] = lambda: Principal(
+            subject="gov", method="oidc", roles=("it-steuerung",)
+        )
+        everything = client.get("/v1beta/suspensions").json()
+        assert everything["scope"] == "all"
+        assert len(everything["suspensions"]) == len(rows)
+        in_demo = client.get("/v1beta/suspensions?use_case=demo-uc").json()["suspensions"]
+        assert "colleague" in {row["reason"] for row in in_demo}
+        assert "other" not in {row["reason"] for row in in_demo}
+
+    app.dependency_overrides.clear()

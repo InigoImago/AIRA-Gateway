@@ -86,7 +86,7 @@ items = [
 "usecase.manage_all" = "manage the members and API keys of every use case"
 "trace.read_all" = "see the request records of every use case"
 "report.read_all" = "see consumption per person in every use case, including as an export"
-"anomaly.read_all" = "see the security findings of every use case, including any IP addresses they name"
+"anomaly.read_all" = "see the security findings and blocks of every use case, including any IP addresses they name"
 "incident.investigate" = "investigate requests across use cases, including source IP addresses"
 "payload.read_any" = "read request and response content in every use case, with every read recorded"
 "content_read.read" = "see the record of reads of content"
@@ -204,7 +204,7 @@ data = "Findings of rules concerning a person, a key or a use case, with the mea
 purpose = "To detect and contain misuse, compromised access and cost outliers."
 legal_basis = "Art. 6(1)(f) GDPR (information security); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "Without automatic deletion; blocks are kept as history after they are lifted."
-recipients = "Roles that may see the security findings of every use case, and members of the use case concerned. A finding's description may contain IP addresses."
+recipients = "Roles that may see the security findings of every use case, and members of the use case concerned. A finding's description may contain IP addresses. Members see a block only where it applies to the whole use case or to themselves."
 
 [activities.model_providers]
 title = "Transfer to model providers"

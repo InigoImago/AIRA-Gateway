@@ -579,8 +579,10 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
     // The gateway obeys only enabled budgets, so the card must show and set the flag.
     const page = setup({ budgets: [BUDGET] });
 
-    expect(page.testid('toggle-budget-3')).not.toBeNull();
-    expect(page.text()).toContain('Active — disable');
+    // The state and the action apart: a badge says what is, the button says what it does.
+    expect(page.testid('status-budget-3')?.textContent?.trim()).toBe('Active');
+    expect(page.testid('toggle-budget-3')?.textContent?.trim()).toBe('Disable');
+    expect(page.text()).not.toContain('Active — disable');
   });
 
   it('sends the whole row with the switch flipped', () => {
@@ -594,7 +596,8 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
 
   it('puts a lifted budget back', () => {
     const page = setup({ budgets: [{ ...BUDGET, enabled: false }] });
-    expect(page.text()).toContain('Disabled — enable');
+    expect(page.testid('status-budget-3')?.textContent?.trim()).toBe('Disabled');
+    expect(page.testid('toggle-budget-3')?.textContent?.trim()).toBe('Enable');
     page.click('toggle-budget-3');
 
     expect(page.calls).toEqual(['create:use_case::10.00:5000:true']);
@@ -607,7 +610,7 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
     const page = setup({ budgets: [{ ...BUDGET, enabled: false }], canManage: false });
 
     expect(page.testid('toggle-budget-3')).toBeNull();
-    expect(page.text()).toContain('Disabled');
+    expect(page.testid('status-budget-3')?.textContent?.trim()).toBe('Disabled');
   });
 
   it('states that a new budget is active rather than leaving it to a default', () => {

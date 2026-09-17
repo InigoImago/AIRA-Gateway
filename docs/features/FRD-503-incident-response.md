@@ -54,10 +54,21 @@ requires, so a throttled request does not debit the limits that would have grant
 in the closed vocabulary. Folding it into `rate_limited` would hide "we stopped this caller on
 purpose" inside "this caller is going too fast", and those want different answers.
 
-**FR-6** — `POST /v1beta/suspensions` creates one by hand; `GET` lists; `DELETE /{id}` lifts. All
-three require an **oversight role** (IT Security or Global Administrator) — the same roles that may
-author a global rule (`FRD-500` FR-8), because a hand-made suspension is a global rule's effect
-without the rule.
+**FR-6** — `POST /v1beta/suspensions` creates one by hand and `DELETE /{id}` lifts; both require
+`incident.suspend` (IT Security or Global Administrator), because a hand-made suspension is a global
+rule's effect without the rule.
+
+**FR-6a** — `GET` lists, to three audiences (amended 2026-09-17):
+
+- **every stop** to `incident.suspend` or `anomaly.read_all`. A finding already records what was
+  done (`action_taken`), so hiding the stop from the role that reads the finding hid nothing;
+- with `?use_case=`, **what applies there to a member**: the use case itself, or the caller's own
+  name or key, scoped to that use case or to everywhere. A stop on a colleague is not listed, and a
+  use case outside the caller's scope answers empty with `in_scope: false`;
+- nothing without `use_case` to anybody else (`403`).
+
+The Warnings tab asks with the use case and names what is stopped: the use case, a person, or one
+key. It says so first, because it is why requests answer `429`.
 
 **FR-7** — A hand-made suspension may have **no expiry**. A person who applied it can lift it; a
 rule cannot, which is why an automatic one always expires (`ADR-0014` §2).

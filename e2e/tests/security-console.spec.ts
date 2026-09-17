@@ -86,11 +86,10 @@ test.describe('IT Security console', () => {
     await page.click('[role="tab"]:has-text("Suspensions")');
 
     await expect(page.locator('[data-testid="stop-toggle"]')).toHaveCount(0);
-    // Withheld, and it says who does it — an unexplained absence reads as a broken console. The
-    // gateway does not list stops to this role either, so the panel says who sees them rather than
-    // claiming nothing is stopped.
-    await expect(page.locator('[data-testid="suspensions-hidden"]')).toContainText('IT Security');
-    await expect(page.getByText('Nothing is stopped')).toHaveCount(0);
+    // Withheld, and it says who does it — an unexplained absence reads as a broken console. Seeing
+    // what is stopped is this role's, since its findings already say what was done (`FRD-503`).
+    await expect(page.locator('[data-testid="stop-readonly"]')).toContainText('IT Security');
+    await expect(page.locator('[data-testid="suspensions-hidden"]')).toHaveCount(0);
   });
 
   test('stopping and restoring a caller is a decision the console records', async ({ page }) => {
@@ -127,6 +126,68 @@ test.describe('IT Security console', () => {
     // deleted.
     await expect(row).toHaveCount(0, { timeout: 15_000 });
     await expect(page.locator(`code:text-is("${target}")`)).toHaveCount(1);
+  });
+});
+
+test.describe('A member and the stops that apply to them', () => {
+  /** Stop one caller in a use case, as IT Security does, and return its row on the page. */
+  async function stop(page: Page, who: string, reason: string) {
+    await page.click('[data-testid="stop-toggle"]');
+    await page.selectOption('#stop-target', 'subject');
+    await page.fill('#stop-value', who);
+    await page.selectOption('#stop-scope', 'kundenservice');
+    await page.selectOption('#stop-action', 'throttle');
+    await page.fill('#stop-rpm', '10000');
+    await page.fill('#stop-reason', reason);
+    await (await submitOfOpenForm(page)).click();
+    const row = page
+      .locator('[data-testid="active-suspensions"]')
+      .locator(`tr:has(code:text-is("${who}"))`)
+      .filter({ hasText: reason });
+    await expect(row).toBeVisible({ timeout: 15_000 });
+  }
+
+  test('sees their own stop on the Warnings tab and not a colleague’s', async ({ page }) => {
+    // Three sign-ins and two stops and restores: more than the suite's default budget.
+    test.setTimeout(150_000);
+    // Throttled to a high rate rather than blocked, so nothing else this suite does as either
+    // account is refused while it runs; a throttle is a stop all the same.
+    const reason = `e2e member view ${Date.now()}`;
+    await login(page, USERS.security);
+    await page.goto('/security');
+    await page.click('[role="tab"]:has-text("Suspensions")');
+    try {
+      await stop(page, 'ucuser', `${reason} (own)`);
+      await stop(page, 'ucadmin', `${reason} (colleague)`);
+
+      await logout(page);
+      await login(page, USERS.useCaseUser);
+      await page.goto('/use-cases/kundenservice?tab=warnings');
+      const banners = page.locator('[data-testid="stopped-banner"]');
+      await expect(banners.filter({ hasText: `${reason} (own)` })).toContainText(
+        'ucuser is stopped here.',
+        { timeout: 20_000 },
+      );
+      await expect(banners.filter({ hasText: `${reason} (colleague)` })).toHaveCount(0);
+    } finally {
+      await logout(page).catch(() => undefined);
+      await login(page, USERS.security);
+      await page.goto('/security');
+      await page.click('[role="tab"]:has-text("Suspensions")');
+      const mine = page
+        .locator('[data-testid="active-suspensions"] tr')
+        .filter({ hasText: reason });
+      // `count()` does not wait: let the list arrive first, or a slow load restores nothing.
+      await expect(mine.first())
+        .toBeVisible({ timeout: 15_000 })
+        .catch(() => undefined);
+      for (let left = await mine.count(); left > 0; left--) {
+        page.once('dialog', (dialog) => dialog.accept());
+        await mine.first().locator('button:has-text("Restore")').click();
+        // The restored row leaves the active list when it reloads; wait for that, not the banner.
+        await expect(mine).toHaveCount(left - 1, { timeout: 15_000 });
+      }
+    }
   });
 });
 

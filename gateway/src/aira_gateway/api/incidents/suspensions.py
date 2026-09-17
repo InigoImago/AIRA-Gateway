@@ -9,15 +9,17 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.anomalies import RuleAction, RuleTarget
 from aira_common.permissions import Permission
 from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.incidents.common import _body_of, router
+from aira_gateway.api.reporting.common import visible_scope
 from aira_gateway.auth.attribution import is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -94,17 +96,90 @@ def _author(principal: Principal) -> str:
     return f"user:{principal.person or principal.subject}"
 
 
+def _concerning(use_case: str, principal: Principal) -> ColumnElement[bool]:
+    """The stops that apply to ``principal`` inside ``use_case``, and nobody else's.
+
+    - the whole use case: ``target = use_case`` naming it;
+    - this caller: ``target = subject`` naming them, or ``target = credential`` naming their own key
+      prefix — scoped to this use case or to everywhere.
+
+    A stop on another person stays with the incident roles: that somebody else was blocked, and
+    why, is theirs.
+    """
+    in_here = or_(AccessSuspension.use_case.is_(None), AccessSuspension.use_case == use_case)
+    concerns: list[ColumnElement[bool]] = [
+        and_(
+            AccessSuspension.target == RuleTarget.USE_CASE.value,
+            AccessSuspension.target_value == use_case,
+        )
+    ]
+    # Either alphabet, as findings are matched: a directory id for an OIDC caller, a username for a
+    # key.
+    names = sorted({name for name in (principal.subject, principal.person) if name})
+    if names:
+        concerns.append(
+            and_(
+                in_here,
+                AccessSuspension.target == RuleTarget.SUBJECT.value,
+                AccessSuspension.target_value.in_(names),
+            )
+        )
+    if principal.credential:
+        concerns.append(
+            and_(
+                in_here,
+                AccessSuspension.target == RuleTarget.CREDENTIAL.value,
+                AccessSuspension.target_value == principal.credential,
+            )
+        )
+    return or_(*concerns)
+
+
 @router.get("/v1beta/suspensions")
 async def list_suspensions(
-    request: Request, principal: Principal = Depends(require_principal)
+    request: Request,
+    principal: Principal = Depends(require_principal),
+    use_case: str = Query("", max_length=64),
 ) -> JSONResponse:
-    _require_an_incident_role(principal)
+    """What was stopped (`FRD-503` FR-8), to three audiences.
+
+    Whoever may stop traffic, or reads every security finding, sees every stop — a finding already
+    says what was done. A member of a use case asks with ``use_case`` and sees whether that use
+    case, or they themselves, are stopped: the fact a member most needs when requests start
+    answering 429. Anybody else is refused.
+    """
+    oversight = principal.allows(Permission.INCIDENT_SUSPEND) or principal.allows(
+        Permission.ANOMALY_READ_ALL
+    )
+    stmt = select(AccessSuspension)
+    if not oversight and principal.method != "demo":
+        if not use_case:
+            _require_an_incident_role(principal)
+        scope = visible_scope(principal, Permission.ANOMALY_READ_ALL)
+        if scope is not None and use_case not in scope:
+            return JSONResponse({"suspensions": [], "scope": "own", "in_scope": False})
+        stmt = stmt.where(_concerning(use_case, principal))
+        audience = "own"
+    else:
+        if use_case:
+            stmt = stmt.where(
+                or_(
+                    AccessSuspension.use_case == use_case,
+                    and_(
+                        AccessSuspension.target == RuleTarget.USE_CASE.value,
+                        AccessSuspension.target_value == use_case,
+                    ),
+                )
+            )
+        audience = "all"
+    stmt = stmt.order_by(AccessSuspension.created_at.desc()).limit(LISTED)
     async with sessionmaker_of(request)() as session:
-        stmt = select(AccessSuspension).order_by(AccessSuspension.created_at.desc()).limit(LISTED)
         rows = list((await session.execute(stmt)).scalars().all())
     # Lifted and expired ones included: "who was blocked last Tuesday" is what an incident review
     # asks (`FRD-503` FR-8).
-    return JSONResponse({"suspensions": [as_dict(row) for row in rows]})
+    return JSONResponse(
+        {"suspensions": [as_dict(row) for row in rows], "scope": audience, "in_scope": True}
+    )
 
 
 @router.post("/v1beta/suspensions", status_code=201)

@@ -19,13 +19,17 @@
   </div>
 
   @if (!editing()) {
-    <p style="margin: 0; white-space: pre-wrap" data-testid="about-description">
-      {{ description() || 'No description yet.' }}
-    </p>
+    <!-- Written in Markdown and read as text: `**on**` is emphasis, not two asterisks. -->
+    @if (description()) {
+      <app-markdown [source]="description()" data-testid="about-description" />
+    } @else {
+      <p class="muted" style="margin: 0" data-testid="about-description">No description yet.</p>
+    }
     @if (processingNotes()) {
-      <p class="muted" style="margin: 0; white-space: pre-wrap" data-testid="about-processing">
-        <strong>Processing:</strong> {{ processingNotes() }}
-      </p>
+      <div class="muted" data-testid="about-processing">
+        <strong>Processing</strong>
+        <app-markdown [source]="processingNotes()" />
+      </div>
     }
   } @else {
     <div class="field">
@@ -53,8 +57,10 @@
         data-testid="uc-processing"
       ></textarea>
       <span class="field__hint">
-        Carried to the gateway with the rest of the use case, and shown on the overview. Nothing
-        here changes what a request may do — these two say what somebody decided and why.
+        Both fields read Markdown: <code>**bold**</code>, <code>*italic*</code>,
+        <code>`code`</code>, lists starting with <code>-</code>, and links. Carried to the gateway
+        with the rest of the use case, and shown on the overview. Nothing here changes what a
+        request may do — these two say what somebody decided and why.
       </span>
     </div>
 
