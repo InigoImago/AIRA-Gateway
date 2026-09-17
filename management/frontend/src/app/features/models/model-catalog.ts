@@ -2,7 +2,7 @@ import { Component, OnInit, computed, inject, signal, viewChild } from '@angular
 import { FormsModule } from '@angular/forms';
 import { errorMessage } from '../../core/api/error-message';
 import { CatalogModel, Me, ModelCheck, OfferedModel, ServedModel } from '../../core/api/models';
-import { MeService } from '../../core/api/me.service';
+import { MeService, perMillion } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { can } from '../../core/auth/roles';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -38,6 +38,9 @@ export class ModelCatalog implements OnInit {
 
   /** The unit this installation's money figures are in, from the one place that decides it. */
   protected readonly currency = this.meService.currency;
+  protected readonly perMillion = computed(() => perMillion(this.currency()));
+  /** `, in EUR` — joined to the sentence in code, because a template block puts a space before the comma. */
+  protected readonly pricedIn = computed(() => (this.currency() ? `, in ${this.currency()}` : ''));
   protected readonly models = signal<CatalogModel[]>([]);
   protected readonly loading = signal(true);
   protected readonly me = signal<Me | null>(null);

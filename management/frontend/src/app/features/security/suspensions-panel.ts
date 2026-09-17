@@ -39,6 +39,8 @@ export class SuspensionsPanel {
   readonly past = input<Suspension[]>([]);
   /** Whether this caller may stop and restore traffic (`incident.suspend`), not only see it. */
   readonly canStop = input(false);
+  /** The gateway would not list them to this caller (a `403`): say so instead of "nothing". */
+  readonly hidden = input(false);
   /** Slugs for the scope picker — what this caller can see, which is what they can name. */
   readonly useCases = input<string[]>([]);
   /** Raised after a stop or a restore, so the page reloads the suspensions it owns. */

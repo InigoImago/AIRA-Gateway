@@ -1,8 +1,11 @@
-import { Observable } from 'rxjs';
+import { EMPTY, Observable, expand, reduce } from 'rxjs';
 import { API } from '../prefixes';
 import { Page } from '../types/common';
 import { UseCase } from '../types/use-cases';
 import { ApiClientClass, seg } from './base';
+
+/** The largest page the server serves (`MAX_PAGE_SIZE`), so `list` asks as few times as it can. */
+const LIST_PAGE_SIZE = 200;
 
 /** Use cases themselves: list, read, create, change, delete. */
 export function withUseCases<T extends ApiClientClass>(Base: T) {
@@ -19,8 +22,20 @@ export function withUseCases<T extends ApiClientClass>(Base: T) {
       return this.http.get<Page<UseCase>>(`${API}/v1/use-cases/`, { params });
     }
 
+    /**
+     * Every use case the caller may see, for a picker. The endpoint is paged (`FRD-208`), so this
+     * follows the pages rather than reading the first body as a list — which is what it did, and
+     * the security console's rule picker threw on the page object and offered only "everywhere".
+     */
     list(): Observable<UseCase[]> {
-      return this.http.get<UseCase[]>(this.base);
+      const page = (number: number) =>
+        this.http.get<Page<UseCase>>(this.base, {
+          params: { page: number, page_size: LIST_PAGE_SIZE },
+        });
+      return page(1).pipe(
+        expand((current) => (current.page < current.pages ? page(current.page + 1) : EMPTY)),
+        reduce((all, current) => [...all, ...current.results], [] as UseCase[]),
+      );
     }
 
     get(slug: string): Observable<UseCase> {

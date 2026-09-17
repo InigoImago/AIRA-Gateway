@@ -215,7 +215,7 @@
         @if (budget.limit_cost) {
           <div style="margin-top: 0.6rem">
             <div class="spread" style="font-size: 0.82rem">
-              <span class="muted">Spend ($)</span>
+              <span class="muted">Spend{{ costUnit() }}</span>
               <span>
                 {{ measured(budget) ? usedFor(budget).used_cost : '—' }} /
                 {{ budget.limit_cost }}

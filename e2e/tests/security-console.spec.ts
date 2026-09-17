@@ -86,8 +86,11 @@ test.describe('IT Security console', () => {
     await page.click('[role="tab"]:has-text("Suspensions")');
 
     await expect(page.locator('[data-testid="stop-toggle"]')).toHaveCount(0);
-    // Withheld, and it says who does it — an unexplained absence reads as a broken console.
-    await expect(page.locator('[data-testid="stop-readonly"]')).toContainText('IT Security');
+    // Withheld, and it says who does it — an unexplained absence reads as a broken console. The
+    // gateway does not list stops to this role either, so the panel says who sees them rather than
+    // claiming nothing is stopped.
+    await expect(page.locator('[data-testid="suspensions-hidden"]')).toContainText('IT Security');
+    await expect(page.getByText('Nothing is stopped')).toHaveCount(0);
   });
 
   test('stopping and restoring a caller is a decision the console records', async ({ page }) => {

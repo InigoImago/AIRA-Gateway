@@ -1,4 +1,5 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, inject, input } from '@angular/core';
+import { MeService, unitSuffix } from '../../core/api/me.service';
 import { Budget, BudgetUsage, PersonRow } from '../../core/api/models';
 import { InfoHint } from '../../core/ui/info-hint';
 
@@ -105,7 +106,7 @@ function half(person: PersonRow, method: string): string | null {
                 <th scope="col">{{ mine() ? 'You' : 'Person' }}</th>
                 <th scope="col">Requests</th>
                 <th scope="col">Tokens</th>
-                <th scope="col">Spend ($)</th>
+                <th scope="col">Spend{{ unit() }}</th>
                 @if (hasAllowance()) {
                   <th scope="col">
                     Left of allowance
@@ -197,6 +198,8 @@ function half(person: PersonRow, method: string): string | null {
 export class PeoplePanel {
   /** Consumption over the month, and over today — the budget's period decides which is used. */
   readonly month = input<PersonRow[]>([]);
+  private readonly currency = inject(MeService).currency;
+  protected readonly unit = computed(() => unitSuffix(this.currency()));
   readonly today = input<PersonRow[]>([]);
   readonly budgets = input<Budget[]>([]);
   readonly unavailable = input(false);

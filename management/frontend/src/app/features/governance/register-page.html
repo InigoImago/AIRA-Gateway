@@ -1,7 +1,7 @@
 <div class="stack">
   <div class="spread">
     <div>
-      <h2 class="card__title" style="margin: 0">Register of processing activities</h2>
+      <h2 class="page-title">Register of processing activities</h2>
       <p class="muted" style="margin: 0.25rem 0 0">
         One row per use case — what it is for, whether prompts are kept, and whether anything
         disagrees. Open a row for the rest: how the processing happens, which models it may call and
@@ -70,15 +70,9 @@
           data-testid="register-search"
         />
       </div>
-      <div class="field">
-        <label for="register-findings">
-          Only rows with a finding
-          <app-info-hint label="Only rows with a finding" [wide]="true">
-            A finding is a disagreement between what was decided and what is: traffic in a region no
-            released model is catalogued for, or a released model the installation will not serve.
-            Off by default — a register is a register first.
-          </app-info-hint>
-        </label>
+      <!-- A checkbox beside its words, as every other filter does: under a field label it sat
+           centred beneath the text, detached from what it switches. -->
+      <label class="checkline" for="register-findings">
         <input
           id="register-findings"
           type="checkbox"
@@ -87,7 +81,15 @@
           (ngModelChange)="toggleFindings($event)"
           data-testid="register-findings-only"
         />
-      </div>
+        <span>
+          Only rows with a finding
+          <app-info-hint label="Only rows with a finding" [wide]="true">
+            A finding is a disagreement between what was decided and what is: traffic in a region no
+            released model is catalogued for, or a released model the installation will not serve.
+            Off by default — a register is a register first.
+          </app-info-hint>
+        </span>
+      </label>
       <button
         type="button"
         class="btn"
@@ -113,8 +115,9 @@
       </p>
       @if (compiled.last_erasure; as erasure) {
         <p class="muted" style="margin: 0.4rem 0 0" data-testid="register-erasure">
-          Retention last ran {{ erasure.ran_at }} — {{ erasure.payloads_cleared }} payload(s)
-          cleared, {{ erasure.rows_deleted }} row(s) deleted.
+          Retention last ran {{ erasure.ran_at | date: 'yyyy-MM-dd HH:mm:ss' }} —
+          {{ erasure.payloads_cleared }} payload(s) cleared, {{ erasure.rows_deleted }} row(s)
+          deleted.
         </p>
       } @else {
         <p

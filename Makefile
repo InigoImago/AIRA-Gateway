@@ -104,7 +104,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         purge-e2e-use-cases config-verify config-check up-apps otel-status otel-arrivals \
         otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
-        run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
+        run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants ui-audit
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -478,6 +478,13 @@ purge-e2e-use-cases: ## Purge the use cases the browser suite retired (demo inst
 	fi
 
 e2e: test-e2e
+
+ui-audit: ## Walk every page, tab and window per role: screenshots + checks → e2e/ui-audit-report/
+	@# Asserts nothing and never fails on a finding: it reports (`e2e/audit/`). Clicks only buttons
+	@# that open something, never one that acts or reads stored content. `AIRA_AUDIT_ROLES=a,b`
+	@# walks a subset.
+	cd e2e && npm install --silent && npx playwright test -c ui-audit.config.ts
+	@echo "report: e2e/ui-audit-report/report.md"
 
 lint: lint-py lint-frontend ## Run all linters/type-checks (check mode)
 

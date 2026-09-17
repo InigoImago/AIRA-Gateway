@@ -1,4 +1,5 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, inject, input } from '@angular/core';
+import { MeService, unitSuffix } from '../../core/api/me.service';
 import { RouterLink } from '@angular/router';
 import { ReportRow, UseCaseConsumption } from '../../core/api/models';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -46,6 +47,7 @@ const FIGURE_HELP = {
 })
 export class ConsumptionPanel {
   readonly slug = input.required<string>();
+  private readonly currency = inject(MeService).currency;
   readonly consumption = input.required<UseCaseConsumption>();
 
   protected readonly monthStats = computed(() => this.statsFor(this.consumption().month));
@@ -63,7 +65,12 @@ export class ConsumptionPanel {
     return [
       // Spend first: a token count cannot stand in for cost, given the price spread between
       // models (`FRD-403`).
-      { key: 'cost', label: 'Spend ($)', value: row ? row.cost : '—', help: FIGURE_HELP.cost },
+      {
+        key: 'cost',
+        label: `Spend${unitSuffix(this.currency())}`,
+        value: row ? row.cost : '—',
+        help: FIGURE_HELP.cost,
+      },
       {
         key: 'requests',
         label: 'Requests',

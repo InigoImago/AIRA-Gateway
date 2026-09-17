@@ -225,6 +225,8 @@ function setup(
     allowedRegions?: string[];
     /** What one provider answers when asked what it offers. */
     offerings?: Observable<OfferedModel[]>;
+    /** `AIRA_CURRENCY` as `/me` states it. */
+    currency?: string;
   } = {},
 ) {
   const checked: string[] = [];
@@ -251,7 +253,10 @@ function setup(
   TestBed.configureTestingModule({
     imports: [ModelCatalog],
     providers: [
-      { provide: MeService, useValue: { currency: signal(''), get: () => of(me) } },
+      {
+        provide: MeService,
+        useValue: { currency: signal(options.currency ?? ''), get: () => of(me) },
+      },
       { provide: ConfirmService, useValue: { ask: () => options.confirm ?? true } },
       {
         provide: UseCaseService,
@@ -385,6 +390,16 @@ function setup(
 }
 
 describe('ModelCatalog', () => {
+  it('heads prices in the installation’s currency, never in a symbol of its own', () => {
+    const harness = setup({ currency: 'EUR' });
+    const text = (harness.fixture.nativeElement as HTMLElement).textContent ?? '';
+
+    expect(text).toContain('Input EUR / 1M');
+    expect(text).toContain('Output EUR / 1M');
+    expect(text).toContain('per 1,000,000 tokens, in EUR. Input');
+    expect(text).not.toContain('$');
+  });
+
   it('lists the catalog with its prices', () => {
     const { text } = setup();
     expect(text()).toContain('gemini-2.0-flash');

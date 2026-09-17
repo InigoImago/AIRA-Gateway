@@ -15170,3 +15170,85 @@ for review, is readable in several languages, and changes whenever the processin
 - **Not legal advice.** The texts follow what the code does. A deployment has them reviewed by its
   DPO and, in Germany, agreed with the works council.
 
+
+## 2026-09-16 — a UI audit, and what it and a design review found
+
+The owner asked for a way to see the console, go through every element for defects, and review it
+with the `frontend-design` skill.
+
+- **The audit** (`make ui-audit`, `e2e/audit/`). A Playwright walk, one test per demo role. It
+  starts at the navigation, clicks every tab, follows one link of each kind and opens every window a
+  button offers. It photographs each state at 1440 px and 390 px and records:
+  - console errors and failed requests;
+  - overflow, overlapping or covered controls, clipped labels and squeezed columns;
+  - axe-core WCAG 2.2 AA, targets under 24 px and invisible focus;
+  - rendered `undefined`;
+  - routes nobody reaches.
+
+  It clicks only buttons that open something. The first version also opened a request row, which
+  reads stored content and records a content read. It hung once, on an action with no timeout. It
+  now has a budget per state, bounded actions, a report after every role, and `request|content|…`
+  on its list of buttons it never presses. A full run takes about 128 states and 25 minutes.
+- **Defects it found in code:**
+  - the security console's rule picker threw `o.map is not a function`. `list()` read the paged
+    `/use-cases/` body as an array, and its stub returned an array too;
+  - table cells used `overflow-wrap: anywhere`, which drops a column's minimum width to one
+    character. On a phone every table stacked its words letter by letter instead of scrolling;
+  - a `flex-basis` meant as a width became a 352 px height once inline forms stack on a phone;
+  - contrast: the muted grey, red and green measured 4.3–4.4, 4.4 and 3.6 on their tints;
+  - "i" hints, row toggles and chip removers were under 24 px;
+  - IT Steuerung was told "You can see everything that is stopped … Nothing is stopped" about a
+    list the gateway refuses it.
+- **Found by reviewing the screenshots:**
+  - `$` in eight labels on an EUR installation. Guarded now by
+    `test_the_console_writes_no_currency_symbol.py`;
+  - "tokens , in EUR ." (spaces before punctuation);
+  - "recorde / d" (a badge broken mid-word);
+  - a raw ISO timestamp with microseconds;
+  - three date formats across screens (`dd.MM.yyyy`, US short, medium). All screens now use
+    `yyyy-MM-dd HH:mm`;
+  - page headings in two sizes, `Use Cases` in title case;
+  - six figures as five and an orphan;
+  - a checkbox detached from its label;
+  - doubled gaps between callouts;
+  - window selects cut at 22rem;
+  - a three-line header on a phone;
+  - Django's "No UseCase matches the given query." shown to a reader.
+- **A correction to a correction.** The 404 page first hid the tabs. The e2e suite caught it:
+  `ucadmin` reaches `demo-uc` only through a Keycloak group, Management answers 404, and the tabs
+  still hold the gateway's data. The page now says Management has no such use case *for you*, and
+  keeps the tabs.
+- **The squeezed-column check was wrong four times before it was right.** It was measured, in
+  turn, from:
+  - the cell's height, which follows its row: 7980 hits on the fixed console;
+  - all of the range's boxes, where child elements add boxes of their own;
+  - characters per line, where "Whole / use / case" counts as squeezed;
+  - words split at spaces, where `pen- / global` breaks at its hyphen, and `textContent` glues a
+    `<code>` to the line beneath it.
+
+  The rule that holds is **more lines than words**, with hyphens, underscores and slashes counted
+  as break points and the text read through `innerText`. With it, the fixed console gives 0 on
+  five pages. With `overflow-wrap: anywhere` injected, the same pages give 60, 201, 26, 3 and 72.
+  That run also found what the first fix had missed: `code`'s own `anywhere` inside table cells,
+  and row headers styled as column labels ("ENTWICKLUNG").
+- **A fix that created a finding.** A table that no longer squeezes scrolls, and the role change
+  log then held a scrolling region with nothing in it to focus (axe
+  `scrollable-region-focusable`). It is now focusable, with a label.
+- **Measured:**
+  - frontend: 1073 passed;
+  - `tools/tests`: 508 passed, plus the currency guard;
+  - e2e against the rebuilt stack: 169 passed, 1 skipped, then 59 of the layout- and
+    console-facing specs again after the last style change;
+  - UI audit, 128 states across 5 roles, first run to last:
+    - `a11y:color-contrast` 168 → 0;
+    - `small-target` 300 → 0;
+    - squeezed columns → 0;
+    - no overflow, overlap, covered control, clipped label, junk text or unreachable route.
+
+    Two findings remain, and they are one fact: the 403 on `/suspensions` for roles without
+    `incident.suspend` (below).
+- **Not changed, for the owner:**
+  - a member cannot see that their own use case is stopped, although the Warnings tab is written
+    to show that first. The gateway lists stops only to `incident.suspend`;
+  - use-case descriptions containing Markdown render it raw;
+  - a status that is also a toggle ("Active — disable").

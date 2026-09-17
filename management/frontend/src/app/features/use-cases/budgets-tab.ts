@@ -158,7 +158,7 @@ export class BudgetsTab {
     const used = this.usedFor(budget);
     const out: { label: string; value: string }[] = [];
     if (!budget.limit_cost && used.used_cost != null) {
-      out.push({ label: 'spent ($)', value: used.used_cost });
+      out.push({ label: `spent${this.costUnit()}`, value: used.used_cost });
     }
     if (budget.limit_tokens == null && used.used_tokens != null) {
       out.push({ label: 'tokens', value: `${used.used_tokens}` });

@@ -382,6 +382,11 @@ describe('RegisterPage', () => {
   it('says when the sweep last ran, and warns when it never has', () => {
     const ran = setup();
     expect(ran.testid('register-erasure')?.textContent).toContain('1412');
+    // A time a person reads, not the wire's ISO string with its offset.
+    expect(ran.testid('register-erasure')?.textContent).toMatch(
+      /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/,
+    );
+    expect(ran.testid('register-erasure')?.textContent).not.toContain('+00:00');
 
     const never = setup(of(register({ last_erasure: null })));
     expect(never.testid('register-erasure')?.textContent).toContain('no recorded pass');

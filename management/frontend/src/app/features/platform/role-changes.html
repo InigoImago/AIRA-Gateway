@@ -12,7 +12,9 @@
   } @else if (!view.rows().length) {
     <p class="empty" data-testid="no-role-changes">No role has been created or changed yet.</p>
   } @else {
-    <div class="table-wrap">
+    <!-- Focusable: on a narrow screen the log scrolls sideways, and a region that scrolls must be
+         reachable by keyboard (WCAG 2.1.1) — its rows hold no link or button to land on. -->
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Role change log">
       <table class="table">
         <thead>
           <tr>
@@ -27,7 +29,7 @@
           @for (change of view.rows(); track change.id) {
             @let diff = summary(change);
             <tr [attr.data-testid]="'role-change-' + change.id">
-              <td class="nowrap">{{ change.at | date: 'dd.MM.yyyy HH:mm' }}</td>
+              <td class="nowrap">{{ change.at | date: 'yyyy-MM-dd HH:mm' }}</td>
               <td data-testid="change-actor">{{ change.actor }}</td>
               <td data-testid="change-role">{{ roleName(change) }}</td>
               <td data-testid="change-action">{{ actions[change.action] }}</td>

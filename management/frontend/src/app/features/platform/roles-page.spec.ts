@@ -731,7 +731,7 @@ describe('RolesPage (`FRD-614` FR-9)', () => {
       row(id).querySelector(`[data-testid="${part}"]`)?.textContent?.trim();
 
     expect(q('role-changes')).not.toBeNull();
-    expect(row(3).textContent).toContain('13.09.2026');
+    expect(row(3).textContent).toContain('2026-09-13');
     expect(cell(3, 'change-actor')).toBe('admin');
     // The role's name today, from `/me`.
     expect(cell(3, 'change-role')).toBe('Controlling');

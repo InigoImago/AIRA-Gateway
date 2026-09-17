@@ -20,7 +20,7 @@
       <div class="privacy-gate__meta">
         <app-privacy-language-picker [notice]="current" [busy]="busy()" (chosen)="load($event)" />
         <span class="muted" data-testid="privacy-edition"
-          >{{ current.labels['edition'] }}: {{ current.edition | date: 'mediumDate' }}</span
+          >{{ current.labels['edition'] }}: {{ current.edition | date: 'yyyy-MM-dd' }}</span
         >
       </div>
       <app-privacy-notice-body [notice]="current" />

@@ -26,6 +26,7 @@ import {
   ThinkingDeclaration,
   ThinkingModeName,
 } from '../../core/api/models';
+import { MeService, perMillion } from '../../core/api/me.service';
 import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -57,6 +58,8 @@ type Verdict = { ok: boolean; detail: string };
 export class ModelEditor {
   private readonly service = inject(UseCaseService);
   private readonly gateway = inject(GatewayProviders);
+  private readonly currency = inject(MeService).currency;
+  protected readonly perMillion = computed(() => perMillion(this.currency()));
   protected readonly feedback = inject(PageFeedback);
 
   /** Raised after a successful save, so the page reloads the catalog. */

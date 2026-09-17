@@ -1,6 +1,6 @@
 <div class="stack">
   <header>
-    <h2 class="card__title" style="margin: 0">Pipeline tests</h2>
+    <h2 class="page-title">Pipeline tests</h2>
     <p class="muted" style="margin: 0.25rem 0 0">
       One catalogue of questions, put to a use case's own pipeline, and judged by a person. Every
       use case is asked all of them, which is what makes two of them comparable. Testing a
@@ -107,7 +107,7 @@
                     <td>
                       <code>{{ row.model }}</code>
                     </td>
-                    <td class="nowrap">{{ row.started_at | date: 'dd.MM.yyyy HH:mm' }}</td>
+                    <td class="nowrap">{{ row.started_at | date: 'yyyy-MM-dd HH:mm' }}</td>
                     <td class="nowrap">
                       {{ row.total }} of {{ row.catalogue }}
                       @if (row.total < row.catalogue) {
@@ -278,7 +278,7 @@
                 @for (run of runs(); track run.id) {
                   <tr>
                     <td class="nowrap">
-                      {{ run.started_at | date: 'dd.MM.yyyy HH:mm' }}
+                      {{ run.started_at | date: 'yyyy-MM-dd HH:mm' }}
                       @if (isLatest(run)) {
                         <span class="badge badge--success">current</span>
                       }

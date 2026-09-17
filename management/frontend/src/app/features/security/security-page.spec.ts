@@ -398,6 +398,23 @@ describe('SecurityPage — suspensions and the kill switch', () => {
 
     expect(component.feedback.error()).toBeNull();
   });
+
+  it('says who may see stopped traffic instead of claiming nothing is stopped', () => {
+    // IT Steuerung was told "You can see everything that is stopped" and "Nothing is stopped"
+    // over a list the gateway had refused to give it.
+    const harness = setup({
+      permissions: ['anomaly.read_all'],
+      suspensions: throwError(() => ({ status: 403 })),
+    });
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
+    harness.fixture.detectChanges();
+    const element = harness.fixture.nativeElement as HTMLElement;
+
+    expect(element.querySelector('[data-testid="suspensions-hidden"]')).not.toBeNull();
+    expect(harness.text()).not.toContain('Nothing is stopped');
+    expect(harness.text()).not.toContain('You can see everything that is stopped');
+    expect(element.querySelector('.tab.is-active .tab__count')).toBeNull();
+  });
 });
 
 describe('SecurityPage — rules', () => {

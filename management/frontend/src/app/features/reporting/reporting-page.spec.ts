@@ -1,3 +1,4 @@
+import { MeService } from '../../core/api/me.service';
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
 import { Budget, Report, ReportRow } from '../../core/api/models';
@@ -87,6 +88,15 @@ function setup(response: Observable<Report> = of(report()), csv?: Observable<Blo
 }
 
 describe('ReportingPage', () => {
+  it('labels spend in the installation’s currency', () => {
+    const harness = setup();
+    TestBed.inject(MeService).currency.set('CHF');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('Spend (CHF)');
+    expect(harness.text()).not.toContain('$');
+  });
+
   it('loads the current month on arrival, without the user asking for a period', () => {
     const { calls, text } = setup();
 

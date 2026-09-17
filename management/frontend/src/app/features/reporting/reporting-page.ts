@@ -1,5 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { MeService, unitSuffix } from '../../core/api/me.service';
 import { Report } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -68,6 +69,7 @@ interface Stat {
 export class ReportingPage implements OnInit {
   private readonly service = inject(UseCaseService);
   protected readonly feedback = inject(PageFeedback);
+  private readonly currency = inject(MeService).currency;
 
   protected readonly report = signal<Report | null>(null);
   protected readonly loading = signal(true);
@@ -135,7 +137,7 @@ export class ReportingPage implements OnInit {
     return [
       {
         key: 'spend',
-        label: 'Spend ($)',
+        label: `Spend${unitSuffix(this.currency())}`,
         value: totals.cost,
         testid: 'total-cost',
         help: FIGURE_HELP.spend,

@@ -171,3 +171,17 @@
     padding: 0 1rem 1rem;
   }
 }
+
+/* A phone gets the header's facts, not its decoration: the subtitle and the divider cost two of
+ * the three lines the header took, and the divider stood alone beside Logout once the row wrapped.
+ * Left-aligned, so a wrapped row starts where the reader's eye does. */
+@media (max-width: 640px) {
+  .aira-subtitle,
+  .aira-user__divider {
+    display: none;
+  }
+  .aira-user {
+    justify-content: flex-start;
+    gap: 0.5rem;
+  }
+}

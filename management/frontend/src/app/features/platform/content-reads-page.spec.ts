@@ -68,7 +68,7 @@ describe('ContentReadsPage (`FRD-622` FR-6)', () => {
     const { html } = setup([of({ reads: [READ], next_cursor: null, count: 1 })]);
     const row = html().querySelector('[data-testid="read-read-1"]')!;
 
-    expect(row.textContent).toContain('13.09.2026');
+    expect(row.textContent).toContain('2026-09-13');
     expect(row.querySelector('[data-testid="read-who"]')?.textContent).toContain('admin');
     expect(row.querySelector('[data-testid="read-request"]')?.textContent).toContain('req-1');
     expect(row.querySelector('[data-testid="read-ground"]')?.textContent).toContain(

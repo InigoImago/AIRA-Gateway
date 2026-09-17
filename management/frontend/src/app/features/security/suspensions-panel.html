@@ -32,7 +32,7 @@
       }
     </div>
 
-    @if (!canStop()) {
+    @if (!canStop() && !hidden()) {
       <p class="muted" style="margin: 0.25rem 0 0" data-testid="stop-readonly">
         You can see everything that is stopped and why. Stopping and restoring traffic is done by IT
         Security or a Global Administrator.
@@ -147,113 +147,125 @@
     }
 
     <!-- One box for both lists; see `searchSuspensions`. -->
-    @if (active().length || past().length) {
-      <div class="table-tools" style="margin-top: 1rem">
-        <label class="search">
-          <span>Find a decision</span>
-          <input
-            type="search"
-            [value]="activeView.query()"
-            (input)="searchSuspensions($any($event.target).value)"
-            placeholder="a caller, a key prefix, a use case"
-            data-testid="suspension-search"
-            autocomplete="off"
-          />
-        </label>
-      </div>
-    }
+    @if (hidden()) {
+      <!-- The gateway lists stops only to a role that may make one. Without that, "nothing is
+           stopped" would be a claim about something this reader was never shown. -->
+      <p class="empty" data-testid="suspensions-hidden">
+        What is stopped is shown to the roles that may stop traffic — IT Security and the Global
+        Administrator unless this installation says otherwise. A rule that throttles or blocks still
+        appears under Findings, with what it did.
+      </p>
+    } @else {
+      @if (active().length || past().length) {
+        <div class="table-tools" style="margin-top: 1rem">
+          <label class="search">
+            <span>Find a decision</span>
+            <input
+              type="search"
+              [value]="activeView.query()"
+              (input)="searchSuspensions($any($event.target).value)"
+              placeholder="a caller, a key prefix, a use case"
+              data-testid="suspension-search"
+              autocomplete="off"
+            />
+          </label>
+        </div>
+      }
 
-    <div class="table-wrap" style="margin-top: 1rem">
-      <table class="table" data-testid="active-suspensions">
-        <thead>
-          <tr>
-            <th scope="col">Target</th>
-            <th scope="col">Action</th>
-            <th scope="col">Until</th>
-            <th scope="col">By</th>
-            <th scope="col">Reason</th>
-            <th scope="col"><span class="sr-only">Actions</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (row of activeView.rows(); track row.id) {
+      <div class="table-wrap" style="margin-top: 1rem">
+        <table class="table" data-testid="active-suspensions">
+          <thead>
             <tr>
-              <td>
-                <code>{{ row.target_value }}</code>
-                <div class="muted" style="font-size: 0.78rem">
-                  {{ row.target }}{{ row.use_case ? ' · ' + row.use_case : ' · everywhere' }}
-                </div>
-              </td>
-              <td>
-                @if (row.action === 'throttle') {
-                  <span class="badge badge--warning">{{ row.throttle_rpm }}/min</span>
-                } @else {
-                  <span class="badge badge--danger">blocked</span>
-                }
-              </td>
-              <td class="nowrap">
-                {{ row.expires_at ? (row.expires_at | date: 'short') : 'until lifted' }}
-              </td>
-              <td>
-                <code>{{ row.author }}</code>
-              </td>
-              <td>{{ row.reason || '—' }}</td>
-              <td class="table__actions">
-                <div class="actions">
-                  @if (canStop()) {
-                    <button
-                      type="button"
-                      class="btn btn--sm"
-                      [disabled]="feedback.busy()"
-                      [attr.aria-label]="'Restore access for ' + row.target_value"
-                      (click)="lift(row)"
-                    >
-                      Restore
-                    </button>
+              <th scope="col">Target</th>
+              <th scope="col">Action</th>
+              <th scope="col">Until</th>
+              <th scope="col">By</th>
+              <th scope="col">Reason</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of activeView.rows(); track row.id) {
+              <tr>
+                <td>
+                  <code>{{ row.target_value }}</code>
+                  <div class="muted" style="font-size: 0.78rem">
+                    {{ row.target }}{{ row.use_case ? ' · ' + row.use_case : ' · everywhere' }}
+                  </div>
+                </td>
+                <td>
+                  @if (row.action === 'throttle') {
+                    <span class="badge badge--warning">{{ row.throttle_rpm }}/min</span>
+                  } @else {
+                    <span class="badge badge--danger">blocked</span>
                   }
-                </div>
-              </td>
-            </tr>
-          } @empty {
-            <tr>
-              <td class="table__empty" colspan="6">Nothing is stopped.</td>
-            </tr>
-          }
-        </tbody>
-      </table>
-    </div>
-    <div style="padding: 0 1rem 0.9rem">
-      <app-table-pager [view]="activeView" noun="suspensions" testid="active-pager" />
-    </div>
+                </td>
+                <td class="nowrap">
+                  {{
+                    row.expires_at ? (row.expires_at | date: 'yyyy-MM-dd HH:mm') : 'until lifted'
+                  }}
+                </td>
+                <td>
+                  <code>{{ row.author }}</code>
+                </td>
+                <td>{{ row.reason || '—' }}</td>
+                <td class="table__actions">
+                  <div class="actions">
+                    @if (canStop()) {
+                      <button
+                        type="button"
+                        class="btn btn--sm"
+                        [disabled]="feedback.busy()"
+                        [attr.aria-label]="'Restore access for ' + row.target_value"
+                        (click)="lift(row)"
+                      >
+                        Restore
+                      </button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td class="table__empty" colspan="6">Nothing is stopped.</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <div style="padding: 0 1rem 0.9rem">
+        <app-table-pager [view]="activeView" noun="suspensions" testid="active-pager" />
+      </div>
 
-    @if (past().length) {
-      <details style="margin-top: 1rem">
-        <summary class="muted" data-testid="past-summary">
-          Earlier decisions ({{ past().length }}) — already lifted or expired. Kept as a record of
-          who stopped what, when, and why.
-        </summary>
-        <div class="table-wrap" style="margin-top: 0.5rem">
-          <table class="table">
-            <tbody>
-              @for (row of pastView.rows(); track row.id) {
-                <tr>
-                  <td>
-                    <code>{{ row.target_value }}</code>
-                  </td>
-                  <td>{{ row.author }}</td>
-                  <td>{{ row.reason || '—' }}</td>
-                  <td class="nowrap">
-                    {{ row.lifted_at ? 'lifted by ' + row.lifted_by : 'expired' }}
-                  </td>
-                </tr>
-              }
-            </tbody>
-          </table>
-        </div>
-        <div style="padding: 0.5rem 0 0">
-          <app-table-pager [view]="pastView" noun="decisions" testid="past-pager" />
-        </div>
-      </details>
+      @if (past().length) {
+        <details style="margin-top: 1rem">
+          <summary class="muted" data-testid="past-summary">
+            Earlier decisions ({{ past().length }}) — already lifted or expired. Kept as a record of
+            who stopped what, when, and why.
+          </summary>
+          <div class="table-wrap" style="margin-top: 0.5rem">
+            <table class="table">
+              <tbody>
+                @for (row of pastView.rows(); track row.id) {
+                  <tr>
+                    <td>
+                      <code>{{ row.target_value }}</code>
+                    </td>
+                    <td>{{ row.author }}</td>
+                    <td>{{ row.reason || '—' }}</td>
+                    <td class="nowrap">
+                      {{ row.lifted_at ? 'lifted by ' + row.lifted_by : 'expired' }}
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <div style="padding: 0.5rem 0 0">
+            <app-table-pager [view]="pastView" noun="decisions" testid="past-pager" />
+          </div>
+        </details>
+      }
     }
   </div>
 }

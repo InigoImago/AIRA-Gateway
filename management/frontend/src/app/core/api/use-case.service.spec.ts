@@ -17,11 +17,21 @@ describe('UseCaseService', () => {
 
   afterEach(() => http.verify());
 
-  it('lists use cases', () => {
-    service.list().subscribe((list) => expect(list.length).toBe(1));
+  it('lists every use case across the pages the server answers in', () => {
+    /** The endpoint answers a page object, not a list: a stub flushing an array hid that the
+     *  security console's picker threw on the real response. */
+    let slugs: string[] = [];
+    service.list().subscribe((list) => (slugs = list.map((useCase) => useCase.slug)));
+    const useCase = (slug: string) => ({ slug, name: slug, description: '', processing_notes: '' });
+
     http
-      .expectOne('/api/v1/use-cases/')
-      .flush([{ slug: 'a', name: 'A', description: '', processing_notes: '' }]);
+      .expectOne('/api/v1/use-cases/?page=1&page_size=200')
+      .flush({ count: 3, page: 1, page_size: 2, pages: 2, results: [useCase('a'), useCase('b')] });
+    http
+      .expectOne('/api/v1/use-cases/?page=2&page_size=200')
+      .flush({ count: 3, page: 2, page_size: 2, pages: 2, results: [useCase('c')] });
+
+    expect(slugs).toEqual(['a', 'b', 'c']);
   });
 
   it('creates a use case with POST', () => {

@@ -7,7 +7,7 @@
 
   @if (notice(); as current) {
     <header [attr.lang]="current.language">
-      <h2 class="card__title" style="margin: 0">{{ current.title }}</h2>
+      <h2 class="page-title">{{ current.title }}</h2>
       <div class="privacy-gate__meta">
         <app-privacy-language-picker
           [notice]="current"
@@ -15,12 +15,12 @@
           (chosen)="load($event)"
         />
         <span class="muted" data-testid="privacy-edition"
-          >{{ current.labels['edition'] }}: {{ current.edition | date: 'mediumDate' }}</span
+          >{{ current.labels['edition'] }}: {{ current.edition | date: 'yyyy-MM-dd' }}</span
         >
         @if (current.acknowledged_at) {
           <span class="muted" data-testid="privacy-acknowledged"
             >{{ current.labels['acknowledged'] }}
-            {{ current.acknowledged_at | date: 'medium' }}</span
+            {{ current.acknowledged_at | date: 'yyyy-MM-dd HH:mm:ss' }}</span
           >
         }
       </div>

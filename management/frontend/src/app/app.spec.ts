@@ -118,7 +118,7 @@ describe('App', () => {
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('h1')?.textContent).toContain('AIRA Gateway');
-    expect(el.textContent).toContain('Use Cases');
+    expect(el.textContent).toContain('Use cases');
     expect(el.querySelector('.aira-user')?.textContent).toContain('demo');
   });
 

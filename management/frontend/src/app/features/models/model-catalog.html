@@ -1,13 +1,9 @@
 <div class="stack">
-  <h2 style="margin: 0">Models &amp; prices</h2>
+  <h2 class="page-title">Models &amp; prices</h2>
   <p class="muted" style="margin: 0">
-    What each model costs per 1,000,000 tokens
-    @if (currency(); as unit) {
-      , in <strong>{{ unit }}</strong>
-    }
-    . Input and output are priced separately because every provider bills the two differently. Cost
-    budgets are calculated from these figures; a model without a price still works, but its
-    consumption cannot be costed.
+    What each model costs per 1,000,000 tokens{{ pricedIn() }}. Input and output are priced
+    separately because every provider bills the two differently. Cost budgets are calculated from
+    these figures; a model without a price still works, but its consumption cannot be costed.
     <!-- The unit is `AIRA_CURRENCY`, the setting the CSV export labels these figures with. -->
   </p>
 
@@ -102,8 +98,8 @@
                 <th scope="col">Model</th>
                 <th scope="col">Provider</th>
                 <th scope="col">Capabilities</th>
-                <th scope="col">Input $ / 1M</th>
-                <th scope="col">Output $ / 1M</th>
+                <th scope="col">Input {{ perMillion() }}</th>
+                <th scope="col">Output {{ perMillion() }}</th>
               </tr>
             </thead>
             <tbody>
@@ -168,7 +164,7 @@
                       <!-- Everything on file, not a chosen subset: the catalog is what the gateway
                            enforces. -->
                       <dl class="detail-grid">
-                        @for (field of detailOf(model); track field.label) {
+                        @for (field of detailOf(model, currency()); track field.label) {
                           <div>
                             <dt>{{ field.label }}</dt>
                             <dd [attr.data-testid]="'detail-' + field.key">{{ field.value }}</dd>

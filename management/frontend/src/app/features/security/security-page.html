@@ -1,7 +1,7 @@
 <div class="stack">
   <div class="spread">
     <div>
-      <h2 style="margin: 0">Security</h2>
+      <h2 class="page-title">Security</h2>
       <p class="muted" style="margin: 0.25rem 0 0">
         What the detector has found, what is stopped right now, and the rules that apply everywhere.
       </p>
@@ -60,7 +60,10 @@
       [class.is-active]="tab() === 'suspensions'"
       (click)="tab.set('suspensions')"
     >
-      Suspensions <span class="tab__count">{{ active().length }}</span>
+      Suspensions
+      @if (!suspensionsHidden()) {
+        <span class="tab__count">{{ active().length }}</span>
+      }
     </button>
     <button
       type="button"
@@ -103,7 +106,7 @@
             <tbody>
               @for (event of events(); track event.id) {
                 <tr [class.is-open]="openEvent() === event.id">
-                  <td class="nowrap">{{ event.created_at | date: 'short' }}</td>
+                  <td class="nowrap">{{ event.created_at | date: 'yyyy-MM-dd HH:mm' }}</td>
                   <td>
                     <!-- The row opens rather than widening: six columns is as much as a table can
                          be read at, and "why did this fire" is another six fields. -->
@@ -194,7 +197,7 @@
                         </div>
                         <div>
                           <dt>Detected at</dt>
-                          <dd>{{ event.created_at | date: 'medium' }}</dd>
+                          <dd>{{ event.created_at | date: 'yyyy-MM-dd HH:mm:ss' }}</dd>
                         </div>
                         <div>
                           <dt>Finding id</dt>
@@ -246,6 +249,7 @@
     [active]="active()"
     [past]="past()"
     [canStop]="canStop()"
+    [hidden]="suspensionsHidden()"
     [useCases]="useCases()"
     (changed)="loadSuspensions()"
   />

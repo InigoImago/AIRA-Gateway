@@ -297,6 +297,19 @@ describe('UseCaseDetail', () => {
     expect(text()).toContain('You may not see this use case.');
   });
 
+  it('says Management has no such use case, in words rather than the ORM’s', () => {
+    /** A content-read row or a bookmark can outlive its use case. The server's own words for that
+     *  are Django's ("No UseCase matches the given query."), which name a class, not a situation. */
+    const { html, text } = setup({ get: httpError(404, 'No UseCase matches the given query.') });
+
+    expect(html().querySelector('[data-testid="use-case-missing"]')?.textContent).toContain(
+      'Management has no use case “demo-uc”',
+    );
+    // The tabs stay: a gateway-only member still has requests and warnings to read there.
+    expect(html().querySelector('[role="tablist"]')).not.toBeNull();
+    expect(text()).not.toContain('No UseCase matches');
+  });
+
   it('reports failures of the secondary loads', () => {
     expect(setup({ members: httpError(500) }).component.feedback.error()).toBe(
       'Could not load the members.',

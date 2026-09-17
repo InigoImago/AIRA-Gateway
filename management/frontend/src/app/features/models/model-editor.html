@@ -751,7 +751,7 @@
         }
         @if (editorTab() === 'price') {
           <div class="field">
-            <label for="model-input">Input price $ / 1M</label>
+            <label for="model-input">Input price {{ perMillion() }}</label>
             <input
               id="model-input"
               name="input_price"
@@ -763,7 +763,7 @@
             />
           </div>
           <div class="field">
-            <label for="model-output">Output price $ / 1M</label>
+            <label for="model-output">Output price {{ perMillion() }}</label>
             <input
               id="model-output"
               name="output_price"
@@ -776,7 +776,7 @@
           </div>
           <div class="field">
             <label for="model-cached">
-              Cached input $ / 1M
+              Cached input {{ perMillion() }}
               <app-info-hint label="Cached input price" testid="cached-price" [wide]="true">
                 What this provider charges for input it served from its prompt cache instead of
                 reading again. Usually a fraction of the ordinary input price — Anthropic charges a
@@ -798,7 +798,7 @@
           </div>
           <div class="field">
             <label for="model-cache-write">
-              Cache write $ / 1M
+              Cache write {{ perMillion() }}
               <app-info-hint label="Cache write price" testid="cache-write-price" [wide]="true">
                 What the <em>first</em> request costs — the one that puts the prefix into the cache.
                 It is <strong>more</strong> than ordinary input, not less: Anthropic charges 1.25×

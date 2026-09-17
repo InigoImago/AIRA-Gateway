@@ -1,3 +1,4 @@
+import { perMillion } from '../../core/api/me.service';
 import { CatalogModel, GatewayProvider, ModelCheck } from '../../core/api/models';
 
 /** One labelled fact in a model's detail panel. */
@@ -36,7 +37,7 @@ export function providerLabel(provider: GatewayProvider): string {
  * Provider and Platform they read as configuration, and neither is a field the editor offers
  * (`test_every_model_control_is_reachable.py`).
  */
-export function detailOf(model: CatalogModel): DetailField[] {
+export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
   const dash = (value: unknown): string =>
     value === null || value === undefined || value === '' ? '—' : String(value);
   const json = (value: unknown): string =>
@@ -64,12 +65,12 @@ export function detailOf(model: CatalogModel): DetailField[] {
     { key: 'attachments', label: 'Attachments', value: json(model.attachments) },
     {
       key: 'input_price',
-      label: 'Input $ / 1M',
+      label: `Input ${perMillion(currency)}`,
       value: model.is_priced ? dash(model.input_price_per_million) : 'no price',
     },
     {
       key: 'output_price',
-      label: 'Output $ / 1M',
+      label: `Output ${perMillion(currency)}`,
       value: model.is_priced ? dash(model.output_price_per_million) : 'no price',
     },
     { key: 'numeric_id', label: 'KIRA id', value: dash(model.numeric_id) },

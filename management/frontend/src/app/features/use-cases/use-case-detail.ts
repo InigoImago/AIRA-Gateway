@@ -87,6 +87,8 @@ export class UseCaseDetail implements OnInit {
 
   protected slug = '';
   protected readonly loading = signal(true);
+  /** The server answered 404: no such use case, or none this caller may see. */
+  protected readonly missing = signal(false);
   protected readonly tab = signal<Tab>('overview');
   protected readonly onOverview = computed(() => this.tab() === 'overview');
 
@@ -214,6 +216,7 @@ export class UseCaseDetail implements OnInit {
         this.loading.set(false);
       },
       error: (response: unknown) => {
+        this.missing.set((response as { status?: number } | null)?.status === 404);
         this.feedback.fail(response, 'Could not load this use case.');
         this.loading.set(false);
       },

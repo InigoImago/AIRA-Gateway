@@ -48,3 +48,25 @@ Keycloak imports `deploy/compose/keycloak/realms/*.json` only when the realm doe
 (`IGNORE_EXISTING`). After editing the realm, recreate it — `make destroy && make up`, or delete
 the realm in the admin console and restart the container — otherwise the tests run against the
 old configuration.
+
+## UI audit (`make ui-audit`)
+
+Not a test suite: a walk through the whole console that reports what it finds. For every role it
+starts at the navigation, clicks every tab, follows one link of every kind (one use case stands for
+all of them) and opens every window a button offers. Each state is photographed at 1440 px and at
+390 px and checked for:
+
+- console errors and failed API requests;
+- a page wider than the screen, controls that overlap or are covered, labels cut off, and table
+  columns squeezed into stacks of letters;
+- WCAG 2.2 AA through axe-core (contrast, names, roles), targets under 24 × 24 px on a phone, and
+  keyboard focus that cannot be seen;
+- `undefined`, `NaN`, `[object Object]` and unrendered `{{ }}` in the page;
+- routes in `app.routes.ts` that the walk never reached.
+
+It changes nothing: it presses only buttons whose names open something, never one that acts or that
+would read stored content (every read is recorded, `ADR-0016`). Output: `ui-audit-report/report.md`
+(findings grouped by shape, most severe first), `findings.json` and `screens/`. The screenshots are
+what a person — or an agent — reviews for what no rule can see: hierarchy, spacing, wording.
+`AIRA_AUDIT_ROLES=global-admin,use-case-user make ui-audit` walks a subset.
+

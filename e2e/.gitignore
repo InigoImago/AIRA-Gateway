@@ -6,3 +6,5 @@ blob-report/
 # which never matched: a pattern in a `.gitignore` is relative to the directory that file is in,
 # so this one was looking for `e2e/e2e/.artifacts`.
 .artifacts/
+# What `make ui-audit` writes: screenshots and a report of one run, never a record to keep.
+ui-audit-report/

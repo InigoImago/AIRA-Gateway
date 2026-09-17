@@ -2,7 +2,9 @@
   <a routerLink="/use-cases" class="muted">&larr; All use cases</a>
 
   @if (feedback.error(); as message) {
-    <p class="callout callout--danger" role="alert">{{ message }}</p>
+    @if (!missing()) {
+      <p class="callout callout--danger" role="alert">{{ message }}</p>
+    }
   }
   @if (feedback.notice(); as message) {
     <p class="callout" role="status">{{ message }}</p>
@@ -25,6 +27,17 @@
         </a>
       </div>
     </div>
+  } @else if (missing()) {
+    <!-- Management has no use case by this name this reader may see. That is not "it does not
+         exist": a member reached through a Keycloak group is known to the gateway, and the tabs
+         below still show what it records. -->
+    <section class="panel" data-testid="use-case-missing">
+      <h2 class="card__title">Management has no use case “{{ slug }}” for you</h2>
+      <p class="muted">
+        It was purged, it was never created here, or your access comes only through the gateway — a
+        Keycloak group — in which case the tabs below still show what the gateway recorded.
+      </p>
+    </section>
   }
 
   <div class="tabs" role="tablist" aria-label="Use-case sections">

@@ -67,6 +67,15 @@ renders and does nothing, a layout that only a viewport has an opinion about. An
 *user token* belongs here — the dev realm has the password grant off, so a token only comes from
 the real flow.
 
+### Beside it: the UI audit (`make ui-audit`)
+Not a test and never red: a walk through every page, tab and window for each of the five demo roles,
+at desktop and phone width, that writes `e2e/ui-audit-report/report.md` and a screenshot per state
+(`e2e/README.md`). It checks what no spec is written for — console errors, failed requests, overflow,
+overlapping or covered controls, squeezed columns, WCAG 2.2 AA via axe-core, target size, visible
+focus, `undefined` on the page, and routes nobody can navigate to. The screenshots are for the
+review a rule cannot do: hierarchy, spacing, wording. A finding worth keeping becomes a spec or a
+guard in `tools/tests/`; the report itself is not a record.
+
 ## Jenkins pipeline (sketch)
 ```groovy
 pipeline {

@@ -4,6 +4,20 @@ import { Observable, tap } from 'rxjs';
 import { Me } from './models';
 import { API } from './prefixes';
 
+/**
+ * The unit after a money label — `Spend (EUR)` — or nothing before `/v1/me` has answered. A label
+ * never carries a symbol of its own: a hard-coded `$` beside figures in `AIRA_CURRENCY` is a
+ * figure in the wrong currency.
+ */
+export function unitSuffix(currency: string): string {
+  return currency ? ` (${currency})` : '';
+}
+
+/** How a price per million tokens is headed: `EUR / 1M`, or `/ 1M` without a unit. */
+export function perMillion(currency: string): string {
+  return currency ? `${currency} / 1M` : '/ 1M';
+}
+
 @Injectable({ providedIn: 'root' })
 export class MeService {
   private readonly http = inject(HttpClient);

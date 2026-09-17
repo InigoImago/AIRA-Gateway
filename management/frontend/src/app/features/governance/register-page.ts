@@ -1,3 +1,4 @@
+import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CatalogModel, Register, RegisterEntry } from '../../core/api/models';
@@ -20,7 +21,7 @@ import { TablePager } from '../../core/ui/table-pager';
  */
 @Component({
   selector: 'app-register-page',
-  imports: [FormsModule, InfoHint, TablePager],
+  imports: [DatePipe, FormsModule, InfoHint, TablePager],
   templateUrl: './register-page.html',
   providers: [PageFeedback],
 })

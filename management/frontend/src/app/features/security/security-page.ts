@@ -49,6 +49,8 @@ export class SecurityPage implements OnInit {
   protected readonly moreEvents = signal<string | null>(null);
   protected readonly loadingMore = signal(false);
   protected readonly suspensions = signal<Suspension[]>([]);
+  /** This caller may not list suspensions; a count of zero would be a claim, not a figure. */
+  protected readonly suspensionsHidden = signal(false);
   protected readonly rules = signal<AnomalyRule[]>([]);
   protected readonly loading = signal(true);
   protected readonly tab = signal<'findings' | 'suspensions' | 'rules'>('findings');
@@ -169,7 +171,9 @@ export class SecurityPage implements OnInit {
       error: (response: unknown) => {
         // A 403 is a real answer — this caller may see findings and not suspensions — so the list
         // stays empty and the panel says who may, rather than the page reporting a failure.
-        if ((response as { status?: number })?.status !== 403) {
+        if ((response as { status?: number })?.status === 403) {
+          this.suspensionsHidden.set(true);
+        } else {
           this.feedback.fail(response, 'Could not load the suspensions.');
         }
       },
