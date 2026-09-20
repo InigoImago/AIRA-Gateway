@@ -91,42 +91,73 @@ For every request, the gateway does what a direct call to a vendor cannot:
 A caller never has to know which company hosts the model. It names a model; the gateway knows where
 that model lives and how to speak to it.
 
-#### Who may do what, and why it is arranged this way
+#### Who decides what — AIRA and the identity provider
 
-Two different questions, answered in two different places on purpose:
+**Keycloak answers who somebody is and which groups they are in. AIRA answers what those groups may
+do.** Neither does the other's job, and everything below follows from that one split.
 
-1. What may this person do **across the installation** — create a use case, read every report, stop
-   traffic, maintain the model catalogue?
-2. What may they do **inside one particular use case** — use it, or also change it?
+AIRA therefore reads exactly two things from a token: the **person** and their **group paths**. It
+reads no Keycloak roles — assigning a realm role called `global-admin` to somebody has no effect
+here — and it **never writes to the directory**: it creates no group, fills none, deletes none.
 
-Both answers start with **membership of a Keycloak group, and nothing else.** A role assigned
-directly to a person in Keycloak grants nothing in AIRA.
+Access is decided in two layers, on purpose:
 
-- **Across the installation.** Configuration maps a group path to a **role**
-  (`/aira/it-security` → IT Security); a role holds a set of named **permissions**; a caller's
-  permissions are the union over every role whose group their token carries. Every check asks for
-  **one permission** — never for a role.
-- **Inside one use case.** A **grant** binds a Keycloak group — or one named person — to that use
-  case as either **user** or **admin**. A *user* may call the gateway attributed to that use case
-  and see its figures. An *admin* may additionally change what happens inside it: members, keys,
-  pipeline, budgets, limits. Where several routes grant the same person, the **strongest wins**.
-- **Every gateway request belongs to exactly one use case.** An API key *is* a use case — it is
-  issued for one and carries no choice. A person's login has to name one, and is refused unless a
-  grant reaches it.
+- **Across the installation.** A group path maps to a role (`/aira/it-security` → IT Security); a
+  role holds named permissions; a caller's permissions are the union over the roles their groups
+  confer. Every check asks for **one permission**, never for a role.
+- **Inside one use case.** A **grant** binds a group — or one named person — to that use case as
+  `user` (may call it, may see its figures) or `admin` (may also change its members, keys,
+  pipeline, budgets and limits). Several routes may reach the same person; the **strongest wins**.
 
-The reasons, because these are the decisions somebody will be asked to defend:
+Being allowed to administer *a* use case must never mean administering *every* use case. That is
+why the two layers are separate mechanisms rather than one list of roles.
 
-| Arrangement | Why |
-|---|---|
-| Membership lives in Keycloak | Joiners and leavers are already handled there. A second list would have to be kept in step with the first, and would not be. |
-| What a role *may do* is AIRA's own configuration | An installation can define its own roles and change what they are allowed to do without asking anybody to edit the directory. |
-| Roles are **not** written into the token | Permissions are read per request from AIRA's own data, so withdrawing access applies to the **next request** — not whenever the person's token happens to expire. |
-| Only group membership counts | One mechanism means one place to look when somebody turns out to have access they should not. |
-| Installation-wide and per-use-case are **separate** layers | Being allowed to administer *a* use case must never mean administering *every* use case. That is the whole reason the two layers exist. |
-| A check asks a permission, never a role | A role is a name an installation may redefine or replace; a permission is the thing the code actually needs. |
-| An API key belongs to exactly one use case | A leaked key's blast radius is that one use case, and attribution never has to guess which purpose a call served. |
+Every gateway request belongs to **exactly one use case**: an API key *is* a use case, and a
+person's login has to name one and is refused without a grant reaching it.
 
-Mechanics, and the argument in full: §8.
+#### What this needs in Keycloak — the short list
+
+For whoever administers the realm. Nothing here is AIRA-specific except the group *paths* you
+choose, and those are yours.
+
+| Needed in the realm | Why | Without it |
+|---|---|---|
+| A **client for the console**, public, authorization code + **PKCE** | The console runs in a browser and can keep no secret; PKCE stops a stolen code being redeemed by anyone else | No sign-in |
+| A **group-membership mapper**: claim `groups`, **full path on**, in the *access* token, on every client whose tokens AIRA sees | Group membership is the only thing AIRA reads access from | Every group grant silently reaches nobody — a token with no groups looks exactly like one whose owner is in no group |
+| An **audience mapper** putting `AIRA_OIDC_AUDIENCE` into `aud` | A token minted for another application must not be usable here; Keycloak does not add it by itself | Both services **refuse to start** outside a local environment |
+| **`preferred_username`** in the access token (Keycloak's default) | Joins a person's browser session and their API key into one identity, so per-person budgets and a kill switch aimed at a person hit both | Each credential gets its own allowance; nothing is silently shared |
+| **Edit username off** in realm login settings (the default) | The name in the token decides person-grants, per-head allowances and kill switches | Somebody can rename themselves into a colleague's access |
+| **Three group paths** for the organisation-wide roles, named in `AIRA_ROLE_GROUPS` | This is how Global Administrator, IT Security and IT Steuerung are held | An installation nobody can administer; Management refuses to start without a Global Administrator group |
+| A **read-only service account** with `view-users` and `query-groups` — nothing else | So the console can *search* your groups and people when somebody grants access | No role can be bound to a group at all: a group nobody could check is refused rather than trusted |
+
+**Why it has to *ask* the directory at all** — the question an administrator asks first, and the
+only reason any realm-management permission is requested:
+
+A grant names a group **path**. A path typed from memory that matches nothing produces a grant that
+applies to **nobody**, and nothing about it looks wrong — not in the console, not in the audit
+trail, not until somebody reports they cannot reach a use case. So before a role or a use case is
+bound to a group, Management asks Keycloak whether that path exists (`group-by-path`), once while
+typing and again on save. `view-users` is the same thing for a grant that names **one person**
+instead of a group, and is what lets the console offer a picker rather than a field for a directory
+id.
+
+Three properties of that lookup are worth stating to whoever grants it:
+
+- **Read-only, and that is all it can be.** `view-users` and `query-groups` only — no
+  `manage-users`, no `manage-realm`. AIRA creates no group, fills none and deletes none.
+- **"You may not look" is never read as "it does not exist."** A `403` is treated as *unknown* and
+  the binding is **refused** rather than admitted unverified — so a missing permission surfaces as
+  an error naming the cause, not as a group that silently turns out to be empty.
+- **It cannot be used to enumerate your directory.** The search strips `%` and `*` before sending,
+  requires two literal characters and returns at most 25 entries. It is a picker, not a report.
+
+Two things it explicitly does **not** need: no AIRA roles in the realm, and **no group per use
+case** — an existing group is granted as it is, or the `/use-cases/<slug>` convention is used, which
+needs no configuration at all. Group paths are matched **exactly**: a sub-group inherits nothing,
+and `/aira/global-admins-readonly` confers nothing.
+
+Realm-by-realm settings: [`INTEGRATIONS.md`](INTEGRATIONS.md) §2. The mechanics and the full
+argument: §8.
 
 #### What ties the two halves together
 

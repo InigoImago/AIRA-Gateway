@@ -90,6 +90,24 @@ the two terms that actually need explaining — JWKS and PKCE — were already e
 used. §8.4 stated the use-case convention as though it were the mechanism; it now states both
 layers, the two grant roles, the strongest-wins rule and the exact-path match.
 
+**§1's access part was then rewritten for the reader it will actually have**, which is the person
+who administers the realm and will read nothing else. It opens on the one split everything follows
+from — Keycloak answers who somebody is and which groups they are in, AIRA answers what those
+groups may do — then a table of what has to exist in the realm with, for each row, *what breaks
+without it*: the console's public client with PKCE, the `groups` mapper with full paths, the
+audience mapper Keycloak does not add by itself, `preferred_username`, *Edit username* off, the
+three role group paths, and the read-only directory account.
+
+The directory account needed its own paragraph, because "why do you want a realm-management role at
+all" is the first question that account will be asked. A grant names a group **path**; one typed
+from memory that matches nothing grants **nobody**, and nothing about it looks wrong until somebody
+reports they cannot reach a use case — so the path is checked against `group-by-path` while typing
+and again on save (`FRD-614` FR-4). Three properties are stated for whoever signs it off: it is
+`view-users` and `query-groups` only and writes nothing; a `403` is read as *unknown* rather than as
+*no such group*, so the binding is refused instead of silently admitted unverified; and the search
+strips `%` and `*`, demands two literal characters and returns 25 rows, so it cannot enumerate a
+directory.
+
 Sizing guidance for a reader: `docs/DEPLOYMENT.md` §1a. Raw runs: `docs/measurements/`.
 
 ## Authentication, drawn (2026-09-15)
