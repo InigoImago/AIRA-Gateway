@@ -373,6 +373,15 @@ reading code.
 - **A number is not a defect until it moves.** `(.*a){20}` cost 30 ms and looked like a fifth
   finding; measured against inputs from 20 to 800 characters it stayed flat at 30 ms, so it is a
   fixed cost, not a backtracker. Growth is the property, never the first reading.
+
+  *And the instrument is part of the claim.* `docker stats` reported the gateway at **21%** while
+  the container's own `cpu.stat` showed **0.91 cores** — a process out of CPU, reported as idle.
+  Every inference from the first number went the same way: a throughput that would not rise above
+  43 rps looked like a lock or a connection pool, and an hour was spent switching controls off one
+  at a time to find a serialisation that was not there. A sampler that has to *catch* a process
+  can be wrong about a busy one; a kernel counter read before and after cannot. **When a
+  measurement is surprising, doubt the instrument before the system** — and prefer the counter you
+  subtract to the gauge you sample.
 - **A caller's own value must never become a server error — and never a missing record.** Three in
   one sweep, each dying far from where it entered: a lone surrogate (`"\ud800"`) parses fine and
   cannot be encoded, so it died inside the HTTP client nine steps later; `1e309` parses to `inf`,
@@ -1369,6 +1378,16 @@ reading code.
 
 ---
 
+- **A limit expressed in a different unit from the caller's refuses them for a reason they cannot
+  read.** A rate limit counts a request's **weight** and a batch weighs its own size (`FRD-405`
+  §4.2), so an embedding use case allowed 4 800 "requests" a minute got 4.7 batches of 128 — and a
+  nightly re-embedding job saw `RESOURCE_EXHAUSTED` on 99.2% of its calls with a per-minute figure
+  in the console that looked generous. Worse, a burst *below* the batch size refuses that request
+  however long the caller waits, which is correct and reads as an outage. Two halves to the rule:
+  the allowance for batch work is sized in **items** per minute, not calls; and wherever a limit's
+  unit is not the caller's unit, the refusal has to say so — this one does, and that message is
+  the only reason the cause was found in minutes rather than in production.
+
 ## 4. Models, providers and dispatch
 
 - **Asking a model for one word means reading one word, not searching for it.** The injection
@@ -1866,6 +1885,24 @@ reading code.
   is enforced by nothing at all, in tests and in production alike, and a mutation anchored there
   would have reported a guard over a rule the database has never heard of.
 - **A property guarded twice cannot be a mutation**, and that is not a reason to weaken the guard.
+- **Synthetic input that is uniform measures the thing that exploits uniformity.** The load
+  harness filled its prompts with twelve words repeated, and the audit trail's growth rate — the
+  figure an installation sizes a volume from — came out at 2 kB a row for a 24 kB prompt. Postgres
+  compresses a large `json` value before writing it out of line, and the filler compressed about
+  fifty to one: the measurement was of `pglz`, not of the product, and wrong by 14× in the
+  comfortable direction. Four thousand distinct tokens put the entropy where prose is and the
+  figure at 28 kB. **Ask what property of real input the measurement depends on**, and give the
+  synthetic input that property — length is rarely the only one.
+- **A double that is slow does not look slow; it makes the system under test look slow.** The load
+  harness reports *measured time less the time the upstream double promised to take*, so every
+  millisecond the double overshoots is charged to the gateway, silently and in the right-looking
+  direction. Two ways of getting that wrong were found by comparing the promise with the schedule
+  rather than by reading either: the promise counted **tokens** where the double waits per
+  **event**, short by one gap per stream (a promised 6.928 s answer took 7.020 s); and chained
+  `asyncio.sleep` calls drift, about 1.2 ms each, which over a 600-token answer is 0.7 s. A
+  deadline computed from one start cannot drift. **An instrument that states its own error has to
+  be checked against itself**, and the check is hermetic — asserting on a wall clock fails on a
+  busy machine and teaches everyone to re-run it.
 - **Each layer sees what the one below structurally cannot.** A dropped socket *cancels* a task
   where an in-process close raises `GeneratorExit`; two credentials can only disagree where both
   are real — a stubbed validator is exactly where a subject that "looks nothing like a username"

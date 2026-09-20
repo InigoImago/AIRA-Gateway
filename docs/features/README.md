@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**86 of 92 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**87 of 93 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -46,6 +46,7 @@ status that goes stale in the copy nobody opens.
 | [133](FRD-133-prompt-caching.md) | Prompt caching: written down now, built after the agent work | 9 | ✅ Built |
 | [134](FRD-134-clock-skew-in-token-validation.md) | Clock skew in token validation | 1 (platform) | ✅ Done |
 | [135](FRD-135-a-models-reasoning.md) | A model's reasoning: counted always, shown when a use case says so | 8 | ✅ Done |
+| [136](FRD-136-capacity-the-gateway-is-not-the-bottleneck.md) | Capacity: the gateway is not the bottleneck | 9 (operability) | ✅ Done — measured |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |

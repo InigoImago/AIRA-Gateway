@@ -60,6 +60,22 @@ make test-integration   # uv run pytest -m integration --no-cov
 Codify the manual end-to-end checks (auth flows, use-case membership, persistence, SSE) as
 `integration`-marked tests under `*/tests/integration/` so they are repeatable in CI.
 
+## Tier 2b — Load runs (`tools/loadtest/`, need the live stack, opt-in)
+
+Not a test: nothing about a load run is red or green, and it asserts on no number. `make loadtest`
+drives the three real workloads — agentic coding, chat with a RAG, nightly embedding batches —
+against a **free upstream double** whose latency is declared, so the gateway's own cost is what
+remains when that latency is subtracted ([`FRD-136`](features/FRD-136-capacity-the-gateway-is-not-the-bottleneck.md)).
+Every step runs twice, once at the gateway and once straight at the double, because a figure about
+the gateway that was never compared with the same load *without* it is a figure about whatever was
+slowest that afternoon. It contacts no cloud model, by construction: the overlay empties every
+cloud credential on the gateway for the duration.
+
+The harness itself is tested in the default run — `tools/tests/test_the_load_double_keeps_its_promise.py`
+— because a double that overshoots its promise does not look slow, it makes the gateway look slow.
+Results go to [`docs/measurements/`](measurements/), sizing guidance to
+[`DEPLOYMENT.md`](DEPLOYMENT.md) §1a.
+
 ## Tier 3 — Browser tests (`e2e/`, need the whole thing)
 Playwright against the running console, gateway and Keycloak (`make test-e2e`). This layer exists
 for what the ones above **structurally cannot see**: a real authorization-code flow, a control that

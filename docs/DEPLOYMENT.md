@@ -225,6 +225,98 @@ dry-run and budget consumption) — that is why the gateway needs OIDC configure
 
 ---
 
+## 1a. Sizing: what one instance carries
+
+Measured on 2026-09-20 against a free upstream double, so the figures are the **gateway's own**
+cost with the model's latency subtracted. Method, full tables and caveats:
+[`FRD-136`](features/FRD-136-capacity-the-gateway-is-not-the-bottleneck.md) §13, raw runs in
+[`docs/measurements/`](measurements/).
+
+**One uvicorn worker is one core, and the image starts one.** `uvicorn aira_gateway.main:app` with
+no `--workers` is a single process and a single event loop; throughput scales linearly with worker
+count (43 → 80 → 125 requests a second at 1, 2 and 4 workers) and does not scale without being
+told to. The request path is stateless and the shared counters are in Redis, so workers and
+instances are interchangeable — `FRD-127` §5.1. The consumer, the retention worker and Management's
+relay stay at one each (§5.2).
+
+### What a request costs
+
+| Workload | Gateway CPU per request |
+| --- | --- |
+| chat with a retrieved context (4 000 tokens in, 220 out, streamed) | **48 ms** |
+| agentic coding (long prompt, tools, thinking, token-by-token stream) | **93 ms** |
+| embedding, per text in a batch | **0.59 ms** |
+| idle background work, **per worker** | 0.16–0.23 cores |
+
+The cost follows **streamed events**, not requests: the same chat workload from a runtime that
+packs eight tokens into an SSE event instead of two cost 31% less CPU. Prompt size, tools and
+thinking all move the figure; the shape of the upstream's stream moves it most.
+
+### Turning that into instances
+
+Multiply the seats by how often a seat asks. Measured: an agentic seat issues 0.066 requests a
+second, a chat seat 0.044.
+
+    cores of request work  =  seats × requests-per-second-per-seat × CPU-per-request
+
+**Then size for about half that per worker, not all of it.** A single event loop degrades well
+before its core is full — at 66% utilisation the chat workload's median overhead went from 74 ms to
+763 ms and its 99th percentile to 16.5 s — because each request's work arrives in one
+unpreemptible burst and time to first token is what waits.
+
+Worked, for 300 agentic and 300 chat seats at once: 1.83 + 0.64 = **2.5 cores of request work**, so
+**six gateway cores** — two instances of four workers, or four of two. Four workers were measured
+carrying 300 agentic seats at 2.72 cores and already lengthening.
+
+### Three limits to set deliberately
+
+- **Upstream connections.** Every adapter builds its HTTP client on the library default: **100
+  connections, 20 kept alive, per worker**. Long answers mean high concurrency, so this binds
+  before the processor does — measured, a worker plateaued at 5.8 requests a second while using
+  **0.21 cores**, purely waiting for a free connection, and the median doubled when callers
+  outnumbered the pool. Count the concurrent calls you expect (`seats × answer-seconds ÷
+  cycle-seconds`) and put enough workers or instances behind them.
+- **Postgres connections.** Each worker keeps its own pool (SQLAlchemy's default: 5, plus 10
+  overflow). Eight workers is 120 connections before Keycloak, Management, the consumer and the
+  retention worker have asked for theirs, against a stock `max_connections` of 100.
+- **The audit volume.** See below; it is the number that surprises.
+
+### What an instance past its capacity looks like
+
+**Nothing is refused.** The gateway queues and slows: no 429, no 503, latency climbing and the
+99th percentile climbing faster. It looks exactly like a slow model. The first internal sign is the
+audit queue saturating — `request_log_queue_full` in the gateway's log, after which rows are
+written on the request path as designed backpressure (`FRD-405` §4.4). That log line is currently
+the **only** exposure of it; there is no metric.
+
+Memory is not a constraint: 300 concurrent streamed answers held one instance at 152 MB.
+
+### The audit trail is what fills the disk
+
+Measured per row, with payload storage on (the default) and prompts with the entropy of prose:
+
+| Workload | Bytes per audit row |
+| --- | --- |
+| chat with a retrieved context | **17.7 kB** |
+| agentic coding | **28.3 kB** |
+| agentic with the reasoning returned | **32.5 kB** |
+
+At 300 agentic plus 300 chat seats that is roughly **68 GB a day**. Stored prompts are pruned per
+use case (`retention_days`, 7 by default, and only if the retention worker runs); **rows are never
+deleted** — `AIRA_LOG_RETENTION_DAYS` is 0 and means *never*, so the spend history survives. Plan
+for a payload working set of several hundred gigabytes and a row count that only grows, or switch
+payload storage off for the use cases that do not need it (`AIRA_STORE_PAYLOADS`, or per use case).
+
+### Sizing a rate limit for batch work
+
+A rate limit counts a request's **weight**, and an embedding batch weighs its own size (`FRD-405`
+§4.2). An allowance of 4 800 "requests" a minute is 4.7 batches of 128 texts, and a **burst** below
+the batch size refuses that request outright however long the caller waits. For a nightly
+re-embedding, size the allowance in **texts** per minute and the burst at or above the largest
+batch.
+
+---
+
 ## 2. Standalone (one machine)
 
 Everything on one host, infrastructure in Docker, applications from source. This is the

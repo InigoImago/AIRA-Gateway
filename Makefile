@@ -99,6 +99,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
 .DEFAULT_GOAL := help
 
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
+        loadtest loadtest-up loadtest-down loadtest-seed loadtest-clean loadtest-cost \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
         purge-e2e-use-cases config-verify config-check up-apps otel-status otel-arrivals \
@@ -398,6 +399,46 @@ verify-up: env ## Start a real local model (FRD-123) and pull the two verificati
 
 verify-down: ## Stop the local model (keeps the downloaded weights)
 	$(COMPOSE) --profile verify stop ollama
+
+# ---- load testing (FRD-136) --------------------------------------------------------------------
+#
+# **The overlay is not in `COMPOSE_ALL` and not in `tools/compose_files.py`.** It is a measuring
+# instrument layered on with an extra `-f`, the way `docker-compose.lab.yml` used to be, not part
+# of what a deployment runs — and registering it would put a load-test service in front of every
+# check that reads "the stack". `make down` still removes it: `--remove-orphans` reaches a
+# container whose service is not in the model at all, which is exactly what this one is. Checked
+# rather than assumed — `COMPOSE_ALL`'s own file and profile list, with `--dry-run down
+# --remove-orphans` and the double running, reports `Container aira-modelsim Removing`.
+#
+# The overlay also **empties every cloud credential on the gateway** for the duration (`FRD-136`
+# FR-2). `make loadtest-down` puts the ordinary configuration back; until it is run, the gateway
+# in this stack can reach nothing but the double.
+LOADTEST_F := -f $(COMPOSE_DIR)/docker-compose.loadtest.yml
+COMPOSE_LOADTEST := docker compose $(INFRA_F) $(APPS_F) $(LOADTEST_F) --profile observability
+SCENARIO ?= smoke
+MEASUREMENTS ?= docs/measurements
+
+loadtest-up: env ## Start the free upstream double and point the gateway at it (no cloud model)
+	$(COMPOSE_LOADTEST) up -d modelsim gateway
+	@$(MAKE) --no-print-directory loadtest-seed
+	@echo "Gateway now serves only the simulated models. 'make loadtest-down' restores it."
+
+loadtest-seed: ## Create the load-test use cases, keys and catalogue rows
+	@AIRA_POSTGRES_HOST=$(word 1,$(subst :, ,$(call stack_url,postgres.netloc))) \
+	 AIRA_POSTGRES_PORT=$(lastword $(subst :, ,$(call stack_url,postgres.netloc))) \
+	 uv run python -m tools.loadtest.seed
+
+loadtest: ## Run a scenario (SCENARIO=smoke|cost|ceiling|capacity|beyond) and write a report
+	uv run python -m tools.loadtest.run --scenario $(SCENARIO) --out $(MEASUREMENTS)
+
+loadtest-clean: ## Remove everything the load run created, request logs included
+	@AIRA_POSTGRES_HOST=$(word 1,$(subst :, ,$(call stack_url,postgres.netloc))) \
+	 AIRA_POSTGRES_PORT=$(lastword $(subst :, ,$(call stack_url,postgres.netloc))) \
+	 uv run python -m tools.loadtest.seed --clean
+
+loadtest-down: ## Stop the double and put the gateway's ordinary configuration back
+	$(COMPOSE_LOADTEST) rm -sf modelsim
+	$(COMPOSE_APPS) up -d gateway
 
 test-verify: ## Integration tests that need a real local model (skips cleanly without one)
 	uv run pytest -m integration --no-cov tests/integration/test_local_model.py

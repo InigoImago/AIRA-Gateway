@@ -5,6 +5,79 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A load test, and where the gateway actually gives way (2026-09-20)
+
+The owner's requirement: 50–300 people at once, all day — up to 300 agentic coding seats with
+tools and reasoning, ordinary chat with a RAG in front of it, and large embedding batches at night.
+Not a throughput target; a statement about **where the ceiling is**. When the system is slow it has
+to be slow because a model is slow. Nothing on the request path had ever been measured under load.
+
+`FRD-136` and `tools/loadtest/`: an OpenAI-dialect **double** whose time to first token and token
+rate are declared, so the gateway's own cost is what remains when they are subtracted; a driver
+spread over processes; a seeder; and a runner that drives every step **twice** — once at the
+gateway and once straight at the double — so a figure about the gateway is never a figure about the
+harness. Nothing contacts a cloud model, and `docker-compose.loadtest.yml` makes that structural
+rather than careful: the gateway runs with every cloud credential emptied for the duration.
+
+**The instrument was wrong first.** `docker stats` reported the gateway at **21%** while the
+container's own `cpu.stat` showed **0.91 cores**. An hour went into hunting a lock that was not
+there — throughput would not rise above 43 rps and the process looked idle — before the counter was
+read instead of the gauge. Everything below comes from cgroups.
+
+What one request costs, fitted across two concurrencies so the idle work is not charged to the
+traffic: **48 ms** of gateway CPU for a chat-with-RAG request, **93 ms** for an agentic one,
+**0.59 ms** per text in an embedding batch, and 0.16–0.23 cores of background per worker with no
+traffic at all. The cost follows **streamed events**, not requests: the same chat workload from a
+runtime packing eight tokens into an SSE event instead of two cost 91 ms instead of 131.
+
+Three ceilings, and they are not the same ceiling.
+
+- **One uvicorn worker is one core**, and the image starts one. 43 → 80 → 125 rps at one, two and
+  four workers, per-request cost unchanged. Linear, and absent unless asked for.
+- **A single event loop degrades well before its core is full.** `chat` at 300 callers used 0.66
+  cores and moved the median overhead from 74 ms to 763 ms, the 99th percentile to 16.5 s. Each
+  request's work is one unpreemptible burst, so time to first token waits. Size for half a core of
+  request work per worker.
+- **At 100 requests in flight the connection pool is the ceiling, at a fifth of a core.** Every
+  adapter builds `httpx.AsyncClient(...)` with no `limits=`, so the library default applies: 100
+  connections, 20 kept alive. With the double taking 15 s per answer, one worker plateaued at
+  **5.8 rps — 100/15 — at 0.21 cores**, and 240 callers doubled the median to 31 s waiting for a
+  slot. This is the one that matters for agentic work, where answers are long and CPU per request
+  is beside the point.
+
+Nothing was ever refused for load: the gateway queues and slows, which from outside is
+indistinguishable from a slow model. The first internal sign is `request_log_queue_full` — 42 of
+them in a minute at 300 agentic callers on one worker — after which audit rows are written on the
+request path, as designed (`FRD-405` §4.4). It is a log line and **not a metric**, which is
+recorded as a gap. Memory never mattered: 300 concurrent streams, 152 MB.
+
+The capacity answer: 300 agentic plus 300 chat seats is **2.5 cores of request work**, so about six
+gateway cores with the headroom the tail behaviour needs. Four workers carried 300 agentic seats at
+2.72 cores and were already lengthening. One worker is past its limit at about 50.
+
+**The audit trail is the volume that grows**, and the first measurement of it was wrong by 14×.
+28.3 kB per agentic row, 17.7 kB per chat row, 32.5 kB when the reasoning is returned — roughly
+68 GB a day at the owner's peak, with payloads pruned per use case and **rows never deleted**. The
+14× was the harness's fault: the synthetic prompt was twelve words repeated and Postgres compressed
+it about fifty to one. A load harness that generates uniform text measures the compressor.
+
+Two things found that are not about capacity. A rate limit counts a request's **weight**, so an
+embedding use case allowed 4 800 "requests" a minute gets 4.7 batches of 128 — 99.2% of a
+nightly-batch step came back `RESOURCE_EXHAUSTED` with a per-minute figure that looked generous,
+and a burst below the batch size refuses that request however long the caller waits. And the
+`budgets` and `rate_limits` identity sequences sit behind their rows, because the consumer writes
+both with explicit ids; any insert that lets the sequence choose collides with a message that names
+a primary key rather than the cause.
+
+Two ways of getting the harness itself wrong, both found by comparing the double's promise with its
+own schedule rather than by reading either: the promise counted **tokens** where the double waits
+per **event** (a promised 6.928 s answer took 7.020 s), and chained `asyncio.sleep` calls drift
+about 1.2 ms each, which over a 600-token answer is 0.7 s. Both would have been charged to the
+gateway, silently and in the flattering-to-nobody direction. `tools/tests/
+test_the_load_double_keeps_its_promise.py` holds both, hermetically.
+
+Sizing guidance for a reader: `docs/DEPLOYMENT.md` §1a. Raw runs: `docs/measurements/`.
+
 ## Authentication, drawn (2026-09-15)
 
 `ARCHITECTURE.md` §8 draws how each caller proves who it is, in five diagrams:
@@ -15298,3 +15371,29 @@ with the `frontend-design` skill.
   fails, and passes again once both say `POST`.
   - hermetic: 4777 → 4779 passed;
   - live: 1060 passed, 15 skipped, against CI's 2 failures.
+
+## 2026-09-18 — the authentication section, checked against the code and written for a reader
+
+`ARCHITECTURE.md` §8 was read line by line against `auth/`, `apps/api/authentication.py` and
+`aira_common/oidc.py`, then rewritten so that somebody who has never seen this platform can follow
+it — the owner's use for it is a ticket description.
+
+- **Three things it said were no longer true.**
+  - *"Refused authentications are bounded … Management answers 429."* Both planes bound them:
+    `AIRA_MAX_AUTH_FAILURES_PER_MINUTE` on the gateway and `AIRA_THROTTLE_AUTH_FAILURES` on
+    Management, 60 a minute each.
+  - *"Nothing on the request path asks Keycloak anything."* The signing keys are fetched on the
+    request path; what is true is that they are cached and that no request asks Keycloak to judge
+    a caller.
+  - Several issuers (`FRD-118` FR-1) were missing from the section altogether, though the gateway
+    routes a token by its own `iss` and Management does not.
+- **What it now carries for a reader with no context**: a glossary of the ten words the section
+  uses (realm, group, role, use case, JWKS, PKCE …); a prose walk-through beside every diagram,
+  since a ticket renders no Mermaid; the four checks a token goes through and why each exists; why
+  roles are deliberately *not* in a token; what an API key is and what it cannot reach; and a table
+  of which refusal answers what (`401`, `403`, `400`, `429`).
+- All five diagrams were rendered with `mermaid-cli` again; the section gained none and lost none.
+- `CLAUDE.md` §6 still said `FRD-118` was a requirement nobody had confirmed, while the FRD's own
+  header had recorded it as confirmed and built. Corrected there, which is the half §4 of that file
+  warns about: the copy that is read every session is the one that goes stale about somebody else's
+  document.

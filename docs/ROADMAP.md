@@ -145,7 +145,12 @@ logic is a named gap with no document behind it), `FRD-601-spend-and-usage-repor
 
 Deliverables:
 - Security hardening & pen-test fixes; retention/redaction policies finalized.
-- Performance/load testing; HA considerations.
+- ~~Performance/load testing~~ — **delivered early** as
+  [`FRD-136`](features/FRD-136-capacity-the-gateway-is-not-the-bottleneck.md), because the owner
+  needed a concurrency answer before the phase: a repeatable harness against a free upstream
+  double, the cost of a request in each of the three real workloads, and the three places the
+  deployment gives way. Sizing for a reader: [`DEPLOYMENT.md`](DEPLOYMENT.md) §1a. HA considerations
+  remain, under [`FRD-127`](features/FRD-127-several-gateway-instances.md).
 - **Kubernetes/Helm** charts; secrets via Vault in-cluster; production observability stack.
 - Coverage/quality audit against the near-100% target.
 

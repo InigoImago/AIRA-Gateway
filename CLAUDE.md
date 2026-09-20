@@ -181,6 +181,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (27 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1a | **what one instance carries**, measured — read before promising a concurrency |
 | [`docs/PRD.md`](docs/PRD.md) §1.1 | the owner's canonical feature list |
 | [`docs/GAP-ANALYSIS.md`](docs/GAP-ANALYSIS.md) | requirements against reality |
 
@@ -193,10 +194,11 @@ requires a test to notice.
 - `FRD-127` (**several gateway instances**) — the owner's requirement: availability, and a rolling
   update that takes one instance at a time. Management stays a single instance. Most of what it
   needs already holds; the two real gaps are named in the FRD.
-- `FRD-118` (several **Keycloak** issuers) — requirement not confirmed, and **not** the
-  multi-instance requirement above. It came from reading the predecessor's code rather than from
-  the owner, and this line said "several Keycloak backends" while the owner's open item was
-  `FRD-127`. A planner reads this section first, so the two are now named apart.
+- `FRD-118` (several **Keycloak** issuers) — FR-1 is **built** (a token is routed by its own `iss`,
+  each realm with its own audience and keys, `AIRA_OIDC_ISSUERS`); FR-3, groups from UserInfo,
+  stays declined. It is **not** the multi-instance requirement above — that is `FRD-127`, and this
+  line said "requirement not confirmed" about a feature the FRD header had already recorded as
+  confirmed and shipped.
 - `FRD-121` (document normalisation for models that cannot read documents) — specified so the
   option exists; the recommendation is not to build it first (`ADR-0012` §4, `ADR-0013`).
 - `FRD-307` — approval is delivered; candidate lists and builder pickers are not.
@@ -214,6 +216,16 @@ requires a test to notice.
   names no region and guarantees none, so it is not in the shipped residency default;
   `gemini-3.5-flash` is catalogued, unapproved, and refused where its region is typed. Stated
   rather than worked around — this is a policy outcome, not a defect to fix.
+
+- **Capacity is measured** (`FRD-136`) and the answer is *not the request path*: a
+  chat request costs **48 ms** of gateway CPU, an agentic one **93 ms**, and both scale linearly
+  with worker count. What gives way is **deployment**, in three places — the image starts **one**
+  uvicorn worker, so one instance is one core; a single event loop lengthens its tail at about
+  two-thirds utilisation, so size for half a core of request work per worker; and every upstream
+  adapter takes httpx's default **100 connections, 20 kept alive**, which binds before the
+  processor does whenever answers are long. 300 agentic plus 300 chat seats is 2.5 cores of
+  request work and about **68 GB a day** of audit trail. Nothing refuses under load — it queues,
+  which from outside looks like a slow model.
 
 A stream still cannot fall back once a chunk is on the wire; conditions are checked, the chain is
 not. Recorded rather than closed — a fallback for streams is a feature.

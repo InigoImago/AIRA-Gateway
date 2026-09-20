@@ -179,6 +179,7 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Migrating a KIRA client**](docs/MIGRATION-KIRA.md) | Use case, released models, members, key — and `X-AIRA-Use-Case` |
 | [**Pointing a Gemini client at AIRA**](docs/MIGRATION-GEMINI.md) | The same four steps, for `google-genai` and anything that speaks it |
 | [**Operations**](docs/DEPLOYMENT.md) | Deploying it: §0 is a runbook for an integration, in order, with the command that checks each step. Then topics, jobs, degradation, backups |
+| [**Sizing**](docs/DEPLOYMENT.md#1a-sizing-what-one-instance-carries) | What one instance carries, measured: the CPU a request of each workload costs, the three places a deployment gives way, and what the audit trail fills |
 | [**Testing**](docs/TESTING.md) | The four layers and why each exists |
 | [**Gap analysis**](docs/GAP-ANALYSIS.md) | Requirements against what is built |
 | [**Features**](docs/features/README.md) | Every FRD, its status, its document — generated from the FRDs themselves |

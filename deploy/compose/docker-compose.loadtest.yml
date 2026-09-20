@@ -1,0 +1,89 @@
+# The load-test overlay (`FRD-136`) — layered on docker-compose.yml + docker-compose.apps.yml:
+#
+#   make loadtest-up      # or: docker compose -f docker-compose.yml -f docker-compose.apps.yml \
+#                         #       -f docker-compose.loadtest.yml up -d modelsim gateway
+#
+# Two things, and the second is the one that matters:
+#
+#   1. `modelsim` — the free upstream double (`tools/loadtest/modelsim.py`), on the stack's own
+#      network, so the gateway reaches it exactly as it reaches a self-hosted vLLM or Ollama.
+#   2. **Every cloud adapter is unconfigured for the duration.** Not "not addressed" — unavailable.
+#      A load run that *could* bill somebody eventually does, and `FRD-136` FR-2 makes that a
+#      requirement rather than a matter of the run naming the right model. The emptied values are
+#      restored by `make loadtest-down`, which brings the gateway back on the ordinary files.
+
+services:
+  modelsim:
+    # The gateway's own image, for its Python and its uvicorn. The double imports nothing from
+    # `aira_gateway`; the image is reused so that a load run needs no build of its own.
+    image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
+    container_name: ${AIRA_STACK:-aira}-modelsim
+    working_dir: /app
+    environment:
+      PYTHONPATH: /app
+      MODELSIM_EXTRA_LATENCY: ${MODELSIM_EXTRA_LATENCY:-0}
+    volumes:
+      # Read-only: the double is a measuring instrument, and one that can write to the repository
+      # it is measuring is one whose results nobody can reproduce.
+      - ../../tools:/app/tools:ro
+    command:
+      - python
+      - -m
+      - uvicorn
+      - tools.loadtest.modelsim:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8099"
+      # Several processes on purpose. One would make the *double* the ceiling, which is the
+      # failure mode `FRD-136` FR-4 exists to detect — better to spend the cores than to publish
+      # a number about this script.
+      - --workers
+      - "${AIRA_LOADTEST_SIM_WORKERS:-2}"
+      - --log-level
+      - warning
+      # No access log: one line per request at several thousand requests a second is a measurement
+      # of Python's logging module.
+      - --no-access-log
+    ports:
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_LOADTEST_MODELSIM_PORT:-8099}:8099"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8099/healthz').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [aira]
+    restart: unless-stopped
+
+  gateway:
+    environment:
+      # The double, as one more OpenAI-dialect server (`FRD-123`). No region: an invented one is
+      # checked against `AIRA_ALLOWED_REGIONS` at startup and would stop the gateway booting.
+      AIRA_OPENAI_SERVERS: "modelsim=http://modelsim:8099|sim-instant,sim-coder,sim-chat,sim-chat-batched|sim-embed|"
+      # FR-2: nothing that costs money is reachable while a run is in progress.
+      AIRA_VERTEX_PROJECT: ""
+      AIRA_VERTEX_API_KEY: ""
+      AIRA_VERTEX_CREDENTIALS: ""
+      AIRA_VERTEX_MODELS: ""
+      AIRA_GOOGLE_API_KEY: ""
+      AIRA_GEMINI_MODELS: ""
+      AIRA_FOUNDRY_ENDPOINT: ""
+      AIRA_FOUNDRY_DEPLOYMENTS: ""
+      AIRA_OLLAMA_URL: ""
+      AIRA_OLLAMA_MODELS: ""
+      # How many cores one instance may use, and how many uvicorn processes share them. Both are
+      # what the run is *for*: a throughput figure with no core budget beside it is a figure about
+      # whichever laptop produced it.
+      AIRA_GATEWAY_WORKERS: ${AIRA_GATEWAY_WORKERS:-1}
+      # Empty by default, so the first run measures the gateway **as the image ships it** —
+      # access log and all. A variant that switches something off is a second run with the
+      # difference named, never the first one quietly.
+      AIRA_GATEWAY_UVICORN_EXTRA: ${AIRA_GATEWAY_UVICORN_EXTRA:-}
+    command:
+      - /bin/sh
+      - -c
+      - 'exec uvicorn aira_gateway.main:app --host 0.0.0.0 --port 8001 --workers "$${AIRA_GATEWAY_WORKERS:-1}" $${AIRA_GATEWAY_UVICORN_EXTRA:-}'
+    cpus: ${AIRA_LOADTEST_GATEWAY_CPUS:-0}
+    depends_on:
+      modelsim:
+        condition: service_healthy
