@@ -76,6 +76,20 @@ about 1.2 ms each, which over a 600-token answer is 0.7 s. Both would have been 
 gateway, silently and in the flattering-to-nobody direction. `tools/tests/
 test_the_load_double_keeps_its_promise.py` holds both, hermetically.
 
+`ARCHITECTURE.md` was opened up in the same round. §1 now says what the thing is in ordinary words
+— the console, the gateway, and the configuration that travels one way between them — and carries
+**why the permissions are arranged as they are**, because the owner's use for the document is
+defending that arrangement, not only describing a flow: both layers start at Keycloak group
+membership, installation-wide permissions and a per-use-case grant (`user`/`admin`) are separate
+mechanisms so that administering *a* use case never means administering *every* one, every gateway
+request belongs to exactly one use case, and every check asks a permission rather than a role. §1a
+adds the objects the system governs and its two loops; §3a maps the repository onto them.
+
+§8.1's glossary of ten words was **removed**: it front-loaded definitions nobody had asked for, and
+the two terms that actually need explaining — JWKS and PKCE — were already explained where they are
+used. §8.4 stated the use-case convention as though it were the mechanism; it now states both
+layers, the two grant roles, the strongest-wins rule and the exact-path match.
+
 Sizing guidance for a reader: `docs/DEPLOYMENT.md` §1a. Raw runs: `docs/measurements/`.
 
 ## Authentication, drawn (2026-09-15)

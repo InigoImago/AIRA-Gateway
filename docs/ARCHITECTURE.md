@@ -91,6 +91,43 @@ For every request, the gateway does what a direct call to a vendor cannot:
 A caller never has to know which company hosts the model. It names a model; the gateway knows where
 that model lives and how to speak to it.
 
+#### Who may do what, and why it is arranged this way
+
+Two different questions, answered in two different places on purpose:
+
+1. What may this person do **across the installation** — create a use case, read every report, stop
+   traffic, maintain the model catalogue?
+2. What may they do **inside one particular use case** — use it, or also change it?
+
+Both answers start with **membership of a Keycloak group, and nothing else.** A role assigned
+directly to a person in Keycloak grants nothing in AIRA.
+
+- **Across the installation.** Configuration maps a group path to a **role**
+  (`/aira/it-security` → IT Security); a role holds a set of named **permissions**; a caller's
+  permissions are the union over every role whose group their token carries. Every check asks for
+  **one permission** — never for a role.
+- **Inside one use case.** A **grant** binds a Keycloak group — or one named person — to that use
+  case as either **user** or **admin**. A *user* may call the gateway attributed to that use case
+  and see its figures. An *admin* may additionally change what happens inside it: members, keys,
+  pipeline, budgets, limits. Where several routes grant the same person, the **strongest wins**.
+- **Every gateway request belongs to exactly one use case.** An API key *is* a use case — it is
+  issued for one and carries no choice. A person's login has to name one, and is refused unless a
+  grant reaches it.
+
+The reasons, because these are the decisions somebody will be asked to defend:
+
+| Arrangement | Why |
+|---|---|
+| Membership lives in Keycloak | Joiners and leavers are already handled there. A second list would have to be kept in step with the first, and would not be. |
+| What a role *may do* is AIRA's own configuration | An installation can define its own roles and change what they are allowed to do without asking anybody to edit the directory. |
+| Roles are **not** written into the token | Permissions are read per request from AIRA's own data, so withdrawing access applies to the **next request** — not whenever the person's token happens to expire. |
+| Only group membership counts | One mechanism means one place to look when somebody turns out to have access they should not. |
+| Installation-wide and per-use-case are **separate** layers | Being allowed to administer *a* use case must never mean administering *every* use case. That is the whole reason the two layers exist. |
+| A check asks a permission, never a role | A role is a name an installation may redefine or replace; a permission is the thing the code actually needs. |
+| An API key belongs to exactly one use case | A leaked key's blast radius is that one use case, and attribution never has to guess which purpose a call served. |
+
+Mechanics, and the argument in full: §8.
+
 #### What ties the two halves together
 
 Everything set in the console reaches the gateway as **configuration**, a short time later, over a
@@ -671,22 +708,7 @@ they are and which groups they are in, and AIRA decides from its own configurati
 groups are allowed to do. There is no third way in: no local password, no shared admin account, and
 no API key that reaches the control plane.
 
-### 8.1 The words this section uses
-
-| Word | What it means here |
-|---|---|
-| **Identity provider / Keycloak** | The organisation's login service. It holds the accounts, runs the login (including MFA, if the organisation requires it) and issues tokens. AIRA never sees a password. |
-| **Realm** | One Keycloak tenant — its own users, groups and signing keys. AIRA is configured with the realm (or realms) it trusts. |
-| **Access token** | The short-lived, signed proof of a completed login (a JWT). It carries who the person is (`sub`), what they are called (`preferred_username`), which **groups** they are in, which realm issued it (`iss`), who it was issued for (`aud`) and when it expires (`exp`). |
-| **Group** | A folder-like label in Keycloak, written as a path such as `/use-cases/kundenservice` or `/aira/it-security`. Group membership is the only thing AIRA reads a person's access from. |
-| **Role / permission** | A role is a named set of permissions (for example "IT Security"). AIRA decides which group confers which role, and which permissions that role holds. Roles are **not** in the token. |
-| **Use case** | One governed purpose for using AI — a chatbot, a coding assistant — with its own members, models, budgets, limits and retention. Nearly everything the gateway does is attributed to exactly one of them. |
-| **API key** | A long random string of the form `aira_<prefix>_<secret>` that AIRA issues for one use case, so an application can call the gateway without a person being present. |
-| **Control plane / data plane** | The Management API (with the console) is where things are configured; the Gateway API is where model requests are served. Both check the same tokens, but only the gateway accepts API keys. |
-| **JWKS** | The realm's public signing keys, published by Keycloak at a well-known URL. Anybody holding them can verify a token's signature without contacting Keycloak. |
-| **PKCE** | A standard addition to the browser login flow that stops a stolen authorization code from being exchanged by anyone but the browser that started the login. |
-
-### 8.2 The three kinds of caller
+### 8.1 The three kinds of caller
 
 Keycloak issues every token, and AIRA verifies each one itself against the realm's public signing
 keys. **No request is answered by asking Keycloak whether a caller is valid**; the keys are cached
@@ -722,7 +744,7 @@ Three kinds of caller, and nothing else reaches either service:
    another system). It fetches a token from Keycloak with its own client credentials and is then
    treated like a person: the same verification, the same groups, the same rules.
 
-### 8.3 A person signing in
+### 8.2 A person signing in
 
 The console is a browser application with no secret of its own, so it uses the authorization-code
 flow with PKCE — the flow designed for exactly that situation.
@@ -769,7 +791,7 @@ In words, for a reader who cannot see the diagram:
    console sets no cookies of its own and holds no long-lived offline token: when the session at
    Keycloak ends, access to AIRA ends with it.
 
-### 8.4 What both services check on a token
+### 8.3 What both services check on a token
 
 Every request carrying a token is checked against four things, in the service itself:
 
@@ -789,7 +811,7 @@ Two details worth knowing:
 - **Verification costs no round trip.** The only network call is fetching the signing keys, and that
   answer is cached and shared by every request.
 
-### 8.5 From groups to permissions — why roles are not in the token
+### 8.4 From groups to permissions — why roles are not in the token
 
 A token says which **groups** a person is in. It does not say what they may do in AIRA, and that is
 deliberate:
@@ -803,15 +825,32 @@ deliberate:
 - **Withdrawal is immediate and reviewable.** Permissions are read per request from AIRA's own data,
   so a change applies to the next request rather than when the person's token happens to expire.
 
-Concretely: configuration maps a group path to a role (`/aira/it-security` → IT Security), each role
-holds a set of permissions, and a `/use-cases/<slug>` group makes somebody a member of that use
-case. Management owns that configuration and publishes it to the gateway over Kafka
-(`aira.roles`, `aira.memberships`), so both planes answer the same question the same way. A realm
-role assigned directly in Keycloak grants nothing in AIRA — only group membership does
-([`ADR-0017`](adr/ADR-0017-a-role-is-held-through-a-group.md),
-[`ADR-0025`](adr/ADR-0025-aira-defines-what-a-role-may-do.md)).
+Concretely, and **in two layers that are deliberately not the same mechanism**:
 
-### 8.6 An application with an API key
+- **Installation-wide.** Configuration maps a group path to a role (`/aira/it-security` → IT
+  Security); each role holds a set of named permissions; a caller's permissions are the union over
+  every role whose group their token carries. Two roles are fixed in code and never read from a
+  table, so a broken role row cannot lock everybody out: `global-admin` holds every permission by
+  construction and `it-security` a fixed set. `it-steuerung` and any role an installation adds are
+  data (`aira_common/permissions.py`). A group path is matched **exactly and never as a prefix**, so
+  `/aira/global-admins-readonly` cannot confer what `/aira/global-admins` does
+  ([`FRD-605`](features/FRD-605-roles-from-groups.md) FR-3).
+- **Inside one use case.** A **grant** binds a principal — a Keycloak group path, or one named
+  person — to that use case as `user` or `admin` (`aira_common/access.py`). `user` may call the
+  gateway attributed to it and read its figures; `admin` may additionally change its members, keys,
+  pipeline, budgets and limits. Several routes may reach the same person, and the **strongest role
+  wins** rather than the one whose row happens to be read first. The `/use-cases/<slug>` convention
+  ([`FRD-102`](features/FRD-102-attribution.md)) still resolves from the token alone, as one route
+  among several — it needs no grant and no read-model lookup, which is why the demo realm uses it.
+
+Management owns both and publishes them to the gateway over Kafka (`aira.roles`,
+`aira.memberships`), so both planes answer the same question the same way. A realm role assigned
+directly in Keycloak grants nothing in AIRA — only group membership does
+([`ADR-0017`](adr/ADR-0017-a-role-is-held-through-a-group.md),
+[`ADR-0025`](adr/ADR-0025-aira-defines-what-a-role-may-do.md),
+[`FRD-209`](features/FRD-209-access-by-group.md)).
+
+### 8.5 An application with an API key
 
 A key exists so that an application can call the gateway with nobody sitting in front of it, while
 every request still belongs to a named person and one use case.
@@ -845,7 +884,7 @@ What that means in practice:
 - **The control plane accepts no keys at all.** A key reaches the gateway and nothing else, so a
   leaked key can spend budget but cannot change configuration, read the roles or grant access.
 
-### 8.7 A request to the gateway, step by step
+### 8.6 A request to the gateway, step by step
 
 ```mermaid
 sequenceDiagram
@@ -883,7 +922,7 @@ sequenceDiagram
    else is treated as a token. Nothing else distinguishes them, and no caller can choose the path.
 3. **Check it.** A key is looked up by its prefix and its hash compared in constant time; the row
    also says whether it is still active and not expired. A token goes through the four checks
-   in §8.4.
+   in §8.3.
 4. **Decide which use case the request belongs to.** The `X-AIRA-Use-Case` header wins; otherwise a
    `/uc/<slug>` path segment. For a key issued by Management, the use case is the key's own and
    needs no selector. **A selector never grants access — it only chooses among what the caller
@@ -905,7 +944,7 @@ catalogue.
 | `400` | A use case named in a form that is not a valid identifier, or none named where one is required. |
 | `429` | Too many **refused** authentication attempts from one source address (default 60 a minute, on both planes). Successful requests never touch that counter, so an ordinary integration cannot trip it, however busy. `Retry-After` says when to come back. |
 
-### 8.8 Directory lookups — the one thing AIRA asks Keycloak
+### 8.7 Directory lookups — the one thing AIRA asks Keycloak
 
 When somebody grants access in the console, they need to find a colleague or a group that may never
 have signed in to AIRA. That is the only case in which AIRA queries Keycloak's admin API, with a
@@ -927,7 +966,7 @@ anything in the realm. Without it the console still works: it then searches only
 already knows and says so. Binding a role to a group is refused while the directory cannot be asked,
 because a group nobody could verify is not one to grant access from.
 
-### 8.9 The guard rails around all of this
+### 8.8 The guard rails around all of this
 
 - **Nothing is stored in the clear.** Keys are hashed; the realm's client secret and the database
   password come from Vault, not from the environment.
