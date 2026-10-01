@@ -35,6 +35,7 @@ COLUMNS = (
     "total_tokens",
     "cost",
     "unpriced_requests",
+    "unmetered_requests",
     "avg_latency_ms",
     "max_latency_ms",
 )
@@ -76,25 +77,36 @@ def render(report: dict[str, Any], breakdown: str, currency: str) -> str:
             [
                 safe_cell(row.get("key", "")),
                 safe_cell(row.get("requests", 0)),
-                safe_cell(row.get("failed", 0)),
+                # `failed_requests`, which is the key the report actually carries. It read `failed`
+                # until 2026-10-01 and so wrote **0 for every row of every export** — a column
+                # nobody could have noticed was wrong, because 0 failures is the ordinary answer.
+                # The fixture it was tested against was hand-written and spelled it `failed`: a
+                # stand-in more generous than the thing it stands in for (`LESSONS.md` §2).
+                safe_cell(row.get("failed_requests", 0)),
                 safe_cell(row.get("prompt_tokens", 0)),
                 safe_cell(row.get("completion_tokens", 0)),
                 safe_cell(row.get("total_tokens", 0)),
                 safe_cell(format_display(int(row.get("cost_nanos") or 0))),
                 safe_cell(row.get("unpriced_requests", 0)),
+                safe_cell(row.get("unmetered_requests", 0)),
                 safe_cell(row.get("avg_latency_ms", 0)),
                 safe_cell(row.get("max_latency_ms", 0)),
             ]
         )
 
     unpriced = sum(int(row.get("unpriced_requests") or 0) for row in rows)
+    unmetered = sum(int(row.get("unmetered_requests") or 0) for row in rows)
     if unpriced:
-        # The screen's caveat, kept in the document that gets forwarded.
+        # The screen's caveat, kept in the document that gets forwarded — and **naming the right
+        # cause**, which it did not: a request can have no cost because the model has no price on
+        # file, or because the upstream answered without a token count. Telling somebody to add a
+        # price for the second sends them to a form that already has one (`FRD-626` FR-18).
         writer.writerow([])
         writer.writerow(
             [
-                f"# {unpriced} request(s) used a model with no price on file. The cost column is a "
-                "lower bound."
+                f"# {unpriced} request(s) have no cost, so the cost column is a lower bound. "
+                f"Of those, {unmetered} reported no token usage for anything to be priced from; "
+                f"the remaining {unpriced - unmetered} ran on a model with no price on file."
             ]
         )
 

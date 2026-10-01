@@ -78,7 +78,18 @@
                   <code>{{ row.key }}</code>
                 </th>
                 <td>
-                  <strong>{{ row.cost }}</strong>
+                  <strong>{{ spend(row) }}</strong>
+                  @if (unknown(row)) {
+                    <span
+                      class="muted"
+                      [title]="
+                        'None of the ' +
+                        row.requests +
+                        ' request(s) in this row could be priced, so the spend is unknown rather than zero.'
+                      "
+                      >nothing priced</span
+                    >
+                  }
                   @if (incomplete(row)) {
                     <span
                       class="muted"

@@ -118,6 +118,9 @@ Complete, and honest about what is not there. Anything unbuilt is in
   which are the caller's content.
 - **Spend and usage reporting** with breakdowns by use case, model and member, and a CSV export that
   is a renderer of the same endpoint rather than a second one.
+- **Usage over time**: a column per day or hour split by model, use case or outcome, and the whole
+  period as one row of blocks — on the reporting screen and on each use case's own overview. Spend,
+  requests and tokens are three views of one load, and the figures are a table as well as a picture.
 - **A request browser**, across use cases for the roles that investigate and inside one for the
   people who run it: which system, whose identity, which machine, what the pipeline objected to.
 - **The prompts and answers themselves**, for the roles entitled to them — and **every read writes a

@@ -35,7 +35,7 @@ import httpx
 
 # Imported, never restated. A third copy of the salt is a third place for it to drift, and the
 # failure it produces (401) looks exactly like the one this script exists to wait out.
-from demo_traffic import CHAT, GATEWAY, key_for
+from demo_traffic import CALLERS, CHAT, GATEWAY, key_for
 
 #: Generous, because on a first run this transitively waits for a model download over a network
 #: nobody here controls. Being slow costs a minute; being short costs the demo.
@@ -46,6 +46,15 @@ POLL_SECONDS = 3.0
 #: opens with.
 PROBE_USE_CASE = "kundenservice"
 
+#: **Every** credential the traffic will use, not one of them.
+#:
+#: A key reaches the gateway over Kafka, and one key arriving says nothing about the next: this
+#: probed the use case's own key alone, so a second member's key could still be in flight when the
+#: wait went green. That was survivable while a 401 only reduced the figures; it is not now that the
+#: traffic treats one as a wiring fault and stops (`FRD-130` §4e). A guard that turns a timing
+#: window into a red run is worse than the window.
+PROBE_KEYS = [key_for(PROBE_USE_CASE, person) for person in CALLERS[PROBE_USE_CASE]]
+
 
 def _state(client: httpx.Client) -> tuple[bool, bool]:
     """``(credential accepted, model servable)`` — the two halves, reported apart.
@@ -54,15 +63,21 @@ def _state(client: httpx.Client) -> tuple[bool, bool]:
     reaches the model list without making a model call, which is what lets this run every three
     seconds without billing anybody.
     """
-    try:
-        response = client.get(
-            f"{GATEWAY}/v1beta/models",
-            headers={"x-goog-api-key": key_for(PROBE_USE_CASE)},
-            timeout=10.0,
-        )
-    except httpx.HTTPError:
-        return False, False
-    if response.status_code != httpx.codes.OK:
+    response = None
+    for key in PROBE_KEYS:
+        try:
+            response = client.get(
+                f"{GATEWAY}/v1beta/models",
+                headers={"x-goog-api-key": key},
+                timeout=10.0,
+            )
+        except httpx.HTTPError:
+            return False, False
+        # Every one of them, because the traffic uses every one of them. The last answer carries the
+        # model list; which one that is does not matter, since they all reach the same registry.
+        if response.status_code != httpx.codes.OK:
+            return False, False
+    if response is None:
         return False, False
     # **`airaDeclared`, not merely present.** The list reports what the *registry* serves — an
     # adapter is configured, so its models appear the moment the gateway starts, whether or not

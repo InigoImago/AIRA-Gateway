@@ -75,12 +75,25 @@ def seed_showcase(fresh: bool) -> SeedResult:
     for declaration in _use_cases():
         usecase = _seed_use_case(declaration, created)
         _reconcile_memberships(usecase, users, created)
-        # One key per use case, owned by its first member, so the demo can call the gateway
-        # without anybody minting one first.
-        owner_name = MEMBERSHIPS.get(usecase.slug, [("admin", "")])[0][0]
-        owner = users.get(owner_name) or users.get("admin")
-        if owner is not None:
-            keys[usecase.slug] = _ensure_key(usecase, owner, created)
+        # **One key per member**, not one per use case. It was one, owned by the first member, and
+        # that made the first member the only person with traffic anywhere in the demo: `ucuser`,
+        # whose whole role is *uses a use case*, had no requests at all and saw an empty "What you
+        # used" card. It also left every per-person figure — `FRD-606`'s table, the per-head budget
+        # on `kundenservice` — with exactly one row to show, which is a comparison with nothing to
+        # compare.
+        #
+        # The first member keeps the **owner-agnostic** derivation, because printed examples,
+        # `showcase_agent.py` and `showcase_try_it.py` all re-derive that one by slug alone
+        # (`FRD-130` FR-4); the others are derived with their own name.
+        for index, (member_name, _role) in enumerate(
+            MEMBERSHIPS.get(usecase.slug, [("admin", "")])
+        ):
+            owner = users.get(member_name)
+            if owner is None:
+                continue
+            keys[f"{usecase.slug}/{member_name}"] = _ensure_key(
+                usecase, owner, created, named=index > 0
+            )
 
     _seed_budgets(created)
     _seed_rate_limits(created)
@@ -216,10 +229,19 @@ def _seed_pipelines(created: dict[str, int]) -> None:
             created["pipelines"] += 1
 
 
-def _ensure_key(usecase: UseCase, owner: Any, created: dict[str, int]) -> str:
-    """A deterministic key per use case, re-derived rather than regenerated (`DEMO_KEY_SALT`)."""
+def _ensure_key(usecase: UseCase, owner: Any, created: dict[str, int], *, named: bool) -> str:
+    """A deterministic key, re-derived rather than regenerated (`DEMO_KEY_SALT`, `FRD-130` FR-4).
+
+    ``named`` puts the owner's username into the digest, which is what gives a second member of the
+    same use case a second key. The first member's key stays derived from the slug alone: every
+    printed example and both hand-over scripts re-derive *that* one, and a demo that mints a new
+    secret is a demo whose documentation stops working on the second run.
+    """
     # Hex, because the key format says hex: the parts must not contain the separator.
-    digest = hashlib.sha256(f"{DEMO_KEY_SALT}:{usecase.slug}".encode()).hexdigest()
+    material = f"{DEMO_KEY_SALT}:{usecase.slug}"
+    if named:
+        material = f"{material}:{owner.get_username()}"
+    digest = hashlib.sha256(material.encode()).hexdigest()
     prefix, secret = digest[:8], digest[8:56]
     plaintext = f"{NAMESPACE}_{prefix}_{secret}"
     key_hash = hash_api_key(plaintext)

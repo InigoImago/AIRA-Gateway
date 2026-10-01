@@ -14,6 +14,7 @@ from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalResponse,
     CanonicalUsage,
+    EmbeddingVectors,
     ToolCallPart,
 )
 
@@ -188,14 +189,25 @@ class StreamedToolCalls:
         return tool_calls_of(raw)
 
 
-def embedding_values(data: dict[str, Any]) -> list[list[float]]:
-    """Vectors in the order submitted — the contract `FRD-113` FR-1 makes.
+def embedding_values(data: dict[str, Any]) -> EmbeddingVectors:
+    """Vectors in the order submitted — the contract `FRD-113` FR-1 makes — **and what they cost**.
 
     Sorted by ``index`` rather than trusted: the field exists because the API promises no order.
+
+    The usage travels with them (`FRD-403`). This returned a plain list and dropped
+    ``data["usage"]``, so every embedding call through this dialect was recorded with no tokens and
+    therefore **no cost** — unpriceable traffic on a model whose price is on file. Measured against
+    the local runtime, which reports `prompt_tokens` for exactly these calls and had them discarded
+    one layer above. `None` where the upstream said nothing: not reported is not zero.
     """
     entries = [entry for entry in (data.get("data") or []) if isinstance(entry, dict)]
     entries.sort(key=lambda entry: int(entry.get("index", 0)))
-    return [[float(value) for value in entry.get("embedding") or []] for entry in entries]
+    usage = data.get("usage")
+    reported = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+    return EmbeddingVectors(
+        ([float(value) for value in entry.get("embedding") or []] for entry in entries),
+        input_tokens=None if reported is None else int(reported),
+    )
 
 
 def parse_sse_line(line: str) -> dict[str, Any] | None:

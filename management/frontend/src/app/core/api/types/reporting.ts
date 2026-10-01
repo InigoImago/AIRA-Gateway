@@ -13,8 +13,16 @@ export interface ReportRow {
   /** Of the prompt tokens, how many the provider served from its cache (FRD-133) — what makes a
    *  cache that silently stopped working visible. */
   cached_input_tokens: number;
-  /** Requests on a model with no price. Their cost is unknown, not zero. */
+  /** Requests whose cost is **unknown, not zero** — nothing could be computed for them. */
   unpriced_requests: number;
+  /**
+   * Of those, the ones where **nothing was reported to price**: the upstream answered with no token
+   * count (`FRD-626` FR-18).
+   *
+   * A different fact from "this model has no price on file", and a different remedy — adding a price
+   * fixes the second and does nothing for the first. Absent on a report from before this existed.
+   */
+  unmetered_requests?: number;
   failed_requests: number;
   avg_latency_ms: number | null;
   max_latency_ms: number | null;
@@ -24,6 +32,39 @@ export interface ReportRow {
 export interface PersonRow extends ReportRow {
   /** Keyed by auth method — `oidc`, `api_key`. Absent methods simply did not call. */
   by_method?: Record<string, ReportRow>;
+}
+
+/** How wide one column of the usage chart is (`FRD-626`). */
+export type Granularity = 'day' | 'hour';
+
+/** What the coloured bands of the usage chart are. */
+export type SeriesSplit = 'model' | 'use_case' | 'outcome';
+
+/** One band of one bucket: a model (or use case, or outcome) on a given day or hour. */
+export interface SeriesPoint extends ReportRow {
+  /** `2026-10-01` for a day, `2026-10-01T14` for an hour. An ISO-8601 prefix, never a local one. */
+  bucket: string;
+}
+
+/**
+ * The period bucket by bucket (`FRD-626`) — what the histogram and the composition blocks draw.
+ *
+ * `buckets` carries the **empty** ones too: a chart drawn only from buckets that have rows puts
+ * Monday beside Friday and calls it a week.
+ */
+export interface UsageSeries {
+  granularity: Granularity;
+  split: SeriesSplit;
+  /** Every bucket of the window, in order, including the quiet ones. */
+  buckets: string[];
+  /**
+   * The bands, biggest first — which is also the order their colours are assigned in, so a period
+   * with fewer bands does not repaint the ones that survive.
+   */
+  keys: string[];
+  /** Whether a tail of small bands was folded into `(other)`. */
+  folded: boolean;
+  points: SeriesPoint[];
 }
 
 export interface Report {
@@ -52,6 +93,11 @@ export interface Report {
    * case is not theirs, not because nothing happened in it.
    */
   in_scope?: boolean;
+  /**
+   * The time series, **present only when it was asked for** (`FRD-626`). Absent is not empty: a
+   * report loaded for its figures alone does not pay for a query nothing on the page reads.
+   */
+  series?: UsageSeries;
 }
 
 /**

@@ -73,10 +73,19 @@ async def _clear_redis() -> int:
         await client.aclose()
 
 
+async def reset() -> tuple[int, int]:
+    """Clear both stores and say how much was cleared. Raises; the caller decides what that means.
+
+    Separate from :func:`main` because `demo_history.py` calls it **once per simulated day** — each
+    backdated day is its own budget period, so clearing between them is what would have
+    happened — and twenty-eight copies of the summary line is not a report.
+    """
+    return await _clear_postgres(), await _clear_redis()
+
+
 async def main() -> int:
     try:
-        rows = await _clear_postgres()
-        keys = await _clear_redis()
+        rows, keys = await reset()
     except Exception as error:  # noqa: BLE001 - a demo helper reports and does not raise
         print(f"could not reset the demo counters: {error}", file=sys.stderr)
         # Not fatal: the traffic that follows still runs, it just may find a spent budget. Saying

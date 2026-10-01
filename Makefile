@@ -267,6 +267,16 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@# only when the pull, the seed, the relay, Kafka and the consumer have all done their work.
 	@echo "==> waiting until the gateway accepts the demo's credentials and model"
 	uv run python tools/demo_wait_ready.py
+	@# **Before the reset**, and before the run whose figures the walkthrough is about. It drives
+	@# real traffic and then moves those rows' timestamps into the past, so the usage chart
+	@# (`FRD-626`) has a month of columns instead of one. It clears the counters between its own
+	@# simulated days, which is why the reset below still has to happen afterwards: what it leaves
+	@# consumed belongs to the last day it built, not to the demo somebody is about to be shown.
+	@#
+	@# Leading `-`: a history is an enrichment. The showcase's own traffic is what decides whether
+	@# the demo is worth showing, and that one has no `-`.
+	@echo "==> building a month of history, so the usage chart has a shape"
+	@-uv run python tools/demo_history.py
 	@echo "==> clearing what earlier runs consumed, so this run tells its own story"
 	@-uv run python tools/demo_reset_usage.py
 	@echo "==> driving real traffic so the reports are not empty"
@@ -341,6 +351,11 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 # reached, which is the thing `showcase` resets so that *its* run is the one you see.
 showcase-traffic: ## Drive more demo traffic (moves the budget bars)
 	uv run python tools/demo_traffic.py
+
+# `DAYS`/`PER_DAY` so a walkthrough can ask for more without editing anything. Real requests,
+# backdated — the script's own docstring says exactly which half of that is real.
+showcase-history: ## Build more history for the usage chart (real traffic, timestamps moved)
+	uv run python tools/demo_history.py $(if $(DAYS),--days $(DAYS),) $(if $(PER_DAY),--per-day $(PER_DAY),)
 
 showcase-reset-keys: ## Let the demo's API keys be reissued after their use case was deleted
 	@echo "Removing the demo keys from the gateway's read-model so the seed can announce them again."

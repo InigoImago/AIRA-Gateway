@@ -1,0 +1,81 @@
+@if (model().empty) {
+  <p class="table__empty" data-testid="histogram-empty">{{ emptyText() }}</p>
+} @else {
+  <!--
+    `aria-hidden`: a column's meaning is its height and its colours. The same figures are in the
+    table the parent always renders, so nothing is reachable only by seeing this (`FRD-626` FR-9).
+  -->
+  <div class="histogram" aria-hidden="true" data-testid="histogram">
+    <div class="histogram__scale">
+      @for (line of gridlines(); track line.at) {
+        <span class="histogram__tick" [style.bottom.%]="line.at">{{ line.label }}</span>
+      }
+    </div>
+
+    <!-- The plot and its axis scroll together: 192 hourly columns do not fit a phone, and labels
+         that scrolled apart from their columns would be worse than either. -->
+    <div class="histogram__track">
+      <div class="histogram__plot">
+        @for (line of gridlines(); track line.at) {
+          <span class="histogram__grid" [style.bottom.%]="line.at"></span>
+        }
+
+        @for (column of model().columns; track column.bucket) {
+          <div
+            class="histogram__col"
+            [class.is-hovered]="hovered() === column.bucket"
+            [attr.data-testid]="'col-' + column.bucket"
+            (mouseenter)="hovered.set(column.bucket)"
+            (mouseleave)="hovered.set(null)"
+          >
+            <div class="histogram__stack" [style.height.%]="column.height">
+              @for (band of column.bands; track band.key) {
+                <span
+                  class="histogram__seg"
+                  [style.height.%]="band.share"
+                  [style.background]="band.color"
+                  [attr.data-testid]="'seg-' + column.bucket + '-' + band.key"
+                ></span>
+              }
+            </div>
+          </div>
+        }
+      </div>
+
+      <div class="histogram__axis">
+        @for (column of model().columns; track column.bucket; let index = $index) {
+          <span class="histogram__label" [title]="column.title">
+            @if (labelled(index)) {
+              {{ column.label }}
+            }
+          </span>
+        }
+      </div>
+    </div>
+  </div>
+
+  <!--
+    Below the plot, not floating over it — and that is a correction rather than a preference. A
+    panel positioned over the chart has to live inside the scroll container to be anchored to its
+    column, and a container that scrolls horizontally clips vertically too, so the panel would be
+    cut off or grow a second scrollbar. Reading all of a bucket's bands at once is what matters;
+    where that reading appears is not. It also works on a touch screen, which a hover never does.
+  -->
+  <div class="histogram__readout" aria-hidden="true">
+    @if (column(); as current) {
+      <p class="histogram__readout-head" data-testid="histogram-tip">
+        <strong>{{ current.title }}</strong>
+        <span class="histogram__readout-total">{{ current.display }}</span>
+        @for (band of current.bands; track band.key) {
+          <span class="histogram__readout-band">
+            <span class="histogram__swatch" [style.background]="band.color"></span>
+            {{ band.key }}
+            <span class="histogram__readout-value">{{ band.display }}</span>
+          </span>
+        }
+      </p>
+    } @else {
+      <p class="histogram__readout-hint">Point at a column to see what it is made of.</p>
+    }
+  </div>
+}

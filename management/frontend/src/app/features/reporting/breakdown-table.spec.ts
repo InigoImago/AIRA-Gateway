@@ -98,3 +98,30 @@ describe('BreakdownTable', () => {
     expect(element.querySelector('table')).toBeNull();
   });
 });
+
+describe('BreakdownTable — a spend nobody could compute (FRD-626 FR-18)', () => {
+  it('shows a row where nothing could be priced as unknown, not as zero', () => {
+    // Found on the running showcase: the local embedding model reports no tokens, so nothing could
+    // be priced — and this column read `0.00` beside a price that is on file. `0.00` is a
+    // measurement; this one was never made (`LESSONS.md` §2).
+    const { element } = setup([
+      row({ key: 'all-minilm', requests: 9, cost: '0.00', unpriced_requests: 9 }),
+    ]);
+    const spend = element.querySelector('tbody td')!;
+
+    expect(spend.textContent).toContain('—');
+    expect(spend.textContent).not.toContain('0.00');
+    expect(spend.textContent).toContain('nothing priced');
+  });
+
+  it('still shows a lower bound where some of the row was priced', () => {
+    // The narrowing: a row with one priced request has a figure, and that figure is a lower bound —
+    // which is a different statement from "unknown" and keeps its own wording.
+    const { element } = setup([row({ requests: 10, cost: '1.00', unpriced_requests: 3 })]);
+    const spend = element.querySelector('tbody td')!;
+
+    expect(spend.textContent).toContain('1.00');
+    expect(spend.textContent).toContain('+ 3 unpriced');
+    expect(spend.textContent).not.toContain('nothing priced');
+  });
+});

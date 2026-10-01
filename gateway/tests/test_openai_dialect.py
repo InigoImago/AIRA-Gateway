@@ -296,6 +296,26 @@ def test_vectors_come_back_in_the_order_submitted_not_the_order_received() -> No
     assert embedding_values(data) == [[0.1], [0.2]]
 
 
+def test_the_embedding_usage_travels_with_the_vectors() -> None:
+    """**The defect this test exists for**: it did not, so every embedding call through this
+    dialect was recorded with no tokens and therefore no cost — unpriceable traffic on a model
+    whose price is on file (`FRD-403`, `FRD-626` §5.11).
+
+    Measured against the local runtime, which answers `{"usage": {"prompt_tokens": 12}}` for exactly
+    these calls; the mapping discarded it and the accounting then found nothing to price.
+    """
+    data = {"data": [{"index": 0, "embedding": [0.1]}], "usage": {"prompt_tokens": 12}}
+
+    assert embedding_values(data).input_tokens == 12
+
+
+def test_an_upstream_that_reports_no_usage_leaves_it_unknown() -> None:
+    """`None`, never 0 — the rule the whole cost path rests on. A zero would say the call was free,
+    and it is the one thing an unmetered call is not (`FRD-626` FR-18)."""
+    assert embedding_values({"data": [{"index": 0, "embedding": [0.1]}]}).input_tokens is None
+    assert embedding_values({"data": [], "usage": {}}).input_tokens is None
+
+
 async def test_the_adapter_embeds_through_the_embeddings_endpoint() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/embeddings"

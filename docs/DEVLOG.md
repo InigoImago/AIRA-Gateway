@@ -5,6 +5,166 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Usage over time, and a chart that cannot say zero (2026-10-01)
+
+The owner, looking at a use case's own consumption card: *histograms, which model when cost what —
+and the total usage visible as blocks.* `FRD-601` had listed charts as a non-goal with the condition
+attached: *"a chart is worth adding once someone has said which comparison they actually make."*
+
+`FRD-626`. Two pictures of one series in one card, under one row of controls: a **stacked column per
+day or hour** (which model, when) and the whole period as **one row of blocks** (what it is made of).
+The second is not a duplicate of the first — each stack in the histogram is scaled against the
+tallest bucket, so the quiet days say nothing about proportion. Spend, requests and tokens all arrive
+for every bucket, so switching the measure costs no request; `granularity` and `split` do, and are
+reported up to the page, which owns the load. On Reporting, and on a use case's own overview over the
+last thirty days.
+
+**The hard part was the bucket, and it was a decision rather than a query.** `date_trunc` is
+Postgres-only and `strftime` SQLite-only, and `FRD-601` §4.2 had already refused to make a reporting
+expression dialect-dependent — in as many words — because the production half would then be exercised
+only by the live suite. The spelling both stores share is a **text prefix of the rendered timestamp**,
+which works and has one catch: Postgres renders a `timestamptz` in the *session's* zone, and nothing
+had ever set it. On a Postgres started in `Europe/Berlin` a request at 23:30 UTC would land in the
+next day's column, and on the SQLite the fast tests run against it would land in this day's — right
+in CI, wrong in production, invisible to every hermetic test. `ADR-0028`: the bucket is portable and
+the sessions are pinned to UTC with a libpq `options: -c timezone=UTC`, which makes true at the
+storage layer what `api/reporting/common.py` had been claiming in its docstring all along —
+*"the zone every figure is in"*. Two live tests assert it: `SHOW TIME ZONE` on the connection the
+application actually makes, and 23:30 and 00:30 either side of a midnight landing in two columns.
+
+**Three things the tests found that reading would not have.**
+
+*A failed reload left the old picture under the new label.* The chart was derived from
+`report().series`, so switching *Coloured by* to Outcome and having that request fail left the model
+bands drawn under the new heading. Stale data beneath a changed control is a wrong statement, not a
+degraded one. Its own signal now, cleared on failure, with the card saying why — and its own in-flight
+flag, because a question about the chart's axis is not a page load and must not blank the totals.
+
+*The usage export's `failed` column has been 0 in every file since `FRD-602`.* The renderer read
+`row.get("failed", 0)`; the report emits `failed_requests`. Nothing noticed because the fixture
+`test_csv_export.py` renders was hand-written and spelled it the renderer's way — the stand-in more
+generous than the thing it stands in for, `LESSONS.md` §2, and 0 failures is the ordinary answer, so
+the column looked right for seven weeks. The renderer reads the real key; and a new test checks
+**every key in that fixture against `Figures.as_dict()`**, which is the half that stops the next one.
+
+*And the reporting screen said the wrong thing about what it counts.* The *Requests* info button
+read *"an embedding batch counts as the many texts it carries, not as one"* — true of a **budget**
+(`FRD-113` FR-6), false of this figure. The audit writes one row per call, which
+`test_serving_options.py` has asserted since the day it was written, and the report counts rows; a
+sibling test asserts the budget weighs a batch of five as five. Both rules are deliberate and they
+genuinely disagree, which is the reason the sentence had to be the other one: a reader reconciling a
+request budget bar against the report finds the two differing on embedding traffic, and a figure
+whose own definition is wrong is the half they stop believing. Corrected on both screens, with the
+difference named rather than smoothed over.
+
+*`US12` survived its first version.* "The series export asks for the data it renders" was asserted on
+the CSV header — which is written either way, with or without the mechanism. The empty file is
+convincing precisely because the header is there. It asserts a row now.
+
+The palette is **computed, not chosen**: seven hues in a fixed order, every adjacent pair clear of
+ΔE 8 under colour-vision deficiency and of 15 for full-colour vision, with `(other)` a neutral rather
+than an eighth hue and red deliberately unused because `--aira-danger` is red everywhere else in this
+console. Three of the seven sit below 3:1 against white, whose documented relief is labels and a table
+— so the plot carries `aria-hidden`, the figures are in a real table that is **always in the DOM**,
+and the ink on a label *inside* a block is chosen by the fill's luminance and asserted to clear 4.5:1
+on every colour. A constant white fails on the yellow at 2.2:1.
+
+**And a month of history to draw, which is where honesty cost something.** A histogram needs days;
+`demo_traffic.py` produces eleven requests that all arrive now. `tools/demo_history.py` drives more
+**real** traffic — authentication, pipeline, a model that answered, the catalogue's price, the audit
+row — and then moves the `created_at` of the rows **it just created** across four weeks in a
+working-week shape. `FRD-130` §4 refuses inserted rows and this is not that, but it is not nothing
+either, so the script says in its docstring and in its output exactly which half is real: every
+figure is the gateway's own, and *when* it happened is not. Bounded to the demo's own use cases and to
+rows matched by a timestamp marker; a day whose rows it cannot match is reported and left alone. It
+clears the budget counters between its own simulated days — each backdated day is its own period, and
+without that the showcase's deliberately tight limits turn the history into a wall of 429s — and runs
+before `demo_reset_usage.py`, so the bars a walkthrough looks at belong to the showcase's own run.
+
+**And the demo had one person with traffic per use case.** Asked why the example usage sits under
+`ucadmin`: *"es wäre doch passender [unter ucuser] oder nicht?"* — and it was, but moving the key
+would only have reversed who sees nothing. The showcase issued **one key per use case**, to its
+first member (`showcase.py`, `MEMBERSHIPS[slug][0]`), and an API key's subject is its owner's
+username (`FRD-604`). So `ucuser` had **zero requests anywhere**, and every per-person figure in the
+product — `FRD-606`'s table, the per-head daily budget on `kundenservice` — had exactly one row,
+which is a comparison with nothing to compare. A key per **member** now; the first member keeps the
+slug-only derivation so printed examples and both hand-over scripts go on working, and the rest
+carry their username in the digest. The traffic and the history round-robin over a use case's
+callers, and a guard reads both files: a caller the seed never made a member derives a key nobody
+stored, and every request as them is a 401.
+
+**`0.00` for a model that has a price.** Found by the owner on the running showcase — *"allminilm
+hat auch kosten von 0.0, was nicht so ganz gut passt"* — and it was two defects. Measured on that
+stack: nine requests on the local embedding model, `total_tokens` NULL, `cost_nanos` NULL, against a
+price the seed does set. **And the first explanation was wrong.** It looked like an upstream that does not meter what it
+serves — which fit every symptom. One `curl` at the runtime answered
+`{"usage": {"prompt_tokens": 12}}`: the tokens *were* reported and the gateway was dropping them.
+`openai.mapping.response.embedding_values` returned a plain list and discarded `data["usage"]`,
+while `accounting.embedded` looks for `vectors.input_tokens`; the Vertex adapter has returned
+`EmbeddingVectors` with both fields since `FRD-115` and the OpenAI dialect never did. So **every**
+embedding call on the local and self-hosted path was recorded with no tokens and no cost. The
+lesson is the diagnosis rather than the line: an explanation that fits every symptom is not the
+cause, and asking the far end cost one command. So (1) a group that is
+**entirely** unpriced was rendering as `0.00` — a measurement, where none was made — in the day list,
+the legend and the reporting screen's breakdown table; it is an em dash now, while a group with
+*some* priced traffic keeps its figure and its lower-bound note, because those are different
+statements. And (2) every caveat named one cause: *"ran on a model with no price on file"*, which for
+an embedding row is false and sends somebody to a form that already has a price in it. The row
+carries the evidence to tell them apart, so the report counts `unmetered_requests` as a named subset
+and the three screens say which is which.
+
+Two of this round's own rules broke while fixing it, both caught by the mutation run and not by
+reading: a refusal test written with `prompt=0` records `total_tokens = 0` rather than NULL, so it
+never reached the path it was named after and `US18` survived; and `_was_served()`, added to give
+both counters one condition, was **never called** — the inline expressions stayed, and a shared rule
+that nothing calls is a comment with parentheses.
+
+**And the money axis had two identical ticks**, `0.0002 / 0.0001 / 0.0001 / 0.000041`, because each
+was refined on its own until it stopped reading as zero. Right for one figure, wrong for a scale:
+one precision for the whole axis now, chosen as the first that tells every tick apart, and a label
+that still repeats is dropped while its line stays.
+
+**And neither picture answered the question somebody actually arrives with.** *What did I use that
+day, and what did it cost me.* The figures that answer it were there — and behind a button
+(*Show the numbers*), as a pivot of **one** measure: spend, or requests, or tokens, never the three
+together. A pivot cannot write that sentence. The pivot is gone; a day list replaces it, visible,
+one `tbody` per day with the day's total and a row per model carrying requests, spend and the token
+split at once, newest first, independent of whichever measure the chart is drawing. Days with no
+traffic are left out — the opposite of the axis rule, and both are right: on an axis an empty day is
+a reading because the week has a shape, in a list it is a row that says nothing thirty times. Spend
+sits before the token split, because this table scrolls inside its wrapper on a phone and the fifth
+column is the one a reader has to drag for; hiding the token column was the other candidate and is
+worse, since `display: none` takes it from a screen reader too. It also discharges the palette's
+contrast relief properly, which had been paid by a table nobody could see without knowing to ask.
+
+**And the first build charted the wrong subject.** The request began *"wir haben schon in einem use
+case **eigene nutzung**, es wäre doch schön wenn wir histogramme der nutzung zeigen können"* — and
+*eigene Nutzung* is the heading of a card already on that page, `people-panel` narrowed to the reader
+(*What you used*, `FRD-606`). The ask was a histogram of **that**. What got built was the use case's
+whole traffic, placed directly above it: a larger figure about a different subject, on one screen,
+with nothing saying which was which. Corrected with a `person=` filter that narrows the **whole**
+report — one predicate in `_window` beside the scope, so the totals, the breakdowns and the series
+cannot disagree about whose traffic they describe — and a card headed *What you used, over time*.
+Keyed `coalesce(username, subject)` like every other per-person figure: filtering on `subject` alone
+shows a person half their own traffic, since an OIDC subject is a directory id and an API key's is
+its owner's username. The load moved from `ngOnInit` into the `/me` response, because until that
+answers there is nobody to narrow to and an early load would fetch the use case's whole traffic and
+label it *yours*.
+
+**Two defects only a screenshot found**, which is why one was taken. The axis thins labels by column
+*count*, and what makes two labels collide is the *width* each gets: thirty days at 390px clipped
+every label to one character and the axis read `0000000001111111112222222223`. And a block is
+labelled above a 12 % share, which fits `gpt-4o-mini` on a desktop card and `q…` on a phone. Both are
+container queries now — on the plot and on the blocks row, not media queries, because this card sits
+beside a 15rem sidebar and the window's width is the wrong question. The hover state was invisible
+too: the tallest column fills its own cell, so a wash behind the bar survives as two 2px strips.
+
+52 gateway tests, 6 live ones against real Postgres, 84 frontend, 7 in the browser, and 15 mutations
+(`US1`–`US13`), each shown to fail before it was shown to pass. No new column, no migration, no new
+stored data: one `GROUP BY`, and one line of engine configuration.
+
+---
+
 ## A load test, and where the gateway actually gives way (2026-09-20)
 
 The owner's requirement: 50–300 people at once, all day — up to 300 agentic coding seats with

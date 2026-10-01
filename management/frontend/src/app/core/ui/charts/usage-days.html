@@ -1,0 +1,92 @@
+@if (days().length === 0) {
+  <p class="table__empty" data-testid="days-empty">No day in this period had any traffic.</p>
+} @else {
+  <div class="table-wrap">
+    <table class="table usage-days" data-testid="usage-days">
+      <caption class="sr-only">
+        Each day, what was used on it and what it cost
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Day</th>
+          <th scope="col">{{ nounLabel() }}</th>
+          <th scope="col">Requests</th>
+          <!-- **Spend before the token split**, and not for emphasis. On a phone this table scrolls
+               inside its own wrapper like every wide table in this console, and whatever sits in the
+               fifth column is what a reader has to drag to reach. "What did it cost me" is the
+               question this view exists for; the token split is the one that can wait. Reordering
+               costs nothing — hiding the column would have taken the figure away from a screen
+               reader too, which is the same loss by another route. -->
+          <th scope="col">Spend{{ unit() }}</th>
+          <th scope="col">Prompt / completion tokens</th>
+        </tr>
+      </thead>
+      <!--
+        One `tbody` per day, so the day's own total is a row and its bands are the rows under it —
+        which is the sentence this view exists to render. Grouped markup rather than a repeated date
+        column: a reader scanning for one day finds one heading, not fourteen identical cells.
+      -->
+      @for (day of shown(); track day.bucket) {
+        <tbody [attr.data-testid]="'day-' + day.bucket">
+          <tr class="usage-days__total">
+            <th scope="rowgroup">{{ day.title }}</th>
+            <td class="muted">all {{ noun() }}s</td>
+            <td>
+              <strong>{{ count(day.requests) }}</strong>
+            </td>
+            <td>
+              <strong>{{ day.cost }}</strong>
+              <!-- Only where the day has a figure *and* something missing from it. Where nothing
+                   could be priced the cell already says so with an em dash, and "— + 6 unpriced"
+                   reads as an arithmetic nobody can do. -->
+              @if (!day.costUnknown && day.unpriced > 0) {
+                <span
+                  class="muted"
+                  [title]="
+                    day.unpriced +
+                    ' request(s) that day ran on a model with no price on file. Their cost is unknown, not zero.'
+                  "
+                  >+ {{ day.unpriced }} unpriced</span
+                >
+              }
+            </td>
+            <td>{{ tokens(day.promptTokens, day.completionTokens) }}</td>
+          </tr>
+          @for (band of day.bands; track band.key) {
+            <tr class="usage-days__band">
+              <td></td>
+              <th scope="row">
+                <span class="legend__swatch" [style.background]="band.color"></span>
+                <code>{{ band.key }}</code>
+              </th>
+              <td>
+                {{ count(band.requests) }}
+                @if (band.failed > 0) {
+                  <span class="muted">({{ band.failed }} failed)</span>
+                }
+              </td>
+              <td>{{ band.cost }}</td>
+              <td>{{ tokens(band.promptTokens, band.completionTokens) }}</td>
+            </tr>
+          }
+        </tbody>
+      }
+    </table>
+  </div>
+
+  @if (hidden() > 0) {
+    <button
+      type="button"
+      class="btn btn--sm"
+      (click)="all.set(!all())"
+      data-testid="days-more"
+      style="margin-top: 0.6rem"
+    >
+      {{
+        all()
+          ? 'Show the most recent ' + limit + ' days only'
+          : 'Show all ' + days().length + ' days'
+      }}
+    </button>
+  }
+}

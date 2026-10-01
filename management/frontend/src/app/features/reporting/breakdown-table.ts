@@ -50,6 +50,22 @@ export class BreakdownTable {
 
   /** Whether a row's spend is a lower bound: unpriced requests are unknown, not zero. */
   protected incomplete(row: ReportRow): boolean {
-    return row.unpriced_requests > 0;
+    return row.unpriced_requests > 0 && !this.unknown(row);
+  }
+
+  /**
+   * Whether the row's spend is **entirely** unknown — every request in it was unpriced.
+   *
+   * Then `0.00` is not a smaller figure, it is a wrong one: the row is a model nobody could price,
+   * not a model that was free. Found on the running showcase, where the local embedding model
+   * reports no tokens and this column read `0.00` beside a price that is on file.
+   */
+  protected unknown(row: ReportRow): boolean {
+    return row.requests > 0 && row.unpriced_requests === row.requests;
+  }
+
+  /** What each row's spend cell says. An em dash is a measurement nobody made. */
+  protected spend(row: ReportRow): string {
+    return this.unknown(row) ? '—' : row.cost;
   }
 }

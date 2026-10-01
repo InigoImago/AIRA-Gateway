@@ -1,0 +1,168 @@
+<div class="card" data-testid="usage-chart">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">{{ heading() }}</h3>
+    @if (resolved(); as grain) {
+      <span class="muted" data-testid="usage-grain"> One column per {{ grain }} </span>
+    }
+  </div>
+  <p class="muted" style="margin: 0.25rem 0 0">
+    {{ subject() }}, and what each {{ noun() }} was responsible for. From the request log — the same
+    record the tables below and the audit trail are built from.
+  </p>
+
+  <div class="filter-row" style="margin-top: 0.75rem">
+    <div class="field">
+      <label for="chart-metric">
+        Show
+        <app-info-hint [label]="metricLabel()" testid="chart-metric" [wide]="true">
+          {{ metricHelp() }}
+        </app-info-hint>
+      </label>
+      <select
+        id="chart-metric"
+        [ngModel]="metric()"
+        (ngModelChange)="setMetric($event)"
+        data-testid="chart-metric-select"
+      >
+        @for (entry of metrics(); track entry.value) {
+          <option [value]="entry.value">{{ entry.label }}</option>
+        }
+      </select>
+    </div>
+
+    @if (periodOptions().length) {
+      <div class="field">
+        <label for="chart-period">Period</label>
+        <select
+          id="chart-period"
+          [ngModel]="period()"
+          (ngModelChange)="setPeriod($event)"
+          data-testid="chart-period-select"
+        >
+          @for (entry of periodOptions(); track entry.value) {
+            <option [value]="entry.value">{{ entry.label }}</option>
+          }
+        </select>
+      </div>
+    }
+
+    <div class="field">
+      <label for="chart-split">Coloured by</label>
+      <select
+        id="chart-split"
+        [ngModel]="split()"
+        (ngModelChange)="setSplit($event)"
+        data-testid="chart-split-select"
+      >
+        @for (entry of splitOptions(); track entry.value) {
+          <option [value]="entry.value">{{ entry.label }}</option>
+        }
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="chart-grain">Columns</label>
+      <select
+        id="chart-grain"
+        [ngModel]="granularity()"
+        (ngModelChange)="setGranularity($event)"
+        data-testid="chart-grain-select"
+      >
+        @for (entry of granularities; track entry.value) {
+          <option [value]="entry.value">{{ entry.label }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <p class="loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the chart…
+    </p>
+  } @else if (!chart()) {
+    <!--
+      Absent, not empty. A flat plot here would say "nothing was used", which is a measurement
+      nobody made (`FRD-603` FR-4). The reason is the backend's own wording where there is one.
+    -->
+    <p class="callout callout--warning" role="status" data-testid="usage-chart-down">
+      The chart could not be loaded{{ reason() ? ': ' + reason() : '.' }} This is
+      <strong>unknown, not zero</strong>.
+    </p>
+  } @else if (chart(); as chart) {
+    <div class="stack" style="margin-top: 1rem">
+      <app-usage-histogram
+        [model]="chart"
+        [emptyText]="'Nothing was used in this period, so there is nothing to plot.'"
+      />
+
+      <!--
+          A legend, always — for two bands or for seven. Identity is never colour alone, and the
+          period total beside each name is what makes the legend worth the space it takes.
+        -->
+      <ul class="legend" data-testid="chart-legend">
+        @for (band of chart.bands; track band.key) {
+          <li class="legend__item" [attr.data-testid]="'legend-' + band.key">
+            <span class="legend__swatch" [style.background]="band.color"></span>
+            <span class="legend__key">{{ band.key }}</span>
+            <span class="legend__value">{{ band.display }}</span>
+          </li>
+        }
+      </ul>
+
+      <div>
+        <div class="spread">
+          <p class="muted" style="margin: 0 0 0.35rem; font-size: 0.82rem">
+            The whole period, in blocks
+          </p>
+          <p class="muted" style="margin: 0 0 0.35rem; font-size: 0.82rem">
+            <strong data-testid="chart-total">{{ chart.display }}</strong>
+            {{ metricLabel().toLowerCase() }}
+          </p>
+        </div>
+        <app-composition-bar
+          [bands]="chart.bands"
+          [noun]="noun()"
+          [emptyText]="'Nothing was used in this period.'"
+        />
+      </div>
+
+      @if (chart.folded) {
+        <p class="field__hint" data-testid="chart-folded">
+          Only the seven largest {{ noun() }}s have a colour of their own; the rest are added
+          together as <code>(other)</code>. An eighth colour would be indistinguishable from one of
+          these for a reader with colour-vision deficiency — the table below has every row.
+        </p>
+      }
+
+      @if (chart.unpriced > 0 && chart.metric === 'cost') {
+        <p class="callout callout--warning" role="status" data-testid="chart-unpriced">
+          {{ chart.unpriced }} request(s) in this period ran on a model with no price on file. They
+          add nothing to the bars above, so the spend is a <strong>lower bound</strong> — switch to
+          Requests to see where they fall.
+        </p>
+      }
+
+      <!--
+        **The reading the two pictures cannot give**, and it is a real table on the screen rather
+        than a view somebody has to know to ask for. A column says how much against the tallest day;
+        this says what happened on one day, with requests, tokens and money on one line. It is also
+        the relief the palette owes: three of its hues sit below 3:1 against this surface, so the
+        figures have to be reachable as text (`FRD-626` FR-9, FR-16).
+      -->
+      <!--
+        A native `<details>`: the rows stay in the accessibility tree whether it is open or shut, a
+        keyboard opens it without any script, and the browser remembers nothing a signal would have
+        to. Shut by default — the two pictures above answer *how much* and *what of* at a glance,
+        and thirty days of rows under them pushed everything else off the page.
+      -->
+      <details class="days-fold">
+        <summary>
+          Day by day — what was used, and what it cost
+          <span class="muted">{{ daysLabel() }}</span>
+        </summary>
+        <app-usage-days [days]="days()" [unit]="unit()" [noun]="noun()" />
+      </details>
+    </div>
+  }
+</div>

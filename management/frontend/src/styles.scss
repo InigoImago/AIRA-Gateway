@@ -2106,3 +2106,419 @@ tr.is-open > * {
 .markdown ol {
   padding-left: 1.25rem;
 }
+
+/* ---- usage charts: the histogram, the blocks, the legend (`FRD-626`) -------------------- */
+
+/*
+  Built out of `div`s and percentages, not SVG: the browser's own layout is what makes a chart work
+  at 390px, and every segment is then an element a pointer can hit and a test can find.
+
+  Two rules carry most of the look, and both are about **white doing the separating**:
+  a 2px gap in the surface colour between stacked segments and between neighbouring columns, and no
+  border anywhere on a mark. A stroke around a bar is ink that is not data.
+*/
+
+$histogram-height: 190px;
+$histogram-scale: 4.5rem;
+
+.histogram {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+/*
+  The plot and its axis in one scroll container, which is the same answer a wide table gets
+  (`.table-wrap`). 192 hourly columns do not fit a phone — and the columns and their labels have to
+  scroll *together*, which is why this wraps both rather than the plot alone.
+*/
+.histogram__track {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  /* So the rules below can ask how much room the *plot* has, rather than how wide the window is:
+     this card sits on a page with a sidebar, and the two answers differ by 15rem. */
+  container-type: inline-size;
+  container-name: plot;
+}
+
+/* The y-axis ticks. Absolutely placed against the plot's height so a tick and its gridline cannot
+   drift apart by a line-height. */
+.histogram__scale {
+  flex: 0 0 $histogram-scale;
+  position: relative;
+  height: $histogram-height;
+}
+.histogram__tick {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  font-size: 0.7rem;
+  color: var(--aira-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.histogram__plot {
+  position: relative;
+  /* Fills the track when the columns are few, and overflows it when they are many. */
+  min-width: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: $histogram-height;
+  border-bottom: 1px solid var(--aira-border-strong);
+}
+
+/* Hairline and solid, one step off the surface: a gridline is reference, not content. */
+.histogram__grid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--aira-border);
+  pointer-events: none;
+}
+
+.histogram__col {
+  position: relative;
+  flex: 1 0 0;
+  /* The full plot height, so the hit target is the whole column and not only the bar in it — a
+     quiet day is exactly the one a reader wants to point at. */
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  /* Narrower than this and a column is not something a pointer can hit; it is also what makes a
+     dense chart overflow its track instead of collapsing into a smear. */
+  min-width: 4px;
+}
+.histogram__col::before {
+  /* The hover wash. On the column, behind the bar, so it reads as "this bucket" rather than as a
+     change to the data. */
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.histogram__col.is-hovered::before {
+  /* Visible against white without competing with the bar in front of it. `--aira-brand-soft` was
+     tried first and was invisible in a screenshot — a hover state nobody can see is not one. */
+  background: rgba(79, 70, 229, 0.12);
+}
+
+/*
+  And a marker at the baseline, because the wash alone is not enough: the tallest column — the one a
+  reader points at first — fills its own cell, so the wash survives only as two 2px strips down its
+  sides. This reads at any bar height, including a column with no bar at all.
+*/
+.histogram__col.is-hovered::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 2px;
+  background: var(--aira-brand);
+}
+
+.histogram__stack {
+  position: relative;
+  display: flex;
+  flex-direction: column-reverse;
+  width: 100%;
+  /* Capped so a chart of three columns does not draw three slabs; the leftover is air. */
+  max-width: 24px;
+  margin: 0 auto;
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+  overflow: hidden;
+}
+.histogram__seg {
+  display: block;
+  width: 100%;
+  min-height: 2px;
+  /*
+    The surface gap, and two details that are easy to get backwards.
+
+    `box-shadow` rather than a margin or a border: both of those change the height a percentage just
+    set, and the segment heights have to keep summing to the stack.
+
+    Cast **downwards** although the gap wanted is the one above. The stack is `column-reverse`, so a
+    segment's visual neighbour below it is an *earlier* DOM sibling and therefore painted first — a
+    shadow offset upwards would be covered by the sibling it is meant to separate from. The
+    bottom-most segment's shadow falls outside the stack and is clipped by its `overflow`.
+  */
+  box-shadow: 0 2px 0 var(--aira-surface);
+}
+
+.histogram__axis {
+  display: flex;
+  gap: 2px;
+  margin-top: 0.35rem;
+}
+.histogram__label {
+  flex: 1 0 0;
+  min-width: 4px;
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--aira-text-muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/*
+  **The second thinning, and the one the component cannot do.** `UsageHistogram` thins by column
+  *count*; what decides whether two labels collide is the width each one gets, which only the layout
+  knows. Thirty days at 310px is ten pixels a column — the labels do not overlap, they are each
+  clipped to one character, and `0000000001111111112222222223` is worse than no axis at all.
+
+  Composed with the component's own thinning rather than replacing it: every fourth cell here, every
+  nth there, and **index 0 always satisfies both** — so however dense the chart, the axis never goes
+  blank. The survivor is allowed out of its cell, which is free because its neighbours are hidden.
+*/
+@container plot (max-width: 34rem) {
+  .histogram__label {
+    visibility: hidden;
+  }
+  .histogram__label:nth-child(4n + 1) {
+    visibility: visible;
+    overflow: visible;
+  }
+}
+
+.histogram__tip {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  transform: translateX(-50%);
+  z-index: 3;
+  min-width: 11rem;
+  max-width: 16rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--aira-surface);
+  border: 1px solid var(--aira-border-strong);
+  border-radius: var(--aira-radius-sm);
+  box-shadow: var(--aira-shadow-lg);
+  pointer-events: none;
+}
+.histogram__tip p {
+  margin: 0;
+}
+.histogram__tip-head {
+  font-size: 0.75rem;
+  color: var(--aira-text-muted);
+}
+.histogram__tip-total {
+  font-weight: 600;
+  margin-bottom: 0.3rem !important;
+  font-variant-numeric: tabular-nums;
+}
+.histogram__tip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.histogram__tip-key {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.histogram__tip-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.histogram__swatch,
+.legend__swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* The whole period as one row of blocks. A length, not an area: two lengths are compared
+   accurately and two areas are not. */
+.blocks {
+  display: flex;
+  /* Its own container, because the rule below asks how wide *this row* is and it is not inside the
+     plot's container. */
+  container-type: inline-size;
+  container-name: blocks;
+  gap: 2px;
+  height: 2.6rem;
+  border-radius: var(--aira-radius-sm);
+  overflow: hidden;
+}
+.blocks__block {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 2px;
+  padding: 0 0.4rem;
+  overflow: hidden;
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+/*
+  Clipped rather than wrapped, because the name is also in the legend and in the table — and a label
+  that reflows the block it sits in would change the width the share is drawn at.
+
+  **And dropped rather than clipped where there is no room for it.** The threshold that decides
+  whether a block is labelled is a *share*, which cannot know how many pixels a share is worth: 13 %
+  of a desktop card fits `gpt-4o-mini` and 13 % of a phone fits `q…`. A cropped model name is worse
+  than none, because the family is at the front of it — the share stays, since a number always fits,
+  and the legend directly below carries every name in full.
+*/
+@container blocks (max-width: 34rem) {
+  .blocks__name {
+    display: none;
+  }
+}
+
+.blocks__name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.blocks__share {
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+  /* `13 %` broken across two lines inside a narrow block is a figure that has to be reassembled. */
+  white-space: nowrap;
+}
+
+/* A legend is always present for two bands or seven: identity is never colour alone. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.legend__item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+.legend__key {
+  color: var(--aira-text);
+}
+.legend__value {
+  color: var(--aira-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .histogram__scale {
+    flex-basis: 2.9rem;
+  }
+  .histogram__tick,
+  .histogram__label {
+    font-size: 0.62rem;
+  }
+}
+
+/* What the hovered column is made of, read below the plot. See the template for why it is not a
+   floating tooltip: a horizontally scrolling container clips vertically too. */
+.histogram__readout {
+  min-height: 1.6rem;
+  margin-top: 0.4rem;
+}
+/* Named rather than reached through `.histogram__readout p`: a class a template uses and no rule
+   names is a style the page appears to have (`tools/tests/test_every_class_the_console_uses_exists`
+   fails on it, which is how this one was caught). */
+.histogram__readout-head,
+.histogram__readout-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.9rem;
+  margin: 0;
+  font-size: 0.78rem;
+}
+.histogram__readout-hint,
+.histogram__readout-value {
+  color: var(--aira-text-muted);
+}
+.histogram__readout-total {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.histogram__readout-band {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* The day-by-day reading of a usage series (`FRD-626` FR-16). One `tbody` per day: the day's own
+   total is a row and its bands are the rows beneath it. */
+.usage-days tbody + tbody {
+  border-top: 1px solid var(--aira-border);
+}
+.usage-days__total th,
+.usage-days__total td {
+  background: var(--aira-bg);
+}
+.usage-days__band th {
+  font-weight: 400;
+  padding-left: 1.25rem;
+}
+.usage-days__band th .legend__swatch {
+  display: inline-block;
+  margin-right: 0.4rem;
+  vertical-align: -1px;
+}
+.usage-days td,
+.usage-days th {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  At phone width four columns have to fit, because the fourth is the money and "what did it cost"
+  is the question this table exists for. Tightened rather than reordered again or hidden: a column
+  removed with `display: none` is removed from a screen reader too, which is the same loss by a
+  quieter route. The token split stays in the fifth column and is what the wrapper scrolls for.
+*/
+@media (max-width: 640px) {
+  .usage-days th,
+  .usage-days td {
+    padding: 0.35rem 0.35rem;
+    font-size: 0.74rem;
+  }
+  .usage-days__band th {
+    padding-left: 0.45rem;
+  }
+  .usage-days__band th code {
+    font-size: 0.68rem;
+  }
+}
+
+/* The day-by-day fold under a usage chart (`FRD-626` FR-16). A native `<details>`, so a keyboard
+   opens it and the rows stay in the accessibility tree either way. */
+.days-fold {
+  border-top: 1px solid var(--aira-border);
+  padding-top: 0.6rem;
+}
+.days-fold > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--aira-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.days-fold > summary:hover,
+.days-fold > summary:focus-visible {
+  color: var(--aira-text);
+}
+.days-fold[open] > summary {
+  margin-bottom: 0.6rem;
+}

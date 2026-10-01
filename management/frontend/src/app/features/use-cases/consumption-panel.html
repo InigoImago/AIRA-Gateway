@@ -78,10 +78,17 @@
         style="margin-top: 1rem"
         data-testid="consumption-unpriced"
       >
-        {{ unpriced() }} request(s) this month ran on a model with no price on file. Their cost is
-        <strong>unknown, not zero</strong>, so the spend above is a lower bound. A Global
-        Administrator can add the missing prices under
-        <a routerLink="/models">Models &amp; prices</a>.
+        {{ unpriced() }} request(s) this month have no cost — <strong>unknown, not zero</strong>, so
+        the spend above is a lower bound.
+        @if (unmetered() > 0) {
+          {{ unmetered() }} of them reported <strong>no token usage</strong> for anything to be
+          priced from; an upstream that does not meter what it serves cannot be fixed with a price.
+        }
+        @if (unpriced() - unmetered() > 0) {
+          {{ unpriced() - unmetered() }} of them ran on a model with
+          <strong>no price on file</strong>, which a Global Administrator can add under
+          <a routerLink="/models">Models &amp; prices</a>.
+        }
       </p>
     }
   }

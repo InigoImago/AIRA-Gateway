@@ -1,7 +1,28 @@
 import { Observable } from 'rxjs';
 import { GW } from '../prefixes';
-import { Register, Report } from '../types/reporting';
+import { Granularity, Register, Report, SeriesSplit } from '../types/reporting';
 import { ApiClientClass } from './base';
+
+/**
+ * What a caller asks of the time series (`FRD-626`): how wide a bucket is, and what the bands are.
+ *
+ * `'auto'` lets the window decide — hours for a day or two, days beyond that — so a caller who has
+ * no opinion does not have to invent one.
+ */
+export interface SeriesRequest {
+  granularity: Granularity | 'auto';
+  split: SeriesSplit;
+}
+
+/**
+ * The two query parameters a series needs, or **none at all** when none was asked for.
+ *
+ * Omitted rather than sent empty: `series=''` is how the gateway spells "no series", and a report
+ * loaded only for its figures should not pay for a query no screen reads.
+ */
+function seriesParams(series?: SeriesRequest): Record<string, string> {
+  return series ? { series: series.granularity, split: series.split } : {};
+}
 
 /**
  * Spend reports and the register of processing activities, from the gateway.
@@ -23,10 +44,26 @@ export function withReporting<T extends ApiClientClass>(Base: T) {
      *
      * The **same endpoint** on purpose: an endpoint of its own would be a second place to decide
      * visibility. The parameter can only intersect with what the token already allows.
+     *
+     * `person` narrows it further, to one person's own traffic (`FRD-626` FR-15) — what a member
+     * opening their own use case asks about. Omitted rather than sent empty, because the gateway
+     * reads an absent filter and an empty one the same way and a client should not rely on that.
      */
-    useCaseReport(slug: string, from: string, to: string): Observable<Report> {
+    useCaseReport(
+      slug: string,
+      from: string,
+      to: string,
+      series?: SeriesRequest,
+      person?: string,
+    ): Observable<Report> {
       return this.http.get<Report>(`${GW}/v1beta/reporting`, {
-        params: { from, to, use_case: slug },
+        params: {
+          from,
+          to,
+          use_case: slug,
+          ...seriesParams(series),
+          ...(person ? { person } : {}),
+        },
       });
     }
 

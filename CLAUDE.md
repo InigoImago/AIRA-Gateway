@@ -45,7 +45,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **881 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **897 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -178,7 +178,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | Where to look | For |
 | --- | --- |
 | [`docs/features/README.md`](docs/features/README.md) | every feature, its status, its document |
-| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (27 ADRs) |
+| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (28 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1a | **what one instance carries**, measured — read before promising a concurrency |

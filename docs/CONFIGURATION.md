@@ -463,6 +463,7 @@ recipe keeps and the command that validates a combination before it is used.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `AIRA_DEMO_CHAT_MODEL` / `_EMBED_MODEL` | `qwen3:0.6b` / `all-minilm` | Which models the demo pulls and catalogues. Read by the Ollama pull loop and the seed, never by a settings class — **demo only**; a real deployment names its models through `AIRA_OPENAI_SERVERS` or a platform's own list. |
+| `AIRA_DEMO_HISTORY_DAYS` / `_PER_DAY` | `28` / `3` | How far back the showcase's usage history reaches and how busy a working day in it is (`FRD-626` §12). Read by `tools/demo_history.py` alone — **demo only**, and the one thing in this repository that moves a timestamp: it drives real traffic and then backdates the rows that run created, so the usage chart has a month of columns instead of one. |
 | `AIRA_CONSOLE_HOST` | `localhost` | The host a **browser** types to reach the console. Read by the Keycloak realm import, and only when the realm does not yet exist, so it is not retroactive on a stack that already has one. `localhost` and `127.0.0.1` stay valid whatever it says. |
 
 ---

@@ -489,7 +489,7 @@ Read it in the order a request travels.
 | `persistence/` | The audit trail: `writer.py` (bounded queue, off the hot path), `redaction.py`, `sanitize.py`. |
 | `audit.py`, `payloads.py` | What is recorded, and who may read stored content — every read being recorded in turn. |
 | `anomalies/` | Detection over the audit rows, and the suspensions it produces. |
-| `reporting/`, `api/reporting/`, `api/incidents/` | Spend and usage, their CSV export, and the incident actions. |
+| `reporting/`, `api/reporting/`, `api/incidents/` | Spend and usage, the series behind the usage chart, their CSV export, and the incident actions. |
 | `consumer/` | The second process: applies configuration events into the read-model. |
 | `retention.py` | The third process: deletes expired payloads. |
 | `db/` | The read-model and the audit tables as ORM models. Their **schema** is owned by `gateway/migrations/` (Alembic), a sibling of `src/`, never by the models. |
@@ -705,7 +705,7 @@ can be read in the light of the conditions it met.
 ```mermaid
 graph LR
     req["Request"] --> log["request_logs<br/><i>one row per request,<br/>served or refused</i>"]
-    log --> report["Reporting<br/><i>spend, usage, CSV</i>"]
+    log --> report["Reporting<br/><i>spend, usage, over time, CSV</i>"]
     log --> detect["Anomaly engine<br/><i>the same rows</i>"]
     detect --> event["anomaly_events"]
     detect --> susp["access_suspensions"]

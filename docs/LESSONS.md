@@ -299,6 +299,69 @@ reading code.
   the next person, which is worse than its absence. The counterpart is cheap: apply it, or assert
   the two copies are equal.
 
+- **The explanation that fits every symptom is not the cause — ask the far end.** An embedding model
+  recorded no tokens and therefore no cost, and *"this runtime does not report usage"* accounted for
+  all of it: the NULL columns, the unpriced counter, the `0.00` on screen. It was false. One `curl`
+  at the endpoint returned `{"usage": {"prompt_tokens": 12}}` — the tokens were reported and the
+  **adapter was dropping them**, because its mapping returned a plain list where the accounting
+  looks for `vectors.input_tokens`. A sibling adapter had carried both fields for months. The
+  symptom is identical either way and the remedies are opposites: one is a demo's limitation to
+  document, the other is every self-hosted embedding call in the product being free. **One request
+  at the upstream separates them, and it costs less than the paragraph explaining why it is not
+  needed.**
+
+- **Two causes behind one NULL, and a message that names only the first.** A request's cost could
+  not be computed for two different reasons — the model has **no price on file**, or the upstream
+  reported **no token usage** for anything to be priced from — and both wrote `cost_nanos IS NULL`
+  into one counter. Every screen said the first: *"ran on a model with no price on file"*, which for
+  a local embedding model is false and sends a reader to a form that already has the price in it.
+  The row carried the evidence to tell them apart the whole time (`total_tokens IS NULL` means
+  nothing was reported), so this was never a missing measurement — it was **a distinction the data
+  made and the schema's reader did not**. Where one condition can be reached by two paths, count
+  them apart before writing the sentence that tells somebody what to do about it.
+
+  *And the figure beside it was `0.00`.* Nine unpriced requests out of nine, rendered as a number —
+  on screens whose whole vocabulary is *unknown is not zero*. A rule a codebase states in twenty
+  comments is still a rule each new view has to apply: **an aggregate of nothing sums to zero, and
+  zero is the one thing it must not be shown as.**
+
+- **A figure's definition can be true of the control beside it and false of itself.** The reporting
+  screen's *Requests* info button read *"an embedding batch counts as the many texts it carries, not
+  as one."* That is `FRD-113` FR-6, and it is about a **budget**: the audit writes one row per call
+  and the report counts rows, so the report says one where the budget says five. Both rules are
+  deliberate, and the sentence had been copied from the one that is not this figure. The failure is
+  worse than a vague definition, because it is the figure somebody reconciles an invoice against and
+  the mismatch they will actually meet: **where two controls count the same event differently, the
+  definition has to say so** rather than describe whichever one was in mind when it was written.
+
+- **A layout rule written from a count cannot see the width.** The usage chart thins its axis labels
+  by how many columns there are — thirty days is under the threshold, so all thirty are labelled —
+  and what decides whether two labels collide is how many **pixels** each one gets. At 390px every
+  label clipped to one character and the axis read `0000000001111111112222222223`. The sibling, in
+  the same chart: a block carries its name above a 12 % share, which fits `gpt-4o-mini` on a desktop
+  card and `q…` on a phone. **A proportion is not a size**, and the only thing that knows the size is
+  the layout — so the second rule belongs in CSS, as a **container query** rather than a media query:
+  this card sits beside a 15rem sidebar, and how wide the window is was never the question. Compose
+  the two thinnings rather than replacing one with the other, and make sure the first element
+  satisfies both, or the densest chart is the one with no axis at all.
+
+  *Both were found by rendering the thing and looking at it*, with a third beside them — a hover wash
+  that was invisible because the tallest column fills its own cell, so the wash survived only as two
+  2px strips down its sides. None of the three is reachable from a unit test asserting
+  `height: 75%`: **the assertions check what was computed, and a screenshot checks what was drawn.**
+
+- **A control that changed and a view that did not is a wrong statement, not a degraded one.**
+  The usage chart was derived from the loaded report, so when a reader switched *Coloured by* from
+  Model to Outcome and that request failed, the select said Outcome and the chart went on drawing
+  the **model** bands. Every figure on screen was true about a question nobody had asked any more.
+  This is the sibling of *unknown is not zero* (§2) and it is the harder one to see: zeroes look
+  like a reading, and stale data looks like an **answer**. The rule is the same either way —
+  **what a reader concludes from a failure is part of the failure's design** — and the shape is
+  specifically a *derived* signal: derive a view from a request's result and a failed re-request
+  silently keeps the previous one. Hold it in its own signal, clear it when the request that would
+  replace it fails, and say why. Found by a test written to fail first; reading the code had not
+  raised it.
+
 - **"Unreachable in practice" is a claim about who can reach it, and the console is somebody.**
   `DialectUnsupported` was left out of the one list both surfaces catch, on a documented argument:
   *"a model that cannot do a thing does not declare the capability."* True of the seed, false of
@@ -1000,6 +1063,15 @@ reading code.
   *"deleting a use case keeps its request log"*; a reader matching it to a test found the one about
   **retirement**, which never reaches that code — so a genuine gap sat behind a name that looked
   covered. **Name the guard after the code it edits**, not after the neighbouring concept.
+
+  *And a guard asserted on the part that is present either way.* `US12` — *"the series export asks
+  for the data it renders"* — was checked by reading the CSV's **header**, which is written whether
+  or not any row was computed. The mutation that removes the whole mechanism produced a file with a
+  correct header and no rows, and the test passed. The empty file is convincing precisely because
+  the header is there, which is the same reason `FRD-601` writes one for an empty period at all.
+  **Assert on the thing the mechanism produces, not on the frame around it** — and this was found by
+  the mutation run, on the first attempt, which is the argument for writing the mutation at the same
+  time as the test.
 
   *And a guard nothing runs is a guard nobody has.* The browser suite's `tsc --noEmit` was added to
   `make lint-frontend` under the words *"a rule only a reviewer enforces is one the next file
@@ -1740,6 +1812,16 @@ reading code.
   where the real adapter returns a response *with usage* made "the audit row carries what the
   answer reported" a property no test could lose, because the harness never produced one. Both
   times a mutation run found it and no reviewer would have.
+
+  *And a hand-written fixture is a stand-in for the thing that produces it.* The usage export's
+  `failed` column had been **0 in every file since `FRD-602`** — seven weeks. The renderer read
+  `row.get("failed", 0)`; the report emits `failed_requests`. The fixture `test_csv_export.py`
+  renders was written by hand and spelled it the renderer's way, so eleven tests agreed with the
+  renderer about a document the product has never produced. It survived because the value it
+  defaults to is also the ordinary answer: **nobody notices a zero where zero is usually right.**
+  The fix that stops the instance is the key; the fix that stops the next one is a test comparing
+  **every key in the fixture against the producer's own `as_dict()`**. A fixture is a double, and a
+  double nothing compares with the original is a second implementation of the contract.
 
   *And the same mismatch in the other direction is loud rather than silent, which is not the same
   as harmless.* Seven spec files stubbed `MeService` with `{get: () => of(…)}`; the service grew one

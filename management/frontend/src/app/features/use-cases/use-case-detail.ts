@@ -5,12 +5,15 @@ import {
   Budget,
   BudgetUsage,
   CatalogModel,
+  Granularity,
   IssuedApiKey,
   KiraModel,
   Membership,
   PersonRow,
   RateLimit,
   ReportRow,
+  SeriesSplit,
+  UsageSeries,
   UseCase,
   UseCaseConsumption,
 } from '../../core/api/models';
@@ -18,7 +21,8 @@ import { errorMessage } from '../../core/api/error-message';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
-import { windowFor } from '../../core/ui/periods';
+import { Preset, windowFor } from '../../core/ui/periods';
+import { UsageChart } from '../../core/ui/charts/usage-chart';
 import { AboutPanel } from './about-panel';
 import { AccessPanel } from './access-panel';
 import { ApiKeysPanel } from './api-keys-panel';
@@ -64,6 +68,7 @@ type Tab = (typeof TABS)[number];
     CapabilitiesPanel,
     ConnectionPanel,
     ConsumptionPanel,
+    UsageChart,
     DataProtectionPanel,
     ModelReleasePanel,
     PeoplePanel,
@@ -121,6 +126,42 @@ export class UseCaseDetail implements OnInit {
   private readonly consumptionFailures = signal(0);
   private readonly consumptionReason = signal('');
   protected readonly consumptionOutOfScope = signal(false);
+
+  // -- the reader's own usage chart (`FRD-626` FR-15) -----------------------------------------
+  //
+  // **Narrowed to the person reading it**, not to the use case. The card below it already says what
+  // *you* used (`FRD-606`); this is that same subject over time, which is what a member opens their
+  // own use case to see. The use case as a whole, split by model or use case, is the reporting
+  // screen's job.
+  //
+  // Its own window and its own request: the consumption card answers *this month* and *today*, and
+  // a chart of a calendar month is a stub on the first of it. Thirty days is the shortest window in
+  // which "is this growing" is a question with an answer — and on the first of a month it is the
+  // only thing on this page that can see the month before.
+  protected readonly chartSeries = signal<UsageSeries | null>(null);
+  /**
+   * The window the reader's own cards are about.
+   *
+   * **The only period control on this page**, and it is here because the two cards above it cannot
+   * have one: the consumption card answers *this month* and *today* by design (`FRD-603`), and the
+   * panel below answers whatever period the reader's own budget resets in — daily, on the showcase's
+   * `kundenservice`. On the first of a month that leaves a page that can only talk about one day,
+   * which is how this was reported.
+   */
+  protected readonly chartPeriod = signal<Preset>('last-30-days');
+  protected readonly chartPeriods: Preset[] = [
+    'today',
+    'last-7-days',
+    'last-30-days',
+    'this-month',
+    'last-month',
+  ];
+  protected readonly chartGranularity = signal<'auto' | Granularity>('auto');
+  /** `use_case` is not offered: this page is one use case, and one band is not a comparison. */
+  protected readonly chartSplits: SeriesSplit[] = ['model', 'outcome'];
+  protected readonly chartSplit = signal<SeriesSplit>('model');
+  protected readonly chartLoading = signal(true);
+  protected readonly chartReason = signal('');
   protected readonly consumption = computed<UseCaseConsumption>(() => {
     const month = this.consumptionMonth();
     const today = this.consumptionToday();
@@ -188,6 +229,10 @@ export class UseCaseDetail implements OnInit {
     this.meService.get().subscribe({
       next: (me) => {
         this.myName.set(me.username || null);
+        // **Here and not in `ngOnInit`**: the chart is about this person, and until `/me` answers
+        // there is nobody to ask about. Started earlier it would fetch the use case's whole traffic
+        // and label it as the reader's own.
+        this.loadChart();
         if (me.api_key_default_days) {
           this.defaultKeyDays.set(me.api_key_default_days);
         }
@@ -303,5 +348,64 @@ export class UseCaseDetail implements OnInit {
     };
     load('this-month', (row) => this.consumptionMonth.set(row));
     load('today', (row) => this.consumptionToday.set(row));
+  }
+
+  /**
+   * The reader's own traffic over the chosen window, bucket by bucket (`FRD-626` FR-15, FR-17).
+   *
+   * Reports its own absence the way the consumption panel does: **in the card, as unknown**, never as
+   * a flat chart and never through the page banner. A plot of zeroes would state that this person
+   * used nothing, which is a measurement nobody made (`FRD-603` §5.4).
+   */
+  protected loadChart(): void {
+    const me = this.myName();
+    if (!me) {
+      // Nobody to narrow to. The card is not rendered at all in that case — the same condition the
+      // people panel beside it uses — so this is the load declining rather than a state to show.
+      this.chartLoading.set(false);
+      return;
+    }
+    const { from, to } = windowFor(this.chartPeriod(), new Date());
+    this.chartLoading.set(true);
+    this.chartReason.set('');
+    this.service
+      .useCaseReport(
+        this.slug,
+        from,
+        to,
+        { granularity: this.chartGranularity(), split: this.chartSplit() },
+        me,
+      )
+      .subscribe({
+        next: (report) => {
+          // Out of scope is an empty report the caller was not entitled to fill. Its zeroes would
+          // be a chart claiming nothing happened; the consumption panel already says which it is.
+          this.chartSeries.set(report.in_scope === false ? null : (report.series ?? null));
+          if (report.in_scope === false) {
+            this.chartReason.set('this use case is not one this account may see figures for.');
+          }
+          this.chartLoading.set(false);
+        },
+        error: (response: unknown) => {
+          this.chartSeries.set(null);
+          this.chartReason.set(errorMessage(response, 'The gateway could not be reached.'));
+          this.chartLoading.set(false);
+        },
+      });
+  }
+
+  protected chooseChartPeriod(value: Preset): void {
+    this.chartPeriod.set(value);
+    this.loadChart();
+  }
+
+  protected chooseChartGranularity(value: 'auto' | Granularity): void {
+    this.chartGranularity.set(value);
+    this.loadChart();
+  }
+
+  protected chooseChartSplit(value: SeriesSplit): void {
+    this.chartSplit.set(value);
+    this.loadChart();
   }
 }

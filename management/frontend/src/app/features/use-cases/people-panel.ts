@@ -81,7 +81,16 @@ function half(person: PersonRow, method: string): string | null {
             under its own subject rather than folded into somebody it probably belonged to.
           </app-info-hint>
         </h3>
-        <span class="muted" style="font-size: 0.85rem">{{ windowLabel() }}</span>
+        <span class="muted" style="font-size: 0.85rem" data-testid="people-window">
+          {{ windowLabel() }}
+          <app-info-hint
+            label="the period these figures cover"
+            testid="people-window"
+            [wide]="true"
+          >
+            {{ windowReason() }}
+          </app-info-hint>
+        </span>
       </div>
 
       @if (unavailable()) {
@@ -272,6 +281,25 @@ export class PeoplePanel {
 
   protected readonly windowLabel = computed(() =>
     this.perHead()?.period === 'day' ? 'today' : 'this month',
+  );
+
+  /**
+   * **Why** this card covers the period it covers, which is not a free choice.
+   *
+   * The figures sit beside *Left of allowance*, and an allowance only means anything against the
+   * period it resets in: comparing a month of spend with a daily cap would print a remainder nobody
+   * has. So the window follows the budget — and a reader who finds a card showing one day on the
+   * first of a month has met a rule, not a defect. Reported as exactly that, which is why the
+   * sentence is on the screen now and not only in this file; the chart above carries the period
+   * control for the longer view (`FRD-626` FR-17).
+   */
+  protected readonly windowReason = computed(() =>
+    this.perHead()?.period === 'day'
+      ? `Today, because the per-person allowance on this use case resets daily — a remainder is only
+         meaningful against the period it is measured in. For a longer view, use the period control
+         on the usage chart above.`
+      : `This month, which is the period the per-person allowance on this use case is measured in.
+         For a shorter or longer view, use the period control on the usage chart above.`,
   );
 
   protected readonly view = computed<PersonView[]>(() =>

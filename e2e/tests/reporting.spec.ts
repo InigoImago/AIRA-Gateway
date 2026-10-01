@@ -174,6 +174,52 @@ test.describe('Reporting', () => {
     await expect(page.locator('[data-testid="help-stat-tokens"]')).toHaveCount(0);
   });
 
+  test('a use case\u2019s own page charts the reader\u2019s own traffic', async ({
+    page,
+    request,
+  }) => {
+    // Two halves, and only the first needs a browser. That the filter *excludes* other people is
+    // pinned hermetically, with two people in one use case
+    // (`test_a_person_filter_leaves_only_that_person_in_the_series`). What no unit test can show is
+    // that the console asks for it with a name the realm actually issued, and that the gateway
+    // answers that name with the reader\u2019s own rows rather than an empty report.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('mine');
+    await createUseCase(page, slug, 'Own usage probe');
+    // The key belongs to whoever issued it (`FRD-604`), so this traffic is recorded under `admin`.
+    await sendTraffic(request, await issueKey(page, slug));
+
+    const [asked] = await Promise.all([
+      page.waitForRequest(
+        (sent) => sent.url().includes('/v1beta/reporting') && sent.url().includes('series='),
+      ),
+      page.goto(`/use-cases/${slug}`),
+    ]);
+
+    expect(new URL(asked.url()).searchParams.get('person')).toBe(USERS.globalAdmin.username);
+
+    const card = page.locator('app-usage-chart');
+    await expect(card).toContainText('What you used, over time');
+    // And it came back with something: the reader is the person who called, so an empty chart here
+    // would mean the filter matched nobody — the way this goes wrong without anyone noticing.
+    await expect(card.locator('[data-testid="histogram-empty"]')).toHaveCount(0);
+    await expect(card.locator('.histogram__seg').first()).toBeVisible();
+
+    // The day list is a fold, shut until somebody opens it. Its rows are a real table underneath —
+    // which is what the plot's `aria-hidden` and three sub-3:1 hues owe a reader.
+    const fold = card.locator('details.days-fold');
+    await expect(card.locator('[data-testid="usage-days"]')).not.toBeVisible();
+    await fold.locator('summary').click();
+    const days = card.locator('[data-testid="usage-days"]');
+    await expect(days).toBeVisible();
+    await expect(days).toContainText('mock-1');
+
+    // Thirty columns with a y-axis beside them, and a five-column table inside the fold, are each a
+    // shape that drags a phone-width page sideways. They scroll inside their own containers.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectNoHorizontalOverflow(page, "a use case's usage chart at 390px");
+  });
+
   test('the report fits a narrow viewport instead of scrolling the page sideways', async ({
     page,
   }) => {

@@ -32,7 +32,13 @@ const FIGURE_HELP = {
   spend:
     'Money for the period, priced per model from the prompt/completion split. Traffic on a model with no price on file is counted apart, never as zero — see the caveat below when it appears.',
   requests:
-    'Requests that reached a model. An embedding batch counts as the many texts it carries, not as one.',
+    // **Corrected on 2026-10-01**, and the correction is the point: this said an embedding batch
+    // "counts as the many texts it carries, not as one". That is true of a *budget* and false of
+    // this figure. The audit writes one row per call (`test_serving_options.py` asserts exactly one
+    // for a batch of two) and this counts rows; a request budget weighs the same batch as one per
+    // text (`FRD-113` FR-6). Both are deliberate, and somebody reconciling one against the other
+    // has to be told, or the report is the half they stop believing.
+    'Requests the gateway handled, one per call — including the ones it refused and the ones a pipeline step made on the caller’s behalf. An embedding batch is one call however many texts it carries: that is where this figure and a request budget differ, because a budget weighs such a batch as one request per text.',
   failed:
     'Requests that reached a model and came back with an error — an upstream failure, not a decision of ours.',
   refused:

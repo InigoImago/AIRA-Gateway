@@ -31,13 +31,32 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
+#: Pin the Postgres session to UTC (`ADR-0028`).
+#:
+#: Every figure this gateway reports is in UTC — `api.reporting.common._parse` reads a naive
+#: timestamp as UTC and says so — and until this was set that was true of the *values* and not of
+#: the *session*. It matters because the usage series buckets time by rendering the timestamp as
+#: text (`reporting.series`), and Postgres renders a `timestamptz` in whatever zone the session
+#: happens to carry: on a server started with a local `TZ`, the same request would land in a
+#: different day's column than it does on SQLite, where the hermetic tests run.
+#:
+#: Passed as a libpq connection option rather than executed on a `connect` event, so it is in force
+#: before the first statement on every connection in the pool, including one the pool re-opens.
+_UTC_SESSION = {"options": "-c timezone=UTC"}
+
+
 def build_engine(url: str) -> AsyncEngine:
     """Create an async engine; in-memory SQLite shares one connection across sessions."""
     if url.startswith("sqlite"):
         engine = create_async_engine(
             url, poolclass=StaticPool, connect_args={"check_same_thread": False}
         )
+    elif url.startswith("postgresql"):
+        engine = create_async_engine(url, connect_args=_UTC_SESSION)
     else:
+        # A store this project does not configure. It gets no option it may not understand: libpq's
+        # `options` is a Postgres keyword, and a connection refused for an unknown argument would be
+        # a worse answer than an unpinned session.
         engine = create_async_engine(url)
     watch_connections(engine)
     return engine

@@ -53,8 +53,18 @@ export class ConsumptionPanel {
   protected readonly monthStats = computed(() => this.statsFor(this.consumption().month));
   protected readonly todayStats = computed(() => this.statsFor(this.consumption().today));
 
-  /** Requests this month whose cost is unknown because their model has no price on file. */
+  /** Requests this month whose cost could not be computed at all. */
   protected readonly unpriced = computed(() => this.consumption().month?.unpriced_requests ?? 0);
+
+  /**
+   * Of those, the ones where the upstream reported **no token usage** (`FRD-626` FR-18).
+   *
+   * The caveat named one cause and there are two: a model with no price on file, which an
+   * administrator can fix, and an upstream that does not meter what it serves, which no price can.
+   * Sending somebody to Models & prices for the second is sending them to a form that already has
+   * the answer in it.
+   */
+  protected readonly unmetered = computed(() => this.consumption().month?.unmetered_requests ?? 0);
 
   private share(row: ReportRow): string {
     if (!row.prompt_tokens) return '—';

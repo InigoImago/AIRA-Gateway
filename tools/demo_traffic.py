@@ -34,9 +34,32 @@ EMBED = os.environ.get("AIRA_DEMO_EMBED_MODEL", "all-minilm")
 DEMO_KEY_SALT = "aira-showcase-demo-not-a-secret"
 
 
-def key_for(slug: str) -> str:
-    digest = hashlib.sha256(f"{DEMO_KEY_SALT}:{slug}".encode()).hexdigest()
+def key_for(slug: str, person: str | None = None) -> str:
+    """The demo key a use case is called with — its own, or a named member's.
+
+    ``None`` is the use case's **own** key, derived from the slug alone: that is the one printed
+    examples and both hand-over scripts re-derive (`FRD-130` FR-4), and it belongs to the use case's
+    first member. A name is the second key the seed issues to that person, so more than one person
+    appears in the demo's per-person figures.
+    """
+    material = f"{DEMO_KEY_SALT}:{slug}" if person is None else f"{DEMO_KEY_SALT}:{slug}:{person}"
+    digest = hashlib.sha256(material.encode()).hexdigest()
     return f"aira_{digest[:8]}_{digest[8:56]}"
+
+
+#: Who sends each use case's traffic. ``None`` is the use case's own key — the first member's — and
+#: a name is the second key issued to that person.
+#:
+#: **Without this the demo had one person with traffic per use case**, and `ucuser` had none at all:
+#: the account whose whole role is *uses a use case* opened "What you used" on an empty card, and
+#: every per-person figure — `FRD-606`'s table, the per-head budget on `kundenservice` — had one row
+#: where it exists to compare several. Only a person the seed actually made a member gets a key, and
+#: `tools/tests/test_the_demo_asks_only_what_it_allows.py` fails if that ever drifts.
+CALLERS: dict[str, tuple[str | None, ...]] = {
+    "kundenservice": (None, "ucuser"),
+    "entwicklung": (None,),
+    "personalwesen": (None,),
+}
 
 
 #: What each use case is *for*, so the audit trail reads like a working system rather than like a
@@ -77,10 +100,13 @@ EMBEDDING_USE_CASE = "kundenservice"
 INJECTION_USE_CASE = "kundenservice"
 
 
-async def _ask(client: httpx.AsyncClient, slug: str, prompt: str) -> int:
+# Public, not `_ask`: `demo_history.py` drives the same two calls to build a history for the usage
+# chart (`FRD-626`), and a second copy of the request shape here is a second place to forget that
+# this model reasons by default and would spend the whole token allowance on it.
+async def ask(client: httpx.AsyncClient, slug: str, prompt: str, person: str | None = None) -> int:
     response = await client.post(
         f"{GATEWAY}/v1beta/models/{CHAT}:generateContent",
-        headers={"x-goog-api-key": key_for(slug), "content-type": "application/json"},
+        headers={"x-goog-api-key": key_for(slug, person), "content-type": "application/json"},
         json={
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -94,10 +120,10 @@ async def _ask(client: httpx.AsyncClient, slug: str, prompt: str) -> int:
     return response.status_code
 
 
-async def _embed(client: httpx.AsyncClient, slug: str) -> int:
+async def embed(client: httpx.AsyncClient, slug: str, person: str | None = None) -> int:
     response = await client.post(
         f"{GATEWAY}/v1beta/models/{EMBED}:batchEmbedContents",
-        headers={"x-goog-api-key": key_for(slug), "content-type": "application/json"},
+        headers={"x-goog-api-key": key_for(slug, person), "content-type": "application/json"},
         json={
             "requests": [
                 {"content": {"parts": [{"text": f"Wissensbaustein {index}"}]}} for index in range(4)
@@ -162,13 +188,17 @@ async def main(*, assert_controls: bool = False) -> int:
     injection_code = embedding_code = 0
     async with httpx.AsyncClient(timeout=300.0) as client:
         for slug, prompts in CONVERSATIONS.items():
-            for prompt in prompts:
-                code = await _ask(client, slug, prompt)
+            callers = CALLERS[slug]
+            for index, prompt in enumerate(prompts):
+                # Round-robin over the people who may call this use case, so one with two members
+                # has both of them in its per-person figures and neither of them has all of it.
+                person = callers[index % len(callers)]
+                code = await ask(client, slug, prompt, person)
                 codes.add(code)
                 served += code == 200
                 refused += 400 <= code < 500
                 failed += code >= 500
-                print(f"  {slug:<14} {code}  {prompt[:52]}")
+                print(f"  {slug:<14} {person or '(owner)':<9} {code}  {prompt[:40]}")
 
         # The blocked one. This use case runs the heuristic injection filter, so it is refused by
         # a control rather than by an error — which is what the audit trail should show.
@@ -176,7 +206,7 @@ async def main(*, assert_controls: bool = False) -> int:
         # The slug is a constant for the same reason as the embedding one below: written out twice,
         # the request and the line describing it drift, and the demo then names the wrong use case
         # in front of the people being shown the audit trail.
-        code = await _ask(client, INJECTION_USE_CASE, INJECTION)
+        code = await ask(client, INJECTION_USE_CASE, INJECTION)
         codes.add(code)
         refused += 400 <= code < 500
         injection_code = code
@@ -195,7 +225,7 @@ async def main(*, assert_controls: bool = False) -> int:
         #
         # `kundenservice` is released every approved model, so this shows what it is meant to show:
         # that an embedding batch is governed, weighed and billed like any other call.
-        code = await _embed(client, EMBEDDING_USE_CASE)
+        code = await embed(client, EMBEDDING_USE_CASE)
         codes.add(code)
         embedding_code = code
         # Counted in every column, like every other call. It used to add only to `served`, so a
@@ -211,6 +241,22 @@ async def main(*, assert_controls: bool = False) -> int:
         print(f"  {EMBEDDING_USE_CASE:<14} {code}  <embedding batch of four>")
 
     print(f"\nserved {served}, refused {refused}, failed {failed}")
+
+    # **A 401 is never a correct answer here, and a partial one used to pass.** The run that found
+    # this reported `served 8, refused 3` while two of its eleven requests were refused for a
+    # credential the seed is supposed to have stored — a wiring fault counted in the same column as
+    # a budget doing its job. 429 and 400 are controls working; 401 is a key that does not exist,
+    # and nothing downstream of it means anything.
+    if 401 in codes:
+        print(
+            "\nsome requests were refused with 401, so the demo is calling as somebody the seed\n"
+            "did not issue a key to. A key is issued per member and announced over Kafka.\n"
+            "  make showcase-doctor              (says which link is broken)\n"
+            "  docker compose ... run --rm management-seed   (did the seed run on this build?)",
+            file=sys.stderr,
+        )
+        return 1
+
     if failed:
         print("a request failed with a 5xx — the demo data is incomplete", file=sys.stderr)
         return 1

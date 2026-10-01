@@ -55,6 +55,11 @@ The fastest way to see the product rather than the infrastructure. Starts the st
 local model, seeds three use cases with budgets, rate limits, pipelines and API keys, and then
 drives **real traffic** through the gateway — including a prompt injection the filter refuses.
 
+It also builds a month of history, so the usage chart has a shape rather than one column: more real
+requests, whose timestamps are then moved into the past. The script says which half of that is real
+([`FRD-626`](features/FRD-626-usage-over-time.md) §12) — every figure is the gateway's own; only the
+clock was moved, and only on rows that run created.
+
 ```bash
 make showcase
 ```
@@ -74,6 +79,7 @@ the fastest way to see the scoping is real rather than a filter in the frontend.
 
 ```bash
 make showcase-traffic  # drive more traffic; the budget bars move
+make showcase-history  # more history for the usage chart (DAYS=…, PER_DAY=…)
 make down-full        # stop it (volumes and model weights are kept)
 ```
 

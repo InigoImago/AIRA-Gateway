@@ -1,7 +1,15 @@
 import { MeService } from '../../core/api/me.service';
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
-import { Budget, Report, ReportRow } from '../../core/api/models';
+import {
+  Budget,
+  Granularity,
+  Report,
+  ReportRow,
+  SeriesSplit,
+  UsageSeries,
+} from '../../core/api/models';
+import { SeriesRequest } from '../../core/api/clients/reporting';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ReportingPage } from './reporting-page';
 import { isoDay, windowFor } from '../../core/ui/periods';
@@ -532,5 +540,23 @@ describe('ReportingPage — each breakdown names itself', () => {
     harness.fixture.detectChanges();
 
     expect(harness.text()).toContain('1–2 of 2 members');
+  });
+});
+
+describe('ReportingPage — what the figures say they count', () => {
+  it('says that a request budget and the request count differ on an embedding batch', () => {
+    // The text used to say a batch "counts as the many texts it carries, not as one". That is true
+    // of a budget (`FRD-113` FR-6) and false of this figure: the audit writes one row per call —
+    // `gateway/tests/test_serving_options.py` asserts exactly one for a batch of two — and this
+    // counts rows. Both rules are deliberate; a reader reconciling one against the other has to be
+    // told, or the report is the half they stop believing (`FRD-206`).
+    const harness = setup();
+    const help = (harness.component as unknown as { stats: () => { key: string; help: string }[] })
+      .stats()
+      .find((stat) => stat.key === 'requests')!.help;
+
+    expect(help).toContain('one per call');
+    expect(help).toContain('budget');
+    expect(help).not.toContain('not as one');
   });
 });

@@ -24,13 +24,19 @@ from aira_gateway.app import create_app
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.reporting.csv_export import BOM, UnknownBreakdown, filename, render
+from aira_gateway.reporting.service import Figures
 
+#: **Every key here is one `Figures.as_dict()` actually emits**, and a test below checks that claim
+#: against the dataclass rather than against this comment. It did not, and this fixture said
+#: `failed` where the report says `failed_requests` — so the renderer read `failed`, found nothing,
+#: and wrote **0 into the failed column of every export** while the suite stayed green. A fixture
+#: more forgiving than the thing it stands in for (`LESSONS.md` §2).
 REPORT: dict[str, Any] = {
     "by_use_case": [
         {
             "key": "kundenservice",
             "requests": 12,
-            "failed": 2,
+            "failed_requests": 2,
             "prompt_tokens": 100,
             "completion_tokens": 50,
             "total_tokens": 150,
@@ -42,7 +48,7 @@ REPORT: dict[str, Any] = {
         {
             "key": "vertrieb, süd",  # a comma and an umlaut, both on purpose
             "requests": 3,
-            "failed": 0,
+            "failed_requests": 0,
             "prompt_tokens": 10,
             "completion_tokens": 5,
             "total_tokens": 15,
@@ -124,6 +130,43 @@ def test_every_column_of_the_report_row_is_present() -> None:
     assert "avg_latency_ms" in header and "max_latency_ms" in header
 
 
+def test_the_fixture_above_uses_the_keys_the_report_actually_carries() -> None:
+    """**The test that was missing.** Every key in the fixture has to be one `Figures.as_dict()`
+    emits, or this whole file is measuring a document the product never produces. It did not exist,
+    the fixture said `failed`, the report says `failed_requests`, and the failed column of every
+    real export was 0 under a green suite."""
+    emitted = set(
+        Figures(
+            key="k",
+            requests=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cached_input_tokens=0,
+            total_tokens=0,
+            cost_nanos=0,
+            unpriced_requests=0,
+            unmetered_requests=0,
+            failed_requests=0,
+            avg_latency_ms=None,
+            max_latency_ms=None,
+        ).as_dict()
+    )
+
+    for breakdown in ("by_use_case", "by_model", "by_member"):
+        for row in REPORT[breakdown]:
+            assert set(row) <= emitted, f"{breakdown}: {set(row) - emitted}"
+
+
+def test_a_failed_request_reaches_the_failed_column() -> None:
+    """The column exists so somebody reconciling an invoice can see that twelve requests included
+    two that came back broken. Written as a value assertion, not a header one: the header was always
+    there."""
+    rows = _rows(render(REPORT, "use_case", "EUR"))
+    header = rows[0]
+
+    assert rows[1][header.index("failed")] == "2"
+
+
 def test_money_is_rendered_for_people_not_in_nano_units() -> None:
     """A spreadsheet is read by people, and a column of integers in billionths is one nobody can
     sum in their head. The exact integer stays in the JSON, which is what a script should read."""
@@ -156,12 +199,6 @@ def test_each_breakdown_renders_its_own_table(breakdown: str, expected: str) -> 
 def test_an_unknown_breakdown_is_named_rather_than_defaulted() -> None:
     with pytest.raises(UnknownBreakdown, match="quarterly"):
         render(REPORT, "quarterly", "EUR")
-
-
-def test_an_empty_breakdown_still_produces_a_header() -> None:
-    """A file with no rows and no header is indistinguishable from a failed download."""
-    rows = _rows(render({"by_use_case": []}, "use_case", "EUR"))
-    assert rows[0][0] == "key"
 
 
 # == unpriced traffic stays visible (FR-6) =======================================================

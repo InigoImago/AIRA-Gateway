@@ -1,0 +1,26 @@
+@if (empty()) {
+  <p class="table__empty" data-testid="blocks-empty">{{ emptyText() }}</p>
+} @else {
+  <!--
+    `aria-hidden`: identity here is colour and width, neither of which a screen reader has. The same
+    figures are in the chart's own table, which is always in the DOM — so nothing is gated behind
+    being able to see this (`FRD-626` FR-9).
+  -->
+  <div class="blocks" aria-hidden="true" data-testid="blocks">
+    @for (band of shown(); track band.key) {
+      <div
+        class="blocks__block"
+        [style.width.%]="width(band)"
+        [style.background]="band.color"
+        [style.color]="ink(band)"
+        [attr.data-testid]="'block-' + band.key"
+        [title]="band.key + ' · ' + band.display + ' · ' + percent(band)"
+      >
+        @if (labelled(band)) {
+          <span class="blocks__name">{{ band.key }}</span>
+          <span class="blocks__share">{{ percent(band) }}</span>
+        }
+      </div>
+    }
+  </div>
+}

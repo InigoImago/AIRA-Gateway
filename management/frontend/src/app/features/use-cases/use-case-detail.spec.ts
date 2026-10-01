@@ -1,4 +1,4 @@
-import { Type } from '@angular/core';
+import { Type, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
@@ -7,14 +7,20 @@ import {
   ApiKey,
   Budget,
   BudgetUsage,
+  Granularity,
   IssuedApiKey,
   Membership,
   RateLimit,
   Report,
   ReportRow,
+  SeriesSplit,
+  UsageSeries,
   UseCase,
   UseCaseConsumption,
 } from '../../core/api/models';
+import { SeriesRequest } from '../../core/api/clients/reporting';
+import { Preset } from '../../core/ui/periods';
+import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { ApiKeysPanel } from './api-keys-panel';
@@ -84,6 +90,13 @@ interface Overrides {
   budgetUsage?: Observable<{ usage: BudgetUsage[] }>;
   useCaseReport?: Observable<Report>;
   useCaseReportPerCall?: () => Observable<Report>;
+  /** The chart's load (`FRD-626`) — the same endpoint, asked for a series. */
+  useCaseSeries?: Observable<Report>;
+  /**
+   * Who is reading. `null` is a signed-in account whose username the server did not give — the
+   * condition under which the reader's own cards are not rendered at all.
+   */
+  me?: { username: string } | null;
   addMember?: Observable<Membership>;
   removeMember?: Observable<void>;
   issueApiKey?: Observable<unknown>;
@@ -104,6 +117,12 @@ interface Detail {
   loading: () => boolean;
   feedback: { error: () => string | null; notice: () => string | null; busy: () => boolean };
   consumption: () => UseCaseConsumption;
+  chartSeries: () => UsageSeries | null;
+  chartReason: () => string;
+  chartSplit: { set: (v: SeriesSplit) => void };
+  chooseChartPeriod: (v: Preset) => void;
+  chooseChartSplit: (v: SeriesSplit) => void;
+  chooseChartGranularity: (v: 'auto' | Granularity) => void;
   canManage: () => boolean;
   isMember: () => boolean;
   useCase: () => UseCase | null;
@@ -129,7 +148,11 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
   // Several tests build two components (accepted vs. declined confirmation) in one case.
   TestBed.resetTestingModule();
   const calls: string[] = [];
+  // Every `useCaseReport` the page makes, in order. The **series part matters**: the consumption
+  // card asks for figures alone and the chart asks for a series, so one list that did not record the
+  // difference would make either load pass for the other.
   const reportCalls: string[] = [];
+  const seriesCalls: string[] = [];
   let keyLoads = 0;
   const service = {
     // Each panel loads its own; stubbed so the walkthrough below can visit all eight tabs.
@@ -152,8 +175,18 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     budgetUsage: () => overrides.budgetUsage ?? of({ usage: [] }),
     // Kept out of `calls`, which records **mutations**: a load there would break every "nothing
     // was sent" assertion.
-    useCaseReport: (slug: string, from: string, to: string) => {
-      reportCalls.push(`${slug}:${from}:${to}`);
+    useCaseReport: (
+      slug: string,
+      from: string,
+      to: string,
+      series?: SeriesRequest,
+      person?: string,
+    ) => {
+      (series ? seriesCalls : reportCalls).push(
+        `${slug}:${from}:${to}` +
+          (series ? `:${series.granularity}:${series.split}:${person ?? '(nobody)'}` : ''),
+      );
+      if (series) return overrides.useCaseSeries ?? of(emptyReport());
       if (overrides.useCaseReportPerCall) return overrides.useCaseReportPerCall();
       return overrides.useCaseReport ?? of(emptyReport());
     },
@@ -224,6 +257,24 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
         },
       },
       { provide: UseCaseService, useValue: service },
+      // **Stubbed, because this page's own-usage cards are about whoever is signed in.** Without a
+      // name there is nobody to narrow the chart to, and the real service would reach for an
+      // `HttpClient` this bed does not provide.
+      {
+        provide: MeService,
+        useValue: {
+          currency: signal('EUR'),
+          get: () =>
+            'me' in overrides && overrides.me === null
+              ? of({ subject: 's', username: '', email: '', roles: [] })
+              : of({
+                  subject: 's',
+                  username: overrides.me?.username ?? 'erika',
+                  email: '',
+                  roles: [],
+                }),
+        },
+      },
       { provide: ConfirmService, useValue: { ask: () => confirmAnswer } },
     ],
   });
@@ -234,6 +285,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     fixture,
     calls,
     reportCalls,
+    seriesCalls,
     keyLoads: () => keyLoads,
     component: fixture.componentInstance as unknown as Detail,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
@@ -738,6 +790,12 @@ describe('UseCaseDetail — consumption (FRD-603)', () => {
     expect(new Date(todayTo).getTime() - new Date(todayFrom).getTime()).toBe(24 * 3600 * 1000);
   });
 
+  it('asks for no series on either consumption window', () => {
+    // The card shows two figures and no chart, and a series it never draws is a `GROUP BY` per
+    // bucket nobody reads — twice per page load (`FRD-626` FR-2).
+    expect(setup().reportCalls.every((call) => call.split(':').length === 3)).toBe(true);
+  });
+
   // A figure the reader did not ask for failing to arrive is not a page failure, so it stays out
   // of the page's one banner (`CLAUDE.md` §3).
   it('reports an unreachable gateway in the panel, not across the page', () => {
@@ -790,5 +848,110 @@ describe('UseCaseDetail — consumption (FRD-603)', () => {
 
     expect(harness.component.consumption().month?.total_tokens).toBe(10664);
     expect(harness.component.consumption().today?.requests).toBe(59);
+  });
+});
+
+describe('UseCaseDetail — the reader’s own usage chart (FRD-626 FR-15)', () => {
+  const series = (over: Partial<UsageSeries> = {}): UsageSeries => ({
+    granularity: 'day',
+    split: 'model',
+    buckets: ['2026-09-01'],
+    keys: ['chat-1'],
+    folded: false,
+    points: [],
+    ...over,
+  });
+
+  it('asks for thirty days of the reader’s own traffic, by model', () => {
+    // **The whole point of this card.** It sits above one headed *What you used*, and a chart of the
+    // use case's total beside it would be a bigger figure about a different subject, on one screen.
+    const harness = setup();
+
+    expect(harness.seriesCalls).toHaveLength(1);
+    const [slug, from, to, granularity, split, person] = harness.seriesCalls[0].split(':');
+    expect(slug).toBe('demo-uc');
+    expect(person).toBe('erika');
+    expect(new Date(to).getTime() - new Date(from).getTime()).toBe(30 * 24 * 3600 * 1000);
+    expect(granularity).toBe('auto');
+    expect(split).toBe('model');
+  });
+
+  it('renders the chart under its own heading, not the use case’s', () => {
+    const harness = setup({ useCaseSeries: of(emptyReport({ series: series() })) });
+
+    expect(harness.html().querySelector('app-usage-chart')).not.toBeNull();
+    expect(harness.text()).toContain('What you used, over time');
+  });
+
+  it('asks nobody, and draws nothing, when the account has no name', () => {
+    // Then there is no person to narrow to. Loading anyway would fetch the use case's whole traffic
+    // and put it under a heading that says "you" — the defect this card exists to avoid, delivered
+    // by the error path. The panel beside it is hidden by the same condition.
+    const harness = setup({ me: null });
+
+    expect(harness.seriesCalls).toHaveLength(0);
+    expect(harness.html().querySelector('app-usage-chart')).toBeNull();
+  });
+
+  it('reports an unreachable gateway in the chart, not across the page', () => {
+    // Same rule as the consumption card (`FRD-603` §5.4): a figure the reader did not ask for
+    // failing is not the use case failing to load.
+    const harness = setup({ useCaseSeries: httpError(503) });
+
+    expect(harness.component.chartSeries()).toBeNull();
+    expect(harness.component.chartReason()).not.toBe('');
+    expect(harness.component.feedback.error()).toBeNull();
+  });
+
+  it('draws no chart for a report it was not entitled to fill', () => {
+    // `in_scope: false` is an empty report, and an empty chart from it would state that this person
+    // used nothing — which nobody measured.
+    const harness = setup({
+      useCaseSeries: of(emptyReport({ in_scope: false, series: series() })),
+    });
+
+    expect(harness.component.chartSeries()).toBeNull();
+    expect(harness.component.chartReason()).toContain('may see figures');
+  });
+
+  it('re-asks for the same person when the split changes', () => {
+    const harness = setup();
+    harness.component.chooseChartSplit('outcome');
+
+    expect(harness.seriesCalls).toHaveLength(2);
+    expect(harness.seriesCalls[1].endsWith(':auto:outcome:erika')).toBe(true);
+    // The two consumption windows are not re-fetched: they do not depend on the chart's bands.
+    expect(harness.reportCalls).toHaveLength(2);
+  });
+
+  it('asks for the chosen period, and re-asks when it changes', () => {
+    // The page's only period control. Without it the whole overview could talk about one day — the
+    // consumption card is *this month* and *today* by design and the panel below follows the
+    // budget's own period, which on the showcase's `kundenservice` is daily.
+    const harness = setup();
+    const [, from30, to30] = harness.seriesCalls[0].split(':');
+    expect(new Date(to30).getTime() - new Date(from30).getTime()).toBe(30 * 24 * 3600 * 1000);
+
+    harness.component.chooseChartPeriod('last-7-days');
+
+    const [, from7, to7] = harness.seriesCalls[1].split(':');
+    expect(new Date(to7).getTime() - new Date(from7).getTime()).toBe(7 * 24 * 3600 * 1000);
+    // The consumption windows are untouched: they are a different question (`FRD-603`).
+    expect(harness.reportCalls).toHaveLength(2);
+  });
+
+  it('asks for a calendar month when one is chosen, not a rolling window', () => {
+    const harness = setup();
+    harness.component.chooseChartPeriod('this-month');
+
+    const [, from] = harness.seriesCalls[1].split(':');
+    expect(from.endsWith('-01')).toBe(true);
+  });
+
+  it('re-asks for the same person when the granularity changes', () => {
+    const harness = setup();
+    harness.component.chooseChartGranularity('hour');
+
+    expect(harness.seriesCalls[1].endsWith(':hour:model:erika')).toBe(true);
   });
 });

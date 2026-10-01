@@ -448,9 +448,16 @@ did their job.
 
 ```bash
 make showcase-traffic   # send another round through the gateway
+make showcase-history   # more history for the usage chart: DAYS=42 PER_DAY=6
 make down                # stop everything, keep the data
 make destroy             # stop everything and delete the data
 ```
+
+`showcase-history` is the one target in this walkthrough that **moves a timestamp**. It drives real
+requests — real tokens, real price, a real audit row — and then backdates the rows it just created,
+so the usage chart has a month of columns instead of one. `make showcase` runs it once; this is how
+to ask for a longer or busier history. What is real and what is not is stated in the script's own
+output and in [`FRD-626`](../features/FRD-626-usage-over-time.md) §12.
 
 ---
 

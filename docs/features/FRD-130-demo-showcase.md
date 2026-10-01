@@ -43,7 +43,7 @@ frontend.
 **FR-3** — Budgets across every axis the UI offers: cost, tokens and requests; use-case and member
 scope; day and month. Sized so the consumption bars show a _reading_, not 0.02%.
 
-**FR-4** — One API key per use case, **re-derived deterministically** rather than regenerated. A
+**FR-4** — One API key **per member**, **re-derived deterministically** rather than regenerated. A
 demo that mints a new secret on every run is a demo whose printed examples stop working the second
 time. This is explicitly _not_ how a real key is issued (`FRD-205`: shown once, never again), and
 the seed says so where it does it.

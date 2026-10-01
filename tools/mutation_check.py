@@ -136,6 +136,7 @@ RELEASE = "gateway/tests/test_use_case_model_release.py"
 DRYRUN = "gateway/tests/test_pipeline_dryrun.py"
 EMBED_PII = "gateway/tests/test_a_redactor_reaches_an_embedding.py"
 CSV_EXPORT = "gateway/tests/test_csv_export.py"
+SERIES = "gateway/tests/test_usage_series.py gateway/tests/test_csv_export.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
@@ -2248,8 +2249,8 @@ MUTATIONS = [
         "N3",
         "unpriced traffic is counted apart, never summed into spend as zero",
         "gateway/src/aira_gateway/reporting/service.py",
-        "                    (RequestLog.cost_nanos.is_(None))",
-        "                    (False)",
+        "                    (RequestLog.cost_nanos.is_(None)) & _was_served(),",
+        "                    (False) & _was_served(),",
         "gateway/tests/test_reporting.py",
     ),
     Mutation(
@@ -2718,8 +2719,8 @@ MUTATIONS = [
         "E9",
         "the export is rendered from the scoped report, not from an unscoped second query",
         "gateway/src/aira_gateway/api/reporting/spend.py",
-        "    report = await service.report(scope, window_start, window_end)",
-        "    report = await service.report(None, window_start, window_end)",
+        "    report = await service.report(\n        scope,",
+        "    report = await service.report(\n        None,",
         f"{CSV_EXPORT} gateway/tests/test_reporting.py",
     ),
     Mutation(
@@ -3358,16 +3359,16 @@ MUTATIONS = [
         "N20",
         "a refused request is not counted as unpriced traffic",
         "gateway/src/aira_gateway/reporting/service.py",
-        "                    & (\n                        (RequestLog.outcome == Outcome.SERVED)",
-        "                    & (\n                        (RequestLog.outcome != Outcome.SERVED)",
+        "    return (RequestLog.outcome == Outcome.SERVED) |",
+        "    return (RequestLog.outcome != Outcome.SERVED) |",
         REPORTING,
     ),
     Mutation(
         "N21",
         "a row written before outcomes existed is still counted as unpriced",
         "gateway/src/aira_gateway/reporting/service.py",
-        "                        | (RequestLog.outcome.is_(None))",
-        "                        | (False)",
+        "| (RequestLog.outcome.is_(None))",
+        "| (False)",
         REPORTING,
     ),
     Mutation(
@@ -7982,6 +7983,139 @@ MUTATIONS = [
         '            f"{stack_addresses.issuer()}/protocol/openid-connect/token",',
         '            f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token",',
         "tools/tests/test_one_owner_for_the_stack_addresses.py",
+    ),
+    # ---- the usage chart's series: when, and which model (2026-10-01, `FRD-626`) ------------------
+    #
+    # Every one of these is a chart that looks right. A bucket off by one, a scale against the wrong
+    # denominator and a folded tail that drops its rows all draw a plausible picture — which is why
+    # the arithmetic is in a module of its own and why it is guarded here rather than by eye.
+    Mutation(
+        "US1",
+        "a quiet bucket is a column, not a bucket left off the axis",
+        "gateway/src/aira_gateway/reporting/series.py",
+        "    while cursor < end:",
+        "    while False:",
+        SERIES,
+    ),
+    Mutation(
+        "US2",
+        "the axis stops before the exclusive bound, like every other window on this surface",
+        "gateway/src/aira_gateway/reporting/series.py",
+        "    while cursor < end:",
+        "    while cursor <= end:",
+        SERIES,
+    ),
+    Mutation(
+        "US3",
+        "a day bucket is named by its day and not by its hour",
+        "gateway/src/aira_gateway/reporting/series.py",
+        '_WIDTH: dict[str, int] = {"day": 10, "hour": 13}',
+        '_WIDTH: dict[str, int] = {"day": 13, "hour": 13}',
+        SERIES,
+    ),
+    Mutation(
+        "US4",
+        "a granularity too wide to draw is refused by name, not quietly coarsened",
+        "gateway/src/aira_gateway/reporting/series.py",
+        "        if hours > MAX_BUCKETS:",
+        "        if False:",
+        SERIES,
+    ),
+    Mutation(
+        "US5",
+        "a named granularity is honoured rather than overridden by what auto would choose",
+        "gateway/src/aira_gateway/reporting/series.py",
+        '    if asked == "day":\n        return "day"',
+        "    pass",
+        SERIES,
+    ),
+    Mutation(
+        "US6",
+        "the tail beyond the colours is folded into one band, never dropped",
+        "gateway/src/aira_gateway/reporting/series.py",
+        "    return case((named.in_(kept), named), else_=literal(OTHER))",
+        "    return named",
+        SERIES,
+    ),
+    Mutation(
+        "US7",
+        "a band the breakdown calls `(none)` is not folded into `(other)` by the chart",
+        "gateway/src/aira_gateway/reporting/series.py",
+        '    named = func.coalesce(func.nullif(SPLITS[split], literal("")), literal(NONE))',
+        "    named = SPLITS[split]",
+        SERIES,
+    ),
+    Mutation(
+        "US8",
+        "the series is scoped by the same window and scope as every other figure",
+        "gateway/src/aira_gateway/reporting/service.py",
+        '            select(bucket.label("bucket"), band.label("key"), *_measures()),\n            scope,',
+        '            select(bucket.label("bucket"), band.label("key"), *_measures()),\n            None,',
+        SERIES,
+    ),
+    Mutation(
+        "US9",
+        "the band order is stable in a period where nothing has a price",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "            ranked, key=lambda row: (-row.cost_nanos, -row.requests, -row.total_tokens, row.key)",
+        "            ranked, key=lambda row: (-row.cost_nanos,)",
+        SERIES,
+    ),
+    Mutation(
+        "US10",
+        "a report nobody asked a series of does not compute one",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "            if granularity is not None:",
+        "            if granularity is None:",
+        SERIES,
+    ),
+    Mutation(
+        "US11",
+        "a split this endpoint does not have is refused in the surface's own envelope",
+        "gateway/src/aira_gateway/api/reporting/spend.py",
+        "    if split not in SPLITS:",
+        "    if False:",
+        SERIES,
+    ),
+    Mutation(
+        "US17",
+        "a request nothing was reported for is counted apart from one with no price",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "                    & (RequestLog.total_tokens.is_(None))",
+        "                    & (RequestLog.total_tokens.isnot(None))",
+        SERIES,
+    ),
+    Mutation(
+        "US18",
+        "a refusal is not counted as unmetered, so the caveat does not become permanent",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "    return (RequestLog.outcome == Outcome.SERVED) | (RequestLog.outcome.is_(None))",
+        "    return RequestLog.outcome.isnot(None) | RequestLog.outcome.is_(None)",
+        SERIES + " gateway/tests/test_reporting.py",
+    ),
+    Mutation(
+        "US14",
+        "a person filter actually narrows the window rather than being ignored",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "        if person:",
+        "        if False:",
+        SERIES,
+    ),
+    Mutation(
+        "US15",
+        "a person is found by the name their credential carried, not by subject alone",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "            statement = statement.where(_PERSON.__eq__(person))",
+        "            statement = statement.where(RequestLog.subject.__eq__(person))",
+        SERIES,
+    ),
+    Mutation(
+        "US13",
+        "the failed column of an export carries the figure the report actually holds",
+        "gateway/src/aira_gateway/reporting/csv_export.py",
+        '                safe_cell(row.get("failed_requests", 0)),',
+        '                safe_cell(row.get("failed", 0)),',
+        CSV_EXPORT,
     ),
 ]
 

@@ -50,6 +50,11 @@ NOT_SETTINGS = {
     "AIRA_GATEWAY_URL",
     "AIRA_CONSOLE_URL",
     "AIRA_DEMO_CHAT_MODEL",
+    # Read by `tools/demo_history.py` alone, which builds the showcase's usage history (`FRD-626`
+    # §12). Documented for the reason the whole file exists: an operator looking for a knob does
+    # not care which process reads it.
+    "AIRA_DEMO_HISTORY_DAYS",
+    "AIRA_DEMO_HISTORY_PER_DAY",
     # Read by the **collector's** own configuration through `${env:…}` and by Compose, not by any
     # settings class — how much it says about what arrives, where to write it, and everything about
     # a second destination. Documented in §5a for the reason the whole file exists: an operator

@@ -38,3 +38,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0025 | [Keycloak decides who holds a role; AIRA decides what a role may do](ADR-0025-aira-defines-what-a-role-may-do.md) | **Accepted** | 2026-09-13 |
 | 0026 | [Speech output is model access, and the audit trail describes its audio](ADR-0026-speech-is-model-access-and-its-audio-is-described.md) | **Accepted** | 2026-09-14 |
 | 0027 | [The privacy notice is written from a register the schema is checked against](ADR-0027-the-privacy-notice-is-generated-and-checked.md) | **Accepted** | 2026-09-16 |
+| 0028 | [A time bucket is portable, and the database session is UTC](ADR-0028-a-time-bucket-is-portable-and-the-session-is-utc.md) | **Accepted** | 2026-10-01 |

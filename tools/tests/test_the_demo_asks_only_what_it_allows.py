@@ -77,6 +77,104 @@ def _releases() -> dict[str, list[str]]:
     return resolved
 
 
+def _memberships() -> dict[str, list[str]]:
+    """`showcase.MEMBERSHIPS`, as names per slug, read from the source like `RELEASES` above."""
+    node = _constant(SEED.read_text(), "MEMBERSHIPS")
+    assert isinstance(node, ast.Dict), "MEMBERSHIPS is not a literal dict any more"
+
+    resolved: dict[str, list[str]] = {}
+    for key, value in zip(node.keys, node.values, strict=True):
+        assert isinstance(key, ast.Constant), "a use case slug must be a literal"
+        assert isinstance(value, ast.List), "a membership list must be a literal list"
+        names: list[str] = []
+        for entry in value.elts:
+            assert isinstance(entry, ast.Tuple), "a membership is a (name, role) pair"
+            first = entry.elts[0]
+            assert isinstance(first, ast.Constant), "a member's name must be a literal"
+            names.append(str(first.value))
+        resolved[str(key.value)] = names
+    return resolved
+
+
+def _callers() -> dict[str, list[str | None]]:
+    """`demo_traffic.CALLERS` — who each use case's traffic is sent as."""
+    node = _constant(TRAFFIC.read_text(), "CALLERS")
+    assert isinstance(node, ast.Dict), "CALLERS is not a literal dict any more"
+
+    resolved: dict[str, list[str | None]] = {}
+    for key, value in zip(node.keys, node.values, strict=True):
+        assert isinstance(key, ast.Constant), "a use case slug must be a literal"
+        assert isinstance(value, ast.Tuple), "a caller list must be a literal tuple"
+        people: list[str | None] = []
+        for entry in value.elts:
+            assert isinstance(entry, ast.Constant), "a caller is a literal name or None"
+            people.append(None if entry.value is None else str(entry.value))
+        resolved[str(key.value)] = people
+    return resolved
+
+
+def test_the_traffic_only_calls_as_people_the_seed_made_members() -> None:
+    """A key is issued per **member** (`FRD-130` FR-4), so naming anybody else derives a key the
+    seed never stored and every request made as them answers 401 — which looks like a broken
+    gateway and is a mismatch between two files.
+
+    `None` is the use case's own key, which is the first member's and always exists.
+    """
+    members = _memberships()
+
+    for slug, people in _callers().items():
+        assert slug in members, f"the traffic calls '{slug}', which the seed does not create"
+        for person in people:
+            if person is None:
+                continue
+            assert person in members[slug], (
+                f"the traffic calls '{slug}' as '{person}', who is not a member of it — the seed "
+                f"issues no key for them, so every such request is a 401. Members: {members[slug]}"
+            )
+
+
+def test_more_than_one_person_calls_somewhere() -> None:
+    """The point of the second key. With one caller everywhere, `FRD-606`'s per-person table and the
+    per-head budget on `kundenservice` each have exactly one row — a comparison with nothing to
+    compare — and `ucuser` sees an empty *What you used* card."""
+    assert any(len(people) > 1 for people in _callers().values()), (
+        "every use case's traffic is sent as one person again"
+    )
+
+
+def test_a_partial_401_fails_the_run() -> None:
+    """**A credential that does not exist is never a correct answer**, and a *partial* 401 used to
+    pass: a run reported `served 8, refused 3` while two of its eleven requests were refused for a
+    key the seed should have stored, because 401 was counted in the same column as a budget doing
+    its job. 429 and 400 are controls working; 401 is wiring, and nothing after it means anything.
+    """
+    source = TRAFFIC.read_text()
+    summary = source.index('print(f"\\nserved {served}')
+
+    assert "if 401 in codes:" in source[summary:], (
+        "the traffic no longer fails on a 401 it did not expect"
+    )
+    assert source.index("if 401 in codes:", summary) < source.index("if failed:", summary), (
+        "the 401 check runs after the 5xx one, so a run with both reports the wrong cause first"
+    )
+
+
+def test_the_wait_probes_every_credential_the_traffic_uses() -> None:
+    """The other half of the 401 check above, and the reason it is safe.
+
+    A key reaches the gateway over Kafka, and one arriving says nothing about the next. Probing the
+    use case's own key alone was survivable while a 401 merely reduced the figures; now that the
+    traffic stops on one, a key still in flight would turn a timing window into a red run.
+    """
+    source = (ROOT / "tools/demo_wait_ready.py").read_text()
+
+    assert "PROBE_KEYS" in source, "the wait probes a single key again"
+    assert "CALLERS[PROBE_USE_CASE]" in source, (
+        "the probed keys are no longer derived from the people the traffic actually calls as"
+    )
+    assert "for key in PROBE_KEYS:" in source, "the wait does not loop over them"
+
+
 def _embedding_use_case() -> str:
     node = _constant(TRAFFIC.read_text(), "EMBEDDING_USE_CASE")
     assert isinstance(node, ast.Constant), "EMBEDDING_USE_CASE is not a literal any more"
@@ -97,6 +195,10 @@ def test_the_two_files_still_say_what_this_test_reads() -> None:
 
     assert releases, "no releases parsed; the seed's RELEASES has changed shape"
     assert "entwicklung" in releases, "the deliberately narrowed use case is gone from RELEASES"
+    # The two parsers added with the second key, held to the same rule: a parser that silently
+    # returns nothing makes every assertion built on it pass by describing nothing.
+    assert _memberships(), "no memberships parsed; the seed's MEMBERSHIPS has changed shape"
+    assert _callers(), "no callers parsed; the traffic's CALLERS has changed shape"
     assert _embedding_use_case()
     assert _embed_model()
 

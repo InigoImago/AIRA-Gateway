@@ -154,10 +154,33 @@ def test_the_api_keys_it_reports_are_the_ones_it_stored(seeded) -> None:
     from aira_common.apikeys import hash_api_key, parse_prefix
 
     result, _ = seeded
-    for slug, plaintext in result["api_keys_plaintext"].items():
+    for handle, plaintext in result["api_keys_plaintext"].items():
+        slug, _, member = handle.partition("/")
         stored = ApiKey.objects.get(prefix=parse_prefix(plaintext))
         assert stored.use_case.slug == slug
+        assert stored.owner.get_username() == member
         assert stored.key_hash == hash_api_key(plaintext)
+
+
+def test_every_member_gets_a_key_of_their_own(seeded) -> None:
+    """**One key per member, not one per use case.** It was one, owned by the first member, which
+    made that member the only person with traffic anywhere: `ucuser` — whose whole role is *uses a
+    use case* — had none, and every per-person figure had a single row to show.
+
+    The first member's key stays derived from the slug alone, because printed examples and both
+    hand-over scripts re-derive that one (`FRD-130` FR-4); the rest carry their own name.
+    """
+    from aira_management.apps.apikeys.models import ApiKey
+    from aira_management.apps.seed.contributions.showcase_data import MEMBERSHIPS
+
+    for slug, members in MEMBERSHIPS.items():
+        owners = {key.owner.get_username() for key in ApiKey.objects.filter(use_case__slug=slug)}
+        assert owners == {name for name, _role in members}, slug
+
+    # And the two on one use case are different credentials, not one row claimed twice.
+    shared = ApiKey.objects.filter(use_case__slug="kundenservice")
+    assert shared.count() == 2
+    assert len({key.prefix for key in shared}) == 2
 
 
 def test_the_pipeline_does_not_seed_the_classifier_that_blocks_everything(seeded) -> None:
@@ -277,7 +300,15 @@ def test_the_handover_derives_the_key_the_seed_actually_stored(seeded) -> None:
     assert spec.loader is not None
     spec.loader.exec_module(module)
 
-    key = ApiKey.objects.get(use_case__slug="coding-assistant")
+    # **The first member's key**, named rather than taken as the only one: a use case with two
+    # members now has two, and the hand-over derives the one that comes from the slug alone
+    # (`FRD-130` FR-4). Written as `.get()` until 2026-10-01, which stopped being a single row the
+    # moment `ucuser` got a key of their own — and would otherwise have failed as an ambiguity
+    # rather than as the question it is: *which* of the two does the hand-over hand over?
+    from aira_management.apps.seed.contributions.showcase_data import MEMBERSHIPS
+
+    first = MEMBERSHIPS["coding-assistant"][0][0]
+    key = ApiKey.objects.get(use_case__slug="coding-assistant", owner__username=first)
 
     assert hash_api_key(module.demo_key("coding-assistant")) == key.key_hash
 

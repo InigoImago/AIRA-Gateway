@@ -18,6 +18,7 @@ from aira_gateway.core.canonical import (
     CanonicalEmbeddingRequest,
     CanonicalRequest,
     CanonicalResponse,
+    EmbeddingVectors,
 )
 from aira_gateway.upstreams.base import OfferedModel, UpstreamModel
 from aira_gateway.upstreams.openai.mapping import (
@@ -174,7 +175,7 @@ class OpenAIAdapter:
                     chunk = chunk.model_copy(update={"tool_calls": calls.finish()})
                 yield chunk
 
-    async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
+    async def embed(self, request: CanonicalEmbeddingRequest) -> EmbeddingVectors:
         body = self._named(canonical_to_openai_embedding(request), request.model)
         data = await self._transport.post(self._routes.embed(request.model), body)
         return embedding_values(data)

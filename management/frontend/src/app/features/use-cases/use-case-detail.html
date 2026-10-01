@@ -182,8 +182,25 @@
         <!-- What it has used, beside how it is configured (`FRD-603`). -->
         <app-consumption-panel [slug]="slug" [consumption]="consumption()" />
 
-        <!-- The reader's own share: the members tab's panel, narrowed to one person. -->
+        <!-- The reader's own share, twice: over time, then as the figures and what is left of an
+             allowance. Both about the same person, so they appear and disappear together. -->
         @if (myName(); as me) {
+          <app-usage-chart
+            [heading]="'What you used, over time'"
+            [subject]="'Your own requests in this use case, day by day'"
+            [series]="chartSeries()"
+            [loading]="chartLoading()"
+            [reason]="chartReason()"
+            [granularity]="chartGranularity()"
+            [split]="chartSplit()"
+            [splits]="chartSplits"
+            [periods]="chartPeriods"
+            [period]="chartPeriod()"
+            (periodChange)="chooseChartPeriod($event)"
+            (granularityChange)="chooseChartGranularity($event)"
+            (splitChange)="chooseChartSplit($event)"
+          />
+
           <app-people-panel
             [only]="me"
             [month]="peopleMonth()"
