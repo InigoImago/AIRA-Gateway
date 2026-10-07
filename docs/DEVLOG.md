@@ -5,6 +5,68 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A release is a Git tag, and the version lives nowhere else (2026-10-07)
+
+The owner, after the pipeline was green again: *can I actually push my images to the GitHub
+registry on a successful run, and what do I need for it?* The honest answer was **no** — one
+workflow, no registry step — and `docs/DEPLOYMENT.md` §7 had been saying so since the deployment
+guide was written: *"Images are not published … no registry push or tagging scheme beyond
+`AIRA_IMAGE_TAG`."* The consequence was not only that a deployment had to build. It was that nobody
+could say **which** AIRA was running.
+
+`FRD-137`, `ADR-0029`. An optional manual release: it reads the last version from the Git tags,
+increments the part you choose, and publishes `aira-gateway`, `aira-management` and `aira-frontend`
+to GHCR under it.
+
+**The version lives in the tags and nowhere else.** A number in `pyproject.toml`, `package.json` and
+a future chart is the same fact in three files — this repository's oldest defect shape — and it needs
+a commit to bump, so the commit that *is* the release cannot carry its own number. A tag is already
+the thing that ties a version to a commit and cannot disagree with itself.
+
+**The arithmetic is a tool, not YAML.** `tools/release_version.py`, because the one real difficulty
+here is ordering: tags are strings, `v0.10.0` sorts *below* `v0.9.0` in every string comparison
+there is, and a release cut from a `sort | tail -1` goes backwards the first time a minor number
+reaches ten — publishing over an image that already exists. Compared as integer triples, pinned by
+four lists whose lexicographic maximum is not their numeric maximum, and runnable locally as
+`make next-version BUMP=…` for the reason `ci.yml`'s own header gives: a second implementation is a
+second place for the bug.
+
+Two smaller rules came out of asking what each failure would leave behind:
+
+- **Unknown is not zero, again.** No tag reported as `None`, never `(0, 0, 0)`, and the first
+  release is `v0.1.0` returned as it is — not bumped from a zero into `v0.0.1`. The same rule the
+  money path rests on (`FRD-403`), met in a place nobody expects it.
+- **The Git tag is pushed after the images.** Reversed, a failed build leaves a version naming no
+  image and the next release counts from it, so the series skips a number to hide a failure. This
+  way a failed publish leaves nothing and can simply be run again.
+
+**Publishing is an input to CI, not a workflow of its own.** The `publish` job declares
+`needs: [python, frontend, stack]` and `if: ${{ inputs.release }}`, so a green release is a green
+commit by construction. A separate workflow would have to ask GitHub whether *some* run was green —
+weaker than it sounds: that run can be about an older commit, cancelled, or re-run until it passed.
+A dispatch with the default `release: false` runs exactly the workflow that ran before.
+
+Nothing new to configure: GHCR accepts the built-in `GITHUB_TOKEN` for the repository's own
+namespace, so there is no personal access token and no stored registry secret, and `packages: write`
+is scoped to that one job. A test fails if `secrets.GHCR_*`, `secrets.CR_PAT` or `secrets.DOCKER_*`
+ever appears.
+
+**A guard found by its own mutation.** `PB12` renames `aira-frontend`'s versioned tag, and it
+survived the first draft: the test asked whether the image *name* appeared anywhere, and the same
+image's `:latest` and `:sha-…` lines kept it appearing — so the assertion passed about a release in
+which two images carried the version and one did not. It now requires the version tag **per image**,
+which is the property FR-8 is actually about. Sixteen mutations in all (`PB1`–`PB16`), 920
+properties.
+
+**Two limits stated rather than hidden.** The published images are a *rebuild* of the tested commit,
+not the tested bytes — with a warm cache the same layers, which is a claim about practice and not a
+guarantee this project usually accepts; handing the images between jobs as artefacts is the named
+upgrade. And GHCR packages start **private** and are not linked to the repository automatically, so
+the job summary says so, because otherwise a first `docker pull` fails for a reason that looks like
+a bug. `DEPLOYMENT.md` §1a's neighbour §1b is the reader's version of all of this; §7's gap row is
+closed except for the half that is honestly still open — **no Compose file pulls these images yet**,
+and that overlay is what Helm will need too.
+
 ## Sixty-one failures, one missing download — and a test that had pinned the defect (2026-10-07)
 
 Reported as *"many integration errors in the GitHub pipeline"*. Sixty-one failures, three distinct

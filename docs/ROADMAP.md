@@ -151,6 +151,12 @@ Deliverables:
   double, the cost of a request in each of the three real workloads, and the three places the
   deployment gives way. Sizing for a reader: [`DEPLOYMENT.md`](DEPLOYMENT.md) §1a. HA considerations
   remain, under [`FRD-127`](features/FRD-127-several-gateway-instances.md).
+- ~~Published images~~ — **delivered** as
+  [`FRD-137`](features/FRD-137-publishing-versioned-images.md) (`ADR-0029`), ahead of the charts
+  because a chart has nothing to pull without it: an optional manual release reads the last version
+  from the Git tags, increments it, and publishes the three images to GHCR behind every CI gate.
+  The version lives in the tags only. A Compose overlay that *pulls* rather than builds is the
+  piece still missing, and it is the same piece Helm will need.
 - **Kubernetes/Helm** charts; secrets via Vault in-cluster; production observability stack.
 - Coverage/quality audit against the near-100% target.
 
@@ -329,7 +335,7 @@ product owner; the reason for the order is recorded so it is not re-litigated la
 | 4 | Budgets & Quotas | 400–404 |
 | 5 | Anomaly & IT Security | 500–503 |
 | 6 | Governance & Analytics | 600–601 |
-| 7 | Hardening & Prod | 700–702 |
+| 7 | Hardening & Prod | 137, 700–702 |
 
 > Phases are sequential in dependency but the roadmap allows overlap where safe (e.g. Angular shell
 > work in Phase 2 can begin while Phase 1 stabilizes).

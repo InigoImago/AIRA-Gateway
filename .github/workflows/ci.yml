@@ -9,13 +9,28 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # The release is an **input to this workflow**, not a workflow of its own, so that publishing
+  # cannot happen except behind the three jobs below. A separate workflow would have to ask GitHub
+  # whether some other run was green, which is a different and weaker claim: it can be about an
+  # older commit, a cancelled run, or a job that was re-run until it passed.
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish versioned images to GHCR once every gate is green"
+        type: boolean
+        default: false
+      bump:
+        description: "Which part of the version to increment"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 # A newer push supersedes an in-flight run on the same ref; the default branch is exempt so its
-# history keeps a result for every commit.
+# history keeps a result for every commit. A release is exempt for a stronger reason: cancelling it
+# between pushing an image and pushing its tag would leave a published version no tag names.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-${{ github.ref }}-${{ inputs.release && 'release' || 'check' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !inputs.release }}
 
 permissions:
   contents: read
@@ -172,3 +187,155 @@ jobs:
       - name: Stop the stack
         if: always()
         run: make down-full
+
+  # ── Releasing ───────────────────────────────────────────────────────────────────────────────────
+  #
+  # Optional, manual, and behind every gate: `needs` the three jobs above, so a dispatch with
+  # `release: false` (the default) runs exactly the workflow that ran before this job existed, and
+  # one with `release: true` publishes only if all three went green. `FRD-137` has the reasoning;
+  # `ADR-0029` has the decision.
+  publish:
+    name: Publish versioned images to GHCR
+    needs: [python, frontend, stack]
+    if: ${{ inputs.release }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      # The only two this job needs. `packages: write` is what GHCR accepts `GITHUB_TOKEN` for in
+      # the repository's own namespace — no personal access token, nothing to configure as a secret.
+      # `contents: write` is for the Git tag, which is where the *next* release reads the version
+      # from, so without it the series could never advance.
+      contents: write
+      packages: write
+
+    steps:
+      # **Full history, because the tags are the version.** A shallow clone sees none, and "no tag"
+      # means "never released" — which would publish v0.1.0 over whatever is already out. This line
+      # is the whole guard, which is why a test asserts it
+      # (`test_a_release_is_published_only_behind_the_gates.py`): the tool cannot tell a shallow
+      # checkout from a genuinely unreleased project, since on the first release both look alike.
+      # The refusals that catch it afterwards are the existing-tag check below and, finally, the
+      # remote rejecting a tag push for a tag that is already there.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Refuse to release from anywhere but the default branch
+        # A version tag on a feature branch names a commit that is not in the history anybody
+        # deploys. Checked here rather than trusted to whoever opens the dispatch form.
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::a release must be cut from main; this ref is ${{ github.ref }}"
+          exit 1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python dependencies
+        run: uv sync --frozen
+
+      # The same command a developer runs locally (`make next-version BUMP=…`), for the reason the
+      # header of this file gives: a second implementation of the arithmetic in YAML is a second
+      # place for the ordering bug `tools/release_version.py` exists to prevent.
+      - name: Work out the next version
+        id: version
+        run: |
+          version="$(uv run python tools/release_version.py --bump '${{ inputs.bump }}')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous=$(uv run python tools/release_version.py --current || echo '(none)')" \
+            >> "$GITHUB_OUTPUT"
+          # GHCR rejects an upper-case path, and this owner has capitals in it.
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to publish a version that already exists
+        # The Git tag is the lock. Two dispatches racing, or a rerun of a release that got as far
+        # as pushing images, would otherwise overwrite a published version in place — and an image
+        # tag that changes under a deployment is the one thing a version number is for.
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.version.outputs.version }}" >/dev/null
+          then
+            echo "::error::${{ steps.version.outputs.version }} is already tagged"
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One entry per image, built from the same contexts the Compose files name
+      # (`deploy/compose/docker-compose.apps.yml`). Three tags each: the version, which never
+      # moves and is what a deployment pins; `sha-<commit>`, which ties an image to the commit a
+      # rolling update is advancing to (`FRD-127`); and `latest`, for a reader trying it out.
+      - name: Build and push the gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: gateway/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-gateway:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-gateway:sha-${{ github.sha }}
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-gateway:latest
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,scope=gateway,mode=max
+
+      - name: Build and push the management backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: management/backend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-management:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-management:sha-${{ github.sha }}
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-management:latest
+          cache-from: type=gha,scope=management
+          cache-to: type=gha,scope=management,mode=max
+
+      - name: Build and push the console
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: management/frontend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-frontend:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-frontend:sha-${{ github.sha }}
+            ghcr.io/${{ steps.version.outputs.owner }}/aira-frontend:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+      # **After the images, never before.** A tag pushed first and then a failed build would leave
+      # a version that names no image, and the next release would count from it — so the series
+      # would skip a number to hide a failure. This way a failed publish leaves nothing behind and
+      # can simply be run again.
+      - name: Tag the release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.version }}" \
+            -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
+
+      - name: Summary
+        run: |
+          {
+            echo "## ${{ steps.version.outputs.version }}"
+            echo
+            echo "Previous release: \`${{ steps.version.outputs.previous }}\` · bump: \`${{ inputs.bump }}\`"
+            echo
+            for image in gateway management frontend; do
+              echo "- \`ghcr.io/${{ steps.version.outputs.owner }}/aira-$image:${{ steps.version.outputs.version }}\`"
+            done
+            echo
+            echo "Packages are **private** until made public in each package's settings on GitHub."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -105,8 +105,8 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         purge-e2e-use-cases config-verify config-check up-apps otel-status otel-arrivals \
         otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
-        run-frontend up-full demo-ready down-full logs-apps build-images ci wait-healthy prune \
-        mutants ui-audit
+        run-frontend up-full demo-ready down-full logs-apps build-images next-version \
+        current-version ci wait-healthy prune mutants ui-audit
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -412,6 +412,20 @@ logs-apps: ## Tail logs of the application containers only (FOLLOW= to print onc
 
 build-images: ## Build the three application images without starting anything
 	$(COMPOSE_FULL) build gateway management frontend
+
+BUMP ?= patch
+
+next-version: ## Print the version a release cut now would carry (BUMP=patch|minor|major)
+	@# The same command the release job runs, for the reason `.github/workflows/ci.yml`'s header
+	@# gives: a second implementation of the arithmetic in YAML is a second place for the ordering
+	@# bug `tools/release_version.py` exists to prevent — `v0.10.0` sorts below `v0.9.0` as a string.
+	@uv run python tools/release_version.py --bump $(BUMP)
+
+current-version: ## Print the newest release tag, or say that nothing has been released
+	@# The tool exits 1 when there is no release, because a script needs to tell "none" from a
+	@# version. A person reading a make target does not, and a bare `make: *** Error 1` answers
+	@# the question less well than a sentence does.
+	@uv run python tools/release_version.py --current || echo "(nothing released yet)"
 
 verify-up: env ## Start a real local model (FRD-123) and pull the two verification models
 	$(COMPOSE) --profile verify up -d ollama

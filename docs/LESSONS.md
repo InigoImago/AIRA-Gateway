@@ -1812,6 +1812,16 @@ reading code.
   path it is named after is the same failure wearing a positive assertion: an
   `httpx.Response(400, json=…)` has its body already read, so a streaming test built on one passed
   whether or not the fix under test was present.
+
+  *And the third shape in this family asserts something true but weaker than the rule it is named
+  for.* A guard called "all three images are published together" checked that each image **name**
+  appeared among the pushed tags — and every image carries three tags, so renaming only the
+  *versioned* one left the name present and the assertion green, about a release in which two images
+  carried the version and one did not. It was its own mutation that caught it, which is the argument
+  for `make mutants` in one line: the test was not vacuous, not stale and not mis-set-up, it simply
+  asserted a weaker property than its name claimed, and nothing but breaking the real rule would
+  have shown that. **Name the property, then check that the assertion cannot be satisfied any other
+  way.**
 - **A check that quietly narrows its own scope reports green about the part it kept.** A `try`/
   `except ImportError` around the second of two settings classes made a documentation guard
   measure one plane and call it the product. If the input cannot be loaded, fail — do not check

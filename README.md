@@ -183,6 +183,7 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Pointing a Gemini client at AIRA**](docs/MIGRATION-GEMINI.md) | The same four steps, for `google-genai` and anything that speaks it |
 | [**Operations**](docs/DEPLOYMENT.md) | Deploying it: §0 is a runbook for an integration, in order, with the command that checks each step. Then topics, jobs, degradation, backups |
 | [**Sizing**](docs/DEPLOYMENT.md#1a-sizing-what-one-instance-carries) | What one instance carries, measured: the CPU a request of each workload costs, the three places a deployment gives way, and what the audit trail fills |
+| [**Releasing**](docs/DEPLOYMENT.md#1b-releasing-cutting-a-version-and-publishing-the-images) | Cutting a version and publishing the three images to GHCR: where the version lives, what gates a release, and the two limits worth knowing first |
 | [**Testing**](docs/TESTING.md) | The four layers and why each exists |
 | [**Gap analysis**](docs/GAP-ANALYSIS.md) | Requirements against what is built |
 | [**Features**](docs/features/README.md) | Every FRD, its status, its document — generated from the FRDs themselves |

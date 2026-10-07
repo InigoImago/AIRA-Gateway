@@ -39,3 +39,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0026 | [Speech output is model access, and the audit trail describes its audio](ADR-0026-speech-is-model-access-and-its-audio-is-described.md) | **Accepted** | 2026-09-14 |
 | 0027 | [The privacy notice is written from a register the schema is checked against](ADR-0027-the-privacy-notice-is-generated-and-checked.md) | **Accepted** | 2026-09-16 |
 | 0028 | [A time bucket is portable, and the database session is UTC](ADR-0028-a-time-bucket-is-portable-and-the-session-is-utc.md) | **Accepted** | 2026-10-01 |
+| 0029 | [A release is a Git tag, and the tag is the only place a version lives](ADR-0029-a-release-is-a-git-tag-and-three-images.md) | **Accepted** | 2026-10-07 |

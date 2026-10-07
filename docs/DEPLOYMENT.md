@@ -317,6 +317,59 @@ batch.
 
 ---
 
+## 1b. Releasing: cutting a version and publishing the images
+
+`ADR-0029`, `FRD-137`. **A release is a Git tag `vX.Y.Z` and the three images published under it.**
+Nothing in the tree carries a version — not `pyproject.toml`, not `package.json` — so the tags are
+the answer to *"what is deployed?"* and they cannot disagree with themselves.
+
+Ask locally what the next release would be:
+
+```bash
+make current-version              # the newest release tag, or "(nothing released yet)"
+make next-version                 # what a patch release would be
+make next-version BUMP=minor      # or minor, or major
+```
+
+Cut one: **Actions → CI → Run workflow**, on `main`, tick **release**, choose **bump**. That runs
+the whole workflow and publishes only if the unit tests, the browser tests *and* the live-stack job
+all pass on that commit — the publish job declares `needs: [python, frontend, stack]`, so a green
+release is a green commit by construction. A dispatch with **release** left unticked is an ordinary
+CI run and publishes nothing.
+
+Each image lands under three tags:
+
+| Tag | For |
+| --- | --- |
+| `vX.Y.Z` | what a deployment pins. Never moves; a version that already exists is refused |
+| `sha-<commit>` | *"is this instance running what I think it is?"*, without trusting that a version tag was never moved. This is the reference a rolling update advances to (`FRD-127`) |
+| `latest` | a reader trying AIRA out |
+
+```
+ghcr.io/<owner>/aira-gateway:vX.Y.Z
+ghcr.io/<owner>/aira-management:vX.Y.Z
+ghcr.io/<owner>/aira-frontend:vX.Y.Z
+```
+
+**Three things worth knowing before the first release.**
+
+- **Nothing to configure.** GHCR accepts the workflow's built-in `GITHUB_TOKEN` for the
+  repository's own namespace, so there is no personal access token and no stored registry secret.
+  `packages: write` is granted to that one job.
+- **The packages start private**, and GitHub does not link them to the repository automatically.
+  Making them pullable is a one-time step per package in its own settings page — the job summary
+  repeats this, because otherwise the first `docker pull` fails for a reason that looks like a bug.
+- **The images are a rebuild of the tested commit, not the tested bytes.** With a warm layer cache
+  they are the same layers; that is a statement about practice, not a guarantee. Recorded in
+  `ADR-0029` as a known limit, with the upgrade named.
+
+A release is refused from any branch but `main`, and the Git tag is pushed **after** the images — so
+a failed build leaves nothing behind and the same version is still available to the next attempt.
+
+**Not yet:** no Compose file *pulls* these images. Every `image:` in `docker-compose.apps.yml` is
+still paired with a `build:`, because it was written when `aira-gateway` was on no registry at all.
+An overlay that names a published tag and omits `build:` is the next step (`FRD-137` §6).
+
 ## 2. Standalone (one machine)
 
 Everything on one host, infrastructure in Docker, applications from source. This is the
@@ -944,7 +997,7 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 | Gap                                                            | Consequence                                                                                                   | Status                                                                                                                                                                                                          |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **No Kubernetes/Helm**                                         | Compose only; no manifests or charts                                                                          | Planned (see `docs/ROADMAP.md`)                                                                                                                                                                                 |
-| **Images are not published**                                   | `make up-full` builds them locally; there is no registry push or tagging scheme beyond `AIRA_IMAGE_TAG`       | —                                                                                                                                                                                                               |
+| ~~**Images are not published**~~                               | —                                                                                                             | **Closed** by `FRD-137` / `ADR-0029`: a manual release publishes `aira-gateway`, `aira-management` and `aira-frontend` to GHCR at `vX.Y.Z` (plus `sha-<commit>` and `latest`), behind every CI gate. The version lives in the Git tags only — `make next-version`. Still open: no Compose overlay *pulls* them yet, so §3's files still build |
 | ~~**Vault is not used by any code**~~                          | —                                                                                                             | **Closed** by `FRD-116`: `aira_common.secrets` reads AppRole + KV-v2 and ranks Vault above the environment for both planes                                                                                      |
 | **Schema Registry is not used**                                | Events are plain JSON with an `event_type` header                                                             | Runs in the stack, unused                                                                                                                                                                                       |
 | ~~**SPA configuration is build-time**~~                        | —                                                                                                             | **Closed** on 2026-08-08: `public/runtime-config.js` ships with the bundle and sets the issuer and client id. Replace it per environment (volume mount, `ConfigMap`, or a `sed` in the entrypoint) — no rebuild |
