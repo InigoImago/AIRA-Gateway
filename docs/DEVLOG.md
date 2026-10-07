@@ -5,6 +5,77 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Sixty-one failures, one missing download — and a test that had pinned the defect (2026-10-07)
+
+Reported as *"many integration errors in the GitHub pipeline"*. Sixty-one failures, three distinct
+messages, and they turned out to be **two unrelated causes** with very different sizes.
+
+**Sixty of them: the readiness gate asked about one of the two models.** Every failing test touched
+the embedding model, and `all-minilm` was not in the gateway's catalogue. The three messages are one
+absence seen through three checks — a one-text batch reports `not in the model catalog`, a two-text
+batch reports `EMBEDDING_AGGREGATION_NOT_SUPPORTED` because the aggregation check runs *first*, and
+the KIRA surface reports `No model with id 9002`. None of them says "a download had not finished",
+which is why this read as flakiness for twenty runs: **six green, eight red**, decided by a
+registry's speed.
+
+The chain, every link of it correct on its own (`FRD-130` §4f):
+
+- the seed waits only for the model pull to **start**, deliberately — a blocked registry must not
+  cost the accounts and budgets that have nothing to do with models (§4d);
+- the seed catalogues only models the endpoint **really serves**, also deliberately, because a
+  catalogued model nobody pulled refuses every request (§4);
+- the pull loop fetches the chat model first and the embedding model second.
+
+Between the second and third downloads, then, the correct behaviour is a catalogue with one model in
+it. `make showcase` closes that window by waiting out the pull and seeding again. **CI does not run
+`make showcase`** — it runs `make up-full`, which starts containers and stops, then
+`make wait-healthy`, which answers *"do four HTTP endpoints respond?"*: a question with no bearing on
+the one the suite asks.
+
+And `tools/demo_wait_ready.py`, which exists for exactly this question, ended with
+`return True, CHAT in declared`. It waited for the model that always finishes first. Its own
+docstring argues at length for asking *the question the traffic is about to ask* rather than waiting
+on each link — and then asked half of it. The keys had already been corrected this way once
+(probing one of a set, reporting on the set); the models had not.
+
+Fixed in two places, the second being the one that matters:
+
+- `REQUIRED_MODELS = (CHAT, EMBED)`, checked per model, with the timeout naming the ones still
+  missing. Shown to fail by pointing `AIRA_DEMO_EMBED_MODEL` at a model nobody catalogued.
+- **`make demo-ready`** — the three steps that make a *started* stack *usable* (wait out the pull,
+  seed again, block until keys and models have crossed Kafka) moved out of `showcase`, which was
+  their only caller, and both `showcase` and the CI job now call the target. A sequence with one
+  caller looks like that caller's business until a second caller needs it, and the second caller got
+  `wait-healthy` instead. A test asserts the pull-wait loop appears **exactly once** in the Makefile,
+  so the copy cannot come back. Found while writing that guard: the loop broke out on *any* state
+  but `running`, so a container compose had created but not yet started read as a finished download
+  — after which the re-seed catalogues the same incomplete set and the wait spends its whole timeout
+  on a model nothing will declare. `created` counts as unfinished now (`CS19`).
+
+**The sixty-first: a test had written the defect down as a requirement.**
+`test_an_embedding_is_recorded_without_inventing_tokens` read, in its own docstring, *"this dialect
+reports no usage for an embedding"* — and asserted the row carried none. The dialect reports
+`usage.prompt_tokens` on every embeddings response and always has; the mapping returned a plain list
+and discarded it. That was the real cause of the owner's *"all-minilm costs 0.0"* a week ago, fixed
+then — and this test, written months earlier from the same false premise, is what went red when the
+mapping started telling the truth.
+
+It was also the premise **I** started from, and had to be shown wrong by one `curl`. Two people
+reached the same wrong explanation independently, and one of them had a green test agreeing.
+
+The test now asserts the positive property: the reported usage reaches the row, and a priced model
+produces a priced row. `FRD-403` is untouched and is *why* it is positive — unknown is not zero, so a
+figure that **was** reported has to be kept rather than rounded away. `FRD-128` FR-4 also stands
+unchanged: an embedding that genuinely reports no tokens is distinct from one that produced nothing,
+which is why `Accounting.produced` exists and is not derived from `usage is None`. Both halves are
+now pinned hermetically (`test_openai_dialect.py`) and as mutations `US19`/`US20` — the fix had
+landed without them, which is the gap that let a stale assertion be the only thing holding the
+question.
+
+**Also corrected**: `FRD-626`'s acceptance criterion and last week's DEVLOG entry both said the
+usage chart is on **Reporting**. It was removed from there when the scope was narrowed to a use
+case's own overview, and the documents kept the sentence. 904 mutation properties.
+
 ## Usage over time, and a chart that cannot say zero (2026-10-01)
 
 The owner, looking at a use case's own consumption card: *histograms, which model when cost what —
@@ -16,8 +87,9 @@ day or hour** (which model, when) and the whole period as **one row of blocks** 
 The second is not a duplicate of the first — each stack in the histogram is scaled against the
 tallest bucket, so the quiet days say nothing about proportion. Spend, requests and tokens all arrive
 for every bucket, so switching the measure costs no request; `granularity` and `split` do, and are
-reported up to the page, which owns the load. On Reporting, and on a use case's own overview over the
-last thirty days.
+reported up to the page, which owns the load. On **a use case's own overview**, over a period the
+reader picks, and narrowed to the signed-in person's own consumption — not on Reporting, which is the
+installation-wide screen and was not what was asked for.
 
 **The hard part was the bucket, and it was a decision rather than a query.** `date_trunc` is
 Postgres-only and `strftime` SQLite-only, and `FRD-601` §4.2 had already refused to make a reporting

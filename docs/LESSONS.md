@@ -1532,6 +1532,16 @@ reading code.
 - **A surface parses; the layer decides.** Both halves of the request path have one owner —
   `prepare_for_dispatch` before dispatch, `accounting` after it. Sharing the *steps* is not sharing
   the *sequence*, and every guarantee that layer makes is a guarantee about the **order**.
+
+  *The same rule applies to a sequence with only one caller, and that is the harder half to see.*
+  Three steps make a started stack usable — wait out the model pull, seed again against what it
+  produced, block until keys and models have crossed Kafka — and they were written out inside
+  `make showcase`, because `showcase` was the only thing that needed them. CI needed them too and
+  got `make wait-healthy`, which answers a different question, and ran the integration suite against
+  a half-filled catalogue: sixty-one failures, over twenty runs that read as flaky. A sequence
+  looks like its single caller's private business right up to the second caller, and by then it is
+  already a copy — so the second caller reaches for the nearest *approximately* right thing instead.
+  **Name a sequence as soon as it is a sequence**, and assert it is written once.
 - **A page is a parent plus panels.** The parent loads and owns the tab bar; each panel owns its
   form state. A new tab is a new child, never another block in the parent.
 - **One definition both planes read.** Role sets, access rules and money live in `aira_common`
@@ -1753,6 +1763,22 @@ reading code.
 - **A green test proves nothing on its own.** It proves the code and the test agree, which they
   inevitably do when both came from the same idea. **Prove a test can fail**: break the property,
   watch it go red, restore. `make mutants` does this for the properties worth keeping.
+- **A test can pin a defect as a requirement, and then it is the hardest kind to find.** A test
+  named `test_an_embedding_is_recorded_without_inventing_tokens` opened with *"this dialect reports
+  no usage for an embedding"* and asserted the row carried none. The dialect reports
+  `usage.prompt_tokens` on every embeddings response and always has; the mapping discarded it, so
+  every embedding through that path was recorded unpriced on a model whose price was on file. The
+  assertion was true, provable, mutation-resistant and about a premise nobody had checked — and when
+  the mapping was fixed, the *test* went red, which reads like a regression in the fix.
+
+  Two things generalise. First, **the premise is the part no test can hold**: `make mutants` asks
+  whether a test notices the code changing, and here the code and the test agreed perfectly about a
+  world that did not exist. Second, this premise was reached **independently twice** — once by
+  whoever wrote the test, once by whoever investigated the owner's *"all-minilm costs 0.0"* a week
+  later — and both times it was plausible, because plenty of dialects really do report nothing for
+  an embedding. A plausible explanation that is cheap to verify should be verified: one `curl` to
+  the upstream settled it. **When a test's docstring states a fact about something outside the
+  repository, that sentence is an untested claim sitting in the most trusted place in the codebase.**
 - **An ADR that cites a control as an existing fact is not a check that it exists.** `ADR-0021` §5
   named `Upstream.thinking_modes` in passing — *"beside the existing `thinking_modes`"* — and the
   declaration was read by nothing, so the document described a control the code did not have and

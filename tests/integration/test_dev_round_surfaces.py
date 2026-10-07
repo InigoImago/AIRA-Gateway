@@ -141,14 +141,33 @@ async def test_generation_is_priced_and_the_token_split_is_kept(
     assert int(row["cost_nanos"]) > 0, "a priced model produced an unpriced row"
 
 
-async def test_an_embedding_is_recorded_without_inventing_tokens(governed: Governed) -> None:
-    """This dialect reports no usage for an embedding, and `FRD-403`'s rule is that unknown is not
-    zero. The row exists, is `served`, and reports nothing rather than a nothing-shaped figure."""
+async def test_an_embedding_is_recorded_with_the_usage_the_upstream_reported(
+    governed: Governed,
+) -> None:
+    """**This test pinned a defect as a requirement.**
+
+    It read *"this dialect reports no usage for an embedding"* and asserted the row carried none.
+    The dialect reports `usage.prompt_tokens` on every embeddings response and always has; the
+    mapping returned a plain list and discarded it, so every embedding call on this path was
+    recorded with no tokens and therefore **no cost** — unpriceable traffic on a model whose price
+    is on file. A premise nobody re-checked, written down as an assertion, is a defect with a guard
+    in front of it.
+
+    `FRD-403`'s rule is untouched and is the reason this is a positive assertion now: unknown is not
+    zero, so where a figure *was* reported it has to be kept rather than rounded to nothing.
+    `FRD-128` FR-4 also stands — an embedding that genuinely reports no tokens is distinct from one
+    that produced nothing, which is why `Accounting.produced` exists and is not derived from
+    `usage is None`. `test_openai_dialect.py` pins the absent-usage half hermetically.
+    """
     assert (await governed.embed({"content": {"parts": [{"text": "x"}]}})).status_code == 200
     row = await governed.last_row()
 
     assert row["outcome"] == "served"
-    assert row["prompt_tokens"] is None or int(row["prompt_tokens"]) == 0
+    assert row["prompt_tokens"] is not None, "the upstream reported usage and the row dropped it"
+    assert int(row["prompt_tokens"]) > 0
+    # An embedding has no output, so the whole of its cost comes from the input side.
+    assert int(row["completion_tokens"] or 0) == 0
+    assert int(row["cost_nanos"]) > 0, "a priced model produced an unpriced row"
 
 
 # ═══ 2. the same request, both surfaces, the same facts ════════════════════════════════════════

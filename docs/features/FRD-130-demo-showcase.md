@@ -224,6 +224,43 @@ refused one appeared in no column and eleven requests reported as "9 served, 1 r
 shape as the refusals `FRD-122` found leaving no audit row, in a script whose only job is to report
 what happened.
 
+## 4f. The wait asked about one of the two models (2026-10-07)
+
+Sixty-one integration tests failed in CI, and not one of them mentioned a model download.
+
+A one-text embedding batch reported `'all-minilm' is not in the model catalog`. A two-text batch
+reported `EMBEDDING_AGGREGATION_NOT_SUPPORTED` — because the aggregation check runs *before* the
+catalogue check, so the same absence comes out as a different refusal depending on the batch size.
+The KIRA surface reported `No model with id 9002`. Three messages, one fact: `all-minilm` was not in
+the gateway's catalogue.
+
+**Why it was not there.** §4d's rule is that the seed runs regardless of the pull and catalogues
+only what the endpoint really serves. The pull loop fetches the chat model first and the embedding
+model second. So between the two downloads there is a window in which the endpoint serves
+`qwen3:0.6b` and not `all-minilm`, and a seed that lands inside it produces a catalogue with one of
+the two models in it — correct by both rules, and half a demo.
+
+`make showcase` closes that window: it waits out the pull and seeds again. **CI does not run
+`make showcase`.** It runs `make up-full`, which starts the containers and stops, then
+`make wait-healthy`, which answers "do four HTTP endpoints respond?" — a question with no bearing
+on the one the suite asks. And `tools/demo_wait_ready.py`, which exists for precisely this question
+and is the one thing in the chain that could have caught it, ended with `return True, CHAT in
+declared`: it required the model that is *always* finished first.
+
+The result read as flakiness rather than as a defect. Over twenty runs of this job: **six green,
+eight red**, decided by how fast a registry answered.
+
+Two changes, and the second is the one that matters:
+
+- The wait requires **every** model the demo serves (`REQUIRED_MODELS = (CHAT, EMBED)`), and its
+  timeout names the ones still missing. This is the same correction already made once for the
+  *keys* (§4e's companion): probing one of a set and reporting on the set.
+- The three steps that make a started stack *usable* — wait out the pull, seed again, block until
+  keys and models have crossed Kafka — moved out of `make showcase` into **`make demo-ready`**, and
+  both `showcase` and the CI job call it. They had one caller, so they were written inside that
+  caller; the second caller needed them and got `wait-healthy` instead. A test asserts the pull-wait
+  appears exactly once in the Makefile.
+
 ## 5. Testing
 
 `management/backend/tests/test_showcase_seed.py`: idempotence (a second run creates nothing new),
@@ -234,6 +271,12 @@ administers anything. Since 2026-08-10 also: that **exactly one** use case may d
 that a model declaring `tools` exists for it to use — with the local endpoint _configured for the
 test_ rather than skipped over, because the condition that hides the defect is the condition that
 would hide the test — and that the hand-over derives the key the seed actually stored.
+
+Since 2026-10-07, in `tools/tests/`: that the readiness wait requires every model the demo serves
+(asserted as a shape — the tuple's elements are the names the traffic imports — so dropping either
+fails, and a rename cannot make it pass by finding nothing), and that the integration job waits
+through `demo-ready` *before* the suite while the pull-wait stays written in one place. Mutations
+`CS15`–`CS19`.
 
 ## 6. Open
 

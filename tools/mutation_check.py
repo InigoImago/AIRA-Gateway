@@ -5982,6 +5982,54 @@ MUTATIONS = [
         "docker inspect -f '{{.State.Status}}' aira-ollama-pull",
         "tools/tests/test_the_core_stack_carries_no_demo.py",
     ),
+    # The readiness gate, after it let sixty-one integration tests run against a catalogue that
+    # held the chat model and not the embedding one. Every one of the four below is a step back to
+    # a state this repository has actually been in.
+    Mutation(
+        "CS15",
+        "the wait requires every model the demo serves, not only the first one pulled",
+        "tools/demo_wait_ready.py",
+        "REQUIRED_MODELS = (CHAT, EMBED)",
+        "REQUIRED_MODELS = (CHAT,)",
+        "tools/tests/test_the_demo_asks_only_what_it_allows.py",
+    ),
+    Mutation(
+        "CS16",
+        "the wait checks each required model, rather than declaring the list and asking about one",
+        "tools/demo_wait_ready.py",
+        "return True, tuple(name for name in REQUIRED_MODELS if name not in declared)",
+        "return True, () if CHAT in declared else (CHAT,)",
+        "tools/tests/test_the_demo_asks_only_what_it_allows.py",
+    ),
+    Mutation(
+        "CS17",
+        "the integration job waits for the catalogue and not only for four endpoints",
+        ".github/workflows/ci.yml",
+        "run: make demo-ready",
+        "run: make wait-healthy",
+        "tools/tests/test_showcase_is_repeatable.py",
+    ),
+    Mutation(
+        "CS19",
+        "a pull that has not started yet counts as unfinished, not as finished",
+        "Makefile",
+        'case "$$s" in running|created) ;; *) break ;; esac;',
+        '[ "$$s" = "running" ] || break;',
+        "tools/tests/test_showcase_is_repeatable.py",
+    ),
+    Mutation(
+        "CS18",
+        "the pull-wait sequence is written once, so no caller can hold a stale copy of it",
+        "Makefile",
+        "\t@$(MAKE) --no-print-directory demo-ready\n",
+        "\t@for i in $$(seq 1 300); do \\\n"
+        "\t\ts=$$(docker inspect -f '{{.State.Status}}'"
+        " $${AIRA_STACK:-aira}-ollama-pull 2>/dev/null || echo gone); \\\n"
+        '\t\t[ "$$s" = "running" ] || break; \\\n'
+        "\t\tsleep 3; \\\n"
+        "\tdone\n",
+        "tools/tests/test_showcase_is_repeatable.py",
+    ),
     # `make config-check` — asked before a deployment, so that a hardening refusal is met at a
     # desk instead of in a maintenance window. Each of these makes it answer more permissively
     # than the service it stands in for, which is the failure mode of every pre-flight check.
@@ -8116,6 +8164,25 @@ MUTATIONS = [
         '                safe_cell(row.get("failed_requests", 0)),',
         '                safe_cell(row.get("failed", 0)),',
         CSV_EXPORT,
+    ),
+    # The embedding-usage defect, reintroduced both ways it has been believed. The fix landed
+    # without these, and an integration test then **asserted the defect** for a round: it read
+    # "this dialect reports no usage for an embedding" and required the row to carry none.
+    Mutation(
+        "US19",
+        "the usage an embedding upstream reports reaches the accounting",
+        "gateway/src/aira_gateway/upstreams/openai/mapping/response.py",
+        "        input_tokens=None if reported is None else int(reported),",
+        "        input_tokens=None,",
+        OPENAI_DIALECT,
+    ),
+    Mutation(
+        "US20",
+        "an embedding nobody metered is unknown, not free",
+        "gateway/src/aira_gateway/upstreams/openai/mapping/response.py",
+        "        input_tokens=None if reported is None else int(reported),",
+        "        input_tokens=int(reported or 0),",
+        OPENAI_DIALECT,
     ),
 ]
 

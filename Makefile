@@ -105,7 +105,8 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         purge-e2e-use-cases config-verify config-check up-apps otel-status otel-arrivals \
         otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
-        run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants ui-audit
+        run-frontend up-full demo-ready down-full logs-apps build-images ci wait-healthy prune \
+        mutants ui-audit
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -239,6 +240,38 @@ up-full: env ## Start EVERYTHING in containers, demo provisioning included (infr
 	$(COMPOSE_FULL) up -d --build
 	@echo "SPA: $(CONSOLE_URL)   (login ucadmin / demo-password)"
 
+demo-ready: ## Block until the demo's keys and *all* its models have reached the gateway
+	@# **Three steps that belong together, in one place**, because two callers need them: `showcase`
+	@# and the CI integration job. `wait-healthy` is not a substitute — it answers whether four HTTP
+	@# endpoints respond, which says nothing about whether the models a suite calls are catalogued
+	@# (`FRD-130` §4f). A sequence with one caller looks like that caller's business right up to the
+	@# second caller, and by then it is already a copy.
+	@#
+	@# The seed deliberately waits only for the pull to **start** (`docker-compose.apps.yml` says
+	@# why: a blocked registry must not cost the accounts, use cases and budgets that have nothing
+	@# to do with models). Its companion rule is that it catalogues only models the endpoint really
+	@# serves. On a **first** run those two combine into a demo with no models in it — correct by
+	@# both rules and not a demo — so the pull is waited for here and the seed, which is
+	@# idempotent, runs once more against what the pull actually produced.
+	@# `created` counts as unfinished, not as finished. A container compose has created but not yet
+	@# started reports neither `running` nor `exited`, so breaking on "not running" treats a pull
+	@# that has not begun as one that is over — and the re-seed below then catalogues the same
+	@# incomplete set the first seed did, leaving the wait to time out instead of to pass.
+	@echo "==> waiting for the model pull to finish"
+	@for i in $$(seq 1 300); do \
+		s=$$(docker inspect -f '{{.State.Status}}' $${AIRA_STACK:-aira}-ollama-pull 2>/dev/null || echo gone); \
+		case "$$s" in running|created) ;; *) break ;; esac; \
+		sleep 3; \
+	done
+	@echo "==> seeding again, now that the models are on disk"
+	@$(COMPOSE_FULL) run --rm --no-deps management-seed >/dev/null
+	@# **Not a sleep.** This waited six seconds "for the read model to catch up", which is not a
+	@# statement about anything. `demo_wait_ready.py` asks the question the traffic is about to
+	@# ask: will the gateway accept every demo credential and serve every demo model? That is true
+	@# only when the pull, the seed, the relay, Kafka and the consumer have all done their work.
+	@echo "==> waiting until the gateway accepts the demo's credentials and models"
+	uv run python tools/demo_wait_ready.py
+
 showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, and real traffic
 	@echo "==> starting the stack (this pulls a model on the first run and takes a few minutes)"
 	$(COMPOSE_FULL) --profile demo up -d --build
@@ -247,26 +280,7 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@# longer, the one URL the walkthrough starts at answered nothing. Two ideas of "ready", and the
 	@# weaker one was the one this target used.
 	@$(MAKE) --no-print-directory wait-healthy
-	@# The seed deliberately waits only for the pull to **start** (`docker-compose.apps.yml` says
-	@# why: a blocked registry must not cost the accounts, use cases and budgets that have nothing
-	@# to do with models). Its companion rule is that it catalogues only models the endpoint really
-	@# serves. On a **first** run those two combine into a demo with no models in it — correct by
-	@# both rules and not a demo — so the pull is waited for here and the seed, which is
-	@# idempotent, runs once more against what the pull actually produced.
-	@echo "==> waiting for the model pull to finish"
-	@for i in $$(seq 1 300); do \
-		s=$$(docker inspect -f '{{.State.Status}}' $${AIRA_STACK:-aira}-ollama-pull 2>/dev/null || echo gone); \
-		[ "$$s" = "running" ] || break; \
-		sleep 3; \
-	done
-	@echo "==> seeding again, now that the models are on disk"
-	@$(COMPOSE_FULL) --profile demo run --rm --no-deps management-seed >/dev/null
-	@# **Not a sleep.** This waited six seconds "for the read model to catch up", which is not a
-	@# statement about anything. `demo_wait_ready.py` asks the question the traffic is about to
-	@# ask: will the gateway accept a demo credential and serve the demo's model? That is true
-	@# only when the pull, the seed, the relay, Kafka and the consumer have all done their work.
-	@echo "==> waiting until the gateway accepts the demo's credentials and model"
-	uv run python tools/demo_wait_ready.py
+	@$(MAKE) --no-print-directory demo-ready
 	@# **Before the reset**, and before the run whose figures the walkthrough is about. It drives
 	@# real traffic and then moves those rows' timestamps into the past, so the usage chart
 	@# (`FRD-626`) has a month of columns instead of one. It clears the counters between its own

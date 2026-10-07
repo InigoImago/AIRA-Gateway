@@ -260,3 +260,53 @@ def test_nothing_a_real_deployment_runs_can_be_stopped_by_the_demo_helpers() -> 
     )
     # And it must not be able to fail: `exit 0` on the path where Vault never answers.
     assert "did not answer" in " ".join(vault_init["command"])
+
+
+def test_the_integration_job_waits_for_the_catalogue_and_not_only_the_endpoints() -> None:
+    """`wait-healthy` answers "do four endpoints respond?"; the suite asks whether the models it
+    calls are catalogued. CI used the first as if it were the second.
+
+    `make up-full` starts the containers and stops. The three steps that make the stack *usable* —
+    wait out the model pull, seed again against what it produced, then block until keys and models
+    have travelled seed → relay → Kafka → gateway — existed only inside `make showcase`, which CI
+    does not run. So the integration job raced the download and lost often enough to look flaky:
+    six green and eight red over twenty runs, every red one blaming a model instead of a download.
+
+    Two properties, because fixing only the first invites the copy back: CI waits through
+    `demo-ready`, and `demo-ready` is the **only** place that sequence is written.
+    """
+    body = MAKEFILE.read_text()
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+
+    assert "make demo-ready" in workflow, (
+        "the integration job starts the stack and runs the suite without waiting for the catalogue"
+    )
+    assert workflow.index("make demo-ready") < workflow.index("pytest -m integration"), (
+        "the wait runs after the suite it exists to protect"
+    )
+    assert "\ndemo-ready:" in body, "the workflow waits on a target the Makefile does not define"
+    # **Once.** Spelled against the pull-wait's own distinguishing call rather than against a
+    # comment, so a second copy of the loop in another target fails here however it is worded.
+    assert body.count("-ollama-pull 2>/dev/null") == 1, (
+        "the pull-wait is written in more than one target; a sequence with two copies has one that "
+        "is already out of date"
+    )
+
+
+def test_the_pull_wait_treats_a_pull_that_has_not_started_as_unfinished() -> None:
+    """`created` is neither `running` nor `exited`.
+
+    Breaking out of the loop on "not running" therefore reads a container compose has created but
+    not yet started as a download that is over. The seed that follows then catalogues the same
+    incomplete set the first one did, and `demo_wait_ready.py` — which cannot fix what it only
+    observes — spends its whole timeout waiting for a model nothing is going to declare. A wait
+    whose exit condition is *the absence of* one state answers the wrong question on every other
+    state there is.
+    """
+    body = MAKEFILE.read_text()
+    target = body[body.index("\ndemo-ready:") : body.index("\nshowcase:")]
+
+    assert "running|created" in target, (
+        "the pull-wait exits on any state but `running`, so a pull that has not started counts "
+        "as one that has finished"
+    )

@@ -510,10 +510,12 @@ None added. The endpoint is the one already traced.
   person rather than on the subject (`US15`).
 
 **Acceptance**
-- *Given* a month with traffic on two models, *when* Reporting is opened, *then* there is a column
-  per day of the month including the quiet ones, each day's column is split by model, the blocks
-  below state the month's composition, and switching to Requests re-ranks the bands without changing
-  any band's colour.
+- *Given* a month with traffic on two models, *when* a use case's **Overview** is opened, *then*
+  there is a column per day of the month including the quiet ones, each day's column is split by
+  model, the blocks below state the month's composition, and switching to Requests re-ranks the
+  bands without changing any band's colour. The card is on that page and **not** on Reporting: the
+  question asked was what *this* reader spent in *this* use case, and the installation-wide screen
+  answers a different one.
 - *Given* a reader who cannot distinguish the hues, *when* they open the same screen, *then* the
   legend names every band and the full table of figures is already in the document.
 - *Given* an unreachable gateway, *when* the chart's granularity is changed, *then* the card says

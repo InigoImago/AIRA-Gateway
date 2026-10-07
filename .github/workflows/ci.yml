@@ -130,6 +130,14 @@ jobs:
       - name: Wait for the stack
         run: make wait-healthy
 
+      # `wait-healthy` answers "do the endpoints respond?", which is not the question the suite
+      # asks: it calls models, and both planes learn the catalogue through the seed, which waits
+      # only for the model *pull* to start. `demo-ready` blocks until every demo credential and
+      # every demo model has travelled seed → relay → Kafka → gateway, and is the same sequence
+      # `make showcase` uses. Without it this job races the download (`FRD-130` §4f).
+      - name: Wait for the demo's keys and models to reach the gateway
+        run: make demo-ready
+
       - name: Integration tests
         run: uv run pytest -m integration --no-cov
 

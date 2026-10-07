@@ -212,10 +212,15 @@ gracefully without it, but the views will say they cannot show you anything.
 
 ```bash
 make ci                # what CI checks: lint + types + unit tests with coverage gates
+make demo-ready        # block until the models and keys have reached the gateway
 make test-integration  # against the live stack
 make test-e2e          # real browser (Playwright)
 make mutants           # break each guarded property and check the tests notice
 ```
+
+`demo-ready` before either live layer, every time: a stack whose endpoints answer may still be
+missing a model whose download has not finished, and the suite then fails on the model rather than
+on the download. Details in [`TESTING.md`](TESTING.md) Tier 2.
 
 Each layer exists for what the one below cannot see; the reasoning and the traps are in
 [`TESTING.md`](TESTING.md).

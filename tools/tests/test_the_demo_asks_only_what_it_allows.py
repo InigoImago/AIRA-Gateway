@@ -231,3 +231,37 @@ def test_the_narrowed_use_case_is_still_narrowed() -> None:
         "'entwicklung' demonstrates a use case released fewer models than the rest (`FRD-308`). "
         "Widening it removes the point of the use case."
     )
+
+
+def test_the_wait_requires_every_model_the_demo_serves() -> None:
+    """Found in CI, where sixty-one integration tests failed on a model that was still downloading.
+
+    The pull loop fetches the chat model first and the embedding model second, and the seed
+    catalogues only what the endpoint already serves (`FRD-130` §4d). Between the two downloads the
+    catalogue holds one of the two — and this wait, whose whole purpose is to close that window,
+    asked `CHAT in declared` and went green inside it.
+
+    None of the sixty-one failures mentioned a download. A one-text batch reported "not in the model
+    catalog", a two-text batch `EMBEDDING_AGGREGATION_NOT_SUPPORTED` (the aggregation check runs
+    first), and the KIRA surface "No model with id 9002" — three symptoms of one absence, which is
+    why the run read as flaky rather than as wrong for twenty runs.
+
+    Asserted as a **shape**: the tuple's elements are the names the traffic imports, so dropping
+    either one fails here, and renaming them cannot make this pass by finding nothing — the third
+    guard in this repository rewritten after one went vacuously true.
+    """
+    source = (ROOT / "tools/demo_wait_ready.py").read_text()
+    required = _constant(source, "REQUIRED_MODELS")
+
+    assert isinstance(required, ast.Tuple), "REQUIRED_MODELS is not a literal tuple any more"
+    named = {element.id for element in required.elts if isinstance(element, ast.Name)}
+    assert named == {"CHAT", "EMBED"}, (
+        f"the wait requires {named or 'nothing'}; the demo serves a chat model and an embedding "
+        "model, and waiting for one of them is what let the suite run against half a catalogue"
+    )
+    # The condition itself, not only the constant: `REQUIRED_MODELS` was defined and the return
+    # still read `CHAT in declared` for one draft of this fix — a dead definition, which is the
+    # same mistake a mutation caught twice in `_was_served()` last round.
+    assert "if name not in declared" in source, (
+        "REQUIRED_MODELS is declared but the wait does not check every one of them"
+    )

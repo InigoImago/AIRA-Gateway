@@ -38,7 +38,7 @@ refused a request that should have been served. **Give a test its own slug**; th
 
 ## Tier 1b — Mutation checks (hermetic, on demand)
 `make mutants` (`tools/mutation_check.py`) breaks one property at a time and requires a named test
-to notice. **897 properties**; the figure is stated in `CLAUDE.md` and a test
+to notice. **904 properties**; the figure is stated in `CLAUDE.md` and a test
 fails when the two disagree, because a claim about how much of a system is checked is exactly the
 sort that rots quietly. It is the answer to *"a green test proves only that the code and the test agree"*: a
 property nothing would notice losing is reported as a **survivor**, and a mutation whose anchor has
@@ -51,11 +51,20 @@ Marked `@pytest.mark.integration` and **excluded from the default run** (`-m 'no
 first brings the stack up:
 
 ```bash
-make up                 # start Postgres, Keycloak, Kafka, Vault, OTel+Grafana
-make migrate-gateway    # apply gateway migrations
-make seed               # (optional) demo data
+make up-full            # infrastructure, both planes, the console, the demo provisioning
+make wait-healthy       # block until the four HTTP endpoints answer
+make demo-ready         # block until the models and keys have reached the gateway
 make test-integration   # uv run pytest -m integration --no-cov
 ```
+
+**`demo-ready` is not optional, and leaving it out is how this stage spent twenty runs looking
+flaky.** `wait-healthy` answers *"do four endpoints respond?"*; the suite calls models, and both
+planes learn the model catalogue through the seed. The seed deliberately waits only for the model
+*pull* to **start**, and the pull fetches the chat model before the embedding one — so a stack whose
+endpoints all answer can still hold a catalogue with one of the two models in it. The suite then
+fails sixty-one times on an embedding model, with no failure mentioning a download
+(`FRD-130` §4f). `demo-ready` blocks until every demo credential and **every** demo model has
+crossed seed → relay → Kafka → gateway, and it is the same target `make showcase` uses.
 
 Codify the manual end-to-end checks (auth flows, use-case membership, persistence, SSE) as
 `integration`-marked tests under `*/tests/integration/` so they are repeatable in CI.

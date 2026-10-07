@@ -35,7 +35,7 @@ import httpx
 
 # Imported, never restated. A third copy of the salt is a third place for it to drift, and the
 # failure it produces (401) looks exactly like the one this script exists to wait out.
-from demo_traffic import CALLERS, CHAT, GATEWAY, key_for
+from demo_traffic import CALLERS, CHAT, EMBED, GATEWAY, key_for
 
 #: Generous, because on a first run this transitively waits for a model download over a network
 #: nobody here controls. Being slow costs a minute; being short costs the demo.
@@ -55,9 +55,17 @@ PROBE_USE_CASE = "kundenservice"
 #: window into a red run is worse than the window.
 PROBE_KEYS = [key_for(PROBE_USE_CASE, person) for person in CALLERS[PROBE_USE_CASE]]
 
+#: **Every** model the demo must serve, for the same reason as the keys above.
+#:
+#: The pull fetches the chat model before the embedding one, and the seed catalogues only what the
+#: endpoint already serves (`FRD-130` §4d) — so between the two downloads the catalogue holds `CHAT`
+#: and not `EMBED`. Waiting on `CHAT` alone goes green inside exactly the window this wait exists to
+#: close, and the failures that follow name a model rather than a download (`FRD-130` §4f).
+REQUIRED_MODELS = (CHAT, EMBED)
 
-def _state(client: httpx.Client) -> tuple[bool, bool]:
-    """``(credential accepted, model servable)`` — the two halves, reported apart.
+
+def _state(client: httpx.Client) -> tuple[bool, tuple[str, ...]]:
+    """``(credential accepted, models still missing)`` — the two halves, reported apart.
 
     A `GET` spends nothing and needs no use case (`SPENDS_NOTHING`), so it is safe to poll: it
     reaches the model list without making a model call, which is what lets this run every three
@@ -72,13 +80,13 @@ def _state(client: httpx.Client) -> tuple[bool, bool]:
                 timeout=10.0,
             )
         except httpx.HTTPError:
-            return False, False
+            return False, REQUIRED_MODELS
         # Every one of them, because the traffic uses every one of them. The last answer carries the
         # model list; which one that is does not matter, since they all reach the same registry.
         if response.status_code != httpx.codes.OK:
-            return False, False
+            return False, REQUIRED_MODELS
     if response is None:
-        return False, False
+        return False, REQUIRED_MODELS
     # **`airaDeclared`, not merely present.** The list reports what the *registry* serves — an
     # adapter is configured, so its models appear the moment the gateway starts, whether or not
     # anybody has catalogued them. Since `FRD-307` only a catalogued, approved model may be used,
@@ -90,23 +98,28 @@ def _state(client: httpx.Client) -> tuple[bool, bool]:
         for model in response.json().get("models", [])
         if model.get("airaDeclared")
     }
-    return True, CHAT in declared
+    return True, tuple(name for name in REQUIRED_MODELS if name not in declared)
 
 
 def main() -> int:
     deadline = time.monotonic() + TIMEOUT_SECONDS
-    accepted = servable = False
+    accepted = False
+    missing: tuple[str, ...] = REQUIRED_MODELS
     announced = False
     with httpx.Client() as client:
         while time.monotonic() < deadline:
-            accepted, servable = _state(client)
-            if accepted and servable:
-                print(f"  the gateway accepts the demo key and serves '{CHAT}'")
+            accepted, missing = _state(client)
+            if accepted and not missing:
+                served = ", ".join(f"'{name}'" for name in REQUIRED_MODELS)
+                print(f"  the gateway accepts the demo keys and serves {served}")
                 return 0
             if not announced:
                 # Said once, and only when there is something to wait for: on a machine that has
                 # run this before, the loop exits on its first pass and stays silent.
-                print("  waiting for the seed to reach the gateway (first run pulls a model)…")
+                print(
+                    "  waiting for the seed to reach the gateway (first run pulls a model)…",
+                    flush=True,
+                )
                 announced = True
             time.sleep(POLL_SECONDS)
 
@@ -120,8 +133,9 @@ def main() -> int:
             file=sys.stderr,
         )
     else:
+        absent = ", ".join(f"'{name}'" for name in missing)
         print(
-            f"the demo key works, but '{CHAT}' is not declared in the model catalog yet.\n"
+            f"the demo key works, but {absent} is not declared in the model catalog yet.\n"
             "The catalog is seeded and announced over Kafka; a model that is catalogued but not\n"
             "pulled fails every request made against it.\n"
             "Check:  docker logs aira-gateway-consumer\n"
