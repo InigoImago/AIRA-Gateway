@@ -22,6 +22,21 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **When a process reliably produces nothing useful, look for the missing field before resolving to
+  do better.** The first release mechanism published `v0.1.0` with the tag annotation `Release
+  v0.1.0` and no GitHub Release at all — and it was working exactly as designed. The trigger was a
+  form with a `bump` dropdown, so there was no moment at which anybody was *asked* what the release
+  contained, and the only free-text in the whole path was a `-m` the job wrote itself. The output
+  looked like carelessness and was in fact an absent input. **A dropdown cannot be asked an open
+  question**; moving the trigger to `git tag -a` put the field where prose is actually writable, at
+  the moment somebody has the change in mind. Ask of any artefact that always comes out empty: who
+  was asked for its contents, and with what?
+
+  *And once the field exists, check it.* A message that is load-bearing and unchecked goes back to
+  saying nothing within one release. The check that matters is not "is it non-empty" but "could this
+  have been written without knowing anything" — `Release v0.1.0` is non-empty and tells a reader
+  exactly what the version number already told them.
+
 - **A check written from where a thing usually lives cannot see the ones that live elsewhere.**
   `CONFIGURATION.md` promises to list every `AIRA_*` variable, and its guard compares the document
   against the **settings classes** — so fifteen knobs read by the collector through `${env:…}` were
@@ -1811,7 +1826,11 @@ reading code.
   constant, the shape — never through a rendering of it. And a test whose setup never reaches the
   path it is named after is the same failure wearing a positive assertion: an
   `httpx.Response(400, json=…)` has its body already read, so a streaming test built on one passed
-  whether or not the fix under test was present.
+  whether or not the fix under test was present. The same trap one layer out: **a test that asserts
+  a renderer's behaviour says nothing about its caller.** A mutation that made `commits_since`
+  return `[""]` for a first release survived, because the test handed the renderer an empty list
+  *directly* and so never reached the function that decides what that list is. Hand the function
+  under test its real input, not the input you expect it to receive.
 
   *And the third shape in this family asserts something true but weaker than the rule it is named
   for.* A guard called "all three images are published together" checked that each image **name**

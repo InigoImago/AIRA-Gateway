@@ -8,29 +8,21 @@ name: CI
 on:
   push:
     branches: ["**"]
+    # **A release is an annotated tag** (`ADR-0030`). Publishing stays inside *this* workflow rather
+    # than in one of its own, so the gates that guard it are the gates that ran on the tagged
+    # commit: a separate workflow would have to ask GitHub whether some other run was green, which
+    # is a weaker claim than it sounds — it can be about an older commit, a cancelled run, or a job
+    # re-run until it passed.
+    tags: ["v*.*.*"]
   pull_request:
-  # The release is an **input to this workflow**, not a workflow of its own, so that publishing
-  # cannot happen except behind the three jobs below. A separate workflow would have to ask GitHub
-  # whether some other run was green, which is a different and weaker claim: it can be about an
-  # older commit, a cancelled run, or a job that was re-run until it passed.
   workflow_dispatch:
-    inputs:
-      release:
-        description: "Publish versioned images to GHCR once every gate is green"
-        type: boolean
-        default: false
-      bump:
-        description: "Which part of the version to increment"
-        type: choice
-        options: [patch, minor, major]
-        default: patch
 
 # A newer push supersedes an in-flight run on the same ref; the default branch is exempt so its
-# history keeps a result for every commit. A release is exempt for a stronger reason: cancelling it
-# between pushing an image and pushing its tag would leave a published version no tag names.
+# history keeps a result for every commit. A tag is exempt for a stronger reason: cancelling a
+# release between two image pushes would leave a version half published.
 concurrency:
-  group: ci-${{ github.ref }}-${{ inputs.release && 'release' || 'check' }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !inputs.release }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -190,44 +182,26 @@ jobs:
 
   # ── Releasing ───────────────────────────────────────────────────────────────────────────────────
   #
-  # Optional, manual, and behind every gate: `needs` the three jobs above, so a dispatch with
-  # `release: false` (the default) runs exactly the workflow that ran before this job existed, and
-  # one with `release: true` publishes only if all three went green. `FRD-137` has the reasoning;
-  # `ADR-0029` has the decision.
-  publish:
-    name: Publish versioned images to GHCR
-    needs: [python, frontend, stack]
-    if: ${{ inputs.release }}
+  # A release is an **annotated tag** `vX.Y.Z`, and its message is the release notes
+  # (`ADR-0030`, `FRD-137`). Two jobs, because they answer different questions at very different
+  # prices: `described` costs seconds and runs beside the gates, `publish` costs a build and runs
+  # behind them.
+  described:
+    name: The tag says what the release is
+    # **No `needs`.** The one thing worth knowing in the first half-minute is whether the tag
+    # carries a description at all, because that is the only failure a tagger can still fix for
+    # free: a bare annotation discovered *after* forty minutes of gates is a release everyone has
+    # already started waiting for. `v0.1.0` was published with the annotation `Release v0.1.0`,
+    # which is what a mechanism with nowhere to put a description produces.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    permissions:
-      # The only two this job needs. `packages: write` is what GHCR accepts `GITHUB_TOKEN` for in
-      # the repository's own namespace — no personal access token, nothing to configure as a secret.
-      # `contents: write` is for the Git tag, which is where the *next* release reads the version
-      # from, so without it the series could never advance.
-      contents: write
-      packages: write
-
+    timeout-minutes: 10
     steps:
-      # **Full history, because the tags are the version.** A shallow clone sees none, and "no tag"
-      # means "never released" — which would publish v0.1.0 over whatever is already out. This line
-      # is the whole guard, which is why a test asserts it
-      # (`test_a_release_is_published_only_behind_the_gates.py`): the tool cannot tell a shallow
-      # checkout from a genuinely unreleased project, since on the first release both look alike.
-      # The refusals that catch it afterwards are the existing-tag check below and, finally, the
-      # remote rejecting a tag push for a tag that is already there.
+      # Full history and tags: the notes quote the commits since the previous release, and
+      # `--depth 1` would make every release look like the first one.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Refuse to release from anywhere but the default branch
-        # A version tag on a feature branch names a commit that is not in the history anybody
-        # deploys. Checked here rather than trusted to whoever opens the dispatch form.
-        if: github.ref != 'refs/heads/main'
-        run: |
-          echo "::error::a release must be cut from main; this ref is ${{ github.ref }}"
-          exit 1
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
@@ -235,31 +209,86 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - name: Install Python dependencies
-        run: uv sync --frozen
+      - run: uv sync --frozen
 
-      # The same command a developer runs locally (`make next-version BUMP=…`), for the reason the
-      # header of this file gives: a second implementation of the arithmetic in YAML is a second
-      # place for the ordering bug `tools/release_version.py` exists to prevent.
-      - name: Work out the next version
-        id: version
+      # The same command `make release-check VERSION=…` runs, so the refusal a tagger meets here is
+      # the one they could have met before pushing.
+      - name: Check the annotation
+        run: uv run python tools/release_notes.py --check "${{ github.ref_name }}"
+
+      - name: Refuse a tag that is not on the default branch
+        # A tag can be pushed from anywhere, so "which branch" is not a property of the push — the
+        # question that *is* answerable is whether the tagged commit is in the history `main`
+        # names. A version naming a commit nobody deploys is worse than no version.
         run: |
-          version="$(uv run python tools/release_version.py --bump '${{ inputs.bump }}')"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "previous=$(uv run python tools/release_version.py --current || echo '(none)')" \
-            >> "$GITHUB_OUTPUT"
+          # **`FETCH_HEAD`, not `origin/main`.** `actions/checkout` configures a refspec for the
+          # ref it checked out — here a tag — so `refs/remotes/origin/main` need not exist, and
+          # `merge-base` against a ref it cannot resolve exits non-zero: the guard would refuse
+          # every release rather than the ones it is for. `FETCH_HEAD` is whatever the fetch on the
+          # line above just produced, which is exactly the thing being asked about.
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${{ github.sha }}" FETCH_HEAD; then
+            echo "::error::${{ github.ref_name }} names a commit that is not on main"
+            exit 1
+          fi
+
+      - name: Refuse a version older than the newest release
+        # `latest` would move **backwards**. Releases here go forward only; a backport would need a
+        # second moving tag per series, which is a feature and not an oversight (`FRD-137` §6).
+        run: |
+          newest="$(uv run python tools/release_version.py --current)"
+          if [ "$newest" != "${{ github.ref_name }}" ]; then
+            echo "::error::${{ github.ref_name }} is older than $newest; releases go forward only"
+            exit 1
+          fi
+
+  publish:
+    name: Publish versioned images to GHCR
+    # Every gate, plus the description check — so a published version is one that four jobs agreed
+    # about, on this commit, in this run.
+    needs: [python, frontend, stack, described]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      # `packages: write` is what GHCR accepts `GITHUB_TOKEN` for in the repository's own
+      # namespace — no personal access token, nothing to configure as a secret. `contents: write`
+      # is for the GitHub Release; the tag already exists, so nothing here writes to a branch.
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen
+
+      - name: Name the release
+        id: release
+        run: |
+          echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           # GHCR rejects an upper-case path, and this owner has capitals in it.
           echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" \
             >> "$GITHUB_OUTPUT"
 
-      - name: Refuse to publish a version that already exists
-        # The Git tag is the lock. Two dispatches racing, or a rerun of a release that got as far
-        # as pushing images, would otherwise overwrite a published version in place — and an image
-        # tag that changes under a deployment is the one thing a version number is for.
+      - name: Refuse to republish a version that is already released
+        # The tag cannot be the lock any more — it exists before this job starts, by definition. The
+        # **GitHub Release** is: re-running a run whose images already landed would otherwise push
+        # over a published version, and an image tag that changes under a deployment is the one
+        # thing a version number exists to prevent.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if git rev-parse -q --verify "refs/tags/${{ steps.version.outputs.version }}" >/dev/null
-          then
-            echo "::error::${{ steps.version.outputs.version }} is already tagged"
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "::error::${{ github.ref_name }} is already released; tag a new version instead"
             exit 1
           fi
 
@@ -282,9 +311,9 @@ jobs:
           file: gateway/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-gateway:${{ steps.version.outputs.version }}
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-gateway:sha-${{ github.sha }}
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-gateway:latest
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-gateway:${{ steps.release.outputs.version }}
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-gateway:sha-${{ github.sha }}
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-gateway:latest
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,scope=gateway,mode=max
 
@@ -295,9 +324,9 @@ jobs:
           file: management/backend/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-management:${{ steps.version.outputs.version }}
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-management:sha-${{ github.sha }}
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-management:latest
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-management:${{ steps.release.outputs.version }}
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-management:sha-${{ github.sha }}
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-management:latest
           cache-from: type=gha,scope=management
           cache-to: type=gha,scope=management,mode=max
 
@@ -308,34 +337,31 @@ jobs:
           file: management/frontend/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-frontend:${{ steps.version.outputs.version }}
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-frontend:sha-${{ github.sha }}
-            ghcr.io/${{ steps.version.outputs.owner }}/aira-frontend:latest
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-frontend:${{ steps.release.outputs.version }}
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-frontend:sha-${{ github.sha }}
+            ghcr.io/${{ steps.release.outputs.owner }}/aira-frontend:latest
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
 
-      # **After the images, never before.** A tag pushed first and then a failed build would leave
-      # a version that names no image, and the next release would count from it — so the series
-      # would skip a number to hide a failure. This way a failed publish leaves nothing behind and
-      # can simply be run again.
-      - name: Tag the release
+      # **After the images, never before**, and it is what makes a release legible: the tag's own
+      # message, then the commits since the previous release, then the three image references. A
+      # failed build therefore leaves a tag with no Release against it — visibly unfinished, rather
+      # than a version that silently names nothing.
+      - name: Publish the release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.version }}" \
-            -m "Release ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
-
-      - name: Summary
-        run: |
-          {
-            echo "## ${{ steps.version.outputs.version }}"
-            echo
-            echo "Previous release: \`${{ steps.version.outputs.previous }}\` · bump: \`${{ inputs.bump }}\`"
-            echo
-            for image in gateway management frontend; do
-              echo "- \`ghcr.io/${{ steps.version.outputs.owner }}/aira-$image:${{ steps.version.outputs.version }}\`"
-            done
-            echo
-            echo "Packages are **private** until made public in each package's settings on GitHub."
-          } >> "$GITHUB_STEP_SUMMARY"
+          owner="${{ steps.release.outputs.owner }}"
+          version="${{ steps.release.outputs.version }}"
+          uv run python tools/release_notes.py "$version" \
+            --image "ghcr.io/$owner/aira-gateway:$version" \
+            --image "ghcr.io/$owner/aira-management:$version" \
+            --image "ghcr.io/$owner/aira-frontend:$version" \
+            > "$RUNNER_TEMP/notes.md"
+          gh release create "$version" \
+            --title "$version — $(git tag -l --format='%(contents:subject)' "$version")" \
+            --notes-file "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "Packages are **private** until made public in each package's settings." \
+            >> "$GITHUB_STEP_SUMMARY"

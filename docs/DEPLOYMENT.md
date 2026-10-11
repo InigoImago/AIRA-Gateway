@@ -319,30 +319,66 @@ batch.
 
 ## 1b. Releasing: cutting a version and publishing the images
 
-`ADR-0029`, `FRD-137`. **A release is a Git tag `vX.Y.Z` and the three images published under it.**
-Nothing in the tree carries a version — not `pyproject.toml`, not `package.json` — so the tags are
-the answer to *"what is deployed?"* and they cannot disagree with themselves.
-
-Ask locally what the next release would be:
+`ADR-0029`, `ADR-0030`, `FRD-137`. **A release is an annotated Git tag `vX.Y.Z`, its message is the
+release notes, and pushing it publishes the three images.** Nothing in the tree carries a version —
+not `pyproject.toml`, not `package.json`, no `CHANGELOG.md` — so the tags are the answer to *"what
+is deployed?"* and they cannot disagree with themselves.
 
 ```bash
-make current-version              # the newest release tag, or "(nothing released yet)"
-make next-version                 # what a patch release would be
-make next-version BUMP=minor      # or minor, or major
+make current-version                      # the newest release tag
+make next-version                         # what a patch release would be
+make next-version BUMP=minor              # or minor, or major
+
+make release-tag VERSION=v0.1.1           # opens your editor, then checks what you wrote
+git push origin v0.1.1                    # this is the release
 ```
 
-Cut one: **Actions → CI → Run workflow**, on `main`, tick **release**, choose **bump**. That runs
-the whole workflow and publishes only if the unit tests, the browser tests *and* the live-stack job
-all pass on that commit — the publish job declares `needs: [python, frontend, stack]`, so a green
-release is a green commit by construction. A dispatch with **release** left unticked is an ordinary
-CI run and publishes nothing.
+`make release-tag` creates the annotated tag, validates the message, and **deletes the tag again if
+it does not pass** — a rejected attempt must not consume a version number. It then prints the notes
+the release would publish. Pushing is the irreversible step and stays a separate command.
+
+### The message is the release notes, and it is checked
+
+`v0.1.0` was cut by an earlier mechanism — a form with a `bump` dropdown — and the tag it left
+behind said, in full, `Release v0.1.0`. There was no GitHub Release at all. That was not a bug: a
+dropdown cannot be asked what a release contains, so there was nowhere to put a description. Now
+there is, and because the message is load-bearing it is **refused if it says nothing**:
+
+| Rule | Why |
+| --- | --- |
+| the tag is **annotated** | `git tag v0.1.1` leaves no message at all, and the difference from `git tag -a` is invisible in `git tag --list` |
+| there is a **subject** | the line that appears in every list |
+| the subject does not **restate the version** | `Release v0.1.0` tells a reader exactly what the version number already told them |
+| there is a **body** after a blank line | a headline is what the reader already has; the body is what changed and whom it affects |
+
+Write it like a commit message:
+
+```
+Tag-driven releases, and a description that is required
+
+The dispatch form had nowhere to put release notes, so v0.1.0 shipped
+with none. A release is an annotated tag now and its message is the notes.
+
+Operators: nothing to change. Pin the version as before.
+```
+
+The refusal arrives **within a minute**, from a job with no dependencies, before any image is built
+— and it is the same refusal `make release-check VERSION=v0.1.1` gives before you push.
+
+### What a release does
+
+Pushing the tag runs the whole workflow. The three images are published only if the unit tests, the
+browser tests, the live-stack job *and* the description check all pass on the tagged commit — the
+publish job declares `needs` on all four, so a green release is a green commit by construction. A
+**GitHub Release** is created last, carrying your words, then the commits since the previous
+release, then the image references.
 
 Each image lands under three tags:
 
 | Tag | For |
 | --- | --- |
-| `vX.Y.Z` | what a deployment pins. Never moves; a version that already exists is refused |
-| `sha-<commit>` | *"is this instance running what I think it is?"*, without trusting that a version tag was never moved. This is the reference a rolling update advances to (`FRD-127`) |
+| `vX.Y.Z` | what a deployment pins. Never moves; a version already released is refused |
+| `sha-<commit>` | *"is this instance running what I think it is?"*, without trusting that a version tag was never moved. The reference a rolling update advances to (`FRD-127`) |
 | `latest` | a reader trying AIRA out |
 
 ```
@@ -351,20 +387,22 @@ ghcr.io/<owner>/aira-management:vX.Y.Z
 ghcr.io/<owner>/aira-frontend:vX.Y.Z
 ```
 
-**Three things worth knowing before the first release.**
+### Four things worth knowing before the next release
 
 - **Nothing to configure.** GHCR accepts the workflow's built-in `GITHUB_TOKEN` for the
   repository's own namespace, so there is no personal access token and no stored registry secret.
-  `packages: write` is granted to that one job.
 - **The packages start private**, and GitHub does not link them to the repository automatically.
-  Making them pullable is a one-time step per package in its own settings page — the job summary
-  repeats this, because otherwise the first `docker pull` fails for a reason that looks like a bug.
+  Making them pullable is a one-time step per package in its own settings page — otherwise the
+  first `docker pull` fails for a reason that looks like a bug.
+- **A failed release spends the version number.** The tag exists before the gates run, so the
+  ordinary recovery is to tag the next patch rather than to retry the same one. What a failure
+  leaves is a tag with **no Release against it**, which is visible in the one list people read.
 - **The images are a rebuild of the tested commit, not the tested bytes.** With a warm layer cache
   they are the same layers; that is a statement about practice, not a guarantee. Recorded in
   `ADR-0029` as a known limit, with the upgrade named.
 
-A release is refused from any branch but `main`, and the Git tag is pushed **after** the images — so
-a failed build leaves nothing behind and the same version is still available to the next attempt.
+Refused on purpose: a tag whose commit is not an ancestor of `main`, and a tag older than the newest
+release — `latest` would move backwards, so releases here go forward only.
 
 **Not yet:** no Compose file *pulls* these images. Every `image:` in `docker-compose.apps.yml` is
 still paired with a `build:`, because it was written when `aira-gateway` was on no registry at all.

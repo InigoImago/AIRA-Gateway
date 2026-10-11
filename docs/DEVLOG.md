@@ -5,6 +5,77 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A release that says what it is (2026-10-11)
+
+`v0.1.0` was published four days ago by the mechanism `ADR-0029` chose: a dispatch form with a
+`bump` dropdown. It worked — run #86, three images, all green. Then the owner looked at what it had
+left behind and said he did not like releases arriving without descriptions.
+
+Two facts, both checkable:
+
+- the tag's annotation, in full: **`Release v0.1.0`**
+- GitHub Releases: **`[]`**
+
+Neither is a bug. Both are the design working. **A dropdown cannot be asked what a release
+contains**, and the only free-text field anywhere in that path was a `-m` the job wrote itself. So
+this was never a discipline problem to be fixed by resolving to write better notes next time; it was
+a **missing field**, and the only question was where the field belongs.
+
+`ADR-0030`, superseding `ADR-0029`'s trigger and nothing else. **A release is an annotated tag, and
+its message is the release notes.** `git tag -a v0.1.1` opens an editor at the one moment somebody
+has the whole change in mind, in the terminal they are already in, and stores the result as a Git
+object anybody can fetch. Three alternatives were weighed and recorded: a notes box on the form (the
+worst place in the toolchain to write prose, and gone the moment it is submitted), a `CHANGELOG.md`
+(a second place a version is recorded, which `ADR-0029` refused), and generating notes from the
+commits (answers *what moved*, never *why it matters* — it would make every release look described
+while describing nothing).
+
+**The message is load-bearing, so it is checked.** Four rules, each one a thing that happened or
+would: the tag is annotated (`git tag` versus `git tag -a` is one flag, and the difference is
+invisible in `git tag --list`); there is a subject; the subject does not merely restate the version;
+and there is a body after a blank line. The restatement check strips the words a restatement is
+*made of* rather than matching the one string the old job produced — `Release v0.1.0`, `v0.1.0`,
+`version 1.2.3` and `v1.2.3 release` are all the same non-answer, and a guard against a single
+spelling is one somebody walks around by accident. The rule is *only* restates, not *mentions*: a
+subject may carry its own version number and say something.
+
+**It is a job of its own with no `needs`, and that is the point.** A bare annotation is the one
+failure a tagger can still fix for free, and it costs seconds to detect. Behind the gates it would
+be reported after forty minutes, by which time everybody is waiting for the release. The same
+refusal is available before pushing (`make release-check`), and `make release-tag` deletes the tag
+it just created when the message fails — a rejected attempt must not consume a version number.
+
+**`ADR-0029`'s objection to a tag trigger was answered rather than forgotten.** It had named the
+cost: the tag exists before the tests run, so a failed build leaves a version naming no image, and
+the next release counts past it — the series skips a number to hide a failure. Still true. What
+changed is what the failure *leaves*: the GitHub Release is created last, so a failed build leaves a
+tag with **no Release against it** — visibly unfinished in the one list a person actually reads.
+The version number is spent, and a patch number is the cheapest thing this project has.
+
+Two guards also changed because a tag changes what is answerable. "Which branch" is not a property
+of a tag push, so the check became whether the tagged commit is an **ancestor of `main`**. And the
+tag can no longer be the lock against republishing — it exists by the time the job starts — so the
+**GitHub Release** is the lock instead. Plus one new refusal: a tag older than the newest release,
+because `latest` would move backwards. Releases here go forward only, named as a limit rather than
+left to be discovered.
+
+**Two guards were found by their own mutations**, and the second is the more interesting:
+
+- `PB18` renames `aira-frontend`'s versioned tag. The guard asked whether the image *name* appeared
+  among the pushed tags — and `:latest` and `:sha-…` kept it appearing, so it was green about a
+  release in which two images carried the version and one did not.
+- `PB28` makes `commits_since` return `[""]` for a first release. The test handed `markdown` an
+  empty list *directly* and therefore never reached the function that decides what that list is.
+  **A test that asserts the renderer's behaviour says nothing about its caller** — the same shape as
+  a test whose setup never reaches the path it is named after, one layer out.
+
+Twenty-eight properties in all (`PB1`–`PB28`), 932. One of the new tests runs the four rules against
+the repository's own `v0.1.0` annotation, so the guard is checked against the real thing it was
+written for and not only against strings.
+
+`v0.1.0`'s own description cannot be recovered — it was never written. `v0.1.1` is the first release
+that has one.
+
 ## A release is a Git tag, and the version lives nowhere else (2026-10-07)
 
 The owner, after the pipeline was green again: *can I actually push my images to the GitHub

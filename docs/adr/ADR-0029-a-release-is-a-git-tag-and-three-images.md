@@ -1,6 +1,6 @@
 # ADR-0029 — A release is a Git tag, and the tag is the only place a version lives
 
-- **Status:** Accepted
+- **Status:** Accepted · **the trigger is superseded by `ADR-0030`** (2026-10-11)
 - **Date:** 2026-10-07
 - **Deciders:** AIRA
 
@@ -64,14 +64,21 @@ Constraints that shaped the answer:
 **A release is a Git tag `vX.Y.Z` and the three images published under it. The tag is the only place
 a version is recorded; nothing in the tree carries one.**
 
+> **Amended 2026-10-11 (`ADR-0030`).** Everything above and below still holds except *how a release
+> starts*. The dispatch form published `v0.1.0` with the annotation `Release v0.1.0` and no GitHub
+> Release — the mechanism had nowhere to put a description, so there was none. The trigger is an
+> annotated tag now, and its message is the release notes. The bullet about `needs` and the one
+> about ordering survive unchanged; the bullet about computing the version from the tags becomes
+> `make next-version`, which tells you what to tag.
+
 - The next version is computed from the tags by `tools/release_version.py`, which is **numeric**:
   tags are strings, `v0.10.0` sorts below `v0.9.0` in every string comparison there is, and a
   release cut from the lexicographic maximum goes backwards the first time a minor number reaches
   ten. The first release is `v0.1.0`, returned as it is rather than bumped from a zero.
 - Publishing is **an input to `ci.yml`**, not a workflow of its own: the `publish` job declares
-  `needs: [python, frontend, stack]` and `if: ${{ inputs.release }}`. A dispatch with the default
-  `release: false` runs exactly the workflow that ran before, and nothing is published that the
-  unit tests, the browser tests and the live stack did not pass on that commit.
+  `needs` on every check job, so nothing is published that the unit tests, the browser tests and
+  the live stack did not pass on that commit. (`ADR-0030` changed the *input* from a form to a
+  tag push; the `needs` relationship is the part that matters and it is unchanged.)
 - Each image carries **three** tags: the version, which never moves and is what a deployment pins;
   `sha-<commit>`, which answers *"is this instance running what I think it is?"* without trusting
   that a version tag was never moved (`FRD-127`); and `latest`, for a reader trying it out.

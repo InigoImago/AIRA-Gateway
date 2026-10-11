@@ -216,6 +216,9 @@ make demo-ready        # block until the models and keys have reached the gatewa
 make test-integration  # against the live stack
 make test-e2e          # real browser (Playwright)
 make mutants           # break each guarded property and check the tests notice
+
+make next-version      # what the next release tag would be
+make release-tag VERSION=v0.1.1   # annotate it, check the message, print the notes
 ```
 
 `demo-ready` before either live layer, every time: a stack whose endpoints answer may still be

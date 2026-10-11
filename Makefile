@@ -106,7 +106,8 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
         run-frontend up-full demo-ready down-full logs-apps build-images next-version \
-        current-version ci wait-healthy prune mutants ui-audit
+        current-version release-tag release-check release-notes ci wait-healthy prune mutants \
+        ui-audit
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -420,6 +421,29 @@ next-version: ## Print the version a release cut now would carry (BUMP=patch|min
 	@# gives: a second implementation of the arithmetic in YAML is a second place for the ordering
 	@# bug `tools/release_version.py` exists to prevent — `v0.10.0` sorts below `v0.9.0` as a string.
 	@uv run python tools/release_version.py --bump $(BUMP)
+
+release-tag: ## Create the annotated release tag and check its description (VERSION=v0.1.1)
+	@# **The editor is the point.** A release's description belongs to the moment somebody has the
+	@# change in mind, and that moment is here, not in a form with a dropdown — `v0.1.0` was
+	@# published with the annotation `Release v0.1.0` because the mechanism had nowhere to put one.
+	@test -n "$(VERSION)" || { \
+		echo "VERSION is required, e.g.  make release-tag VERSION=$$($(MAKE) -s next-version)"; \
+		exit 1; \
+	}
+	git tag -a "$(VERSION)"
+	@# A rejected annotation leaves **no tag**, the same habit the release job has: a failed
+	@# attempt must not consume a version number, or the series skips one to hide it.
+	@uv run python tools/release_notes.py --check "$(VERSION)" \
+		|| { git tag -d "$(VERSION)" >/dev/null; exit 1; }
+	@echo
+	@uv run python tools/release_notes.py "$(VERSION)"
+	@echo "==> push it to publish:  git push origin $(VERSION)"
+
+release-check: ## Check that a release tag's annotation is a real description (VERSION=v0.1.1)
+	@uv run python tools/release_notes.py --check "$(VERSION)"
+
+release-notes: ## Print the release notes a tag would publish (VERSION=v0.1.1)
+	@uv run python tools/release_notes.py "$(VERSION)"
 
 current-version: ## Print the newest release tag, or say that nothing has been released
 	@# The tool exits 1 when there is no release, because a script needs to tell "none" from a
