@@ -5,6 +5,57 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A caller can ask what is left of their allowance (2026-10-11)
+
+The owner's agentic-coding use cases run OpenCode, which shows a budget in its status bar, and
+asked whether **our** limits could be shown there — so that a developer knows what they have spent
+and what is left.
+
+**What OpenCode's own figures are worth was already measured here**, in `FRD-132` §11: the token
+counts are exact to the last token, and the *limits* it shows come from its configuration file
+rather than from any API. Since then two more facts: `opencode stats` tallies its own sessions, and
+for a custom OpenAI-compatible provider its cost display does not work at all. So the only
+authoritative figure is the counter that refuses — ours.
+
+`GET /v1beta/me/budget`, answered from the credential that asked. No slug in the path, because an
+agent was configured with a URL and a key and knows no slug; no permission beyond being
+authenticated, because it is the caller's own figure. One request says what the limits are, what is
+used, what is left, when the period rolls over, and whether limits are enforced at all.
+
+Four decisions worth keeping:
+
+- **Not capped is `null`, never a number.** A budget that limits requests and not tokens answers
+  `limit_tokens: null`. A large number would be drawn as a full bar — a limit nobody set.
+- **A negative remainder is reported as it is.** Enforcement refuses *at* the limit, so passing it
+  takes a settle correcting a reservation upward. "Spent to the last cent" and "spent more than
+  allowed" are different facts, and the second is the one somebody has to explain. A display may
+  clamp; the figure does not.
+- **Two sources, labelled apart.** `allowances` are the counters enforcement reads; `this_period`
+  is what the audit trail records for this caller. They answer different questions and can differ,
+  and one number made out of both would hide which.
+- **`enforced`** closes half of `FRD-610` §3.3 from the other side: a caller is told when the limit
+  beside the figure stops nothing. The console still says nothing, which stays open — the person
+  editing a budget is the likeliest to assume it works.
+
+And one thing deliberately **not** built: the display. The same answer serves a shell prompt, a
+tmux status line, an OpenCode plugin or an MCP tool, and `FRD-139` §5 weighs all three — a plugin
+is the only way into OpenCode's own chrome and could not be run against a real OpenCode from here,
+so what shipped is a documented `curl` in `tools/opencode/README.md` and no untested integration in
+the repository. The fourth way — prepending the figure to the model's answer through `FRD-309`'s
+notice — was refused outright: it would put budget text into the agent's context on every request.
+
+Two things the round found in passing:
+
+- `test_budget_service.py` asserts the usage row **whole**, field for field, and failed the moment
+  the limits were added. That is the notification a contract is supposed to send, and it is the
+  argument for asserting a dict rather than the keys somebody remembered.
+- `TC26`'s anchor became ambiguous: `period_ends` is the same UTC conversion as `period_key` read
+  the other way, and the harness refused to run rather than mutate whichever came first.
+
+Mutations `AL1`–`AL6`, all caught — **1000 properties**.
+
+---
+
 ## The works council's question: the figures per person follow the setting too (2026-10-11)
 
 The owner asked, from a works-council point of view, whether the visibility options had been

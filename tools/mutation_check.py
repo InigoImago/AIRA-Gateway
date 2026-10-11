@@ -608,8 +608,10 @@ MUTATIONS = [
         "TC26",
         "a budget's period boundary is UTC, and the console says which clock it follows",
         "gateway/src/aira_gateway/budgets/keys.py",
-        "    moment = now.astimezone(UTC)",
-        "    moment = now",
+        # Widened when `period_ends` gained the same line: `period_key` is the one this guards,
+        # and an anchor matching twice is one the harness refuses rather than guess.
+        "    moment = now.astimezone(UTC)\n    return moment.strftime",
+        "    moment = now\n    return moment.strftime",
         "gateway/tests/test_budget_service.py",
     ),
     Mutation(
@@ -8939,6 +8941,59 @@ MUTATIONS = [
         '    report["people_limited"] = limited is not None',
         '    report["people_limited"] = False',
         "gateway/tests/test_whose_figures_a_member_sees.py",
+    ),
+    # ---- a caller sees their own allowance (2026-10-11, `FRD-139`) ----------------------------
+    #
+    # Agentic coding spends money in a loop, and the only figure worth showing a developer is the
+    # one that will refuse them. Each mutation here is a way the answer could look right and be
+    # about somebody else, about nothing, or about a limit nobody enforces.
+    Mutation(
+        "AL1",
+        "a caller's allowance is their own counter, not the row an unbound reader gets",
+        "gateway/src/aira_gateway/api/usage.py",
+        '    allowances = await service.usage(use_case or "", subject=person) if use_case else []',
+        '    allowances = await service.usage(use_case or "", subject=None) if use_case else []',
+        "gateway/tests/test_a_caller_sees_their_own_allowance.py",
+    ),
+    Mutation(
+        "AL2",
+        "a dimension a budget does not cap is absent rather than zero",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "    return None if limit is None else limit - used",
+        "    return 0 if limit is None else limit - used",
+        "gateway/tests/test_a_caller_sees_their_own_allowance.py",
+    ),
+    Mutation(
+        "AL3",
+        "a settle past the limit is reported as it is, not clamped to nothing left",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "    return None if limit is None else limit - used",
+        "    return None if limit is None else max(0, limit - used)",
+        "gateway/tests/test_a_caller_sees_their_own_allowance.py",
+    ),
+    Mutation(
+        "AL4",
+        "a period ends at the next period's first moment, which is when the counter resets",
+        "gateway/src/aira_gateway/budgets/keys.py",
+        "        return (moment + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)",
+        "        return moment.replace(hour=23, minute=59, second=59, microsecond=0)",
+        "gateway/tests/test_a_caller_sees_their_own_allowance.py",
+    ),
+    Mutation(
+        "AL5",
+        "the answer says whether a limit is enforced at all",
+        "gateway/src/aira_gateway/api/usage.py",
+        '            "enforced": settings_of(request).enforce_budgets,',
+        '            "enforced": True,',
+        "gateway/tests/test_a_caller_sees_their_own_allowance.py",
+    ),
+    Mutation(
+        "AL6",
+        "the figures beside the allowance are the caller's own, not the use case's",
+        "gateway/src/aira_gateway/api/usage.py",
+        '(use_case,) if use_case else (), start, end, person=person or ""',
+        '(use_case,) if use_case else (), start, end, person=""',
+        "gateway/tests/test_a_caller_sees_their_own_allowance.py",
     ),
 ]
 

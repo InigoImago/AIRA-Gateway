@@ -66,6 +66,16 @@ class Reservation:
         return bool(self.budgets)
 
 
+def _left(limit: int | None, used: int) -> int | None:
+    """What is left of one capped dimension, or ``None`` where it is not capped.
+
+    ``None`` and not a large number: *"this budget does not limit tokens"* and *"you have a lot of
+    tokens left"* are different answers, and a client that renders the second as a full bar would
+    be inventing a limit nobody set.
+    """
+    return None if limit is None else limit - used
+
+
 class BudgetService:
     FEATURE = "budget enforcement"
 
@@ -385,12 +395,23 @@ class BudgetService:
         *,
         subject: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Current-period usage per budget of a use case, for the consumption view (`FRD-402`).
+        """Current-period usage per budget of a use case, for the consumption view (`FRD-402`) and
+        for a caller asking about their own allowance (`FRD-139`).
 
         Cost comes as a decimal string for people and as nano-units for a progress bar. A
         **per-person** budget is one counter per head, so ``measured_for`` names whose figure it
         is; a reader it does not bind gets ``None`` for every figure rather than a zero, which is
         also what an untouched allowance looks like (`FRD-603`).
+
+        Each row also carries **what the limit is and what is left of it**, so that one answer is
+        enough for the question people actually ask. Three dimensions, each capped or not: a
+        ``limit_*`` of ``None`` means *this budget does not cap that dimension*, and the matching
+        ``remaining_*`` is ``None`` too — not a large number, and not zero.
+
+        ``remaining_*`` may be **negative**, and is reported as it is. Enforcement refuses at the
+        limit, so going past it takes a settle correcting a reservation upward; clamping to zero
+        would hide exactly that and make "spent to the last cent" indistinguishable from "spent
+        more than the budget allowed". A display may clamp; the figure does not.
         """
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
@@ -400,7 +421,24 @@ class BudgetService:
             out: list[dict[str, Any]] = []
             for budget in result.scalars():
                 measured_for = subject if budget.scope == EACH_MEMBER else budget.subject
-                row: dict[str, Any] = {"id": budget.id, "measured_for": measured_for}
+                row: dict[str, Any] = {
+                    "id": budget.id,
+                    "measured_for": measured_for,
+                    "scope": budget.scope,
+                    "period": budget.period,
+                    # When this counter is replaced by the next one — the moment an exhausted
+                    # allowance comes back, which is the second thing a refused caller asks.
+                    "period_ends": keys.period_ends(budget.period, now).isoformat(),
+                    "enabled": budget.enabled,
+                    "limit_cost_nanos": budget.limit_cost_nanos,
+                    "limit_cost": (
+                        None
+                        if budget.limit_cost_nanos is None
+                        else format_display(budget.limit_cost_nanos)
+                    ),
+                    "limit_tokens": budget.limit_tokens,
+                    "limit_requests": budget.limit_requests,
+                }
                 if budget.scope == EACH_MEMBER and not subject:
                     row.update(
                         used_tokens=None,
@@ -408,6 +446,10 @@ class BudgetService:
                         used_cost_nanos=None,
                         used_cost=None,
                         unpriced_requests=None,
+                        remaining_cost_nanos=None,
+                        remaining_cost=None,
+                        remaining_tokens=None,
+                        remaining_requests=None,
                     )
                     out.append(row)
                     continue
@@ -419,12 +461,17 @@ class BudgetService:
                     keys.scope_key(budget, caller),
                     keys.period_key(budget.period, now),
                 )
+                left_cost = _left(budget.limit_cost_nanos, usage.cost_nanos)
                 row.update(
                     used_tokens=usage.tokens,
                     used_requests=usage.requests,
                     used_cost_nanos=usage.cost_nanos,
                     used_cost=format_display(usage.cost_nanos),
                     unpriced_requests=usage.unpriced_requests,
+                    remaining_cost_nanos=left_cost,
+                    remaining_cost=(None if left_cost is None else format_display(left_cost)),
+                    remaining_tokens=_left(budget.limit_tokens, usage.tokens),
+                    remaining_requests=_left(budget.limit_requests, usage.requests),
                 )
                 out.append(row)
             return out

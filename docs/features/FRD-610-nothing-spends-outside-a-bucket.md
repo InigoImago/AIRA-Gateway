@@ -135,6 +135,12 @@ money.
 Whatever else is built, this is the cheapest and should come first: a banner on the budgets screen
 when the installation does not enforce them.
 
+> **Half of it exists since 2026-10-11, on the other side.** `FRD-139`'s
+> `GET /v1beta/me/budget` carries `enforced`, so a **caller** — a coding assistant showing a
+> developer what is left — is told that the limit beside the figure does not stop anything. The
+> console still says nothing, which is the half still open: the person who edits a budget is the
+> one most likely to assume it works.
+
 ### 3.4 What is deliberately not in this concept
 
 - **A hard cap on the vendor's side.** Right, and not ours: it belongs in the cloud account, and a

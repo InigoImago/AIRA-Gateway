@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.db.models import BudgetRead
@@ -24,6 +24,21 @@ def period_key(period: str, now: datetime) -> str:
     """
     moment = now.astimezone(UTC)
     return moment.strftime("%Y-%m-%d") if period == "day" else moment.strftime("%Y-%m")
+
+
+def period_ends(period: str, now: datetime) -> datetime:
+    """When the counter `period_key` names is replaced by the next one — **UTC**, half-open.
+
+    Beside `period_key` because it is the same arithmetic read the other way, and a second place
+    that decided where a month ends would eventually disagree with the place that decides where it
+    begins. The answer is the *first moment of the next period*, which is the moment the counter
+    resets: a caller asking "when does my allowance come back" is told that, not 23:59:59.
+    """
+    moment = now.astimezone(UTC)
+    if period == "day":
+        return (moment + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    year, month = (moment.year + 1, 1) if moment.month == 12 else (moment.year, moment.month + 1)
+    return moment.replace(year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
 def scope_key(budget: BudgetRead, caller: str | None = None) -> str:

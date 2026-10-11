@@ -314,6 +314,14 @@ So the honest answer to *"can we supply it over the official interface"* is that
 question does not arise: the fix is in a file, not in the surface, and the constraint is met by
 construction.
 
+> **The question came back on 2026-10-11, about the other kind of limit.** Not the context window —
+> the **budget**: what has this developer spent and what is left of their allowance. That one cannot
+> come from a configuration file, because nobody but the gateway knows it, and it is not in the
+> Gemini shape either. It is [`FRD-139`](FRD-139-a-caller-sees-their-own-allowance.md): one
+> endpoint, `GET /v1beta/me/budget`, answered from the credential that asked — and deliberately no
+> display, because OpenCode's own cost tracking does not work for a custom provider and the figure
+> that matters is the counter that refuses.
+
 ### 11.3 The one thing that *is* the interface, and where we had drifted
 
 The official Gemini model resource carries **`inputTokenLimit`** and **`outputTokenLimit`**. AIRA

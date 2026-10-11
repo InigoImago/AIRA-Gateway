@@ -54,3 +54,33 @@ budgets for a use-case shape that makes many model calls per human instruction.
 Tool calling. `tools` is refused with **400** at the surface (`FRD-131` builds it, per use case and
 off by default). Reaching that refusal is a successful stage-A run: it means the path, the auth and
 the streaming all worked, and the one missing capability is the one already written up.
+
+## Showing what is left of the budget (`FRD-139`, 2026-10-11)
+
+OpenCode can show a budget in its status bar, but it tallies **its own** sessions — and for a custom
+OpenAI-compatible provider its cost display does not work at all. The figure a developer actually
+needs is the one that will refuse them, which is AIRA's counter:
+
+```bash
+# The same key the assistant uses. No console login, no permission beyond the key.
+curl -s http://localhost:8001/v1beta/me/budget -H "x-goog-api-key: $AIRA_API_KEY" | jq -r '
+  (.allowances[] | select(.limit_cost != null)
+    | "\(.remaining_cost) of \(.limit_cost) left (resets \(.period_ends[0:10]))")
+  // "spent \(.this_period.cost) this month"'
+```
+
+Put that in a shell prompt, a tmux `status-right`, or an alias beside the editor. It lives *next to*
+OpenCode rather than inside it, which is the whole reason it needs nothing from OpenCode.
+
+Three things the answer says that a tally cannot:
+
+- `remaining_*` is `null` where that dimension is **not capped** — not a large number, so a bar
+  drawn from it cannot invent a limit nobody set;
+- `period_ends` is when the counter resets, which is the question that follows a refusal;
+- `enforced: false` means the limits are **figures and not stops** in this installation
+  (`AIRA_ENFORCE_BUDGETS`), so a full-looking bar would be a lie.
+
+Inside OpenCode's own chrome needs one of two things, and `FRD-139` §5 weighs both: a small plugin
+(the pattern exists — `opencode-opper-budget` does this for Opper.ai), or an MCP tool so the agent
+itself can be asked. Neither is in this repository: an integration that cannot be run here is worse
+than a documented `curl`.

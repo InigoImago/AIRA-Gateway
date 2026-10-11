@@ -113,6 +113,13 @@ async def test_month_period_key(sessionmaker) -> None:
 
 
 async def test_usage_reports_current_period(sessionmaker) -> None:
+    """The whole row, field for field — it is a contract two readers depend on: the console's
+    budget view (`FRD-402`) and a caller asking about their own allowance (`FRD-139`).
+
+    Asserted as a whole dict rather than key by key, so a field **added** shows up here. That is
+    how the limits and the remainders arrived: this test failed, which is the notification a
+    contract is supposed to send.
+    """
     await _add(sessionmaker, id=1, limit_requests=5)
     service = BudgetService(sessionmaker)
     await service.record((await service.guard("uc", "bob", NOW)).budgets, 30, now=NOW)
@@ -120,11 +127,27 @@ async def test_usage_reports_current_period(sessionmaker) -> None:
         {
             "id": 1,
             "measured_for": "",
+            "scope": "use_case",
+            "period": "day",
+            # The first moment of the next period: when this counter is replaced, which is when an
+            # exhausted allowance comes back.
+            "period_ends": "2026-08-05T00:00:00+00:00",
+            "enabled": True,
+            "limit_cost_nanos": None,
+            "limit_cost": None,
+            "limit_tokens": None,
+            "limit_requests": 5,
             "used_tokens": 30,
             "used_requests": 1,
             "used_cost_nanos": 0,
             "used_cost": "0.00",
             "unpriced_requests": 1,
+            # `None` where the dimension is not capped — not a large number, which a client would
+            # draw as a limit nobody set.
+            "remaining_cost_nanos": None,
+            "remaining_cost": None,
+            "remaining_tokens": None,
+            "remaining_requests": 4,
         }
     ]
 

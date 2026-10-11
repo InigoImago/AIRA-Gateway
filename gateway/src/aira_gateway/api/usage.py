@@ -1,16 +1,26 @@
-"""Budget consumption for one use case (`FRD-402`), for the console's budget view.
+"""What has been consumed against a budget: for the console's view, and for the caller's own client.
 
-Read-only, but per-use-case operational data, so the caller must be entitled to the use case
-(`ADR-0007`). Entitled to *read* is wider than to *act*: an oversight role reads the per-use-case
-figure it already sees in full on the reporting screen.
+Two endpoints, one question asked from two sides:
+
+- ``/v1beta/usage/{use_case}`` — the console's budget view (`FRD-402`). Read-only, but
+  per-use-case operational data, so the caller must be entitled to the use case (`ADR-0007`).
+  Entitled to *read* is wider than to *act*: an oversight role reads the per-use-case figure it
+  already sees in full on the reporting screen.
+- ``/v1beta/me/budget`` — **the caller's own allowance** (`FRD-139`), for a coding assistant or any
+  other client that wants to show what is left before the refusal arrives. No use case in the
+  path, no permission beyond being authenticated: it answers about the credential that asked.
 """
 
 from __future__ import annotations
+
+import calendar
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from aira_common.permissions import Permission
+from aira_gateway.api.serving.context import attribution_of
 from aira_gateway.auth.dependencies import (
     authorize_use_case,
     require_principal,
@@ -18,7 +28,8 @@ from aira_gateway.auth.dependencies import (
 )
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.service import BudgetService
-from aira_gateway.state import budgets_of
+from aira_gateway.reporting.service import ReportingService
+from aira_gateway.state import budgets_of, settings_of
 
 router = APIRouter(tags=["usage"])
 
@@ -37,3 +48,77 @@ async def usage(
     # as the gateway enforces it (`aira_gateway.scopes.person`) — never a named colleague's.
     figures = await service.usage(use_case, subject=principal.person)
     return JSONResponse({"use_case": use_case, "usage": figures})
+
+
+@router.get("/v1beta/me/budget")
+async def my_budget(
+    request: Request, principal: Principal = Depends(require_principal)
+) -> JSONResponse:
+    """What this caller is allowed and what is left of it (`FRD-139`).
+
+    **Why a second endpoint rather than a parameter.** The console asks *about a use case*; a
+    client asks *about itself*, and it does not know the slug — an API key is bound to one and the
+    agent holding it was configured with a URL and a key, nothing else. Everything here is
+    resolved from the credential that called.
+
+    What it answers, in the order somebody reads it:
+
+    - ``allowances`` — one entry per budget that binds **this** caller: the shared pot of their use
+      case, and their own counter where the use case gives each member one. Each carries the limit,
+      what is used, what is left and when the period rolls over. A colleague's counter is never
+      among them: an `each_member` budget is keyed on the person asking.
+    - ``this_period`` — what this caller has spent in the current month **from the audit trail**,
+      whether or not any budget exists. A use case with no budget still answers the question the
+      feature was asked for ("what have I used"), and a client can show a figure without inventing
+      a limit to put beside it.
+    - ``enforced`` — whether budgets refuse at all in this installation
+      (``AIRA_ENFORCE_BUDGETS``). With enforcement off a limit is a figure and not a stop, and a
+      client that drew a bar implying otherwise would be wrong in the direction that matters
+      (`FRD-610` §3.3).
+
+    Two figures, two sources, deliberately labelled apart: ``allowances`` are the **counters
+    enforcement reads** (reset per period, the number that refuses), ``this_period`` is the
+    **record** (what the audit trail says the caller spent). They answer different questions and
+    can differ — a reservation released, a row retained after a counter reset — and collapsing
+    them into one number would make the difference impossible to see.
+    """
+    attribution = attribution_of(request)
+    use_case = getattr(attribution, "use_case", None) or None
+    person = principal.person
+
+    service: BudgetService = budgets_of(request)
+    # The same method the console reads, so the arithmetic of "what is left" exists once
+    # (`BudgetService.usage`). `subject=person` is what makes an `each_member` row this caller's.
+    allowances = await service.usage(use_case or "", subject=person) if use_case else []
+
+    start, end = _this_month(datetime.now(UTC))
+    reporting: ReportingService = request.app.state.reporting
+    # Scoped to this caller's own traffic in their own use case: `person` narrows the whole report
+    # (`FRD-626` FR-15), so nothing here can carry a colleague's figures whatever the use case's
+    # visibility says (`FRD-622` FR-1c).
+    spent = await reporting.report((use_case,) if use_case else (), start, end, person=person or "")
+
+    return JSONResponse(
+        {
+            "use_case": use_case,
+            "person": person,
+            "enforced": settings_of(request).enforce_budgets,
+            "allowances": allowances,
+            "this_period": {
+                "from": start.isoformat(),
+                "to": end.isoformat(),
+                **spent["totals"],
+            },
+        }
+    )
+
+
+def _this_month(now: datetime) -> tuple[datetime, datetime]:
+    """The current calendar month, half-open and UTC — the window the console's figures use.
+
+    Not the budget's period: a budget may count by day, and this block is the record rather than
+    the counter. Said in the docstring above rather than inferred from a date in the payload.
+    """
+    start = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    days = calendar.monthrange(start.year, start.month)[1]
+    return start, start + timedelta(days=days)
