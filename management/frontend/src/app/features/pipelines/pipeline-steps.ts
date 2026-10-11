@@ -113,15 +113,23 @@ export function defaultConfig(type: StepType): PipelineStep['config'] {
   }
 }
 
-/** The one-line meta under a step's node in the graph. */
+/**
+ * The one-line meta under a step's node in the graph.
+ *
+ * A step's own chain is named here and not only in the inspector (`FRD-302` FR-7): it changes what
+ * an outage does to this step, and a reader of the graph should not have to click each node to
+ * find out which ones have a second model.
+ */
 export function summarize(step: PipelineStep): string {
+  const spare = (step.config.fallback_models ?? []).filter((name) => name).length;
+  const chain = spare ? ` · +${spare} fallback` : '';
   switch (step.type) {
     case 'injection_filter':
-      return `${step.config.mode ?? 'heuristic'} · ${step.config.action ?? 'block'}`;
+      return `${step.config.mode ?? 'heuristic'} · ${step.config.action ?? 'block'}${chain}`;
     case 'model_route':
-      return `${(step.config.categories ?? []).length} categor(ies)`;
+      return `${(step.config.categories ?? []).length} categor(ies)${chain}`;
     case 'pii_filter':
-      return `${step.config.model || 'no model'} · ${step.config.on_failure ?? 'block'}`;
+      return `${step.config.model || 'no model'} · ${step.config.on_failure ?? 'block'}${chain}`;
   }
 }
 

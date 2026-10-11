@@ -28,6 +28,7 @@ interface Editor {
   setStartModel: (model: string) => void;
   setFallback: (csv: string) => void;
   setListField: (index: number, key: string, value: string) => void;
+  setStepField: (index: number, key: string, value: unknown) => void;
   addCategory: (index: number) => void;
   removeCategory: (index: number, catIndex: number) => void;
   setCategoryField: (index: number, catIndex: number, key: string, value: string) => void;
@@ -1297,5 +1298,113 @@ describe('PipelineEditor — the personal-data filter', () => {
     expect(picker).not.toBeNull();
     const offered = [...(picker?.options ?? [])].map((o) => o.value).filter(Boolean);
     expect(offered).toEqual(harness.component.released());
+  });
+});
+
+// ---- a step's own fallback chain (`FRD-302` FR-7) -----------------------------------------
+//
+// Two chains with one field name: the use case's `fallback_models` is the chain that **serves the
+// caller**, a step's is the chain that **decides about** the request. They are edited in different
+// places and must not be written into each other — which is the mistake a shared field name
+// invites, and the reason these assertions check where the value landed as well as that it did.
+
+describe('PipelineEditor — a step reaches a chain', () => {
+  function el(harness: { fixture: { nativeElement: unknown } }): HTMLElement {
+    return harness.fixture.nativeElement as HTMLElement;
+  }
+
+  const inspectors: [string, Record<string, unknown>, string][] = [
+    ['injection_filter', { mode: 'llm', model: 'mock-1' }, 'filter-chain'],
+    ['pii_filter', { model: 'mock-1' }, 'pii-chain'],
+    [
+      'model_route',
+      { model: 'mock-1', categories: [{ name: 'c', model: 'cheap-1' }] },
+      'route-chain',
+    ],
+  ];
+
+  it.each(inspectors)(
+    'shows %s its own chain as chips over the released models',
+    async (type, config, testid) => {
+      const harness = setup({
+        steps: [
+          {
+            ...{ type, config: { ...config, fallback_models: ['backup-1'] } },
+          } as unknown as PipelineConfig['steps'][number],
+        ],
+        fallback_models: [],
+      });
+      harness.component.select(0);
+      harness.fixture.detectChanges();
+      await harness.fixture.whenStable();
+
+      expect(el(harness).querySelector(`[data-testid="${testid}-chosen"]`)?.textContent).toContain(
+        'backup-1',
+      );
+      expect(harness.text()).toContain('cannot be reached');
+    },
+  );
+
+  it('writes a chosen chain into that step and leaves the dispatch chain alone', () => {
+    const harness = setup({
+      steps: [
+        { type: 'pii_filter', config: { model: 'mock-1' } },
+        { type: 'injection_filter', config: { mode: 'llm', model: 'mock-1' } },
+      ],
+      fallback_models: [],
+    });
+
+    harness.component.setStepField(1, 'fallback_models', ['backup-1', 'cheap-1']);
+
+    expect(harness.component.config().steps[1].config.fallback_models).toEqual([
+      'backup-1',
+      'cheap-1',
+    ]);
+    // The other step and the use case's own chain are untouched: one field name, three owners.
+    expect(harness.component.config().steps[0].config.fallback_models).toBeUndefined();
+    expect(harness.component.config().fallback_models).toEqual([]);
+  });
+
+  it('saves the step chain to the server as part of the step', () => {
+    const harness = setup({
+      steps: [{ type: 'pii_filter', config: { model: 'mock-1' } }],
+      fallback_models: [],
+    });
+    harness.component.setStepField(0, 'fallback_models', ['backup-1']);
+    harness.component.save();
+
+    expect(harness.getSaved()?.steps[0].config.fallback_models).toEqual(['backup-1']);
+  });
+
+  it('names a step chain on its node, so the graph says which steps have a second model', () => {
+    const harness = setup({
+      steps: [
+        { type: 'pii_filter', config: { model: 'mock-1', fallback_models: ['backup-1'] } },
+        { type: 'injection_filter', config: { mode: 'llm', model: 'mock-1' } },
+      ],
+      fallback_models: [],
+    });
+
+    expect(harness.text()).toContain('+1 fallback');
+    // And exactly once: the step without a chain says nothing about one.
+    expect(harness.text().split('+1 fallback').length - 1).toBe(1);
+  });
+
+  it('does not promise a default model the engine no longer has', () => {
+    // The empty option read "— first released model —", which was the engine's behaviour until
+    // 2026-08-27: a step naming no model asked the *first model in the registry*, outside the
+    // release, the approval and the residency list. That fallback is gone (`FRD-308`), and a
+    // dropdown describing it was the console promising a control nobody has (`FRD-206`).
+    const harness = setup({
+      steps: [{ type: 'injection_filter', config: { mode: 'llm' } }],
+      fallback_models: [],
+    });
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+
+    const empty = el(harness).querySelector<HTMLSelectElement>('#insp-filter-model')!.options[0];
+    expect(empty.value).toBe('');
+    expect(empty.textContent).not.toContain('first released model');
+    expect(empty.textContent).toContain('patterns');
   });
 });

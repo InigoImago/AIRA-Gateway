@@ -319,4 +319,9 @@ async def enforce_pre_dispatch(
         units=units,
         extra_tokens=extra_tokens,
     )
-    return await budgets_of(request).guard(use_case, caller, estimated=expected)
+    reservation = await budgets_of(request).guard(use_case, caller, estimated=expected)
+    # Kept on the request as well as returned, so that a refusal raised **after** the reservation
+    # and **before** the accounting block can give it back (`release_reservation`). `Prepared`
+    # carries it to the dispatch; the surface's refusal boundary never sees `Prepared`.
+    request.state.reservation = reservation
+    return reservation

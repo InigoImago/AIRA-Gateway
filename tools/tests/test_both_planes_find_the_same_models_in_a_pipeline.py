@@ -62,8 +62,20 @@ MANAGEMENT_SOURCE = (
 #: rather than about the easy case.
 EVERYWHERE = {
     "steps": [
-        {"type": "injection_filter", "config": {"mode": "llm", "model": "filter-model"}},
-        {"type": "pii_filter", "config": {"model": "redactor-model"}},
+        {
+            "type": "injection_filter",
+            "config": {
+                "mode": "llm",
+                "model": "filter-model",
+                # A step's own chain (`FRD-302` FR-7), which is the fifth place a model can be
+                # named and the reason `fallback_models` is no longer a key at one level only.
+                "fallback_models": ["second-filter-model"],
+            },
+        },
+        {
+            "type": "pii_filter",
+            "config": {"model": "redactor-model", "fallback_models": ["second-redactor-model"]},
+        },
         {
             "type": "model_route",
             "config": {
@@ -90,6 +102,12 @@ AWKWARD: list[dict] = [
     {"steps": [{"type": "model_route", "config": {"model": "", "default_model": None}}]},
     {"fallback_models": ["a", "", None, "a"]},
     {"steps": [{"type": "x", "config": {"model": "dup"}}], "fallback_models": ["dup"]},
+    # A step chain in the shapes a hand-written body can carry: absent, empty, holed, and one that
+    # repeats its own step's model.
+    {"steps": [{"type": "pii_filter", "config": {"model": "m", "fallback_models": []}}]},
+    {"steps": [{"type": "pii_filter", "config": {"fallback_models": ["only-a-fallback"]}}]},
+    {"steps": [{"type": "pii_filter", "config": {"model": "m", "fallback_models": ["", None]}}]},
+    {"steps": [{"type": "pii_filter", "config": {"model": "m", "fallback_models": ["m", "n"]}}]},
 ]
 
 
@@ -111,7 +129,9 @@ def test_they_agree_about_a_pipeline_that_names_a_model_everywhere_it_can() -> N
     # And the answer is not empty, or the comparison above would hold for two broken readers.
     assert set(models_named_in(EVERYWHERE)) == {
         "filter-model",
+        "second-filter-model",
         "redactor-model",
+        "second-redactor-model",
         "router-model",
         "default-model",
         "code-model",
@@ -156,10 +176,17 @@ def _config_keys(source: pathlib.Path, function: str) -> set[str]:
 
 
 def test_they_look_at_the_same_places_in_a_step() -> None:
-    """The structural half. `steps` and `fallback_models` are parameters on Management's side and
-    read off the document on the gateway's, so those two are excluded by name and everything else
-    has to match — a fourth key learned by one side fails here."""
-    outer = {"steps", "fallback_models"}
+    """The structural half. `steps` is a parameter on Management's side and read off the document
+    on the gateway's, so it is excluded by name and everything else has to match — a key learned
+    by one side fails here.
+
+    **`fallback_models` used to be excluded with it, and must not be.** Since `FRD-302` FR-7 it is
+    a key at *two* levels — the use case's dispatch chain and each step's own — so an exclusion by
+    name would hide a step chain one plane had learned and the other had not, which is precisely
+    the door this file exists to keep shut. Both sides read the literal now: the gateway off the
+    document and inside a step, Management from its parameter and inside a step.
+    """
+    outer = {"steps"}
     gateway = _config_keys(GATEWAY_SOURCE, "models_named_in") - outer
     management = _config_keys(MANAGEMENT_SOURCE, "_models_named_in") - outer
 

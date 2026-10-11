@@ -5,10 +5,15 @@ not degrade a request silently, and `requirements.py` implements that as a set o
 residency (`FRD-115`), approval (`FRD-307`), release (`FRD-308`), media types (`FRD-110`),
 thinking, schemas, tools, sampling. Every one of them was applied in exactly one place:
 `dispatch_with_fallback`. So a verb that does not use the chain applied **none of them**, and two
-verbs do not use the chain:
+verbs did not use the chain:
 
     :streamGenerateContent   the chain returns a finished response, so a stream cannot use it
     :embedContent            there is nothing to fall back *to*, so nobody wrote one
+
+**The first of those is no longer true** (`ADR-0032`, `FRD-302` FR-6): `stream_with_fallback`
+opens the chain instead of awaiting it, so a streamed verb now walks the same candidates and asks
+the same conditions. The embedding keeps no chain, and its conditions come from
+`resolve_direct_target`.
 
 Measured on 2026-08-11 against the hermetic app — each refused by name on `:generateContent`,
 each **served with a 200** on both of the others:
@@ -44,11 +49,13 @@ DISPATCHING = frozenset({"generate", "stream_generate", "embed"})
 #: The functions that apply the conditions. A dispatching call site has to be in the same function
 #: as one of these, or on the list below with a reason.
 #:
-#: - `dispatch_with_fallback` asks `permits` per hop, which is how a chain refuses to substitute
-#:   a candidate that would answer differently.
+#: - `_candidates` asks `permits` per hop and yields only the candidates that may be called. Both
+#:   forms of the chain walk it — `dispatch_with_fallback` for a response and
+#:   `stream_with_fallback` for a stream — which is how a chain refuses to substitute a candidate
+#:   that would answer differently, and why neither needs an exemption below.
 #: - `resolve_direct_target` asks it once, for the verbs that have no chain, and returns the
 #:   adapter — so the check cannot be separated from getting something to call.
-GATES = frozenset({"dispatch_with_fallback", "resolve_direct_target"})
+GATES = frozenset({"_candidates", "dispatch_with_fallback", "resolve_direct_target"})
 
 #: Dispatching calls that legitimately apply no condition, and why.
 #:
@@ -67,8 +74,11 @@ UNCONDITIONED: dict[str, str] = {
         "configuration named none asked `PipelineEngine._default_model()`, which answered *the "
         "first model in the registry* — outside the release, outside the approval and outside the "
         "residency list, because all three are checked against what somebody wrote. The fallback "
-        "is gone; a step reaches only the model in its own configuration, and one that names none "
-        "degrades (the LLM filter falls back to the heuristic, the router to its `default_model`)."
+        "is gone; a step reaches only the models **its own configuration names** — since "
+        "2026-10-11 that is its model plus its own `fallback_models` chain (`FRD-302` FR-7), every "
+        "one of which the serializer validates against the release (FR-10) — and a step that "
+        "names none degrades (the LLM filter falls back to the heuristic, the router to its "
+        "`default_model`)."
     ),
     "pipeline/classifiers/routing.py:classify_text:generate": (
         "The router's classifier, on the same terms as the injection classifier above: the "
@@ -86,8 +96,9 @@ UNCONDITIONED: dict[str, str] = {
         "rule and gets no separate hole. The sentence above applies here and was sharpest here: a "
         "`pii_filter` with `config: {}` sent the caller's **personal data** to the first model in "
         "the registry at a 200, where naming that model in the same step is a 400. Since the "
-        "fallback went, `config.model` really is the only model this step can reach, which is what "
-        "the sentence claimed all along."
+        "fallback went, the only models this step can reach are the ones its own configuration "
+        "names — `config.model` and, since 2026-10-11, its own `fallback_models` — and "
+        "`_models_named_in` reads both, so the chain gained a candidate and no hole."
     ),
     "api/incidents/thinking_check.py:_accepts:generate": (
         "The console's *Ask the model* button (`ADR-0021`), and it is a question **about the "
@@ -98,10 +109,6 @@ UNCONDITIONED: dict[str, str] = {
         "release. Gated to the two roles that may investigate an installation, bounded to "
         "`MAX_LEVELS_PER_CHECK` words, and capped at one output token per word: a word the model "
         "refuses is free, because the refusal comes before any generation."
-    ),
-    "pipeline/dispatch.py:dispatch_with_fallback:generate": (
-        "The chain itself, which is where `permits` is asked. Named here because it is the "
-        "definition rather than an exemption — the call is one line below the check."
     ),
 }
 
@@ -197,10 +204,20 @@ def test_there_are_dispatch_sites_to_check() -> None:
     sites = _dispatch_sites()
 
     assert len(sites) >= 4, f"the parser found only {sorted(sites)}"
-    # And it must reach inside a closure, which is where the defect that prompted this file lived.
-    assert any("generate_chunks" in site for site in sites), (
-        "no nested function was found; the streamed dispatch lives in a closure, so a walk that "
-        "misses those would report the hole's own location as clean"
+    # And it must reach inside a closure. **No dispatching call lives in one today**: the streamed
+    # dispatch did — `generate_chunks` is where the hole this file was written about lived — and
+    # `FRD-302` FR-6 moved it into `stream_with_fallback`, a module-level function. So what is
+    # asserted is the walk's reach rather than today's layout, because the next streamed verb will
+    # be written as a closure again and this file has to see it.
+    nested = [
+        f"{path.name}:{name}"
+        for path in sorted(SOURCE.rglob("*.py"))
+        for name, chain in _scopes(path)
+        if len(chain) > 1
+    ]
+    assert nested, (
+        "the walk found no nested function anywhere in the gateway, so a dispatching call written "
+        "inside a closure would be reported as clean — which is the defect this file exists for"
     )
 
 
@@ -228,7 +245,7 @@ def test_the_exemptions_name_calls_that_exist() -> None:
     assert not stale, f"UNCONDITIONED names call sites that no longer exist: {stale}"
 
 
-def test_both_gates_are_real_functions() -> None:
+def test_every_gate_is_a_real_function() -> None:
     """`GATES` is matched by name, so a rename would make every site read as ungated — noisy and
     safe — while a **deleted** gate would make them read as gated by a name nothing defines. That
     is the direction worth asserting."""
@@ -237,3 +254,7 @@ def test_both_gates_are_real_functions() -> None:
 
     assert "async def resolve_direct_target(" in serving
     assert "async def dispatch_with_fallback(" in dispatch
+    assert "async def stream_with_fallback(" in dispatch
+    # The walk both forms of the chain share, and the only place `permits` is asked for them.
+    assert "async def _candidates(" in dispatch
+    assert "refusal = await permits(model)" in dispatch

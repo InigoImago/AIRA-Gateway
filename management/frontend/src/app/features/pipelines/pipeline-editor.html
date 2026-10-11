@@ -233,7 +233,7 @@
                     [ngModel]="step.config.model || ''"
                     (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
                   >
-                    <option value="">— first released model —</option>
+                    <option value="">— none: use the patterns below —</option>
                     @for (model of released(); track model) {
                       <option [value]="model">{{ model }}</option>
                     }
@@ -241,6 +241,24 @@
                   <!-- A classifier call is a real model call, charged to this use case and
                        audited under `pipeline:injection_filter` (`FRD-125b`), so it may only name
                        a released model. -->
+                </div>
+                <div class="field">
+                  <label id="insp-filter-chain">If that model cannot be reached</label>
+                  <app-multi-select
+                    label="Fallback classifier models"
+                    testid="filter-chain"
+                    placeholder="type part of a model name…"
+                    emptyHint="No model is released to this use case yet."
+                    [options]="modelChoices()"
+                    [selected]="step.config.fallback_models || []"
+                    (changed)="setStepField(selectedIndex(), 'fallback_models', $event)"
+                  />
+                  <span class="field__hint"
+                    >Tried in order, and only where the model above could not be reached — a model
+                    that answered has answered, including when its answer is <em>undetermined</em>.
+                    With none of them reachable the filter falls back to the patterns, which is a
+                    downgrade of the method and never of the verdict.</span
+                  >
                 </div>
                 <div class="field">
                   <label for="insp-instruction">Instruction to the classifier (optional)</label>
@@ -294,7 +312,7 @@
                   (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
                   data-testid="pii-model"
                 >
-                  <option value="">— first released model —</option>
+                  <option value="">— none: the step blocks —</option>
                   @for (model of released(); track model) {
                     <option [value]="model">{{ model }}</option>
                   }
@@ -304,6 +322,24 @@
                   personal data it is being asked to remove — so it is the one model here that has
                   to be trusted with the thing the step exists to protect.
                 </span>
+              </div>
+              <div class="field">
+                <label id="insp-pii-chain">If that model cannot be reached</label>
+                <app-multi-select
+                  label="Fallback redactors"
+                  testid="pii-chain"
+                  placeholder="type part of a model name…"
+                  emptyHint="No model is released to this use case yet."
+                  [options]="modelChoices()"
+                  [selected]="step.config.fallback_models || []"
+                  (changed)="setStepField(selectedIndex(), 'fallback_models', $event)"
+                />
+                <span class="field__hint"
+                  >Tried in order where the model above cannot be reached, and each one has to be
+                  trusted with the same prompt. With none of them reachable this step has no lesser
+                  version of itself: it blocks, unless you chose
+                  <strong>Send it unchanged</strong> below.</span
+                >
               </div>
               <div class="field">
                 <label for="insp-pii-instruction">What to replace</label>
@@ -363,11 +399,28 @@
                   [ngModel]="step.config.model || ''"
                   (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
                 >
-                  <option value="">— first released model —</option>
+                  <option value="">— none: everything takes the default —</option>
                   @for (model of released(); track model) {
                     <option [value]="model">{{ model }}</option>
                   }
                 </select>
+              </div>
+              <div class="field">
+                <label id="insp-route-chain">If that model cannot be reached</label>
+                <app-multi-select
+                  label="Fallback classifier models"
+                  testid="route-chain"
+                  placeholder="type part of a model name…"
+                  emptyHint="No model is released to this use case yet."
+                  [options]="modelChoices()"
+                  [selected]="step.config.fallback_models || []"
+                  (changed)="setStepField(selectedIndex(), 'fallback_models', $event)"
+                />
+                <span class="field__hint"
+                  >Tried in order where the model above cannot be reached. With none of them
+                  reachable nothing is classified and every request takes the default model,
+                  recorded on the row as <code>not_asked</code>.</span
+                >
               </div>
               <p class="muted">
                 The classifier reads system + user text and picks one category below.
@@ -463,9 +516,10 @@
               />
             </div>
             <p class="muted">
-              Tried in order when the primary upstream fails (non-streaming). Only models released
-              to this use case — a chain that named another would be skipped at every hop anyway,
-              and the request would fail with nothing here saying why.
+              Tried in order when the model asked for cannot answer — on a streamed request too, for
+              as long as nothing has reached the caller. Only models released to this use case: a
+              chain that named another would be skipped at every hop anyway, and the request would
+              fail with nothing here saying why.
             </p>
           } @else {
             <p class="muted">Select a node in the graph to configure it.</p>

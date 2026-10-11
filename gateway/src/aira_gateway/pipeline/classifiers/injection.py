@@ -68,6 +68,13 @@ class Classification:
     #: The model's verbatim reply, for the dry run's screen — **never persisted** (`FRD-122` §5.3).
     #: It is what tells "neither word", "both words" and "empty" apart under one *undetermined*.
     reply: str = ""
+    #: Whether the model was **reached** — ``False`` only where the call itself failed. This is
+    #: what a step's chain moves on for (`FRD-302` FR-8): a model that answered has answered, even
+    #: when the answer is *undetermined*, and a chain that tried the next one would be a filter
+    #: shopping for a verdict. A field rather than an inference from a missing `ModelCall`: the
+    #: heuristic classifier has no call either, and reading that as "not reached" would send it
+    #: down a chain it never asked for.
+    reached: bool = True
 
 
 @runtime_checkable
@@ -137,8 +144,9 @@ class LlmInjectionClassifier:
                     classifier_request(self._model, self._instruction, text, self._thinking)
                 )
         except UpstreamError:
-            # No call to report: nothing was served, and no vendor here bills a failed call.
-            return Classification(Verdict.UNDETERMINED)
+            # No call to report: nothing was served, and no vendor here bills a failed call. The
+            # verdict is still undetermined — a step whose chain is exhausted decides on it.
+            return Classification(Verdict.UNDETERMINED, reached=False)
         call = ModelCall(step="injection_filter", model=self._model, usage=response.usage)
         return Classification(self._verdict_of(response.text), call, response.text)
 

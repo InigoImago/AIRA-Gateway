@@ -22,6 +22,9 @@ from aira_common.logging import get_logger
 _log = get_logger("aira_gateway.pipeline")
 
 MAX_STEPS = 32
+#: The length of a chain — the use case's own, and each step's (`FRD-302` FR-7). One bound, because
+#: both are the same thing in two places and a step allowed a longer chain than the dispatch would
+#: be a step that can spend more on deciding than on answering.
 MAX_FALLBACK_MODELS = 16
 #: Management's ceiling on a model name. A fallback name reaches an audit row and the caller's
 #: `NoCapableModel` message, so it is bounded in length as well as in count.
@@ -63,6 +66,24 @@ def _clipped(value: Any, *, where: str, step: str) -> Any:
 def _bounded(config: dict[str, Any], step: str) -> dict[str, Any]:
     """The step's configuration with every operator-authored text held to Management's bounds."""
     bounded = {key: _clipped(value, where=key, step=step) for key, value in config.items()}
+
+    # A step's own fallback chain (`FRD-302` FR-7/FR-12): bounded here as well as in Management,
+    # because this read-model is also reachable by a direct write and by `pipeline:dryRun`'s
+    # unvalidated `pipeline` field (`ADR-0018`). Truncated rather than dropped, like every other
+    # oversized value: a shortened chain is a step with fewer candidates, an absent one is a step
+    # back to a single model.
+    chain = bounded.get("fallback_models")
+    if isinstance(chain, list):
+        if len(chain) > MAX_FALLBACK_MODELS:
+            _log.warning(
+                "pipeline_step_fallbacks_truncated",
+                step=step,
+                count=len(chain),
+                limit=MAX_FALLBACK_MODELS,
+            )
+        bounded["fallback_models"] = [
+            str(name)[:MAX_MODEL_LENGTH] for name in chain[:MAX_FALLBACK_MODELS] if name
+        ]
 
     categories = bounded.get("categories")
     if isinstance(categories, list):

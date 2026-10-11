@@ -15,7 +15,7 @@ from aira_gateway.auth.keys import DEMO_API_KEY
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, CanonicalUsage
 from aira_gateway.pipeline.engine import PipelineEngine
-from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
+from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, UpstreamModel
 
 _URL = "/v1beta/pipeline:dryRun"
 
@@ -160,6 +160,21 @@ async def _release(app, slug: str, models: list[str] | None) -> None:  # noqa: A
 
     async with app.state.db_sessionmaker() as session:
         session.add(UseCaseRead(slug=slug, name=slug, allowed_models=models))
+        await session.commit()
+
+
+async def _approve(app, *models: str) -> None:  # noqa: ANN001
+    """Catalogue each model and approve it, which is what a Global Administrator does (`FRD-307`).
+
+    Needed only by the cases whose doubles are **not** declared test doubles: a declared one is
+    exempt from the catalogue requirement by design, and a case about the catalogue has to use a
+    model the catalogue governs.
+    """
+    from aira_gateway.db.models import ModelRead
+
+    async with app.state.db_sessionmaker() as session:
+        for model in models:
+            session.add(ModelRead(model=model, approved=True, capabilities=["generate"]))
         await session.commit()
 
 
@@ -742,3 +757,98 @@ async def test_a_refused_dry_run_never_reaches_a_model() -> None:
 
     assert resp.status_code == 429, resp.text
     assert called == [], f"a refused dry run called {called}"
+
+
+# ---- a step's own chain (`FRD-302` FR-7/FR-10) ---------------------------------------------
+
+
+async def test_a_step_chain_is_approval_checked_like_the_model_in_front_of_it() -> None:
+    """**The hole a chain could have opened, closed where the other three are.**
+
+    A step's own call applies no dispatch condition, and the reason it may not have to is that
+    somebody wrote the name and both planes checked it: Management against the use case's release,
+    this endpoint against the installation's approval. A `fallback_models` entry is a model this
+    dry run **will call** when the one in front of it cannot be reached — so a chain the approval
+    check could not see would be `allow_check`'s removal undone, one field along.
+
+    Asked of the `pii_filter`, because that is the step whose fallback would be sent the caller's
+    personal data.
+    """
+    called: list[str] = []
+
+    class _Spy(_Classifier):
+        is_test_double = False
+
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            called.append(request.model)
+            return await super().generate(request)
+
+    app = _app(_Spy("approved-1", "SAFE"), _Spy("unapproved-2", "SAFE"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _approve(app, "approved-1")
+        resp = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "user": "hi",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "pii_filter",
+                            "config": {
+                                "model": "approved-1",
+                                "fallback_models": ["unapproved-2"],
+                            },
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert resp.status_code == 400, resp.text
+    assert "unapproved-2" in resp.json()["error"]["message"]
+    # Nothing is called at all: the refusal comes before the pipeline runs, so the approved model
+    # in front of the chain is not asked either.
+    assert called == []
+
+
+async def test_a_step_chain_of_approved_models_runs_and_the_trace_names_who_answered() -> None:
+    """The other direction, and the half an operator uses the dry run for: with the first model
+    unreachable the second answers, and the screen says which one did — `classifier` in the
+    trace's detail, which is how somebody testing a chain sees it working at all."""
+
+    class _Down(_Classifier):
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            raise UpstreamError("approved-1 is unavailable", 503)
+
+    app = _app(_Down("approved-1", "SAFE"), _Classifier("approved-2", "INJECTION"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        resp = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "user": "hi",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "injection_filter",
+                            "config": {
+                                "mode": "llm",
+                                "model": "approved-1",
+                                "fallback_models": ["approved-2"],
+                            },
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["blocked"] is True
+    (entry,) = body["trace"]
+    assert entry["detail"]["verdict"] == "injection"
+    assert entry["detail"]["classifier"] == "approved-2", (
+        "the trace names the model that was written first rather than the one that answered, so an "
+        "operator testing a chain cannot see which half of it is working"
+    )

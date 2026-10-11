@@ -367,3 +367,68 @@ async def test_a_batch_leaves_one_priced_row_for_the_step_it_was() -> None:
     # Two calls of 5 + 5, added up rather than reported once and lost once.
     assert spent[0].prompt_tokens == 10
     assert spent[0].completion_tokens == 10
+
+
+# ---- and so does the redactor's own chain (`FRD-302` FR-7) ---------------------------------
+
+
+class _Second(_Provider):
+    """A second trusted model, under its own name, that redacts the same way."""
+
+    def models(self) -> list[UpstreamModel]:
+        return [UpstreamModel("trusted-2", "trusted-2", ("generateContent", "embedContent"))]
+
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        answer = await super().generate(request)
+        return answer.model_copy(update={"model": "trusted-2"})
+
+
+async def test_a_redactor_chain_reaches_an_embedding_too() -> None:
+    """**The branch this repository keeps forgetting**, and the reason this file exists at all: a
+    step about the text itself runs wherever text is sent, and an embedding is the path where that
+    was once not true.
+
+    The chain is in the shared evaluator, so it *should* reach both — which is exactly the kind of
+    "should" that was true of the pipeline itself and false of this verb for a fortnight. With the
+    first redactor down, the second one rewrites, and what is embedded and stored is the rewrite.
+    """
+    first, second = _Provider(fail_on=PERSONAL), _Second()
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    registry = ProviderRegistry([first, second])
+    app.state.providers = registry
+    app.state.pipeline_engine = PipelineEngine(registry)
+    app.state.pipeline_store = _Store(
+        PipelineStep(
+            type=StepType.PII_FILTER,
+            config={"model": "trusted", "fallback_models": ["trusted-2"]},
+        )
+    )
+
+    with TestClient(app) as client:
+        await _seed(app)
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                ModelRead(
+                    model="trusted-2",
+                    approved=True,
+                    capabilities=["generate", "embed"],
+                    embedding={"dimensions": [2], "supports_batch": True},
+                )
+            )
+            await session.commit()
+        response = client.post(
+            "/v1beta/models/trusted:embedContent",
+            json={"model": "models/trusted", "content": {"parts": [{"text": PERSONAL}]}},
+            headers=HEADERS,
+        )
+        rows = await _rows(app)
+
+    assert response.status_code == 200, response.text
+    # The text that reached the embedding model is the second redactor's rewrite — exactly, because
+    # "it contains no name" is also true of an empty list and of a text nobody embedded.
+    assert first.embedded == [["Bitte an <PERSON>, <ADDRESS> senden."]]
+    assert second.embedded == [], "the fallback redactor was asked to embed as well"
+    # Both models were asked, in order, and the second's call is the one that is billed.
+    assert [row.model for row in rows if row.operation == "pipeline:pii_filter"] == ["trusted-2"]
+    # And nothing personal survived into the caller's own row.
+    assert "Max Mustermann" not in str([row.request_payload for row in _caller_rows(rows)])

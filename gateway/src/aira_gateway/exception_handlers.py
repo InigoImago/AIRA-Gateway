@@ -24,6 +24,7 @@ from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
 from aira_gateway.api.kira.errors import (
     code_for_unauthenticated as kira_code_for_unauthenticated,
 )
+from aira_gateway.api.serving.accounting import release_reservation
 from aira_gateway.middleware import RequestTooLarge, SecurityHeadersMiddleware
 
 #: The Gemini surface's path prefix.
@@ -133,6 +134,9 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
     exception from `ServerErrorMiddleware`, outside the whole user middleware stack. So the headers
     are applied here, from that middleware's own tuple rather than a second copy that could drift.
     """
+    # A bug between the reservation and the accounting block would otherwise hold a slice of the
+    # use case's month until it expired; `accounting` records the row for the failures it sees.
+    await release_reservation(request)
     attribution = getattr(request.state, "attribution", None)
     _log.error(
         "unhandled_error",

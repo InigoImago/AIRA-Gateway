@@ -2,7 +2,7 @@
 
 > Phase: 3 · Status: **Done** (engine + distribution + builder UI) · Owner: Vadim Scheibe
 > Related: `docs/PRD.md` (pre-dispatch pipeline); `docs/ROADMAP.md` Phase 3; builds on FRD-100/102/103/304.
-> Companion FRDs: `FRD-301` (routing/rerouting details), `FRD-302` (fallback), `FRD-303` (builder UI).
+> Companion FRDs: [`FRD-302`](FRD-302-model-fallback.md) (the fallback chains — the use case's, a stream's and each step's own), [`FRD-303`](FRD-303-pipeline-builder-ui.md) (builder UI). `FRD-301` was never written: routing is specified here, in FR-4 and §4.
 
 ## 1. Summary
 A **per-use-case, config-driven pipeline** runs in the gateway on every request **before dispatch**:

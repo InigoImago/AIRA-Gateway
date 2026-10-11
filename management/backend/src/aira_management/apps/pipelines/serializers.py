@@ -74,7 +74,23 @@ def _check_policy(config: dict[str, Any], field: str) -> None:
         )
 
 
+def _check_step_chain(config: dict[str, Any]) -> None:
+    """A step's own fallback chain (`FRD-302` FR-7), bounded where it is authored.
+
+    Same bounds as the use case's dispatch chain, because they are the same thing one level in. The
+    *release* check is not here: `validate` collects every model a pipeline names — this chain
+    included, through `_models_named_in` — and refuses them together, so one refusal lists them
+    all rather than stopping at the first.
+    """
+    chain = config.get("fallback_models")
+    if chain is None:
+        return
+    _check_str_list(chain, "fallback_models", MAX_FALLBACK_MODELS, MAX_MODEL_LENGTH)
+
+
 def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
+    # Every model-backed step may carry one, so it is checked before the per-type fields.
+    _check_step_chain(config)
     if step_type == "injection_filter":
         patterns = config.get("patterns", [])
         _check_str_list(patterns, "patterns", MAX_PATTERNS, MAX_PATTERN_LENGTH)
@@ -116,6 +132,12 @@ def _models_named_in(steps: list[Any], fallbacks: list[Any]) -> list[str]:
         for key in ("model", "default_model"):
             if config.get(key):
                 named.append(str(config[key]))
+        # A step's own chain (`FRD-302` FR-10). **This is why a step's model call applies no
+        # dispatch condition**: an administrator wrote the name and this check saw it. A fallback
+        # name nobody checked would be the hole `allow_check`'s removal closed, one field along.
+        for fallback in config.get("fallback_models") or []:
+            if fallback:
+                named.append(str(fallback))
         for category in config.get("categories") or []:
             if isinstance(category, dict) and category.get("model"):
                 named.append(str(category["model"]))

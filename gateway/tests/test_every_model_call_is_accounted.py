@@ -43,18 +43,6 @@ ACCOUNTED: dict[str, str] = {
         "router mount, and the call is inside `Accounting`, which reserves before and settles "
         "after — so the row and the budget booking happen on every exit including a refusal."
     ),
-    "api/gemini/routes.py:stream_generate": (
-        "The Gemini surface's `:streamGenerateContent`. Same attribution and the same `Accounting` "
-        "context; the settle is `asyncio.shield`ed so a client dropping the socket mid-stream "
-        "still books what was spent (`FRD-110`)."
-    ),
-    "api/kira/routes.py:stream_generate": (
-        "The KIRA surface's `/streaming-chat`, which since 2026-08-12 actually streams — it used "
-        "to call the non-streaming dispatch and send one terminal event. Attribution is this "
-        "surface's own (`FRD-107` §5.3), and the call sits inside the same `Accounting` context, "
-        "whose settle is `asyncio.shield`ed so a caller dropping the socket mid-answer still books "
-        "what was spent and still leaves a row."
-    ),
     "api/kira/routes.py:embed": (
         "The KIRA surface's `/embed`. That surface resolves its own attribution (`FRD-107` §5.3 — "
         "one membership, or a header, never an unattributed bucket) and shares this file's "
@@ -88,8 +76,21 @@ ACCOUNTED: dict[str, str] = {
         "`pipeline:pii_filter` with `requests=0` (`FRD-125b`)."
     ),
     "pipeline/dispatch.py:generate": (
-        "The dispatch chain itself. Reached only from `serving.py`, inside `Accounting`, with the "
+        "The dispatch chain itself. Reached only from the surfaces, inside `Accounting`, with the "
         "per-hop requirements applied to every candidate (`ADR-0012` §3)."
+    ),
+    "pipeline/dispatch.py:stream_generate": (
+        "The same chain, opened for a stream (`FRD-302` FR-6) — **both** streaming surfaces reach "
+        "their upstream through here now, which is why neither names a call site of its own any "
+        "more.\n\n"
+        "Where it differs from every other entry: the HTTP request is issued **before** the "
+        "`Accounting` context is entered, because the first chunk is what proves a candidate can "
+        "serve and the chain pulls it while a refusal can still be a status. What that does not "
+        "move is the accounting — the chunk is handed to the surface unread, so its usage, like "
+        "every later chunk's, is read inside `Accounting`, whose settle is `asyncio.shield`ed so a "
+        "client dropping the socket mid-stream still books what was spent and still leaves a row. "
+        "A candidate that failed before producing a chunk spent nothing and is recorded as a "
+        "passed-over attempt on the row (FR-11)."
     ),
 }
 

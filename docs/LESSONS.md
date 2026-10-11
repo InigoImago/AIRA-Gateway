@@ -1119,6 +1119,20 @@ reading code.
 
 ---
 
+- **A reason that is true outlives the thing it was a reason for.** *"A stream cannot fall back
+  once its first chunk is out"* is true, and for two months it was read as *"a stream cannot fall
+  back"* — in a module docstring, in a structural test's exemption list and in an ADR, each one
+  citing the others. What it cost was the use case's whole fallback chain on the verb every chat
+  client uses: an outage at one vendor took every streamed request with it while the same request
+  unstreamed was served by the second candidate. The sentence was never wrong; its **scope** was
+  never stated, and a limit with no stated scope is read as total.
+
+  The same shape, twice more in the same round: a console dropdown offered *"— first released
+  model —"* for weeks after the engine stopped having that default, and a test asserted a streamed
+  outage was `200` with an empty body while its own comment carried the reason to change it. **Write the scope into the sentence** — *once a chunk is on the wire*, *while the registry
+  default existed*, *for the non-streamed verb* — because the copy nobody re-reads is the one that
+  keeps being quoted.
+
 ## 2. Evidence and the audit trail
 
 - **The log records what was *asked*, not only what was served.** A refused request that leaves no
@@ -1612,6 +1626,19 @@ reading code.
 
 ## 5. Layering
 
+- **A layer inserted into a stream inherits a contract nobody wrote down.** A fallback chain hands
+  the surface a *wrapper* — the chunk that proved the candidate, then the adapter's own — and that
+  wrapper sits between the caller and the connection. A caller who hangs up closes the iterator
+  **they** are reading, and closing an async generator does not close the one it was iterating:
+  `async for` promises nothing of the sort. So the upstream's response stayed open until the
+  garbage collector reached it, on exactly the path the surfaces had been careful about for as long
+  as they streamed. Nothing was deleted; a layer was added, and a property that had been implicit
+  in *reading the thing directly* stopped holding.
+
+  **Ask what the direct path did for free**, every time something is inserted into one: who closes,
+  who cancels, who times out, whose context the work runs in. Three of those four were fine here
+  and the fourth was a leak, and only a test that made a caller stop reading could tell them apart.
+
 - **A surface parses; the layer decides.** Both halves of the request path have one owner —
   `prepare_for_dispatch` before dispatch, `accounting` after it. Sharing the *steps* is not sharing
   the *sequence*, and every guarantee that layer makes is a guarantee about the **order**.
@@ -1922,6 +1949,15 @@ reading code.
   asserted a weaker property than its name claimed, and nothing but breaking the real rule would
   have shown that. **Name the property, then check that the assertion cannot be satisfied any other
   way.**
+
+  *And the fourth shape excludes by **name** what it cannot compare, which is safe exactly until
+  the name means two things.* A guard compares the two planes' readings of a pipeline for the
+  models it names, and skipped the key `fallback_models` because each plane reaches it differently.
+  Right while that key existed at one level. The moment a *step* could carry its own chain under
+  the same key, the exclusion covered the new site as well — the guard would have stayed green
+  while one plane validated a chain against the use case's release and the other did not, which is
+  the door it exists to keep shut. **An exclusion is an assertion about why something cannot be
+  compared; re-read it whenever the thing it names starts meaning something else.**
 - **A check that quietly narrows its own scope reports green about the part it kept.** A `try`/
   `except ImportError` around the second of two settings classes made a documentation guard
   measure one plane and call it the product. If the input cannot be loaded, fail — do not check
@@ -1965,6 +2001,15 @@ reading code.
   files whose subject was budgets, security and the model catalog. Nothing was wrong with any of
   them. A double is a promise to be the same shape, and a promise kept only until the shape changes
   is how one added member costs an afternoon of reading stack traces that name the wrong thing.
+
+  *And a double of the wrong **shape** can make the property true for free.* A chain must close the
+  stream of a candidate it passes over, or an open HTTP response holds its connection out of the
+  pool. The guard used an async generator that raised — and a generator is *finished* by the
+  exception it raises, so its `finally` ran whether or not anything closed it. The assertion was
+  about Python, passed with the close deleted, and the mutation run is what said so. The protocol
+  the code accepts is `AsyncIterator`, so the honest double is the shape that **needs** closing: a
+  class holding a response. **Pick the double from the widest shape the contract allows, not the
+  most convenient one** — the convenient shape is usually the one that already satisfies the rule.
 - **A file that offers a knob must be checked against the thing that turns it.** `config/`
   rendered 86 variables into the environment both planes read, and **47 reached no container**: 45
   that no compose file interpolated, the rest overridden by a literal there. Nothing failed —

@@ -380,12 +380,36 @@ def test_a_routing_target_the_use_case_may_not_call_is_refused_by_name() -> None
 
 
 def test_every_place_a_model_can_be_written_is_checked() -> None:
-    """Five of them: the filter's classifier, the router's classifier, a category target, the
-    default target and the fallback chain. A check that read one would refuse the obvious mistake
-    and leave four."""
+    """**Six** of them: the filter's classifier, the router's classifier, a category target, the
+    default target, the use case's fallback chain and — since `FRD-302` FR-7 — each step's own
+    chain. A check that read one would refuse the obvious mistake and leave five.
+
+    The last one is why this check is load-bearing rather than courteous: a step's model call
+    applies no dispatch condition *because* an administrator wrote the name and this saw it
+    (`test_every_dispatch_applies_the_conditions.py`). A chain nobody validated would be the hole
+    `allow_check`'s removal closed, one field along.
+    """
     cases = [
         ([{"type": "injection_filter", "config": {"mode": "llm", "model": "sneak-1"}}], []),
         ([{"type": "model_route", "config": {"model": "sneak-1"}}], []),
+        (
+            [
+                {
+                    "type": "injection_filter",
+                    "config": {"mode": "llm", "model": "allowed-1", "fallback_models": ["sneak-1"]},
+                }
+            ],
+            [],
+        ),
+        (
+            [
+                {
+                    "type": "pii_filter",
+                    "config": {"model": "allowed-1", "fallback_models": ["sneak-1"]},
+                }
+            ],
+            [],
+        ),
         (
             [
                 {
@@ -426,3 +450,38 @@ def test_a_released_model_saves() -> None:
     )
 
     assert resp.status_code == 200
+
+
+# ---- a step's own chain (`FRD-302` FR-7) ---------------------------------------------------
+
+
+def test_a_step_chain_of_released_models_saves() -> None:
+    """The ordinary case: a redactor with a second model the use case also trusts."""
+    resp = _save(
+        [
+            {
+                "type": "pii_filter",
+                "config": {"model": "strong-1", "fallback_models": ["cheap-1"]},
+            }
+        ],
+        releases=("strong-1", "cheap-1"),
+    )
+
+    assert resp.status_code == 200, resp.data
+
+
+@pytest.mark.parametrize(
+    ("chain", "why"),
+    [
+        ([f"m{index}" for index in range(20)], "longer than the chain is allowed to be"),
+        (["x" * 200], "a name longer than a model name can be"),
+        ("cheap-1", "a string where a list belongs"),
+        ([{"model": "cheap-1"}], "an object where a name belongs"),
+    ],
+)
+def test_a_step_chain_is_bounded_where_it_is_authored(chain: object, why: str) -> None:
+    """Same bounds as the dispatch chain, because it is the same thing one level in — and this
+    read-model is executed by the gateway on every request of the use case (`ADR-0007`)."""
+    resp = _save([{"type": "pii_filter", "config": {"model": "m", "fallback_models": chain}}])
+
+    assert resp.status_code == 400, why

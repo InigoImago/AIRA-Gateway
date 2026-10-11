@@ -96,6 +96,12 @@ hop of the fallback chain (`FRD-110`, `FRD-112` §5.3).
 
 **A fallback chain must be capability-homogeneous for the request at hand.** If the primary can read
 the PDF and the fallback cannot, the fallback is **skipped**, not used with the document dropped.
+
+> **Widened by `ADR-0032` (2026-10-11).** This section said what a chain must not do and left who
+> gets one to the implementation, which gave it to one verb: a streamed request resolved a single
+> adapter, and a pipeline step asked the one model it named. Both are chains now, under the same
+> rule, and a candidate that was tried and failed is on the audit row beside the ones a condition
+> excluded.
 And if no candidate qualifies, the request **fails**.
 
 The reasoning is worth stating plainly, because the tempting behaviour is the opposite. Falling back

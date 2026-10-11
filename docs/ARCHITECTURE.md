@@ -239,7 +239,9 @@ In words, and the order is the point:
    recorded, and a step that cannot decide blocks by default.
 4. **Which model will actually serve it?** The catalogue says who hosts the named model and what it
    can do. A candidate that cannot honour the request — no tools, no document reading, wrong region
-   — is skipped **by name**, never sent a silently reduced request.
+   — is skipped **by name**, never sent a silently reduced request. A use case may name further
+   models to try, and that chain applies to a streamed answer as well, for as long as nothing has
+   reached the caller (`FRD-302`); each pipeline step has its own chain for the model it asks.
 5. **Budget is reserved against the model routing chose**, not the one the caller typed, and
    reserved *before* the call so two simultaneous requests cannot both fit into room for one.
 6. **The call goes out** in the vendor's own wire format. This is the only place in the system that
@@ -481,7 +483,7 @@ Read it in the order a request travels.
 | `auth/` | Turning a credential into an attribution: API keys, OIDC, group grants, and the failed-attempt bound. |
 | `api/gemini/`, `api/kira/` | The two **surfaces**. They parse a wire format and render an answer, and do nothing else. |
 | `api/serving/` | **The order.** `prepare.py` owns the pre-dispatch sequence, `accounting.py` owns every exit — served, refused, or abandoned. A surface calls these; it never assembles the steps itself. |
-| `pipeline/` | The per-use-case steps and the dispatch chain: `engine/` runs the configured steps, `classifiers/` are the steps themselves (injection, routing, redaction), `dispatch.py` picks a model that can actually serve the request. |
+| `pipeline/` | The per-use-case steps and the chains: `engine/` runs the configured steps (each with its own chain of models to ask), `classifiers/` are the steps themselves (injection, routing, redaction), `dispatch.py` picks a model that can actually serve the request — a finished answer or a stream, through one candidate walk. |
 | `catalog.py`, `requirements.py`, `residency.py`, `thinking.py`, `embedding.py`, `attachments.py`, `audio.py` | What a model may be asked for, and what it must be able to do to be asked. One question per module. |
 | `ratelimit/`, `budgets/`, `scopes.py`, `pricing.py` | How fast and how much. `scopes.py` holds the scoping rule once, because budgets and limits scope identically. |
 | `upstreams/` | **The only code that knows a vendor exists.** `vertex/`, `foundry/`, `openai/` per platform, each split into a transport (how to reach it) and a dialect (what the wire looks like); `mock.py` is the offline double. An architecture test fails if a vendor name appears anywhere else. |

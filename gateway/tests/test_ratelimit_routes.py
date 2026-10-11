@@ -227,6 +227,28 @@ async def test_an_unexpected_error_still_leaves_a_row() -> None:
     ]
 
 
+def test_a_release_that_fails_does_not_replace_the_refusal_the_caller_is_owed() -> None:
+    """Cleanup must not become the answer. The allowance is given back at the refusal boundary
+    (`FRD-302` FR-6a put every streamed outage on that path), and a ledger that is itself having a
+    bad minute would otherwise turn a `503` the caller can act on into a `500` they cannot — on
+    exactly the requests where the ledger is most likely to be struggling.
+    """
+
+    class _CannotRelease(_TrackingBudgets):
+        async def release(self, reservation):  # noqa: ANN001, ANN201
+            raise RuntimeError("the ledger is unreachable")
+
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.providers = ProviderRegistry([_FailingProvider()])
+    app.state.budgets = _CannotRelease()
+
+    with TestClient(app) as client:
+        response = client.post("/v1beta/models/mock-1:streamGenerateContent", json=_BODY)
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["status"] == "UNAVAILABLE"
+
+
 def test_a_failed_stream_releases_rather_than_charging_for_nothing() -> None:
     """A stream that produced no output consumed nothing. Settling would still book a request
     against a request-limited budget, so a provider outage would eat the allowance."""

@@ -5,6 +5,122 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Every model access is a chain, including the two that had reasons not to be (2026-10-11)
+
+The owner asked where a fallback model is defined for the case where a request *does not get
+through*. There is a chain — `fallback_models`, per use case, every condition applied at every hop
+— and two model accesses were not using it.
+
+**A streamed request resolved exactly one adapter.** The reason was written down and was true: a
+stream cannot fall back once its first chunk is out. It was then read as *a stream cannot fall
+back*, and that reading sat in a module docstring, in a structural test's exemption list and in
+`ADR-0012` §3 for two months. What it cost is not subtle — an interactive caller streams, so a
+model that was rate-limited for ten minutes took every streamed request of that use case with it,
+while the same request sent to `:generateContent` was served by the second candidate.
+
+**A pipeline step asked the one model its configuration named.** A `pii_filter` has no lesser
+version of itself, so an outage at one vendor refused every request of its use case, by design and
+by default, while a second model that could have done the same job sat in the same catalogue.
+
+Both are chains now (`FRD-302`, `ADR-0032`), and the FRD exists at last: `FRD-300`, `FRD-304`,
+`ROADMAP` and `PRD` had pointed at `FRD-302` since Phase 3 and nothing was there.
+
+**What made the stream possible is one fact about async generators**: a streaming adapter issues
+its HTTP request on the first `__anext__`, not when the iterator is built. So `stream_with_fallback`
+*opens* the chain rather than awaiting it — conditions, open, pull one chunk — and hands the
+surface the chunk it already has. Pulling that chunk is both the proof a candidate can serve and
+the last moment at which replacing it is invisible.
+
+Two things followed that are improvements on their own:
+
+- **a streamed request nothing can serve is a status again.** It used to be `200` and the body
+  `[]`, because the response had already begun — indistinguishable from a model with nothing to
+  say. The test that pinned that behaviour had the reason for changing it in its own comment, which
+  is the second time in two days (`v0.1.1`'s title) that the sentence explaining a wart was the
+  sentence that described the fix.
+- **a reservation is given back.** The allowance is reserved at the end of the pre-dispatch
+  sequence and `accounting`'s `hold` releases it — but only for refusals raised *inside* that
+  block. Everything refused between the reservation and dispatch kept it until it expired: a
+  streamed outage, an embedding whose model is not released, a model the catalogue cannot address.
+  Rare one at a time, and an outage is never one at a time. `release_reservation` is called from
+  the refusal boundary both surfaces share and from the unexpected-error handler; it is idempotent,
+  because the ordinary path has already resolved the reservation.
+
+**The step chain's rule is reachability and nothing else.** A model that answered has answered: an
+`UNDETERMINED` verdict or a rewrite too short to trust stops the chain. A filter that kept asking
+until some model agreed would be a filter that gets weaker exactly as things get worse — so
+`Classification`, `Routing` and `Redaction` each carry `reached`, and that field is what the chain
+reads. A field rather than an inference from a missing `ModelCall`, because the *heuristic*
+classifier has no call either and would have been sent down a chain it never asked for.
+
+**The release check is what makes a step's chain safe**, and it is load-bearing in the literal
+sense: a step's own model call applies no dispatch condition precisely because an administrator
+wrote the name and the serializer validated it (`test_every_dispatch_applies_the_conditions.py`
+says so in its exemption). Both planes read the new names — Management's `_models_named_in` and the
+gateway's `models_named_in` — and the test that compares them had to change too: it **excluded
+`fallback_models` by name**, which was right while the key lived at one level and would have hidden
+exactly this drift now that it lives at two.
+
+**The console had to grow the field**, and its own guard said so before I did:
+`test_every_pipeline_setting_the_gateway_obeys_can_be_authored` failed the moment the engine read
+a key the builder could not set — *"whatever the engine's default is becomes the behaviour of every
+use case, chosen by nobody"*. While adding the picker, three dropdowns turned out to promise a
+default the engine removed on 2026-08-27: *"— first released model —"*, which was the behaviour
+where a step with no model asked the first model in the registry. The labels now say what each step
+actually does without one (patterns, block, the default target).
+
+Measured and proven:
+
+- 26 new cases in two files, plus the DOM-level console specs and the serializer's bounds;
+- mutations `MF1`–`MF16`, all caught — **978 properties**. Two were found by running them: `MF3`
+  survived because the double was an async generator, which is *finished* by the exception it
+  raises, so its `finally` ran whether or not the chain closed anything; `MF16` survived because
+  nothing asserted which model a streamed attempt marks its span with;
+- four existing anchors (`TC47`, `D3`, `D4`, `MC6`) became ambiguous the moment a second chain
+  existed in the same file, and the harness refused to run rather than mutate whichever came
+  first — the guard behaving exactly as intended.
+
+**Then the tests were asked to be thorough rather than sufficient, and one of them found a
+defect.** The chain hands the surface a *wrapper* — a generator yielding the proven chunk and then
+the adapter's own — and a caller who hangs up closes the iterator they are reading, which is the
+wrapper. Closing an async generator does not close the one it was iterating: `async for` makes no
+such promise. So a disconnect left the upstream's response open until the garbage collector reached
+it, a leak the surfaces had been careful about for as long as they streamed, removed by inserting a
+layer. The `finally` that closes the inner stream is three lines; finding it took writing the test
+that asks a caller to stop reading.
+
+What else the extended round added, in order of how much it would have hurt to miss:
+
+- **the comparison test.** `dispatch_with_fallback` and `stream_with_fallback` are run against the
+  same registry over twelve failure shapes and must agree on the choice, the reasons and the
+  refusal. `LESSONS.md` §7 asks for exactly this when two things are meant to be alike — and two
+  suites, one each, is how the streamed verb came to apply no condition at all in the first place.
+  Proven by diverging one on purpose (a region failure reclassified as an attempt): two cases red.
+- **the embedding branch**, because it is the one this project has forgotten before: a redactor's
+  chain has to reach `run_over_texts` too, and now a test says so.
+- **the dry run's approval check** against a step's chain. A chain the installation's approval
+  could not see would be `allow_check`'s removal undone one field along, and the dry run is the
+  endpoint that *calls* those models.
+- **the money**: a streamed fallback is priced as the model that answered. Two models a tenfold
+  price apart, so a row priced from the wrong one is unmistakable.
+- **the caller's notice** (`FRD-309`) still leading a fallback's stream — two features that had
+  never met.
+- **a release that fails** must not replace the refusal it was cleaning up after: a `503` the
+  caller can act on, not a `500` they cannot.
+- and the cases coverage asked for: an iterator with no `aclose`, an `aclose` that raises, an
+  empty name in a chain, a chain inside its bounds.
+
+Two guards in `steps.py` turned out to be unreachable once the chain owned the lookup — a step's
+"no model" is decided in one place now — and an unreachable guard is a line no test can hold, so
+they are gone rather than left as coverage nobody can earn. `pipeline/dispatch.py`,
+`pipeline/config.py`, the three classifiers and `api/serving/accounting.py` are at **100%**,
+statements and branches.
+
+Still open, stated rather than discovered later: nothing falls back **after** the first chunk,
+nothing retries the same model, and a chain costs its candidates' timeouts in series.
+
+---
+
 ## The gate that stopped `v0.1.2` was a test reading this repository's tags (2026-10-11)
 
 `v0.1.2` was pushed and published nothing. Runs #91 and #92 failed in the Python job, on one test,

@@ -223,6 +223,28 @@ async def _settle_and_record(
 # == refused before dispatch ======================================================================
 
 
+async def release_reservation(request: Request) -> None:
+    """Give back an allowance reserved for a request that was never dispatched.
+
+    `accounting`'s `hold` covers every refusal raised **inside** the block. This covers the window
+    before it: the allowance is reserved at the end of the pre-dispatch sequence (`FRD-126`), and
+    anything refused between that point and dispatch used to keep it until it expired — a streamed
+    request whose chain had nothing left to offer (`FRD-302` FR-6a), an embedding whose model is
+    not released, a model the catalogue cannot address. Rare one at a time, and an outage is not
+    one at a time: it is every request of that use case, each holding a slice of the month.
+
+    Idempotent, because the ordinary path has already resolved the reservation and a refusal then
+    reaches this as well. A failure here never replaces the refusal the caller is owed.
+    """
+    reservation = getattr(request.state, "reservation", None)
+    if reservation is None or reservation.resolved:
+        return
+    try:
+        await budgets_of(request).release(reservation)
+    except Exception:  # noqa: BLE001 — see above
+        _log.error("reservation_not_released", exc_info=True)
+
+
 async def record_refusal(
     request: Request, trail: AuditTrail, exc: Exception, *, status: int, started: float
 ) -> None:
@@ -236,6 +258,9 @@ async def record_refusal(
     A failed write never turns a correct refusal into a 500 — that would invite the retry storm a
     limit exists to prevent (`FRD-122` FR-7) — and it is never silent either.
     """
+    # Before the attribution check: an allowance is given back whether or not the refusal is the
+    # kind that leaves a row.
+    await release_reservation(request)
     if attribution_of(request) is None:
         return
     try:

@@ -213,10 +213,18 @@ to a use case exactly as a request does — and it asks the installation's own a
 ([`FRD-307`](features/FRD-307-model-catalog.md)) of every model it will *call*, which the release
 alone could not: the release has a "nobody has told us" state and approval has none.
 
-**A step reaches only the model written in its own configuration.** One that names none used to
+**A step reaches only the models written in its own configuration.** One that names none used to
 borrow the first model in the registry — a model nobody chose, which no gate covers, since none of
 these conditions sits on a step's *own* call. It degrades instead: the redactor blocks, the LLM
 filter falls back to the heuristic, the router uses its `default_model`.
+
+Since 2026-10-11 a step may name **more than one**: its own `fallback_models` chain
+([`FRD-302`](features/FRD-302-model-fallback.md) FR-7), tried in order where the model before it
+could not be *reached*. Reached, not agreeable — a model that answered `UNDETERMINED`, or returned
+a rewrite too short to trust, has answered and the chain stops, because a filter that kept asking
+until some model agreed would get weaker exactly when things get worse. What a chain adds is a
+candidate; what it never removes is the safe direction above. Every name in it is checked against
+the release like every other, which is what lets a step's own call apply no dispatch condition.
 
 Then a `fallback_models` chain. **A pipeline model call is a first-class request**: it leaves its own
 audit row named `pipeline:<step>`, priced, and booked against the budget **as a request** — it
@@ -263,15 +271,28 @@ graph LR
     c1 -->|"residency · media types ·<br/>schema · sampling · thinking"| ok1["dispatch"]
     c1 -->|"fails"| skip1["skip, keep the reason"]
     skip1 --> c2{"candidate 2"}
-    c2 --> ok2["dispatch"]
+    c2 --> ok2["dispatch<br/><i>streamed: first chunk proves it</i>"]
     c2 -->|"fails"| none["<b>NoCapableModel</b><br/>400 FAILED_PRECONDITION"]
 
     style none fill:#dc2626,color:#fff
 ```
 
 A candidate that fails a condition is **skipped with its reason kept**, and the reasons reach the
-audit row. An exhausted chain is a **400 FAILED_PRECONDITION**, not a 502: "every candidate was
-excluded" is fixable by an operator, an outage is not.
+audit row — as does a candidate that was *tried* and failed, with what the upstream said
+([`FRD-302`](features/FRD-302-model-fallback.md) FR-11): until `ADR-0032` the row could say that a
+fallback had answered and never why the model before it had not. An exhausted chain is a
+**400 FAILED_PRECONDITION**, not a 502: "every candidate was excluded" is fixable by an operator,
+an outage is not.
+
+**A streamed request uses this chain too**, and did not until 2026-10-11 — it resolved exactly one
+adapter, so the availability a second model is configured for did not exist on the verb every chat
+client uses. The chain is *opened* rather than awaited: for each candidate in turn, the conditions,
+then the upstream stream, then its **first chunk** — the `__anext__` that issues the HTTP request.
+A candidate that fails before producing that chunk is passed over; the one that produced it owns
+the rest of the answer. Two things follow. The response does not begin until a model has produced
+something, so a streamed request nothing can serve is a **status** rather than a `200` whose body
+is an empty array; and once a chunk is on the wire the stream is **committed**, because text from
+two models spliced into one answer would be worse than the failure it hid.
 
 Five conditions share this mechanism rather than each inventing one: **residency**
 (one policy for every cloud), **media types**, the **schema** capability, **thinking**, and

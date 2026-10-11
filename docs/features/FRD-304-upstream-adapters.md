@@ -20,8 +20,8 @@ protocol; since our surface is already Gemini-shaped (FRD-100), the mapping is n
 - Credentials from **Vault**/env (`google_api_key`); provider registered only when configured.
 
 **Non-Goals**
-- Per-use-case model **routing/rerouting** (FRD-301), **fallback** (FRD-302), the pipeline engine
-  (FRD-300), Microsoft Foundry adapter, multimodal/tools. Those are separate.
+- Per-use-case model **routing/rerouting** and the pipeline engine (FRD-300), **fallback**
+  (FRD-302), Microsoft Foundry adapter, multimodal/tools. Those are separate.
 
 ## 3. Functional Requirements
 - **FR-1 generate**: map canonical → Gemini request body, `POST /models/{model}:generateContent?key=…`,

@@ -35,6 +35,13 @@ class Redaction:
     call: ModelCall | None = None
     #: Why there is no text, for the audit row and the dry run's screen.
     failure: str | None = None
+    #: Whether the model was **reached** — ``False`` only where the call itself failed. This is
+    #: what a step's chain moves on for (`FRD-302` FR-8): a model that answered has answered, even
+    #: when the answer is *undetermined*, and a chain that tried the next one would be a filter
+    #: shopping for a verdict. A field rather than an inference from a missing `ModelCall`: the
+    #: heuristic classifier has no call either, and reading that as "not reached" would send it
+    #: down a chain it never asked for.
+    reached: bool = True
 
 
 class LlmRedactor:
@@ -82,7 +89,11 @@ class LlmRedactor:
                     )
                 )
         except UpstreamError as exc:
-            return Redaction(None, failure=f"the redactor could not be reached ({exc.message})")
+            return Redaction(
+                None,
+                failure=f"the redactor could not be reached ({exc.message})",
+                reached=False,
+            )
 
         call = ModelCall(step="pii_filter", model=self._model, usage=response.usage)
         # Stripped even though the instruction forbids echoing them: models differ, and the markers

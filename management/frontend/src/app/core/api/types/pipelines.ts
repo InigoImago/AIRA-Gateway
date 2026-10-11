@@ -38,6 +38,13 @@ export interface StepConfig {
   model?: string; // classifier model
   categories?: RouteCategory[];
   default_model?: string;
+  // every model-backed step (`FRD-302` FR-7)
+  /**
+   * This step's own chain, tried in order where `model` cannot be **reached** — not where it
+   * answers something the operator would rather it had not. Distinct from the use case's
+   * `fallback_models`, which is the chain that serves the caller.
+   */
+  fallback_models?: string[];
 }
 
 export interface PipelineStep {

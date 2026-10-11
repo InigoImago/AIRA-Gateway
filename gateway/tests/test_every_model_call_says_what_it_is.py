@@ -7,15 +7,17 @@ produces: the caller's identity and the model's name, on the record the delivery
 as a model access. Without it that record is a method, a status and a URL, which on an
 OpenAI-compatible upstream does not even name the model — the model travels in the body.
 
-**Why it is a test and not a convention.** There are seven such call sites, spread across dispatch,
-two streaming surfaces, two embedding surfaces, three pipeline classifiers and the incident probe.
+**Why it is a test and not a convention.** There are eight such call sites, spread across the two
+forms of the dispatch chain, two embedding surfaces, three pipeline classifiers and the incident
+probe. The streaming surfaces are no longer among them: since `FRD-302` FR-6 both reach their
+upstream through `stream_with_fallback`, which marks each attempt where the request is issued.
 This project has now paid twice for the shape *a fact applied at each site is missing from one of
 them* — `set_attribution` (`FRD-105`) and `prepare_for_dispatch` (`FRD-126`) both exist because of
 it. Seven sites and a convention is six sites and a convention.
 
-Unlike those two, the act **cannot** be extracted into one function: `dispatch_with_fallback` needs
-it per attempt, a stream needs it around the iteration rather than the call, and a classifier is a
-different purpose. So the sites stay, and this fails when an eighth appears without the mark.
+Unlike those two, the act **cannot** be extracted into one function: both forms of the chain need
+it per attempt, and a classifier is a different purpose. So the sites stay, and this fails when a
+ninth appears without the mark.
 
 It reads source, like `test_surface_layering.py`. A behavioural equivalent would have to drive
 every one of the seven paths with a live upstream to notice a missing mark on one of them, which

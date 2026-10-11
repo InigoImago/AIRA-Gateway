@@ -285,8 +285,11 @@ MUTATIONS = [
         "TC47",
         "an address the operator got wrong is a refusal naming it, not a server error",
         "gateway/src/aira_gateway/pipeline/dispatch.py",
-        "        except (AmbiguousModel, RegionNotAllowed) as exc:",
-        "        except NotImplementedError as exc:",
+        # Widened to the comment below it when `stream_with_fallback` gained the same `except`:
+        # an anchor that matches twice is one the harness refuses, and rightly — it would mutate
+        # whichever came first and report about the other.
+        "        except (AmbiguousModel, RegionNotAllowed) as exc:\n            # A candidate",
+        "        except NotImplementedError as exc:\n            # A candidate",
         "gateway/tests/test_no_silent_drop.py",
     ),
     Mutation(
@@ -1069,9 +1072,10 @@ MUTATIONS = [
         "P4",
         "the fallback chain tries the requested model first",
         "gateway/src/aira_gateway/pipeline/dispatch.py",
-        "candidates = [request.model, *[m for m in fallback_models if m != request.model]]",
-        "candidates = [*[m for m in fallback_models if m != request.model], request.model]",
-        "gateway/tests/test_pipeline_dispatch.py",
+        "    names = [request.model, *[model for model in fallback_models if model != request.model]]",
+        "    names = [*[model for model in fallback_models if model != request.model], request.model]",
+        "gateway/tests/test_pipeline_dispatch.py"
+        " gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
     ),
     Mutation(
         "P5",
@@ -1713,16 +1717,16 @@ MUTATIONS = [
         "D3",
         "an exhausted chain is a precondition failure, not an upstream outage",
         "gateway/src/aira_gateway/pipeline/dispatch.py",
-        "    raise NoCapableModel(skipped)",
-        '    raise UpstreamError("No provider available.")',
+        "    # Everything else is a chain that had nothing to offer.\n    if last_error is not None:\n        raise last_error\n    raise NoCapableModel(skipped)",
+        '    # Everything else is a chain that had nothing to offer.\n    if last_error is not None:\n        raise last_error\n    raise UpstreamError("No provider available.")',
         REQUIREMENTS,
     ),
     Mutation(
         "D4",
         "an upstream that was tried and failed is still reported as an outage",
         "gateway/src/aira_gateway/pipeline/dispatch.py",
-        "    if last_error is not None:\n        raise last_error",
-        "    if False:\n        raise last_error",
+        "    # Everything else is a chain that had nothing to offer.\n    if last_error is not None:\n        raise last_error",
+        "    # Everything else is a chain that had nothing to offer.\n    if False:\n        raise last_error",
         f"{REQUIREMENTS} gateway/tests/test_pipeline_dispatch.py",
     ),
     Mutation(
@@ -1737,7 +1741,7 @@ MUTATIONS = [
         "D6",
         "the candidates a chain passed over reach the audit trail",
         "gateway/src/aira_gateway/api/gemini/routes.py",
-        "        trail.passed_over(dispatched.skipped)",
+        "        trail.passed_over(dispatched.skipped, dispatched.failed)",
         "        pass",
         REQUIREMENTS,
     ),
@@ -2934,8 +2938,8 @@ MUTATIONS = [
         # Re-anchored: `FRD-125b` moved this return into `classify_text`, and the harness reported
         # the property as undefended rather than pretending otherwise — which is the behaviour that
         # makes "a mutation whose anchor moved protects nothing" checkable instead of aspirational.
-        "            return Classification(Verdict.UNDETERMINED)",
-        "            return Classification(Verdict.CLEAN)",
+        "            return Classification(Verdict.UNDETERMINED, reached=False)",
+        "            return Classification(Verdict.CLEAN, reached=False)",
         CLASSIFIERS,
     ),
     Mutation(
@@ -4634,8 +4638,8 @@ MUTATIONS = [
         "QA2",
         "a streamed request is answered by the model routing chose, not the one it named",
         "gateway/src/aira_gateway/api/gemini/routes.py",
-        "    provider = await resolve_direct_target(request, canonical.model, canonical)",
-        "    provider = registry_of(request).provider_for(canonical.model)  # pre-routing lookup",
+        "    return await _stream_response(\n        request,\n        prepared.canonical,",
+        '    return await _stream_response(\n        request,\n        prepared.canonical.model_copy(update={"model": model}),',
         STREAM_CONDITIONS,
     ),
     Mutation(
@@ -5402,8 +5406,8 @@ MUTATIONS = [
         "RB3",
         "a fallback candidate is addressed where the catalogue puts it, not where the primary is",
         "gateway/src/aira_gateway/pipeline/dispatch.py",
-        '                update["addressing"] = routing.addressing',
-        "                pass",
+        '            update["addressing"] = routing.addressing',
+        "            pass",
         "gateway/tests/test_pipeline_dispatch.py",
     ),
     Mutation(
@@ -6273,33 +6277,31 @@ MUTATIONS = [
         "PD1",
         "a redactor that names no model blocks rather than borrowing the first in the registry",
         "gateway/src/aira_gateway/pipeline/engine/steps.py",
-        '        model = config.get("model")\n'
-        "        provider = await self._provider_for(model, declaration_of)\n"
-        "        if provider is None or not model:",
-        '        model = config.get("model") or self._registry.models()[0].name\n'
-        "        provider = await self._provider_for(model, declaration_of)\n"
-        "        if provider is None or not model:",
+        "        candidates = await self._models_for(config, declaration_of)\n        if not candidates:",
+        "        candidates = await self._models_for(config, declaration_of) or [\n"
+        "            (self._registry.models()[0].name, self._registry.provider_for(self._registry.models()[0].name))\n"
+        "        ]\n"
+        "        if not candidates:",
         PII,
     ),
     Mutation(
         "PD2",
         "an LLM filter that names no model falls back to the heuristic, not to any model at hand",
         "gateway/src/aira_gateway/pipeline/engine/steps.py",
-        '        if config.get("mode") == "llm":\n            model = config.get("model")',
+        '        if config.get("mode") == "llm":\n\n            async def ask',
         '        if config.get("mode") == "llm":\n'
-        '            model = config.get("model") or self._registry.models()[0].name',
+        '            config = {**config, "model": config.get("model") or self._registry.models()[0].name}\n'
+        "\n            async def ask",
         CLASSIFIERS,
     ),
     Mutation(
         "PD6",
         "a router that names no classifier is not asked, rather than asking any model at hand",
         "gateway/src/aira_gateway/pipeline/engine/steps.py",
-        '        model = config.get("model")\n'
-        "        provider = await self._provider_for(model, declaration_of)\n"
-        "        if provider is None or model is None:",
-        '        model = config.get("model") or self._registry.models()[0].name\n'
-        "        provider = await self._provider_for(model, declaration_of)\n"
-        "        if provider is None or model is None:",
+        "        answered = await self._asked(await self._models_for(config, declaration_of), ask)\n        if answered is None:",
+        '        config = {**config, "model": config.get("model") or self._registry.models()[0].name}\n'
+        "        answered = await self._asked(await self._models_for(config, declaration_of), ask)\n"
+        "        if answered is None:",
         PIPELINE,
     ),
     Mutation(
@@ -6559,8 +6561,8 @@ MUTATIONS = [
         "MC6",
         "a fallback chain marks each attempt, so three tried models leave three named records",
         "gateway/src/aira_gateway/pipeline/dispatch.py",
-        '            with model_call_span(model, purpose="serve"):',
-        '            with model_call_span(request.model, purpose="serve"):',
+        '            with model_call_span(model, purpose="serve"):\n                response',
+        '            with model_call_span(request.model, purpose="serve"):\n                response',
         "gateway/tests/test_pipeline_dispatch.py",
     ),
     Mutation(
@@ -8666,6 +8668,156 @@ MUTATIONS = [
         'git tag -a "$(VERSION)" -F .git/AIRA_RELEASE_NOTES --cleanup=strip',
         'git tag -a "$(VERSION)" -F .git/AIRA_RELEASE_NOTES',
         "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
+    ),
+    # ---- every model access is a chain (2026-10-11, `FRD-302`, `ADR-0032`) ---------------------
+    #
+    # **Two model accesses had no chain and the reasons had outlived themselves.** A streamed
+    # request resolved one adapter, because the chain returns a finished response; a pipeline step
+    # asked the one model its configuration named, so a `pii_filter` whose redactor was down
+    # refused every request of its use case. Each mutation here puts one of those back.
+    Mutation(
+        "MF1",
+        "a stream tries the next candidate when one fails before its first chunk",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "        except UpstreamError as exc:\n            last_error = exc\n            failed.append(Attempted(model, _why(exc)))\n            await _closed(chunks, model)",
+        "        except UpstreamError:\n            raise",
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF2",
+        "a stream that has delivered a chunk is committed to the model that sent it",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "    try:\n        yield first\n        async for chunk in rest:\n            yield chunk",
+        "    try:\n        yield first\n        async for chunk in rest:\n            yield chunk\n    except UpstreamError:\n        return",
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF3",
+        "the stream of a candidate being passed over is closed",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        '    close = getattr(chunks, "aclose", None)\n    if close is None:\n        return',
+        '    close = getattr(chunks, "aclose", None)\n    if close is not None:\n        return',
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF4",
+        "a stream that ends with no chunk at all has answered",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "        except StopAsyncIteration:\n            return Streaming(model, index, _nothing(), skipped, failed)",
+        "        except StopAsyncIteration:\n            continue",
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF5",
+        "every candidate of either chain is asked the conditions",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "            refusal = await permits(model)\n            if refusal is not None:",
+        "            refusal = await permits(model)\n            if refusal is None:",
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF6",
+        "a streamed answer is recorded under the model that produced it",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    served = streamed.model",
+        "    served = canonical.model",
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF7",
+        "the predecessor's stream also names the model that answered",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "    served = streamed.model",
+        "    served = canonical.model",
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF8",
+        "a candidate that was tried and failed is on the audit row",
+        "gateway/src/aira_gateway/audit.py",
+        '        for entry in failed:\n            self.decisions.append(\n                {"step": "dispatch", "action": "failed", "to": entry.model, "why": entry.reason}\n            )',
+        "        return",
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF9",
+        "an allowance reserved for a request that was never dispatched is given back",
+        "gateway/src/aira_gateway/api/serving/accounting.py",
+        "    await release_reservation(request)\n    if attribution_of(request) is None:",
+        "    if attribution_of(request) is None:",
+        "gateway/tests/test_ratelimit_routes.py",
+    ),
+    Mutation(
+        "MF10",
+        "a step asks the chain its own configuration names",
+        "gateway/src/aira_gateway/pipeline/engine/steps.py",
+        '        named = [config.get("model"), *(config.get("fallback_models") or [])]',
+        '        named = [config.get("model")]',
+        "gateway/tests/test_a_step_asks_a_chain_of_models.py",
+    ),
+    Mutation(
+        "MF11",
+        "a step's chain stops at the first model it reached",
+        "gateway/src/aira_gateway/pipeline/engine/steps.py",
+        "            if answer.reached:\n                break",
+        "            if not answer.reached:\n                break",
+        "gateway/tests/test_a_step_asks_a_chain_of_models.py",
+    ),
+    Mutation(
+        "MF12",
+        "a step's chain is asked once per model, however often it is written",
+        "gateway/src/aira_gateway/pipeline/engine/steps.py",
+        "            if not model or model in seen:",
+        "            if not model:",
+        "gateway/tests/test_a_step_asks_a_chain_of_models.py",
+    ),
+    Mutation(
+        "MF13",
+        "the gateway re-applies Management's bound on a step's chain",
+        "gateway/src/aira_gateway/pipeline/config.py",
+        "            str(name)[:MAX_MODEL_LENGTH] for name in chain[:MAX_FALLBACK_MODELS] if name",
+        "            str(name) for name in chain if name",
+        "gateway/tests/test_a_step_asks_a_chain_of_models.py",
+    ),
+    Mutation(
+        "MF14",
+        "every model a step's chain names is checked against the use case's release",
+        "management/backend/src/aira_management/apps/pipelines/serializers.py",
+        '        for fallback in config.get("fallback_models") or []:\n            if fallback:\n                named.append(str(fallback))',
+        "        pass",
+        "management/backend/tests/test_pipelines.py tools/tests/test_both_planes_find_the_same_models_in_a_pipeline.py",
+    ),
+    Mutation(
+        "MF15",
+        "a streamed chain with nothing to offer is a configuration fault, not an outage",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "            return Streaming(model, index, _rejoined(first, chunks, model), skipped, failed)\n\n    if last_error is not None:\n        raise last_error\n    raise NoCapableModel(skipped)",
+        '            return Streaming(model, index, _rejoined(first, chunks, model), skipped, failed)\n\n    if last_error is not None:\n        raise last_error\n    raise UpstreamError("No provider available.")',
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF16",
+        "a streamed attempt is marked with the model it reached for",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        '            with model_call_span(model, purpose="serve"):\n                chunks',
+        '            with model_call_span(request.model, purpose="serve"):\n                chunks',
+        "gateway/tests/test_every_model_call_says_what_it_is.py gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py",
+    ),
+    Mutation(
+        "MF17",
+        "a caller who stops reading releases the stream that answered them",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "    finally:\n        await _closed(rest, model)",
+        "    finally:\n        pass",
+        "gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py gateway/tests/test_upstream_pools_are_closed.py",
+    ),
+    Mutation(
+        "MF18",
+        "a dry run asks the installation's approval of the models a step's chain would call",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        '            named.append(str(config["model"]))\n            named.extend(str(name) for name in config.get("fallback_models") or [] if name)',
+        '            named.append(str(config["model"]))',
+        "gateway/tests/test_pipeline_dryrun.py",
     ),
 ]
 

@@ -60,9 +60,9 @@ from aira_gateway.embedding import (
     EMBEDDING_AGGREGATION_NOT_SUPPORTED,
     EmbeddingRejected,
 )
-from aira_gateway.pipeline.dispatch import dispatch_with_fallback
+from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
-from aira_gateway.telemetry import model_call_chunks, model_call_span
+from aira_gateway.telemetry import model_call_span
 
 router = APIRouter(tags=["kira"], prefix=BASE)
 
@@ -95,7 +95,7 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             )
             answer = annotate(canonical, dispatched.response, prepared, trail)
             trail.served_by(answer.model, dispatched.candidate_index)
-            trail.passed_over(dispatched.skipped)
+            trail.passed_over(dispatched.skipped, dispatched.failed)
             check_structured_result(canonical, answer)
             payload = to_chat_response(answer).model_dump()
             acct.served(answer.model, answer.usage, payload)
@@ -112,8 +112,9 @@ async def streaming_chat(
 
     ``completed`` still carries the whole answer and the usage, so a client that reads only the
     terminal event is unaffected by the updates. A stream cannot fall back once its first chunk is
-    out, so the conditions a candidate must meet are checked before the response exists
-    (`resolve_direct_target`), where a refusal can still be a status.
+    out — but it can until then, so the chain is **opened** before the response exists
+    (`stream_with_fallback`, `FRD-302` FR-6): the candidates meet every condition there, and a
+    chain with nothing left to offer is still a status rather than a stream that stops.
     """
     started = time.monotonic()
     trail = AuditTrail(operation="streaming-chat", api="kira")
@@ -121,9 +122,21 @@ async def streaming_chat(
         prepared = await _prepare(request, principal, trail)
         canonical = prepared.canonical
         assert canonical is not None
-        provider = await resolve_direct_target(request, canonical.model, canonical)
+        streamed = await stream_with_fallback(
+            providers_of(request),
+            canonical,
+            prepared.fallbacks,
+            permits=await requirements_for(request, canonical),
+            routing_of=await declared_routing(request),
+        )
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
+
+    # Recorded here rather than at the end of the stream: this is where it is known, and the
+    # terminal event is not reached by a stream the caller abandons.
+    served = streamed.model
+    trail.served_by(served, streamed.candidate_index)
+    trail.passed_over(streamed.skipped, streamed.failed)
 
     async def events() -> AsyncIterator[str]:
         async with accounting(
@@ -139,9 +152,9 @@ async def streaming_chat(
             # Whether the stream ended on its own — answered, or stopped by a refusal.
             finished = False
             try:
-                async for chunk in model_call_chunks(
-                    canonical.model, provider.stream_generate(canonical)
-                ):
+                # The first chunk is already in hand; the chain marked its model call where the
+                # request was issued.
+                async for chunk in streamed.chunks:
                     if chunk.usage is not None:
                         usage = chunk.usage
                     if chunk.finish_reason:
@@ -163,13 +176,13 @@ async def streaming_chat(
                 if not finished and usage is not None:
                     # The caller left mid-answer after the upstream reported usage: that much was
                     # spent and reached them, so it is settled — and recorded as `499`.
-                    acct.abandoned(canonical.model, usage, {"text": "".join(parts)})
+                    acct.abandoned(served, usage, {"text": "".join(parts)})
                 outcome_note = notice.outcome()
                 if outcome_note is not None:
                     trail.decisions.append(outcome_note)
 
             answer = CanonicalResponse(
-                model=canonical.model,
+                model=served,
                 text="".join(parts),
                 usage=usage or CanonicalUsage(prompt_tokens=0, completion_tokens=0),
                 finish_reason=finish_reason,
@@ -182,7 +195,6 @@ async def streaming_chat(
             except KIRA_REFUSALS as exc:
                 acct.failed(502, refusal_outcome(exc))
                 return
-            trail.served_by(answer.model, 0)
             event = completed_event(answer)
             acct.served(answer.model, usage, event["data"])
             yield f"data: {json.dumps(event)}\n\n"

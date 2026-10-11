@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**90 of 96 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**91 of 97 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -60,6 +60,7 @@ status that goes stale in the copy nobody opens.
 | [208](FRD-208-paging-and-use-case-rules.md) | Paging that is real, and a rule somebody can actually change | 2/5 | ✅ Done |
 | [209](FRD-209-access-by-group.md) | Access by group, and one place to search for whoever gets it | 2 | ✅ Done |
 | [300](FRD-300-pipeline-engine.md) | Pre-dispatch pipeline engine (filter · routing · fallback) | 3 | ✅ Done |
+| [302](FRD-302-model-fallback.md) | Model fallback: every model access is a chain | 3 | ✅ Built |
 | [303](FRD-303-pipeline-builder-ui.md) | Pipeline builder UI (clickable graph) | 3 | ✅ Done |
 | [304](FRD-304-upstream-adapters.md) | Real upstream adapter: Google Gemini | 3 | ✅ Done |
 | [306](FRD-306-pipeline-usability.md) | Pipeline rework: LLM routing, explainable filter, dry-run | 3 | ✅ Done |

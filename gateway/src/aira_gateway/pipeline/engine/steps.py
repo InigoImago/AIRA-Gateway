@@ -1,17 +1,22 @@
 """One pipeline step, evaluated: what it did, without deciding what to do about it (FRD-300/306).
 
 Each step type is one method returning a `StepEvaluation`; `runner.PipelineEngine` interprets it for
-the served path and for the dry run alike. A step reaches only the model its own configuration
-names — never a default nobody chose — so the release, approval and residency checks on that name
-hold. A step whose model does not resolve degrades in its own safe direction: the LLM filter to the
-heuristic, the router to its `default_model`, the redactor to a block.
+the served path and for the dry run alike. A step reaches only the models its own configuration
+names — its `model` and its own `fallback_models` chain (`FRD-302` FR-7), never a default nobody
+chose — so the release, approval and residency checks on those names hold. A step whose models
+cannot be reached at all degrades in its own safe direction: the LLM filter to the heuristic, the
+router to its `default_model`, the redactor to a block.
+
+**The chain moves on for reachability and nothing else** (FR-8). A model that answered has
+answered: an `UNDETERMINED` verdict or a rewrite too short to trust stops the chain, because a
+filter that kept asking until some model agreed would be a filter that weakens under load.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from aira_common.models import ThinkingMode
 from aira_gateway.audit import ModelCall
@@ -24,6 +29,8 @@ from aira_gateway.pipeline.classifiers import (
     LlmCategoryRouter,
     LlmInjectionClassifier,
     LlmRedactor,
+    Redaction,
+    Routing,
     Verdict,
 )
 from aira_gateway.pipeline.config import PipelineStep, StepType
@@ -37,6 +44,20 @@ from aira_gateway.upstreams.base import ProviderRegistry
 #: It answers with the whole declaration because the step needs two facts from it: who serves the
 #: model, and whether its thinking may be switched off.
 DeclarationOf = Callable[[str], Awaitable[ModelDeclaration]]
+
+
+class Reachable(Protocol):
+    """An answer that says whether its model was reached — what a step's chain moves on for.
+
+    Read-only on purpose: the chain asks, it does not set. `Classification`, `Routing` and
+    `Redaction` each carry the field, so one helper can walk a chain for all three steps instead of
+    three loops that would drift (the shape `LESSONS.md` §1 lists: a fact applied at each site is
+    the fact missing from one of them).
+    """
+
+    @property
+    def reached(self) -> bool: ...
+
 
 #: What a filter does when its classifier reached no verdict (`FRD-125`). Blocking is the default:
 #: a filter configured to block that serves an unchecked request is an absent control that still
@@ -278,19 +299,24 @@ class StepEvaluator:
         allow` is the operator's recorded choice. Only the **user's own text** is rewritten — the
         system instruction is the use case's, and a redactor must not edit it.
         """
-        model = config.get("model")
-        provider = await self._provider_for(model, declaration_of)
-        if provider is None or not model:
+        candidates = await self._models_for(config, declaration_of)
+        if not candidates:
             return self._pii_failure(config, "no model is available to redact with", None)
 
         original = request.last_user_text()
-        redactor = LlmRedactor(
-            provider,
-            model,
-            config.get("instruction"),
-            await self._thinking_for(model, declaration_of),
-        )
-        result = await redactor.rewrite(original)
+
+        async def ask(model: str, provider: Any) -> Redaction:
+            return await LlmRedactor(
+                provider,
+                model,
+                config.get("instruction"),
+                await self._thinking_for(model, declaration_of),
+            ).rewrite(original)
+
+        answered = await self._asked(candidates, ask)
+        # `candidates` is not empty, so the chain answered with something.
+        assert answered is not None
+        model, result = answered
         if result.text is None:
             return self._pii_failure(config, result.failure or "the redactor failed", result.call)
 
@@ -343,29 +369,32 @@ class StepEvaluator:
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None = None,
     ) -> Classification:
-        text = _scanned_text(request, config.get("scope", "user"))
-        classifier = await self._injection_classifier(config, declaration_of)
-        return await classifier.classify_text(text)
+        """The verdict, from the first of this step's models that could be reached.
 
-    async def _injection_classifier(
-        self, config: dict[str, Any], declaration_of: DeclarationOf | None = None
-    ) -> InjectionClassifier:
-        """The classifier this step is configured with.
-
-        An `llm` step whose model does not resolve falls back to the **heuristic** — a downgrade of
+        An `llm` step whose models none resolve falls back to the **heuristic** — a downgrade of
         the method, not of the verdict, so a mistyped model name cannot take a use case's traffic
-        down. The lookup asks the catalogue, so a catalogued model is not mistaken for a typo.
+        down. One that resolves and cannot be reached leaves its verdict *undetermined*, which the
+        step decides on (`FRD-125`).
         """
+        text = _scanned_text(request, config.get("scope", "user"))
         if config.get("mode") == "llm":
-            model = config.get("model")
-            provider = await self._provider_for(model, declaration_of)
-            if provider is not None and model is not None:
-                return LlmInjectionClassifier(
+
+            async def ask(model: str, provider: Any) -> Classification:
+                return await LlmInjectionClassifier(
                     provider,
                     model,
                     config.get("instruction"),
                     await self._thinking_for(model, declaration_of),
-                )
+                ).classify_text(text)
+
+            answered = await self._asked(await self._models_for(config, declaration_of), ask)
+            if answered is not None:
+                return answered[1]
+        return await self._heuristic(config).classify_text(text)
+
+    def _heuristic(self, config: dict[str, Any]) -> InjectionClassifier:
+        """The pattern classifier: the `heuristic` mode, and where an `llm` step with no reachable
+        model lands. Never a model call, so it cannot fail the way a chain can."""
         extras = tuple(config.get("patterns", []))
         return HeuristicInjectionClassifier(extras, use_builtins=config.get("use_builtins", True))
 
@@ -381,14 +410,16 @@ class StepEvaluator:
         default_model = config.get("default_model")
         if not categories:
             return _Routed(None, default_model)
-        model = config.get("model")
-        provider = await self._provider_for(model, declaration_of)
-        if provider is None or model is None:
+
+        async def ask(model: str, provider: Any) -> Routing:
+            return await LlmCategoryRouter(
+                provider, model, categories, await self._thinking_for(model, declaration_of)
+            ).classify_text(_system_and_user(request))
+
+        answered = await self._asked(await self._models_for(config, declaration_of), ask)
+        if answered is None:
             return _Routed(None, default_model)
-        router = LlmCategoryRouter(
-            provider, model, categories, await self._thinking_for(model, declaration_of)
-        )
-        routing = await router.classify_text(_system_and_user(request))
+        model, routing = answered
         if routing.category:
             for category in categories:
                 if category.get("name") == routing.category:
@@ -401,11 +432,60 @@ class StepEvaluator:
                     )
         return _Routed(None, default_model, routing.call, routing.reply, model)
 
-    async def _provider_for(self, model: str | None, declaration_of: DeclarationOf | None) -> Any:
+    async def _models_for(
+        self, config: dict[str, Any], declaration_of: DeclarationOf | None
+    ) -> list[tuple[str, Any]]:
+        """The models this step may ask, in order, each with the adapter that serves it.
+
+        Its own `model` first, then its own `fallback_models` (`FRD-302` FR-7). A name no provider
+        serves is left out rather than tried — that is the "quietly do less" the single-model
+        version had, and the chain is what now gives the step somewhere else to go. Duplicates are
+        dropped, so a chain that repeats the step's own model does not pay for it twice.
+        """
+        named = [config.get("model"), *(config.get("fallback_models") or [])]
+        found: list[tuple[str, Any]] = []
+        seen: set[str] = set()
+        for name in named:
+            model = str(name) if name else ""
+            if not model or model in seen:
+                continue
+            seen.add(model)
+            provider = await self._provider_for(model, declaration_of)
+            if provider is not None:
+                found.append((model, provider))
+        return found
+
+    async def _asked[Answer: Reachable](
+        self,
+        candidates: list[tuple[str, Any]],
+        ask: Callable[[str, Any], Awaitable[Answer]],
+    ) -> tuple[str, Answer] | None:
+        """Ask this step's models in order; the first one **reached** answers (`FRD-302` FR-8).
+
+        The answer comes back with the model that gave it, because that is the name the decision
+        row and the dry run's screen carry — for a fallback it is not the model written first.
+
+        ``None`` only where the step has no candidate at all, which is the case each step already
+        had a safe direction for. When every candidate was tried and none could be reached, the
+        **last** answer is returned: a chain that is exhausted has to decide exactly what one
+        unreachable model decided, or adding a fallback would change what a blocking filter does.
+        """
+        answered: tuple[str, Answer] | None = None
+        for model, provider in candidates:
+            answer = await ask(model, provider)
+            answered = (model, answer)
+            if answer.reached:
+                break
+        return answered
+
+    async def _provider_for(self, model: str, declaration_of: DeclarationOf | None) -> Any:
         """The adapter serving ``model``, asking the catalogue when configuration does not know it
-        (`FRD-507`). Every caller reads "nothing" as "quietly do less", so both lookups matter."""
-        if not model:
-            return None
+        (`FRD-507`). Every caller reads "nothing" as "quietly do less", so both lookups matter.
+
+        ``model`` is a name, never empty: `_models_for` drops the empty ones, which is where "this
+        step names no model" is decided. The guard that used to be here as well was unreachable
+        from the moment the chain took over, and an unreachable guard is a line no test can hold.
+        """
         direct = self._registry.provider_for(model)
         if direct is not None or declaration_of is None:
             return direct
@@ -414,12 +494,12 @@ class StepEvaluator:
         # identifies neither.
         return self._registry.provider_for(model, declaration.provider, declaration.publisher)
 
-    async def _thinking_for(self, model: str | None, declaration_of: DeclarationOf | None) -> Any:
+    async def _thinking_for(self, model: str, declaration_of: DeclarationOf | None) -> Any:
         """What to tell ``model`` about thinking, from the catalogue.
 
         Without a resolver the classifier asks for off: a reasoning model sent nothing thinks and
         spends its one-word allowance doing so (`FRD-125`).
         """
-        if declaration_of is None or not model:
+        if declaration_of is None:
             return Thinking(mode=ThinkingMode.DISABLED)
         return for_a_classifier(await declaration_of(model))

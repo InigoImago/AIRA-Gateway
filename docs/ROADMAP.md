@@ -74,8 +74,8 @@ Deliverables:
 - First **real upstream adapters** (Gemini Enterprise, Microsoft Foundry) behind the mock-compatible
   interface.
 
-FRDs: `FRD-300-pipeline-engine`, `FRD-301-routing-and-rerouting`, `FRD-302-model-fallback`,
-`FRD-303-pipeline-builder-ui`, `FRD-304-upstream-adapters`.
+FRDs: `FRD-300-pipeline-engine` (routing is specified there; `FRD-301` was never written),
+`FRD-302-model-fallback`, `FRD-303-pipeline-builder-ui`, `FRD-304-upstream-adapters`.
 
 ---
 

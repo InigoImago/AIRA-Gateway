@@ -29,7 +29,7 @@ scheduled` here while `FRD-118` had shipped.
 | 6 | Incident response | done | `FRD-503` — suspensions with author, expiry, reason; kill switch |
 | 7 | Blocking dangerous requests | partly | injection filter done, operator kill switch done, and `FRD-504` can now **measure** what a model refuses — but as *controls* there are still **no further categories** (jailbreak, data exfiltration, PII in the prompt, output filtering) |
 | 8 | Model routing from the definition | done | `FRD-300`, `FRD-306` |
-| 9 | Model fallback | done | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently |
+| 9 | Model fallback | done | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently. **Every model access is a chain since 2026-10-11** (`FRD-302`, `ADR-0032`) — a streamed request falls back for as long as nothing has reached the caller, and each pipeline step has its own chain. Still open: nothing falls back *after* the first chunk, and nothing retries the same model |
 | 10 | Independence from Google / Microsoft | partly | proven for **three** platforms by an architecture assertion — Foundry reused the OpenAI dialect unchanged and its diff never left `upstreams/`; still unproven against a real Azure subscription |
 | 11 | Overview of all use cases | partly | list and detail done — **no governance view of the processing logic** across use cases (`FRD-600`) |
 | 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306` |

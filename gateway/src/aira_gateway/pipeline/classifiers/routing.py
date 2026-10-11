@@ -27,6 +27,13 @@ class Routing:
     category: str | None
     call: ModelCall | None = None
     reply: str = ""
+    #: Whether the model was **reached** — ``False`` only where the call itself failed. This is
+    #: what a step's chain moves on for (`FRD-302` FR-8): a model that answered has answered, even
+    #: when the answer is *undetermined*, and a chain that tried the next one would be a filter
+    #: shopping for a verdict. A field rather than an inference from a missing `ModelCall`: the
+    #: heuristic classifier has no call either, and reading that as "not reached" would send it
+    #: down a chain it never asked for.
+    reached: bool = True
 
 
 class LlmCategoryRouter:
@@ -63,7 +70,7 @@ class LlmCategoryRouter:
             with model_call_span(self._model, purpose="pipeline"):
                 response = await self._provider.generate(request)
         except UpstreamError:
-            return Routing(None)
+            return Routing(None, reached=False)
         call = ModelCall(step="model_route", model=self._model, usage=response.usage)
         return Routing(self._matched(response.text), call, response.text)
 

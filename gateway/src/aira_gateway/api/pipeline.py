@@ -76,9 +76,9 @@ class DryRunRequest(BaseModel):
 def models_named_in(pipeline: dict[str, Any]) -> list[str]:
     """Every model this pipeline could reach, wherever it is written.
 
-    The release check has to see **all** of them — each classifier, each category's target, the
-    default target and the fallback chain. Mirrored by Management's serializer; a test compares the
-    two.
+    The release check has to see **all** of them — each classifier, **each step's own fallback
+    chain** (`FRD-302` FR-10), each category's target, the default target and the dispatch chain.
+    Mirrored by Management's serializer; a test compares the two.
     """
     named: list[str] = []
     for step in pipeline.get("steps") or []:
@@ -87,6 +87,9 @@ def models_named_in(pipeline: dict[str, Any]) -> list[str]:
             named.append(str(config["model"]))
         if config.get("default_model"):
             named.append(str(config["default_model"]))
+        for fallback in config.get("fallback_models") or []:
+            if fallback:
+                named.append(str(fallback))
         for category in config.get("categories") or []:
             if isinstance(category, dict) and category.get("model"):
                 named.append(str(category["model"]))
@@ -97,10 +100,11 @@ def models_named_in(pipeline: dict[str, Any]) -> list[str]:
 def classifiers_named_in(pipeline: dict[str, Any]) -> list[str]:
     """The models a dry run will actually **call** — a subset of `models_named_in`.
 
-    A dry run runs each step's own model and never reaches a category's target, a `default_model`
-    or the fallback chain. The release is about the whole configuration; the installation's approval
-    is about calls this request makes, and applying it to a target nobody dials would refuse a
-    preview whose classifier is approved.
+    A dry run runs each step's own model, **and its own chain where that model cannot be reached**
+    (`FRD-302` FR-7), and never reaches a category's target, a `default_model` or the dispatch
+    chain. The release is about the whole configuration; the installation's approval is about calls
+    this request makes, and applying it to a target nobody dials would refuse a preview whose
+    classifier is approved.
     """
     named: list[str] = []
     for step in pipeline.get("steps") or []:
@@ -112,6 +116,7 @@ def classifiers_named_in(pipeline: dict[str, Any]) -> list[str]:
         asks = ASKS_A_MODEL.get(str(step.get("type")))
         if asks is not None and asks(config):
             named.append(str(config["model"]))
+            named.extend(str(name) for name in config.get("fallback_models") or [] if name)
     return list(dict.fromkeys(named))
 
 

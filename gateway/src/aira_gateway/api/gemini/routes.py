@@ -51,9 +51,9 @@ from aira_gateway.api.serving import (
 from aira_gateway.audio import AudioDigest
 from aira_gateway.audit import AuditTrail
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
-from aira_gateway.pipeline.dispatch import dispatch_with_fallback
+from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
-from aira_gateway.telemetry import model_call_chunks, model_call_span
+from aira_gateway.telemetry import model_call_span
 
 _log = get_logger("aira_gateway")
 
@@ -207,7 +207,7 @@ async def _generate_content(
         )
         answer = annotate(canonical, dispatched.response, prepared, trail)
         trail.served_by(answer.model, dispatched.candidate_index)
-        trail.passed_over(dispatched.skipped)
+        trail.passed_over(dispatched.skipped, dispatched.failed)
         # Before the outcome is reported, so a refused answer is released rather than booked.
         check_structured_result(canonical, answer)
         # `exclude_none`: Google omits what did not happen (no `functionCall: null`, no zero
@@ -259,13 +259,26 @@ async def _stream_response(
 ) -> StreamingResponse:
     """Stream chunks as SSE (`?alt=sse`, the google-genai SDK) or as a JSON array (Gemini REST).
 
-    Resolves its adapter **before** the response exists: resolving is what applies the dispatch
-    conditions, and a refusal must still be a status rather than a stream that stops.
+    Opens the chain **before** the response exists (`FRD-302` FR-6): the candidates are tried in
+    order until one has produced a chunk, which is both what applies the dispatch conditions and
+    what makes a refusal a status rather than a stream that stops. The model that answered is the
+    one recorded and billed — for a fallback that is not the model the caller named.
     """
-    provider = await resolve_direct_target(request, canonical.model, canonical)
+    # Before the chain is opened: the wait for a candidate's first chunk is time this request
+    # took, and a `started` taken after it would report every stream as faster than it was.
+    started = time.monotonic()
+    streamed = await stream_with_fallback(
+        providers_of(request),
+        canonical,
+        prepared.fallbacks,
+        permits=await requirements_for(request, canonical),
+        routing_of=await declared_routing(request),
+    )
+    served = streamed.model
+    trail.served_by(served, streamed.candidate_index)
+    trail.passed_over(streamed.skipped, streamed.failed)
 
     async def generate_chunks() -> AsyncIterator[str]:
-        started = time.monotonic()
         async with accounting(
             request,
             trail,
@@ -291,9 +304,9 @@ async def _stream_response(
                 if not sse:
                     yield "["
                 try:
-                    async for chunk in model_call_chunks(
-                        canonical.model, provider.stream_generate(canonical)
-                    ):
+                    # The first chunk is already in hand; its own model call is marked where the
+                    # request was issued, inside the chain.
+                    async for chunk in streamed.chunks:
                         if chunk.usage is not None:
                             final_usage = chunk.usage
                         streamed_calls.extend(call.name for call in chunk.tool_calls)
@@ -303,7 +316,7 @@ async def _stream_response(
                         led = notice.lead(chunk.text_delta)
                         parts.append(led)
                         payload = chunk_to_gemini(
-                            chunk.model_copy(update={"text_delta": led}), canonical.model
+                            chunk.model_copy(update={"text_delta": led}), served
                         ).model_dump_json(exclude_none=True)
                         if sse:
                             yield f"data: {payload}\n\n"
@@ -317,7 +330,7 @@ async def _stream_response(
                         "upstream_stream_error",
                         error=str(exc),
                         status=getattr(exc, "status_code", None),
-                        model=canonical.model,
+                        model=served,
                     )
                 if not sse:
                     yield "]"
@@ -334,7 +347,7 @@ async def _stream_response(
                     if not audio.empty:
                         # Described, never kept (`ADR-0026`); the hash covers every chunk.
                         stored["audio"] = audio.describe()
-                    report(canonical.model, final_usage, stored, streamed_calls)
+                    report(served, final_usage, stored, streamed_calls)
                 if failure is not None:
                     acct.failed(refusal_response(failure).status_code, refusal_outcome(failure))
 

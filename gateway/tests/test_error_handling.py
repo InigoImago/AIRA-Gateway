@@ -127,13 +127,23 @@ def test_upstream_error_on_embed_maps_status() -> None:
     assert resp.json()["error"]["status"] == "RESOURCE_EXHAUSTED"
 
 
-def test_upstream_error_on_stream_terminates_cleanly() -> None:
+def test_a_stream_nothing_can_serve_is_a_status_and_not_an_empty_success() -> None:
+    """**This test asserted the opposite until 2026-10-11**, and its own comment carried the
+    reason it could change: *"stream headers are already sent when the upstream fails"*. They were
+    — because the adapter was called inside the response generator, after the `200` had gone out.
+    So a caller whose model was down received `200` and the body `[]`, which reads as "the model
+    had nothing to say" and is indistinguishable from an empty completion.
+
+    Since `FRD-302` FR-6 the chain pulls a candidate's **first chunk before the response exists**,
+    which is what makes falling back possible at all — and the same restructuring is what lets the
+    failure be a status again. Here one candidate and no chain: it fails, and the upstream's own
+    `503` reaches the caller (`FRD-302` FR-6a, `ADR-0032`).
+    """
     with _raising_client(503) as client:
         resp = client.post("/v1beta/models/mock-1:streamGenerateContent", json=_BODY)
-    # Stream headers are already sent when the upstream fails: status stays 200, body is an
-    # empty JSON array (the error is logged server-side, never leaked to the client).
-    assert resp.status_code == 200
-    assert resp.text == "[]"
+
+    assert resp.status_code == 503
+    assert resp.json()["error"]["status"] == "UNAVAILABLE"
 
 
 def test_unexpected_error_on_non_api_returns_envelope() -> None:

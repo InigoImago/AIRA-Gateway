@@ -131,11 +131,22 @@ class AuditTrail:
             self.selection = SELECTION_ROUTE
         self.model = model
 
-    def passed_over(self, skipped: list[Any]) -> None:
-        """Record the candidates the chain declined, and why, alongside the pipeline decisions."""
+    def passed_over(self, skipped: list[Any], failed: list[Any]) -> None:
+        """Record every candidate the chain moved past, and why (`FRD-302` FR-11).
+
+        Two actions, because they are two different facts: `skipped` is a candidate a **condition**
+        excluded, which an operator can fix, and `failed` is one that was **called** and did not
+        answer, which a vendor can. Both parameters are required — a chain reports both lists, and
+        a caller that may pass one and forget the other is how `failed` came to be unrecorded for
+        two months while `model_selection` said a substitution had happened.
+        """
         for entry in skipped:
             self.decisions.append(
                 {"step": "dispatch", "action": "skipped", "to": entry.model, "why": entry.reason}
+            )
+        for entry in failed:
+            self.decisions.append(
+                {"step": "dispatch", "action": "failed", "to": entry.model, "why": entry.reason}
             )
 
     def served_by(self, model: str, candidate_index: int) -> None:
