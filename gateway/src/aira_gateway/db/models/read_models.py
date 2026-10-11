@@ -36,9 +36,14 @@ class UseCaseRead(Base):
     #: Whether prompts and responses are written at all, and for how long they are kept (`FRD-404`).
     store_payloads: Mapped[bool] = mapped_column(Boolean, default=True)
     retention_days: Mapped[int] = mapped_column(Integer, default=7)
-    #: A use-case **user** sees only their own requests; an administrator sees all (`FRD-505`).
-    #: Default false, the behaviour that existed before: an added restriction, not a new default.
-    restrict_members_to_own_requests: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Who **inside the use case** may open a stored prompt and answer (`FRD-622` FR-1): `members`
+    #: (everybody in it), `own` (administrators all of them, everybody else their own requests), or
+    #: `oversight` (nobody in it — only the installation roles that may read any content). Default
+    #: `members`, the behaviour that existed before: an added restriction, not a new default.
+    #:
+    #: Content only. Which rows a member sees is what `own` decides, and the figures a use case
+    #: needs to run itself are unaffected in every value.
+    payload_visibility: Mapped[str] = mapped_column(String(16), default="members")
     #: Whether the use case may declare functions for the model to call (`FRD-131`). Default false:
     #: least privilege is the state a use case starts in.
     tools_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -113,7 +113,7 @@ async def _bound_key(app, *, subject: str, slug: str) -> str:  # noqa: ANN001
 
 async def _restricted_use_case(app, slug: str) -> None:  # noqa: ANN001
     async with app.state.db_sessionmaker() as session:
-        session.add(UseCaseRead(slug=slug, name=slug, restrict_members_to_own_requests=True))
+        session.add(UseCaseRead(slug=slug, name=slug, payload_visibility="own"))
         await session.commit()
 
 

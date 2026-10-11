@@ -9,6 +9,11 @@ by role, and every read is recorded:
 - **A use-case administrator** sees the payloads of their own use case.
 - **A use-case user** sees them too, unless the use case restricts members to their own requests.
 
+...and a use case may take the last two away: `PayloadVisibility.OVERSIGHT_ONLY` leaves content to
+the two installation roles above and to nobody inside the use case, its administrators included
+(`FRD-622` FR-1). Three values, one question; `store_payloads` answers the different question of
+whether anything is written at all.
+
 "Not stored", "expired" and "you may not" are three different facts and are never collapsed into
 one refusal.
 """
@@ -29,6 +34,32 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import RequestLog, UseCaseMemberRead, UseCaseRead
 
 
+class PayloadVisibility(StrEnum):
+    """Who, **inside a use case**, may open a stored prompt and answer (`FRD-622` FR-1).
+
+    One value rather than a pair of booleans: it is one question with three answers, and two
+    booleans also spell combinations that mean nothing. Whether anything is stored at all is a
+    different question (`store_payloads`) — it decides what is *written*, and retention reads it as
+    a period of zero.
+
+    Content only, in every value. Which rows a member sees is what `OWN_REQUESTS_ONLY` decides,
+    and the figures a use case needs to run itself — status, latency, cost — are unaffected.
+    """
+
+    #: Everybody in the use case reads every stored prompt. The behaviour that existed first, and
+    #: still the default: a restriction is imposed, never assumed.
+    EVERY_MEMBER = "members"
+    #: Administrators of the use case read all of them; everybody else only their own requests.
+    OWN_REQUESTS_ONLY = "own"
+    #: **Nobody in the use case**, not even its administrators. Only the installation roles that
+    #: may read any content — Global Administrator and IT Security (`payload.read_any`).
+    OVERSIGHT_ONLY = "oversight"
+
+
+#: The values this gateway understands. A value outside it came from a newer Management.
+VISIBILITIES = frozenset(value.value for value in PayloadVisibility)
+
+
 class PayloadRefusal(StrEnum):
     """Why a payload is not being shown. Never collapsed into one message."""
 
@@ -38,6 +69,9 @@ class PayloadRefusal(StrEnum):
     NOT_A_CONTENT_ROLE = "not_a_content_role"
     #: A member restricted to their own requests, looking at somebody else's.
     OTHERS_REQUEST = "others_request"
+    #: The use case leaves content to the installation's oversight roles — nobody inside it reads
+    #: a prompt, its administrators included.
+    OVERSIGHT_ONLY = "oversight_only"
     #: The use case has payload storage switched off (`FRD-404`).
     NOT_STORED = "not_stored"
     #: Stored once, and removed by retention since (`FRD-404`).
@@ -53,6 +87,7 @@ AUTHORITY_REFUSALS = frozenset(
         PayloadRefusal.OUT_OF_SCOPE,
         PayloadRefusal.NOT_A_CONTENT_ROLE,
         PayloadRefusal.OTHERS_REQUEST,
+        PayloadRefusal.OVERSIGHT_ONLY,
     }
 )
 
@@ -66,6 +101,11 @@ MESSAGES = {
     PayloadRefusal.OTHERS_REQUEST: (
         "This use case shows each member their own requests only. Its administrator can change "
         "that."
+    ),
+    PayloadRefusal.OVERSIGHT_ONLY: (
+        "This use case keeps prompts and responses for oversight only: inside the use case nobody "
+        "reads them, including its administrators. A Global Administrator or IT Security can, and "
+        "every such read is recorded. Its administrator chose this and can change it."
     ),
     PayloadRefusal.NOT_STORED: (
         "This use case does not store prompts and responses. Its administrator can turn storage "
@@ -219,15 +259,22 @@ async def _authority(
             return PayloadRefusal.NOT_A_CONTENT_ROLE
         return PayloadRefusal.OUT_OF_SCOPE
 
+    use_case = (
+        await session.execute(select(UseCaseRead).where(UseCaseRead.slug == row.use_case))
+    ).scalar_one_or_none()
+    visibility = use_case.payload_visibility if use_case is not None else None
+
+    # **Before the administrator check**, which is the whole of this mode: the use case has left
+    # its content to the installation's oversight roles, and an administrator of the use case is
+    # not one of them. Anybody who *is* one has already returned above, on `payload.read_any`.
+    if visibility == PayloadVisibility.OVERSIGHT_ONLY:
+        return PayloadRefusal.OVERSIGHT_ONLY
+
     role = await grant_role_in(session, principal, row.use_case)
     if role == GrantRole.ADMIN.value:
         return "use_case_admin"
 
-    use_case = (
-        await session.execute(select(UseCaseRead).where(UseCaseRead.slug == row.use_case))
-    ).scalar_one_or_none()
-    restricted = bool(use_case is not None and use_case.restrict_members_to_own_requests)
-    if restricted and not is_own_request(principal, row):
+    if visibility == PayloadVisibility.OWN_REQUESTS_ONLY and not is_own_request(principal, row):
         return PayloadRefusal.OTHERS_REQUEST
     return "use_case_member"
 
@@ -248,6 +295,11 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
     The list view needs this as much as the payload view: a visible row tells a user who else is
     calling, how often and at what cost. An incident role is never restricted, nor is a use-case
     administrator inside their own use case; the rest is decided per use case.
+
+    **`oversight` is not here, on purpose.** It hides the prompt and the answer, not the row: a use
+    case still has to be able to see its own traffic — what failed, what it cost, who is calling
+    too much — and taking that away would answer a question nobody asked (`FRD-622` FR-1c). Only
+    `own` restricts which rows a member sees.
     """
     if principal.allows(Permission.INCIDENT_INVESTIGATE) or not principal.use_cases:
         return []
@@ -258,7 +310,7 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
             await session.execute(
                 select(UseCaseRead.slug).where(
                     UseCaseRead.slug.in_(slugs),
-                    UseCaseRead.restrict_members_to_own_requests.is_(True),
+                    UseCaseRead.payload_visibility == PayloadVisibility.OWN_REQUESTS_ONLY,
                 )
             )
         ).scalars()

@@ -20,7 +20,7 @@ Read against the code on 2026-08-19:
 | | state |
 | --- | --- |
 | **Does IT Steuerung have access?** | **Yes.** `OVERSIGHT_ROLES` includes it, so it sees every use case; `GOVERNANCE_ROLES` includes it, so it sees every figure in reporting. Read-only by design (`ADR-0007`) — it may act inside none. |
-| **Do the fields exist?** | **Yes, all of them.** A use case carries `description`, `processing_notes`, `store_payloads`, `retention_days`, `allowed_models`, `tools_enabled`, `prompt_caching_enabled`, `include_reasoning`, `prompt_cache_ttl`, `restrict_members_to_own_requests`. |
+| **Do the fields exist?** | **Yes, all of them.** A use case carries `description`, `processing_notes`, `store_payloads`, `retention_days`, `allowed_models`, `tools_enabled`, `prompt_caching_enabled`, `include_reasoning`, `prompt_cache_ttl`, `payload_visibility`. |
 | **Is there a view?** | **No.** `use-case-list.html` renders **two columns** — name and technical id. Everything else is one click deeper, one use case at a time. |
 
 So this is not a data problem or a permission problem. It is a **shape** problem, and the shape
@@ -44,7 +44,7 @@ is not a register.
 | Provider · region | catalogue join | **third-country transfer**, per model |
 | Prompts stored | `store_payloads` | whether personal data is retained at all |
 | Retention | `retention_days` | Art. 30(1)(f) — erasure deadlines |
-| Own-requests only | `restrict_members_to_own_requests` | who inside the use case sees whose content |
+| Who may read content | `payload_visibility` | who inside the use case sees whose content — including the use cases **nobody** inside may read (`FRD-622` FR-1b), which is the answer a review asks for by name |
 | Tools · caching · reasoning | three flags | what leaves the request path, and where |
 | Members · groups | counts, with a link | Art. 30(1)(a-ish) — who processes |
 | Status | live / retired (`FRD-607`) | a retired use case is a record, not an omission |

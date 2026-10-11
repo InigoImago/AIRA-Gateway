@@ -66,7 +66,7 @@ paragraphs = [
 items = [
   "Access by permission only: who sees which data follows from the role, which is bound to a group in the identity service, and from membership of a use case.",
   "Request and response content is visible only to those permitted to see it. Every single read is recorded with the reader, their roles and the ground, before the content is shown. That record is not deleted.",
-  "Which roles may read content is stated under “Who has access within the organisation”. A use case can specify that its members see only their own requests.",
+  "Which roles may read content is stated under “Who has access within the organisation”. A use case can specify that its members see only their own requests, or that nobody in the use case reads content at all — not even its own administrators — leaving it to the two roles that may read any content.",
   "Each use case decides whether content is stored at all and for how long, from 1 to 3650 days. {content_storage}",
   "To be clear: per-person consumption figures (requests, tokens, costs, response times) are visible to the members of the use case concerned, and across all use cases to roles that may read every report. The “own requests only” setting does not currently restrict these reports.",
 ]

@@ -1119,6 +1119,19 @@ reading code.
 
 ---
 
+- **A boolean is the wrong shape for a question with three answers**, and the third answer is the
+  one that shows it. *"Members see only their own requests"* was a switch for two years; the day a
+  use case had to be able to withhold content from **itself** there was nowhere to put the value,
+  and two booleans would have spelled the three modes plus two combinations that mean nothing. The
+  tell was there before the third answer arrived: the console already derived a three-valued mode
+  from the pair and wrote the pair back, which is an enumeration wearing two flags.
+
+  The cost of the late change is not the field — it is the **register, the notice and the event**.
+  A flag in a register of processing activities printed `no` for both *"everybody here reads it"*
+  and *"nobody here does"*, which are opposite facts, and a renamed column needed a new privacy
+  edition in two languages. **Name the question, count its answers, and if there are more than two,
+  make it a value** — before a reviewer reads the flag.
+
 - **A reason that is true outlives the thing it was a reason for.** *"A stream cannot fall back
   once its first chunk is out"* is true, and for two months it was read as *"a stream cannot fall
   back"* — in a module docstring, in a structural test's exemption list and in an ADR, each one
@@ -1869,6 +1882,15 @@ reading code.
 ---
 
 ## 7. Tests
+
+- **A test that calls a migration's own function with today's models expires.** It passes for as
+  long as the fields that function reads still exist, and the migration that removes one of them is
+  the diff that breaks the test without breaking the migration — Django hands a real migration the
+  **historical** model, and a test calling the function directly cannot. Two consequences worth
+  keeping: split a data migration so the part that reads a doomed field is separate from the part
+  that does not, and check the doomed part by **migrating the test database backwards and
+  forwards**, which is also the only form that tests what an upgrade actually does.
+
 
 - **A green test proves nothing on its own.** It proves the code and the test agree, which they
   inevitably do when both came from the same idea. **Prove a test can fail**: break the property,

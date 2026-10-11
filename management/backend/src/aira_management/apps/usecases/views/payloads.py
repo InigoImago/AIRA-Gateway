@@ -16,7 +16,15 @@ def _snapshot(usecase: UseCase) -> dict[str, Any]:
         "description": usecase.description,
         "processing_notes": usecase.processing_notes,
         "store_payloads": usecase.store_payloads,
-        "restrict_members_to_own_requests": usecase.restrict_members_to_own_requests,
+        "payload_visibility": usecase.payload_visibility,
+        # **The retired field, still emitted, derived.** A gateway older than
+        # `payload_visibility`
+        # reads this one and nothing else, and an absent boolean is `False` to it — so leaving it
+        # out would *unrestrict* a use case on every instance not yet upgraded, which is a
+        # disclosure rather than a missing feature. Management is upgraded first (`FRD-204`), so
+        # this is the window that exists by design; it goes when no gateway reads it.
+        "restrict_members_to_own_requests": usecase.payload_visibility
+        != UseCase.PAYLOAD_VISIBILITY_MEMBERS,
         "tools_enabled": usecase.tools_enabled,
         "include_reasoning": usecase.include_reasoning,
         "prompt_caching_enabled": usecase.prompt_caching_enabled,

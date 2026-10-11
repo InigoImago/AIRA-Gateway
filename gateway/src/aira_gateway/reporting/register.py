@@ -92,7 +92,11 @@ class Entry:
     prompts_stored: bool
     #: ``None`` where prompts are not stored: there is no erasure deadline for data never written.
     retention_days: int | None
-    own_requests_only: bool
+    #: Who inside the use case may read a stored prompt (`FRD-622` FR-1): `members`, `own` or
+    #: `oversight`. **A word and not a flag**, because the answer a review needs is which of the
+    #: three, and the third — nobody in the use case, only the installation's oversight roles — is
+    #: the one a reviewer most wants to see named.
+    content_visibility: str
     tools: bool
     prompt_caching: bool
     cache_ttl: str
@@ -115,7 +119,7 @@ class Entry:
             "models": [model.as_dict() for model in self.models],
             "prompts_stored": self.prompts_stored,
             "retention_days": self.retention_days,
-            "own_requests_only": self.own_requests_only,
+            "content_visibility": self.content_visibility,
             "tools": self.tools,
             "prompt_caching": self.prompt_caching,
             "cache_ttl": self.cache_ttl,
@@ -225,7 +229,7 @@ class RegisterService:
             models=released,
             prompts_stored=row.store_payloads,
             retention_days=row.retention_days if row.store_payloads else None,
-            own_requests_only=row.restrict_members_to_own_requests,
+            content_visibility=row.payload_visibility,
             tools=row.tools_enabled,
             prompt_caching=row.prompt_caching_enabled,
             cache_ttl=row.prompt_cache_ttl,

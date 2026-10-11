@@ -23,7 +23,7 @@ const USE_CASE: UseCase = {
   processing_notes: '',
   retention_days: 7,
   store_payloads: true,
-  restrict_members_to_own_requests: false,
+  payload_visibility: 'members' as const,
   permissions: { can_admin: true, can_manage: true, is_member: true },
 };
 
@@ -118,39 +118,54 @@ describe('DataProtectionPanel — retention', () => {
   });
 });
 
-describe('DataProtectionPanel — three content modes (`FRD-622` FR-1)', () => {
-  it('reads the two switches as one of three modes', () => {
+describe('DataProtectionPanel — four content modes (`FRD-622` FR-1)', () => {
+  it('reads the two fields as one of four modes', () => {
     // Not stored wins: with nothing written, who may read it is moot.
-    expect(modeOf({ store_payloads: false, restrict_members_to_own_requests: true })).toBe(
-      'not-stored',
-    );
-    expect(modeOf({ store_payloads: true, restrict_members_to_own_requests: true })).toBe(
-      'admins-and-own',
-    );
-    expect(modeOf({ store_payloads: true, restrict_members_to_own_requests: false })).toBe(
-      'members',
-    );
+    expect(modeOf({ store_payloads: false, payload_visibility: 'own' })).toBe('not-stored');
+    expect(modeOf({ store_payloads: false, payload_visibility: 'oversight' })).toBe('not-stored');
+    expect(modeOf({ store_payloads: true, payload_visibility: 'oversight' })).toBe('oversight');
+    expect(modeOf({ store_payloads: true, payload_visibility: 'own' })).toBe('admins-and-own');
+    expect(modeOf({ store_payloads: true, payload_visibility: 'members' })).toBe('members');
     expect(modeOf(null)).toBe('members');
+    // A server that does not send the field at all: the mode that existed before it did.
+    expect(modeOf({ store_payloads: true })).toBe('members');
   });
 
-  it('saves each mode as the two switches the gateway enforces', () => {
+  it('saves each mode as the two fields the gateway enforces', () => {
     expect(fieldsFor('not-stored')).toEqual({ store_payloads: false });
+    expect(fieldsFor('oversight')).toEqual({
+      store_payloads: true,
+      payload_visibility: 'oversight',
+    });
     expect(fieldsFor('admins-and-own')).toEqual({
       store_payloads: true,
-      restrict_members_to_own_requests: true,
+      payload_visibility: 'own',
     });
     expect(fieldsFor('members')).toEqual({
       store_payloads: true,
-      restrict_members_to_own_requests: false,
+      payload_visibility: 'members',
     });
+  });
+
+  it('round-trips every mode through the fields and back', () => {
+    // The pair has to be a bijection on the stored modes, or the panel opens on a mode nobody
+    // chose: `fieldsFor` is what a save sends and `modeOf` is what the next open reads.
+    for (const mode of ['oversight', 'admins-and-own', 'members'] as const) {
+      const fields = fieldsFor(mode);
+      expect(modeOf({ store_payloads: true, payload_visibility: fields.payload_visibility })).toBe(
+        mode,
+      );
+    }
   });
 
   it('offers the three modes in the DOM with the current one chosen', () => {
     const harness = setup();
 
     expect(harness.radio('not-stored')).not.toBeNull();
+    expect(harness.radio('oversight')).not.toBeNull();
     expect(harness.radio('admins-and-own')).not.toBeNull();
     expect(harness.radio('members')?.checked).toBe(true);
+    expect(harness.text()).toContain('read by nobody in this use case');
     expect(harness.text()).toContain("Administrators, and each person's own requests");
     expect(harness.text()).toContain('Every member of the use case');
   });
@@ -194,7 +209,7 @@ describe('DataProtectionPanel — three content modes (`FRD-622` FR-1)', () => {
 
     expect(sentUpdate(harness.calls)).toEqual({
       store_payloads: true,
-      restrict_members_to_own_requests: true,
+      payload_visibility: 'own',
       retention_days: 7,
     });
   });
@@ -210,7 +225,7 @@ describe('DataProtectionPanel — three content modes (`FRD-622` FR-1)', () => {
   it('shows a reader who may not change it the mode in words', () => {
     const { html } = setup({
       canManage: false,
-      useCase: { ...USE_CASE, restrict_members_to_own_requests: true },
+      useCase: { ...USE_CASE, payload_visibility: 'own' as const },
     });
 
     expect(html().querySelector('[data-testid="content-mode-readonly"]')?.textContent).toContain(
@@ -218,5 +233,42 @@ describe('DataProtectionPanel — three content modes (`FRD-622` FR-1)', () => {
     );
     expect(html().querySelector('[data-testid="retention-readonly"]')?.textContent).toContain('7');
     expect(html().querySelector('input[type="radio"]')).toBeNull();
+  });
+});
+
+describe('DataProtectionPanel — oversight only (`FRD-622` FR-1b)', () => {
+  it('saves the mode the use case cannot read itself', () => {
+    const harness = setup();
+    harness.radio('oversight')!.click();
+    harness.fixture.detectChanges();
+    harness.html().querySelector('form')!.dispatchEvent(new Event('submit'));
+
+    expect(sentUpdate(harness.calls)).toEqual({
+      store_payloads: true,
+      payload_visibility: 'oversight',
+      retention_days: 7,
+    });
+  });
+
+  it('asks for a retention period, because something is still stored', () => {
+    // The mode that reads *least* still writes, so the period is the one thing it must not drop:
+    // content nobody in the use case can see still has to be erased on time.
+    const harness = setup();
+    harness.radio('oversight')!.click();
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('#retention-days')).not.toBeNull();
+    expect(harness.component.retentionError()).toBeNull();
+  });
+
+  it('shows a reader who may not change it that the use case cannot read its own content', () => {
+    const { html } = setup({
+      canManage: false,
+      useCase: { ...USE_CASE, payload_visibility: 'oversight' as const },
+    });
+
+    expect(html().querySelector('[data-testid="content-mode-readonly"]')?.textContent).toContain(
+      'Global Administrators and IT Security only',
+    );
   });
 });

@@ -31,7 +31,7 @@ COLUMNS = (
     "unreleased_or_unapproved",
     "prompts_stored",
     "retention_days",
-    "own_requests_only",
+    "content_visibility",
     "tools",
     "prompt_caching",
     "cache_ttl",
@@ -119,7 +119,9 @@ def render(register: Register, start: str, end: str) -> str:
                 safe_cell(_yes_no(entry.prompts_stored)),
                 # Empty where nothing is stored: a deadline for data never written claims nothing.
                 safe_cell("" if entry.retention_days is None else str(entry.retention_days)),
-                safe_cell(_yes_no(entry.own_requests_only)),
+                # The word, not yes/no: three answers do not fit in a flag, and the column is
+                # read by somebody answering for a disclosure.
+                safe_cell(entry.content_visibility),
                 safe_cell(_yes_no(entry.tools)),
                 safe_cell(_yes_no(entry.prompt_caching)),
                 safe_cell(entry.cache_ttl if entry.prompt_caching else ""),

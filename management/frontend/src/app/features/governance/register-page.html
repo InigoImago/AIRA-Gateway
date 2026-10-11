@@ -344,8 +344,12 @@
                         <dt>People</dt>
                         <dd>
                           {{ entry.members }} member(s), {{ entry.groups }} group(s)
-                          @if (entry.own_requests_only) {
+                          @if (entry.content_visibility === 'own') {
                             <div class="muted">members see only their own requests</div>
+                          } @else if (entry.content_visibility === 'oversight') {
+                            <div class="muted">
+                              content readable only by Global Administrators and IT Security
+                            </div>
                           }
                         </dd>
                       </div>

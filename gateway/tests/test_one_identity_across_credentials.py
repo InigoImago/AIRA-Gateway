@@ -563,7 +563,13 @@ async def _use_case(
     sessions: async_sessionmaker[AsyncSession], *, restricted: bool = False, role: str = "admin"
 ) -> None:
     async with sessions() as session:
-        session.add(UseCaseRead(slug="uc-a", name="A", restrict_members_to_own_requests=restricted))
+        session.add(
+            UseCaseRead(
+                slug="uc-a",
+                name="A",
+                payload_visibility="own" if restricted else "members",
+            )
+        )
         session.add(UseCaseMemberRead(use_case_slug="uc-a", subject=NAME, role=role))
         await session.commit()
 
@@ -669,7 +675,7 @@ async def test_a_group_granted_administrator_sees_the_whole_list(
     group-granted administrator saw the figures about their own use case narrowed to their own
     traffic."""
     async with sessions() as session:
-        session.add(UseCaseRead(slug="uc-a", name="A", restrict_members_to_own_requests=True))
+        session.add(UseCaseRead(slug="uc-a", name="A", payload_visibility="own"))
         await session.commit()
     granted = Principal(
         subject=DIRECTORY_ID,

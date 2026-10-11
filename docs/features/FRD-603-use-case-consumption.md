@@ -143,10 +143,12 @@ of the error's design.
 
 ### 5.5 What it deliberately does not do
 
-It does not restrict the aggregate by `restrict_members_to_own_requests` (`FRD-505` FR-4). That
-switch is about **requests and their content**, which is what a member could otherwise read about a
-colleague; a use case's total spend is not that, and the reporting screen has never restricted it
-either. Applying it here and nowhere else would produce two numbers for one month.
+It does not restrict the aggregate by `payload_visibility` (`FRD-505` FR-4, `FRD-622` FR-1c). That
+setting is about **requests and their content**, which is what a member could otherwise read about
+a colleague; a use case's total spend is not that, and the reporting screen has never restricted it
+either. Applying it here and nowhere else would produce two numbers for one month. The same holds
+for the mode that leaves content to the installation's oversight roles: it withholds the prompt,
+not the bill.
 
 ### 5.6 On the overview, not in the budgets tab
 

@@ -53,10 +53,15 @@ consoles of `FRD-206` came to disagree.
 payload; a use-case administrator reads their own use case's; a use-case user reads their own use
 case's, subject to FR-4. **IT Steuerung reads none** — every figure, no content.
 
-**FR-4 — A use case may restrict its own members.** `restrict_members_to_own_requests`, owned by the
-use case's administrator, shows each *user* only the requests they made themselves. Administrators
-of the use case are unaffected. **Default off**, which is the behaviour that already existed: this
+**FR-4 — A use case may restrict its own members.** `payload_visibility: own`, owned by the use
+case's administrator, shows each *user* only the requests they made themselves. Administrators of
+the use case are unaffected. **The default is `members`**, the behaviour that already existed: this
 is a restriction somebody may impose, not a permission that was previously assumed.
+
+**FR-4c — …and may withhold content from itself.** `payload_visibility: oversight` leaves stored
+content to the roles holding `payload.read_any` and to nobody inside the use case, its
+administrators included (`FRD-622` FR-1b). It was a boolean until 2026-10-11 and is a three-valued
+field now, because the third answer cannot be spelled with two values.
 
 **FR-4a** — the restriction applies to the **list**, not only to the content. Withholding the
 payload while leaving the row visible still discloses who else calls, how often and at what cost —

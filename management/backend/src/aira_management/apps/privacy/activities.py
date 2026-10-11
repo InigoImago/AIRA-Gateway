@@ -293,7 +293,7 @@ NOT_PERSONAL_COLUMNS: dict[tuple[Plane, str], tuple[str, ...]] = {
         "prompt_caching_enabled",
         "include_reasoning",
         "prompt_cache_ttl",
-        "restrict_members_to_own_requests",
+        "payload_visibility",
         "retention_days",
         "created_at",
         "updated_at",

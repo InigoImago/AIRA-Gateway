@@ -34,6 +34,7 @@ from aira_gateway.db.models import (
     UseCaseMemberRead,
     UseCaseRead,
 )
+from aira_gateway.payloads import VISIBILITIES, PayloadVisibility
 from aira_gateway.retention import DEFAULT_RETENTION_DAYS
 
 _log = structlog.get_logger(__name__)
@@ -135,6 +136,30 @@ async def _upsert(
 # == use cases ====================================================================================
 
 
+def _payload_visibility(payload: dict[str, Any]) -> str:
+    """Who may read this use case's stored content, from whichever field the event carries.
+
+    **Both, in this order**, because a half-upgraded installation is the ordinary case for a day:
+    Management is upgraded first (`FRD-204`), and until then its events carry only the boolean
+    `restrict_members_to_own_requests`. Reading its absence as `members` would *widen* who may
+    read a use case that had been restricted — the one direction a default must never go.
+
+    An unknown value is read as the **narrowest** of the three for the same reason: a value this
+    gateway does not understand came from a newer Management that meant to restrict something, and
+    guessing `members` would publish content on the strength of not recognising a word.
+    """
+    named = str(payload.get("payload_visibility") or "").strip()
+    if named in VISIBILITIES:
+        return named
+    if named:
+        _log.warning("payload_visibility_unknown", value=named)
+        return PayloadVisibility.OVERSIGHT_ONLY.value
+    # Nothing new in the event: the retired boolean, which said exactly `own` or `members`.
+    if payload.get("restrict_members_to_own_requests"):
+        return PayloadVisibility.OWN_REQUESTS_ONLY.value
+    return PayloadVisibility.EVERY_MEMBER.value
+
+
 async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
     fields = {
         "name": payload.get("name", ""),
@@ -151,10 +176,8 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
         "prompt_caching_enabled": bool(payload.get("prompt_caching_enabled", False)),
         # The cheap TTL; reading silence as "1h" would double every write price.
         "prompt_cache_ttl": str(payload.get("prompt_cache_ttl") or "5m"),
-        # Absent means **unrestricted**: a missing restriction must not narrow what members see.
-        "restrict_members_to_own_requests": bool(
-            payload.get("restrict_members_to_own_requests", False)
-        ),
+        # Who inside the use case may read content (`FRD-622` FR-1).
+        "payload_visibility": _payload_visibility(payload),
         "retention_days": int(payload.get("retention_days") or DEFAULT_RETENTION_DAYS),
         # Absent keeps `None`, read as unrestricted; an empty list releases nothing (`FRD-308`).
         "allowed_models": _released_models(payload),

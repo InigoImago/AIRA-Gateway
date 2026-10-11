@@ -634,3 +634,96 @@ def test_a_release_list_is_bounded() -> None:
     )
 
     assert response.status_code == 400
+
+
+# ---- who may read the content, as one choice (`FRD-622` FR-1) ------------------------------
+
+
+def test_a_use_case_starts_readable_by_its_members() -> None:
+    """The default is the behaviour that existed before the setting did: a restriction is imposed,
+    never assumed. Asserted on a freshly created use case, because a default nobody states is a
+    default somebody discovers."""
+    admin = _user("admin1", "global-admin")
+    created = _create(_client(admin), "demo-uc", "Demo")
+
+    assert created.json()["payload_visibility"] == "members"
+    assert UseCase.objects.get(slug="demo-uc").payload_visibility == "members"
+
+
+@pytest.mark.parametrize("visibility", ["members", "own", "oversight"])
+def test_an_administrator_of_the_use_case_chooses_who_may_read_it(
+    captured_events, visibility: str
+) -> None:
+    """All three, through the API that saves them, by somebody who holds **no** organisation-wide
+    role — this is a grant on the use case (`ADR-0017`), and the panel belongs to whoever
+    administers it.
+
+    `oversight` included on purpose: it takes the administrator's *own* reading away, and they are
+    allowed to choose it and allowed to change their mind (the owner's decision, 2026-10-11).
+    """
+    usecase = UseCase.objects.create(slug="uc", name="UC")
+    admin = _administrator("uc-admin", usecase)
+
+    response = _client(admin).patch(f"{BASE}uc/", {"payload_visibility": visibility}, format="json")
+
+    assert response.status_code == 200, response.data
+    assert response.json()["payload_visibility"] == visibility
+    assert UseCase.objects.get(slug="uc").payload_visibility == visibility
+    # And it travels, or the gateway enforces yesterday's decision.
+    upserted = [payload for kind, payload in captured_events if kind == "usecase.upserted"]
+    assert upserted[-1]["payload_visibility"] == visibility
+
+
+def test_the_oversight_mode_can_be_left_again() -> None:
+    """The door closes and opens. Making it one-way was considered and declined: the panel belongs
+    to the use case's administrator, and a latch only an installation role could open would be a
+    second kind of ownership on one setting (owner's decision)."""
+    usecase = UseCase.objects.create(slug="uc", name="UC", payload_visibility="oversight")
+    admin = _administrator("uc-admin", usecase)
+
+    response = _client(admin).patch(f"{BASE}uc/", {"payload_visibility": "members"}, format="json")
+
+    assert response.status_code == 200, response.data
+    assert UseCase.objects.get(slug="uc").payload_visibility == "members"
+
+
+@pytest.mark.parametrize(
+    "value", ["", "everyone", "oversight ", "OVERSIGHT", True, 3, None, "own,members"]
+)
+def test_a_visibility_nobody_defined_is_refused_where_it_is_typed(value: object) -> None:
+    """The gateway reads an unknown value as the **narrowest** of the three, deliberately — so a
+    typo here would silently hide a use case's content from its own members rather than fail.
+    Which is exactly why it has to be refused at the boundary where somebody can still see what
+    they typed (`ADR-0018`: both ends, each for its own reason)."""
+    admin = _user("admin1", "global-admin")
+    _create(_client(admin), "demo-uc", "Demo")
+
+    response = _client(admin).patch(f"{BASE}demo-uc/", {"payload_visibility": value}, format="json")
+
+    assert response.status_code == 400, f"{value!r} was accepted"
+
+
+def test_the_event_still_carries_the_retired_boolean_for_a_gateway_that_reads_it(
+    captured_events,
+) -> None:
+    """**The upgrade window, which is a day long and real** (`FRD-204`): Management is upgraded
+    first, and a gateway that has not been yet reads `restrict_members_to_own_requests` and nothing
+    else. Dropping it from the event would *unrestrict* every restricted use case on those
+    instances — a disclosure arriving as an upgrade — so it is still emitted, derived, and
+    anything that is not `members` is a restriction as far as that gateway is concerned.
+    """
+    admin = _user("admin1", "global-admin")
+    _create(_client(admin), "demo-uc", "Demo")
+    client = _client(admin)
+
+    sent: dict[str, dict] = {}
+    for visibility in ("members", "own", "oversight"):
+        client.patch(f"{BASE}demo-uc/", {"payload_visibility": visibility}, format="json")
+        upserted = [payload for kind, payload in captured_events if kind == "usecase.upserted"]
+        sent[visibility] = upserted[-1]
+
+    assert sent["members"]["restrict_members_to_own_requests"] is False
+    assert sent["own"]["restrict_members_to_own_requests"] is True
+    # Oversight is narrower than the boolean can say, so it says the narrowest it can.
+    assert sent["oversight"]["restrict_members_to_own_requests"] is True
+    assert sent["oversight"]["payload_visibility"] == "oversight"

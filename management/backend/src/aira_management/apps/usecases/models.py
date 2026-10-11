@@ -94,13 +94,35 @@ class UseCase(models.Model):
             "pays for itself only if the gap between turns regularly exceeds five minutes."
         ),
     )
-    restrict_members_to_own_requests = models.BooleanField(
-        default=False,
+    #: Who, **inside this use case**, may open a stored prompt and answer (`FRD-622` FR-1).
+    #:
+    #: A choice and not a pair of booleans, because it is one question with three answers and two
+    #: booleans can spell combinations that mean nothing. `store_payloads` stays beside it: whether
+    #: anything is written is a different question from who may read it, and it is the one
+    #: retention reads as a period of zero.
+    #:
+    #: It restricts **content**, never rows: which requests a member sees at all is what `OWN`
+    #: decides, and the figures a use case needs to run itself — status, latency, cost — stay
+    #: where they were in every mode.
+    PAYLOAD_VISIBILITY_MEMBERS = "members"
+    PAYLOAD_VISIBILITY_OWN = "own"
+    PAYLOAD_VISIBILITY_OVERSIGHT = "oversight"
+    PAYLOAD_VISIBILITIES = [
+        (PAYLOAD_VISIBILITY_MEMBERS, "Every member of the use case"),
+        (PAYLOAD_VISIBILITY_OWN, "Administrators, and each person's own requests"),
+        (PAYLOAD_VISIBILITY_OVERSIGHT, "Global Administrators and IT Security only"),
+    ]
+    payload_visibility = models.CharField(
+        max_length=16,
+        choices=PAYLOAD_VISIBILITIES,
+        default=PAYLOAD_VISIBILITY_MEMBERS,
         help_text=(
-            "Show each use-case *user* only the requests they made themselves. An administrator "
-            "of the use case still sees all of them. Default off, which is the behaviour that "
-            "already existed — this is a restriction an administrator may impose, not a "
-            "permission that was previously assumed."
+            "Who inside this use case may read stored prompts and responses (FRD-622). "
+            "'members': everybody in the use case. 'own': administrators of the use case read all "
+            "of them, everybody else only their own requests. 'oversight': nobody in the use "
+            "case, not even its administrators — only the installation roles that may read any "
+            "content (Global Administrator, IT Security). The default is the behaviour that "
+            "already existed. Rows, figures and costs are unaffected."
         ),
     )
     retention_days = models.PositiveSmallIntegerField(

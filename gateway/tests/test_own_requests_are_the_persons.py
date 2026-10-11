@@ -63,7 +63,11 @@ def _client(principal: Principal) -> TestClient:
 
 async def _seed(sessions, *, restricted: bool) -> None:
     async with sessions() as session:
-        session.add(UseCaseRead(slug="uc-a", name="A", restrict_members_to_own_requests=restricted))
+        session.add(
+            UseCaseRead(
+                slug="uc-a", name="A", payload_visibility="own" if restricted else "members"
+            )
+        )
         session.add(UseCaseMemberRead(use_case_slug="uc-a", subject="alice", role="user"))
         session.add(UseCaseMemberRead(use_case_slug="uc-a", subject="bob", role="user"))
         # Alice's own traffic, made with **her API key**: the subject is her username.

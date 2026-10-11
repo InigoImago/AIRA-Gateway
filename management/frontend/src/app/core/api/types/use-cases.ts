@@ -36,8 +36,15 @@ export interface UseCase {
   prompt_caching_enabled?: boolean;
   /** How long the provider keeps it: `5m` or `1h`. */
   prompt_cache_ttl?: string;
-  /** Show each use-case *user* only their own requests. An administrator still sees all of them. */
-  restrict_members_to_own_requests?: boolean;
+  /**
+   * Who inside the use case may open a stored prompt and answer (`FRD-622` FR-1).
+   *
+   * `members` — everybody in it. `own` — administrators read all of them, everybody else only
+   * their own requests. `oversight` — nobody in the use case, its administrators included; only
+   * the installation roles that may read any content. Content only: rows and figures are
+   * unaffected.
+   */
+  payload_visibility?: 'members' | 'own' | 'oversight';
   /** How long stored prompts and responses are kept, in days (FRD-404). */
   retention_days?: number;
   /**

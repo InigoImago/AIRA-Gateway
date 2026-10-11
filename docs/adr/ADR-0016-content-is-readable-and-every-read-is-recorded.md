@@ -41,6 +41,13 @@ naming who read what, when, and on what authority.**
 | Use-case administrator | their own use case, recorded | It is their use case's data. |
 | Use-case user | their own use case, recorded — or only their own requests, if that use case restricts it | Their own team's traffic, with a switch their administrator owns. |
 
+> **Extended by `FRD-622` FR-1b (2026-10-11).** A use case may also choose that **nobody inside
+> it** reads content — its own administrators included — leaving the two rows above it as the only
+> readers. The table is therefore a ceiling rather than a grant: every row still needs the use
+> case's own setting to allow it, and the two oversight rows are the ones it cannot take away.
+> The bargain this ADR makes is what makes that mode usable at all: the people whose data it is
+> cannot look either, so the record of who did is the only thing left to hold anybody to.
+
 Three conditions bound it, and none is new: the use case must have **payload storage on**
 (`FRD-404`), the payload must not have **expired** under that use case's retention, and the reader
 must be inside the caller's visible scope.

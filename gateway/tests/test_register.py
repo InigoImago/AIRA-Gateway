@@ -57,7 +57,7 @@ def _use_case(slug: str, **over: Any) -> UseCaseRead:
         "processing_notes": "Prompt goes to the model, answer comes back.",
         "store_payloads": True,
         "retention_days": 7,
-        "restrict_members_to_own_requests": False,
+        "payload_visibility": "members",
         "tools_enabled": False,
         "prompt_caching_enabled": False,
         "prompt_cache_ttl": "5m",
@@ -143,6 +143,7 @@ async def test_one_row_carries_what_a_register_is_made_of() -> None:
     assert entry["processing"].startswith("Prompt goes to the model")
     assert entry["prompts_stored"] is True
     assert entry["retention_days"] == 7
+    assert entry["content_visibility"] == "members"
     assert entry["members"] == 1
     assert entry["groups"] == 1
     assert entry["status"] == "live"
@@ -173,6 +174,25 @@ async def test_a_use_case_that_keeps_nothing_has_no_erasure_deadline() -> None:
 
     assert entry["prompts_stored"] is False
     assert entry["retention_days"] is None
+
+
+async def test_the_register_names_a_use_case_its_own_people_cannot_read() -> None:
+    """**A register is read by somebody answering for a disclosure** (`FRD-622` FR-1b), and the
+    third answer is the one they most need named: not "members see their own" and not its absence,
+    but *nobody here reads this — the installation's two oversight roles do*.
+
+    A word rather than a flag for that reason: a boolean column would have printed `no` for both
+    "every member reads it" and "nobody here does", which are opposite facts.
+    """
+    app = _app()
+    with TestClient(app) as client:
+        await _seed(app, _use_case("hidden", payload_visibility="oversight"))
+        entry = _entry(_register(client), "hidden")
+
+    assert entry["content_visibility"] == "oversight"
+    # Still stored, and still with a deadline: the mode narrows reading, not keeping.
+    assert entry["prompts_stored"] is True
+    assert entry["retention_days"] == 7
 
 
 async def test_a_retired_use_case_is_in_the_register_and_says_so() -> None:

@@ -125,7 +125,9 @@ Two rules the code enforces so that neither plane has to restate them:
   read first is not a decision anybody can review.
 
 A use case may show its **users** only the requests they made themselves
-(`restrict_members_to_own_requests`); its administrators always see all of them.
+(`payload_visibility: own`); its administrators always see all of them. It may also leave content
+to the two installation roles above and to **nobody inside it** (`payload_visibility: oversight`) —
+the one case where an administrator of a use case cannot read its prompts (`FRD-622` FR-1b).
 
 **AIRA never writes to the directory.** Groups come from Keycloak; AIRA reads them and grants
 against them. If the token carries no `groups` claim, no group grant can match — the mapper has to

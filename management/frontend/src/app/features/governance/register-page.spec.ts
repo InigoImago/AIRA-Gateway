@@ -32,7 +32,7 @@ function entry(over: Partial<RegisterEntry> = {}): RegisterEntry {
     models: [model()],
     prompts_stored: true,
     retention_days: 7,
-    own_requests_only: false,
+    content_visibility: 'members',
     tools: false,
     prompt_caching: false,
     cache_ttl: '5m',
@@ -349,7 +349,7 @@ describe('RegisterPage', () => {
               prompt_caching: true,
               cache_ttl: '15m',
               reasoning: true,
-              own_requests_only: true,
+              content_visibility: 'own',
             }),
           ],
         }),
@@ -363,6 +363,20 @@ describe('RegisterPage', () => {
     expect(text).toContain('caching 15m');
     expect(text).toContain('reasoning on');
     expect(text).toContain('members see only their own requests');
+  });
+
+  it('names the use cases whose content only the oversight roles may read (`FRD-622` FR-1b)', () => {
+    // The register is read by somebody answering for a disclosure, so the third answer has to be
+    // a sentence rather than the absence of the second one.
+    const harness = setup(
+      of(register({ use_cases: [entry({ content_visibility: 'oversight' })] })),
+    );
+    harness.component.toggle('demo-uc');
+    harness.fixture.detectChanges();
+
+    const text = harness.text();
+    expect(text).toContain('content readable only by Global Administrators and IT Security');
+    expect(text).not.toContain('members see only their own requests');
   });
 
   it('asks for a period of its own without reloading until it is given one', () => {

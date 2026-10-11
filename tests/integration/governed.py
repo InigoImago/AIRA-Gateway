@@ -213,7 +213,7 @@ class Governed:
             "prompt_cache_ttl",
             "store_payloads",
             "retention_days",
-            "restrict_members_to_own_requests",
+            "payload_visibility",
         }
         assert column in allowed, f"{column} is not a use-case switch"
         await self._exec(

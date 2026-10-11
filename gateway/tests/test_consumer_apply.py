@@ -624,3 +624,99 @@ async def test_reasoning_turned_off_in_management_is_off_in_the_gateway(make_ses
         )
     (row,) = await _all(make_session, UseCaseRead)
     assert row.include_reasoning is False
+
+
+# ---- who may read content, from whichever field the event carries (`FRD-622` FR-1) ---------
+
+
+async def test_the_visibility_is_taken_from_the_event(make_session) -> None:
+    """The ordinary case: Management says which of the three, and the read-model stores it."""
+    async with make_session() as session:
+        for slug, value in (("m", "members"), ("o", "own"), ("x", "oversight")):
+            await apply_event(
+                session,
+                "usecase.upserted",
+                {"slug": slug, "name": "N", "payload_visibility": value},
+            )
+
+    rows = {row.slug: row.payload_visibility for row in await _all(make_session, UseCaseRead)}
+    assert rows == {"m": "members", "o": "own", "x": "oversight"}
+
+
+async def test_an_event_from_an_older_management_is_read_through_the_boolean(make_session) -> None:
+    """**The half-upgraded stack, which is the ordinary state for a day** (`FRD-204`): Management
+    is upgraded first, and until the day it is, its events carry only
+    `restrict_members_to_own_requests`.
+
+    The direction matters. Reading the absence of the new field as `members` would *widen* who may
+    read a use case somebody had restricted — a disclosure arriving as an upgrade — so the retired
+    boolean is still understood, and it said exactly `own` or `members`.
+    """
+    async with make_session() as session:
+        await apply_event(
+            session,
+            "usecase.upserted",
+            {"slug": "restricted", "name": "N", "restrict_members_to_own_requests": True},
+        )
+        await apply_event(
+            session,
+            "usecase.upserted",
+            {"slug": "open", "name": "N", "restrict_members_to_own_requests": False},
+        )
+        # Neither field: the behaviour that existed before either of them.
+        await apply_event(session, "usecase.upserted", {"slug": "silent", "name": "N"})
+
+    rows = {row.slug: row.payload_visibility for row in await _all(make_session, UseCaseRead)}
+    assert rows == {"restricted": "own", "open": "members", "silent": "members"}
+
+
+async def test_the_new_field_wins_where_the_event_carries_both(make_session) -> None:
+    """Management emits both during the transition, the boolean derived from the field. If they
+    ever disagree the field is the one somebody chose — and the boolean cannot express the third
+    value at all, so deriving the other way round would lose it."""
+    async with make_session() as session:
+        await apply_event(
+            session,
+            "usecase.upserted",
+            {
+                "slug": "uc",
+                "name": "N",
+                "payload_visibility": "oversight",
+                "restrict_members_to_own_requests": True,
+            },
+        )
+
+    assert (await _all(make_session, UseCaseRead))[0].payload_visibility == "oversight"
+
+
+async def test_a_visibility_this_gateway_does_not_know_is_read_as_the_narrowest(
+    make_session,
+) -> None:
+    """**A rolling upgrade runs two versions at once** (`FRD-127`), and the newer Management is the
+    one that writes. A value this gateway has never heard of came from a version that meant to
+    restrict *something*, so it is read as the narrowest of the three: guessing `members` would
+    publish a use case's prompts to its members on the strength of not recognising a word.
+
+    The same shape as `FRD-114`'s rule for capabilities — absence of information is not permission
+    — applied to a value instead of a flag.
+    """
+    async with make_session() as session:
+        await apply_event(
+            session,
+            "usecase.upserted",
+            {"slug": "uc", "name": "N", "payload_visibility": "auditors-on-tuesdays"},
+        )
+
+    assert (await _all(make_session, UseCaseRead))[0].payload_visibility == "oversight"
+
+
+async def test_an_empty_visibility_is_not_a_value(make_session) -> None:
+    """`""` is what a serialiser writes for "no answer", and reading it as a word nobody chose
+    would be the opposite mistake from the one above: the ordinary default is right here, because
+    an empty string is the shape of *silence*, not of a newer version's choice."""
+    async with make_session() as session:
+        await apply_event(
+            session, "usecase.upserted", {"slug": "uc", "name": "N", "payload_visibility": "  "}
+        )
+
+    assert (await _all(make_session, UseCaseRead))[0].payload_visibility == "members"

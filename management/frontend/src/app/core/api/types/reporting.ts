@@ -158,7 +158,8 @@ export interface RegisterEntry {
   prompts_stored: boolean;
   /** `null` where prompts are not stored: there is no erasure deadline for data never written. */
   retention_days: number | null;
-  own_requests_only: boolean;
+  /** Who may read this use case's content: `members`, `own` or `oversight` (`FRD-622` FR-1). */
+  content_visibility: string;
   tools: boolean;
   prompt_caching: boolean;
   cache_ttl: string;

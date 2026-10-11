@@ -8,10 +8,11 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 const MAX_RETENTION_DAYS = 3650;
 
 /**
- * What happens to prompts and responses (`FRD-622` FR-1). Three modes over the two fields the
- * gateway enforces: `store_payloads` and `restrict_members_to_own_requests` (`FRD-505` FR-4).
+ * What happens to prompts and responses (`FRD-622` FR-1). Four modes over the two fields the
+ * gateway enforces: `store_payloads` — whether anything is written — and `payload_visibility`,
+ * which is who may read it (`FRD-505` FR-4).
  */
-export type ContentMode = 'not-stored' | 'admins-and-own' | 'members';
+export type ContentMode = 'not-stored' | 'oversight' | 'admins-and-own' | 'members';
 
 /** The modes as offered, in order, with what each means for the people in the use case. */
 export const CONTENT_MODES: readonly { value: ContentMode; label: string; explains: string }[] = [
@@ -21,6 +22,14 @@ export const CONTENT_MODES: readonly { value: ContentMode; label: string; explai
     explains:
       'Nothing a caller sends or receives is written. Who, when, which model and what it cost ' +
       'are still kept.',
+  },
+  {
+    value: 'oversight',
+    label: 'Global Administrators and IT Security only',
+    explains:
+      'Kept for oversight and read by nobody in this use case — not by its administrators ' +
+      'either. A Global Administrator or IT Security can open a request, and every such read is ' +
+      'recorded. Rows, figures and costs stay visible here.',
   },
   {
     value: 'admins-and-own',
@@ -38,22 +47,27 @@ export const CONTENT_MODES: readonly { value: ContentMode; label: string; explai
 
 /** The mode a use case is in. Not stored wins: with nothing written, who may read it is moot. */
 export function modeOf(
-  useCase: Pick<UseCase, 'store_payloads' | 'restrict_members_to_own_requests'> | null,
+  useCase: Pick<UseCase, 'store_payloads' | 'payload_visibility'> | null,
 ): ContentMode {
   if (useCase?.store_payloads === false) return 'not-stored';
-  return useCase?.restrict_members_to_own_requests ? 'admins-and-own' : 'members';
+  if (useCase?.payload_visibility === 'oversight') return 'oversight';
+  return useCase?.payload_visibility === 'own' ? 'admins-and-own' : 'members';
 }
 
 /**
- * The fields a mode is saved as. Not stored leaves the restriction as it is: it decides nothing
+ * The fields a mode is saved as. Not stored leaves the visibility as it is: it decides nothing
  * while nothing is written, and the next stored mode sets it explicitly.
  */
 export function fieldsFor(mode: ContentMode): {
   store_payloads: boolean;
-  restrict_members_to_own_requests?: boolean;
+  payload_visibility?: UseCase['payload_visibility'];
 } {
   if (mode === 'not-stored') return { store_payloads: false };
-  return { store_payloads: true, restrict_members_to_own_requests: mode === 'admins-and-own' };
+  if (mode === 'oversight') return { store_payloads: true, payload_visibility: 'oversight' };
+  return {
+    store_payloads: true,
+    payload_visibility: mode === 'admins-and-own' ? 'own' : 'members',
+  };
 }
 
 /**
@@ -134,7 +148,7 @@ export class DataProtectionPanel implements OnInit {
         // Named, not spread: every field this form writes is visible where it is sent. Not stored
         // leaves the restriction `undefined`, which is not sent at all.
         store_payloads: fields.store_payloads,
-        restrict_members_to_own_requests: fields.restrict_members_to_own_requests,
+        payload_visibility: fields.payload_visibility,
         ...(fields.store_payloads && days != null ? { retention_days: days } : {}),
       }),
       {

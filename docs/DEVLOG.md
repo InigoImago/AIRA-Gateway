@@ -5,6 +5,70 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A use case can withhold its content from itself (2026-10-11)
+
+The owner counted the ways prompts and responses can be seen — not stored, administrators and each
+person's own, every member — and asked for a fourth: **stored, and readable by Global
+Administrators and IT Security only**. Then: check that visibility *and* erasure still work for all
+of them.
+
+**A boolean cannot carry the fourth answer**, and two booleans would have carried it along with two
+combinations that mean nothing. So `restrict_members_to_own_requests` became
+`payload_visibility` ∈ {`members`, `own`, `oversight`}, with `store_payloads` left beside it
+answering the different question of whether anything is written at all — which is also the one
+retention reads as a period of zero.
+
+What the new mode is, precisely: **nobody inside the use case**, its own administrators included.
+That is the first time an administrator cannot read their own use case's prompts, and it is the
+whole of the mode — one that let them read would promise something it cannot keep. It hides the
+**content** and not the rows: status, latency, cost and who called stay where they were, because a
+use case still has to be able to run itself and *which rows a member sees* is what `own` answers.
+Asked and answered by the owner: the mode is a deliberate restriction, not a lock — whoever
+administers the use case may set it and may leave it again.
+
+**The upgrade is the part with teeth**, and it goes in one direction only. Management's `0016`
+carries the boolean over, drops it and announces every live use case again; the gateway's `0047`
+does the same to the read-model. Management is deployed first, so its event still emits the retired
+boolean, derived — **dropping it would unrestrict every restricted use case** on a gateway that has
+not been upgraded yet, which is a disclosure arriving as an upgrade. For the same reason the
+consumer reads a visibility it does *not* recognise as the **narrowest** of the three: a value from
+a newer Management meant to restrict something, and guessing `members` would publish content on the
+strength of not recognising a word. `FRD-114`'s rule for capabilities — absence of information is
+not permission — applied to a value instead of a flag.
+
+Two places had to be told, and both are read by somebody answering for a disclosure. The register
+of processing activities reported `own_requests_only` as a **flag**, which would have printed `no`
+for both *"every member reads it"* and *"nobody here does"* — opposite facts under one word; it
+names the value now, in the JSON, the CSV and the console. And the privacy notice says what a use
+case can decide, so it says this too, in both languages, with a new edition and digest.
+
+**On the testing, which is what the question was really about.** Visibility is a table keyed by
+*(reader, visibility)* — seven readers, three stored modes — with a completeness check that fails
+on a missing or a stale cell. The old shape was a list of thirteen cases, and a list is where a new
+column gets added for the rows somebody thought of: four of this mode's seven cells are the
+interesting ones. Erasure is parametrised over **every** value rather than the new one, because the
+claim is that the sweep does not read that field at all — two use cases differing only in who may
+read them are cleared alike, storage switched off clears what is there whatever the mode was, and
+`oversight` buys a use case no extra day. The one property that can only be shown by *adding* code
+has a mutation that adds it (`WR7`: a sweep that exempts oversight use cases), and the record of
+who read a payload is asserted to outlive the payload.
+
+Two findings from writing it down:
+
+- **a test that calls a migration's `RunPython` with today's app registry expires** the moment the
+  schema moves past it. `0015`'s test did, on this change, because `0015`'s snapshot reads the
+  field `0016` removes. Django hands a real migration the *historical* model; a test calling the
+  function cannot. So `0016` has two `RunPython` steps — the carry-over, checked by migrating the
+  test database backwards and forwards, and the announcement, which reads only fields that outlive
+  it and can be called directly.
+- **the console's own guard asked for the field before I did**, again: a mode the engine reads and
+  the builder cannot set fails `test_every_use_case_control_is_reachable`.
+
+Measured: 8 mutations `WR1`–`WR8`, all caught (**988 properties**); the console's four modes
+round-trip through the fields and back.
+
+---
+
 ## Every model access is a chain, including the two that had reasons not to be (2026-10-11)
 
 The owner asked where a fallback model is defined for the case where a request *does not get

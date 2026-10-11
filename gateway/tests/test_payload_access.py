@@ -64,7 +64,7 @@ async def _seed(
     sessions,
     *,
     store_payloads: bool = True,
-    restricted: bool = False,
+    visibility: str = "members",
     payload: bool = True,
     status: int = 200,
     row_id: str = "",
@@ -75,7 +75,7 @@ async def _seed(
                 slug="uc-a",
                 name="A",
                 store_payloads=store_payloads,
-                restrict_members_to_own_requests=restricted,
+                payload_visibility=visibility,
             )
         )
         session.add(UseCaseMemberRead(use_case_slug="uc-a", subject="boss", role="admin"))
@@ -116,8 +116,77 @@ def _accesses(client: TestClient) -> list[PayloadAccess]:
 
 # ═══ the matrix ═════════════════════════════════════════════════════════════════════════════════
 #
-# `expected` is the HTTP status; `reason` is the refusal name in a 200 body, or None when content
-# is expected.
+# Seven readers against the three ways a stored use case can answer, as a **table keyed by both**
+# rather than a list of cases. A list is where a new column gets added for the rows somebody
+# thought of: `oversight` arrived on 2026-10-11 and a list would have grown four of its seven
+# cells, all of them the interesting ones. The completeness check below fails on a missing cell,
+# so a fourth visibility or a fifth role is a diff that does not compile until it is answered.
+#
+# `expected` is the HTTP status; `reason` is the refusal in a 200 body or the 403's message;
+# `ground` is the authority a granted read is recorded under.
+
+#: Every reader this decision distinguishes, by the name its row carries.
+READERS = {
+    "global-admin": GLOBAL_ADMIN,
+    "it-security": IT_SECURITY,
+    "it-steuerung": IT_STEUERUNG,
+    "uc-admin": UC_ADMIN,
+    "own-request": UC_USER,
+    "colleagues-request": OTHER_USER,
+    "outsider": OUTSIDER,
+}
+
+#: The three answers a use case that **stores** content can give (`FRD-622` FR-1). "Not stored" is
+#: not here: it is the other question — whether anything is written — and it has its own cases.
+VISIBILITIES = ("members", "own", "oversight")
+
+#: `(reader, visibility)` → `(status, reason, ground)`.
+#:
+#: Read it as sentences. An incident role reads anything, which is the point of the role. IT
+#: Steuerung reads every figure and no content, in every visibility. A use-case administrator reads
+#: their use case — **except** where the use case has left content to oversight, which is the whole
+#: of that mode: the administrator is not an oversight role, and a mode that let them read would
+#: promise something it cannot keep. An outsider is told 404, because 403 would confirm the use
+#: case exists.
+EXPECTED: dict[tuple[str, str], tuple[int, str | None, str | None]] = {
+    ("global-admin", "members"): (200, None, "incident"),
+    ("global-admin", "own"): (200, None, "incident"),
+    ("global-admin", "oversight"): (200, None, "incident"),
+    ("it-security", "members"): (200, None, "incident"),
+    ("it-security", "own"): (200, None, "incident"),
+    ("it-security", "oversight"): (200, None, "incident"),
+    ("it-steuerung", "members"): (403, "not_a_content_role", None),
+    ("it-steuerung", "own"): (403, "not_a_content_role", None),
+    ("it-steuerung", "oversight"): (403, "not_a_content_role", None),
+    ("uc-admin", "members"): (200, None, "use_case_admin"),
+    ("uc-admin", "own"): (200, None, "use_case_admin"),
+    ("uc-admin", "oversight"): (403, "oversight_only", None),
+    ("own-request", "members"): (200, None, "use_case_member"),
+    ("own-request", "own"): (200, None, "use_case_member"),
+    ("own-request", "oversight"): (403, "oversight_only", None),
+    ("colleagues-request", "members"): (200, None, "use_case_member"),
+    ("colleagues-request", "own"): (403, "others_request", None),
+    ("colleagues-request", "oversight"): (403, "oversight_only", None),
+    ("outsider", "members"): (404, None, None),
+    ("outsider", "own"): (404, None, None),
+    ("outsider", "oversight"): (404, None, None),
+}
+
+
+def test_the_matrix_answers_every_reader_in_every_visibility() -> None:
+    """The table is the specification, so a hole in it is a sentence nobody wrote.
+
+    Both directions: a cell for a reader or a visibility that no longer exists is a claim about
+    nothing, and it reads as coverage.
+    """
+    want = {(reader, visibility) for reader in READERS for visibility in VISIBILITIES}
+
+    assert set(EXPECTED) == want, (
+        "unanswered: "
+        f"{sorted(want - set(EXPECTED))}; stale: {sorted(set(EXPECTED) - want)}. Every reader has "
+        "an answer in every visibility, and a missing one is the case somebody will discover in "
+        "production."
+    )
 
 
 #: A **status is not an answer.** Three different refusals all return 403, so a matrix that checked
@@ -127,48 +196,17 @@ def _accesses(client: TestClient) -> list[PayloadAccess]:
 #: point of the message: "you see figures, not content" and "that use case is not yours" send the
 #: reader to two different people.
 @pytest.mark.parametrize(
-    ("principal", "restricted", "expected", "reason", "ground"),
+    ("reader", "visibility"),
     [
-        # An incident role reads anything, restriction or not — that is the point of the role.
-        (GLOBAL_ADMIN, False, 200, None, "incident"),
-        (GLOBAL_ADMIN, True, 200, None, "incident"),
-        (IT_SECURITY, False, 200, None, "incident"),
-        (IT_SECURITY, True, 200, None, "incident"),
-        # Every figure, no content. The split this whole feature turns on — and the *reason* is
-        # asserted, not just the status, or this row passes while the role boundary is gone.
-        (IT_STEUERUNG, False, 403, "not_a_content_role", None),
-        (IT_STEUERUNG, True, 403, "not_a_content_role", None),
-        # The use case's own administrator, including under their own restriction.
-        (UC_ADMIN, False, 200, None, "use_case_admin"),
-        (UC_ADMIN, True, 200, None, "use_case_admin"),
-        # A user reading their own request: always allowed.
-        (UC_USER, False, 200, None, "use_case_member"),
-        (UC_USER, True, 200, None, "use_case_member"),
-        # A user reading a colleague's: allowed until the administrator restricts it.
-        (OTHER_USER, False, 200, None, "use_case_member"),
-        (OTHER_USER, True, 403, "others_request", None),
-        # Somebody else's use case entirely. 404, because saying 403 would confirm it exists.
-        (OUTSIDER, False, 404, None, None),
-    ],
-    ids=[
-        "global-admin",
-        "global-admin-restricted",
-        "it-security",
-        "it-security-restricted",
-        "it-steuerung-refused",
-        "it-steuerung-refused-restricted",
-        "uc-admin",
-        "uc-admin-restricted",
-        "own-request",
-        "own-request-restricted",
-        "colleagues-request",
-        "colleagues-request-restricted",
-        "outsider",
+        pytest.param(reader, visibility, id=f"{reader}-{visibility}")
+        for reader in READERS
+        for visibility in VISIBILITIES
     ],
 )
-def test_who_may_read_a_stored_prompt(principal, restricted, expected, reason, ground) -> None:
-    with _client(principal) as client:
-        _fill(client, restricted=restricted)
+def test_who_may_read_a_stored_prompt(reader: str, visibility: str) -> None:
+    expected, reason, ground = EXPECTED[(reader, visibility)]
+    with _client(READERS[reader]) as client:
+        _fill(client, visibility=visibility)
         response = client.get("/v1beta/traces/row-1/payload")
 
     assert response.status_code == expected, response.text
@@ -267,7 +305,7 @@ def test_a_restricted_user_does_not_even_see_the_row() -> None:
     """Withholding only the content would still disclose who else calls, how often and at what
     cost — the interesting half — and would read as a broken screen rather than a boundary."""
     with _client(OTHER_USER) as client:
-        _fill(client, restricted=True)
+        _fill(client, visibility="own")
         rows = client.get("/v1beta/traces").json()["traces"]
 
     assert rows == []
@@ -275,7 +313,7 @@ def test_a_restricted_user_does_not_even_see_the_row() -> None:
 
 def test_the_same_user_sees_the_row_when_the_use_case_does_not_restrict() -> None:
     with _client(OTHER_USER) as client:
-        _fill(client, restricted=False)
+        _fill(client, visibility="members")
         rows = client.get("/v1beta/traces").json()["traces"]
 
     assert len(rows) == 1
@@ -285,7 +323,7 @@ def test_an_administrator_of_a_restricted_use_case_still_sees_every_row() -> Non
     """The restriction is on its *users*. An administrator who could no longer see their own use
     case's traffic could not administer it."""
     with _client(UC_ADMIN) as client:
-        _fill(client, restricted=True)
+        _fill(client, visibility="own")
         rows = client.get("/v1beta/traces").json()["traces"]
 
     assert len(rows) == 1
@@ -313,7 +351,7 @@ def test_an_administrator_is_recognised_when_the_token_carries_a_username() -> N
     )
 
     with _client(signed_in) as client:
-        _fill(client, restricted=True)
+        _fill(client, visibility="own")
         rows = client.get("/v1beta/traces").json()["traces"]
 
     assert len(rows) == 1, (
@@ -324,7 +362,7 @@ def test_an_administrator_is_recognised_when_the_token_carries_a_username() -> N
 
 def test_an_incident_role_is_never_restricted() -> None:
     with _client(IT_SECURITY) as client:
-        _fill(client, restricted=True)
+        _fill(client, visibility="own")
         rows = client.get("/v1beta/traces").json()["traces"]
 
     assert len(rows) == 1
@@ -467,7 +505,7 @@ async def test_a_restricted_use_case_does_not_narrow_a_group_granted_administrat
     from aira_gateway.payloads import restricted_use_cases
 
     async with sessions() as session:
-        session.add(UseCaseRead(slug="uc-a", name="A", restrict_members_to_own_requests=True))
+        session.add(UseCaseRead(slug="uc-a", name="A", payload_visibility="own"))
         await session.commit()
 
     async with sessions() as session:
@@ -487,8 +525,106 @@ async def test_a_restricted_use_case_still_narrows_a_group_granted_member(sessio
         grants=(("uc-a", "user"),),
     )
     async with sessions() as session:
-        session.add(UseCaseRead(slug="uc-a", name="A", restrict_members_to_own_requests=True))
+        session.add(UseCaseRead(slug="uc-a", name="A", payload_visibility="own"))
         await session.commit()
 
     async with sessions() as session:
         assert await restricted_use_cases(session, plain) == ["uc-a"]
+
+
+# ═══ oversight only: stored, and read by nobody in the use case ═════════════════════════════════
+#
+# The fourth answer the owner asked for (`FRD-622` FR-1b). Its two halves are easy to get wrong in
+# opposite directions: a mode that hid the *rows* as well would take a use case's own operations
+# view away, and a mode that let the use case's administrator read content would promise something
+# it cannot keep. Both are asserted here, beside what the mode does to the evidence.
+
+
+def test_the_refusal_says_who_can_read_and_that_the_reading_is_recorded() -> None:
+    """A dead end is not an answer. Somebody who needs that prompt — for a complaint, an incident,
+    a subject access request — has to learn from the refusal **who** can get it for them, and the
+    person whose data it is has to learn that such a read leaves a record."""
+    with _client(UC_ADMIN) as client:
+        _fill(client, visibility="oversight")
+        response = client.get("/v1beta/traces/row-1/payload")
+
+    message = response.json()["error"]["message"]
+    assert response.status_code == 403
+    assert "Global Administrator" in message and "IT Security" in message
+    assert "recorded" in message
+    # And it names who chose this, because the next question is always "can that be changed".
+    assert "administrator chose" in message
+
+
+def test_an_oversight_read_is_recorded_like_any_other() -> None:
+    """`ADR-0016`'s bargain: content is readable **because** every read is written down. The mode
+    that narrows reading to two roles is the one where that record matters most — it is the only
+    trace of the only people who can look."""
+    with _client(IT_SECURITY) as client:
+        _fill(client, visibility="oversight")
+        response = client.get("/v1beta/traces/row-1/payload")
+        records = _accesses(client)
+
+    assert response.status_code == 200
+    assert "4711" in str(response.json()["request"])
+    assert [(record.request_log_id, record.ground) for record in records] == [("row-1", "incident")]
+
+
+def test_a_read_this_mode_refuses_records_nothing_either() -> None:
+    """The rule above, for the refusal this mode adds: the record is of **disclosures**. Asserted
+    again rather than assumed, because this refusal is the first one that turns away somebody who
+    is otherwise entitled — an administrator of the use case — and an entitled caller is exactly
+    who a *"record the attempt"* exception would be written for."""
+    with _client(UC_ADMIN) as client:
+        _fill(client, visibility="oversight")
+        refused = client.get("/v1beta/traces/row-1/payload")
+        records = _accesses(client)
+
+    assert refused.status_code == 403
+    assert records == []
+
+
+@pytest.mark.parametrize(
+    "reader", ["uc-admin", "colleagues-request"], ids=["uc-admin", "a-colleague"]
+)
+def test_oversight_hides_the_content_and_leaves_the_rows(reader: str) -> None:
+    """**FR-1c, in both directions.** A use case still has to be able to run itself: what failed,
+    what it cost, who is calling too much. That is the row. The prompt is not, and this mode is
+    about the prompt — so the row is there and the content behind it is not.
+
+    Asserted for a colleague as well as the administrator, because `own` restricts exactly this
+    list and a mode that leaked into `restricted_use_cases` would silently take the colleague's
+    rows away too.
+    """
+    with _client(READERS[reader]) as client:
+        _fill(client, visibility="oversight")
+        rows = client.get("/v1beta/traces").json()["traces"]
+        content = client.get("/v1beta/traces/row-1/payload")
+
+    assert len(rows) == 1, "the mode took away the operations view, which is not its business"
+    assert rows[0]["model"] == "mock-1"
+    assert content.status_code == 403
+
+
+def test_the_mode_is_not_a_second_way_to_say_not_stored() -> None:
+    """Three facts, three answers (the rule this file opens with): *nothing was written*, *it was
+    written and you may not read it*, and *it was written and has expired*. A reader who cannot
+    tell them apart cannot tell a setting from a clock from a boundary — and for this mode the
+    difference decides whether asking IT Security is worth anything."""
+    with _client(UC_ADMIN) as client:
+        _fill(client, visibility="oversight", store_payloads=False, payload=False)
+        not_stored = client.get("/v1beta/traces/row-1/payload")
+
+    # Authority first: the use case has left content to oversight, so that is what its own
+    # administrator is told — before anything says whether a payload exists. Telling them "not
+    # stored" would be a disclosure about the data by somebody who may not see the data.
+    assert not_stored.status_code == 403
+    assert MESSAGES[PayloadRefusal.OVERSIGHT_ONLY] in not_stored.json()["error"]["message"]
+
+    with _client(IT_SECURITY) as client:
+        _fill(client, visibility="oversight", store_payloads=False, payload=False)
+        oversight = client.get("/v1beta/traces/row-1/payload")
+
+    # The role that may read is told the truth about the data: there is none.
+    assert oversight.status_code == 200
+    assert oversight.json()["reason"] == "not_stored"

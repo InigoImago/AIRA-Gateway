@@ -55,7 +55,7 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             "description",
             "processing_notes",
             "store_payloads",
-            "restrict_members_to_own_requests",
+            "payload_visibility",
             "tools_enabled",
             "include_reasoning",
             "prompt_caching_enabled",
