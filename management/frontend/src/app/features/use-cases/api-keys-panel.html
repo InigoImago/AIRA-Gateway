@@ -135,12 +135,27 @@
         >
           Download opencode.json
         </button>
+        <button
+          type="button"
+          class="btn btn--sm"
+          (click)="downloadBudgetPlugin()"
+          data-testid="download-budget-plugin"
+        >
+          Download budget plugin
+        </button>
         <button type="button" class="btn btn--sm btn--ghost" (click)="dismissIssued()">Done</button>
       </div>
       <span class="field__hint">
         The OpenCode configuration is built now, while the key exists: it is shown once and never
         retrievable, so a config offered later could only carry a placeholder.
         <strong>It contains the key</strong> — treat the file as the credential it is.
+      </span>
+      <span class="field__hint" data-testid="budget-plugin-hint">
+        <strong>The budget plugin</strong> shows what is left of this use case's allowance inside
+        OpenCode — when a session starts, and again whenever the agent finishes a turn. Save
+        <code>aira-budget.js</code> into <code>.opencode/plugin/</code> next to the project, or
+        <code>~/.config/opencode/plugin/</code> for every project. It takes the key from the
+        configuration above, so there is nothing else to set up, and it contains no credential.
       </span>
       <!-- Repeated beside the plaintext: the last moment the reader sees the key. -->
       <span class="field__hint" data-testid="key-issued-responsibility">

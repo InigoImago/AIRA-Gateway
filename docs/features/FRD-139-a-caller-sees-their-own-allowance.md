@@ -96,57 +96,100 @@ GET /v1beta/me/budget
 
 ## 5. How it gets in front of a developer
 
+**The first answer to this was wrong, and the owner said so:** *it is not practical to run a
+command to find out how much budget is left — and it is worse for everybody else, who will either
+not bother reading the documentation or never learn such an action exists.* A figure that arrives
+only when asked for arrives for the one developer who already knew. `ADR-0033` records the decision
+that followed: the display is **shipped**, as a plugin that runs inside the client.
+
+### 5.1 What the installed client can actually do
+
 **Checked against the installed binary** (`opencode 1.18.15`), not against the project's
-documentation — the two disagree, and the disagreement cost this section a rewrite. What that
-version has: a `plugin` array, `command` prompt templates, an `mcp` block, and `permission.bash`
-patterns where the **last matching rule wins**. What it does **not** have is a status line that runs
-a shell command: that is an open pull request, so a figure cannot simply be drawn into its chrome.
-The origin note above says "status bar" because that is what the request assumed, and the assumption
-is wrong for this version.
+documentation or its published types — every line below contradicts one of them, and each
+contradiction cost a broken client first:
 
-Three routes ship, in the order a developer meets them:
+| | |
+| --- | --- |
+| a status line running a shell command | **no** — an open pull request, not a feature |
+| `.opencode/plugin/*.js`, auto-loaded | yes — and **every file** in the directory is loaded as a plugin |
+| a plugin's exports | **every export is called as a plugin factory.** `export const id = "…"`, which `PluginModule.id` declares as valid, makes the loader refuse the file: *"Plugin export is not a function"* |
+| `tui` vs `server` plugins | a file exporting `tui` is picked up by the **server** loader anyway, called with a plugin's arguments, and the session then hangs. `TuiPluginModule` exists in the types and not in this path |
+| the way into the interface | `client.tui.showToast` — the server API the TUI itself serves (`POST /tui/show-toast`) |
+| `permission.bash` | glob patterns, and **the last matching rule wins** |
 
-1. **The price in the generated configuration.** OpenCode's own per-session cost comes from
-   `cost` in its config, not from any API — with no `cost` it prints `$0.00` forever, which is what
-   a developer was actually looking at. The console now always writes the figures and puts the
-   currency in the model's **name** (`FRD-132` §11). Measured from OpenCode's own store: the same
-   instruction booked `cost: 0.0002102` with the priced config against `cost: 0` without it, and
-   AIRA's audit row for the same request says `0.0002`. This is the session figure, and it is the
-   half the request was about that no endpoint can answer — the gateway does not know what the
-   client calls a session.
-2. **The terminal.** `curl` with the key the agent already uses, in a shell prompt, a tmux status
-   line or an alias. Costs nothing, lives next to the assistant rather than inside it. The recipe is
-   in [`tools/opencode/README.md`](../../tools/opencode/README.md) and was run against the live
-   stack: `5.00 of 5.00 left (resets 2026-11-01)`.
-3. **A `/budget` command** — [`tools/opencode/command/budget.md`](../../tools/opencode/command/budget.md).
-   A command file is a **prompt template**: OpenCode expands it into the session
-   (`opencode run --command budget`, or `/budget` in the TUI) and the agent runs the `curl` with its
-   shell tool. No plugin, no second surface, and the agent needs `curl -s *` allowed in
-   `permission.bash`. `tools/tests/test_the_opencode_command_asks_for_a_real_endpoint.py` fails if
-   the route it names stops existing.
+The origin note at the top of this document says "status bar" because that is what the request
+assumed. It is wrong for this version, and finding that out is what produced the route that works.
 
-   **What was not demonstrated:** the agent actually running it. This installation serves
-   `qwen3:0.6b` for test purposes; the expansion works (the answer mirrors the template's own
-   bullets) but the model never calls the shell tool at all — OpenCode's `part` table holds only
-   `text` and `step-start` rows, no tool call — and its first answer *invented* figures that
-   contradicted the stack. That is a model-size limit, not a mechanism failure, and the template now
-   orders a refusal rather than a guess. It is stated here rather than implied away: a coding model
-   able to use tools is the premise of the whole use case, and this one is not it.
+### 5.2 What ships
 
-**Two routes deliberately not taken.** A **plugin** is the only way into OpenCode's own chrome and
-the pattern exists in the wild (`opencode-opper-budget` does this for Opper.ai) — but with no
-shell-command status line in this version it would have to draw the figure itself, and an
-integration that cannot be exercised here is worse than a documented `curl`. An **MCP tool** is a
-second surface with its own authentication: an ADR, not a patch.
+1. **The plugin** — [`tools/opencode/plugin/aira-budget.js`](../../tools/opencode/plugin/aira-budget.js),
+   one file, dropped into `.opencode/plugin/`. It reads this endpoint when it loads, when a session
+   starts and after every finished turn, and shows one line as a toast. **Nobody has to know it is
+   there**, which is the requirement. Four properties decide whether it is bearable rather than
+   merely present:
+
+   - the figure shown is the dimension that will **refuse first** across every budget that binds —
+     not the first one in the list, and not an average;
+   - `announce` keeps it from speaking every turn: the first reading, every change of severity, and
+     otherwise only a tenth of the limit at a time. A counter that went *down* is not news;
+   - a new session is shown the figure **unconditionally**, because that is the moment somebody
+     starts spending — and because a toast sent while the plugin was loading can be accepted by the
+     server and drawn by nobody;
+   - a setup it cannot read is said **once**, naming the two places to fix. Silence would look
+     exactly like a use case with no budget.
+
+   It carries no credential: the key comes from the `opencode.json` the console generates, or from
+   `AIRA_API_KEY`. It guesses no address either — an installed file that falls back to a loopback
+   host reports a connection error about a host the reader never named.
+
+2. **The console hands it out.** The API-keys panel offers *Download budget plugin* beside the
+   configuration it already generates, because collecting a key is the one moment a developer is
+   certainly looking. The copy in the bundle is generated from the file above
+   (`tools/opencode_plugin_asset.py`) and a test fails when they disagree — the copy nobody
+   regenerates is the one somebody installs, and a plugin a version behind does not announce
+   itself, it just shows a figure.
+
+3. **The `/budget` command** — [`tools/opencode/command/budget.md`](../../tools/opencode/command/budget.md),
+   a prompt template OpenCode expands (`opencode run --command budget`, or `/budget` in the TUI).
+   Kept for anybody who wants to *ask*, and demoted from the main route for a measured reason: it
+   depends on the model calling a shell tool. Against this gateway, `qwen3:0.6b` never attempted it
+   and `qwen3:4b` declared ten tools and called none — twice, taking 90 seconds each time — while
+   the smaller model's first answer **invented** a budget that contradicted the stack, in the
+   template's own bullet shape. The template now orders `I could not read the budget.` instead of a
+   guess. A transparency feature whose reliability depends on a model's mood is not one; the plugin
+   does not involve the model at all.
+
+4. **The `curl` recipe** — in [`tools/opencode/README.md`](../../tools/opencode/README.md), for a
+   shell prompt, a tmux status line, or any client that is not OpenCode.
 
 **Deliberately not a way at all:** prepending the figure to the model's answer. `FRD-309`'s notice
 mechanism could do it today, and it would put budget text into the agent's context on every
 request, where the model reads it and can act on it.
 
+### 5.3 Measured, live
+
+With the plugin installed, a real key, and `qwen3:4b` answering through the gateway:
+
+- the gateway recorded `GET /v1beta/me/budget → 200`, and OpenCode's toast endpoint accepted the
+  line with `{"data": true}`;
+- the line it computed from the live answer was
+  **`AIRA: 489 of 500 requests left · use case, per day · resets 12 Oct`**;
+- replayed from a captured pty, the interface drew it:
+
+  ```
+  ┃  hi           ┃                                                          ┃
+  ┃               ┃  AIRA budget                                             ┃
+                  ┃                                                          ┃
+     ▣  Build · qw┃  AIRA: 489 of 500 requests left · use case, per day ·    ┃
+  ```
+
+- and beside it, `Build · qwen3:4b via AIRA (EUR)` — the session cost half of `FRD-132` §11.7, in
+  the same screenshot.
+
 **What OpenCode's own numbers are worth here:** `opencode stats` tallies its *own* sessions and
-rounds to two decimals, so a real figure of `0.00021` still prints as `$0.00`. `FRD-132` §11
-measured the token figures and found them exact. The *limits* it shows come from its configuration
-file, so the only authoritative remaining figure is this endpoint's — the counter that refuses.
+rounds to two decimals, so a real figure of `0.00021` prints as `$0.00`. `FRD-132` §11 measured the
+token figures and found them exact. The *limits* it shows come from its configuration file, so the
+only authoritative remaining figure is this endpoint's — the counter that refuses.
 
 ## 6. Open
 
@@ -154,8 +197,15 @@ file, so the only authoritative remaining figure is this endpoint's — the coun
   different mechanism; bundling it would have hidden the decision.
 - **No installation budget for a caller with no use case.** `FRD-610`'s residual bucket is not
   reported: it is not *theirs*, and a figure a caller cannot influence reads like one they can.
-- **Nothing pushes.** A client polls. A header on every answer was considered and left out: it is
-  the request path, and with enforcement off nothing reads the counters at all.
+- **Nothing pushes.** A client polls — the plugin polls on its behalf, at session start and after
+  each turn. A header on every answer was considered and left out: it is the request path, and with
+  enforcement off nothing reads the counters at all.
+- **One client is served.** The plugin is OpenCode's because OpenCode is the client that was
+  measured (`ADR-0033`). A KIRA client, a plain `curl` user or another assistant still has only the
+  endpoint, and the next client gets its own decision rather than a framework.
+- **The guards are structural.** Nothing here can notice an OpenCode release changing its plugin
+  loader or its toast endpoint; the tests assert what *this* repository ships. All three loader
+  rules in §5.1 contradict the published types, so the far end moving is a question of when.
 
 ## 7. Testing & Acceptance Criteria
 
@@ -176,9 +226,44 @@ a negative remainder.
 how the limits arrived in it: that test failed, which is the notification a contract is supposed to
 send.
 
-**Mutations** `AL1`–`AL6`: the caller's own counter rather than an unbound row, an uncapped
+**Mutations** `AL1`–`AL8`: the caller's own counter rather than an unbound row, an uncapped
 dimension as zero, a clamped negative remainder, a period ending at 23:59, enforcement reported as
-always on, and the figures taken for the use case instead of the person.
+always on, the figures taken for the use case instead of the person, the use case resolved by hand
+instead of by the surface's own dependency, and the amounts' currency hard-coded to dollars.
+
+### 7.1 The plugin and the command
+
+The plugin is JavaScript running in a third-party client, so neither `pytest` nor `ng test` reaches
+it. Its properties are asserted by `node --test` in `tools/opencode/plugin/*.test.mjs` —
+**40 of them** — and bridged into the suite that gates this repository by
+`tools/tests/test_the_opencode_plugin_holds_its_properties.py`, which also fails when the shipped
+directory grows a second file or the file grows a second export (§5.1). `node` is required rather
+than skipped: a skipped guard reports success.
+
+The arithmetic half asks what the line may say: an uncapped dimension is not a dimension, a limit
+of zero is not one either, a disabled budget is not consulted, the tightest dimension wins across
+budgets and units, the unit is the installation's and never a `$`, an unlabelled amount is better
+than a wrong label, `period_ends` is formatted in UTC whatever the reader's clock says, spending
+past the limit is reported as past the limit, and a limit that stops nothing says so.
+
+The wiring half asks what reaches the screen: the figure appears before anything has been spent;
+the key comes from the configuration OpenCode already loaded, or from the environment, which wins;
+no key and no address are **different** complaints, each naming where to fix it; a refusal is
+reported with the gateway's own message, once, and again if it breaks after working; an unchanged
+figure does not interrupt; crossing into the last fifth does, and for longer; a reached limit is an
+error; a new session is shown the figure whatever it says; an unknown event is not a crash; and
+**loading the plugin cannot keep OpenCode from starting** — the one that drew nothing at all.
+
+**Mutations** `OB1`–`OB10`, each a way the display could be reassuring, unbearable or absent:
+the first reading suppressed, an uncapped limit counted, the first dimension shown instead of the
+tightest, the warning moved to the refusal, the enforcement label dropped, a complaint repeated
+every turn, the request's timeout removed, a second export added, the first reading awaited, and a
+new session shown nothing because the figure had not changed.
+
+`tools/tests/test_the_opencode_command_asks_for_a_real_endpoint.py` (`CMD1`, `CMD2`) keeps the
+command file from naming a route this gateway does not serve, and from losing the order to refuse
+rather than invent. `tools/tests/test_the_console_hands_out_the_plugin_it_ships.py` keeps the
+console's generated copy identical to the file it is generated from.
 
 **Acceptance**
 
@@ -189,3 +274,8 @@ always on, and the figures taken for the use case instead of the person.
   limit unchanged.
 - *Given* a use case with no budget at all, *then* `allowances` is empty and `this_period` carries
   the caller's own spend.
+- *Given* the plugin installed and the console's configuration, *when* a session starts, *then* the
+  interface shows one line naming what is left, whose counter it is and when it resets — measured
+  in §5.3.
+- *Given* no key and no `AIRA_BASE_URL`, *then* the plugin says which of the two is missing and
+  where to put it, once, and nothing else.

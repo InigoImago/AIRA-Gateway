@@ -8,6 +8,7 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { openCodeModel } from './opencode-config';
+import { OPENCODE_BUDGET_PLUGIN } from './opencode-plugin.generated';
 
 /** The model an OpenCode configuration names when the catalogue offers none that calls tools. */
 const FALLBACK_OPENCODE_MODEL = 'qwen2.5:3b';
@@ -136,6 +137,27 @@ export class ApiKeysPanel {
     const link = document.createElement('a');
     link.href = url;
     link.download = 'opencode.json';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /**
+   * The budget plugin, as the file a developer drops into `.opencode/plugin/` (`FRD-139` §5).
+   *
+   * Offered **here** because this is where somebody gets their key, and a feature whose discovery
+   * depends on reading a README in this repository is one most people never meet. The plugin shows
+   * what is left of the allowance by itself — at session start and after every turn — which is the
+   * difference between a figure a developer has and a command they would have to know about.
+   *
+   * No key is written into it: it reads the one in the `opencode.json` above, or `AIRA_API_KEY`.
+   * So this file, unlike that one, is not a credential.
+   */
+  protected downloadBudgetPlugin(): void {
+    const blob = new Blob([OPENCODE_BUDGET_PLUGIN], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'aira-budget.js';
     link.click();
     URL.revokeObjectURL(url);
   }

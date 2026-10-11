@@ -43,3 +43,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0030 | [A release is an annotated tag, and its message is the release notes](ADR-0030-a-release-is-an-annotated-tag-and-its-message.md) | **Accepted** | 2026-10-11 |
 | 0031 | [Running a published release is two overlays, not a second stack](ADR-0031-running-a-release-is-two-overlays.md) | **Accepted** | 2026-10-11 |
 | 0032 | [Every model access is a chain, and a failed attempt is on the record](ADR-0032-every-model-access-is-a-chain.md) | **Accepted** | 2026-10-11 |
+| 0033 | [The budget reaches a developer through code we ship into their client](ADR-0033-a-figure-a-developer-did-not-ask-for.md) | **Accepted** | 2026-10-11 |

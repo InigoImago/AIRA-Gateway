@@ -82,6 +82,8 @@ async def my_budget(
       whether or not any budget exists. A use case with no budget still answers the question the
       feature was asked for ("what have I used"), and a client can show a figure without inventing
       a limit to put beside it.
+    - ``currency`` — the unit the amounts are in, because the caller cannot work it out and a
+      client that guesses puts a wrong unit beside a right number.
     - ``enforced`` — whether budgets refuse at all in this installation
       (``AIRA_ENFORCE_BUDGETS``). With enforcement off a limit is a figure and not a stop, and a
       client that drew a bar implying otherwise would be wrong in the direction that matters
@@ -113,6 +115,11 @@ async def my_budget(
             "use_case": use_case,
             "person": person,
             "enforced": settings_of(request).enforce_budgets,
+            # The unit every amount below is in (`AIRA_CURRENCY`). A client cannot derive it and
+            # must not assume one: a figure labelled in the wrong currency is read as a fact, and
+            # the one client this was built for prints costs with a `$` of its own
+            # (`FRD-132` §11.7). No conversion happens anywhere — display only (`FRD-403`).
+            "currency": settings_of(request).currency,
             "allowances": allowances,
             "this_period": {
                 "from": start.isoformat(),

@@ -76,9 +76,12 @@ because the two disagree:
 | `mcp: {...}` | yes — local or remote tool servers |
 | `permission.bash` | yes — glob patterns, and **the last matching rule wins** |
 | a status line running a shell command | **no** — an open pull request, not a feature |
+| what a plugin may export | **one function, and nothing else** — every export is called as a plugin factory, and a string `id` makes the loader refuse the file |
+| `tui` plugins from that directory | **no** — the server loader takes the file anyway and the session hangs; the way in is `client.tui.showToast` |
 
-That last row is why there is no one-liner that paints a budget into its chrome: it was assumed to
-exist, and the assumption is what made this section wrong before.
+The status-line row is why there is no one-liner that paints a budget into the chrome: it was
+assumed to exist, and the assumption is what made this section wrong before. The two plugin rows
+are why §3's file looks the way it does — both were found by watching the client refuse to work.
 
 ### 1. The session cost: prices in the configuration
 
@@ -126,7 +129,54 @@ Three things the answer says that a tally cannot:
 - `enforced: false` means the limits are **figures and not stops** in this installation
   (`AIRA_ENFORCE_BUDGETS`), so a full-looking bar would be a lie.
 
-### 3. Inside the session: the `/budget` command
+### 3. Inside the session, unasked: the budget plugin
+
+[`plugin/aira-budget.js`](plugin/aira-budget.js) is **the route this feature is delivered by**
+(`ADR-0033`). Everything above still has to be *asked for*, and a figure nobody asks for is a
+figure nobody sees:
+
+```bash
+mkdir -p .opencode/plugin
+cp /path/to/AIRA/tools/opencode/plugin/aira-budget.js .opencode/plugin/
+#   …or ~/.config/opencode/plugin/ for every project. The AIRA console offers the same file
+#   beside the key it issues: "Download budget plugin".
+```
+
+That is the whole installation. It reads the key from the `opencode.json` OpenCode has already
+loaded — so the console's generated configuration needs nothing added — or from `AIRA_API_KEY` and
+`AIRA_BASE_URL` when you prefer the environment. It carries no credential and guesses no address.
+
+What it does, and what it deliberately does not:
+
+| | |
+| --- | --- |
+| when it speaks | at load, when a session starts, and after a turn that moved the counters |
+| when it stays quiet | an unchanged figure, a counter that went *down*, and anything less than a tenth of the limit since the last notice |
+| what it shows | the dimension that will **refuse first** across every budget that binds you, whose counter it is, and when it resets |
+| how loudly | `info`, `warning` from four fifths spent, `error` at the limit — with the warning on screen for twice as long |
+| when it complains | no key, no address, or a gateway that refuses: said **once**, naming the place to fix |
+
+Measured against a live stack, which is also what it looks like:
+
+```
+┃  hi           ┃                                                          ┃
+┃               ┃  AIRA budget                                             ┃
+                ┃                                                          ┃
+   ▣  Build · qw┃  AIRA: 489 of 500 requests left · use case, per day ·    ┃
+```
+
+**Three rules the file obeys, each one having broken the client first** — they are in its header
+too, because the next person to tidy it will not have measured them:
+
+1. **One file in the plugin directory.** OpenCode loads *every* file there as a plugin, so a helper
+   module beside it is handed to the plugin API and `opencode run` dies with `UnknownError`.
+2. **One export, and it is a function.** The loader calls every export as a plugin factory. An
+   `export const id = "…"` — valid according to the published types — makes it refuse the file with
+   *"Plugin export is not a function"*, and the display then silently never appears.
+3. **Loading may not block.** Awaiting the first reading waits on the gateway *and* on the TUI's
+   own server, which is not serving yet; the interface drew nothing at all until it was killed.
+
+### 4. Inside the session, on request: the `/budget` command
 
 [`command/budget.md`](command/budget.md) is a **prompt template**, not code. Copy it next to a
 project (`.opencode/command/budget.md`) or into `~/.config/opencode/command/`, then:
@@ -145,14 +195,12 @@ The agent runs the `curl` above with its own shell tool and reports one line. Tw
 `AIRA_API_KEY` in the environment the agent inherits. The key is never written into a file in this
 repository — that is the one way a shipped recipe leaks a credential into version control.
 
-**What has not been demonstrated:** an agent actually running it. This demo stack serves
-`qwen3:0.6b`, and that model never calls the shell tool — OpenCode's `part` table holds only `text`
-rows for the attempt — while its first answer *invented* a budget that contradicted the stack. Hence
-the template's standing order to reply `I could not read the budget.` rather than guess. A coding
-model able to use tools is the premise of the use case; this one is not it, and §1 and §2 above are
-what was actually measured here.
+**Why this is not the main route.** It depends on the model calling a shell tool, and that was
+measured rather than assumed: `qwen3:0.6b` never attempted it, and `qwen3:4b` — a model this
+catalogue records as one that *does* emit tool calls — declared ten tools and called none, twice,
+taking 90 seconds each time. The smaller model's first answer *invented* a budget that contradicted
+the live stack, in the template's own bullet shape, which is why the template now orders
+`I could not read the budget.` instead of a guess.
 
-A **plugin** would be the only route into OpenCode's own chrome (`opencode-opper-budget` does this
-for Opper.ai) and an **MCP tool** would be a second authenticated surface — `FRD-139` §5 weighs
-both, and neither is in this repository: an integration that cannot be exercised here is worse than
-a documented `curl`.
+A transparency feature whose reliability depends on a model's mood is not one. The plugin in §3
+does not involve the model at all; this command is for somebody who wants to ask.

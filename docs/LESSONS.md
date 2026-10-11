@@ -233,6 +233,18 @@ reading code.
   **Where a check exists per plane, a document that lists checks without naming the plane is wrong
   for one of them**, and it is wrong for whichever half the reader meets first.
 
+  *And one step further again: an artefact we ship into somebody else's loader is governed by that
+  loader, not by its published types.* A plugin directory in a third-party client turned out to
+  load **every** file in it (so the helper module beside the plugin took the client down), to call
+  **every export** as a plugin factory (so a string `id`, which the published type declares as
+  valid, made it refuse the file and display nothing at all), and to hand a `tui`-only module to
+  the server loader anyway (so the session hung). Three rules, none of them written down anywhere,
+  each found by watching the client fail. **When the thing you build runs inside somebody else's
+  process, the shape of the artefact is part of the interface** — so the rules live in the file's
+  own header and in a structural test, because the next person to tidy it will not have measured
+  them. The same round also showed the mirror image: our own code must not *block* the host —
+  awaiting the first reading at load stopped the client's bootstrap, and the interface drew nothing.
+
   *The same shape, one step further out: a capability is a claim about a **version**.* A feature
   was planned around a third-party client's status line running a shell command, which its project
   describes and the installed release does not have — it is an open pull request. Three documents
@@ -1083,6 +1095,19 @@ reading code.
   **A vocabulary with no compiler needs a scan**, and its allow-list is the point: fourteen names
   are on an element for some other reason, each now recorded with that reason instead of being
   indistinguishable from the six that were mistakes.
+
+- **Accepted is not shown, and asked-for is not seen.** Two halves of the same mistake, both paid
+  for in one round. A display pushed through somebody else's API returned `{"data": true}` — which
+  means *the server took it*, not that a human saw it; the toast was in fact drawn only once a
+  session existed, and a figure sent while the client was still starting went nowhere. **A delivery
+  receipt is not a reading**, so the figure is now re-sent at the moment somebody certainly is
+  looking, and the test says `showToast` resolving proves nothing. The other half is the feature
+  that preceded it: a correct figure behind a command nobody runs. *"It is not practical to run a
+  command to know how much budget is left — other users will either not read the documentation or
+  never notice the action exists."* A control nobody meets is not a control, which this file
+  already says about a permission nobody can reach and a badge on an inactive control — and it
+  applies to a **number** just as much. If a figure matters before the refusal, something has to
+  show it unasked.
 
 - **Withholding a figure can be authoring a wrong one.** *Absent, never zero* is a good rule and
   it was applied to the wrong thing: the console generated a coding assistant's configuration

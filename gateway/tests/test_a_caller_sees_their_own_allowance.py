@@ -54,7 +54,7 @@ async def sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     await engine.dispose()
 
 
-def _client(principal: Principal, *, enforce: bool = True) -> TestClient:
+def _client(principal: Principal, *, enforce: bool = True, currency: str = "EUR") -> TestClient:
     """The app with one thing replaced: who the caller is.
 
     **The first version of this helper also installed a middleware that wrote the attribution**,
@@ -66,7 +66,9 @@ def _client(principal: Principal, *, enforce: bool = True) -> TestClient:
     resolved by the surface's own dependency, which is the thing under test.
     """
     app = create_app(
-        GatewaySettings(auth_required=False, enforce_budgets=enforce, log_queue_size=0)
+        GatewaySettings(
+            auth_required=False, enforce_budgets=enforce, log_queue_size=0, currency=currency
+        )
     )
     app.dependency_overrides[require_principal] = lambda: principal
     return TestClient(app)
@@ -256,6 +258,33 @@ def test_the_answer_says_when_a_limit_is_not_enforced() -> None:
     # The limit is still reported: it is what somebody configured, and it will refuse the moment
     # enforcement is switched on.
     assert body["allowances"][0]["limit_cost"] == "50.00"
+
+
+def test_the_amounts_carry_the_unit_the_installation_accounts_in() -> None:
+    """A client cannot derive the currency and must not assume one.
+
+    The client this was built for prints its own costs with a `$` from a figure it holds in its
+    configuration file (`FRD-132` §11.7), so an installation accounting in euros has a client
+    already inclined to put the wrong unit on a right number. The answer says the unit; nothing
+    converts anything (`FRD-403`).
+    """
+    with _client(KEY, currency="CHF") as client:
+        _seed(client, lambda s: _budget(s, scope="use_case", limit_cost="50.00"))
+        body = client.get(URL).json()
+
+    assert body["currency"] == "CHF"
+    # Said once, about every amount in the answer, rather than repeated per figure — a second copy
+    # is a second thing that can disagree.
+    assert "currency" not in body["allowances"][0]
+
+
+def test_an_installation_that_never_set_a_currency_still_names_its_default() -> None:
+    """`AIRA_CURRENCY` has a default (`EUR`), so the field is never absent and never empty: a
+    client that found nothing would have to guess, which is the case this field exists to stop."""
+    with _client(KEY) as client:
+        body = client.get(URL).json()
+
+    assert body["currency"] == "EUR"
 
 
 def test_the_period_a_day_budget_rolls_over_is_the_next_midnight() -> None:

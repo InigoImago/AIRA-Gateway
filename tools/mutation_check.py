@@ -8988,6 +8988,14 @@ MUTATIONS = [
         "gateway/tests/test_a_caller_sees_their_own_allowance.py",
     ),
     Mutation(
+        "AL8",
+        "the amounts carry the unit the installation accounts in",
+        "gateway/src/aira_gateway/api/usage.py",
+        '            "currency": settings_of(request).currency,',
+        '            "currency": "USD",',
+        "gateway/tests/test_a_caller_sees_their_own_allowance.py",
+    ),
+    Mutation(
         "AL5",
         "the answer says whether a limit is enforced at all",
         "gateway/src/aira_gateway/api/usage.py",
@@ -9023,6 +9031,92 @@ MUTATIONS = [
         "`I could not read the budget.`",
         "whatever you can determine.",
         "tools/tests/test_the_opencode_command_asks_for_a_real_endpoint.py",
+    ),
+    # ---- the budget plugin, which shows the figure unasked (2026-10-11, `FRD-139` §5) ---------
+    #
+    # JavaScript running inside a third-party client, so neither mypy nor `ng build` looks at it.
+    # Each property below is a way the display could be reassuring and wrong, or correct and
+    # unbearable. They are noticed by `node --test`, bridged into pytest by
+    # `test_the_opencode_plugin_holds_its_properties.py` so this harness can reach them at all.
+    Mutation(
+        "OB1",
+        "the first reading is always shown, so nobody has to know the figure exists",
+        "tools/opencode/plugin/aira-budget.js",
+        "  if (!previous) return true;",
+        "  if (!previous) return false;",
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB2",
+        "a dimension with no limit, or a limit of zero, is not a limit",
+        "tools/opencode/plugin/aira-budget.js",
+        "      if (limit === null || limit <= 0) continue;",
+        "      if (limit === null) continue;",
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB3",
+        "the dimension shown is the one that will refuse first, not the first one listed",
+        "tools/opencode/plugin/aira-budget.js",
+        "  return all.reduce((worst, one) =>\n    one.fraction > worst.fraction ? one : worst,\n  );",
+        "  return all[0];",
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB4",
+        "the warning arrives with a fifth of the allowance left, not at the refusal",
+        "tools/opencode/plugin/aira-budget.js",
+        "const WARN_AT = 0.8;",
+        "const WARN_AT = 0.999;",
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB5",
+        "a limit that stops nothing is labelled as not enforced",
+        "tools/opencode/plugin/aira-budget.js",
+        '    enforced ? null : "not enforced",',
+        "    null,",
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB6",
+        "a broken setup is said once, not after every turn",
+        "tools/opencode/plugin/aira-budget.js",
+        "    if (complaint === reason) return;",
+        "    if (false) return;",
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB8",
+        "the shipped plugin exports one thing, because every export is called as a plugin",
+        "tools/opencode/plugin/aira-budget.js",
+        "export const server = async ({ client }) => {",
+        'export const id = "aira-budget";\nexport const server = async ({ client }) => {',
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB9",
+        "loading the plugin cannot block OpenCode's bootstrap",
+        "tools/opencode/plugin/aira-budget.js",
+        "  void show(true).catch(() => {});",
+        "  await show(true);",
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB10",
+        "a new session is shown the figure even when it has not changed",
+        "tools/opencode/plugin/aira-budget.js",
+        '      if (event?.type === "session.created") {\n        await show(true);\n        return;\n      }',
+        '      if (event?.type === "session.created") {\n        await show(false);\n        return;\n      }',
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
+    ),
+    Mutation(
+        "OB7",
+        "a budget read cannot hang the session it is decorating",
+        "tools/opencode/plugin/aira-budget.js",
+        "      signal: AbortSignal.timeout(TIMEOUT_MS),",
+        "",
+        "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
     ),
 ]
 

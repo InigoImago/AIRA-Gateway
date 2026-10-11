@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { Observable, of } from 'rxjs';
 import { ApiKey, CatalogModel, IssuedApiKey } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -24,6 +25,7 @@ interface Panel {
   dismissIssued: () => void;
   openCodeConfig: (issued: IssuedApiKey) => string;
   copyOpenCodeConfig: (issued: IssuedApiKey) => void;
+  downloadBudgetPlugin: () => void;
 }
 
 interface Options {
@@ -441,5 +443,64 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
 
     expect(component.configCopied()).toBe(true);
     expect(written).toContain('aira_ab_cd');
+  });
+});
+
+/**
+ * The budget plugin, offered beside the configuration (`FRD-139` §5).
+ *
+ * Offered **here** because this is where somebody gets their key. A plugin whose only mention is a
+ * README in the repository is one most developers never meet — which was the complaint that
+ * produced it: *"it is not practical to run a command to know how much budget is left, and other
+ * users will be lazier about reading documentation or will not notice the action exists at all."*
+ */
+describe('ApiKeysPanel — the budget plugin', () => {
+  it('offers the plugin as a file, named the way OpenCode must find it', () => {
+    const { component, fixture } = setup();
+    component.issueKey();
+    fixture.detectChanges();
+
+    const link = document.createElement('a');
+    const clicked = vi.spyOn(link, 'click').mockImplementation(() => {});
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(link);
+    const blobbed: Blob[] = [];
+    const created = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockImplementation((blob) => (blobbed.push(blob as Blob), 'blob:plugin'));
+    const revoked = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    component.downloadBudgetPlugin();
+
+    expect(clicked).toHaveBeenCalled();
+    // The file name is not cosmetic: OpenCode loads every file in `.opencode/plugin/`, so what is
+    // saved there has to be the plugin and nothing else.
+    expect(link.download).toBe('aira-budget.js');
+    expect(created).toHaveBeenCalled();
+    expect(revoked).toHaveBeenCalledWith('blob:plugin');
+    expect(blobbed[0].type).toBe('text/javascript');
+  });
+
+  it('hands out the plugin that ships, asking the gateway for the caller’s own allowance', async () => {
+    // Not a paraphrase: the constant is generated from `tools/opencode/plugin/aira-budget.js`, and
+    // a Python test fails when the two disagree. What is asserted here is that the console offers
+    // *that* file — a plugin a version behind does not announce itself, it just shows a figure.
+    const { OPENCODE_BUDGET_PLUGIN } = await import('./opencode-plugin.generated');
+
+    expect(OPENCODE_BUDGET_PLUGIN).toContain('/v1beta/me/budget');
+    expect(OPENCODE_BUDGET_PLUGIN).toContain('export const server');
+    // No credential travels in this file; the key comes from the configuration or the environment.
+    expect(OPENCODE_BUDGET_PLUGIN).not.toContain('aira_');
+  });
+
+  it('says where the file goes and that it carries no credential', () => {
+    // The two things a reader needs and cannot guess: the directory, and whether this second file
+    // is as dangerous as the first one (the configuration contains the key; this does not).
+    const { component, fixture, html } = setup();
+    component.issueKey();
+    fixture.detectChanges();
+
+    const hint = html().querySelector('[data-testid="budget-plugin-hint"]');
+    expect(hint?.textContent).toContain('.opencode/plugin/');
+    expect(hint?.textContent).toContain('no credential');
   });
 });
