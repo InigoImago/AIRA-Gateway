@@ -280,10 +280,51 @@ def test_the_title_and_the_body_come_from_the_same_place() -> None:
     workflow; when the tag arrived flattened, the title became the commit's subject and nothing
     objected. `subject` is the one owner now, and it goes through `read`, so a title can never be
     published from an annotation the rules would refuse.
+
+    **Against tags this test makes, not the ones the checkout has.** The first version asserted
+    about `v0.1.1` and `v0.1.0`, which passed here and failed in CI: `actions/checkout` fetches the
+    triggering ref and no other tag, so `v0.1.1` was not in the clone at all and `annotation`
+    correctly reported nothing. A guard that reads the ambient repository says something different
+    in every clone — and the alternative it tempts you into, skipping when the tag is absent, means
+    the property goes unchecked in the one place that publishes.
+
+    The tagger identity is passed in rather than assumed, because an annotated tag needs one and a
+    fresh checkout has none: `git tag -a` exits 128 with *Committer identity unknown* in CI, where
+    nothing has configured a `user.email`.
     """
+    import os
+    import subprocess
+
     from release_notes import annotation, subject
 
-    assert subject("v0.1.1") == read(annotation("v0.1.1"), version="v0.1.1").subject
+    tagging = {
+        **os.environ,
+        "GIT_COMMITTER_NAME": "the test suite",
+        "GIT_COMMITTER_EMAIL": "tests@example.invalid",
+    }
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    described, bare = "v99.99.98", "v99.99.97"
+    for tag, message in (
+        (described, "The gateway speaks a second dialect\n\nAnd why."),
+        (bare, f"Release {bare}\n\nA body that is fine on its own."),
+    ):
+        subprocess.run(
+            ["git", "tag", "-a", tag, "-m", message, head],
+            check=True,
+            capture_output=True,
+            env=tagging,
+        )
+    try:
+        assert (
+            subject(described)
+            == read(annotation(described), version=described).subject
+            == "The gateway speaks a second dialect"
+        )
 
-    with pytest.raises(NotDescribed, match="only restates the version"):
-        subject("v0.1.0")
+        # The half that matters: a title is not published from an annotation the rules refuse.
+        with pytest.raises(NotDescribed, match="only restates the version"):
+            subject(bare)
+    finally:
+        subprocess.run(["git", "tag", "-d", described, bare], check=True, capture_output=True)

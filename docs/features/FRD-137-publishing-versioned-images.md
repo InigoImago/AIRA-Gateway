@@ -244,7 +244,10 @@ subject, ten ways of restating the version including the `Release v0.1.0` the ol
 by itself, and a headline with no body. Plus that a subject *mentioning* its version is accepted
 (the rule is *only* restates), that Markdown reaches GitHub unreflowed, and that the prose comes
 before the evidence. One test runs the rules against the repository's own `v0.1.0` annotation, so
-the guard is checked against the real thing it was written for. Mutations `PB23`–`PB29`,
+the guard is checked against the real thing it was written for — and **skips where that tag is
+absent**, because the clone CI makes holds only the ref that triggered it. Every other test that
+needs a tag creates it, annotated or lightweight, with the tagger identity passed in: a fresh
+checkout has no `user.email`, so `git tag -a` there exits 128. Mutations `PB23`–`PB29`,
 plus `RT1`–`RT4` for the rules added on 2026-10-11.
 
 **And the five that were added after a release went out wrong** (mutations `RT1`–`RT9`): a real
@@ -255,6 +258,11 @@ with no placeholders makes rule 5 inert without making it absent; an unfilled te
 and a filled one accepted; and the title must come from the same function as the body, so that it
 goes through the rules too. On the workflow's side: both release jobs restore the tag object *and
 assert it is one*, and the Release's title no longer comes from a second `git tag --format`.
+
+*The last of those five was machine-dependent on its first attempt, and it stopped `v0.1.2`.* It
+asked about `v0.1.1`'s annotation — a tag this clone has and CI's does not — so the Python gate
+failed on a tag's absence and no image was built. Reproduced in a `git clone --no-tags` holding one
+tag and no identity, which is CI's situation; the test makes the two tags it reasons about now.
 
 *Three guards were found by their own mutations.* `RT8` and `RT9` both survived their first draft,
 for the third recorded instance of one shape: the test asked whether `docs/RELEASE-TEMPLATE.txt`

@@ -5,6 +5,44 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The gate that stopped `v0.1.2` was a test reading this repository's tags (2026-10-11)
+
+`v0.1.2` was pushed and published nothing. Runs #91 and #92 failed in the Python job, on one test,
+with exactly the refusal that mechanism exists to give:
+
+    FAILED tools/tests/test_a_release_says_what_it_is.py::test_the_title_and_the_body_come_from_the_same_place
+    release_notes.NotDescribed: v0.1.1 has no annotation. A lightweight tag carries no message, so
+    there is nothing to publish as release notes — create it with 'git tag -a'.
+
+**The code was right; the test's premise was not.** It asserted about `v0.1.1` and `v0.1.0` — tags
+this clone has and CI's does not. `actions/checkout` fetches the triggering ref and no other, so on
+a `v0.1.2` push `refs/tags/v0.1.1` is absent altogether, `for-each-ref` on an absent ref reports no
+object type, and `annotation()` turns that into *no annotation*, correctly. The same shape as the
+defect the test was written for, one layer out: the previous round learned that **the clone CI works
+in is not the repository**, and then wrote a guard that assumed it was.
+
+The test makes its own tags now — one annotated with a real description, one annotated with a
+restatement of its version — asserts that the title comes from the same function as the body for
+the first and is refused for the second, and deletes both. **The tagger identity is passed in**,
+which is the second way that test would have failed only in CI: `git tag -a` needs one, a fresh
+checkout has none, and `git tag -a` there exits 128 with *Committer identity unknown*.
+
+Both halves were proven against CI's situation rather than argued: a `git clone --no-tags` of this
+repository holding only `v0.1.2` and no `user.email`. The old shape fails there with CI's message;
+the new one passes, 29 tests with one skip — the test that quotes this repository's own `v0.1.0`
+annotation, which is honestly about this repository and skips where that tag is absent.
+`RT1`–`RT9` are all still caught, `RT4` being the property this test defends.
+
+**What the failed run does say is that the release fix works.** "The tag says what the release is"
+passed on the `v0.1.2` run: rule 1 now really runs in CI, against a restored tag object. `publish`
+was skipped, so `v0.1.2` has no images and no release page, and its tag sits on the remote at
+`4cac4e7`. That is `ADR-0030`'s accepted cost arriving in a shape nobody had pictured: **the gate
+that refuses need not be the description.** The annotation was exactly right and the suite said no,
+and because the fix is a new commit the number is spent either way — the documented recovery, tag
+the next patch and carry the same words over, is the right one here too.
+
+---
+
 ## A release published a commit message, and nothing failed (2026-10-11)
 
 `v0.1.1` went out. Its GitHub Release page carries `def905f`'s **commit message** as the release

@@ -2053,6 +2053,15 @@ reading code.
   defect hid — so it closes the test's own socket and requires `503` too. The same file's other
   sweep had met the symptom first and **skipped the route by hand**; an exemption that makes a
   machine-dependent answer go away is the finding, silenced.
+
+  *And the machine includes the repository.* A release guard asserted about `v0.1.1`'s and
+  `v0.1.0`'s annotations — tags a developer's clone has and CI's does not, because
+  `actions/checkout` fetches the triggering ref and no other. It passed here, failed there, and
+  stopped a release that was otherwise ready. A test that needs a tag **makes the tag** (and passes
+  the tagger identity in, since `git tag -a` needs one and a fresh checkout has none); the
+  alternative it tempts you into — skipping when the tag is absent — leaves the property unchecked
+  in the one place that publishes. **State of the working copy is input, and input belongs to the
+  test.**
 - **A harness that configures a service differently from production tests a different service.**
 - **Assert behaviour, not wire bodies**, and never assert the *model's* answer — that tests the
   model and flakes.

@@ -416,6 +416,10 @@ ghcr.io/<owner>/aira-frontend:vX.Y.Z
 - **A failed release spends the version number.** The tag exists before the gates run, so the
   ordinary recovery is to tag the next patch rather than to retry the same one. What a failure
   leaves is a tag with **no Release against it**, which is visible in the one list people read.
+  The gate that refuses need not be the description: `v0.1.2` was stopped by the Python suite with
+  a perfectly good annotation, and since the fix for a red gate is a new commit, the number is
+  spent the same way. Copy the tag's words into the next one — `git tag -l --format='%(contents)'
+  v0.1.2` prints them — rather than writing the release twice.
 - **The images are a rebuild of the tested commit, not the tested bytes.** With a warm layer cache
   they are the same layers; that is a statement about practice, not a guarantee. Recorded in
   `ADR-0029` as a known limit, with the upgrade named.
