@@ -574,3 +574,77 @@ async def test_an_expired_suspension_does_not_stop_anybody(governed: Governed) -
     await governed.settle()
 
     assert (await governed.generate(_body(), model=MOCK_MODEL)).status_code == 200
+
+
+# == what a caller can read about its own allowance (`FRD-139`) ==================================
+
+
+async def test_a_key_reads_its_own_allowance_from_the_gateway(governed: Governed) -> None:
+    """The endpoint an agentic client polls, with a **real** API key against the running gateway.
+
+    The hermetic cases override the attribution dependency, so what they cannot show is the chain
+    this feature actually rests on: a key in a header → authentication → the use case the key is
+    bound to → the person it belongs to → that person's counter. Every one of those is a different
+    module, and the endpoint takes no parameters at all, so a break anywhere in it looks like an
+    empty answer rather than an error.
+    """
+    await governed.budget(requests=10, cost_nanos=50_000_000_000, period="month")
+    await governed.settle()
+
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client:
+        before = (await client.get(f"{GEMINI}/me/budget", headers=governed.headers())).json()
+
+    assert before["use_case"] == governed.slug, before
+    assert before["enforced"] is True
+    (allowance,) = [row for row in before["allowances"] if row["limit_requests"] == 10]
+    assert allowance["limit_cost"] == "50.00"
+    assert allowance["period_ends"].endswith("T00:00:00+00:00")
+
+    served = await governed.generate(_body(), model=MOCK_MODEL)
+    assert served.status_code == 200, served.text
+    # The row the counter is booked from is written off the request path (`FRD-405` §4.4), so the
+    # figure is waited for rather than assumed to be there the moment the answer arrives.
+    await governed.wait_for_rows(1)
+
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client:
+        after = (await client.get(f"{GEMINI}/me/budget", headers=governed.headers())).json()
+
+    (spent,) = [row for row in after["allowances"] if row["limit_requests"] == 10]
+    assert spent["used_requests"] >= 1, after
+    assert spent["remaining_requests"] == 10 - spent["used_requests"]
+    # And the record beside the counter says the same request happened.
+    assert after["this_period"]["requests"] >= 1
+
+
+async def test_a_second_person_on_the_same_use_case_reads_their_own_counter(
+    governed: Governed,
+) -> None:
+    """`each_member` is one counter per head, and a fixture with one credential cannot tell that
+    apart from one counter per use case. A second key, owned by somebody else, can.
+    """
+    await governed.budget(requests=5, scope="each_member", period="month")
+    theirs = await governed.key_for(f"colleague-{governed.slug[-6:]}")
+    await governed.settle()
+
+    served = await governed.generate_as(theirs, _body(), model=MOCK_MODEL)
+    assert served.status_code == 200, served.text
+    await governed.wait_for_rows(1)
+
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client:
+        mine = (await client.get(f"{GEMINI}/me/budget", headers=governed.headers())).json()
+        colleague = (
+            await client.get(
+                f"{GEMINI}/me/budget",
+                headers={"x-goog-api-key": theirs, "content-type": "application/json"},
+            )
+        ).json()
+
+    (mine_row,) = [row for row in mine["allowances"] if row["scope"] == "each_member"]
+    (their_row,) = [row for row in colleague["allowances"] if row["scope"] == "each_member"]
+
+    assert their_row["measured_for"] != mine_row["measured_for"]
+    assert their_row["used_requests"] >= 1, colleague
+    # The one who did not call has their own untouched counter — not the colleague's figure, and
+    # not the use case's sum.
+    assert mine_row["used_requests"] == 0, mine
+    assert mine_row["remaining_requests"] == 5

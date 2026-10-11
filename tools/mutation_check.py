@@ -8980,6 +8980,14 @@ MUTATIONS = [
         "gateway/tests/test_a_caller_sees_their_own_allowance.py",
     ),
     Mutation(
+        "AL7",
+        "the use case an allowance is about comes from the surface's own resolver",
+        "gateway/src/aira_gateway/api/usage.py",
+        "    use_case = attribution.use_case or None",
+        "    use_case = None",
+        "gateway/tests/test_a_caller_sees_their_own_allowance.py",
+    ),
+    Mutation(
         "AL5",
         "the answer says whether a limit is enforced at all",
         "gateway/src/aira_gateway/api/usage.py",

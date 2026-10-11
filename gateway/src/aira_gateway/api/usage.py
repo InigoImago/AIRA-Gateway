@@ -20,9 +20,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from aira_common.permissions import Permission
-from aira_gateway.api.serving.context import attribution_of
+from aira_gateway.auth.attribution import Attribution
 from aira_gateway.auth.dependencies import (
     authorize_use_case,
+    require_attribution,
     require_principal,
     require_valid_use_case,
 )
@@ -52,7 +53,9 @@ async def usage(
 
 @router.get("/v1beta/me/budget")
 async def my_budget(
-    request: Request, principal: Principal = Depends(require_principal)
+    request: Request,
+    principal: Principal = Depends(require_principal),
+    attribution: Attribution = Depends(require_attribution),
 ) -> JSONResponse:
     """What this caller is allowed and what is left of it (`FRD-139`).
 
@@ -60,6 +63,14 @@ async def my_budget(
     client asks *about itself*, and it does not know the slug — an API key is bound to one and the
     agent holding it was configured with a URL and a key, nothing else. Everything here is
     resolved from the credential that called.
+
+    **The use case comes from `require_attribution`**, the same resolver the served verbs use, and
+    that is not a detail: the first version read `request.state.attribution` directly and always
+    found nothing, because that dependency is mounted on the Gemini router and this endpoint is not
+    under it. Every answer said `use_case: null` and carried no allowance — and the hermetic tests
+    passed, because they installed a middleware that wrote the attribution themselves. The live
+    stack found it in one call. A `GET` *"spends nothing"* (`must_name_a_use_case`), so a caller
+    who names none is still answered rather than refused.
 
     What it answers, in the order somebody reads it:
 
@@ -82,8 +93,7 @@ async def my_budget(
     can differ — a reservation released, a row retained after a counter reset — and collapsing
     them into one number would make the difference impossible to see.
     """
-    attribution = attribution_of(request)
-    use_case = getattr(attribution, "use_case", None) or None
+    use_case = attribution.use_case or None
     person = principal.person
 
     service: BudgetService = budgets_of(request)

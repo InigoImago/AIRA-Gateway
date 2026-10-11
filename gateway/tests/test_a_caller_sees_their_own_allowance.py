@@ -55,33 +55,26 @@ async def sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 
 def _client(principal: Principal, *, enforce: bool = True) -> TestClient:
+    """The app with one thing replaced: who the caller is.
+
+    **The first version of this helper also installed a middleware that wrote the attribution**,
+    and that is why these tests passed against an endpoint that answered `use_case: null` to every
+    real request: `require_attribution` is mounted on the Gemini router and this endpoint is not
+    under it, so nothing resolved a use case at all. The live stack found it in one call.
+
+    So the only stand-in here is the credential. Which use case that credential is *about* is
+    resolved by the surface's own dependency, which is the thing under test.
+    """
     app = create_app(
         GatewaySettings(auth_required=False, enforce_budgets=enforce, log_queue_size=0)
     )
     app.dependency_overrides[require_principal] = lambda: principal
-
-    # The attribution the data plane resolves from the credential. Overridden rather than faked in
-    # the endpoint: the use case comes from the credential, and a test that passed it in would not
-    # be testing that.
-    from aira_gateway.auth.attribution import Attribution
-
-    async def _attribute(request) -> None:  # noqa: ANN001
-        request.state.attribution = Attribution(
-            subject=principal.subject,
-            method=principal.method,
-            use_case=principal.use_cases[0] if principal.use_cases else None,
-            username=principal.username,
-        )
-
-    app.middleware("http")(
-        lambda request, call_next: _with_attribution(_attribute, request, call_next)
-    )
     return TestClient(app)
 
 
-async def _with_attribution(attribute, request, call_next):  # noqa: ANN001, ANN201
-    await attribute(request)
-    return await call_next(request)
+#: What a console token sends to say which use case it means (`FRD-102`). An API key needs none —
+#: it is bound to one — and the difference is why both are exercised below.
+SELECTOR = {"X-AIRA-Use-Case": "coding"}
 
 
 async def _budget(
@@ -240,14 +233,15 @@ def test_a_key_and_a_login_land_on_the_same_allowance() -> None:
     directory id. Keying on the subject gave one human two allowances; this asserts the figure a
     developer sees in their terminal is the figure the console shows them."""
     seen = []
-    for principal in (KEY, TOKEN):
+    for principal, headers in ((KEY, {}), (TOKEN, SELECTOR)):
         with _client(principal) as client:
             _seed(client, lambda s: _budget(s, scope="each_member", limit_cost="10.00"))
             _seed(client, lambda s: _spent(s, subject="erika", username="erika", cost="1.00"))
-            body = client.get(URL).json()
-        seen.append((body["person"], body["allowances"][0]["measured_for"]))
+            body = client.get(URL, headers=headers).json()
+        seen.append((body["use_case"], body["person"], body["allowances"][0]["measured_for"]))
 
-    assert seen == [("erika", "erika"), ("erika", "erika")]
+    # The key needed no selector and the token sent one; both land on one human's allowance.
+    assert seen == [("coding", "erika", "erika"), ("coding", "erika", "erika")]
 
 
 def test_the_answer_says_when_a_limit_is_not_enforced() -> None:
@@ -288,7 +282,12 @@ def test_it_needs_a_credential_and_no_permission_beyond_it() -> None:
 def test_a_credential_bound_to_no_use_case_is_answered_rather_than_refused() -> None:
     """A token that selected no use case has no budget to report and still has figures. Answered
     with an empty list rather than a 400: a client polling a status bar must not have to tell a
-    configuration mistake from an outage."""
+    configuration mistake from an outage.
+
+    It is the surface's own rule that allows this — a `GET` *"spends nothing"*
+    (`must_name_a_use_case`), so the resolver does not insist on a selector here as it does on a
+    request that costs money.
+    """
     nobody = Principal(subject="wanderer", method="oidc", use_cases=())
     with _client(nobody) as client:
         body = client.get(URL).json()
@@ -296,6 +295,31 @@ def test_a_credential_bound_to_no_use_case_is_answered_rather_than_refused() -> 
     assert body["use_case"] is None
     assert body["allowances"] == []
     assert body["this_period"]["requests"] == 0
+
+
+def test_the_use_case_comes_from_the_surfaces_own_resolver() -> None:
+    """**The defect the live stack found**, as a test that would have found it.
+
+    Asserted on a *bound API key with no selector*, which is the shape an agent actually has: the
+    answer has to name the use case the key belongs to. The old harness wrote the attribution
+    itself, so this held for a reason that had nothing to do with the endpoint.
+    """
+    with _client(KEY) as client:
+        _seed(client, lambda s: _budget(s, scope="use_case", limit_cost="50.00"))
+        body = client.get(URL).json()
+
+    assert body["use_case"] == "coding", body
+    assert body["allowances"], "no allowance, because no use case was resolved"
+
+
+def test_a_token_naming_a_use_case_it_may_not_reach_is_refused() -> None:
+    """The authorisation the resolver applies, inherited rather than re-implemented: this endpoint
+    must not become a way to ask about somebody else's use case by naming it."""
+    outsider = Principal(subject="eve", method="oidc", use_cases=("other",))
+    with _client(outsider) as client:
+        response = client.get(URL, headers=SELECTOR)
+
+    assert response.status_code in (400, 403, 404), response.text
 
 
 async def test_what_is_left_moves_when_something_is_actually_booked(sessions) -> None:

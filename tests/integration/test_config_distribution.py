@@ -259,3 +259,59 @@ async def test_deleting_a_use_case_stops_its_key_from_working(engine: AsyncEngin
     assert after.status_code == 401, (
         f"the key still worked after the deletion ({after.status_code})"
     )
+
+
+async def test_the_content_visibility_a_use_case_chooses_reaches_the_gateway(
+    engine: AsyncEngine,
+) -> None:
+    """`payload_visibility` travels, and an older event is still understood (`FRD-622` FR-1e).
+
+    Both directions in one pass, because the two cannot be tested apart at this layer: the field
+    Management emits today, and the retired boolean a gateway may still receive while Management is
+    upgraded and a second instance is not. The hermetic consumer tests cover the mapping; what only
+    this layer shows is that the value survives the topic, the relay and the consumer — and that
+    the column it lands in is the one the payload decision reads.
+    """
+    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    management = await _management_engine()
+    try:
+        for payload, expected in (
+            ({"payload_visibility": "oversight"}, "oversight"),
+            # An event from a Management that predates the field. Reading its absence as `members`
+            # would unrestrict a use case somebody had restricted, so the boolean is still read.
+            ({"restrict_members_to_own_requests": True}, "own"),
+            ({"payload_visibility": "members"}, "members"),
+        ):
+            await _queue_outbox_event(
+                management,
+                "aira.usecases",
+                slug,
+                "usecase.upserted",
+                {
+                    "slug": slug,
+                    "name": "Visibility probe",
+                    "description": "",
+                    "processing_notes": "",
+                    **payload,
+                },
+            )
+            relay = _run_relay()
+            assert relay.returncode == 0, relay.stderr
+
+            row = await _wait_for(
+                engine,
+                "SELECT payload_visibility FROM use_cases"
+                " WHERE slug = :slug AND payload_visibility = :want",
+                {"slug": slug, "want": expected},
+            )
+            assert row is not None, f"{payload} did not arrive as {expected!r}"
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM use_cases WHERE slug = :slug"), {"slug": slug}
+            )
+        async with management.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM outbox_outboxevent WHERE key = :key"), {"key": slug}
+            )
+        await management.dispose()
