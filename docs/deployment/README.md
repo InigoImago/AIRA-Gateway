@@ -9,6 +9,11 @@ Four ways to run AIRA, one page each, written for somebody doing it for the firs
 | [**Development**](dev.md) | changing the code, with reload on save | Docker, Python 3.14 + uv, Node 26 |
 | [**Integrated**](integrated.md) | your infrastructure, your Keycloak, your model platform | see its access checklist |
 
+All four build the three application images from this checkout by default, and all four can run a
+**published release** instead — `RELEASE=vX.Y.Z` on any `up*` target, nothing built
+([`FRD-138`](../features/FRD-138-running-a-published-release.md)). For the integrated shape that is
+the documented path: [§5a](integrated.md#5a-running-the-published-images-against-your-infrastructure).
+
 Supporting reference:
 
 - [**Configuration**](../CONFIGURATION.md) — every variable, what it does, what breaks without it

@@ -26,6 +26,13 @@ Which list to ask for:
 - `ALL` — the same three files. Named apart from `SHOWCASE` because the *reason* differs: a check
   that asks "does any container receive this variable" must read every file that defines one, and
   that question is not about the demo.
+- `RELEASE`, `SHOWCASE_RELEASE`, `INTEGRATED`, `INTEGRATED_RELEASE` — the compositions that take
+  the three application images **from the registry** instead of building them, and the one that
+  runs them against infrastructure somebody else provides (`FRD-138`). Overlays, not files of
+  their own: each entry in them re-points a service `APPS` already defines.
+
+Read a file with `load()` rather than `yaml.safe_load`, which raises on the two tags an overlay
+needs — `!reset` and `!override`.
 """
 
 from __future__ import annotations
@@ -38,6 +45,8 @@ COMPOSE_DIR = ROOT / "deploy" / "compose"
 INFRA = COMPOSE_DIR / "docker-compose.yml"
 APPS = COMPOSE_DIR / "docker-compose.apps.yml"
 SHOWCASE_ONLY = COMPOSE_DIR / "docker-compose.showcase.yml"
+RELEASE_ONLY = COMPOSE_DIR / "docker-compose.release.yml"
+EXTERNAL_ONLY = COMPOSE_DIR / "docker-compose.external.yml"
 
 #: What a real deployment runs.
 CORE: tuple[Path, ...] = (INFRA, APPS)
@@ -45,8 +54,32 @@ CORE: tuple[Path, ...] = (INFRA, APPS)
 #: The demo, which is `CORE` with provisioning layered on top.
 SHOWCASE: tuple[Path, ...] = (INFRA, APPS, SHOWCASE_ONLY)
 
-#: Every file that defines a service, for checks that must not miss one.
+#: Every file that **defines** a service, for checks that must not miss one.
+#:
+#: The two overlays below are deliberately absent, and the distinction is the reason this is not
+#: simply "every compose file". They define no service: every entry in them names one of
+#: `APPS`' and changes one property of it. A check asking *"does any container receive this
+#: variable"* or *"does every image say how it is built"* is asking about the files above, and
+#: adding these two would answer it twice over a service that exists once.
 ALL: tuple[Path, ...] = SHOWCASE
+
+#: `CORE` with the three application images taken from the registry instead of built here
+#: (`FRD-138`). Needs `AIRA_VERSION`; Compose refuses the composition without it, on purpose.
+RELEASE: tuple[Path, ...] = (INFRA, APPS, RELEASE_ONLY)
+
+#: The demo, on published images — what `make showcase RELEASE=vX.Y.Z` runs. The order matters:
+#: `RELEASE_ONLY` must come after `SHOWCASE_ONLY` so that it also re-points the seed, which
+#: `extends:` out of `APPS` and would otherwise be the one container built from source.
+SHOWCASE_RELEASE: tuple[Path, ...] = (INFRA, APPS, SHOWCASE_ONLY, RELEASE_ONLY)
+
+#: The applications alone, against infrastructure the operator provides. **No `INFRA`** — that is
+#: the whole point — so every address becomes required and every dependency on a container this
+#: composition does not start is removed.
+INTEGRATED: tuple[Path, ...] = (APPS, EXTERNAL_ONLY)
+
+#: The same, running published images rather than a build of this checkout: the shape
+#: `docs/deployment/integrated.md` §5a describes.
+INTEGRATED_RELEASE: tuple[Path, ...] = (APPS, EXTERNAL_ONLY, RELEASE_ONLY)
 
 #: **There is no fourth file.** There was one — `docker-compose.lab.yml`, an overlay for trying a
 #: second telemetry destination alongside the stack, kept out of every list above so that an
@@ -72,3 +105,44 @@ DEMO_ONLY = ("keycloak-init", "vault-init", "management-seed")
 def args(files: tuple[Path, ...]) -> list[str]:
     """`-f a -f b …`, in the order Compose must read them."""
     return [arg for path in files for arg in ("-f", str(path))]
+
+
+def load(path: Path) -> dict:
+    """One Compose document, parsed — including the two tags an overlay cannot do without.
+
+    `!reset` removes an inherited key and `!override` replaces one instead of merging into it.
+    Both are Compose's own, and `yaml.safe_load` raises `ConstructorError` on either: *"could not
+    determine a constructor for the tag '!reset'"*. A test that reads an overlay with `safe_load`
+    therefore does not fail about the overlay — it fails about YAML, from inside a helper, and the
+    first guess is that the file is malformed.
+
+    Both are mapped to the node's own value, so `build: !reset null` reads as `build: None`. That
+    is what a test wants to assert: the key is *present and emptied*, which is a different
+    statement from absent, and the difference is the whole mechanism.
+    """
+
+    # **Imported here, not at the top.** `tools/stack_addresses.py` imports this module and the
+    # Makefile runs *that* with the system `python3`, before any virtual environment exists —
+    # `STACK_ADDRESSES := $(shell python3 tools/stack_addresses.py make)`, evaluated by every
+    # target. A module-level `import yaml` therefore broke `make down` with a traceback about PyYAML
+    # from a file about compose paths. The one function that parses is the one that needs the
+    # parser.
+    import yaml
+
+    def untagged(loader: yaml.SafeLoader, node: yaml.Node) -> object:
+        if isinstance(node, yaml.MappingNode):
+            return loader.construct_mapping(node, deep=True)
+        if isinstance(node, yaml.SequenceNode):
+            return loader.construct_sequence(node, deep=True)
+        # `!reset null` — the scalar is the word, so it is resolved the way an untagged one would
+        # be rather than kept as the string "null".
+        scalar = loader.construct_scalar(node)
+        return yaml.safe_load(scalar) if scalar else None
+
+    class _ComposeTags(yaml.SafeLoader):
+        pass
+
+    for tag in ("!reset", "!override"):
+        _ComposeTags.add_constructor(tag, untagged)
+
+    return yaml.load(path.read_text(), Loader=_ComposeTags) or {}

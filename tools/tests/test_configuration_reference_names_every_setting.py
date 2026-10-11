@@ -50,6 +50,14 @@ NOT_SETTINGS = {
     "AIRA_GATEWAY_URL",
     "AIRA_CONSOLE_URL",
     "AIRA_DEMO_CHAT_MODEL",
+    # Which **images** a deployment runs (`FRD-138`): read by `docker-compose.release.yml` and by
+    # no settings class, which is also why `config_render.py` refuses to put them in a `.env` from
+    # a config file. Documented anyway — §5b — because they decide which *code* is running, which
+    # is a stranger thing to leave out of a configuration reference than a port.
+    "AIRA_VERSION",
+    "AIRA_IMAGE_REGISTRY",
+    "AIRA_IMAGE_TAG",
+    "AIRA_PULL_POLICY",
     # Read by `tools/demo_history.py` alone, which builds the showcase's usage history (`FRD-626`
     # §12). Documented for the reason the whole file exists: an operator looking for a knob does
     # not care which process reads it.

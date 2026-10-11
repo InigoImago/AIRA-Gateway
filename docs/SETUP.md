@@ -24,6 +24,7 @@ Pick the row that matches your intent.
 | Run the whole thing locally, no source checkout beyond this repo | [§3 Standalone](#3-standalone--everything-in-containers) | Docker |
 | Develop with reload-on-save | [§4 Development](#4-development--from-source-no-application-containers) | Docker, Python 3.14 + uv, Node 26 |
 | Deploy onto existing infrastructure | [§5 Integrated](#5-integrated--onto-your-own-infrastructure) | see [`INTEGRATIONS.md`](INTEGRATIONS.md) |
+| Run a published version rather than build one | [`deployment/integrated.md` §5a](deployment/integrated.md#5a-running-the-published-images-against-your-infrastructure) | Docker |
 
 Every configuration value is in [`CONFIGURATION.md`](CONFIGURATION.md). What each container is and
 why is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
@@ -301,11 +302,22 @@ Everything else — which databases, which topics, which Keycloak clients and ro
 each model platform needs, TLS, and the SPA's build-time configuration — is in
 **[`INTEGRATIONS.md`](INTEGRATIONS.md)**.
 
-### Building the images
+### Building the images — or not building them
 
 ```bash
 make build-images      # aira-gateway:dev, aira-management:dev, aira-frontend:dev
 ```
+
+A release publishes the same three images to GHCR at `vX.Y.Z`, and any `up*` target can run those
+instead ([`FRD-138`](features/FRD-138-running-a-published-release.md)):
+
+```bash
+make release-pull RELEASE=v0.1.1     # fetch them
+make up-integrated RELEASE=v0.1.1    # applications only, against the infrastructure you supply
+```
+
+`deployment/integrated.md` [§5a](deployment/integrated.md#5a-running-the-published-images-against-your-infrastructure)
+is the full path, including the six addresses that composition then requires.
 
 The SPA is configured **at deployment time**: `public/runtime-config.js` ships beside the bundle
 and names the OIDC issuer and client id, so one image serves any realm — replace that one file and

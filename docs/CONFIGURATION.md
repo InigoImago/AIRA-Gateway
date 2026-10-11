@@ -18,6 +18,7 @@ environment ([§7](#7-secrets-from-vault)).
 | [4 Management](#4-management)                                 | the control plane                              |
 | [5 Frontend](#5-frontend)                                     | build-time, not run-time                       |
 | [5a Collector](#5a-the-collector-and-a-second-destination)    | what arrives, and a second destination         |
+| [5b Images](#5b-which-images-a-deployment-runs-compose-only)  | which version a deployment runs                |
 | [6 Missing pieces](#6-what-happens-when-something-is-missing) | degradation, decided                           |
 | [7 Vault](#7-secrets-from-vault)                              |                                                |
 | [8 Safe defaults](#8-what-refuses-to-boot)                    | what refuses to boot                           |
@@ -465,6 +466,31 @@ recipe keeps and the command that validates a combination before it is used.
 | `AIRA_DEMO_CHAT_MODEL` / `_EMBED_MODEL` | `qwen3:0.6b` / `all-minilm` | Which models the demo pulls and catalogues. Read by the Ollama pull loop and the seed, never by a settings class — **demo only**; a real deployment names its models through `AIRA_OPENAI_SERVERS` or a platform's own list. |
 | `AIRA_DEMO_HISTORY_DAYS` / `_PER_DAY` | `28` / `3` | How far back the showcase's usage history reaches and how busy a working day in it is (`FRD-626` §12). Read by `tools/demo_history.py` alone — **demo only**, and the one thing in this repository that moves a timestamp: it drives real traffic and then backdates the rows that run created, so the usage chart has a month of columns instead of one. |
 | `AIRA_CONSOLE_HOST` | `localhost` | The host a **browser** types to reach the console. Read by the Keycloak realm import, and only when the realm does not yet exist, so it is not retroactive on a stack that already has one. `localhost` and `127.0.0.1` stay valid whatever it says. |
+
+---
+
+## 5b. Which images a deployment runs (Compose only)
+
+**Not settings.** No settings class reads these, nothing is prefixed-and-forgotten in a `.env`
+rendered from a config file (`config_render.py` refuses what is not a setting), and Vault has no
+opinion about them. They are read by Compose, when `docker-compose.release.yml` is layered on, and
+they decide **which code runs** — which makes them worth a place in this reference anyway
+([`FRD-138`](features/FRD-138-running-a-published-release.md),
+[`ADR-0031`](adr/ADR-0031-running-a-release-is-two-overlays.md)).
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `AIRA_VERSION` | **none — required** | The published version to run: `v0.1.1`. Unset is a refusal naming the variable, before a container starts. There is deliberately no default: `latest` moves under a restart, so a deployment that was pinned yesterday would not be pinned today and nothing would say so. `make current-version` prints the newest version this checkout's tags name (`make next-version` is the other question: what a release cut now would be called). |
+| `AIRA_IMAGE_REGISTRY` | `ghcr.io/inigoimago` | Everything before the image name — registry and owner. A fork publishes to its own namespace. Lower case: **GHCR rejects an upper-case path**, which fails at the push, after a build. |
+| `AIRA_PULL_POLICY` | `missing` | What Compose does when the image is not already local. `missing` is right for a version, which is immutable — asking the registry again on every start buys nothing and fails without a network. Set `always` when running a tag that **moves** (`latest`, `sha-…`), where the local copy and the registry's are not the same bytes. `build` is also a legal value for Compose and would be this overlay undoing itself. |
+| `AIRA_IMAGE_TAG` | `dev` | The *locally built* tag, for the ordinary build path. Nothing to do with a release: it names an image on this machine only. |
+
+The addresses an integrated deployment must supply — `AIRA_POSTGRES_HOST`,
+`AIRA_KAFKA_BOOTSTRAP_SERVERS`, `AIRA_OIDC_ISSUER`, `AIRA_OIDC_JWKS_URI`, and `AIRA_REDIS_URL` /
+`VAULT_ADDR` as deliberate blanks — are ordinary settings, documented in their own sections above.
+What `docker-compose.external.yml` changes is only that they become **required**: their defaults one
+file down name the containers of the stack this repository ships beside, which resolve to nothing in
+a deployment. See [`deployment/integrated.md` §5a](deployment/integrated.md#5a-running-the-published-images-against-your-infrastructure).
 
 ---
 

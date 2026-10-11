@@ -1,0 +1,150 @@
+# The applications alone, against infrastructure this file does not manage.
+#
+#   docker compose -f docker-compose.apps.yml -f docker-compose.external.yml \
+#     -f docker-compose.release.yml up -d
+#   # or, from the repo root:  make up-integrated RELEASE=v0.1.1
+#
+# Overlay on `docker-compose.apps.yml`. It starts **no** Postgres, no Keycloak, no Kafka, no Redis,
+# no Vault and no collector: those are yours, and this file's whole job is to make that fact
+# unmissable instead of discoverable (`FRD-138`, `ADR-0031`). What it does is three things.
+#
+# **1. Every address you must supply becomes required.** `docker-compose.apps.yml` defaults them to
+# the container names of the stack it ships with — `postgres`, `kafka:9092`,
+# `keycloak:8080/realms/aira`. Those are right there and wrong here, and wrong in the worst way: a
+# name that resolves to nothing produces a connection error several screens into a container log,
+# minutes after `up` reported success. Compose's `${VAR:?message}` turns each one into a refusal
+# before a container starts, naming the variable and what it is for.
+#
+# Two of them are `${VAR?message}` instead — error when **unset**, accepted when deliberately
+# **empty** — because "none" is a real answer for them and silence is not:
+#
+#   AIRA_REDIS_URL   empty means per-process rate limits and the racy budget path. A documented,
+#                    reported state (`/readyz` says `degraded: true`), not a failure — but it must
+#                    be chosen, because N replicas then allow N times each limit.
+#   VAULT_ADDR       empty means every credential comes from your environment files instead. The
+#                    loader is inert without an address and says nothing, which is why the one
+#                    step of an integration that is easiest to skip is asked about here.
+#
+# **2. Dependencies on containers that no longer exist are removed.** `depends_on` naming
+# `postgres` or `keycloak` is not merely unmet here — Compose refuses the whole file for a
+# dependency on an undefined service. `!reset` removes the key; `!override` replaces it with the
+# dependencies that *are* in this project, because the order between the migrations and the
+# services they prepare the schema for still matters and is not yours to arrange.
+#
+# **3. Topic creation becomes opt-in.** See `kafka-topics` below.
+#
+# What this file deliberately does **not** do is reach your infrastructure in any way. It passes
+# addresses. Everything else — the two databases, the realm, the eight compacted topics, the Vault
+# mount — is `docs/INTEGRATIONS.md` and `docs/deployment/integrated.md`, in that order.
+
+# **The project name, which this composition would otherwise take from a directory.** Compose
+# derives it from the project directory's basename when no file declares one — so `-f
+# docker-compose.apps.yml -f docker-compose.external.yml` would be the project `compose`, while the
+# bundled stack is `aira` (`docker-compose.yml` declares it, and this file is layered on *without*
+# that one).
+#
+# Nothing about the applications would look wrong: the container names are explicit, so they would
+# still be `aira-gateway` and friends. What breaks is everything that works by project — `make
+# down`, `make ps` and `make logs` all name the stack, and would report on, and remove, a project
+# these containers are not in. The same `AIRA_STACK` as everywhere else, so a second installation
+# on one host is still one variable.
+name: ${AIRA_STACK:-aira}
+
+# The addresses each plane cannot be guessed into. Written once and aliased, so a service's entry
+# says which plane it belongs to and nothing else.
+x-gateway-endpoints: &gateway-endpoints
+  AIRA_POSTGRES_HOST: "${AIRA_POSTGRES_HOST:?the host of your PostgreSQL server (docs/INTEGRATIONS.md §1). The bundled stack's default is the container name `postgres`, which resolves to nothing here}"
+  AIRA_KAFKA_BOOTSTRAP_SERVERS: "${AIRA_KAFKA_BOOTSTRAP_SERVERS:?your broker list, host:port[,host:port] (docs/INTEGRATIONS.md §3)}"
+  AIRA_OIDC_ISSUER: "${AIRA_OIDC_ISSUER:?your realm's issuer URL — it must match the `iss` claim of the tokens your console obtains, exactly (docs/INTEGRATIONS.md §2)}"
+  AIRA_OIDC_JWKS_URI: "${AIRA_OIDC_JWKS_URI:?the JWKS URL this container can reach. Not the issuer: the issuer is what a browser saw, this is what the gateway fetches keys from}"
+  AIRA_REDIS_URL: "${AIRA_REDIS_URL?redis://host:port/db for shared rate-limit and budget counters, or empty to run without them — see the header of this file}"
+  VAULT_ADDR: "${VAULT_ADDR?your Vault address, or empty to take every credential from the environment instead — see the header of this file and docs/deployment/integrated.md §4}"
+
+x-management-endpoints: &management-endpoints
+  AIRA_POSTGRES_HOST: "${AIRA_POSTGRES_HOST:?the host of your PostgreSQL server (docs/INTEGRATIONS.md §1). The bundled stack's default is the container name `postgres`, which resolves to nothing here}"
+  AIRA_KAFKA_BOOTSTRAP_SERVERS: "${AIRA_KAFKA_BOOTSTRAP_SERVERS:?your broker list, host:port[,host:port] (docs/INTEGRATIONS.md §3)}"
+  AIRA_OIDC_ISSUER: "${AIRA_OIDC_ISSUER:?your realm's issuer URL — it must match the `iss` claim of the tokens your console obtains, exactly (docs/INTEGRATIONS.md §2)}"
+  AIRA_OIDC_JWKS_URI: "${AIRA_OIDC_JWKS_URI:?the JWKS URL this container can reach. Not the issuer: the issuer is what a browser saw, this is what the control plane fetches keys from}"
+  VAULT_ADDR: "${VAULT_ADDR?your Vault address, or empty to take every credential from the environment instead — see the header of this file and docs/deployment/integrated.md §4}"
+
+services:
+  # ---- one-shot setup ----------------------------------------------------------------------
+
+  gateway-migrate:
+    environment: *gateway-endpoints
+    # Your Postgres' readiness is not something this project can wait for.
+    depends_on: !reset null
+
+  management-migrate:
+    environment: *management-endpoints
+    depends_on: !reset null
+
+  # **Opt-in, because it cannot be right for every broker.** `--bootstrap-server` is the address
+  # given above, but a broker reached over SASL or TLS needs a client properties file this
+  # one-shot has no way to assemble — so against a secured cluster it fails, and two services
+  # wait on `service_completed_successfully` and never start.
+  #
+  # The topics are eight lines of `kafka-topics.sh` and most platform teams would rather run them
+  # themselves (`docs/INTEGRATIONS.md` §3 is the list, with `cleanup.policy=compact`, which is not
+  # optional: the gateway rebuilds its read-model by replaying them from the beginning).
+  #
+  #   make kafka-topics-external     # PLAINTEXT, and only if you may create them yourself
+  kafka-topics:
+    profiles: ["create-topics"]
+    depends_on: !reset null
+
+  # ---- long-running services ---------------------------------------------------------------
+
+  gateway:
+    environment: *gateway-endpoints
+    # `keycloak` and `redis` go; the schema this process reads does not.
+    depends_on: !override
+      gateway-migrate:
+        condition: service_completed_successfully
+
+  gateway-consumer:
+    environment: *gateway-endpoints
+    # `kafka-topics` goes with it — above. A consumer whose topics do not exist logs that it found
+    # none and keeps asking, which is recoverable; one that never starts is not.
+    depends_on: !override
+      gateway-migrate:
+        condition: service_completed_successfully
+
+  gateway-retention:
+    environment: *gateway-endpoints
+    # Its one dependency is the migration, which is in this project. Nothing to reset — and left
+    # alone deliberately, so that this file reads as the list of things that *had* to change.
+
+  management:
+    environment: *management-endpoints
+    depends_on: !override
+      management-migrate:
+        condition: service_completed_successfully
+
+  management-relay:
+    environment: *management-endpoints
+    depends_on: !override
+      management-migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    environment:
+      # One variable, two consumers: the console's `runtime-config.js` and the `connect-src` of its
+      # content policy. A console configured for an issuer nobody can reach shows a login page that
+      # cannot complete, which looks like a broken console.
+      AIRA_OIDC_ISSUER: "${AIRA_OIDC_ISSUER:?your realm's issuer URL, as a **browser** must reach it — this one ends up in the page, not in a container's configuration}"
+    # `management` and `gateway` are in this project, so this dependency still means what it says.
+
+networks:
+  # **The same definition as `docker-compose.yml`'s, on purpose and not by accident.**
+  # `docker-compose.apps.yml` says `networks: [aira]` for every service and defines nothing: the
+  # infrastructure file owns that network, and this composition does not include it. So it is
+  # declared here, identically — a second expression for the same name would give the applications
+  # a bridge of their own while every address they were handed kept resolving somewhere else.
+  #
+  # Named after the stack, like there, so that two installations on one host do not share a bridge
+  # on which `postgres` resolves to whichever container answers first.
+  # `tools/tests/test_a_release_runs_from_the_registry.py` fails if the two expressions drift.
+  aira:
+    name: ${AIRA_STACK:-aira}
+    driver: bridge

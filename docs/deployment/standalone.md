@@ -38,6 +38,23 @@ Wait for health:
 make ps
 ```
 
+### Without building: run a published release
+
+`make up-full` builds the three application images from this checkout, which needs nothing but
+Docker and about twelve minutes. A released version can be pulled instead
+([`FRD-138`](../features/FRD-138-running-a-published-release.md)):
+
+```bash
+make up-full RELEASE=v0.1.1
+```
+
+Same stack, same infrastructure containers, same ports — the three AIRA images come from
+`ghcr.io/inigoimago/…:v0.1.1` and nothing is built. `RELEASE=` works on `make showcase` too, so the
+demo with real traffic runs without a Python or Node toolchain at all. `make current-version`
+prints the newest version this checkout's tags name; there is no default, because `latest` moves
+under a restart and a stack that cannot say which version it runs is what the version numbers exist
+for.
+
 ---
 
 ## Step 2: create the roles and users

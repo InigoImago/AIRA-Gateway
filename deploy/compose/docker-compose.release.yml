@@ -1,0 +1,99 @@
+# AIRA's own three images, taken from the registry instead of built from this checkout.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.apps.yml -f docker-compose.release.yml \
+#     up -d
+#   # or, from the repo root:  make up-apps RELEASE=v0.1.1
+#
+# Overlay on `docker-compose.apps.yml`, and on nothing else: it changes **where the three
+# application images come from** and leaves every other property — environment, ports, order,
+# dependencies — exactly as that file has it. Which is the point. A second copy of the stack, with
+# `image:` lines edited into it, would be a second place every setting has to be kept right
+# (`FRD-138`, `ADR-0031`).
+#
+# Combine it with whatever the deployment needs:
+#
+#   + docker-compose.yml                    the published release on this repository's own
+#                                           infrastructure — one machine, nothing to build
+#   + docker-compose.external.yml           the published release on infrastructure you provide
+#   + docker-compose.showcase.yml           the demo, on published images
+#
+# **Why a published version is required and `latest` is not the default.** A deployment that cannot
+# say which version it runs is the thing `FRD-137` was built to end, and `:latest` moves under a
+# restart. `AIRA_VERSION` is therefore `${…:?}` — unset is an error with a message, not a silent
+# fall back to a tag whose meaning changes. `latest` still exists in the registry for a reader
+# trying AIRA out; typing it here is a deliberate act.
+
+# Each anchor is the whole of what this overlay says about one image, so a service's entry is one
+# line and cannot acquire a fourth property by accident.
+#
+# `build: !reset null` **removes** the key rather than overriding it. Compose merges overlays, so a
+# `build:` left in place from `docker-compose.apps.yml` is still a build: `docker compose up` builds
+# an image that is missing locally instead of pulling it, and `--build` rebuilds it even when the
+# pull succeeded. Either way the deployment would quietly run this checkout's code under a version
+# number it took from the registry — the exact confusion a version number exists to prevent.
+x-gateway-image: &gateway
+  image: ${AIRA_IMAGE_REGISTRY:-ghcr.io/inigoimago}/aira-gateway:${AIRA_VERSION:?set AIRA_VERSION to a published version, e.g. v0.1.1 — make current-version prints the newest — or pass RELEASE=vX.Y.Z to any make up target}
+  build: !reset null
+  # `missing` for a pinned version, because a version is immutable: having pulled it once, asking
+  # the registry again on every start buys nothing and fails without a network. Set
+  # `AIRA_PULL_POLICY=always` when running a tag that moves (`latest`, `main`), where the local
+  # copy and the registry's are not the same bytes.
+  pull_policy: ${AIRA_PULL_POLICY:-missing}
+
+x-management-image: &management
+  image: ${AIRA_IMAGE_REGISTRY:-ghcr.io/inigoimago}/aira-management:${AIRA_VERSION:?set AIRA_VERSION to a published version, e.g. v0.1.1 — make current-version prints the newest — or pass RELEASE=vX.Y.Z to any make up target}
+  build: !reset null
+  pull_policy: ${AIRA_PULL_POLICY:-missing}
+
+x-frontend-image: &frontend
+  image: ${AIRA_IMAGE_REGISTRY:-ghcr.io/inigoimago}/aira-frontend:${AIRA_VERSION:?set AIRA_VERSION to a published version, e.g. v0.1.1 — make current-version prints the newest — or pass RELEASE=vX.Y.Z to any make up target}
+  build: !reset null
+  pull_policy: ${AIRA_PULL_POLICY:-missing}
+
+services:
+  # ---- one-shot setup ----------------------------------------------------------------------
+  #
+  # The migrations come from the same image as the service that reads the schema, which is what
+  # makes "version v0.1.1" a statement about the database too.
+
+  gateway-migrate:
+    <<: *gateway
+
+  management-migrate:
+    <<: *management
+
+  # ---- long-running services ---------------------------------------------------------------
+
+  gateway:
+    <<: *gateway
+
+  gateway-consumer:
+    <<: *gateway
+
+  gateway-retention:
+    <<: *gateway
+
+  management:
+    <<: *management
+
+  management-relay:
+    <<: *management
+
+  frontend:
+    <<: *frontend
+
+  # ---- the demo's seed, for `make showcase RELEASE=vX.Y.Z` ----------------------------------
+  #
+  # **It is here because `extends:` does not see an overlay.** `management-seed` in
+  # `docker-compose.showcase.yml` is `extends: {file: docker-compose.apps.yml, service:
+  # management-migrate}`, and `extends` reads that file **from disk** — not the merged result of the
+  # `-f` chain. So the entry above for `management-migrate` does not reach it, and without this one
+  # the demo's seed would be the only container built from source, running `manage.py seed_demo`
+  # from this checkout against a database three published images own.
+  #
+  # `profiles: ["demo"]` is what makes the entry harmless when `docker-compose.showcase.yml` is
+  # *not* layered on: without it, naming a service here would declare a new one — an image with no
+  # command, started by every `up`.
+  management-seed:
+    <<: *management
+    profiles: ["demo"]

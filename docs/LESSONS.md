@@ -612,6 +612,15 @@ reading code.
   behaviour has two sources, **give each its own distinguishable answer and assert the one you
   mean**; a shared substring is a passing test with no subject.
 
+  **The same shape at file scope, three times now:** a guard that asks whether a string is *in* a
+  file is satisfied while any **one** of the places that needs it still has it. `PB14` was
+  satisfied by a comment inside the `run:` block it was checking. `PB18` asked whether an image
+  name appeared among the pushed tags and the same image's `:latest` line kept it appearing, so the
+  guard was green about a release in which two images carried the version and one did not. `IM11`
+  turned the gateway's required JWKS URL into a default and the control plane's copy kept
+  `${AIRA_OIDC_JWKS_URI:?` in the file. Each survived its own mutation. **Assert per occurrence, or
+  on the shape of the construct** — `re.findall` over every use, not `in`.
+
 - **An identity that crosses a system boundary is set once.** Two planes, two databases, one
   string: a use case's `slug` and a model's `name` are editable fields on the Management side and
   **primary keys** on the gateway side, arriving over Kafka. A rename therefore renames nothing.
@@ -1134,6 +1143,29 @@ reading code.
 ---
 
 ## 3. Configuration, defaults and refusals
+
+- **A default that names a neighbour is wrong the moment there is no neighbour.** Every address in
+  `docker-compose.apps.yml` defaults to the container name of the stack it ships beside —
+  `postgres`, `kafka:9092`, `keycloak:8080/realms/aira`. In that stack they are right and
+  convenient. In a deployment onto somebody else's infrastructure they are a name that resolves to
+  nothing, and the failure arrives minutes after `up` reported success, several screens into a
+  container log. The deployment overlay makes each one `${VAR:?message}`: **a refusal naming the
+  variable beats a default that is only correct in the configuration the file was written in.**
+
+  Two of them are `${VAR?message}` *without* the colon — error when unset, accepted when
+  deliberately empty — because `AIRA_REDIS_URL` and `VAULT_ADDR` each have a real "none" with real
+  consequences (per-process rate limits; credentials from the environment). Required-and-non-empty
+  would make a lie the only way to start. **"Must be answered" and "must have a value" are
+  different rules, and the choice between them is about whether *none* is a configuration.**
+
+- **A shared module's import list is part of its contract.** `tools/compose_files.py` gained a
+  module-level `import yaml`; `tools/stack_addresses.py` imports it, and the Makefile runs *that*
+  with the system `python3` on every target, before any virtual environment. `make down` then
+  printed a traceback about PyYAML from a module about file paths. The failure mode is the lesson:
+  `$(shell …)` **swallows the exit code**, so every address became the empty string, nothing said
+  so, and `make wait-healthy` polled `curl -sf /` for four minutes before declaring a healthy stack
+  unready. **Where a script is run by something other than the test suite, put the dependency in
+  the function that needs it — and have a test run it the way that caller does.**
 
 - **A literal in a configuration file is a preference until a real destination makes it a
   constraint.** The forwarding leg's `encoding: json` was hard-coded, for a good reason — OTLP/JSON

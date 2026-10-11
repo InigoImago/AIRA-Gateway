@@ -12,14 +12,43 @@ INFRA_F    := -f $(COMPOSE_DIR)/docker-compose.yml
 APPS_F     := -f $(COMPOSE_DIR)/docker-compose.apps.yml
 SHOWCASE_F := -f $(COMPOSE_DIR)/docker-compose.showcase.yml
 
+# ---- running a published release instead of a build of this checkout --------------------------
+#
+# `RELEASE=vX.Y.Z` on any `up*` target takes the three application images from the registry
+# (`FRD-138`): `make up-apps RELEASE=v0.1.1`, `make showcase RELEASE=v0.1.1`. Two things change
+# together, which is why this is one switch and not two — a file and a flag:
+#
+#   the overlay   re-points the three images at `ghcr.io/<owner>/…:$(RELEASE)` and **removes**
+#                 their `build:`, so nothing can be built by accident
+#   `--build`     goes away. It is what `up-apps` and `showcase` pass by default, and against a
+#                 published image it would rebuild from this checkout and run *that* under the
+#                 version number — the one confusion a version number exists to prevent
+#
+# `AIRA_VERSION` is exported rather than asked of the caller twice: the overlay reads it, and a
+# release that is named in one place cannot be two versions at once. Compose refuses the
+# composition if it is unset, so `RELEASE=` empty is the same as not passing it at all (`ifdef` is
+# false for an empty value) and the ordinary build path is unaffected.
+RELEASE_F :=
+BUILD_FLAG := --build
+ifdef RELEASE
+RELEASE_F := -f $(COMPOSE_DIR)/docker-compose.release.yml
+BUILD_FLAG :=
+export AIRA_VERSION := $(RELEASE)
+endif
+
+# The applications **alone**, against infrastructure the operator provides: no infra file, every
+# address required, and no dependency on a container this composition does not start.
+EXTERNAL_F := -f $(COMPOSE_DIR)/docker-compose.external.yml
+COMPOSE_INTEGRATED := docker compose $(APPS_F) $(EXTERNAL_F) $(RELEASE_F)
+
 # Infrastructure + the application processes: **what a real deployment runs**, and nothing that
 # exists for the demo. Startable on its own — `tools/tests/test_the_core_stack_carries_no_demo.py`
 # fails if a demo service or a demo dependency creeps back into it.
-COMPOSE_APPS := docker compose $(INFRA_F) $(APPS_F) --profile observability
+COMPOSE_APPS := docker compose $(INFRA_F) $(APPS_F) $(RELEASE_F) --profile observability
 
 # The above, plus the demo provisioning: a development Keycloak realm, a `-dev` Vault that forgets
 # on every restart, and the seeded accounts.
-COMPOSE_FULL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) \
+COMPOSE_FULL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) $(RELEASE_F) \
                 --profile observability --profile demo
 
 # Every service this repository can start — both files, every profile.
@@ -46,6 +75,12 @@ COMPOSE_FULL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) \
 # silently this same bug again. A written list has a counterpart instead —
 # `tools/tests/test_compose_lifecycle_covers_the_stack.py` fails when a profile is declared that
 # this line does not name.
+#
+# **Neither release overlay is in here, and it does not need to be.** They re-point images and
+# remove dependencies; they declare no service this list does not already name, and
+# `docker-compose.external.yml` declares the same project name — so `down`, `ps` and `logs` reach
+# the containers an integrated `up` started. `tools/tests/test_a_release_runs_from_the_registry.py`
+# holds both halves of that: no new service, and the same project.
 COMPOSE_ALL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) \
                --profile observability --profile demo --profile verify --profile debug
 ENV_FILE := $(COMPOSE_DIR)/.env
@@ -107,7 +142,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         verify-up verify-down test-verify \
         run-frontend up-full demo-ready down-full logs-apps build-images next-version \
         current-version release-tag release-check release-notes ci wait-healthy prune mutants \
-        ui-audit
+        ui-audit release-pull up-integrated kafka-topics-external
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -172,7 +207,50 @@ up-core: env ## Start only core infra (no observability backend)
 
 up-apps: env ## Start the product: infra + the application processes, no demo provisioning
 	@-$(MAKE) --no-print-directory config-verify
-	$(COMPOSE_APPS) up -d --build
+	$(COMPOSE_APPS) up -d $(BUILD_FLAG)
+
+release-pull: ## Fetch a published version's three images — RELEASE=vX.Y.Z; add RELEASE= to any up* target to run them
+	@test -n "$(RELEASE)" || { \
+		echo "usage: make release-pull RELEASE=vX.Y.Z"; \
+		echo "       published versions:  $$(uv run python tools/release_version.py --current)  (newest)"; \
+		exit 2; \
+	}
+	@# **Separate from `up`, because a pull is the one step that needs the network and the one that
+	@# fails for a reason nothing else does** — a version that was never published, or a package
+	@# that is still private. Running into that during `up`, after the infrastructure has started,
+	@# reads as a broken stack; running into it here reads as what it is.
+	@#
+	@# Three services, not every service: the one-shots and the second processes share these three
+	@# images, and `docker compose pull` with no arguments would also fetch Postgres, Keycloak,
+	@# Kafka and the rest, which this target is not about.
+	$(COMPOSE_APPS) pull gateway management frontend
+	@echo ""
+	@echo "  $(RELEASE) is on this machine. To run it:"
+	@echo "    make up-apps RELEASE=$(RELEASE)          # on this repository's infrastructure"
+	@echo "    make up-integrated RELEASE=$(RELEASE)    # on infrastructure you provide"
+
+up-integrated: env ## Start the applications ALONE, against infrastructure you provide (docs/deployment/integrated.md §5a)
+	@# **No Postgres, no Keycloak, no Kafka, no Redis, no Vault, no collector.** Those are the
+	@# deployment's, and `docker-compose.external.yml` makes every address required rather than
+	@# defaulting it to the container name of a stack that is not running here.
+	@#
+	@# The topics are not created: against a secured broker this cannot work, and most platform
+	@# teams create them themselves (`docs/INTEGRATIONS.md` §3). For a PLAINTEXT broker you may
+	@# create on:   make kafka-topics-external
+	@-$(MAKE) --no-print-directory config-verify
+	$(COMPOSE_INTEGRATED) up -d $(BUILD_FLAG)
+
+kafka-topics-external: ## Create the config topics on a broker YOU provide (PLAINTEXT only; see up-integrated)
+	@# **Not `kafka-topics`, and the difference is which broker.** That target `docker exec`s into
+	@# this repository's own Kafka container, which an integrated deployment does not have. This one
+	@# runs the same eight `--create --if-not-exists` commands from a one-shot container against
+	@# `AIRA_KAFKA_BOOTSTRAP_SERVERS` — the address the applications were configured with, so there
+	@# is no second idea of where the broker is.
+	@#
+	@# PLAINTEXT only: a broker reached over SASL or TLS needs a client properties file this
+	@# one-shot cannot assemble. Against one of those, have the topics created instead
+	@# (`docs/INTEGRATIONS.md` §3 lists them, all `cleanup.policy=compact`).
+	$(COMPOSE_INTEGRATED) --profile create-topics run --rm --no-deps kafka-topics
 
 otel-arrivals: ## Watch what arrives at the collector, in its own words
 	@# **What arrived**, which is a different question from what was delivered onward
@@ -238,7 +316,7 @@ otlp-inspector-down: ## Stop the standing-in SIEM and forget what it held
 
 up-full: env ## Start EVERYTHING in containers, demo provisioning included (infra + apps + showcase)
 	@-$(MAKE) --no-print-directory config-verify
-	$(COMPOSE_FULL) up -d --build
+	$(COMPOSE_FULL) up -d $(BUILD_FLAG)
 	@echo "SPA: $(CONSOLE_URL)   (login ucadmin / demo-password)"
 
 demo-ready: ## Block until the demo's keys and *all* its models have reached the gateway
@@ -275,7 +353,7 @@ demo-ready: ## Block until the demo's keys and *all* its models have reached the
 
 showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, and real traffic
 	@echo "==> starting the stack (this pulls a model on the first run and takes a few minutes)"
-	$(COMPOSE_FULL) --profile demo up -d --build
+	$(COMPOSE_FULL) --profile demo up -d $(BUILD_FLAG)
 	@# `wait-healthy`, not a second loop of its own. This waited on the **gateway** alone and then
 	@# printed "SPA $(CONSOLE_URL)" — so on a machine where the frontend took a few seconds
 	@# longer, the one URL the walkthrough starts at answered nothing. Two ideas of "ready", and the
@@ -639,7 +717,7 @@ run-frontend: ## Run the Angular dev server (proxies /api to the management back
 migrate-gateway: ## Apply gateway DB migrations (Alembic)
 	cd gateway && uv run alembic upgrade head
 
-kafka-topics: ## Create the compacted config-distribution topics (idempotent)
+kafka-topics: ## Create the compacted config-distribution topics in THIS stack's broker (idempotent)
 	@prefix="aira."; if [ -n "$${AIRA_KAFKA_STAGE:-}" ]; then prefix="aira.$${AIRA_KAFKA_STAGE}."; fi; \
 	for t in usecases memberships api-keys pipelines budgets rate-limits models anomaly-rules roles; do \
 		docker exec $${AIRA_STACK:-aira}-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$prefix$$t \

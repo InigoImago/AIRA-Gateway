@@ -48,6 +48,13 @@ COMPOSE_ONLY = {
     "AIRA_DEMO_CHAT_MODEL",
     "AIRA_DEMO_EMBED_MODEL",
     "AIRA_IMAGE_TAG",
+    # Which **images** a deployment runs, read by `docker-compose.release.yml` (`FRD-138`). Not in
+    # `compose_files.ALL`, because that list is every file that *defines* a service and the release
+    # overlay defines none — so these are named here rather than discovered there, which is the
+    # same reason `AIRA_IMAGE_TAG` above is: a name Compose reads and no settings class does.
+    "AIRA_VERSION",
+    "AIRA_IMAGE_REGISTRY",
+    "AIRA_PULL_POLICY",
     "AIRA_AZURE_API_KEY",
     "AIRA_OPENAI_API_KEY",
     # Read by the compose file's **own shell**, in the `while true; do … sleep ${…}` commands that

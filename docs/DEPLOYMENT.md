@@ -124,8 +124,13 @@ is filled in step 7.
 
 ```bash
 uv run python tools/config_render.py config/my-installation.yaml -o deploy/compose/.env
-make up-apps
+make up-apps RELEASE=v0.1.1        # the published images; drop RELEASE= to build from this checkout
 ```
+
+On **your own** infrastructure — your Postgres, your realm, your broker — use `make up-integrated
+RELEASE=v0.1.1` instead. It starts the applications and no infrastructure at all: six processes and
+the two migrations that go before them. See §1b *Running one*, and `deployment/integrated.md` §5a
+for the six addresses it then requires rather than defaults.
 
 `docker-compose.apps.yml` is the product and nothing in it exists for the demo — the development
 realm, the `-dev` Vault and the seeded accounts live in `docker-compose.showcase.yml`, which you do
@@ -404,9 +409,25 @@ ghcr.io/<owner>/aira-frontend:vX.Y.Z
 Refused on purpose: a tag whose commit is not an ancestor of `main`, and a tag older than the newest
 release — `latest` would move backwards, so releases here go forward only.
 
-**Not yet:** no Compose file *pulls* these images. Every `image:` in `docker-compose.apps.yml` is
-still paired with a `build:`, because it was written when `aira-gateway` was on no registry at all.
-An overlay that names a published tag and omits `build:` is the next step (`FRD-137` §6).
+### Running one
+
+Two overlays, one per question — `FRD-138`, `ADR-0031`. `docker-compose.release.yml` takes the three
+images from the registry and **removes** their `build:`; `docker-compose.external.yml` starts no
+infrastructure and turns every address a deployment must supply into a required variable.
+
+```bash
+make release-pull RELEASE=v0.1.1     # fetch the three images, and nothing else
+make up-full RELEASE=v0.1.1          # on this repository's infrastructure
+make up-integrated RELEASE=v0.1.1    # on infrastructure you provide — §3 and deployment/integrated.md §5a
+```
+
+`RELEASE=` is one switch for two things: it layers the overlay on **and** drops the `--build` that
+`up-full` and `showcase` pass by default. Either half alone is a contradiction.
+
+`AIRA_VERSION` has no default, so no composition can quietly run `latest` — which moves under a
+restart, and a stack that cannot say which version it is running is the state these version numbers
+exist to end. To check: `docker inspect --format '{{.Name}} {{.Config.Image}}' $(docker ps -q)`, and
+every AIRA container must name the same reference.
 
 ## 2. Standalone (one machine)
 
@@ -1035,7 +1056,7 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 | Gap                                                            | Consequence                                                                                                   | Status                                                                                                                                                                                                          |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **No Kubernetes/Helm**                                         | Compose only; no manifests or charts                                                                          | Planned (see `docs/ROADMAP.md`)                                                                                                                                                                                 |
-| ~~**Images are not published**~~                               | —                                                                                                             | **Closed** by `FRD-137` / `ADR-0029`: a manual release publishes `aira-gateway`, `aira-management` and `aira-frontend` to GHCR at `vX.Y.Z` (plus `sha-<commit>` and `latest`), behind every CI gate. The version lives in the Git tags only — `make next-version`. Still open: no Compose overlay *pulls* them yet, so §3's files still build |
+| ~~**Images are not published**~~                               | —                                                                                                             | **Closed** by `FRD-137` / `ADR-0030`: pushing an annotated tag publishes `aira-gateway`, `aira-management` and `aira-frontend` to GHCR at `vX.Y.Z` (plus `sha-<commit>` and `latest`), behind every CI gate, with the tag's message as the release notes. The version lives in the Git tags only — `make next-version`. And **`FRD-138` / `ADR-0031`** closes the other half: `docker-compose.release.yml` pulls them (`RELEASE=vX.Y.Z` on any `up*` target) and `docker-compose.external.yml` runs them against infrastructure you provide |
 | ~~**Vault is not used by any code**~~                          | —                                                                                                             | **Closed** by `FRD-116`: `aira_common.secrets` reads AppRole + KV-v2 and ranks Vault above the environment for both planes                                                                                      |
 | **Schema Registry is not used**                                | Events are plain JSON with an `event_type` header                                                             | Runs in the stack, unused                                                                                                                                                                                       |
 | ~~**SPA configuration is build-time**~~                        | —                                                                                                             | **Closed** on 2026-08-08: `public/runtime-config.js` ships with the bundle and sets the issuer and client id. Replace it per environment (volume mount, `ConfigMap`, or a `sed` in the entrypoint) — no rebuild |

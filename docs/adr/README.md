@@ -41,3 +41,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0028 | [A time bucket is portable, and the database session is UTC](ADR-0028-a-time-bucket-is-portable-and-the-session-is-utc.md) | **Accepted** | 2026-10-01 |
 | 0029 | [A release is a Git tag, and the tag is the only place a version lives](ADR-0029-a-release-is-a-git-tag-and-three-images.md) | **Accepted** (trigger superseded by 0030) | 2026-10-07 |
 | 0030 | [A release is an annotated tag, and its message is the release notes](ADR-0030-a-release-is-an-annotated-tag-and-its-message.md) | **Accepted** | 2026-10-11 |
+| 0031 | [Running a published release is two overlays, not a second stack](ADR-0031-running-a-release-is-two-overlays.md) | **Accepted** | 2026-10-11 |

@@ -3,7 +3,8 @@
 **For:** running AIRA on your organisation's infrastructure, with your Keycloak, your database and
 your model platform.
 **You need:** the accesses listed in §1, and somebody who can grant them.
-**Shape:** you supply the infrastructure; AIRA supplies two application images and a console.
+**Shape:** you supply the infrastructure; AIRA supplies three published images — two application
+planes and a console — which §5a pulls from a registry and starts. Nothing here is built.
 
 This page is the order to do things in. What each connected system must provide in detail is in
 [`../INTEGRATIONS.md`](../INTEGRATIONS.md), and every configuration value is in
@@ -168,6 +169,130 @@ Compose defaults are **development values**; a deployment that leaves them unset
 
 ---
 
+## 5a. Running the published images, against your infrastructure
+
+Everything above is what the deployment must be *given*. This is how it is *started* — and since
+`FRD-138` it is two Compose files, not a build.
+
+AIRA publishes three images per release ([`FRD-137`](../features/FRD-137-publishing-versioned-images.md)):
+
+```
+ghcr.io/inigoimago/aira-gateway:v0.1.1       the data plane — API, consumer, retention sweep
+ghcr.io/inigoimago/aira-management:v0.1.1    the control plane — API, outbox relay, migrations
+ghcr.io/inigoimago/aira-frontend:v0.1.1      the console
+```
+
+`make current-version` prints the newest version this checkout's tags name; GitHub's Releases page
+carries each one's own description. They are `linux/amd64` only.
+
+### What to run
+
+```bash
+make release-pull RELEASE=v0.1.1     # fetch the three images, and nothing else
+make up-integrated RELEASE=v0.1.1    # start the applications, and no infrastructure at all
+```
+
+Or without the Makefile, which is all the target does:
+
+```bash
+cd deploy/compose
+AIRA_VERSION=v0.1.1 docker compose \
+  -f docker-compose.apps.yml \
+  -f docker-compose.external.yml \
+  -f docker-compose.release.yml up -d
+```
+
+Three files, each about one thing. `docker-compose.apps.yml` is what the product is configured
+with — the same file every other deployment shape uses, so there is no second copy of forty
+defaults to keep in step. `docker-compose.external.yml` starts **no** Postgres, Keycloak, Kafka,
+Redis, Vault or collector, and makes every address they live at a **required** variable.
+`docker-compose.release.yml` takes the three images from the registry and removes their build, so
+nothing can be built here by accident.
+
+### It will refuse to start until you have answered six questions
+
+That is the point of the second file. `docker-compose.apps.yml` defaults every address to the
+container names of the stack AIRA ships beside — `postgres`, `kafka:9092`,
+`keycloak:8080/realms/aira` — which are right there and resolve to nothing here. Each one becomes
+a refusal naming the variable, before a container starts:
+
+| Variable | Is |
+|---|---|
+| `AIRA_POSTGRES_HOST` | your PostgreSQL host (§3). Port, user and password are the usual `AIRA_POSTGRES_*`; the database names are fixed, `aira_gateway` and `aira_mgmt` |
+| `AIRA_KAFKA_BOOTSTRAP_SERVERS` | `host:port[,host:port]` (§3) |
+| `AIRA_OIDC_ISSUER` | your realm's issuer, exactly as the **browser** obtains tokens from it (§2) |
+| `AIRA_OIDC_JWKS_URI` | the JWKS URL **these containers** can reach. Not the same answer as the issuer, and the reason is in §2 |
+| `AIRA_REDIS_URL` | the shared counters, **or empty** — a deliberate none |
+| `VAULT_ADDR` | your Vault, **or empty** — a deliberate none (§4) |
+
+The last two are the only ones that may be answered with nothing, because for both of them
+"nothing" is a real configuration and a consequential one:
+
+- **No Redis** means rate limits hold per process and budgets use the older racy path. `/readyz`
+  reports `degraded: true`. With N replicas each limit then allows N times what it says.
+- **No Vault** means every credential comes from your environment files instead, silently. §4 is
+  the step this is here to stop you skipping.
+
+Everything else keeps the default `docker-compose.apps.yml` documents, and
+[`../CONFIGURATION.md`](../CONFIGURATION.md) is the full list. Put your values in
+`deploy/compose/.env` — or generate that file from
+[`config/integrated.example.yaml`](../../config/integrated.example.yaml), which is the same
+settings under section headings with the comments that say what each one refuses:
+
+```bash
+make config-check CONFIG=config/integrated.example.yaml
+uv run python tools/config_render.py config/integrated.example.yaml -o deploy/compose/.env
+make config-verify
+```
+
+A version is **not** in that file, and neither is a registry: they are Compose's own variables, not
+settings of either plane, and `config_render.py` refuses what is not a setting. `AIRA_VERSION` comes
+from `RELEASE=` on the command line, which is one place rather than two.
+
+### The topics are not created for you
+
+`make up-integrated` does not create the eight compacted Kafka topics. Against a broker reached over
+SASL or TLS it cannot: the one-shot that creates them would need a client properties file it has no
+way to assemble, and two services wait for it to finish successfully and would never start at all.
+
+So either have them created (§3 and [`../INTEGRATIONS.md` §3](../INTEGRATIONS.md#3-apache-kafka)
+list the names, all with `cleanup.policy=compact`, which is not optional — the gateway rebuilds its
+read-model by replaying them), or, on a PLAINTEXT broker you may create on:
+
+```bash
+make kafka-topics-external
+```
+
+### What `up` then does, in order
+
+1. `gateway-migrate` runs `alembic upgrade head` and `management-migrate` runs
+   `manage.py migrate` — **from the published images**, so §7's two commands are already done, and
+   the schema is the one that version expects.
+2. The six long-running processes start, each waiting on the migration that prepares its schema.
+3. The console starts, waiting on both APIs.
+
+There is no step where this project reaches your infrastructure to configure it. It is handed
+addresses.
+
+### Verifying the version, which is the point of all this
+
+```bash
+docker inspect --format '{{.Name}} {{.Config.Image}}' $(docker ps -q) | sort
+```
+
+Every AIRA container must name the same `ghcr.io/…:v0.1.1`. If one of them says `aira-gateway:dev`,
+something built it — and that container is this machine's code under a version number from the
+registry, which is the one thing a version number exists to prevent.
+
+### A note on the two moving tags
+
+`latest` and `sha-<commit>` are published too. `AIRA_VERSION` deliberately has **no default**, so
+neither is used unless you type it: `latest` moves under a restart, which means a deployment that
+was pinned yesterday is not pinned today and nothing says so. If you do run a moving tag, set
+`AIRA_PULL_POLICY=always` — otherwise Compose keeps the copy it already has.
+
+---
+
 ## 6. Ingress and TLS
 
 Two hostnames, because the console and the API are separate origins:
@@ -185,6 +310,11 @@ image.
 ---
 
 ## 7. Migrate, then start
+
+**If you started it the way §5a says, this is already done** — the two migration containers ran
+`alembic upgrade head` and `manage.py migrate` from the published images, and the six long-running
+processes each waited for the one that prepares their schema. This section is what those containers
+do, for a deployment that runs the processes some other way (a scheduler, a chart, systemd):
 
 ```bash
 # control plane

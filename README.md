@@ -54,6 +54,10 @@ Four ways to run it, one page each. Written for somebody doing it for the first 
 | [**Development**](docs/deployment/dev.md) | changing the code, reload on save | Docker, Python 3.14 + uv, Node 26 |
 | [**Integrated**](docs/deployment/integrated.md) | your infrastructure, your Keycloak, your models | see its access checklist |
 
+Every one of them can run the **published images** instead of building: `RELEASE=vX.Y.Z` on any
+`up*` target ([`FRD-138`](docs/features/FRD-138-running-a-published-release.md)). The integrated one
+then starts the applications alone, against the database, realm, broker and Vault you supply.
+
 ---
 
 ## Features
@@ -184,6 +188,7 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Operations**](docs/DEPLOYMENT.md) | Deploying it: §0 is a runbook for an integration, in order, with the command that checks each step. Then topics, jobs, degradation, backups |
 | [**Sizing**](docs/DEPLOYMENT.md#1a-sizing-what-one-instance-carries) | What one instance carries, measured: the CPU a request of each workload costs, the three places a deployment gives way, and what the audit trail fills |
 | [**Releasing**](docs/DEPLOYMENT.md#1b-releasing-cutting-a-version-and-publishing-the-images) | Cutting a version: an annotated tag whose message is the release notes, checked before anything is published. Where the version lives, what gates a release, and what a failure leaves behind |
+| [**Running a release**](docs/deployment/integrated.md#5a-running-the-published-images-against-your-infrastructure) | The published images, pulled rather than built: `RELEASE=vX.Y.Z` on any `up*` target, and the six addresses an integrated deployment is required to supply |
 | [**Testing**](docs/TESTING.md) | The four layers and why each exists |
 | [**Gap analysis**](docs/GAP-ANALYSIS.md) | Requirements against what is built |
 | [**Features**](docs/features/README.md) | Every FRD, its status, its document — generated from the FRDs themselves |

@@ -2,7 +2,7 @@
 
 > Phase: 7 · Status: **Built** · Owner: AIRA
 > Related: `ADR-0029` (the decision), `ADR-0030` (the trigger and the notes),
-> `FRD-127` (several gateway instances),
+> `FRD-138` (running what this publishes), `FRD-127` (several gateway instances),
 > `FRD-130` (the demo), `docs/DEPLOYMENT.md` §7
 
 ## 1. Summary
@@ -50,8 +50,8 @@ Container Registry under that version, once every quality gate has passed on the
 - Multi-architecture images. `linux/arm64` needs QEMU and roughly triples the console build; worth
   doing when somebody needs it, not before.
 - A changelog, a GitHub Release body, or signing. §6 keeps them open.
-- Consuming the published images. A deployment Compose overlay that pulls instead of builds is the
-  payoff and the next step — see §6.
+- Consuming the published images. That is the payoff and it is a feature of its own:
+  [`FRD-138`](FRD-138-running-a-published-release.md).
 
 ## 3. User Stories
 
@@ -177,10 +177,12 @@ cheap to fix, and only while nobody is waiting yet.
   cache they are the same layers in practice, and "in practice" is not a guarantee this project
   usually accepts. Handing the three images between jobs as artefacts (~1 GB) is the upgrade;
   stated in `ADR-0029` as a known limit rather than left to be discovered.
-- **Nothing consumes the images yet.** Every `image:` in `docker-compose.apps.yml` is paired with a
-  `build:` because `aira-gateway` was on no registry. A deployment overlay that names
-  `ghcr.io/<owner>/aira-gateway:vX.Y.Z` and omits `build:` is what closes `DEPLOYMENT.md` §7 all the
-  way, and is what `FRD-127` will want.
+- ~~**Nothing consumes the images yet.**~~ **Closed** by
+  [`FRD-138`](FRD-138-running-a-published-release.md) / `ADR-0031` on 2026-10-11: two overlays —
+  `docker-compose.release.yml` takes the three images from the registry and removes their `build:`,
+  `docker-compose.external.yml` runs them against infrastructure the operator provides. `RELEASE=`
+  on any `up*` target is the interface, and the whole integration suite has been run against
+  `v0.1.0` pulled from GHCR. `DEPLOYMENT.md` §7's row is closed both ways.
 - **Packages start private** and are not linked to the repository automatically. Making them
   pullable is a one-time step per package in GitHub's own settings, outside this repository.
 - **No backports.** A tag older than the newest release is refused (FR-14). Supporting one would

@@ -38,7 +38,7 @@ refused a request that should have been served. **Give a test its own slug**; th
 
 ## Tier 1b — Mutation checks (hermetic, on demand)
 `make mutants` (`tools/mutation_check.py`) breaks one property at a time and requires a named test
-to notice. **933 properties**; the figure is stated in `CLAUDE.md` and a test
+to notice. **953 properties**; the figure is stated in `CLAUDE.md` and a test
 fails when the two disagree, because a claim about how much of a system is checked is exactly the
 sort that rots quietly. It is the answer to *"a green test proves only that the code and the test agree"*: a
 property nothing would notice losing is reported as a **survivor**, and a mutation whose anchor has
@@ -65,6 +65,22 @@ endpoints all answer can still hold a catalogue with one of the two models in it
 fails sixty-one times on an embedding model, with no failure mentioning a download
 (`FRD-130` §4f). `demo-ready` blocks until every demo credential and **every** demo model has
 crossed seed → relay → Kafka → gateway, and it is the same target `make showcase` uses.
+
+### The same four commands against a published release
+
+`RELEASE=vX.Y.Z` on the first one runs the whole tier against the images a release published,
+rather than against a build of the checkout (`FRD-138`):
+
+```bash
+make up-full RELEASE=v0.1.0 && make wait-healthy && make demo-ready && make test-integration
+```
+
+This is the only thing that answers *"are the images we publish functionally complete?"* — and
+nothing had asked it before 2026-10-11, when it was run against `ghcr.io/inigoimago/*:v0.1.0`
+pulled from the registry, with `aira_pgdata` deleted first so the published image's migrations
+created both schemas from nothing. 1066 tests passed and 15 were skipped, in 24 minutes. It is a fair oracle only while the product
+code under test is the released product code; when it is not, a failure may be the suite moving on
+rather than the image being wrong, and the suite cannot tell you which.
 
 Codify the manual end-to-end checks (auth flows, use-case membership, persistence, SSE) as
 `integration`-marked tests under `*/tests/integration/` so they are repeatable in CI.

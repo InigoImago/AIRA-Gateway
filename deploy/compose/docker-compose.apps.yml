@@ -19,8 +19,14 @@ services:
 
   gateway-migrate:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
-    # Every service naming this image also declares how to build it. `aira-gateway` is on no
-    # registry, and a service with `image:` and no `build:` is one Compose tries to *pull*.
+    # Every service naming this image also declares how to build it. The *unqualified* name
+    # `aira-gateway` is on no registry, and a service with `image:` and no `build:` is one Compose
+    # tries to pull — so on a machine that has never built it, four services would fail to start.
+    #
+    # Published images exist since `FRD-137` and are **not** named here. They carry a registry and
+    # a version (`ghcr.io/<owner>/aira-gateway:vX.Y.Z`) and running them is a different decision
+    # from building this checkout, so it is a different file: `docker-compose.release.yml`, which
+    # replaces these three images and removes these three builds (`FRD-138`).
     build: &gateway-build
       context: ../..
       dockerfile: gateway/Dockerfile
@@ -298,6 +304,12 @@ services:
     container_name: ${AIRA_STACK:-aira}-kafka-topics
     environment:
       AIRA_KAFKA_STAGE: ${AIRA_KAFKA_STAGE:-}
+      # **The broker both planes were configured with, not a second idea of where it is.** This
+      # said `kafka:9092` inside the command, which is the same value this default resolves to in
+      # the bundled stack and a different one everywhere else: pointed at an external broker, the
+      # applications moved and the container that creates the topics they read kept talking to a
+      # name that resolves to nothing — or, worse, to a second broker on the same bridge.
+      AIRA_KAFKA_BOOTSTRAP_SERVERS: ${AIRA_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
     entrypoint: ["/bin/sh", "-c"]
     # One physical line per command: a folded scalar would turn the continuations into arguments
     # of their own, which the topic tool then rejects.
@@ -307,7 +319,7 @@ services:
         prefix="aira."
         if [ -n "$${AIRA_KAFKA_STAGE:-}" ]; then prefix="aira.$${AIRA_KAFKA_STAGE}."; fi
         for t in usecases memberships api-keys pipelines budgets rate-limits models anomaly-rules roles; do
-          /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic "$$prefix$$t" --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+          /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic "$$prefix$$t" --bootstrap-server "$$AIRA_KAFKA_BOOTSTRAP_SERVERS" --partitions 1 --replication-factor 1 --config cleanup.policy=compact
         done
     depends_on:
       kafka:

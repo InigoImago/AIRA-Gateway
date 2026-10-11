@@ -152,11 +152,16 @@ Deliverables:
   deployment gives way. Sizing for a reader: [`DEPLOYMENT.md`](DEPLOYMENT.md) §1a. HA considerations
   remain, under [`FRD-127`](features/FRD-127-several-gateway-instances.md).
 - ~~Published images~~ — **delivered** as
-  [`FRD-137`](features/FRD-137-publishing-versioned-images.md) (`ADR-0029`), ahead of the charts
-  because a chart has nothing to pull without it: an optional manual release reads the last version
-  from the Git tags, increments it, and publishes the three images to GHCR behind every CI gate.
-  The version lives in the tags only. A Compose overlay that *pulls* rather than builds is the
-  piece still missing, and it is the same piece Helm will need.
+  [`FRD-137`](features/FRD-137-publishing-versioned-images.md) (`ADR-0029`, `ADR-0030`), ahead of
+  the charts because a chart has nothing to pull without it: pushing an annotated tag publishes the
+  three images to GHCR behind every CI gate, with the tag's own message as the release notes. The
+  version lives in the tags only.
+- ~~Running them~~ — **delivered** as
+  [`FRD-138`](features/FRD-138-running-a-published-release.md) (`ADR-0031`): two Compose overlays,
+  one for where the images come from and one for where the infrastructure is, so a deployment runs
+  a version it did not build (`RELEASE=vX.Y.Z` on any `up*` target) and an integrated one supplies
+  its own Postgres, realm, broker and Vault. Proven by running the whole integration suite against
+  `v0.1.0` pulled from the registry. This is the piece Helm will want next.
 - **Kubernetes/Helm** charts; secrets via Vault in-cluster; production observability stack.
 - Coverage/quality audit against the near-100% target.
 
@@ -335,7 +340,7 @@ product owner; the reason for the order is recorded so it is not re-litigated la
 | 4 | Budgets & Quotas | 400–404 |
 | 5 | Anomaly & IT Security | 500–503 |
 | 6 | Governance & Analytics | 600–601 |
-| 7 | Hardening & Prod | 137, 700–702 |
+| 7 | Hardening & Prod | 137, 138, 700–702 |
 
 > Phases are sequential in dependency but the roadmap allows overlap where safe (e.g. Angular shell
 > work in Phase 2 can begin while Phase 1 stabilizes).

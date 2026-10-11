@@ -5,6 +5,89 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A release you can run: two overlays, and the integration suite against a pulled image (2026-10-11)
+
+`FRD-137` had been publishing three images to GHCR since `v0.1.0`. **Nothing could run them.** Every
+`image:` in `docker-compose.apps.yml` is paired with a `build:` — deliberately, because the
+unqualified name `aira-gateway` is on no registry and a pull of it fails on any machine that has
+never built it. So the registry held artefacts nothing asked for, every deployment still built from
+a checkout, and the question a version number exists to answer still had no answer.
+
+Two overlays, one per question (`FRD-138`, `ADR-0031`). `docker-compose.release.yml` re-points the
+three images at `${AIRA_IMAGE_REGISTRY:-ghcr.io/inigoimago}/…:${AIRA_VERSION}` and **removes** their
+build with `!reset`. `docker-compose.external.yml` starts no infrastructure at all and turns every
+address a deployment must supply into a required variable. `RELEASE=vX.Y.Z` on any `up*` target is
+the interface, and it changes two things together: the file *and* the `--build` those targets pass
+by default.
+
+**Why removing the build is the whole point.** A `build:` that survives is a build. `docker compose
+up` builds an image that is not local rather than pulling it, and `--build` rebuilds it even when a
+pull succeeded — so the stack comes up healthy, serves requests, and is this checkout's code under a
+version number taken from the registry. Nothing fails. That is also why `AIRA_VERSION` has no
+default: `:-latest` moves under a restart and `:-dev` is silently a build again.
+
+**And why the external overlay is mostly refusals.** `docker-compose.apps.yml` defaults every
+address to the container names of the stack it ships beside — `postgres`, `kafka:9092`,
+`keycloak:8080/realms/aira`. Right there, wrong in a deployment, and wrong in the way that costs an
+afternoon: `up` reports success and the failure is a connection error several screens into a
+container log. Four of them are now `${VAR:?message}`. Two are `${VAR?message}` without the colon —
+`AIRA_REDIS_URL` and `VAULT_ADDR` — because for both of them *nothing* is a real and consequential
+answer, so they must be **answered** and may be answered with none.
+
+**Proven by running it, which is the only way this one can be proven.** The three `v0.1.0` images
+were **pulled from GHCR** (not built and re-tagged — the packages turned out to be public), and
+`aira_pgdata` was deleted first so the published image's own `alembic upgrade head` and
+`manage.py migrate` created both schemas from nothing. The full integration suite — **1066
+passed**, 15 skipped, 24 minutes, exit 0 — ran against it. That also answers something nothing had asked before:
+whether the images `FRD-137` publishes are functionally complete. They are, and `v0.1.0`'s product
+code is identical to the commit under test, which is what makes the suite a fair oracle for them.
+
+The integrated composition was then verified the same way: the six application containers removed
+and started again from `apps` + `external` + `release` alone — managing no Postgres, no Keycloak,
+no Kafka, no Redis, no Vault — with the four addresses passed in, the suite run again (**1066
+passed**, 22 minutes), and `make down` leaving no container behind. What that run exercises is the composition
+and the configuration; the stand-in infrastructure was reachable by container name on a shared
+bridge rather than at an address outside Docker, and `FRD-138` §7 says so rather than leaving it to
+be assumed.
+
+Three traps, each written down because each is silent:
+
+- **`extends:` does not see an overlay.** The demo's seed extends `management-migrate` *from
+  `docker-compose.apps.yml` on disk*, not from the merged `-f` chain, so re-pointing that service
+  does not reach it. Without its own entry the seed is the one container built from source, running
+  `manage.py seed_demo` out of a checkout against a database three published images own. Its entry
+  carries `profiles: ["demo"]`, because naming a service in an overlay **declares** one — an image
+  with no command, started by every `up` that does not layer the showcase on.
+- **A shared module's import list is part of its contract.** `tools/compose_files.py` gained
+  `import yaml` for the loader the overlays' `!reset` and `!override` tags need, and `make down`
+  broke with a traceback about PyYAML. `tools/stack_addresses.py` imports that module and the
+  Makefile runs *it* with the system `python3` on **every** target. The instructive half is the
+  failure mode: `$(shell …)` swallows the exit code, so every address became the empty string, and
+  `make wait-healthy` then polled `curl -sf /` for four minutes before reporting that a perfectly
+  healthy stack had not become ready. The import moved into the one function that parses, and the
+  script is now run by a test under a bare interpreter (`IM18`).
+- **A substring is present as long as one of the places that needs it still has it.** `IM11`
+  turns the *gateway's* required JWKS URL back into a default; the first draft of its guard asked
+  whether `${AIRA_OIDC_JWKS_URI:?` appeared in the file, and the control plane's copy kept it
+  there. Green about a deployment where one of two planes reaches for a container that is not
+  running. Checked per occurrence now — the same shape as `FRD-137`'s `PB18`, two features apart.
+
+Also fixed along the way: `kafka-topics` created its topics against a hard-coded `kafka:9092`
+rather than the broker both planes were configured with, which is the same value in the bundled
+stack and a different one everywhere else.
+
+A fourth, found by reading what `docker compose config` answered rather than by expecting it:
+**the project name comes from a directory when no file declares one.** `docker-compose.yml` declares
+`name: ${AIRA_STACK:-aira}` and the integrated composition does not include that file, so it was the
+project `compose` — with containers still called `aira-gateway`, because those names are explicit.
+Nothing would have looked wrong. What breaks is `make down`, `make ps` and `make logs`: each names
+the stack, and each would have reported on, and removed, a project these containers are not in.
+
+21 guards in `tools/tests/test_a_release_runs_from_the_registry.py`, 20 mutations `IM1`–`IM20`, and
+the compositions named once in `tools/compose_files.py` so that nobody spells one by hand.
+
+---
+
 ## One failure in 1062, and the product was right (2026-10-11)
 
 CI's integration stage: `test_the_pipeline_runs_before_the_declaration_is_checked_against_the_routed_model`

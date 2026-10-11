@@ -302,3 +302,34 @@ def test_integration_tokens_come_from_the_trusted_issuer() -> None:
 
     assert "stack_addresses.issuer()}/protocol/openid-connect/token" in conftest
     assert "{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token" not in conftest
+
+
+def test_the_owner_runs_under_the_interpreter_the_makefile_has() -> None:
+    """**The Makefile asks this script for every address, on every target, with the system
+    `python3`** — `STACK_ADDRESSES := $(shell python3 tools/stack_addresses.py make)`, before any
+    virtual environment exists. So its import list is part of its contract, and a dependency that
+    is only in `.venv` breaks `make` itself.
+
+    It happened: `tools/compose_files.py`, which this script imports, gained a module-level
+    `import yaml` for a Compose-tag loader. `make down` then printed a traceback about PyYAML from
+    a file about compose paths.
+
+    The failure mode is why this is a test. `$(shell …)` **swallows the exit code**: every address
+    became the empty string, nothing said so, and `make wait-healthy` polled `curl -sf /` for four
+    minutes before reporting that a stack which was perfectly healthy had not become ready.
+
+    Run as a subprocess with `sys.executable` deliberately avoided — under pytest that is the
+    virtual environment's interpreter, which has everything and would prove nothing.
+    """
+    done = subprocess.run(
+        ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "python3", "tools/stack_addresses.py", "make"],
+        capture_output=True,
+        text=True,
+        cwd=stack_addresses.ROOT,
+    )
+
+    assert done.returncode == 0, (
+        "tools/stack_addresses.py does not run under a bare interpreter, so every address the "
+        f"Makefile computes is the empty string and nothing reports it:\n{done.stderr}"
+    )
+    assert "gateway=http" in done.stdout, f"the make fragment names no address: {done.stdout!r}"
