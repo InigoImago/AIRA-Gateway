@@ -338,8 +338,11 @@ async def test_a_router_that_re_targets_records_where_it_sent_the_request(
     )
 
     assert (await governed.generate(_body("Write a haiku."))).status_code == 200
-    rows = await governed.wait_for_rows(1)
-    served = [row for row in rows if row["operation"] == "generateContent"][0]
+    # The same two rows as the sibling in `test_dev_round_evidence.py`: the caller's, and the
+    # classifier call the router recorded. Selecting by operation was right and waiting for one row
+    # was not — with only the step's row landed, the comprehension is empty and this raised
+    # `IndexError` instead of saying what was missing.
+    served = await governed.own_row(total=2)
 
     assert served["asked_for"] == CHAT_MODEL, "the model the caller named was not kept"
     assert served["model"] == MOCK_MODEL, f"the route did not take: {_decisions(served)}"

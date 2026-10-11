@@ -5,6 +5,47 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## One failure in 1062, and the product was right (2026-10-11)
+
+CI's integration stage: `test_the_pipeline_runs_before_the_declaration_is_checked_against_the_routed_model`
+failed on its **last** assertion, `asked_for == 'mock-1'`, having got `'qwen3:0.6b'`. The three
+assertions before it — the 400, the `maxOutputTokens` in the message, the `50000` — all passed, so
+the ordering property the test exists for held. What failed was *which row the test read*.
+
+**A `model_route` step asks a classifier, and that call is audited as a row of its own.** That is
+deliberate and `pipeline_run.py` says why: `operation=pipeline:<step>`, so reporting separates a
+use case's own traffic from what governing it cost. The request therefore produces **two** rows,
+both written off the request path (`FRD-405`) — and `last_row()` was
+`wait_for_rows(1)[-1]`, which returns the moment *either* of them exists. In CI the step's row
+landed first, so the test read the classifier's `requested_model`, concluded the caller's model had
+been lost, and blamed the product for it.
+
+Reproduced deterministically by waiting for both rows and then asking the old way:
+
+    rows: [('pipeline:model_route', 'qwen3:0.6b'), ('generateContent', 'mock-1')]
+
+**This is the fifth time this repository has recorded *waiting for one row when the request made
+more*** — and the fourth is what put the warning on `wait_for_rows`: *"Waiting for one row when the
+test made three is the mistake this repository has recorded four times."* The warning was there, in
+the function being called, and the test was written after it. A warning in a docstring is a rule
+only a reviewer enforces.
+
+So it refuses instead. `last_row()` now fails when any pipeline row is present, naming the fix and
+printing the rows it saw; it cannot affect a test whose pipeline made no model call, which is why no
+other caller of the thirty-six moved. `own_row(total=N)` is the replacement: it waits for **every**
+row the request produces, because a stated count cannot lie in either direction, and it selects the
+caller's row by its *not* being a pipeline row rather than by operation name — the two API surfaces
+spell that operation differently, and a helper that hard-codes one is one the other surface cannot
+use.
+
+**The sweep found a second instance of the same race**, which is the point of sweeping:
+`test_a_router_that_re_targets_records_where_it_sent_the_request` already selected by operation —
+correct — but still waited for one row, so with only the step's row landed its comprehension was
+empty and it raised `IndexError` instead of saying what was missing. Fixing one and leaving the
+other is the shape this repository has a rule about.
+
+No product change. The message it printed about the product was wrong in every particular.
+
 ## A release that says what it is (2026-10-11)
 
 `v0.1.0` was published four days ago by the mechanism `ADR-0029` chose: a dispatch form with a

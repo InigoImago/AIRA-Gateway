@@ -1786,6 +1786,19 @@ reading code.
 - **A green test proves nothing on its own.** It proves the code and the test agree, which they
   inevitably do when both came from the same idea. **Prove a test can fail**: break the property,
   watch it go red, restore. `make mutants` does this for the properties worth keeping.
+- **Wait for the rows the request makes, not for one.** Five times now. The audit write is off the
+  request path, so a response arriving and its row existing are two events — and a request that
+  triggers a pipeline model call produces *two* rows, the caller's and the step's. A helper that
+  waits for one and takes the last returns whichever landed first, which is a coin flip that comes
+  up wrong in CI and right on a developer's machine. **The count a test states is the only version
+  that cannot lie in either direction.**
+
+  *And the fifth instance is the one worth remembering, because the warning was already written on
+  the function being called.* `wait_for_rows` said, in its own docstring, *"waiting for one row when
+  the test made three is the mistake this repository has recorded four times"* — and a test written
+  afterwards called `last_row()` anyway and spent a CI run accusing the product of losing a caller's
+  model. The helper refuses now when a pipeline row is present. **A warning in a docstring is a rule
+  only a reviewer enforces; put it in the code path that would break.**
 - **A test can pin a defect as a requirement, and then it is the hardest kind to find.** A test
   named `test_an_embedding_is_recorded_without_inventing_tokens` opened with *"this dialect reports
   no usage for an embedding"* and asserted the row carried none. The dialect reports

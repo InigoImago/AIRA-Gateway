@@ -32,6 +32,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aira_common.apikeys import generate_api_key
 
+# Imported, not restated: a pipeline step's own row is identified by the prefix the gateway
+# writes it with, so a rename cannot leave this reading the caller's row as a step's.
+from aira_gateway.audit import PIPELINE_OPERATION_PREFIX
+
 from .conftest import GATEWAY_URL
 
 #: The two models `make showcase` and CI pull. Small on purpose: what is under test is the gateway,
@@ -257,7 +261,60 @@ class Governed:
             await asyncio.sleep(0.25)
 
     async def last_row(self, *, timeout: float = 25.0) -> dict[str, Any]:
-        return (await self.wait_for_rows(1, timeout=timeout))[-1]
+        """The one row this use case has — refusing when a pipeline step recorded its own.
+
+        **The race this refusal exists for, measured in CI on 2026-10-11.** A `model_route` step
+        asks a classifier, and that call is audited as a row of its own
+        (`pipeline_run.py`, operation `pipeline:<step>`) so reporting can separate a use case's
+        traffic from what governing it cost. The caller's row and the step's row are therefore two
+        rows, written off the request path — and `wait_for_rows(1)` returns the moment *either*
+        exists. The step's row lands first often enough that
+        `test_the_pipeline_runs_before_the_declaration_is_checked_against_the_routed_model` read
+        `asked_for == 'qwen3:0.6b'`, the classifier, and reported that the caller's model had not
+        been kept. The product was right; the test was reading the wrong row.
+
+        That is the fifth time this repository has recorded *waiting for one row when the request
+        made more*, and the fourth was what put the warning on `wait_for_rows`. A warning in a
+        docstring is a rule only a reviewer enforces, so this refuses instead: it fires exactly
+        when a pipeline row is present, names `own_row`, and cannot affect a test whose pipeline
+        made no model call.
+        """
+        rows = await self.wait_for_rows(1, timeout=timeout)
+        recorded_by_the_pipeline = [
+            row for row in rows if str(row["operation"]).startswith(PIPELINE_OPERATION_PREFIX)
+        ]
+        # **No suggested number.** The count depends on how many model calls the step made, and
+        # the rows that have landed by now are not that count — guessing from them would hand the
+        # reader a figure as wrong as the row they were about to read.
+        assert not recorded_by_the_pipeline, (
+            "a pipeline step recorded its own model call, so this use case has more than one row "
+            "and 'the last' of them is whichever landed first. Use own_row(total=N), where N is "
+            "every row the request produces: the caller's, plus one per model call a step made.\n"
+            f"landed so far: {[(row['operation'], row['requested_model']) for row in rows]}"
+        )
+        return rows[-1]
+
+    async def own_row(self, *, total: int, timeout: float = 25.0) -> dict[str, Any]:
+        """The caller's own row, from a request whose pipeline also recorded model calls.
+
+        `total` is **every** row the request produces, the caller's included, because the count a
+        test states is the only version that cannot lie in either direction — asking for fewer
+        returns early and asking for more fails loudly.
+
+        Selected by *not* being a pipeline row rather than by operation name: the two API surfaces
+        spell the caller's operation differently (`generateContent` against the Gemini surface,
+        something else against KIRA), and a helper that hard-codes one of them is a helper the
+        other surface's tests cannot use.
+        """
+        rows = await self.wait_for_rows(total, timeout=timeout)
+        mine = [
+            row for row in rows if not str(row["operation"]).startswith(PIPELINE_OPERATION_PREFIX)
+        ]
+        assert len(mine) == 1, (
+            f"expected exactly one row for the caller among {total}, saw {len(mine)}: "
+            f"{[(row['operation'], row['requested_model']) for row in rows]}"
+        )
+        return mine[0]
 
     async def clear_rows(self) -> None:
         """Forget what has been recorded, so the next assertion is about the next request.

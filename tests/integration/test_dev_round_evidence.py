@@ -430,7 +430,11 @@ async def test_the_pipeline_runs_before_the_declaration_is_checked_against_the_r
     message = _message(response)
     assert "maxOutputTokens" in message, message
     assert "50000" in message, message
-    row = await governed.last_row()
+    # **Two rows, and this read one.** The router asks a classifier, and that call is audited as a
+    # row of its own (`pipeline:<step>`) so reporting can separate the use case's traffic from what
+    # governing it cost. `last_row()` returned whichever landed first — in CI the classifier's,
+    # reporting `asked_for == CHAT_MODEL` and blaming the product for losing the caller's model.
+    row = await governed.own_row(total=2)
     assert row["asked_for"] == MOCK_MODEL, "the model the caller named was not kept"
 
 
