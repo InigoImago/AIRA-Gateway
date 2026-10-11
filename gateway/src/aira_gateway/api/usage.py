@@ -5,7 +5,8 @@ Two endpoints, one question asked from two sides:
 - ``/v1beta/usage/{use_case}`` — the console's budget view (`FRD-402`). Read-only, but
   per-use-case operational data, so the caller must be entitled to the use case (`ADR-0007`).
   Entitled to *read* is wider than to *act*: an oversight role reads the per-use-case figure it
-  already sees in full on the reporting screen.
+  already sees in full on the reporting screen. It also carries ``enforced``, because a figure
+  beside a limit that stops nothing is the shape of a working control (`FRD-610` §3.3).
 - ``/v1beta/me/budget`` — **the caller's own allowance** (`FRD-139`), for a coding assistant or any
   other client that wants to show what is left before the refusal arrives. No use case in the
   path, no permission beyond being authenticated: it answers about the credential that asked.
@@ -48,7 +49,17 @@ async def usage(
     # A per-person budget has one figure per person. The reader is shown their own, keyed by person
     # as the gateway enforces it (`aira_gateway.scopes.person`) — never a named colleague's.
     figures = await service.usage(use_case, subject=principal.person)
-    return JSONResponse({"use_case": use_case, "usage": figures})
+    # **Whether any of this stops anything** (`FRD-610` §3.3). A budget with enforcement off keeps
+    # its figures, its warnings and its bars, and reads like a working control — and the person
+    # editing it is the likeliest to assume it works. Said by the plane that *does* the enforcing:
+    # Management has its own copy of this setting and no authority over it.
+    return JSONResponse(
+        {
+            "use_case": use_case,
+            "usage": figures,
+            "enforced": settings_of(request).enforce_budgets,
+        }
+    )
 
 
 @router.get("/v1beta/me/budget")

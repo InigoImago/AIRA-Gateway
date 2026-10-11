@@ -292,6 +292,19 @@ def test_the_endpoint_defaults_to_the_current_month() -> None:
     assert body["totals"]["requests"] == 0
 
 
+def test_the_report_says_whether_budgets_refuse_at_all() -> None:
+    """`FRD-610` §3.3, for the page the installation's own budget is edited on (§3.1).
+
+    The figure and the limit beside it are unchanged by enforcement; whether anything stops is a
+    separate fact, and the console has no honest source for it but the plane that enforces.
+    """
+    for enforce in (True, False):
+        with _client(enforce_budgets=enforce) as client:
+            body = client.get("/v1beta/reporting").json()
+
+        assert body["enforced"] is enforce
+
+
 def test_a_window_that_ends_before_it_starts_is_refused() -> None:
     with _client() as client:
         response = client.get("/v1beta/reporting?from=2026-09-01&to=2026-08-01")

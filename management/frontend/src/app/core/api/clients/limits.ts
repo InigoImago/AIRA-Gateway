@@ -18,9 +18,17 @@ export function withLimits<T extends ApiClientClass>(Base: T) {
       return this.http.delete<void>(`${this.base}${seg(slug)}/budgets/${id}/`);
     }
 
-    /** Current-period consumption per budget, from the gateway. */
-    budgetUsage(slug: string): Observable<{ usage: BudgetUsage[] }> {
-      return this.http.get<{ usage: BudgetUsage[] }>(`${GW}/v1beta/usage/${seg(slug)}`);
+    /**
+     * Current-period consumption per budget, from the gateway — with `enforced` beside it.
+     *
+     * The second field is not decoration: a limit with enforcement off keeps its figures and stops
+     * nothing (`FRD-610` §3.3), and only this plane knows. Optional in the type, because a gateway
+     * older than the field says nothing and *nothing* must not read as `true`.
+     */
+    budgetUsage(slug: string): Observable<{ usage: BudgetUsage[]; enforced?: boolean }> {
+      return this.http.get<{ usage: BudgetUsage[]; enforced?: boolean }>(
+        `${GW}/v1beta/usage/${seg(slug)}`,
+      );
     }
 
     /**

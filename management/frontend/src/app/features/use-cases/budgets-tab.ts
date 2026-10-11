@@ -38,6 +38,15 @@ export class BudgetsTab {
   readonly usage = input.required<Record<number, BudgetUsage>>();
   readonly usageUnavailable = input(false);
   readonly usageRefused = input(false);
+  /**
+   * Whether budgets refuse at all in this installation (`AIRA_ENFORCE_BUDGETS`, `FRD-610` §3.3).
+   *
+   * **Three states, and `null` is the one that matters.** `false` says the limits below stop
+   * nothing; `null` says the gateway did not answer, which is *not* the same and must not be drawn
+   * as either. A boolean defaulting to `true` would have the screen claim enforcement every time
+   * the gateway is unreachable — the direction that reassures.
+   */
+  readonly enforced = input<boolean | null>(null);
   /** Told by the page, which asked the server: an object-level permission is not in the token. */
   readonly canManage = input(false);
   /** The spend limit's unit — an input, because the parent already holds `/v1/me` (`CLAUDE.md` §3). */

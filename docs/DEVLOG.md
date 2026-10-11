@@ -5,6 +5,59 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two open points closed: an inert switch says so, and a browser asks who may read (2026-10-11)
+
+**`FRD-610` §3.3 was the cheapest named hole in the file and had been open since the concept was
+written.** `AIRA_ENFORCE_BUDGETS` turns enforcement off; budgets keep their figures, their bars and
+their warnings, and refuse nothing. The caller's side was closed earlier today — `/v1beta/me/budget`
+carries `enforced`, and the OpenCode plugin says it out loud — while the console, where somebody
+sits down and *configures* a limit, said nothing at all.
+
+Both budget screens say it now: the use case's tab from `GET /v1beta/usage/{use_case}`, and the
+installation's own budget card from the reporting report, since that is the page it is edited on.
+Three decisions worth keeping:
+
+- **The plane that enforces answers.** Management has a copy of the setting and no authority over
+  it, so the fact travels with the figures rather than being read from the console's own
+  configuration. A second copy would be the copy that is wrong.
+- **Three states, not two.** `true`, `false`, and *not answered* — the gateway may be unreachable
+  or older than the field. A boolean defaulting to `true` claims enforcement every time a request
+  fails, which is wrong in the reassuring direction; defaulting to `false` announces inert limits
+  because of a network error. Unknown draws nothing, and the specs assert each state.
+- **The message says what switching it on would do**: every limit takes effect immediately,
+  including one already exceeded. That is the half a reader cannot guess, and the half that makes
+  the banner actionable rather than merely honest.
+
+Mutations `EN1`/`EN2`, and `AL5`'s anchor had to move: the console's budget view now carries the
+same field in the same words, and an ambiguous anchor stops the harness rather than mutating one of
+two. The frontend rule was falsified by hand — turning `=== false` into `!== true` makes the banner
+appear whenever the gateway is silent, and the spec goes red.
+
+**The second point: the oversight-only content mode had no browser test**, which was test debt
+named in this log when the mode shipped. `e2e/tests/content-visibility.spec.ts` now asserts what
+only a browser can — that the fourth mode is offered and survives a reload, that an **administrator
+of the use case** is refused the content and keeps the row, and that IT Security reads the same
+prompt the administrator was refused.
+
+**It failed on the first run, and the failure read exactly like a leak**: the administrator's screen
+showed the prompt. It was not. `_authority` checks `OVERSIGHT_ONLY` before the administrator rule
+and reads the projection fresh — what happened is that the test set the mode *after* sending the
+request, and a use-case update reaches the data plane over Kafka. The read arrived while the gateway
+still held the previous visibility. The audit trail recorded it as `use_case_admin`, which is the
+system being correct about something that should not have been asked.
+
+Two fixes, and the first is the one worth copying: the setting is now chosen **before** any traffic,
+so the seconds spent polling for the key to go live are the seconds the setting needs too — ordering
+rather than sleeping. And the live refresh is switched off before a row is opened, because a refresh
+landing between the click and the assertion closes the panel again.
+
+What the round also recorded about the console: the refusal is **not** a hidden control. The button
+is offered, the read is attempted, and the gateway's own sentence arrives in the page's single
+banner — *"inside the use case nobody reads them, including its administrators"*. A missing button
+teaches a reader nothing; an empty panel teaches them that the audit trail is broken.
+
+---
+
 ## A figure nobody asked for: the budget ships into the client (2026-10-11)
 
 The endpoint answered *what is left*; the recipe said `curl`; the command said `/budget`. The owner

@@ -137,6 +137,20 @@
     </div>
   </app-modal>
 
+  <!--
+    First, above every figure: a limit that stops nothing (`FRD-610` §3.3). It is the first banner
+    because everything below it — the bars, the warnings, the two pots — reads as a working control
+    and is not one, and the person on this screen is the likeliest to assume otherwise.
+  -->
+  @if (enforced() === false && budgets().length) {
+    <p class="callout callout--danger" style="margin-top: 1rem" data-testid="budgets-not-enforced">
+      <strong>These limits are not enforced in this installation.</strong> The figures are recorded
+      and the bars are real, but nothing is refused when a limit is reached:
+      <code>AIRA_ENFORCE_BUDGETS</code> is off on the gateway. Switching it on makes every limit
+      below take effect immediately — including any that is already exceeded.
+    </p>
+  }
+
   @if (unpricedRequests() > 0) {
     <p class="callout callout--warning" style="margin-top: 1rem">
       {{ unpricedRequests() }} request(s) this period used a model with no price on file — their

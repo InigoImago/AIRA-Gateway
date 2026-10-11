@@ -87,7 +87,7 @@ interface Overrides {
   members?: Observable<Membership[]>;
   apiKeys?: Observable<ApiKey[]>;
   budgets?: Observable<Budget[]>;
-  budgetUsage?: Observable<{ usage: BudgetUsage[] }>;
+  budgetUsage?: Observable<{ usage: BudgetUsage[]; enforced?: boolean }>;
   useCaseReport?: Observable<Report>;
   useCaseReportPerCall?: () => Observable<Report>;
   /** The chart's load (`FRD-626`) — the same endpoint, asked for a series. */
@@ -126,6 +126,7 @@ interface Detail {
   canManage: () => boolean;
   isMember: () => boolean;
   useCase: () => UseCase | null;
+  enforced: () => boolean | null;
 }
 
 /** The panels' members these tests reach through the page. */
@@ -953,5 +954,37 @@ describe('UseCaseDetail — the reader’s own usage chart (FRD-626 FR-15)', () 
     harness.component.chooseChartGranularity('hour');
 
     expect(harness.seriesCalls[1].endsWith(':hour:model:erika')).toBe(true);
+  });
+});
+
+/**
+ * Whether budgets refuse at all (`FRD-610` §3.3) travels with the figures.
+ *
+ * The page is the only place that can get this wrong in a way the panel cannot see: it reads the
+ * gateway's answer, and what it does when the gateway says *nothing* decides whether a screen
+ * claims enforcement it has not been told about.
+ */
+describe('UseCaseDetail — whether budgets are enforced', () => {
+  it("carries the gateway's answer to the budgets tab", () => {
+    for (const enforced of [true, false]) {
+      const harness = setup({ budgetUsage: of({ usage: [], enforced }) });
+
+      expect(harness.component.enforced()).toBe(enforced);
+    }
+  });
+
+  it('leaves it unanswered when the gateway does not say', () => {
+    // An older gateway, or one that never had the field. `true` would be a claim nobody made.
+    const harness = setup({ budgetUsage: of({ usage: [] }) });
+
+    expect(harness.component.enforced()).toBeNull();
+  });
+
+  it('forgets the answer when the gateway refuses or vanishes', () => {
+    // The limits still render from Management's own data, so the page stays useful — but the last
+    // enforcement answer may be stale, and a stale "enforced" is the reassuring kind of wrong.
+    const harness = setup({ budgetUsage: httpError(403) });
+
+    expect(harness.component.enforced()).toBeNull();
   });
 });

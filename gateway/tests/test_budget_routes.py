@@ -164,6 +164,25 @@ def test_usage_endpoint_reports_consumption() -> None:
     assert body["usage"][0]["used_requests"] == 2
 
 
+def test_the_budget_view_is_told_whether_budgets_refuse_at_all() -> None:
+    """`FRD-610` §3.3: a limit with enforcement off keeps its bar and stops nothing.
+
+    The console cannot answer this from its own settings — Management has a copy of no authority,
+    and the plane that enforces is the one that must say so. Asserted on the route rather than the
+    settings object, because what is open is the console's *screen*, and the screen reads this.
+    """
+    for enforce in (True, False):
+        app = create_app(GatewaySettings(auth_required=False, enforce_budgets=enforce))
+        app.state.budgets = _UsageBudgets()
+        with TestClient(app) as client:
+            body = client.get("/v1beta/usage/demo-uc").json()
+
+        assert body["enforced"] is enforce
+        # The limits and figures are unchanged: they are what somebody configured, and they will
+        # refuse the moment enforcement is switched on.
+        assert body["usage"][0]["used_requests"] == 2
+
+
 def test_usage_is_asked_whose_figures_to_report() -> None:
     """A per-person budget is one row and N counters, so the route has to say who is asking.
 

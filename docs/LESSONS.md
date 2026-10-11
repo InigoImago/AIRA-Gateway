@@ -1965,6 +1965,17 @@ reading code.
   afterwards called `last_row()` anyway and spent a CI run accusing the product of losing a caller's
   model. The helper refuses now when a pipeline row is present. **A warning in a docstring is a rule
   only a reviewer enforces; put it in the code path that would break.**
+
+  *The same two-events shape, one plane further apart, and this one accuses the product of a
+  breach.* A browser test set a use case's content visibility to oversight-only and then, in a
+  second identity, opened the trace: the content came back, and the screenshot read exactly like a
+  governance control that does not work. It was the **projection**: a use-case update reaches the
+  data plane over Kafka, so saving a setting and asking the gateway about it are two events, and
+  the console reporting success only means Management stored it. The fix is ordering, not polling —
+  the setting is now chosen *before* any traffic, so the seconds spent waiting for the key to go
+  live are the seconds the setting needs too. **A test that changes a control in one plane and
+  immediately asks the other is asserting a race**, and when the control is a permission the
+  failure looks like a leak rather than like flakiness.
 - **A test can pin a defect as a requirement, and then it is the hardest kind to find.** A test
   named `test_an_embedding_is_recorded_without_inventing_tokens` opened with *"this dialect reports
   no usage for an embedding"* and asserted the row carried none. The dialect reports

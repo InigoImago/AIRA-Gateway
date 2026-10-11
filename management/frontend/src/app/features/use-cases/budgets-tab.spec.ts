@@ -42,6 +42,8 @@ interface Options {
   usage?: Record<number, BudgetUsage>;
   usageUnavailable?: boolean;
   usageRefused?: boolean;
+  /** What the gateway said about `AIRA_ENFORCE_BUDGETS`; `undefined` means it has not said. */
+  enforced?: boolean | null;
   overrides?: Overrides;
   confirmAnswer?: boolean;
   canManage?: boolean;
@@ -80,6 +82,9 @@ function setup(options: Options = {}) {
   fixture.componentRef.setInput('usage', options.usage ?? {});
   fixture.componentRef.setInput('usageUnavailable', options.usageUnavailable ?? false);
   fixture.componentRef.setInput('usageRefused', options.usageRefused ?? false);
+  // `?? null` and not `?? true`: the default here is the same "not yet answered" the component
+  // defaults to, so a case that says nothing about enforcement is not quietly asserting it.
+  fixture.componentRef.setInput('enforced', options.enforced ?? null);
   // Default to an administrator: most of these cases are about the form. The read-only case is a
   // test of its own, below.
   fixture.componentRef.setInput('canManage', options.canManage ?? true);
@@ -619,5 +624,89 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
     page.component.add();
 
     expect(page.calls).toEqual(['create:use_case::null:1000:true']);
+  });
+});
+
+/**
+ * A limit that stops nothing must say so (`FRD-610` §3.3).
+ *
+ * Open since the concept was written, and half-closed on the other side first: a *caller* has been
+ * told since `FRD-139` that the limit beside their figure refuses nothing. The console — where
+ * somebody sits down and configures the limit — said nothing at all, which is the shape this
+ * project already knows as a badge on an inactive control.
+ */
+describe('BudgetsTab — enforcement', () => {
+  const budgets: Budget[] = [
+    { id: 1, scope: 'use_case', subject: '', period: 'month', limit_requests: 100, enabled: true },
+  ];
+
+  it('says so, above the figures, when the installation does not enforce budgets', () => {
+    const { fixture, text } = setup({ budgets, enforced: false });
+
+    const banner = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="budgets-not-enforced"]',
+    );
+    expect(banner).not.toBeNull();
+    expect(text()).toContain('not enforced in this installation');
+    // The variable is named, because the reader's next question is where to change it.
+    expect(text()).toContain('AIRA_ENFORCE_BUDGETS');
+    // And what switching it on would do, which is the part a reader cannot guess: a limit already
+    // exceeded starts refusing immediately.
+    expect(text()).toContain('already exceeded');
+  });
+
+  it('says nothing when budgets are enforced', () => {
+    const { fixture } = setup({ budgets, enforced: true });
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="budgets-not-enforced"]'),
+    ).toBeNull();
+  });
+
+  it('says nothing when the gateway has not answered, rather than claiming either', () => {
+    // The direction that matters: a screen that read silence as "not enforced" would tell a
+    // reader their limits are inert because a request failed, and one that read it as "enforced"
+    // would reassure them for the same reason. Neither is a fact.
+    const { fixture, text } = setup({ budgets, enforced: null });
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="budgets-not-enforced"]'),
+    ).toBeNull();
+    expect(text()).not.toContain('AIRA_ENFORCE_BUDGETS');
+  });
+
+  it('is quiet on a use case with no budget at all', () => {
+    // There is nothing to be wrong about: no limit is shown, so no limit can read as working.
+    const { fixture } = setup({ budgets: [], enforced: false });
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="budgets-not-enforced"]'),
+    ).toBeNull();
+  });
+
+  it('is shown beside the figures, not instead of them', () => {
+    // The limits and the consumption are still what somebody configured and what was spent. A
+    // banner that replaced them would hide the numbers the switch does not change.
+    const { fixture, text } = setup({
+      budgets,
+      enforced: false,
+      usage: {
+        1: {
+          id: 1,
+          used_requests: 40,
+          used_tokens: 0,
+          // `measured()` reads this: a row without it is a counter the gateway could not measure,
+          // and the figure then renders as an em dash rather than as a number.
+          used_cost_nanos: 0,
+          used_cost: '0.00',
+          unpriced_requests: 0,
+        },
+      },
+    });
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="budgets-not-enforced"]'),
+    ).not.toBeNull();
+    expect(text()).toContain('40');
   });
 });

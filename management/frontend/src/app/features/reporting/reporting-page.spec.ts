@@ -1,5 +1,6 @@
 import { MeService } from '../../core/api/me.service';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { Observable, of, throwError } from 'rxjs';
 import {
   Budget,
@@ -11,6 +12,7 @@ import {
 } from '../../core/api/models';
 import { SeriesRequest } from '../../core/api/clients/reporting';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { InstallationBudgetCard } from './installation-budget-card';
 import { ReportingPage } from './reporting-page';
 import { isoDay, windowFor } from '../../core/ui/periods';
 
@@ -558,5 +560,31 @@ describe('ReportingPage — what the figures say they count', () => {
     expect(help).toContain('one per call');
     expect(help).toContain('budget');
     expect(help).not.toContain('not as one');
+  });
+});
+
+/**
+ * The page passes enforcement down to the card that sets the installation's budget
+ * (`FRD-610` §3.3).
+ *
+ * Asserted on the **child's input** rather than on its rendered banner: what the card does with
+ * the three states is its own spec's subject, and the card draws nothing at all until `/v1/me`
+ * has answered. What can only be wrong here is the wiring — and `?? null` in particular, since a
+ * report from a gateway that never had the field must not become a claim.
+ */
+describe('ReportingPage — whether budgets are enforced', () => {
+  function cardInput(response: Observable<Report>): boolean | null {
+    const { fixture } = setup(response);
+    const card = fixture.debugElement.query(By.directive(InstallationBudgetCard));
+    return (card.componentInstance as { enforced: () => boolean | null }).enforced();
+  }
+
+  it("hands the gateway's answer to the installation-budget card", () => {
+    expect(cardInput(of(report({ enforced: false })))).toBe(false);
+    expect(cardInput(of(report({ enforced: true })))).toBe(true);
+  });
+
+  it('hands down "not answered" rather than an answer of its own', () => {
+    expect(cardInput(of(report()))).toBeNull();
   });
 });

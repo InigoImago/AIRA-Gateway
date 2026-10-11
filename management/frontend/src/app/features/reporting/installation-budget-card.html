@@ -1,5 +1,21 @@
 @if (visible()) {
   <div class="card" data-testid="installation-budget">
+    <!--
+      Before the figures, because the figures are what make an unenforced limit look like a limit
+      (`FRD-610` §3.3). Shown whether or not a budget is configured here: on this card an empty
+      state is an invitation to set one, and somebody setting one should know what it will do.
+    -->
+    @if (enforced() === false) {
+      <p
+        class="callout callout--danger"
+        style="margin-bottom: 0.75rem"
+        data-testid="installation-budget-not-enforced"
+      >
+        <strong>Budgets are not enforced in this installation.</strong> A limit set here is recorded
+        and counted against, and nothing is refused when it is reached —
+        <code>AIRA_ENFORCE_BUDGETS</code> is off on the gateway.
+      </p>
+    }
     <div class="spread">
       <h3 class="section-title" style="margin: 0">
         Installation budget

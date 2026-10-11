@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Budget } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
@@ -32,6 +32,15 @@ export class InstallationBudgetCard implements OnInit {
   /** The page's single banner, not one of this panel's own. */
   protected readonly feedback = inject(PageFeedback);
   protected readonly currency = this.meService.currency;
+
+  /**
+   * Whether budgets refuse at all (`FRD-610` §3.3), from the page's report — `null` until the
+   * gateway has said, and `null` is not `true`.
+   *
+   * An input rather than a second request: the page already holds the report that carries it, and
+   * a panel asking the server the same question again is a second answer that can differ.
+   */
+  readonly enforced = input<boolean | null>(null);
 
   protected readonly budgets = signal<Budget[]>([]);
   protected readonly loaded = signal(false);

@@ -152,6 +152,10 @@ async def reporting(
     # this is true, and a second copy of the rule in the browser would be the copy that goes stale
     # — and the one that could invent a restriction the server did not apply.
     report["people_limited"] = limited is not None
+    # The installation's own budget is edited on this page (`FRD-610` §3.1), so the page is told
+    # whether budgets refuse at all. Same fact as `/v1beta/usage` and `/v1beta/me/budget`, from the
+    # same settings object — one plane answers for it, the one that enforces.
+    report["enforced"] = settings_of(request).enforce_budgets
 
     if fmt == "json":
         return JSONResponse(report)

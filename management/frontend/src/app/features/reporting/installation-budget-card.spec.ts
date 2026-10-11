@@ -37,6 +37,8 @@ interface Options {
   remove?: Observable<void>;
   confirmAnswer?: boolean;
   me?: Observable<Me>;
+  /** What the page's report said about enforcement; `undefined` means the gateway has not said. */
+  enforced?: boolean | null;
 }
 
 function setup(options: Options = {}) {
@@ -86,6 +88,8 @@ function setup(options: Options = {}) {
   });
 
   const fixture = TestBed.createComponent(InstallationBudgetCard);
+  // The page passes what its report carried. `null` is the honest default: not answered.
+  fixture.componentRef.setInput('enforced', options.enforced ?? null);
   fixture.detectChanges();
 
   return {
@@ -308,5 +312,48 @@ describe('InstallationBudgetCard', () => {
     expect(text()).toContain('$20.000000');
     expect(feedback.error()).toBeNull();
     expect(testid('add-installation-budget')).toBeNull();
+  });
+});
+
+/**
+ * A limit set here that refuses nothing (`FRD-610` §3.3).
+ *
+ * This card is where somebody *sets* the installation's cap, which is why the banner belongs on it
+ * even with no budget configured: an empty state here is an invitation, and the person accepting it
+ * should know what the limit will do.
+ */
+describe('InstallationBudgetCard — enforcement', () => {
+  it('says so when the installation does not enforce budgets', () => {
+    const { fixture, text } = setup({ enforced: false });
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="installation-budget-not-enforced"]',
+      ),
+    ).not.toBeNull();
+    expect(text()).toContain('not enforced in this installation');
+    expect(text()).toContain('AIRA_ENFORCE_BUDGETS');
+  });
+
+  it('says it even before a budget exists, because this is where one is set', () => {
+    const { fixture } = setup({ enforced: false, budgets: [] });
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="installation-budget-not-enforced"]',
+      ),
+    ).not.toBeNull();
+  });
+
+  it('says nothing when budgets are enforced, and nothing when the gateway has not said', () => {
+    for (const enforced of [true, null] as const) {
+      const { fixture } = setup({ enforced });
+
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector(
+          '[data-testid="installation-budget-not-enforced"]',
+        ),
+      ).toBeNull();
+    }
   });
 });

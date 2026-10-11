@@ -63,7 +63,7 @@
 
   <!-- The cap on the `(none)` row below. Above the report: it is a control, not a figure, and must
        be findable when the period returns nothing. -->
-  <app-installation-budget-card />
+  <app-installation-budget-card [enforced]="report()?.enforced ?? null" />
 
   @if (loading()) {
     <p class="loading">

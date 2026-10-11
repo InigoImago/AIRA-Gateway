@@ -8999,7 +8999,9 @@ MUTATIONS = [
         "AL5",
         "the answer says whether a limit is enforced at all",
         "gateway/src/aira_gateway/api/usage.py",
-        '            "enforced": settings_of(request).enforce_budgets,',
+        # Anchored with the line above it: the console's budget view now carries the same field in
+        # the same words, and an ambiguous anchor stops the harness rather than mutating one of two.
+        '            "person": person,\n            "enforced": settings_of(request).enforce_budgets,',
         '            "enforced": True,',
         "gateway/tests/test_a_caller_sees_their_own_allowance.py",
     ),
@@ -9031,6 +9033,27 @@ MUTATIONS = [
         "`I could not read the budget.`",
         "whatever you can determine.",
         "tools/tests/test_the_opencode_command_asks_for_a_real_endpoint.py",
+    ),
+    # ---- a limit that stops nothing says so (2026-10-11, `FRD-610` §3.3) ---------------------
+    #
+    # Enforcement off leaves every figure, bar and warning in place and refuses nothing, which is
+    # the shape of a working control. Both console-facing answers carry the fact, from the plane
+    # that enforces — Management has a copy with no authority over it.
+    Mutation(
+        "EN1",
+        "the console's budget view is told whether budgets refuse at all",
+        "gateway/src/aira_gateway/api/usage.py",
+        '            "usage": figures,\n            "enforced": settings_of(request).enforce_budgets,',
+        '            "usage": figures,\n            "enforced": True,',
+        "gateway/tests/test_budget_routes.py",
+    ),
+    Mutation(
+        "EN2",
+        "the reporting page is told too, because the installation's own budget is edited there",
+        "gateway/src/aira_gateway/api/reporting/spend.py",
+        '    report["enforced"] = settings_of(request).enforce_budgets',
+        '    report["enforced"] = True',
+        "gateway/tests/test_reporting.py",
     ),
     # ---- the budget plugin, which shows the figure unasked (2026-10-11, `FRD-139` §5) ---------
     #

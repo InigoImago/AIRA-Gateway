@@ -1,7 +1,8 @@
 # FRD-610 — Nothing spends outside a bucket
 
-> Phase: 6 · Status: **Partly built** — diagnostics are audited (§2) and the installation budget
-> exists (§3.1); §3.2 and §3.3 remain · Owner: Vadim Scheibe
+> Phase: 6 · Status: **Partly built** — diagnostics are audited (§2), the installation budget
+> exists (§3.1) and an unenforced switch now says so everywhere (§3.3); **§3.2 remains** · Owner:
+> Vadim Scheibe
 >
 > Origin: the owner, on the console's model checks: *"how does it look with the budget? Are these
 > test requests counted and taken into the budget, as already described — every request should be
@@ -125,21 +126,36 @@ Two ways out, and the first is recommended:
   estimate. Rejected as the default: it invents a number, which is exactly what `ADR-0021` spent a
   day removing, and a wrong number that permits spending is worse than a refusal that stops it.
 
-### 3.3 A switch that is off must say so
+### 3.3 A switch that is off must say so — **built (2026-10-11)**
 
-`AIRA_ENFORCE_BUDGETS` turns enforcement off, and **nothing in the console says so.** Budgets keep
-their figures, their warnings and their bars; they simply stop stopping anything. A control that is
-present and inert reads as a working control — the shape `LESSONS.md` §6 opens with, applied to
-money.
+`AIRA_ENFORCE_BUDGETS` turns enforcement off, and budgets keep their figures, their warnings and
+their bars; they simply stop stopping anything. A control that is present and inert reads as a
+working control — the shape `LESSONS.md` §6 opens with, applied to money.
 
-Whatever else is built, this is the cheapest and should come first: a banner on the budgets screen
-when the installation does not enforce them.
+Three places now say it, and the order they arrived in is the argument for the third:
 
-> **Half of it exists since 2026-10-11, on the other side.** `FRD-139`'s
-> `GET /v1beta/me/budget` carries `enforced`, so a **caller** — a coding assistant showing a
-> developer what is left — is told that the limit beside the figure does not stop anything. The
-> console still says nothing, which is the half still open: the person who edits a budget is the
-> one most likely to assume it works.
+1. **A caller** — `FRD-139`'s `GET /v1beta/me/budget` carries `enforced`, so an assistant showing a
+   developer what is left does not draw a bar implying a stop.
+2. **The use case's budgets tab** — `GET /v1beta/usage/{use_case}` now carries `enforced` beside
+   the figures, and the tab puts a banner above everything else on it.
+3. **The installation's own budget** (§3.1) — edited on the reporting page, so the report carries
+   the same field and the card shows the same banner. Shown even with no budget configured: an
+   empty state there is an invitation to set one, and whoever accepts it should know what it does.
+
+**Said by the plane that enforces.** Management has a copy of this setting and no authority over
+it, so a console reading its own configuration could claim enforcement the gateway does not
+perform. The answer therefore travels with the figures.
+
+**Three states, not two.** `true`, `false`, and *not answered* — the gateway may be unreachable, or
+older than the field. A boolean defaulting to `true` would claim enforcement every time a request
+failed, which is wrong in the reassuring direction; defaulting to `false` would announce inert
+limits because of a network error. Unknown is drawn as nothing, and
+`budgets-tab.spec.ts` asserts each of the three.
+
+The message names the variable, because the reader's next question is where to change it, and says
+what switching it on would do: **every limit takes effect immediately, including one already
+exceeded.** That is the part a reader cannot guess, and the part that makes the banner actionable
+rather than merely honest.
 
 ### 3.4 What is deliberately not in this concept
 

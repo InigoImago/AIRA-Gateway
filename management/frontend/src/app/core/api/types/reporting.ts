@@ -99,6 +99,14 @@ export interface Report {
    */
   people_limited?: boolean;
   /**
+   * Whether budgets refuse at all in this installation (`AIRA_ENFORCE_BUDGETS`, `FRD-610` §3.3).
+   *
+   * Here because the installation's own budget is edited on this page, and because only the plane
+   * that enforces can answer it. **Absent is not `true`**: an older gateway says nothing, and a
+   * screen that reads silence as "enforced" is wrong in the reassuring direction.
+   */
+  enforced?: boolean;
+  /**
    * The time series, **present only when it was asked for** (`FRD-626`). Absent is not empty: a
    * report loaded for its figures alone does not pay for a query nothing on the page reads.
    */

@@ -106,6 +106,13 @@ export class UseCaseDetail implements OnInit {
   protected readonly usageUnavailable = signal(false);
   /** Why budget usage is missing: refused by the gateway, or not reachable at all. */
   protected readonly usageRefused = signal(false);
+  /**
+   * Whether budgets refuse at all (`FRD-610` §3.3) — `null` until the gateway has said.
+   *
+   * Not a setting this console holds: Management has a copy of `AIRA_ENFORCE_BUDGETS` with no
+   * authority over it, so the answer comes with the figures, from the plane that enforces.
+   */
+  protected readonly enforced = signal<boolean | null>(null);
   /** Held here so the tab badges are right before a tab is opened. */
   protected readonly warningCount = signal(0);
   protected readonly ruleCount = signal(0);
@@ -321,11 +328,14 @@ export class UseCaseDetail implements OnInit {
       error: (response: unknown) => this.feedback.fail(response, 'Could not load the budgets.'),
     });
     this.service.budgetUsage(this.slug).subscribe({
-      next: ({ usage }) => {
+      next: ({ usage, enforced }) => {
         const map: Record<number, BudgetUsage> = {};
         for (const entry of usage) map[entry.id] = entry;
         this.usage.set(map);
         this.usageUnavailable.set(false);
+        // `?? null`, never `?? true`: an older gateway that does not say leaves the question open
+        // rather than answering it the reassuring way.
+        this.enforced.set(enforced ?? null);
       },
       // Usage comes from the gateway and limits from Management: an unreachable or refusing
       // gateway must not blank the tab. Show the limits and say which of the two happened.
@@ -333,6 +343,9 @@ export class UseCaseDetail implements OnInit {
         this.usage.set({});
         this.usageUnavailable.set(true);
         this.usageRefused.set(response?.status === 403);
+        // Unknown again: a gateway that refused or vanished has said nothing about enforcement,
+        // and the last answer may be stale.
+        this.enforced.set(null);
       },
     });
   }
