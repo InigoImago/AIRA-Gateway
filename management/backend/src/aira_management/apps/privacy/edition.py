@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parent
 EDITION = "2026-10-11"
 
 #: `source_digest()` as of ``EDITION``.
-SOURCE_DIGEST = "aac2ff4f7ec835cd2eaf40c39a4a03f14a35a69bc80d15e4c495021e1f52e1ef"
+SOURCE_DIGEST = "5e67b6b35d9498a1ab900224f3a7ca2f8191dbc27755f54d59f043f2aa1f8025"
 
 #: What the notice is made of. The loader and the renderer decide how it reads, not what it says.
 SOURCES: tuple[Path, ...] = (HERE / "activities.py", *sorted((HERE / "texts").glob("*.toml")))

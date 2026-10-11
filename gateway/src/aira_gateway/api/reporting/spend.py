@@ -21,17 +21,46 @@ from aira_gateway.api.reporting.common import (
 )
 from aira_gateway.auth.dependencies import require_principal, require_valid_use_case
 from aira_gateway.auth.principal import Principal
+from aira_gateway.payloads import people_restricted_use_cases
 from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
 from aira_gateway.reporting.register import RegisterService
 from aira_gateway.reporting.register_csv import filename as register_filename
 from aira_gateway.reporting.register_csv import render as render_register
 from aira_gateway.reporting.series import SPLITS, TooManyBuckets, resolve
-from aira_gateway.reporting.service import ReportingService
+from aira_gateway.reporting.service import ReportingService, Scope
 from aira_gateway.state import sessionmaker_of, settings_of
 
 #: What may be asked of the series parameter. ``auto`` lets the window decide; the empty string is
 #: *no series at all*, which is what a caller who only wants the tables sends.
 GRANULARITIES = ("auto", "day", "hour")
+
+
+async def _people_limited_to(request: Request, principal: Principal, scope: Scope) -> str | None:
+    """The caller's own name, when the use cases in view withhold **other people's** figures.
+
+    ``None`` means "show everybody", which is the ordinary answer: a role that may read every
+    figure, a use case on `members`, or an administrator of one on `own`. A name means the two
+    splits keyed on a human carry that person's row and nothing else.
+
+    **All or nothing across the window on purpose.** A report over several use cases, one of which
+    withholds, cannot show "everybody except them" without saying which use case each person's
+    figures came from — the splits are keyed on a person, not on a pair. So one withholding use
+    case in view narrows the splits for the whole report, and a reader who needs the rest asks for
+    one use case at a time, which is what the use-case page does anyway. The alternative — dropping
+    the narrow use case's rows silently into an aggregate by person — is the disclosure this exists
+    to stop.
+    """
+    if principal.allows(Permission.REPORT_READ_ALL):
+        return None
+    async with sessionmaker_of(request)() as session:
+        narrowed = await people_restricted_use_cases(session, principal)
+    if not narrowed:
+        return None
+    if scope is not None and not set(narrowed) & set(scope):
+        return None
+    # The name the figures are keyed on, with the subject behind it: an API key's subject *is* the
+    # name, and an older row carries no name at all (`FRD-606`).
+    return principal.person or principal.subject
 
 
 @router.get("/v1beta/reporting")
@@ -92,6 +121,12 @@ async def reporting(
         else:
             scope, in_scope = (), False
 
+    # Whether this caller may see **other people's** figures in the use cases they are looking at
+    # (`FRD-603` §5.5): the use case's content setting decides, and where it does not allow it the
+    # two splits keyed on a human carry the caller's own row only. Resolved here, beside the
+    # scope, because this is the one place that decides what a report is about.
+    limited = await _people_limited_to(request, principal, scope)
+
     # **A narrowing, and nothing more.** It adds a predicate to the window the caller's scope has
     # already bounded, so it can only ever subtract rows — and it reaches nothing `by_person` does
     # not already carry to the same caller (`FRD-606`). The scope above is what decides visibility,
@@ -107,11 +142,16 @@ async def reporting(
         # that rule — written, observed not to be reachable by any single edit, and deleted rather
         # than kept as a claim (`tools/mutation_check.py`'s own note on a property enforced twice).
         person=person,
+        people_limited_to=limited,
     )
     report["person"] = person or None
     report["scope"] = scope_label(scope)
     report["use_case"] = use_case or None
     report["in_scope"] = in_scope
+    # **Said rather than inferred** (`FRD-206`): the console shows one row instead of a table when
+    # this is true, and a second copy of the rule in the browser would be the copy that goes stale
+    # — and the one that could invent a restriction the server did not apply.
+    report["people_limited"] = limited is not None
 
     if fmt == "json":
         return JSONResponse(report)

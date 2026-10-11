@@ -176,6 +176,25 @@ export class UseCaseDetail implements OnInit {
     };
   });
 
+  /**
+   * Whether the gateway narrowed the per-person figures to this reader (`FRD-622` FR-1c).
+   *
+   * Read off the report rather than worked out from the use case's setting and the reader's role:
+   * the gateway decides it, and a second opinion in the browser is the one that would narrow a
+   * table the server had filled — or fill one it had narrowed.
+   */
+  protected readonly peopleLimited = signal(false);
+  /** Whom the members tab's figures are narrowed to, or `null` for everybody's. */
+  protected readonly peopleNarrowedTo = computed(() =>
+    this.peopleLimited() ? this.myName() : null,
+  );
+  /** Said on the members tab, where one row in a table of people would otherwise read as a fault. */
+  protected readonly whyPeopleNarrowed = computed(() =>
+    this.peopleLimited()
+      ? 'This use case shows figures per person only to the roles that may read its content.'
+      : '',
+  );
+
   /** The signed-in reader's name — what the gateway groups a person's figures under (`FRD-606`). */
   protected readonly myName = signal<string | null>(null);
   /** The gateway's KIRA listing for the connection block; `null` until it answers. */
@@ -335,6 +354,7 @@ export class UseCaseDetail implements OnInit {
           // `in_scope: false` is an empty report the caller was not entitled to fill; its zeroes
           // would claim this use case consumed nothing.
           this.consumptionOutOfScope.set(report.in_scope === false);
+          this.peopleLimited.set(report.people_limited === true);
           into(report.in_scope === false ? null : report.totals);
           const people = report.in_scope === false ? [] : (report.by_person ?? []);
           (preset === 'today' ? this.peopleToday : this.peopleMonth).set(people);

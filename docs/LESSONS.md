@@ -1119,6 +1119,17 @@ reading code.
 
 ---
 
+- **A control answers for the data it names, and the data has relatives.** *"Who may read the
+  prompt"* was built, tested and documented; the **figures about the same requests** — how many,
+  how expensive, how slow, per person — were governed by nothing, in a screen one tab away. The
+  gap was *written down* in the privacy notice for two months, which is what made it survive: a
+  sentence admitting a hole reads like a decision, and nobody re-opens a decision.
+
+  Two questions to ask of any access control, and the second is the one that was missed here:
+  *what else is derived from the thing I am protecting*, and *which screen shows it*. For stored
+  content the relatives are its metadata — counts, costs, latencies, who and when. A works council
+  asked, not a reviewer.
+
 - **A boolean is the wrong shape for a question with three answers**, and the third answer is the
   one that shows it. *"Members see only their own requests"* was a switch for two years; the day a
   use case had to be able to withhold content from **itself** there was nowhere to put the value,

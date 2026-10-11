@@ -24,6 +24,7 @@ function row(over: Partial<PersonRow> & { key: string }): PersonRow {
   imports: [PeoplePanel],
   template: `<app-people-panel
     [only]="only()"
+    [whyOnly]="whyOnly()"
     [month]="month()"
     [today]="today()"
     [budgets]="budgets()"
@@ -38,6 +39,7 @@ class Host {
   readonly budgets = signal<Budget[]>([]);
   readonly unavailable = signal(false);
   readonly only = signal<string | null>(null);
+  readonly whyOnly = signal('');
   readonly usage = signal<Record<number, BudgetUsage>>({});
 }
 
@@ -50,6 +52,8 @@ function setup() {
     fixture,
     host: fixture.componentInstance,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
+    testid: (id: string) =>
+      (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`),
     render: () => fixture.detectChanges(),
   };
 }
@@ -302,5 +306,36 @@ describe('PeoplePanel — the shared pot', () => {
     expect(line).toBeNull();
     // …and the per-head column is the one that answers here.
     expect(harness.text()).toContain('Left of allowance');
+  });
+});
+
+// ---- one row, and why (`FRD-622` FR-1c) ----------------------------------------------------
+
+describe('PeoplePanel — narrowed to the reader', () => {
+  it('says why it shows one row where that is not obvious', () => {
+    // On the members tab a single row in a table of people reads as a fault unless the panel says
+    // otherwise. The sentence comes from the page, which reads the gateway's answer rather than
+    // deciding the rule a second time.
+    const harness = setup();
+    harness.host.only.set('alice');
+    harness.host.whyOnly.set(
+      'This use case shows figures per person only to the roles that may read its content.',
+    );
+    harness.host.month.set([row({ key: 'alice' })]);
+    harness.render();
+
+    expect(harness.testid('people-why-only')?.textContent).toContain(
+      'only to the roles that may read its content',
+    );
+    expect(harness.text()).toContain('What you used');
+  });
+
+  it('says nothing extra when it is showing everybody', () => {
+    const harness = setup();
+    harness.host.month.set([row({ key: 'alice' }), row({ key: 'boss' })]);
+    harness.render();
+
+    expect(harness.testid('people-why-only')).toBeNull();
+    expect(harness.text()).toContain('What each person used');
   });
 });

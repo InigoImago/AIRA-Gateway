@@ -301,29 +301,92 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
     too much — and taking that away would answer a question nobody asked (`FRD-622` FR-1c). Only
     `own` restricts which rows a member sees.
     """
+    return await _narrowed(
+        session,
+        principal,
+        (PayloadVisibility.OWN_REQUESTS_ONLY,),
+        administrators_exempt=True,
+    )
+
+
+async def people_restricted_use_cases(session: AsyncSession, principal: Principal) -> list[str]:
+    """Use cases in which this caller may see **only their own** figures per person (`FRD-603`).
+
+    The second question a works council asks, and for two months the answer was *"it does not
+    apply"*: requests, tokens, cost and response times **per person** were visible to every member
+    of a use case whatever its content setting said, which the privacy notice stated as a gap
+    rather than a decision. A screen that withholds a colleague's prompt and prints how many
+    requests they made at what latency has not withheld much.
+
+    So the ladder is the content's, one dimension lower — it is about a *split by person*, never
+    about totals:
+
+    - `members`: everybody in the use case sees everybody's figures, as before;
+    - `own`: a member sees their own, an **administrator** of the use case sees all of them, which
+      is what that mode already means for rows and content;
+    - `oversight`: **nobody inside the use case** sees a split by person, its administrators
+      included — the same people who may not read a prompt there.
+
+    What stays in every mode: the use case's **totals**, every other breakdown, and each person's
+    own figures. A use case has to be able to see what it costs and what fails, and a reader must
+    be able to see what they themselves used (`FRD-626`). Roles that may read every figure
+    (`report.read_all`) are not narrowed at all — the oversight the mode leaves content to.
+    """
+    # Two walks, because the **exemption differs by mode** and that is the whole distinction: on
+    # `own` an administrator of the use case sees everybody's figures, as they see everybody's rows
+    # and everybody's prompts; on `oversight` they do not, because that mode is defined by its own
+    # administrators being inside it. One call with both visibilities would have to pick one
+    # exemption for both, and either choice is wrong for one of them.
+    own_only = await _narrowed(
+        session, principal, (PayloadVisibility.OWN_REQUESTS_ONLY,), administrators_exempt=True
+    )
+    oversight = await _narrowed(
+        session, principal, (PayloadVisibility.OVERSIGHT_ONLY,), administrators_exempt=False
+    )
+    return sorted(set(own_only) | set(oversight))
+
+
+async def _narrowed(
+    session: AsyncSession,
+    principal: Principal,
+    visibilities: tuple[PayloadVisibility, ...],
+    *,
+    administrators_exempt: bool,
+) -> list[str]:
+    """The use cases among this caller's own whose visibility is one of ``visibilities``.
+
+    One walk for both questions above, because the *exemptions* are the part that goes wrong when
+    copied: an incident role is never narrowed, a use-case administrator is an administrator both
+    by member row and by **group grant** (which writes no member row), and a caller with no
+    memberships has nothing to narrow. Two copies of that is one copy that will keep the group
+    grant and one that will forget it.
+
+    ``administrators_exempt`` is the only difference, and it is the one `oversight` turns on: that
+    mode is defined by the use case's own administrators being inside it rather than above it.
+    """
     if principal.allows(Permission.INCIDENT_INVESTIGATE) or not principal.use_cases:
         return []
     slugs = list(principal.use_cases)
-    restricted_slugs = {
+    narrowed = {
         str(row)
         for row in (
             await session.execute(
                 select(UseCaseRead.slug).where(
                     UseCaseRead.slug.in_(slugs),
-                    UseCaseRead.payload_visibility == PayloadVisibility.OWN_REQUESTS_ONLY,
+                    UseCaseRead.payload_visibility.in_([value.value for value in visibilities]),
                 )
             )
         ).scalars()
     }
-    if not restricted_slugs:
-        return []
+    if not narrowed or not administrators_exempt:
+        return sorted(narrowed)
     administered = {
         str(row)
         for row in (
             await session.execute(
                 select(UseCaseMemberRead.use_case_slug).where(
                     UseCaseMemberRead.subject == _member_key(principal),
-                    UseCaseMemberRead.use_case_slug.in_(list(restricted_slugs)),
+                    UseCaseMemberRead.use_case_slug.in_(list(narrowed)),
                     UseCaseMemberRead.role == GrantRole.ADMIN.value,
                 )
             )
@@ -331,4 +394,4 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
     }
     # And administrators by *group* grant, which writes no member row (see `grant_role_in`).
     administered |= {slug for slug, role in principal.grants if role == GrantRole.ADMIN.value}
-    return sorted(restricted_slugs - administered)
+    return sorted(narrowed - administered)

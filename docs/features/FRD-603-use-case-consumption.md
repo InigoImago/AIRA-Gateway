@@ -143,12 +143,39 @@ of the error's design.
 
 ### 5.5 What it deliberately does not do
 
-It does not restrict the aggregate by `payload_visibility` (`FRD-505` FR-4, `FRD-622` FR-1c). That
-setting is about **requests and their content**, which is what a member could otherwise read about
-a colleague; a use case's total spend is not that, and the reporting screen has never restricted it
-either. Applying it here and nowhere else would produce two numbers for one month. The same holds
-for the mode that leaves content to the installation's oversight roles: it withholds the prompt,
-not the bill.
+**It restricts the splits by person, and not the totals** (`payload_visibility`, `FRD-622` FR-1c).
+
+This section said the opposite for two months, and the reasoning was half right: *"a use case's
+total spend is not content, and the reporting screen has never restricted it either."* The total is
+not content — the **split by person** is a different thing, and that half was missing. Requests,
+tokens, cost and response times *per person* are what a colleague could otherwise read about a
+colleague, and they are the material §87(1) no. 6 BetrVG is about: a screen that withholds a
+prompt and prints how many requests somebody made at what latency has not withheld much. The
+privacy notice said it plainly, which made it a stated gap rather than a hidden one — and a stated
+gap is still a gap. Raised by the works council on 2026-10-11 and closed the same day.
+
+What is narrowed, and by whom:
+
+| `payload_visibility` | who sees other people's figures in that use case |
+| --- | --- |
+| `members` | everybody in the use case |
+| `own` | administrators of the use case |
+| `oversight` | nobody in the use case, its administrators included |
+
+What is **not** narrowed, in any mode: the use case's totals, every breakdown that is not keyed on
+a person (model, outcome, use case), the time series, and each reader's **own** figures. A use case
+has to be able to see what it costs and what fails, and a person is always entitled to what they
+themselves used (`FRD-626`). Roles that may read every figure (`report.read_all`) are not narrowed
+at all — they are the oversight the mode leaves content to.
+
+One narrowing use case in view narrows the splits for the **whole** report, because those splits
+are keyed on a person and not on a person *and* a use case: "everybody except the people in that
+one use case" cannot be expressed in them, and folding the withheld use case's rows into an
+aggregate by person is exactly the disclosure this closes. A reader who needs the rest asks for one
+use case at a time, which is what this page does.
+
+The gateway decides it and **says so** (`people_limited` on the report), so the console shows one
+row instead of a table on the server's answer rather than on a second copy of the rule.
 
 ### 5.6 On the overview, not in the budgets tab
 

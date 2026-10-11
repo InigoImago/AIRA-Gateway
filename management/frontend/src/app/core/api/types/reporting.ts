@@ -94,6 +94,11 @@ export interface Report {
    */
   in_scope?: boolean;
   /**
+   * The splits by person carry the reader's own row only, because the use cases in view withhold
+   * other people's figures (`FRD-622` FR-1c). Absent from an older gateway, which never withheld.
+   */
+  people_limited?: boolean;
+  /**
    * The time series, **present only when it was asked for** (`FRD-626`). Absent is not empty: a
    * report loaded for its figures alone does not pay for a query nothing on the page reads.
    */

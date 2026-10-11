@@ -8845,8 +8845,11 @@ MUTATIONS = [
         "WR3",
         "the mode hides the content and leaves the use case its own rows",
         "gateway/src/aira_gateway/payloads.py",
-        "                    UseCaseRead.payload_visibility == PayloadVisibility.OWN_REQUESTS_ONLY,",
-        "                    UseCaseRead.payload_visibility != PayloadVisibility.EVERY_MEMBER,",
+        # Re-anchored when `people_restricted_use_cases` arrived and the walk became shared: the
+        # property is now **which visibilities each question narrows for**, and this is the one
+        # that must narrow for `own` alone.
+        "    return await _narrowed(\n        session,\n        principal,\n        (PayloadVisibility.OWN_REQUESTS_ONLY,),",
+        "    return await _narrowed(\n        session,\n        principal,\n        (PayloadVisibility.OWN_REQUESTS_ONLY, PayloadVisibility.OVERSIGHT_ONLY),",
         "gateway/tests/test_payload_access.py",
     ),
     Mutation(
@@ -8888,6 +8891,54 @@ MUTATIONS = [
         "            content_visibility=row.payload_visibility,",
         '            content_visibility="members",',
         "gateway/tests/test_register.py",
+    ),
+    Mutation(
+        "WR9",
+        "a use case's content setting narrows its figures per person",
+        "gateway/src/aira_gateway/api/reporting/spend.py",
+        "    limited = await _people_limited_to(request, principal, scope)",
+        "    limited = None",
+        "gateway/tests/test_whose_figures_a_member_sees.py",
+    ),
+    Mutation(
+        "WR10",
+        "an administrator of a use case on `own` still sees everybody's figures",
+        "gateway/src/aira_gateway/payloads.py",
+        "        session, principal, (PayloadVisibility.OWN_REQUESTS_ONLY,), administrators_exempt=True",
+        "        session, principal, (PayloadVisibility.OWN_REQUESTS_ONLY,), administrators_exempt=False",
+        "gateway/tests/test_whose_figures_a_member_sees.py",
+    ),
+    Mutation(
+        "WR11",
+        "`oversight` withholds the figures from the use case's own administrators too",
+        "gateway/src/aira_gateway/payloads.py",
+        "        session, principal, (PayloadVisibility.OVERSIGHT_ONLY,), administrators_exempt=False",
+        "        session, principal, (PayloadVisibility.OVERSIGHT_ONLY,), administrators_exempt=True",
+        "gateway/tests/test_whose_figures_a_member_sees.py",
+    ),
+    Mutation(
+        "WR12",
+        "withholding who spent it does not change what the use case spent",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "            totals = await self._totals(session, scope, start, end, person)",
+        "            totals = await self._totals(session, scope, start, end, person or people_limited_to)",
+        "gateway/tests/test_whose_figures_a_member_sees.py",
+    ),
+    Mutation(
+        "WR13",
+        "the narrowing covers both splits keyed on a human, not one of them",
+        "gateway/src/aira_gateway/reporting/service.py",
+        '                    ("member", RequestLog.subject, True),',
+        '                    ("member", RequestLog.subject, False),',
+        "gateway/tests/test_whose_figures_a_member_sees.py",
+    ),
+    Mutation(
+        "WR14",
+        "the report says whether it withheld anybody, so the console does not guess",
+        "gateway/src/aira_gateway/api/reporting/spend.py",
+        '    report["people_limited"] = limited is not None',
+        '    report["people_limited"] = False',
+        "gateway/tests/test_whose_figures_a_member_sees.py",
     ),
 ]
 

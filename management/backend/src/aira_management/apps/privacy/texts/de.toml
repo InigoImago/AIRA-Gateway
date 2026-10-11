@@ -68,7 +68,7 @@ items = [
   "Inhalte von Anfragen und Antworten sieht nur, wer dazu berechtigt ist. Jeder einzelne Lesezugriff wird mit der lesenden Person, ihren Rollen und dem Anlass aufgezeichnet, bevor der Inhalt angezeigt wird. Diese Aufzeichnung wird nicht gelöscht.",
   "Welche Rollen Inhalte lesen dürfen, steht unter „Wer innerhalb der Organisation Zugriff hat“. Ein Use Case kann festlegen, dass seine Mitglieder nur ihre eigenen Anfragen sehen — oder dass im Use Case niemand Inhalte liest, auch seine eigenen Administratoren nicht, sondern nur die beiden Rollen, die jeden Inhalt lesen dürfen.",
   "Ob Inhalte überhaupt gespeichert werden und wie lange, legt jeder Use Case fest; eingestellt werden können 1 bis 3650 Tage. {content_storage}",
-  "Offen gesagt: Verbrauchszahlen je Person (Anfragen, Tokens, Kosten, Antwortzeiten) sind für die Mitglieder des jeweiligen Use Case sichtbar, und für Rollen mit Leserecht auf alle Berichte über alle Use Cases hinweg. Die Einstellung „nur eigene Anfragen“ schränkt diese Berichte derzeit nicht ein.",
+  "Verbrauchszahlen je Person (Anfragen, Tokens, Kosten, Antwortzeiten) folgen derselben Einstellung wie die Inhalte: bei „alle Mitglieder“ sind sie für alle im Use Case sichtbar, bei „nur eigene Anfragen“ für seine Administratoren, und wo Inhalte nur Global Administratoren und IT Security lesen dürfen, für niemanden im Use Case. Die Summen des Use Case und die eigenen Zahlen sind in jedem Fall sichtbar, und Rollen mit Leserecht auf alle Berichte sehen alle Zahlen.",
 ]
 
 [sections.access]

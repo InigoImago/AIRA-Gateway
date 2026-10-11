@@ -81,6 +81,11 @@ function half(person: PersonRow, method: string): string | null {
             under its own subject rather than folded into somebody it probably belonged to.
           </app-info-hint>
         </h3>
+        @if (whyOnly()) {
+          <span class="muted" style="font-size: 0.85rem" data-testid="people-why-only">
+            {{ whyOnly() }}
+          </span>
+        }
         <span class="muted" style="font-size: 0.85rem" data-testid="people-window">
           {{ windowLabel() }}
           <app-info-hint
@@ -218,6 +223,14 @@ export class PeoplePanel {
    * component, so the remainder arithmetic exists once and the two views cannot disagree.
    */
   readonly only = input<string | null>(null);
+  /**
+   * Why only one row, where that is not obvious from the screen it is on.
+   *
+   * The overview is one person's page and needs no sentence; the members tab is a table of people,
+   * and one row in it reads as a broken screen unless it says otherwise (`FRD-206`: what a reader
+   * concludes from an absence is part of the design).
+   */
+  readonly whyOnly = input('');
   /** Current-period consumption per budget, so a shared pot can say what is left of it. */
   readonly usage = input<Record<number, BudgetUsage>>({});
 

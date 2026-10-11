@@ -170,6 +170,7 @@ class ReportingService:
         split: str = "model",
         top: int = series_module.DEFAULT_TOP,
         person: str | None = None,
+        people_limited_to: str | None = None,
     ) -> dict[str, Any]:
         """Totals and breakdowns for ``scope`` over ``[start, end)``.
 
@@ -185,17 +186,34 @@ class ReportingService:
         way ``scope`` narrows it to some use cases: one predicate on the one window every figure is
         built from, so the totals, the breakdowns and the series cannot disagree about whose traffic
         they are describing.
+
+        ``people_limited_to`` narrows **only the two splits by person** to that name, and is a
+        different act: it is what a use case's content setting does to its figures (`FRD-603`
+        §5.5, `FRD-622` FR-1c). The totals, every other breakdown and the series are left whole —
+        a reader who may not see *who* spent it may still see *that* the use case spent it, which
+        is what they need to run it. Narrowing those as well would answer a question nobody asked
+        and would make a use case's own total depend on who is looking at it.
         """
         async with self._sessionmaker() as session:
             totals = await self._totals(session, scope, start, end, person)
+            # `people_limited_to` applies to the two splits **keyed on a human** and to nothing
+            # else: `by_member` by credential subject, `by_person` by name (`FRD-606`). Both, or
+            # the same figures reappear one column over.
             grouped = {
-                name: await self._grouped(session, scope, start, end, column, person)
-                for name, column in (
-                    ("use_case", RequestLog.use_case),
-                    ("model", RequestLog.model),
-                    ("member", RequestLog.subject),
+                name: await self._grouped(
+                    session,
+                    scope,
+                    start,
+                    end,
+                    column,
+                    people_limited_to if about_people else person,
+                )
+                for name, column, about_people in (
+                    ("use_case", RequestLog.use_case, False),
+                    ("model", RequestLog.model, False),
+                    ("member", RequestLog.subject, True),
                     # Why requests ended as they did (`FRD-122` FR-8): which control refused them.
-                    ("outcome", RequestLog.outcome),
+                    ("outcome", RequestLog.outcome, False),
                 )
             }
             report: dict[str, Any] = {
@@ -205,7 +223,9 @@ class ReportingService:
                 **{f"by_{name}": [row.as_dict() for row in rows] for name, rows in grouped.items()},
                 # One person across credentials (`FRD-606`). `by_member` stays keyed on `subject`,
                 # which is what every counter and budget is keyed on.
-                "by_person": await self._by_person(session, scope, start, end, person),
+                "by_person": await self._by_person(
+                    session, scope, start, end, people_limited_to or person
+                ),
             }
             if granularity is not None:
                 report["series"] = await self._series(

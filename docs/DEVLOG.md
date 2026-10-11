@@ -5,6 +5,70 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The works council's question: the figures per person follow the setting too (2026-10-11)
+
+The owner asked, from a works-council point of view, whether the visibility options had been
+considered **anywhere besides the requests view**. Audited rather than answered from memory, and it
+came out in three parts.
+
+**Content: one door, by construction.** A prompt and an answer leave this system at exactly one
+endpoint, `GET /v1beta/traces/{id}/payload`, decided by `may_read_payload`. The trace list is an
+allow-list whose own comment names this case — *"the two that must never appear
+(`request_payload`, `response_payload`) are exactly what a forgotten exclusion would leak"*. So
+there was no second screen in which the new mode could have been forgotten. What looks like
+content and is not: the pipeline dry run shows the prompt the tester typed, smoke tests show our
+own question catalogue, a finding carries a generated sentence and a count, spans and the SIEM
+channel carry names.
+
+**Rows: `own` narrows, `oversight` deliberately does not** — the requests list and the findings
+list, both through `restricted_use_cases`.
+
+**And then the hole.** Requests, tokens, cost and **response times per person** were visible to
+every member of a use case whatever its content setting said. On the use case's Members tab
+(*"What each person used"*), on the reporting page and in its CSV export. The privacy notice said
+so in as many words — *"the 'own requests only' setting does not currently restrict these
+reports"* — and `FRD-625` carried it as open decision 1 with the `BetrVG` argument beside it. A
+stated gap is still a gap: a screen that withholds a colleague's prompt and prints how many
+requests they made at what latency has not withheld much.
+
+The owner's decision: **couple it to the visibility.** So the ladder is the content's, one
+dimension lower, and it is about a *split by person*:
+
+| `payload_visibility` | who sees other people's figures |
+| --- | --- |
+| `members` | everybody in the use case |
+| `own` | administrators of the use case |
+| `oversight` | nobody inside it, its administrators included |
+
+**What was not narrowed is the half that took the thinking.** Totals, every breakdown that is not
+keyed on a human, the series, and each reader's own figures. A use case has to be able to see what
+it costs and what fails; a person is entitled to what they used. A total that changed with the
+reader would make two screens disagree about one month, which is how a figure stops being believed.
+`report.read_all` is not narrowed at all — it is the oversight the mode leaves content to.
+
+Three things fell out of building it:
+
+- **the exemption differs by mode, and one call could not say both.** `own` exempts the use case's
+  administrator, `oversight` does not — that is what `oversight` *is*. The first version passed
+  one `administrators_exempt` for both visibilities and the matrix caught it on the first run:
+  an administrator of an `own` use case lost figures they are entitled to. Two walks over one
+  shared helper now, because the exemptions are the part that goes wrong when copied — a group
+  grant writes no member row, and one of two copies always forgets it.
+- **one narrowing use case narrows the whole report.** The splits are keyed on a person, not on a
+  person *and* a use case, so "everybody except the people over there" cannot be expressed in
+  them; folding the withheld rows into an aggregate by person is the disclosure being closed. A
+  reader who needs the rest asks per use case, which is what the use-case page does.
+- **the gateway says whether it narrowed** (`people_limited`), and the console shows one row
+  instead of a table on that answer. A second copy of the rule in the browser would have been the
+  copy that goes stale — and the one that could invent a restriction the server never applied.
+
+Measured: a second keyed matrix (three readers × three modes, complete), the totals asserted
+identical for all three readers in every mode, the spreadsheet asserted to inherit it, mutations
+`WR9`–`WR14` all caught (**994 properties**), 1186 console specs. The notice says the new rule in
+both languages, with a new digest, and `FRD-625`'s open decision 1 is closed with a date.
+
+---
+
 ## A use case can withhold its content from itself (2026-10-11)
 
 The owner counted the ways prompts and responses can be seen — not stored, administrators and each

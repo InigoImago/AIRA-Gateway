@@ -31,9 +31,10 @@ An inventory of both planes (2026-09-16, recorded in the DEVLOG) found twelve pr
 from sign-in to telemetry. Three findings shaped the text, because a notice has to describe what
 the system does rather than what its FRDs intend:
 
-- per-person consumption figures are visible to **every member** of a use case, and neither the
-  "own requests only" setting nor the one that leaves content to the oversight roles restricts
-  reports (`FRD-622` FR-1c);
+- per-person consumption figures were visible to **every member** of a use case whatever its
+  content setting said — **closed on 2026-10-11** after the works council asked: they now follow
+  that setting (`FRD-603` §5.5, `FRD-622` FR-1c), while totals and a reader's own figures stay
+  visible in every mode;
 - a `new_source_ip` finding writes IP addresses into its `detail`, visible to whoever reads
   findings;
 - no table besides request content has an automatic deletion — accounts, findings, suspensions,
@@ -157,12 +158,12 @@ Nothing new. Acknowledgements are rows, not events.
 
 ## 11. Open decisions for the owner
 
-1. **Per-person figures for every member** (§1). Either restrict `by_member`/`by_person` to
-   use-case admins and `report.read_all`, and honour `payload_visibility` in reports — or keep it
-   and keep saying so. The notice says so today. The question gained a second half on 2026-10-11:
-   a use case may now withhold *content* from everybody inside it, and its per-person figures stay
-   visible to its members, which is defensible (a bill is not a prompt) and worth deciding
-   deliberately rather than inheriting.
+1. ~~**Per-person figures for every member**~~ — **decided 2026-10-11**, by the owner after the
+   works council asked: `by_member` and `by_person` follow `payload_visibility`
+   (`FRD-603` §5.5). One setting now governs the prompt *and* the split by person; the totals and
+   each reader's own figures are deliberately not governed by it, because a use case has to be
+   able to see what it costs and a person is entitled to what they used. The notice says which,
+   in both languages.
 2. **IP addresses in finding details** — mask them, or keep them for incident response.
 3. **Automatic deletion** of findings, suspensions, counters, accounts of people who left, and
    `AIRA_LOG_RETENTION_DAYS=0` (records kept forever) as a default. The notice states each honestly;

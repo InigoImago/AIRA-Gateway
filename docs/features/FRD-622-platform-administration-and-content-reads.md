@@ -76,9 +76,15 @@ has kept since August. Until now nobody could see that record.
   from the refusal who to ask. The use case's administrator may set this mode and may leave it
   again — the panel belongs to whoever administers the use case (owner's decision, 2026-10-11),
   so the mode is a deliberate restriction and not a lock against them.
-- **FR-1c — It hides the content, not the rows.** Status, latency, cost, which model, who called:
-  unchanged in every mode. A use case still has to be able to run itself, and which *rows* a
-  member sees is what `own` answers. Only `own` narrows the list.
+- **FR-1c — It hides the content and the split by person; it leaves the rows and the totals.**
+  Which *rows* a member sees is what `own` answers, and `oversight` leaves the list alone: a use
+  case has to be able to see what failed and what it cost. What it does take, since the works
+  council asked on 2026-10-11, is **figures per person** — requests, tokens, cost and response
+  times broken down by human (`FRD-603` §5.5): `members` shows everybody's to everybody, `own`
+  shows them to the use case's administrators, `oversight` to nobody inside the use case. Totals,
+  every other breakdown, the series and each reader's own figures stay in every mode, and
+  `report.read_all` is never narrowed. The gateway says which it did (`people_limited`), so the
+  console does not decide the rule twice.
 - **FR-1d — Erasure does not depend on it.** `retention_days` applies as written in every mode,
   and storage switched off clears what is already there on the next sweep whatever the visibility
   said (`FRD-404`). A visibility is not a legal basis, and the record of who *read* a payload
