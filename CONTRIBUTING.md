@@ -25,6 +25,11 @@ read before changing anything substantial.
 3. **Append to the devlog** with what changed and why.
 4. **Update the reader-facing documents** when a change alters what a reader would do or expect:
    architecture, request lifecycle, deployment, configuration, integrations, gap analysis, roles.
+5. **Cutting a release is one of these, not a chore after them.** A release is an annotated tag and
+   **its message is the release notes** — there is no changelog. `make release-tag VERSION=vX.Y.Z`
+   opens your editor on `docs/RELEASE-TEMPLATE.txt`; five rules refuse an annotation that says
+   nothing, and a rejected one is deleted again so the version number is not spent. Details and the
+   two failures that produced the rules: [`docs/DEPLOYMENT.md` §1b](docs/DEPLOYMENT.md#1b-releasing-cutting-a-version-and-publishing-the-images).
 
 ## Testing
 
