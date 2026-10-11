@@ -12,15 +12,31 @@
         "qwen2.5:3b": {
           "name": "qwen2.5:3b via AIRA",
           "tool_call": true,
-          "limit": { "context": 32768, "output": 4096 }
+          "limit": {
+            "context": 32768,
+            "output": 4096
+          }
         },
         "qwen3:0.6b": {
           "name": "qwen3:0.6b via AIRA",
           "tool_call": true,
-          "limit": { "context": 32768, "output": 2048 }
+          "limit": {
+            "context": 32768,
+            "output": 2048
+          },
+          "cost": {
+            "input": 0.1,
+            "output": 0.4
+          }
         }
       }
     }
   },
-  "model": "aira/qwen2.5:3b"
+  "model": "aira/qwen2.5:3b",
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "curl -s *": "allow"
+    }
+  }
 }

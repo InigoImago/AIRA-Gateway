@@ -360,10 +360,14 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
       },
     ]);
 
-    // The limits always; prices only in the unit OpenCode displays, and this currency is not USD.
+    // Limits **and prices**: withholding the price left a developer looking at `$0.00` for every
+    // session (`opencode-config.ts`). This harness has not been told a currency, so the name
+    // carries none — which currency reaches the name is `opencode-config.spec.ts`'s subject,
+    // where it is a parameter rather than a stub.
     expect(config.provider.aira.models['qwen2.5:3b']).toEqual({
       name: 'qwen2.5:3b via AIRA',
       limit: { context: 32768, output: 4096 },
+      cost: { input: 0.1, output: 0.4 },
     });
   });
 

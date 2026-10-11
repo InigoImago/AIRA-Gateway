@@ -8,6 +8,11 @@ import { openCodeModel } from './opencode-config';
  * fills a missing `limit` with `0`, a context gauge is `used / limit.context`, and `0` is not
  * "unknown" on screen — it is a gauge that never moves. So the question at every branch is whether
  * a figure the catalog does not have stays out of the file.
+ *
+ * **The price is a different question from the limit** (§11.7): a price the catalog *has* goes in
+ * whatever the currency, because with no `cost` block OpenCode prints `$0.00` for every session —
+ * a wrong figure this file would be the author of. Proven by putting the old rule back (write
+ * `cost` only for `USD`) and watching two of these go red.
  */
 
 function model(over: Partial<CatalogModel> = {}): CatalogModel {
@@ -62,24 +67,49 @@ describe('openCodeModel', () => {
     expect(openCodeModel(model({ output_price_per_million: 'cheap' }), 'USD').cost).toBeUndefined();
   });
 
-  it('writes no price at all when the installation does not price in dollars', () => {
-    // OpenCode prints the running total with a `$`. Figures from a euro installation displayed as
-    // dollars are a number somebody budgets against, wrong by that morning's exchange rate — and
-    // `AIRA_CURRENCY`'s own comment refuses conversion, because a rate needs a date per booking.
+  it('writes the price in another currency and says which, in the name', () => {
+    // **This test asserted the opposite until 2026-10-11**, and its reasoning was half right:
+    // OpenCode prints the total with a `$`, and converting needs a rate per booking. What it got
+    // wrong is what withholding costs — an installation in euros got no `cost` at all, so
+    // OpenCode showed `$0.00` for every session, which is precisely the figure a developer was
+    // asking for. Measured against a live stack: `opencode stats` reported `Total Cost $0.00`
+    // after a real run that AIRA had priced at 0.0002.
+    //
+    // So the figures go in, unconverted, and the currency travels in the one field this file
+    // controls and OpenCode displays.
     const entry = openCodeModel(model(), 'EUR');
 
-    expect(entry.cost).toBeUndefined();
+    expect(entry.cost).toEqual({ input: 0.1, output: 0.4 });
+    expect(entry.name).toBe('qwen3:0.6b via AIRA (EUR)');
     // The limits are not money and are unaffected: a context window is a count of tokens.
     expect(entry.limit).toEqual({ context: 40960, output: 4096 });
+  });
+
+  it('adds no currency to the name where OpenCode already assumes it', () => {
+    // A label that repeats the obvious is noise in a model picker; `$` and USD agree.
+    expect(openCodeModel(model(), 'USD').name).toBe('qwen3:0.6b via AIRA');
+  });
+
+  it('adds no currency to the name of a model with no price', () => {
+    // Nothing to label: `(EUR)` beside a model whose cost OpenCode cannot show says nothing.
+    const entry = openCodeModel(model({ input_price_per_million: null }), 'EUR');
+
+    expect(entry.cost).toBeUndefined();
+    expect(entry.name).toBe('qwen3:0.6b via AIRA');
   });
 
   it('does not care how the currency is spelled', () => {
     expect(openCodeModel(model(), 'usd').cost).toEqual({ input: 0.1, output: 0.4 });
   });
 
-  it('writes no price before the console has been told the currency', () => {
-    // Empty until the first `/v1/me`; no guessing "probably dollars".
-    expect(openCodeModel(model(), '').cost).toBeUndefined();
+  it('writes the price before the console has been told the currency, and labels nothing', () => {
+    // The currency arrives with the first `/v1/me`, and the file may be generated before it does.
+    // The price is a fact of the catalogue either way; what is not known is what to call it, so
+    // nothing is called anything — rather than guessing "probably dollars" in the name.
+    const entry = openCodeModel(model(), '');
+
+    expect(entry.cost).toEqual({ input: 0.1, output: 0.4 });
+    expect(entry.name).toBe('qwen3:0.6b via AIRA');
   });
 
   it('keeps a price of zero, which is a price', () => {

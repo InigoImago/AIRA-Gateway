@@ -96,29 +96,57 @@ GET /v1beta/me/budget
 
 ## 5. How it gets in front of a developer
 
-Three ways, none of which needs a change here, recorded with what each costs:
+**Checked against the installed binary** (`opencode 1.18.15`), not against the project's
+documentation — the two disagree, and the disagreement cost this section a rewrite. What that
+version has: a `plugin` array, `command` prompt templates, an `mcp` block, and `permission.bash`
+patterns where the **last matching rule wins**. What it does **not** have is a status line that runs
+a shell command: that is an open pull request, so a figure cannot simply be drawn into its chrome.
+The origin note above says "status bar" because that is what the request assumed, and the assumption
+is wrong for this version.
 
-1. **The terminal.** `curl` with the key the agent already uses, in a shell prompt, a tmux status
+Three routes ship, in the order a developer meets them:
+
+1. **The price in the generated configuration.** OpenCode's own per-session cost comes from
+   `cost` in its config, not from any API — with no `cost` it prints `$0.00` forever, which is what
+   a developer was actually looking at. The console now always writes the figures and puts the
+   currency in the model's **name** (`FRD-132` §11). Measured from OpenCode's own store: the same
+   instruction booked `cost: 0.0002102` with the priced config against `cost: 0` without it, and
+   AIRA's audit row for the same request says `0.0002`. This is the session figure, and it is the
+   half the request was about that no endpoint can answer — the gateway does not know what the
+   client calls a session.
+2. **The terminal.** `curl` with the key the agent already uses, in a shell prompt, a tmux status
    line or an alias. Costs nothing, lives next to the assistant rather than inside it. The recipe is
-   in [`tools/opencode/README.md`](../../tools/opencode/README.md).
-2. **An OpenCode plugin.** OpenCode has a plugin mechanism and this exact pattern already exists in
-   the wild (`opencode-opper-budget` shows a personal budget in the status bar). It is the only way
-   to get the figure **into** the assistant's own chrome. Not written here: it could not be run
-   against a real OpenCode in this repository, and an untested integration is worse than a
-   documented `curl`.
-3. **An MCP tool.** OpenCode speaks MCP (`mcp` block in `opencode.json`, local or remote), so the
-   agent itself could be asked *"how much budget is left"*. It is the plugin-free way to have it in
-   the session, and it is a second surface with its own authentication — an ADR, not a patch.
+   in [`tools/opencode/README.md`](../../tools/opencode/README.md) and was run against the live
+   stack: `5.00 of 5.00 left (resets 2026-11-01)`.
+3. **A `/budget` command** — [`tools/opencode/command/budget.md`](../../tools/opencode/command/budget.md).
+   A command file is a **prompt template**: OpenCode expands it into the session
+   (`opencode run --command budget`, or `/budget` in the TUI) and the agent runs the `curl` with its
+   shell tool. No plugin, no second surface, and the agent needs `curl -s *` allowed in
+   `permission.bash`. `tools/tests/test_the_opencode_command_asks_for_a_real_endpoint.py` fails if
+   the route it names stops existing.
 
-**Deliberately not a fourth way:** prepending the figure to the model's answer. `FRD-309`'s notice
+   **What was not demonstrated:** the agent actually running it. This installation serves
+   `qwen3:0.6b` for test purposes; the expansion works (the answer mirrors the template's own
+   bullets) but the model never calls the shell tool at all — OpenCode's `part` table holds only
+   `text` and `step-start` rows, no tool call — and its first answer *invented* figures that
+   contradicted the stack. That is a model-size limit, not a mechanism failure, and the template now
+   orders a refusal rather than a guess. It is stated here rather than implied away: a coding model
+   able to use tools is the premise of the whole use case, and this one is not it.
+
+**Two routes deliberately not taken.** A **plugin** is the only way into OpenCode's own chrome and
+the pattern exists in the wild (`opencode-opper-budget` does this for Opper.ai) — but with no
+shell-command status line in this version it would have to draw the figure itself, and an
+integration that cannot be exercised here is worse than a documented `curl`. An **MCP tool** is a
+second surface with its own authentication: an ADR, not a patch.
+
+**Deliberately not a way at all:** prepending the figure to the model's answer. `FRD-309`'s notice
 mechanism could do it today, and it would put budget text into the agent's context on every
 request, where the model reads it and can act on it.
 
-**What OpenCode's own numbers are worth here:** `opencode stats` tallies its *own* sessions, and for
-a custom OpenAI-compatible provider its cost display does not work at all (two open issues at the
-time of writing). `FRD-132` §11 measured the token figures and found them exact; the *limits* it
-shows come from its configuration file, not from any API. So the only authoritative figure is this
-one — the counter that refuses.
+**What OpenCode's own numbers are worth here:** `opencode stats` tallies its *own* sessions and
+rounds to two decimals, so a real figure of `0.00021` still prints as `$0.00`. `FRD-132` §11
+measured the token figures and found them exact. The *limits* it shows come from its configuration
+file, so the only authoritative remaining figure is this endpoint's — the counter that refuses.
 
 ## 6. Open
 

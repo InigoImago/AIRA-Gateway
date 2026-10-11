@@ -9003,6 +9003,27 @@ MUTATIONS = [
         '(use_case,) if use_case else (), start, end, person=""',
         "gateway/tests/test_a_caller_sees_their_own_allowance.py",
     ),
+    # ---- the `/budget` command ships as a prompt (2026-10-11, `FRD-139` §5) -------------------
+    #
+    # A command file is text an agent reads, so nothing in the compiler or the type checker is
+    # watching it. Both mutations are what rot looks like: a route renamed elsewhere, and the one
+    # instruction that stops a model answering from the template instead of from the gateway.
+    Mutation(
+        "CMD1",
+        "the shipped command names a route this gateway serves",
+        "tools/opencode/command/budget.md",
+        "/v1beta/me/budget",
+        "/v1beta/me/allowance",
+        "tools/tests/test_the_opencode_command_asks_for_a_real_endpoint.py",
+    ),
+    Mutation(
+        "CMD2",
+        "the command orders a refusal, because a model that cannot run it will otherwise invent",
+        "tools/opencode/command/budget.md",
+        "`I could not read the budget.`",
+        "whatever you can determine.",
+        "tools/tests/test_the_opencode_command_asks_for_a_real_endpoint.py",
+    ),
 ]
 
 

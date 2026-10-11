@@ -233,6 +233,15 @@ reading code.
   **Where a check exists per plane, a document that lists checks without naming the plane is wrong
   for one of them**, and it is wrong for whichever half the reader meets first.
 
+  *The same shape, one step further out: a capability is a claim about a **version**.* A feature
+  was planned around a third-party client's status line running a shell command, which its project
+  describes and the installed release does not have — it is an open pull request. Three documents
+  and the feature's own origin note said the client "shows a budget in its status bar". Reading the
+  binary instead produced both the correction and the route that shipped: that version has prompt
+  templates, which need no plugin. A permission rule in the same file was read the same way round
+  — the *last* matching glob wins, not the most specific — which is the sort of thing only the
+  implementation says. **Ask the version you have, not the project.**
+
 - **A shared stateful stack is one test run at a time, and the rule does not stop at the suite
   boundary.** `playwright.config.ts` sets `fullyParallel: false, workers: 1` with the reason in a
   comment — *the suite drives shared, stateful services*. Starting the integration suite and the
@@ -1074,6 +1083,18 @@ reading code.
   **A vocabulary with no compiler needs a scan**, and its allow-list is the point: fourteen names
   are on an element for some other reason, each now recorded with that reason instead of being
   indistinguishable from the six that were mistakes.
+
+- **Withholding a figure can be authoring a wrong one.** *Absent, never zero* is a good rule and
+  it was applied to the wrong thing: the console generated a coding assistant's configuration
+  without the price block for any installation not accounting in US dollars, because the client
+  prints its total with a `$` and a mislabelled unit looked worse than none. What the client
+  actually does with no price is print **`$0.00` forever** — so the choice was never "no figure or
+  a badly labelled one", it was "a badly labelled figure or a wrong one we generated". The fix was
+  to put the unit where it could still be said (the model's displayed name) and write the figure.
+  The rule survives for a figure we **do not have**; it does not cover a figure we have and dislike
+  the unit of. Checking which of the two it is means asking what the consumer shows in the absent
+  case — and the absent case here rounded to `$0.00` in the client's own summary, which is how it
+  stayed invisible for two months.
 
 - **A guard that cannot fail.** *Five, each caught only by breaking it deliberately:* an Angular
   spec using `import.meta.glob` failed to *load* and Vitest reported "0 tests" inside a green run;

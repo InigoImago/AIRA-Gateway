@@ -5,6 +5,51 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The session cost was a wrong number we generated ourselves (2026-10-11)
+
+The endpoint above answered *what is left*. The owner read it and said the problem was still open:
+*it is still not possible to see how much is left and what the session costs — that is what solves
+usage transparency for the users.* Right on both halves, and the second one was ours.
+
+**Two figures, two owners.** What is left is the gateway's counter (`FRD-139`). What a session cost
+is **OpenCode's** — and `FRD-132` §11.2 had already measured where it comes from: the `cost` block
+in OpenCode's configuration file, never an API. The entry above then withheld that block for any
+installation not accounting in US dollars, on the grounds that OpenCode prints the total with a `$`
+and a mislabelled unit is worse than none. Read as a statement about units, defensible. Read as
+what a developer sees: a console that generates a configuration **guaranteeing `$0.00` forever**,
+which is a wrong figure we authored, in the one currency nobody uses here.
+
+So the prices are written in whatever currency the installation accounts in, and the currency
+travels in the model's **name** — `qwen3:0.6b via AIRA (EUR)` — the one field that file controls and
+which OpenCode shows in its model list and beside the session. No conversion: a rate needs a date
+per booking (`FRD-403`). An unpriced catalog entry still gets no `cost`, because *absent, never
+zero* is about a figure we do not have, not one whose unit we dislike.
+
+Measured out of OpenCode's own store, the same instruction twice: `cost: 0` with no block,
+`cost: 0.0002102` with it, against `0.0002` in AIRA's audit row for the same request. `opencode
+stats` prints `$0.00` either way — it rounds to two decimals — which is how the withholding had
+stayed invisible.
+
+**The second half shipped as a prompt, and the honest result is a split.** OpenCode 1.18.15 has no
+status line that runs a shell command (an open pull request), so nothing paints a figure into its
+chrome without a plugin. What it does have is `command/*.md` **prompt templates**, so
+`tools/opencode/command/budget.md` asks the agent to `curl` the endpoint and report one line — no
+plugin, no second authenticated surface, and a guard test fails if the route it names disappears.
+The mechanism is confirmed: `opencode run --command budget` expands the template into the session.
+**The agent running it is not.** This stack serves `qwen3:0.6b`, which never calls the shell tool at
+all — OpenCode's `part` table holds only `text` rows — and whose first answer invented a budget
+that contradicted the live stack, in the template's own bullet shape. The template now orders
+`I could not read the budget.` instead of a guess, and `FRD-139` §5 says plainly that a
+tool-using model is the premise of the use case and this one is not it.
+
+What a round of reading the binary rather than the docs also corrected: the request, this log and
+`FRD-139`'s own origin note all said OpenCode "shows a budget in its status bar". It does not, in
+this version. `permission.bash` needs `"curl -s *": "allow"` **after** the general `"*": "ask"`,
+because the last matching rule wins. Both facts came from the installed binary; both contradict
+what was assumed from the project's documentation.
+
+---
+
 ## A caller can ask what is left of their allowance (2026-10-11)
 
 The owner's agentic-coding use cases run OpenCode, which shows a budget in its status bar, and
@@ -52,7 +97,15 @@ Two things the round found in passing:
 - `TC26`'s anchor became ambiguous: `period_ends` is the same UTC conversion as `period_key` read
   the other way, and the harness refused to run rather than mutate whichever came first.
 
-Mutations `AL1`–`AL6`, all caught — **1000 properties**.
+**And the live stack found what the hermetic suite could not.** The endpoint read
+`request.state.attribution` directly, but `require_attribution` is mounted on the Gemini router and
+this endpoint is not under it — so every real answer said `use_case: null` and carried no allowance,
+which is the whole feature. The hermetic tests passed because the harness installed a middleware
+that wrote the attribution itself: a stand-in **more capable** than the thing it replaced, living in
+the test setup rather than in a double, where `CLAUDE.md` §3's warning does not look. It now takes
+the dependency the served verbs take.
+
+Mutations `AL1`–`AL7`, all caught — **1001 properties**.
 
 ---
 

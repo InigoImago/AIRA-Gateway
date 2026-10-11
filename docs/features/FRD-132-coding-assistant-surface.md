@@ -387,11 +387,14 @@ and `MeService` holds it as a signal the three screens read. Empty until the fir
 empty currency renders **no unit at all**: an unlabelled amount is a reader who asks, a wrongly
 labelled one is a reader who does not.
 
-The generated OpenCode configuration takes the same fact and uses it to decide something different:
-prices are written **only when the installation prices in USD**, because OpenCode prints the running
+The generated OpenCode configuration took the same fact and used it to decide something different:
+prices were written **only when the installation prices in USD**, because OpenCode prints the running
 total with a `$`. No conversion — `AIRA_CURRENCY`'s own comment refuses exchange rates for the reason
-they are refused everywhere here, that a rate needs a date per booking. Absent is the honest answer,
-and OpenCode then shows no cost, which is true.
+they are refused everywhere here, that a rate needs a date per booking. Absent looked like the honest
+answer, and OpenCode then showed no cost.
+
+**That withholding was reversed on 2026-10-11 — see §11.7.** It was honest about the unit and
+useless about the amount, which is not a trade a reader asked for.
 
 *Found on the way:* seven spec files stub `MeService`, and every one of those doubles was **less
 capable than the thing it stands in for** — the moment the service grew a member, 144 tests failed
@@ -417,3 +420,38 @@ shape: a text part carries no `functionCall: null`, and a candidate carries no k
 not do. It is the **third** exit of this file to need saying so — the streamed one since `FRD-100`,
 the model list since §11.3 — which makes "a fact stated at one exit and missing from another" this
 file's oldest recurring shape rather than an observation about any one of them.
+
+### 11.7 Withholding the price answered the wrong question (2026-10-11)
+
+> *"It is still not possible to see how much is left and what the session costs — that is what
+> solves my problem of usage transparency for the users."*
+
+Two figures, two owners, and §11.6 had quietly dropped one of them.
+
+**What is left** is the gateway's, and `FRD-139` answers it. **What this session cost** is
+OpenCode's, and OpenCode computes it from `cost` in its configuration file (§11.2) — so an
+installation that prices in euros got no `cost` at all and a permanent `$0.00`. The rule was
+defensible read as *"do not mislabel a unit"* and indefensible read as what a developer sees: a
+console that generates a configuration guaranteeing a wrong number is the author of that number
+either way, and `0` is the version a reader acts on.
+
+So the figures are written in whatever currency the installation accounts in, and the **currency
+travels in the model's name** — `qwen3:0.6b via AIRA (EUR)` — because the name is the one field
+this file controls and OpenCode shows it in the model list and beside the session. Still no
+conversion: an exchange rate needs a date per booking (`FRD-403`), which is the one thing that must
+not be invented. USD, or an installation that has not said, gets no suffix; an unpriced catalog
+entry still gets no `cost`, since **absent, never zero** (§11.3) is about a figure we do not have,
+not about one we have and dislike the unit of.
+
+Measured from OpenCode's own store, the same instruction twice:
+
+| Configuration | OpenCode's `cost` | AIRA's audit row |
+| --- | --- | --- |
+| before, no `cost` block | `0` | `0.0002` |
+| after, `cost` written | `0.0002102` | `0.0002` |
+
+The 5% difference is OpenCode pricing its own token counts at full precision against a figure the
+audit row rounds; both planes agree on the tokens (§11.1). `opencode stats` still prints `$0.00`,
+because it rounds to two decimals — the figure is there, the display is coarse, and that is
+OpenCode's to change.
+
