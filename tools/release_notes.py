@@ -11,18 +11,26 @@ terminal they are already in. And because the message is now load-bearing, it is
 whose annotation says nothing is **refused before anything is published**, which is the only point
 at which refusing is still free.
 
-Four rules, each one a thing that actually happened or would:
+Five rules, each one a thing that actually happened or would:
 
-1. The tag is **annotated**. A lightweight tag has no message at all — `git tag v0.1.2` rather than
-   `git tag -a`, one missing flag.
+1. The ref is an **annotated tag**. A lightweight one has no message of its own — `git tag v0.1.2`
+   rather than `git tag -a`, one missing flag. **This rule did not work until 2026-10-11**: it
+   asked for `%(contents)`, which for a ref pointing at a commit is *the commit's message*, so a
+   lightweight tag passed all four rules and `v0.1.1` was published carrying `def905f`'s commit
+   message. The object type is now asked first; see `annotation`.
 2. There is a **subject** line.
 3. The subject is not a **restatement of the version**. `Release v0.1.0` is what the old mechanism
    wrote by itself, and it is indistinguishable from having written nothing.
 4. There is a **body** after a blank line. A subject alone is a headline; the body is where the
    reader finds out what changed and whether it affects them.
+5. No **placeholder** from `docs/RELEASE-TEMPLATE.txt` survives. The template is what
+   `make release-tag` opens an editor on, and its sections are the ones a reader needs — so a
+   release that still carries the prompts has the right shape and nothing in it, and rules 2 to 4
+   all pass on it.
 
     uv run python tools/release_notes.py --check v0.1.1
     uv run python tools/release_notes.py v0.1.1        # the rendered notes, to stdout
+    uv run python tools/release_notes.py --subject v0.1.1     # the GitHub Release's title
 """
 
 from __future__ import annotations
@@ -37,6 +45,11 @@ from pathlib import Path
 from release_version import parse, render
 
 ROOT = Path(__file__).resolve().parents[1]
+
+#: The skeleton `make release-tag` opens an editor on, and the source of the placeholder list
+#: below. `.txt` and not `.md`: it is fed to `git tag -a -F … --cleanup=strip`, whose comment lines
+#: are the guidance a tagger reads while writing — not a page anybody renders.
+TEMPLATE = ROOT / "docs" / "RELEASE-TEMPLATE.txt"
 
 #: Words a bare subject is made of. Stripped out before asking whether anything is left, so that
 #: `Release v0.1.0`, `v0.1.0`, `version 0.1.0` and `0.1.0 release` are all recognised as saying
@@ -89,6 +102,27 @@ def _stripped_subject(subject: str) -> str:
     return _FILLER.sub(" ", subject).strip()
 
 
+def placeholders() -> list[str]:
+    """Every `<…>` placeholder `docs/RELEASE-TEMPLATE.txt` ships, longest first.
+
+    **Read from the template rather than listed here**, because a list of placeholders beside the
+    template is a second copy of it: add a section, forget the list, and the new placeholder is the
+    one nobody checks. Whatever the template asks for is what must not survive into a release.
+
+    Longest first so that a refusal names the whole placeholder a tagger left behind, rather than
+    whichever shorter one happens to be contained in it.
+
+    Angle brackets are this repository's placeholder spelling — `docs/features/FRD-TEMPLATE.md` and
+    `docs/adr/ADR-TEMPLATE.md` use the same — so the match is on the template's own text and not
+    on a pattern. That keeps a body that legitimately writes `<your-host>` or `sha-<commit>` out of
+    it: only the strings the template actually contains are refused.
+    """
+    if not TEMPLATE.exists():
+        return []
+    found = re.findall(r"<[^<>]+>", TEMPLATE.read_text(), re.DOTALL)
+    return sorted({" ".join(text.split()) for text in found}, key=len, reverse=True)
+
+
 def read(message: str, *, version: str) -> Notes:
     """`message` as `Notes`, or `NotDescribed` saying which of the four rules it breaks."""
     text = message.strip()
@@ -116,6 +150,20 @@ def read(message: str, *, version: str) -> Notes:
             "the version number."
         )
 
+    # Rule 5: the template was opened and not filled in. The sections it suggests are exactly the
+    # ones a reader needs, so a release that still carries the prompts has the right shape and no
+    # content — and the four rules above all pass, because the template has a subject and a body.
+    # Whitespace-collapsed on both sides, because a placeholder spans several lines in the template
+    # and a tagger's editor may have re-wrapped it.
+    flattened = " ".join(text.split())
+    left = next((prompt for prompt in placeholders() if prompt in flattened), None)
+    if left is not None:
+        raise NotDescribed(
+            f"{version} still carries a placeholder from docs/RELEASE-TEMPLATE.txt: {left!r}. "
+            "Answer it or delete the section — an unfilled template is the right shape with "
+            "nothing in it."
+        )
+
     return Notes(subject=subject, body=body.strip())
 
 
@@ -131,12 +179,37 @@ def _git(*arguments: str) -> str:
 
 
 def annotation(version: str) -> str:
-    """The message of the annotated tag `version`, or `''` for a lightweight one.
+    """The message of the **annotated** tag `version`, or `''` when the ref is not one.
 
-    `%(contents)` is empty for a lightweight tag, which is exactly the case rule 1 is about — so
-    this reports it rather than failing, and `read` turns it into the sentence that explains it.
+    **The object type is asked first, and this is the whole of rule 1.** The first version of this
+    function returned `%(contents)` and its comment claimed that was empty for a lightweight tag.
+    It is not: for a ref pointing straight at a commit, `%(contents)` is **the commit's message**.
+    So rule 1 never ran. A lightweight tag sailed through all four rules, because a commit message
+    has a subject, a body, and says something — and the release was published with it.
+
+    That is not hypothetical. `v0.1.1` was published on 2026-10-11 with `def905f`'s commit message
+    as its release notes and `fix(tests): wait for the rows a request makes, not for one` as its
+    title, while the annotated tag on the remote carried the real description all along. The cause
+    was upstream of this file — `actions/checkout` leaves the triggering tag as a lightweight ref
+    at the commit, so CI never saw the tag object — and the workflow now restores it. But a
+    mechanism that depends on another tool's behaviour for its *own* rule to work is a mechanism
+    with no rule, so the type is checked here as well, where the answer cannot be mistaken for
+    prose somebody wrote.
     """
+    kind = _git("for-each-ref", f"refs/tags/{version}", "--format=%(objecttype)").strip()
+    if kind != "tag":
+        return ""
     return _git("for-each-ref", f"refs/tags/{version}", "--format=%(contents)")
+
+
+def subject(version: str) -> str:
+    """The tag's subject line, for the GitHub Release's title.
+
+    Here rather than as a second `git tag --format` in the workflow, for the reason the title was
+    wrong in the first place: two places asking Git what a tag says are two chances to be told
+    about a commit instead, and only one of them was checked.
+    """
+    return read(annotation(version), version=version).subject
 
 
 def previous(version: str) -> str | None:
@@ -174,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
         "--check", action="store_true", help="validate the annotation and print nothing on success"
     )
     parser.add_argument(
+        "--subject", action="store_true", help="print the tag's subject line and nothing else"
+    )
+    parser.add_argument(
         "--image",
         action="append",
         default=[],
@@ -192,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if arguments.check:
+        return 0
+
+    if arguments.subject:
+        print(notes.subject)
         return 0
 
     print(

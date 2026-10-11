@@ -97,8 +97,9 @@ Container Registry under that version, once every quality gate has passed on the
   to the release job alone. No personal access token exists.
 
 - **FR-11** A tag whose message is not a description is refused **before anything is published**.
-  Four rules: it is annotated (a lightweight tag has no message — one missing `-a`); it has a
-  subject; the subject does not merely restate the version; and it has a body after a blank line.
+  Five rules: the ref is an **annotated tag object** (a lightweight one has no message of its own —
+  one missing `-a`); it has a subject; the subject does not merely restate the version; it has a
+  body after a blank line; and no placeholder from `docs/RELEASE-TEMPLATE.txt` survives.
   The restatement check strips the words a restatement is made of rather than matching one string,
   because a guard against a single spelling is one somebody walks around by accident — including
   **the project's own name**, which was added after writing `v0.1.1`'s notes with this very tool
@@ -116,6 +117,27 @@ Container Registry under that version, once every quality gate has passed on the
   evidence **after** the description, never instead of it. A section with nothing in it is
   omitted, so a first release's notes are its description and not an empty Commits heading.
 - **FR-14** A tag older than the newest release is refused, so `latest` never moves backwards.
+- **FR-15** The annotation is written **from a template**. `make release-tag` opens an editor on
+  `docs/RELEASE-TEMPLATE.txt` with the version substituted, rather than on an empty buffer: a blank
+  annotation is a prompt to improvise, and what gets improvised is a sentence restating the version
+  — which is how `Release v0.1.0` happened. The template asks the reader's two questions in order
+  (*what changed*, *do I have to do anything*), its guidance lines start with `#` so
+  `--cleanup=strip` never publishes them, and a release that still carries its placeholders is
+  refused: an unfilled template is the right shape with nothing in it. The placeholder list is read
+  **from the template**, because a list beside it is a second copy — add a section, forget the list,
+  and the new prompt is the one nobody checks.
+- **FR-16** Whatever reads the tag asks Git for the **object type first**, and a ref that is not a
+  tag object has no annotation. `%(contents)` of a ref pointing at a commit is *the commit's
+  message*, which has a subject, has a body, and says something — so it passes every other rule.
+  **This is the defect that published `v0.1.1` with `def905f`'s commit message**; see §6.
+- **FR-17** The release job **restores the annotated tag object** before anything reads it, and
+  asserts that it is one. `actions/checkout` creates `refs/tags/<name>` pointing at the commit it
+  checked out, so the tag object is not in the clone at all. Both release jobs do it, because a
+  description check that validates a commit message and reports success is worse than no check.
+- **FR-18** The Release's **title and body come from the same place** — `release_notes.py`, which
+  means the title goes through the five rules too. It was a second `git tag --format` in the
+  workflow, unchecked, so when the tag arrived flattened the title became the commit's subject and
+  nothing objected.
 ## 5. Design & Architecture
 
 Three pieces, and the split is the point.
@@ -173,6 +195,14 @@ cheap to fix, and only while nobody is waiting yet.
 - **A description cannot be corrected after the fact.** Editing the GitHub Release makes it disagree
   with the tag it came from. A real wart; the alternative is notes in a file, which is a second
   source of truth and is what `ADR-0029` refused.
+- **`v0.1.1`'s published Release still carries the wrong text**, and this is that wart being paid.
+  The run published `def905f`'s commit message as the notes and `fix(tests): wait for the rows a
+  request makes, not for one` as the title, because the ref the job was handed was a lightweight
+  tag at the commit and `%(contents)` of such a ref is the commit's message (FR-16, FR-17). The
+  **tag on the remote was right all along**, so the correct body is recoverable —
+  `make release-notes VERSION=v0.1.1` prints it — but re-publishing it is a `gh release edit`
+  somebody runs once, and the already-released guard means the job will not do it. Recorded rather
+  than quietly fixed, because the release that was wrong is the evidence for why both rules exist.
 - **The published bytes are a rebuild of the tested commit, not the tested bytes.** With a warm
   cache they are the same layers in practice, and "in practice" is not a guarantee this project
   usually accepts. Handing the three images between jobs as artefacts (~1 GB) is the upgrade;
@@ -205,17 +235,35 @@ the tag trigger and its pattern, all four gates on `publish`, both jobs gated on
 the already-released refusal, the notes **after** the images and from the tool rather than
 `--generate-notes`, all three images at the version, a commit tag per image, exactly two permissions
 on the job with a read-only default on the workflow, no long-lived token anywhere, and that a
-release run is never cancelled mid-publish. Mutations `PB7`–`PB22`.
+release run is never cancelled mid-publish, the tag object is restored in both release jobs, and
+the title comes from the tool. Mutations `PB7`–`PB22` and `RT5`–`RT9`.
 
-`tools/tests/test_a_release_says_what_it_is.py` — the four description rules, each against the
+`tools/tests/test_a_release_says_what_it_is.py` — the five description rules, each against the
 spellings of the same non-answer: a lightweight tag (refused by naming the missing `-a`), a missing
 subject, ten ways of restating the version including the `Release v0.1.0` the old mechanism wrote
 by itself, and a headline with no body. Plus that a subject *mentioning* its version is accepted
 (the rule is *only* restates), that Markdown reaches GitHub unreflowed, and that the prose comes
 before the evidence. One test runs the rules against the repository's own `v0.1.0` annotation, so
-the guard is checked against the real thing it was written for. Mutations `PB23`–`PB28`.
+the guard is checked against the real thing it was written for. Mutations `PB23`–`PB29`,
+plus `RT1`–`RT4` for the rules added on 2026-10-11.
 
-*Two guards were found by their own mutations.* `PB18` renames `aira-frontend`'s versioned tag and
+**And the five that were added after a release went out wrong** (mutations `RT1`–`RT9`): a real
+lightweight tag, created and removed in the test, must report **no** annotation — the assertion
+that would have caught the whole defect, and the one nobody wrote because `%(contents)` was
+believed rather than asked; the template must exist and must ask for something, since a template
+with no placeholders makes rule 5 inert without making it absent; an unfilled template is refused
+and a filled one accepted; and the title must come from the same function as the body, so that it
+goes through the rules too. On the workflow's side: both release jobs restore the tag object *and
+assert it is one*, and the Release's title no longer comes from a second `git tag --format`.
+
+*Three guards were found by their own mutations.* `RT8` and `RT9` both survived their first draft,
+for the third recorded instance of one shape: the test asked whether `docs/RELEASE-TEMPLATE.txt`
+and `--cleanup=strip` appeared in the `release-tag` target, and **the comment block explaining why
+they are there kept them appearing** after the commands were removed. `PB14` was the same thing in
+a workflow's `run:` block and `IM11` in a Compose file one plane along. The helper strips `@#`
+lines now: a comment is prose about a rule, and only the recipe is the rule.
+
+*Two more were found the same way earlier.* `PB18` renames `aira-frontend`'s versioned tag and
 survived the first draft: the test asked whether the image *name* appeared, and the same image's
 `:latest` and `:sha-…` lines kept it appearing — green about a release in which two images carried
 the version and one did not. And `PB28` made `commits_since` return `[""]` for a first release and
@@ -229,6 +277,14 @@ about its caller.**
   `v0.10.1` — not `v0.9.1`.
 - *Given* a tag annotated `Release v0.1.1`, *when* it is pushed, *then* the release is refused
   within a minute, naming the subject and saying what to write instead — and no image is built.
+- *Given* `make release-tag VERSION=v0.1.2` and an editor that saves the template unchanged, *when*
+  the check runs, *then* the placeholder it still carries is named, the tag is deleted, and the
+  version number is not spent. (Run with `EDITOR=true`, which is exactly that editor.)
+- *Given* a **lightweight** tag `vX.Y.Z` on a commit with a perfectly good commit message, *when*
+  the annotation is read, *then* it is empty and the release is refused naming the missing `-a` —
+  not accepted with the commit's message as its notes.
+- *Given* a published release, *when* its page is read, *then* the title is the tag's own subject
+  line and not a commit's.
 - *Given* `make release-tag VERSION=v0.1.2` and an annotation that fails the rules, *when* the check
   runs, *then* the tag is deleted again, so the version number is not spent.
 - *Given* an annotated tag with a subject and a body, *when* it is pushed and every gate passes,

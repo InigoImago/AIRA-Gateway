@@ -618,8 +618,12 @@ reading code.
   name appeared among the pushed tags and the same image's `:latest` line kept it appearing, so the
   guard was green about a release in which two images carried the version and one did not. `IM11`
   turned the gateway's required JWKS URL into a default and the control plane's copy kept
-  `${AIRA_OIDC_JWKS_URI:?` in the file. Each survived its own mutation. **Assert per occurrence, or
-  on the shape of the construct** — `re.findall` over every use, not `in`.
+  `${AIRA_OIDC_JWKS_URI:?` in the file. `RT8` and `RT9` removed the template and the
+  `--cleanup=strip` from a Make target and **the `@#` comment explaining why they were there** kept
+  both strings in the file. Each survived its own mutation. **Assert per occurrence, or on the
+  shape of the construct** — `re.findall` over every use, not `in`; and in a repository that
+  comments this heavily, strip the comments before asking whether the rule is there, because prose
+  about a rule will otherwise keep satisfying the test for it.
 
 - **An identity that crosses a system boundary is set once.** Two planes, two databases, one
   string: a use case's `slug` and a model's `name` are editable fields on the Management side and
@@ -1143,6 +1147,30 @@ reading code.
 ---
 
 ## 3. Configuration, defaults and refusals
+
+- **A rule that depends on another tool's behaviour is not a rule until you ask the tool.** The
+  release check's first rule was *"the tag is annotated"*, implemented as `%(contents)` of
+  `refs/tags/<v>` with a comment claiming that is empty for a lightweight tag. It is not: for a ref
+  pointing at a commit it is **the commit's message** — which has a subject, has a body, and says
+  something, so the remaining rules all passed. `v0.1.1` was published carrying a commit message as
+  its release notes while the annotated tag held the real description. One `git for-each-ref
+  --format=%(objecttype)` would have answered it at any point in the two days the code existed.
+
+  Two corollaries, both now implemented. **Ask for the discriminator first** (`%(objecttype)`
+  before `%(contents)`), so the answer cannot be mistaken for content somebody wrote. And where the
+  behaviour of an *upstream* tool is what sets the trap — `actions/checkout` leaves the triggering
+  tag as a lightweight ref at the commit — **restore the precondition and then assert it**, so the
+  next version of that tool stops the release instead of changing what it publishes.
+
+- **A blank buffer is a prompt to improvise, and what gets improvised restates the question.**
+  Twice now: `v0.1.0`'s annotation was `Release v0.1.0`, and the first draft of `v0.1.1`'s notes
+  described the tooling rather than the release. Neither was carelessness — a required free-text
+  field with no shape is answered with whatever the writer has at hand, which is the version number
+  and the thing they were last working on. A template with the reader's questions in order
+  (*what changed*, *do I have to do anything*) fixes both, and only because it is **the thing the
+  editor opens on**: a template somebody has to go and find is a document, not a mechanism. Make
+  the unfilled template a refusal and the list of prompts come **from the template**, or the
+  check and the thing it checks drift apart at the first new section.
 
 - **A default that names a neighbour is wrong the moment there is no neighbour.** Every address in
   `docker-compose.apps.yml` defaults to the container name of the stack it ships beside —

@@ -45,7 +45,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **953 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **962 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -128,6 +128,25 @@ Always keep documentation in sync with what is actually built. On any meaningful
    into the existing entry** if it is the same shape in different clothes.
 5. **PRD/ROADMAP** — update these when scope, phases, or requirements shift.
 6. Keep this `CLAUDE.md` updated as **conventions** evolve.
+
+**Cutting a release is a documentation act too** (`ADR-0030`, `FRD-137`). A release is an
+annotated tag, and **the tag's message is the release notes** — there is no changelog and no
+second place a version lives. Write it from the template, never from a blank buffer:
+
+```bash
+make next-version                        # what to call it
+make release-tag VERSION=v0.1.2          # opens docs/RELEASE-TEMPLATE.txt in $EDITOR
+make release-check VERSION=v0.1.2        # the same refusal CI gives, before pushing
+git push origin v0.1.2                   # this is what publishes
+```
+
+The template asks the reader's two questions in order — *what changed*, and *do I have to do
+anything* — and five rules refuse an annotation that answers neither: it must be an annotated tag
+object, with a subject that does not merely restate the version (`Release v0.1.0` and
+`AIRA Gateway v0.1.1` are both refused), a body, and **no placeholder left from the template**. A
+rejected annotation is deleted again, so a failed attempt does not spend a version number. Two of
+those rules exist because a release went out wrong: `v0.1.0` with the annotation `Release v0.1.0`,
+and `v0.1.1` carrying a *commit message* as its notes.
 
 **What must not go in `CLAUDE.md`.** Per-feature status, and the story of a round. Both have a home
 above, and both were written here as well until §6 stood at **1667 lines — 93% of this file** and

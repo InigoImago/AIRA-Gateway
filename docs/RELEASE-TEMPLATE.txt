@@ -1,0 +1,68 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# RELEASE NOTES FOR vX.Y.Z
+#
+# This is the tag's annotation, and the tag's annotation *is* the release notes
+# (ADR-0030). Whatever is left below after you save becomes the body of the
+# GitHub Release, verbatim; the first line becomes its title.
+#
+# Lines starting with `#` are stripped and never published, so the guidance
+# below can stay where you are reading it.
+#
+# WRITE IT FOR THE PERSON WHO ALREADY RUNS THE PREVIOUS VERSION. Their two
+# questions, in this order: what changed, and do I have to do anything? A
+# commit list answers neither — that is why one is appended automatically, as
+# evidence, after your words.
+#
+# FOUR RULES ARE CHECKED (tools/release_notes.py), before any image is built:
+#   1. the tag is annotated — `git tag -a`, which `make release-tag` does
+#   2. there is a subject line
+#   3. the subject does not merely restate the version. `Release v0.1.0` and
+#      `AIRA Gateway v0.1.1` are refused: a reader opening a release of this
+#      repository already knows the project and the number
+#   4. there is a body after a blank line
+# and a fifth: no placeholder from this template may remain. `make release-tag`
+# deletes the tag again when any of them fails, so a rejected attempt does not
+# spend a version number.
+#
+# KEEP THE PLAIN-TEXT HEADINGS (`WHAT CHANGED`, not `## What changed`). The
+# tool appends `## Commits` and `## Images` to what you write, and the line
+# between your words and the generated evidence is worth being able to see.
+#
+# Delete any section that has nothing in it. An empty heading is worse than an
+# absent one. `UPGRADING` is the exception: "Nothing to do." is an answer, and
+# a valuable one.
+# ─────────────────────────────────────────────────────────────────────────────
+
+<one line: what this release is — not its number>
+
+<One paragraph for somebody arriving at this release cold: what changed and
+whether it concerns them. If the application code is unchanged from the
+previous version, say so here and say it plainly — it is the most useful
+sentence a release can contain.>
+
+WHAT CHANGED
+
+<The substance. One bullet or short paragraph per thing a reader would act on
+or ask about. Name what it affects, not which files moved.>
+
+UPGRADING
+
+<What an operator must do, in order — a migration, a new variable, a changed
+default, a topic to create. "Nothing to do." when there is nothing, which is
+the answer a reader hopes for and should be able to trust.>
+
+KNOWN LIMITS IN THIS VERSION
+
+<What this version does not do, that somebody might reasonably expect it to.
+Stated here rather than discovered later; see docs/GAP-ANALYSIS.md. Drop the
+section only if the previous release's list is unchanged and still accurate.>
+
+RUNNING IT
+
+  ghcr.io/inigoimago/aira-gateway:vX.Y.Z
+  ghcr.io/inigoimago/aira-management:vX.Y.Z
+  ghcr.io/inigoimago/aira-frontend:vX.Y.Z
+
+<One or two lines: what else a deployment needs, and where the runbook is —
+docs/deployment/integrated.md for your own infrastructure, `make up-full
+RELEASE=vX.Y.Z` for one machine. Keep it short; the page is the page.>

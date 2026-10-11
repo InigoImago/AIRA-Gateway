@@ -8589,6 +8589,84 @@ MUTATIONS = [
         "from pathlib import Path\n\nimport yaml\n\nROOT",
         "tools/tests/test_one_owner_for_the_stack_addresses.py",
     ),
+    # ---- a release's notes are the tag's own (2026-10-11, `FRD-137`, `ADR-0030`) ----------------
+    #
+    # **`v0.1.1` was published carrying a commit message.** `%(contents)` of a ref that points at a
+    # commit is that commit's message, not nothing — so rule 1 never ran, `actions/checkout` handed
+    # the job a flattened tag, and a plausible description with a subject and a body sailed through
+    # all four rules. Every mutation here restores one of the ways that stayed invisible.
+    Mutation(
+        "RT1",
+        "a ref that is not an annotated tag has no annotation to publish",
+        "tools/release_notes.py",
+        '    kind = _git("for-each-ref", f"refs/tags/{version}", "--format=%(objecttype)").strip()\n    if kind != "tag":\n        return ""',
+        '    kind = "tag"\n    if kind != "tag":\n        return ""',
+        "tools/tests/test_a_release_says_what_it_is.py",
+    ),
+    Mutation(
+        "RT2",
+        "a template nobody filled in is not a description",
+        "tools/release_notes.py",
+        "    left = next((prompt for prompt in placeholders() if prompt in flattened), None)",
+        "    left = None",
+        "tools/tests/test_a_release_says_what_it_is.py",
+    ),
+    Mutation(
+        "RT3",
+        "the placeholders rule 5 refuses are the template's own, not a list beside it",
+        "tools/release_notes.py",
+        '    found = re.findall(r"<[^<>]+>", TEMPLATE.read_text(), re.DOTALL)',
+        '    found = ["<one line: what this release is>"]',
+        "tools/tests/test_a_release_says_what_it_is.py",
+    ),
+    Mutation(
+        "RT4",
+        "the release title goes through the rules that check the body",
+        "tools/release_notes.py",
+        "    return read(annotation(version), version=version).subject",
+        '    return _git("for-each-ref", f"refs/tags/{version}", "--format=%(contents:subject)").strip()',
+        "tools/tests/test_a_release_says_what_it_is.py",
+    ),
+    Mutation(
+        "RT5",
+        "the tag object is restored before the description check reads it",
+        ".github/workflows/ci.yml",
+        '      - name: Restore the annotated tag object\n        run: |\n          git fetch --force origin \\\n            "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"\n          kind="$(git cat-file -t "refs/tags/${{ github.ref_name }}")"\n          if [ "$kind" != tag ]; then\n            echo "::error::refs/tags/${{ github.ref_name }} is a $kind, not an annotated tag"\n            exit 1\n          fi\n\n      # The same command `make release-check VERSION=…` runs',
+        "      # The same command `make release-check VERSION=…` runs",
+        "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
+    ),
+    Mutation(
+        "RT6",
+        "a restored tag is asserted to be one, not assumed",
+        ".github/workflows/ci.yml",
+        '          kind="$(git cat-file -t "refs/tags/${{ github.ref_name }}")"\n          if [ "$kind" != tag ]; then\n            echo "::error::refs/tags/${{ github.ref_name }} is a $kind, not an annotated tag"\n            exit 1\n          fi\n\n      # The same command `make release-check VERSION=…` runs',
+        "      # The same command `make release-check VERSION=…` runs",
+        "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
+    ),
+    Mutation(
+        "RT7",
+        "the release title comes from the tool and not from a second git call",
+        ".github/workflows/ci.yml",
+        '--title "$version — $(uv run python tools/release_notes.py --subject "$version")" \\',
+        '--title "$version — $(git tag -l --format=\'%(contents:subject)\' "$version")" \\',
+        "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
+    ),
+    Mutation(
+        "RT8",
+        "the editor opens on the template rather than on an empty buffer",
+        "Makefile",
+        "\t@sed 's/vX\\.Y\\.Z/$(VERSION)/g' docs/RELEASE-TEMPLATE.txt > .git/AIRA_RELEASE_NOTES\n\t@$${GIT_EDITOR:-$${EDITOR:-$${VISUAL:-vi}}} .git/AIRA_RELEASE_NOTES\n\tgit tag -a \"$(VERSION)\" -F .git/AIRA_RELEASE_NOTES --cleanup=strip",
+        '\tgit tag -a "$(VERSION)"',
+        "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
+    ),
+    Mutation(
+        "RT9",
+        "the template's guidance is stripped and never published as notes",
+        "Makefile",
+        'git tag -a "$(VERSION)" -F .git/AIRA_RELEASE_NOTES --cleanup=strip',
+        'git tag -a "$(VERSION)" -F .git/AIRA_RELEASE_NOTES',
+        "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
+    ),
 ]
 
 

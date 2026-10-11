@@ -56,7 +56,14 @@ a release, because two ways are two ways for a version to be wrong.
 - The trigger is `on.push.tags: ["v*.*.*"]`. The version is `github.ref_name`, not computed — the
   bump arithmetic in `tools/release_version.py` remains, now as the thing that **tells you what to
   tag** (`make next-version`) and as the forward-only check below.
-- **The message is checked, and a tag that says nothing is refused before anything is published.**
+- **The message is written from a template and checked, and a tag that says nothing is refused
+  before anything is published.** `make release-tag` opens an editor on
+  [`docs/RELEASE-TEMPLATE.txt`](../RELEASE-TEMPLATE.txt), not on an empty buffer — amended
+  2026-10-11, after `v0.1.0`'s `Release v0.1.0` and a first draft of `v0.1.1` that described the
+  tooling rather than the release. A blank annotation is a prompt to improvise; a template asks the
+  reader's two questions in order, and its guidance is `#`-commented so `--cleanup=strip` never
+  publishes it. A fifth rule follows from having one: a release still carrying the template's
+  placeholders is refused, because an unfilled template is the right shape with nothing in it.
   Four rules, each one a thing that happened or would: the tag is annotated (a lightweight tag has
   no message at all — one missing `-a`); there is a subject; the subject does not merely restate the
   version (`Release v0.1.0` is indistinguishable from silence, and the check strips the words a
@@ -83,6 +90,26 @@ a release, because two ways are two ways for a version to be wrong.
 - **Releases go forward only.** A tag older than the newest release is refused, because `latest`
   would otherwise move backwards. A backport would need a second moving tag per series; that is a
   feature, and it is named as absent rather than left to be discovered.
+
+**Amended 2026-10-11 — rule 1 did not work, and a release went out wrong because of it.** The
+decision above says the tag's message *is* the notes. The implementation asked Git for
+`%(contents)` of `refs/tags/<v>` and a comment claimed that was empty for a lightweight tag. It is
+not: for a ref pointing at a commit, `%(contents)` is **the commit's message** — which has a
+subject, has a body, and says something, so it passed every other rule. And `actions/checkout`
+leaves the triggering tag as exactly such a ref, pointing at the commit it checked out.
+
+`v0.1.1` was therefore published carrying `def905f`'s commit message as its release notes and
+`fix(tests): wait for the rows a request makes, not for one` as its title, while the annotated tag
+on the remote held the real description throughout. Three things changed, and the order matters:
+the release jobs **restore the tag object and assert that it is one**; whatever reads a tag asks
+for `%(objecttype)` **first**; and the Release's title now comes from the same function as its
+body, so it goes through the rules too — it had been a second, unchecked `git tag --format`, which
+is why the wrong title looked like a consequence of the wrong body rather than a second instance of
+the same cause.
+
+The lesson is not about Git. **A mechanism whose own rule depends on another tool's behaviour has
+no rule**, and the way to find that out is to ask the tool rather than to believe a comment about
+it.
 
 ## Consequences
 

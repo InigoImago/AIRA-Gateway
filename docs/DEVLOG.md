@@ -5,6 +5,71 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A release published a commit message, and nothing failed (2026-10-11)
+
+`v0.1.1` went out. Its GitHub Release page carries `def905f`'s **commit message** as the release
+notes and `fix(tests): wait for the rows a request makes, not for one` as its title. The annotated
+tag on the remote held the real description — *"The same gateway as v0.1.0, described for the first
+time"* — the whole time.
+
+**Rule 1 never ran.** `annotation()` asked Git for `%(contents)` of `refs/tags/<v>`, and its own
+comment claimed that was empty for a lightweight tag. Asked rather than believed:
+
+    annotated v0.1.1:   objecttype=tag     subject=The same gateway as v0.1.0, described …
+    lightweight probe:  objecttype=commit  subject=fix(tests): wait for the rows a request …
+
+For a ref pointing at a commit, `%(contents)` is **the commit's message**. It has a subject, it has
+a body, and it says something — so rules 2, 3 and 4 all passed, and rule 1 was never reached. The
+only thing standing between a commit message and a release page was a comment that was wrong.
+
+What put a flattened tag in front of it: `actions/checkout` creates `refs/tags/<name>` pointing at
+the commit it checked out, so the tag object is not in the clone at all. Fixed in three places,
+and the order is the point — **the one that matters is the local one**:
+
+1. whatever reads a tag asks for `%(objecttype)` **first**, so a ref that is not a tag object has
+   no annotation, full stop. A mechanism whose own rule depends on another tool's behaviour has no
+   rule;
+2. both release jobs re-fetch the tag object and **assert that it is one**, so a future version of
+   the action flattening it again stops the release instead of changing what it publishes;
+3. the Release's **title comes from the same function as its body**. It had been a second,
+   unchecked `git tag --format` — which is why the wrong title looked like a consequence of the
+   wrong body rather than a second instance of one cause.
+
+**And a template, which is the other half of the same problem.** `v0.1.0` shipped with the
+annotation `Release v0.1.0`; the first draft of `v0.1.1`'s notes described the *tooling* and had to
+be rewritten. Both are what a blank buffer produces under a deadline. `make release-tag` now opens
+`$EDITOR` on `docs/RELEASE-TEMPLATE.txt` with the version substituted — it asks the reader's two
+questions in order (*what changed*, *do I have to do anything*), its guidance lines start with `#`
+so `--cleanup=strip` never publishes them, and the sections are the ones the good `v0.1.1`
+annotation turned out to have. A fifth rule follows from having a template: a release still
+carrying its placeholders is refused, and the placeholder list is read **from the template**,
+because a list beside it is a second copy that goes stale the first time a section is added.
+
+Proven end to end with `EDITOR=true` — an editor that changes nothing:
+
+    v9.9.9 still carries a placeholder from docs/RELEASE-TEMPLATE.txt: '<One paragraph for …>'
+    make: *** [release-tag] Error 1
+    (tags afterwards: v0.1.0, v0.1.1)
+
+The tag was deleted again, so the rejected attempt did not spend a version number.
+
+`v0.1.1`'s page stays wrong until somebody re-publishes it, which is `ADR-0030`'s known wart being
+paid for the first time: the tag is right, so `make release-notes VERSION=v0.1.1` prints the
+correct body, and one `gh release edit` re-syncs them. Recorded rather than quietly repaired — the
+release that was wrong is the evidence for why both rules exist.
+
+**Third instance of a guard satisfied by its own comment.** `RT8` and `RT9` survived their first
+draft: the test asked whether `docs/RELEASE-TEMPLATE.txt` and `--cleanup=strip` appeared in the
+`release-tag` target, and the `@#` block *explaining why they are there* kept them appearing after
+the commands were gone. `PB14` was this in a workflow's `run:`, `IM11` in a Compose file one plane
+along. The helper strips comment lines now; a comment is prose about a rule, and only the recipe is
+the rule.
+
+Nine mutations `RT1`–`RT9`, five new guards, and the release ritual written into `CLAUDE.md` §4 so
+that the next session cuts a release the same way rather than inventing one.
+
+---
+
 ## A release you can run: two overlays, and the integration suite against a pulled image (2026-10-11)
 
 `FRD-137` had been publishing three images to GHCR since `v0.1.0`. **Nothing could run them.** Every

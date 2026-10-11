@@ -75,7 +75,11 @@ INLINE_CODE = re.compile(r"`[^`\n]+`")
 
 #: `make <target>` inside one of those. The target is the first word after `make`; anything after
 #: it is an argument (`make test-e2e ARGS=…`) or a shell continuation.
-MAKE_INVOCATION = re.compile(r"(?:^|[\s;&|(])make\s+([a-zA-Z0-9_-]+)")
+#: `make [flags] <target>`. The flags are skipped rather than read as a target name: a documented
+#: `make -s release-subject` inside a `$(…)` is an ordinary thing to write, and the first draft of
+#: this reported `-s` as a target that does not exist — a guard failing about its own parsing reads
+#: exactly like the defect it is for.
+MAKE_INVOCATION = re.compile(r"(?:^|[\s;&|(])make\s+(?:-[a-zA-Z-]+\s+)*([a-zA-Z0-9_-]+)")
 
 
 def _commands(text: str) -> list[str]:

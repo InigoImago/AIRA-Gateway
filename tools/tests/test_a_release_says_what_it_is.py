@@ -183,3 +183,107 @@ def test_the_repositorys_own_tags_are_read_as_git_reports_them() -> None:
 
     # Nothing precedes the first release, numerically.
     assert previous("v0.1.0") is None
+
+
+def test_a_lightweight_tag_is_not_mistaken_for_an_annotated_one() -> None:
+    """**Rule 1 did not work, and this is the test that would have caught it.**
+
+    `annotation` asked Git for `%(contents)`, and its comment claimed that was empty for a
+    lightweight tag. It is not: for a ref pointing straight at a commit, `%(contents)` is **the
+    commit's message**. A commit message has a subject, has a body, and says something — so it
+    passed rules 2, 3 and 4, and rule 1 was never reached.
+
+    What that cost: `v0.1.1` was published on 2026-10-11 with `def905f`'s commit message as its
+    release notes and `fix(tests): wait for the rows a request makes, not for one` as its title,
+    while the annotated tag on the remote carried the real description the whole time. The release
+    job had been handed a flattened tag by `actions/checkout` and had no way to notice.
+
+    Asserted against a real lightweight tag, created and removed here, because the whole defect was
+    a claim about what Git returns that nobody had asked Git about.
+    """
+    import subprocess
+
+    from release_notes import annotation
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "tag", "v99.99.99", head], check=True, capture_output=True)
+    try:
+        assert annotation("v99.99.99") == "", (
+            "a lightweight tag reports an annotation — which is the commit's message, and will be "
+            "published as the release notes"
+        )
+        with pytest.raises(NotDescribed, match="git tag -a"):
+            read(annotation("v99.99.99"), version="v99.99.99")
+    finally:
+        subprocess.run(["git", "tag", "-d", "v99.99.99"], check=True, capture_output=True)
+
+
+def test_the_template_exists_and_asks_for_something() -> None:
+    """The template is what `make release-tag` opens an editor on, and the source of the
+    placeholder list rule 5 refuses. A template with no placeholders makes rule 5 inert without
+    making it absent, which is the worst of the three states."""
+    from release_notes import TEMPLATE, placeholders
+
+    assert TEMPLATE.exists(), f"{TEMPLATE} is missing, so `make release-tag` opens on nothing"
+
+    prompts = placeholders()
+    assert len(prompts) >= 4, f"the template asks for {len(prompts)} things: {prompts}"
+    assert all(prompt.startswith("<") and prompt.endswith(">") for prompt in prompts)
+
+
+def test_a_template_nobody_filled_in_is_refused() -> None:
+    """**Rule 5.** The template's sections are the ones a reader needs, so a release that still
+    carries its prompts has the right shape and nothing in it — and rules 2 to 4 all pass on it,
+    because a template has a subject and a body.
+
+    Run against the real template, with its comment lines stripped the way
+    `git tag --cleanup=strip` strips them, so this fails if the template grows a section whose
+    placeholder is spelled in some way the rule does not see.
+    """
+    from release_notes import TEMPLATE
+
+    filled_in_by_nobody = "\n".join(
+        line for line in TEMPLATE.read_text().splitlines() if not line.startswith("#")
+    )
+
+    with pytest.raises(NotDescribed, match="placeholder"):
+        read(filled_in_by_nobody, version="v1.2.3")
+
+
+def test_answering_the_template_is_accepted() -> None:
+    """The other direction, because a rule that refuses everything is not a rule. The shape here is
+    the template's own, with its prompts answered."""
+    notes = read(
+        "Deployment: run the published images instead of building them\n"
+        "\n"
+        "The application code is unchanged from v0.1.0.\n"
+        "\n"
+        "WHAT CHANGED\n"
+        "\n"
+        "Two Compose overlays take the three images from the registry.\n"
+        "\n"
+        "UPGRADING\n"
+        "\n"
+        "Nothing to do.\n",
+        version="v1.2.3",
+    )
+
+    assert notes.subject.startswith("Deployment")
+    assert "UPGRADING" in notes.body
+
+
+def test_the_title_and_the_body_come_from_the_same_place() -> None:
+    """**Two places asking Git what a tag says are two chances to be told about a commit**, and
+    only one of them was checked. The Release's title was a second `git tag --format` in the
+    workflow; when the tag arrived flattened, the title became the commit's subject and nothing
+    objected. `subject` is the one owner now, and it goes through `read`, so a title can never be
+    published from an annotation the rules would refuse.
+    """
+    from release_notes import annotation, subject
+
+    assert subject("v0.1.1") == read(annotation("v0.1.1"), version="v0.1.1").subject
+
+    with pytest.raises(NotDescribed, match="only restates the version"):
+        subject("v0.1.0")

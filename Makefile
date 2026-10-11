@@ -141,7 +141,8 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
         run-frontend up-full demo-ready down-full logs-apps build-images next-version \
-        current-version release-tag release-check release-notes ci wait-healthy prune mutants \
+        current-version release-tag release-check release-notes release-subject ci wait-healthy \
+        prune mutants \
         ui-audit release-pull up-integrated kafka-topics-external
 
 help: ## Show this help
@@ -508,7 +509,19 @@ release-tag: ## Create the annotated release tag and check its description (VERS
 		echo "VERSION is required, e.g.  make release-tag VERSION=$$($(MAKE) -s next-version)"; \
 		exit 1; \
 	}
-	git tag -a "$(VERSION)"
+	@# **The editor opens on `docs/RELEASE-TEMPLATE.txt`, not on an empty buffer.** A blank
+	@# annotation is a prompt to improvise, and what people improvise under a deadline is a
+	@# sentence restating the version — which is how `Release v0.1.0` happened. The template asks
+	@# the reader's two questions in order (what changed, do I have to do anything) and its
+	@# guidance lines start with `#`, so `--cleanup=strip` removes them and they are never
+	@# published. `vX.Y.Z` is substituted, because an image reference nobody edited is worse than
+	@# a missing one.
+	@#
+	@# The draft lives in `.git/`, beside `COMMIT_EDITMSG` and for the same reasons: never
+	@# committed, and still there to recover from if the editor or the check goes badly.
+	@sed 's/vX\.Y\.Z/$(VERSION)/g' docs/RELEASE-TEMPLATE.txt > .git/AIRA_RELEASE_NOTES
+	@$${GIT_EDITOR:-$${EDITOR:-$${VISUAL:-vi}}} .git/AIRA_RELEASE_NOTES
+	git tag -a "$(VERSION)" -F .git/AIRA_RELEASE_NOTES --cleanup=strip
 	@# A rejected annotation leaves **no tag**, the same habit the release job has: a failed
 	@# attempt must not consume a version number, or the series skips one to hide it.
 	@uv run python tools/release_notes.py --check "$(VERSION)" \
@@ -522,6 +535,12 @@ release-check: ## Check that a release tag's annotation is a real description (V
 
 release-notes: ## Print the release notes a tag would publish (VERSION=v0.1.1)
 	@uv run python tools/release_notes.py "$(VERSION)"
+
+release-subject: ## Print a tag's subject line — the GitHub Release's title (VERSION=v0.1.1)
+	@# The same function the workflow titles a Release with, so the two cannot disagree. It goes
+	@# through the description rules, which is the point: a title is published prose too, and the
+	@# one `v0.1.1` went out with came from a second, unchecked `git tag --format`.
+	@uv run python tools/release_notes.py --subject "$(VERSION)"
 
 current-version: ## Print the newest release tag, or say that nothing has been released
 	@# The tool exits 1 when there is no release, because a script needs to tell "none" from a

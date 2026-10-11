@@ -229,3 +229,74 @@ def test_a_release_run_is_never_cancelled_by_a_newer_one() -> None:
     cancel = str(_workflow()["concurrency"]["cancel-in-progress"])
 
     assert "refs/tags/" in cancel, "a release run can be cancelled between two image pushes"
+
+
+def test_both_release_jobs_restore_the_tag_object_before_reading_it() -> None:
+    """**What `v0.1.1` was published with.** `actions/checkout` creates `refs/tags/<name>` pointing
+    at the *commit* it checked out, so the annotated tag object — the thing that carries the notes —
+    is not in the clone. `%(contents)` of a ref pointing at a commit is the commit's message, which
+    has a subject and a body and passes every description rule, so nothing failed: the Release went
+    out carrying `def905f`'s commit message and a title to match.
+
+    Both jobs need it. The `described` job without it validates a commit message and reports
+    success, which is worse than not checking at all — it is a gate that says the thing it did not
+    look at is fine.
+    """
+    for job in ("described", "publish"):
+        restore = _step(job, "Restore the annotated tag object")
+        run = str(restore["run"])
+
+        assert "git fetch --force origin" in run, f"{job} does not re-fetch the tag object"
+        assert "refs/tags/" in run
+        assert "cat-file -t" in run and "exit 1" in run, (
+            f"{job} re-fetches the tag and does not assert it is one, so a future version of the "
+            "checkout action flattening it again would publish the nearest available prose"
+        )
+
+
+def test_the_release_title_comes_from_the_tool_that_checks_the_annotation() -> None:
+    """The title was a second `git tag --format` in the workflow, unchecked — so when the tag
+    arrived flattened, the body and the title were both the commit's and only the body looked like
+    a mistake. One owner for *what the tag says*, and it goes through the rules."""
+    publish = _step("publish", "gh release create")
+    run = str(publish["run"])
+
+    assert "release_notes.py --subject" in run, "the title does not come from the checked tool"
+    assert "git tag -l --format" not in run, (
+        "the title is read from Git a second time, beside the body that already was"
+    )
+
+
+def _recipe(target: str) -> str:
+    """The **commands** of a Make target, with its `@#` comment lines removed.
+
+    **Both mutations of the test below survived its first draft**, for the third recorded instance
+    of the same shape: the guard asked whether `docs/RELEASE-TEMPLATE.txt` and `--cleanup=strip`
+    appeared in the target, and the comment block *explaining why they are there* kept them
+    appearing after the commands were gone. `PB14` was the same thing in a workflow's `run:`
+    block, `IM11` in a Compose file one plane along.
+
+    A comment is prose about a rule; only the recipe is the rule. This repository comments heavily
+    and on purpose, which makes "is the string in the file" a guard it will keep defeating.
+    """
+    body = MAKEFILE.read_text()
+    block = body.partition(f"\n{target}:")[2].partition("\n\n")[0]
+    return "\n".join(
+        line for line in block.splitlines() if not line.strip().startswith(("@#", "#"))
+    )
+
+
+def test_the_tag_message_is_written_from_the_template() -> None:
+    """A blank annotation is a prompt to improvise, and what gets improvised is a sentence
+    restating the version — `Release v0.1.0`, which is where this whole mechanism started. The
+    editor opens on the template instead, and `--cleanup=strip` is what keeps its guidance out of
+    the published notes."""
+    recipe = _recipe("release-tag")
+
+    assert "docs/RELEASE-TEMPLATE.txt" in recipe, "the editor opens on an empty buffer"
+    assert "--cleanup=strip" in recipe, (
+        "without it the template's own guidance lines are published as release notes"
+    )
+    assert "release_notes.py --check" in recipe and "git tag -d" in recipe, (
+        "a rejected annotation leaves the tag behind, so the version number is spent"
+    )

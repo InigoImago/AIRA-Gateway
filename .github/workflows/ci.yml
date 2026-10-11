@@ -211,6 +211,27 @@ jobs:
 
       - run: uv sync --frozen
 
+      # **The tag object, which the checkout above flattens into a lightweight ref.**
+      # `actions/checkout` creates `refs/tags/<name>` pointing at the *commit* it checked out, so
+      # the annotated tag object — the thing that carries the release notes — is not in this
+      # clone. `%(contents)` of a ref that points at a commit is **the commit's message**, which
+      # is a plausible-looking description with a subject and a body, so nothing failed: `v0.1.1`
+      # was published on 2026-10-11 with `def905f`'s commit message as its notes and
+      # `fix(tests): wait for the rows a request makes, not for one` as its title.
+      #
+      # `--force` because the ref already exists, pointing at the commit. The type is then
+      # asserted rather than assumed: if a future version of the checkout action changes this
+      # again, the release must stop here and say so, not publish the nearest available prose.
+      - name: Restore the annotated tag object
+        run: |
+          git fetch --force origin \
+            "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          kind="$(git cat-file -t "refs/tags/${{ github.ref_name }}")"
+          if [ "$kind" != tag ]; then
+            echo "::error::refs/tags/${{ github.ref_name }} is a $kind, not an annotated tag"
+            exit 1
+          fi
+
       # The same command `make release-check VERSION=…` runs, so the refusal a tagger meets here is
       # the one they could have met before pushing.
       - name: Check the annotation
@@ -270,6 +291,27 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - run: uv sync --frozen
+
+      # **The tag object, which the checkout above flattens into a lightweight ref.**
+      # `actions/checkout` creates `refs/tags/<name>` pointing at the *commit* it checked out, so
+      # the annotated tag object — the thing that carries the release notes — is not in this
+      # clone. `%(contents)` of a ref that points at a commit is **the commit's message**, which
+      # is a plausible-looking description with a subject and a body, so nothing failed: `v0.1.1`
+      # was published on 2026-10-11 with `def905f`'s commit message as its notes and
+      # `fix(tests): wait for the rows a request makes, not for one` as its title.
+      #
+      # `--force` because the ref already exists, pointing at the commit. The type is then
+      # asserted rather than assumed: if a future version of the checkout action changes this
+      # again, the release must stop here and say so, not publish the nearest available prose.
+      - name: Restore the annotated tag object
+        run: |
+          git fetch --force origin \
+            "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          kind="$(git cat-file -t "refs/tags/${{ github.ref_name }}")"
+          if [ "$kind" != tag ]; then
+            echo "::error::refs/tags/${{ github.ref_name }} is a $kind, not an annotated tag"
+            exit 1
+          fi
 
       - name: Name the release
         id: release
@@ -358,8 +400,12 @@ jobs:
             --image "ghcr.io/$owner/aira-management:$version" \
             --image "ghcr.io/$owner/aira-frontend:$version" \
             > "$RUNNER_TEMP/notes.md"
+          # **The title comes from the same tool as the body.** It was a second
+          # `git tag --format` here, and that one was never checked — so when the tag arrived
+          # flattened, the body and the title were both the commit's, and only the body looked
+          # like a mistake worth noticing. One place asks Git what the tag says.
           gh release create "$version" \
-            --title "$version — $(git tag -l --format='%(contents:subject)' "$version")" \
+            --title "$version — $(uv run python tools/release_notes.py --subject "$version")" \
             --notes-file "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"

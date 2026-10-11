@@ -355,20 +355,34 @@ there is, and because the message is load-bearing it is **refused if it says not
 | there is a **subject** | the line that appears in every list |
 | the subject does not **restate the version** | `Release v0.1.0` tells a reader exactly what the version number already told them |
 | there is a **body** after a blank line | a headline is what the reader already has; the body is what changed and whom it affects |
+| no **placeholder** from the template survives | an unfilled template is the right shape with nothing in it |
 
-Write it like a commit message:
+**You do not start from a blank buffer.** `make release-tag VERSION=v0.1.2` opens your editor on
+[`RELEASE-TEMPLATE.txt`](RELEASE-TEMPLATE.txt) with the version substituted. It asks the two
+questions a reader of the previous version has, in that order — *what changed*, and *do I have to
+do anything* — and its guidance lines start with `#`, so they are stripped and never published.
+Delete any section you have nothing for; `UPGRADING` is the exception, because *"Nothing to do."* is
+an answer and a valuable one.
 
-```
-Tag-driven releases, and a description that is required
+If the annotation fails a rule, `make release-tag` **deletes the tag it just created**, so a
+rejected attempt does not spend a version number. The same refusal is available on its own as
+`make release-check VERSION=v0.1.2`, and in CI it arrives **within a minute**, from a job with no
+dependencies, before any image is built.
 
-The dispatch form had nowhere to put release notes, so v0.1.0 shipped
-with none. A release is an annotated tag now and its message is the notes.
-
-Operators: nothing to change. Pin the version as before.
-```
-
-The refusal arrives **within a minute**, from a job with no dependencies, before any image is built
-— and it is the same refusal `make release-check VERSION=v0.1.1` gives before you push.
+> **Rule 1 did not work until 2026-10-11, and `v0.1.1` paid for it.** The check asked Git for the
+> tag's `%(contents)`, which for a ref pointing at a *commit* is **the commit's message** — a
+> plausible description with a subject and a body. `actions/checkout` leaves the triggering tag as
+> exactly such a ref, so the published `v0.1.1` Release carries `def905f`'s commit message and
+> `fix(tests): wait for the rows a request makes, not for one` as its title. The tag itself was
+> right the whole time. The jobs restore the tag object and assert it is one now, the object type
+> is checked before the message is read, and the Release's title comes from the same checked tool
+> as its body. `v0.1.1`'s page is still wrong until somebody re-publishes it:
+>
+> ```bash
+> make release-notes VERSION=v0.1.1 > /tmp/v0.1.1.md
+> gh release edit v0.1.1 --notes-file /tmp/v0.1.1.md \
+>   --title "v0.1.1 — $(make -s release-subject VERSION=v0.1.1)"
+> ```
 
 ### What a release does
 
