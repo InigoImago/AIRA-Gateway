@@ -8393,8 +8393,16 @@ MUTATIONS = [
         "PB26",
         "the restatement check sees every spelling of it, not only the one the old job wrote",
         "tools/release_notes.py",
-        '_FILLER = re.compile(r"\\b(release|version|tag|v?\\d+\\.\\d+\\.\\d+|v\\d+)\\b|[^\\w\\s]", re.IGNORECASE)',
-        '_FILLER = re.compile(r"^Release v\\d+\\.\\d+\\.\\d+$")',
+        r'    r"\b(aira|gateway|release|version|tag|v?\d+\.\d+\.\d+|v\d+)\b|[^\w\s]",',
+        r'    r"^Release v\d+\.\d+\.\d+$",',
+        "tools/tests/test_a_release_says_what_it_is.py",
+    ),
+    Mutation(
+        "PB29",
+        "the project's own name is as empty a subject as the word 'release'",
+        "tools/release_notes.py",
+        r'    r"\b(aira|gateway|release|version|tag|v?\d+\.\d+\.\d+|v\d+)\b|[^\w\s]",',
+        r'    r"\b(release|version|tag|v?\d+\.\d+\.\d+|v\d+)\b|[^\w\s]",',
         "tools/tests/test_a_release_says_what_it_is.py",
     ),
     Mutation(

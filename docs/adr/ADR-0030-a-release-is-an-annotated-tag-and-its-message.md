@@ -60,7 +60,7 @@ a release, because two ways are two ways for a version to be wrong.
   Four rules, each one a thing that happened or would: the tag is annotated (a lightweight tag has
   no message at all — one missing `-a`); there is a subject; the subject does not merely restate the
   version (`Release v0.1.0` is indistinguishable from silence, and the check strips the words a
-  restatement is made of rather than matching that one string); and there is a body after a blank
+  restatement is made of — the project's name among them — rather than matching that one string); and there is a body after a blank
   line, because a headline is what the version number already gave the reader.
 - **The check is a job of its own with no `needs`.** It costs seconds and it is the only failure a
   tagger can still fix for free. Behind the gates it would be reported after forty minutes, by which

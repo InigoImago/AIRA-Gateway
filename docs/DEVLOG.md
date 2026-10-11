@@ -69,7 +69,14 @@ left to be discovered.
   **A test that asserts the renderer's behaviour says nothing about its caller** — the same shape as
   a test whose setup never reaches the path it is named after, one layer out.
 
-Twenty-eight properties in all (`PB1`–`PB28`), 932. One of the new tests runs the four rules against
+**And the rule's first real use found a hole in it.** Writing `v0.1.1`'s notes with this very tool
+produced the subject `AIRA Gateway v0.1.1` — which passed. It is `Release v0.1.0` with the product's
+name in place of the word, and anybody opening a release of this repository already knows which
+project it is. The project's own name is filler here, so it is stripped too (`PB29`). The useful
+general form: **a guard built from the one example that prompted it will pass the second example,
+and the second example arrives the first time somebody uses the thing for real.**
+
+Twenty-nine properties in all (`PB1`–`PB29`), 933. One of the new tests runs the four rules against
 the repository's own `v0.1.0` annotation, so the guard is checked against the real thing it was
 written for and not only against strings.
 

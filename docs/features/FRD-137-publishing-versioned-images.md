@@ -100,7 +100,12 @@ Container Registry under that version, once every quality gate has passed on the
   Four rules: it is annotated (a lightweight tag has no message — one missing `-a`); it has a
   subject; the subject does not merely restate the version; and it has a body after a blank line.
   The restatement check strips the words a restatement is made of rather than matching one string,
-  because a guard against a single spelling is one somebody walks around by accident.
+  because a guard against a single spelling is one somebody walks around by accident — including
+  **the project's own name**, which was added after writing `v0.1.1`'s notes with this very tool
+  produced the subject `AIRA Gateway v0.1.1` and it passed. That is the same non-answer as
+  `Release v0.1.0` with the product's name in place of the word, and anybody opening a release of
+  this repository already knows which project it is. Only the *words* are removed, so a subject
+  that uses them to say something keeps a subject.
 - **FR-12** That check is a **job with no `needs`**, so it reports in seconds. It is the only
   failure a tagger can still fix for free, and behind the gates it would arrive after forty minutes.
   The same refusal is available before pushing (`make release-check`), and `make release-tag`

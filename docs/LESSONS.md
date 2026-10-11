@@ -37,6 +37,14 @@ reading code.
   have been written without knowing anything" — `Release v0.1.0` is non-empty and tells a reader
   exactly what the version number already told them.
 
+  *Then expect the check to be wrong once.* **A guard built from the one example that prompted it
+  will pass the second example, and the second example arrives the first time somebody uses the
+  thing for real.** The rule above was written against `Release v0.1.0`; the first notes actually
+  written with it opened `AIRA Gateway v0.1.1`, which is the identical non-answer with the product's
+  name in place of the word, and it passed. The fix is always the same shape: ask what *class* the
+  example belongs to — here, words that carry no information in this context — rather than widening
+  the pattern one spelling at a time.
+
 - **A check written from where a thing usually lives cannot see the ones that live elsewhere.**
   `CONFIGURATION.md` promises to list every `AIRA_*` variable, and its guard compares the document
   against the **settings classes** — so fifteen knobs read by the collector through `${env:…}` were

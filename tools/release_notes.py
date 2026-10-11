@@ -41,7 +41,16 @@ ROOT = Path(__file__).resolve().parents[1]
 #: Words a bare subject is made of. Stripped out before asking whether anything is left, so that
 #: `Release v0.1.0`, `v0.1.0`, `version 0.1.0` and `0.1.0 release` are all recognised as saying
 #: nothing — the restatement comes in more spellings than the one the old job happened to write.
-_FILLER = re.compile(r"\b(release|version|tag|v?\d+\.\d+\.\d+|v\d+)\b|[^\w\s]", re.IGNORECASE)
+#:
+#: **The project's own name belongs here**, and the first draft of this left it out. Writing
+#: `v0.1.1`'s notes produced the subject `AIRA Gateway v0.1.1`, which passed — and it is the same
+#: non-answer as `Release v0.1.0` with the product's name in place of the word. Anybody opening a
+#: release of this repository already knows which project it is. Only the words are removed, so a
+#: subject that *uses* them to say something ("the gateway now refuses …") still has a subject left.
+_FILLER = re.compile(
+    r"\b(aira|gateway|release|version|tag|v?\d+\.\d+\.\d+|v\d+)\b|[^\w\s]",
+    re.IGNORECASE,
+)
 
 
 class NotDescribed(Exception):

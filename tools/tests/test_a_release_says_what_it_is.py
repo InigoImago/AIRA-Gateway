@@ -56,6 +56,12 @@ def test_a_lightweight_tag_is_refused_and_told_which_flag_is_missing() -> None:
         "tag v1.2.3",
         "   v1.2.3   ",
         "Release: v1.2.3!",
+        # **Found by writing real notes with this very tool.** The project's own name is no more
+        # informative than the word "release": anybody opening a release of this repository already
+        # knows which project it is. The first draft of the rule let this through.
+        "AIRA Gateway v1.2.3",
+        "aira v1.2.3",
+        "AIRA Gateway",
     ],
 )
 def test_a_subject_that_only_restates_the_version_is_refused(subject: str) -> None:
@@ -70,12 +76,23 @@ def test_a_subject_that_only_restates_the_version_is_refused(subject: str) -> No
         _read(f"{subject}\n\nA body that is perfectly fine on its own.\n")
 
 
-def test_a_subject_that_mentions_the_version_but_says_something_is_accepted() -> None:
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "v1.2.3 drops the dispatch form",
+        "The gateway refuses a model it has no price for",
+        "AIRA Gateway speaks the Anthropic dialect on Vertex",
+        "The same gateway as v1.2.2, described for the first time",
+    ],
+)
+def test_a_subject_that_uses_those_words_to_say_something_is_accepted(subject: str) -> None:
     """The rule is *only* restates, not *mentions*. Refusing a subject for containing its own
-    version number would be a guard that punishes the careful case along with the empty one."""
-    notes = _read("v1.2.3 drops the dispatch form\n\nReleases are tags now.\n")
+    version number — or the project's name — would punish the careful case along with the empty
+    one, and `AIRA Gateway speaks the Anthropic dialect on Vertex` is exactly the subject somebody
+    should be able to write."""
+    notes = _read(f"{subject}\n\nA body that is perfectly fine on its own.\n")
 
-    assert notes.subject == "v1.2.3 drops the dispatch form"
+    assert notes.subject == subject
 
 
 def test_a_subject_with_no_body_is_refused() -> None:
