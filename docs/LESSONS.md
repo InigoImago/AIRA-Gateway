@@ -1121,6 +1121,14 @@ reading code.
   case — and the absent case here rounded to `$0.00` in the client's own summary, which is how it
   stayed invisible for two months.
 
+- **An exemption nothing defends is an exemption the next rule removes.** Every requirement on the
+  request path exempts the mock upstream — deterministic fiction is not a model, and the demo ships
+  a cost budget, so a new rule that governed its price would make the one-command demonstration
+  refuse its own traffic. The mutation that deletes that exemption **survived**: the suite's
+  cost-budget tests price their mock models, so nothing would have noticed. The rule the exemption
+  protects had a test; the exemption itself had none, which is the same asymmetry as a test
+  asserting an absence — and the fix is the same, a case that *is* the exempt thing.
+
 - **A guard that cannot fail.** *Five, each caught only by breaking it deliberately:* an Angular
   spec using `import.meta.glob` failed to *load* and Vitest reported "0 tests" inside a green run;
   an alignment guard queried a container the case it named did not use; a parser that matched
@@ -2113,6 +2121,18 @@ reading code.
   refused for it — `AIRA_MAX_REQUEST_BYTES=2048`, a 5 000-byte body, `413`; without it the same
   body reaches authentication and returns `401`; before the wiring the name was not in the compose
   files at all.
+
+  *The guards held, and they taught a naming rule nobody had written.* A new switch arrived as
+  `AIRA_REFUSE_UNPRICED_UNDER_COST_BUDGET` — exactly what it does, and it fitted nothing. The
+  installation files are two levels deep and the renderer **derives the variable from the section**,
+  so a name that belongs to no section needs a section of its own, and a reader scanning
+  `enforce:` beside three governance switches would never find a fourth living elsewhere. It
+  shipped as `AIRA_ENFORCE_PRICED_MODELS`, in that family, with the precision moved into the
+  docstring, the FRD and the refusal message. **A setting's name is part of the configuration
+  surface**: it is read where the other names are, and the structure that renders it is a
+  constraint on it, not a detail. The three guards named the whole chain a knob lives in — the
+  example environment, the installation files, the compose service that passes it through — which
+  is the difference between a knob and a knob somebody can turn.
 
 - **A configuration file is not tested until something is started from it.** Every check on the
   `config/` examples validated *names and values* — against the settings classes, against the

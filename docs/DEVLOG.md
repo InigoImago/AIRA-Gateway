@@ -5,6 +5,60 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Unpriced is not unlimited: the last hole in spend control (2026-10-12)
+
+`FRD-610` §3.2, the one the file itself left as an open question *to the owner*, because the answer
+stops traffic: a cost budget compares a spend figure against a limit, and a model with **no price
+on file** contributes nothing to that figure. It is counted apart as `unpriced_requests` — right
+for reporting, where unknown is not zero — and for enforcement unknown becomes **unbounded**. A use
+case whose models were all unpriced could spend without limit against a budget that looked
+configured.
+
+The owner's decision: **refuse, behind a switch, defaulting to on.** The FRD had suggested
+defaulting to *off* for one release so nobody is surprised, and that was rejected for the reason
+the section exists — a hole that stays open by default is a hole for everybody who does not know
+about it. `AIRA_ENFORCE_PRICED_MODELS=false` is the escape hatch for an installation that has not
+finished pricing, which then keeps serving **by saying so**.
+
+**It is a dispatch condition, not a check at the reservation**, and that is the part worth keeping.
+`PricedWhereCostIsLimited` is asked of each candidate, so a chain **skips** the unpriced model and a
+priced one serves (`FRD-302`); only a request whose candidates are all uncountable is refused. The
+question the FRD worried about — *this will stop traffic* — is therefore narrower than it looked:
+what stops is traffic with no countable model at all.
+
+Everything about this rule is in where it does **not** fire, and each line is a test: a *token* or
+*request* limit counts unpriced traffic exactly like any other; no budget at all refuses nothing;
+with `AIRA_ENFORCE_BUDGETS` off nothing is capped, so nothing is refused for being uncountable; a
+lifted budget does not bind; and the mock is exempt, like in every other requirement — deterministic
+fiction has no price and the demo ships a cost budget.
+
+Which budgets bind is `applicable`'s answer, the same rows the reservation books against, so the
+shared pot, a per-member cost budget and the installation's own bucket each make a price a
+requirement. The price question is `PricingService.price_for`, which the audit trail and the
+counters already use. Ordered cheaply: the price first, the budgets only when there is no price, and
+the budget answer memoised per request — so an ordinary request pays nothing and a long chain asks
+once.
+
+**Two things the round found by being checked rather than reasoned about.**
+
+The mutation that removes the mock's exemption **survived**: `test_cost_budgets.py` prices its mock
+models, so nothing would have noticed the demo starting to refuse its own traffic. A test for the
+exemption exists now.
+
+And the switch was renamed before it shipped. `AIRA_REFUSE_UNPRICED_UNDER_COST_BUDGET` said exactly
+what it does and fitted nothing: the configuration a reader scans has an `enforce:` section with
+three governance switches, and the renderer derives a name from the section. `AIRA_ENFORCE_PRICED_MODELS`
+joins them as the fourth answer to *what does this installation refuse*, with the precision in the
+docstring, the FRD and the refusal message. Three guards insisted on the whole chain of places a
+new setting lives — the example environment, the three installation files, and the compose service
+that passes it through — which is the difference between a knob and a knob somebody can turn.
+
+Mutations `UP1`–`UP6`; `IB4`'s anchor had to widen, because `cost_limited` asks the same question of
+the same flag and an ambiguous anchor stops the harness rather than editing one of two places.
+**1022 properties.**
+
+---
+
 ## Two open points closed: an inert switch says so, and a browser asks who may read (2026-10-11)
 
 **`FRD-610` §3.3 was the cheapest named hole in the file and had been open since the concept was

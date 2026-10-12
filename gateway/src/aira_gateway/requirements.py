@@ -28,6 +28,16 @@ class Requirement(Protocol):
     async def refusal(self, model: str) -> str | None: ...
 
 
+class Pricing(Protocol):
+    """The price question, as `PricingService` answers it.
+
+    A protocol rather than the class: this module is the request path's rule book and importing the
+    service would make it depend on the database layer for one method.
+    """
+
+    async def price_for(self, model: str) -> object | None: ...
+
+
 def _is_test_double(registry: object | None, model: str) -> bool:
     """Whether ``model`` is served by the mock, which is not a model.
 
@@ -81,6 +91,52 @@ class RegionAllowed:
                 f"{sorted(self._allowed)}"
             )
         return None
+
+
+class PricedWhereCostIsLimited:
+    """A model with no price may not serve a request a **cost** limit binds (`FRD-610` §3.2).
+
+    The hole this closes: an unpriced request contributes nothing to a spend figure. It is counted
+    apart as `unpriced_requests` — right for reporting, where unknown is not zero — and for
+    *enforcement* unknown becomes **unbounded**, so a use case whose models are all unpriced spends
+    without limit against a budget that looks configured.
+
+    Refusing makes a price a precondition for governance, which is the honest relation between
+    them. The alternative considered and rejected was a worst-case ceiling used for enforcement
+    only: it invents a number, and a wrong number that permits spending is worse than a refusal
+    that stops it (`ADR-0021` spent a day removing invented numbers).
+
+    **A requirement rather than a check at the reservation**, because that is what lets a chain do
+    something better than refuse: an unpriced candidate is skipped by name and a priced one serves
+    (`FRD-302`). A request whose *only* candidate is unpriced is refused with the reason.
+
+    Ordered cheaply: the price is asked first, and the budgets only when there is no price. A
+    normal request therefore pays nothing for this check.
+    """
+
+    def __init__(
+        self,
+        pricing: Pricing,
+        cost_limited: Callable[[], Awaitable[bool]],
+        registry: object | None = None,
+    ) -> None:
+        self._pricing = pricing
+        self._cost_limited = cost_limited
+        self._registry = registry
+
+    async def refusal(self, model: str) -> str | None:
+        if _is_test_double(self._registry, model):
+            return None
+        if await self._pricing.price_for(model) is not None:
+            return None
+        if not await self._cost_limited():
+            return None
+        return (
+            f"'{model}' has no price on file and this request is subject to a spend limit. An "
+            "unpriced request cannot be counted against a cost budget, so it would spend without "
+            "bound. A Global Administrator adds the price under Models — or the installation "
+            "accepts the gap by setting AIRA_ENFORCE_PRICED_MODELS=false."
+        )
 
 
 class ModelApproved:

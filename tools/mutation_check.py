@@ -5336,8 +5336,11 @@ MUTATIONS = [
         "IB4",
         "spend that names no use case is reserved rather than waved through",
         "gateway/src/aira_gateway/budgets/service.py",
-        "        if not self._enforce:",
-        "        if not self._enforce or not use_case:",
+        # Anchored with the line it guards: `cost_limited` asks the same question of the same flag
+        # (`FRD-610` §3.2), and an ambiguous anchor stops the harness rather than editing one of
+        # two places.
+        "        if not self._enforce:\n            return Reservation()",
+        "        if not self._enforce or not use_case:\n            return Reservation()",
         "gateway/tests/test_installation_budget.py",
     ),
     # Anchored in the **migration**, not in `models.py`: the test database is built from
@@ -9033,6 +9036,59 @@ MUTATIONS = [
         "`I could not read the budget.`",
         "whatever you can determine.",
         "tools/tests/test_the_opencode_command_asks_for_a_real_endpoint.py",
+    ),
+    # ---- unpriced is not unlimited (2026-10-12, `FRD-610` §3.2) ------------------------------
+    #
+    # A cost limit cannot bound what it cannot count. Each mutation is a way the rule could be
+    # absent, too broad, or scoped to the wrong budgets — and the broad ones matter as much as the
+    # absent one: a model refused where no money is capped is a model taken away for nothing.
+    Mutation(
+        "UP1",
+        "an unpriced model is refused where a cost limit binds the request",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if await self._pricing.price_for(model) is not None:\n            return None",
+        "        if True:\n            return None",
+        "gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
+    ),
+    Mutation(
+        "UP2",
+        "the refusal needs a cost limit; an unpriced model is otherwise none of its business",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if not await self._cost_limited():\n            return None",
+        "        if False:\n            return None",
+        "gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
+    ),
+    Mutation(
+        "UP3",
+        "a *cost* limit binds it, not any limit — tokens and requests count unpriced traffic",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "        return any(budget.limit_cost_nanos is not None for budget in budgets)",
+        "        return bool(budgets)",
+        "gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
+    ),
+    Mutation(
+        "UP4",
+        "with enforcement off nothing is capped, so nothing is refused for being uncountable",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "        if not self._enforce:\n            return False",
+        "        if False:\n            return False",
+        "gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
+    ),
+    Mutation(
+        "UP5",
+        "the switch lets an installation accept the gap knowingly",
+        "gateway/src/aira_gateway/api/serving/prepare.py",
+        "    if settings.enforce_priced_models:",
+        "    if True:",
+        "gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
+    ),
+    Mutation(
+        "UP6",
+        "the mock is not a model, so governing its price is theatre",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if _is_test_double(self._registry, model):\n            return None\n        if await self._pricing.price_for(model) is not None:",
+        "        if False:\n            return None\n        if await self._pricing.price_for(model) is not None:",
+        "gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
     ),
     # ---- a limit that stops nothing says so (2026-10-11, `FRD-610` §3.3) ---------------------
     #

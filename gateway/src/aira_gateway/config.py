@@ -55,6 +55,25 @@ class GatewaySettings(BaseAiraSettings):
 
     # Enforce use-case/member usage budgets pre-dispatch (FRD-401).
     enforce_budgets: bool = True
+    #: Refuse a model with **no price on file** where a *cost* limit binds the request
+    #: (`FRD-610` §3.2).
+    #:
+    #: An unpriced request contributes nothing to a spend figure — it is counted apart as
+    #: `unpriced_requests`, which is right for reporting (unknown is not zero) and means
+    #: **unbounded** for enforcement: a use case whose models are all unpriced spends without
+    #: limit against a budget that looks configured. Refusing makes a price a precondition for
+    #: governance, which is the honest relation between them.
+    #:
+    #: On by default, with the switch as the escape hatch: an installation with unpriced models and
+    #: cost budgets can keep serving while it adds the prices, and it does so **knowing** the limit
+    #: is not a limit. A `cost` budget is the only kind affected; token and request limits count
+    #: unpriced traffic exactly like any other.
+    #:
+    #: Named for the family it belongs to rather than for its mechanism: it sits beside
+    #: `enforce_budgets`, `enforce_rate_limits` and `enforce_suspensions` in the configuration a
+    #: reader scans, and all four answer *what does this installation refuse*. The precision — only
+    #: under a cost limit, only a model with no price — is here, in the FRD and in the refusal.
+    enforce_priced_models: bool = True
     #: Anomaly detection (`FRD-501`). Off evaluates nothing; authored rules stay authored.
     detect_anomalies: bool = True
     #: Whether a suspension stops traffic (`FRD-503`). Off records findings and refuses nobody.

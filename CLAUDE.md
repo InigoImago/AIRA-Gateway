@@ -45,7 +45,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **1016 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **1022 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -227,10 +227,9 @@ requires a test to notice.
 - `FRD-106` (an OpenAI-compatible **surface**) stays **withdrawn** — `FRD-132` measured a real
   coding assistant against the existing Gemini surface and it worked unmodified. The OpenAI
   *dialect* as an upstream is unaffected and shipped.
-- `FRD-610` **§3.2 is the one still open**: a *cost* limit is blind to a model the catalogue has no
-  price for — unknown is counted apart, which is right for reporting and *unbounded* for
-  enforcement. The FRD's answer is to refuse such a model where a cost limit applies, making
-  pricing a precondition for governance: a policy call, not a defect. §3.1 and §3.3 are built.
+- `FRD-610` is **built**: an unpriced model cannot hide from a cost limit (§3.2,
+  `AIRA_ENFORCE_PRICED_MODELS`, a dispatch condition so a chain prefers a priced candidate), and
+  both budget screens say when enforcement is off (§3.3).
 - **A model reachable only at `global` is not usable here** (`FRD-611`, `ADR-0012` §6). `global`
   names no region and guarantees none, so it is not in the shipped residency default;
   `gemini-3.5-flash` is catalogued, unapproved, and refused where its region is typed. Stated

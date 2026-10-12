@@ -1,8 +1,8 @@
 # FRD-610 — Nothing spends outside a bucket
 
-> Phase: 6 · Status: **Partly built** — diagnostics are audited (§2), the installation budget
-> exists (§3.1) and an unenforced switch now says so everywhere (§3.3); **§3.2 remains** · Owner:
-> Vadim Scheibe
+> Phase: 6 · Status: **Built** — diagnostics are audited (§2), the installation has its own budget
+> (§3.1), an unpriced model cannot hide from a cost limit (§3.2) and an unenforced switch says so
+> on every screen that shows a limit (§3.3) · Owner: Vadim Scheibe
 >
 > Origin: the owner, on the console's model checks: *"how does it look with the budget? Are these
 > test requests counted and taken into the budget, as already described — every request should be
@@ -109,22 +109,52 @@ else; this is not a global cap over everything. The pipeline's own calls (`refus
 `book_side_call`) still require a use case, because a pipeline **is** a use case's configuration —
 there is no such thing as an installation-level pipeline call.
 
-### 3.2 Unpriced is not unlimited
+### 3.2 Unpriced is not unlimited — **built (2026-10-12)**
 
 A cost budget compares `usage.cost_nanos` against its limit. An unpriced model contributes
 **nothing** to that figure — it is counted separately as `unpriced_requests`, which is the right
 answer for *reporting* (`FRD-403`: unknown is not zero) and the wrong one for *enforcement*, where
-unknown becomes unbounded. A use case whose models are all unpriced can spend without limit against
-a cost budget that looks configured.
+unknown becomes unbounded. A use case whose models are all unpriced could spend without limit
+against a cost budget that looked configured.
 
-Two ways out, and the first is recommended:
+Two ways out were considered:
 
-- **Refuse.** A model with no price on file may not be served where a *cost* limit applies. That
-  makes pricing a precondition for governance, which is the honest relation between them — and the
-  console already counts unpriced models on its own screen.
+- **Refuse** — chosen. A model with no price on file may not serve a request a *cost* limit binds.
+  That makes pricing a precondition for governance, which is the honest relation between them.
 - **Assume a worst case.** A configured ceiling price used for enforcement only, recorded as an
-  estimate. Rejected as the default: it invents a number, which is exactly what `ADR-0021` spent a
-  day removing, and a wrong number that permits spending is worse than a refusal that stops it.
+  estimate. Rejected: it invents a number, which is exactly what `ADR-0021` spent a day removing,
+  and a wrong number that permits spending is worse than a refusal that stops it.
+
+**It is a dispatch condition, not a check at the reservation**, and that is what makes it better
+than a refusal: `PricedWhereCostIsLimited` is asked of each candidate, so a chain **skips** the
+unpriced model and a priced one serves (`FRD-302`). Only a request whose last candidate cannot be
+counted is refused — and it is refused by name, with the price, the screen to add it on, and the
+switch that accepts the gap.
+
+**What does not fire.** A rule about money that fired where no money is capped would take a model
+away for reasons nobody asked for, so the conditions are narrow and each one is a test:
+
+| | |
+| --- | --- |
+| a *token* or *request* limit | counts unpriced traffic exactly like any other — no refusal |
+| no budget at all | no refusal |
+| `AIRA_ENFORCE_BUDGETS=false` | nothing is capped, so nothing is refused for being uncountable |
+| a disabled (lifted) cost budget | does not bind (`applicable`), so it cannot make a model unusable |
+| the mock upstream | exempt, like every other requirement: deterministic fiction has no price, and the demo ships a cost budget |
+
+Which budgets bind is `applicable`'s answer, the same rows the reservation books against — so the
+use case's shared pot, a per-member cost budget **and** the installation's own bucket (§3.1) each
+make a price a requirement. The price question is `PricingService.price_for`, the one definition
+the audit trail and the counters already use.
+
+**The order is cheap on purpose:** the price is asked first and the budgets only when there is no
+price, so an ordinary request pays for no extra query, and a chain asks the budget question at most
+once however many hops it takes.
+
+`AIRA_ENFORCE_PRICED_MODELS` is **on by default** and sits with `enforce_budgets`,
+`enforce_rate_limits` and `enforce_suspensions` — the four answers to *what does this installation
+refuse*. Off, an installation with unpriced models keeps serving while the prices are filled in,
+and it does so knowing the limit is not a limit.
 
 ### 3.3 A switch that is off must say so — **built (2026-10-11)**
 
@@ -178,6 +208,11 @@ Two of the three were answered by building §3.1:
    The installation's own spend is exactly the figure a governance role exists to see, and setting
    it is an act — `ADR-0007`: `IT Steuerung` oversees and acts in nothing. If that should change it
    changes in `InstallationBudgetViewSet.get_permissions` and nowhere else.
-3. **Refusing unpriced models under a cost budget will stop traffic** in installations that have
-   models nobody priced (§3.2). Behind a switch, defaulting to off for one release? — **still
-   open.**
+3. ~~**Refusing unpriced models under a cost budget will stop traffic**~~ — **behind a switch,
+   defaulting to on** (the owner's decision, 2026-10-12). Defaulting to *off* for a release was the
+   suggestion in this file and was rejected for the reason the whole section exists: a hole that
+   stays open by default is a hole for everybody who does not know about it. On, with
+   `AIRA_ENFORCE_PRICED_MODELS=false` as the escape hatch, an installation that has not finished
+   pricing keeps serving **by saying so** rather than by not having been asked. And the chain
+   softens the edge the question was worried about: a priced fallback serves where one exists, so
+   what stops is traffic that has no countable model at all.

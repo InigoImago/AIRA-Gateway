@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -24,6 +25,7 @@ from fastapi import Request
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.serving.context import (
+    attribution_of,
     catalog_of,
     embedding_bounds,
     released_models,
@@ -54,6 +56,7 @@ from aira_gateway.requirements import (
     MediaTypesSupported,
     ModelApproved,
     ModelReleasedForUseCase,
+    PricedWhereCostIsLimited,
     RegionAllowed,
     Requirement,
     SamplingExpressible,
@@ -65,7 +68,7 @@ from aira_gateway.requirements import (
     permits,
 )
 from aira_gateway.residency import parse_allowed
-from aira_gateway.state import providers_of, settings_of
+from aira_gateway.state import budgets_of, pricing_of, providers_of, settings_of
 from aira_gateway.thinking import reserved_tokens
 from aira_gateway.thinking import resolve as resolve_thinking
 from aira_gateway.upstreams.base import Upstream
@@ -192,11 +195,20 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     """
     registry = providers_of(request)
     catalog = catalog_of(request)
+    settings = settings_of(request)
     checks: list[Requirement] = [
-        RegionAllowed(registry, parse_allowed(settings_of(request).allowed_regions)),
+        RegionAllowed(registry, parse_allowed(settings.allowed_regions)),
         ModelApproved(catalog, registry),
         ModelReleasedForUseCase(await released_models(request), use_case_of(request), registry),
     ]
+    if settings.enforce_priced_models:
+        # An installation-level check like the three above, and asked on every verb: an embedding
+        # books against the same budgets as a chat request (`FRD-610` §3.2). The budget question is
+        # passed as a callable, resolved at most once per request and only when a candidate turns
+        # out to have no price — so the ordinary request pays for no extra query.
+        checks.append(
+            PricedWhereCostIsLimited(pricing_of(request), _cost_limited_once(request), registry)
+        )
     if canonical is not None and canonical.media_types:
         checks.append(MediaTypesSupported(catalog, canonical.media_types))
     if canonical is not None and canonical.response_schema is not None:
@@ -213,6 +225,30 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     if canonical is not None and canonical.speech is not None:
         checks.append(SpeechSupported(registry, catalog))
     return permits(checks)
+
+
+def _cost_limited_once(request: Request) -> Callable[[], Awaitable[bool]]:
+    """*Is spend capped for this caller?* — asked at most once per request, however long the chain.
+
+    Memoised on the request rather than in the requirement, because a chain builds its conditions
+    once and asks them per hop, and two hops must not be two queries about a fact that cannot
+    change inside one request.
+    """
+
+    async def answer() -> bool:
+        cached = getattr(request.state, "cost_limited", None)
+        if cached is None:
+            # The **same pot** the reservation books against: `attribution` is where the use case
+            # and the person come from on this path (`enforce_pre_dispatch`), and resolving either
+            # of them a second way is how one request gets asked about two different budgets.
+            attribution = attribution_of(request)
+            cached = await budgets_of(request).cost_limited(
+                getattr(attribution, "use_case", None), getattr(attribution, "person", None)
+            )
+            request.state.cost_limited = cached
+        return bool(cached)
+
+    return answer
 
 
 async def resolve_direct_target(

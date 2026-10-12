@@ -388,6 +388,24 @@ class BudgetService:
 
     # == reporting ================================================================================
 
+    async def cost_limited(self, use_case: str | None, subject: str | None) -> bool:
+        """Whether a **cost** limit binds this request (`FRD-610` §3.2).
+
+        Asked only when a model turns out to have no price, so the ordinary request pays for no
+        extra query. The same `applicable` rows the reservation books against, so the question
+        *"is spend capped here"* is answered by the thing that would do the capping — a second
+        definition of which budgets bind is the copy that disagrees.
+
+        With enforcement off nothing is capped at all, and the answer is `False`: refusing a model
+        to protect a limit that refuses nothing would be the strictest reading of the least
+        meaningful configuration.
+        """
+        if not self._enforce:
+            return False
+        async with self._sessionmaker() as session:
+            budgets = await applicable(session, use_case, subject)
+        return any(budget.limit_cost_nanos is not None for budget in budgets)
+
     async def usage(
         self,
         use_case: str,

@@ -64,7 +64,6 @@ core:
   auth_required: true
   # The three governance controls. Off means *measured and not enforced* — which is the honest way
   # to introduce them, and the wrong way to leave them.
-  # (`enforce_budgets` off is one of the two named holes in `FRD-610` §3.2.)
   redact_patterns: ''
   trust_forwarded_for: false
   trusted_proxy_hops: 1
@@ -73,6 +72,10 @@ enforce:
   budgets: true
   rate_limits: true
   suspensions: true
+  # A model with no price cannot be counted against a *cost* budget, so it would spend without
+  # bound (`FRD-610` §3.2). Off keeps such traffic flowing while prices are filled in — knowing
+  # the limit is not a limit. Token and request limits are unaffected.
+  priced_models: true
 
 # Watching traffic for the patterns `FRD-503` describes, and acting on them. `alert` first and
 # `block` later is the order `docs/INTEGRATIONS.md` §9 argues for: a rule is a hypothesis until
