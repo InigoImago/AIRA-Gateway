@@ -67,6 +67,14 @@ export class SmokeTests implements OnInit {
    * whose every control would refuse (`FRD-206`).
    */
   protected readonly withheld = signal(false);
+  /**
+   * Whether the server has answered for this screen at all.
+   *
+   * One permission guards every read here, so the first answer decides: a refusal withholds the
+   * screen, anything else shows it. No tab is shown before that — shown early, the tabs would be
+   * withdrawn under the reader's click the moment a refusal arrived.
+   */
+  protected readonly answered = signal(false);
 
   /**
    * The use cases this caller may put the catalogue to, answered by the server (`ADR-0020`):
@@ -115,6 +123,7 @@ export class SmokeTests implements OnInit {
       next: (rows) => {
         this.cases.set(rows);
         this.loading.set(false);
+        this.answered.set(true);
       },
       error: (response: unknown) => {
         this.loading.set(false);
@@ -125,6 +134,7 @@ export class SmokeTests implements OnInit {
       next: (rows) => {
         this.runnableUseCases.set(rows);
         this.attributionKnown.set(true);
+        this.answered.set(true);
         // Preselect only when there is nothing to choose: a run costs money, so picking one of
         // several pipelines for somebody is not this screen's call.
         if (rows.length === 1) this.chooseUseCase(rows[0].use_case);
@@ -149,6 +159,7 @@ export class SmokeTests implements OnInit {
       next: (rows) => {
         this.runs.set(rows);
         this.runsKnown.set(true);
+        this.answered.set(true);
       },
       error: (response: unknown) => {
         this.runsKnown.set(true);
@@ -159,6 +170,7 @@ export class SmokeTests implements OnInit {
       next: (rows) => {
         this.stats.set(rows);
         this.statsKnown.set(true);
+        this.answered.set(true);
       },
       error: (response: unknown) => {
         this.statsKnown.set(true);
@@ -179,6 +191,8 @@ export class SmokeTests implements OnInit {
       this.withheld.set(true);
       return;
     }
+    // An ordinary failure is an answer too, and not a refusal: the screen stays, with the reason.
+    this.answered.set(true);
     this.feedback.fail(response, failure);
   }
 

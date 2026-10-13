@@ -100,6 +100,11 @@ interface Options {
   loadBreaks?: boolean;
   /** Hold the attribution answer back, so the panel has to say it does not know yet. */
   attributionPending?: boolean;
+  /**
+   * Hold **every** guarded read back, so the screen has to wait for the server before it shows a
+   * tab. Released with `refuse()` or `allow()`, as the server answers: all four alike.
+   */
+  held?: boolean;
   /** Whether the reader says yes to an irreversible question. */
   confirm?: boolean;
   /**
@@ -121,6 +126,11 @@ function setup(options: Options = {}) {
   // An answer that has not arrived, so the "still asking" state is reachable at all.
   const attribution = new Subject<TestAttribution[]>();
   const pendingAttribution = attribution.asObservable();
+  // The four guarded reads, held back together when `held` asks for it.
+  const heldCases = new Subject<TestCase[]>();
+  const heldAttribution = new Subject<TestAttribution[]>();
+  const heldRuns = new Subject<TestRun[]>();
+  const heldStats = new Subject<TestModelStats[]>();
   const patched: Record<string, unknown>[] = [];
   TestBed.configureTestingModule({
     imports: [SmokeTests],
@@ -141,6 +151,7 @@ function setup(options: Options = {}) {
         provide: UseCaseService,
         useValue: {
           testCases: () => {
+            if (options.held) return heldCases.asObservable();
             if (options.refused) return throwError(() => REFUSAL);
             if (options.loadBreaks) {
               return throwError(() => ({
@@ -153,39 +164,45 @@ function setup(options: Options = {}) {
           // One server answer per use case: would the gateway accept this caller, can the pipeline
           // be entered, and if not, why not. The screen decides none of the three.
           testAttribution: () =>
-            options.refused
-              ? throwError(() => REFUSAL)
-              : options.attributionPending
-                ? pendingAttribution
-                : of(
-                    options.attribution ?? [
-                      {
-                        use_case: 'uc-a',
-                        name: 'Kundenservice',
-                        models: ['qwen2.5:3b'],
-                        may_run: true,
-                        why_not: '',
-                      },
-                    ],
-                  ),
+            options.held
+              ? heldAttribution.asObservable()
+              : options.refused
+                ? throwError(() => REFUSAL)
+                : options.attributionPending
+                  ? pendingAttribution
+                  : of(
+                      options.attribution ?? [
+                        {
+                          use_case: 'uc-a',
+                          name: 'Kundenservice',
+                          models: ['qwen2.5:3b'],
+                          may_run: true,
+                          why_not: '',
+                        },
+                      ],
+                    ),
           testRuns: () =>
-            options.refused
-              ? throwError(() => REFUSAL)
-              : options.runsFail
-                ? throwError(() => ({
-                    status: 500,
-                    error: { error: { message: 'the run store is unreachable' } },
-                  }))
-                : of([RUN]),
+            options.held
+              ? heldRuns.asObservable()
+              : options.refused
+                ? throwError(() => REFUSAL)
+                : options.runsFail
+                  ? throwError(() => ({
+                      status: 500,
+                      error: { error: { message: 'the run store is unreachable' } },
+                    }))
+                  : of([RUN]),
           testStats: () =>
-            options.refused
-              ? throwError(() => REFUSAL)
-              : options.statsFail
-                ? throwError(() => ({
-                    status: 500,
-                    error: { error: { message: 'the figures are unreachable' } },
-                  }))
-                : of(options.stats ?? []),
+            options.held
+              ? heldStats.asObservable()
+              : options.refused
+                ? throwError(() => REFUSAL)
+                : options.statsFail
+                  ? throwError(() => ({
+                      status: 500,
+                      error: { error: { message: 'the figures are unreachable' } },
+                    }))
+                  : of(options.stats ?? []),
           runResults: () => of(options.results ?? [result(), result({ id: 11, topic: 'PII' })]),
           startRun: (useCase: string) => {
             calls.push(`startRun:${useCase}`);
@@ -263,6 +280,26 @@ function setup(options: Options = {}) {
       attribution.complete();
       fixture.detectChanges();
     },
+    /** The held reads are refused, one after another, as the server refuses all four. */
+    refuse() {
+      for (const read of [heldAttribution, heldRuns, heldStats, heldCases]) {
+        read.error(REFUSAL);
+        fixture.detectChanges();
+      }
+    },
+    /** Only the attribution answers: the first answer that is not a refusal, the catalogue still out. */
+    allow() {
+      heldAttribution.next([]);
+      heldAttribution.complete();
+      fixture.detectChanges();
+    },
+    /** Every held read fails for an ordinary reason — the server is broken, not refusing. */
+    breakAll() {
+      for (const read of [heldAttribution, heldRuns, heldStats, heldCases]) {
+        read.error({ status: 500, error: { error: { message: 'the database is on fire' } } });
+        fixture.detectChanges();
+      }
+    },
   };
 }
 
@@ -304,6 +341,49 @@ describe('SmokeTests', () => {
       'the figures are unreachable',
     );
     expect(stats.testid('stats-loading')).toBeNull();
+  });
+
+  it('shows no tab before the server has said whether the screen is the reader\u2019s', () => {
+    /** One permission guards all four reads, and it can refuse. Tabs shown before the answer are
+     *  withdrawn the moment a refusal arrives — under a click the reader has already started. So
+     *  the screen says it is loading, and then shows either the refusal or the tabs, never both
+     *  in turn. */
+    const harness = setup({ held: true });
+
+    expect(harness.testid('tests-loading')).not.toBeNull();
+    expect(harness.testid('tab-runs')).toBeNull();
+
+    harness.refuse();
+
+    expect(harness.testid('tests-withheld')).not.toBeNull();
+    expect(harness.testid('tab-runs')).toBeNull();
+    expect(harness.testid('tests-loading')).toBeNull();
+  });
+
+  it('shows the tabs at the first answer that is not a refusal, whichever read gives it', () => {
+    const harness = setup({ held: true, tab: 'catalogue' });
+
+    harness.allow();
+
+    expect(harness.testid('tests-loading')).toBeNull();
+    expect(harness.testid('tab-runs')).not.toBeNull();
+    // The catalogue has not answered, and its own panel says so rather than showing none.
+    expect(harness.testid('cases-loading')).not.toBeNull();
+  });
+
+  it('stops saying it is loading when every read failed for an ordinary reason', () => {
+    /** A failed answer is still an answer. With nothing loaded, "Loading…" above a red banner
+     *  would say the server is still working on something it has already given up on. */
+    const harness = setup({ held: true });
+
+    harness.breakAll();
+
+    expect(harness.testid('tests-loading')).toBeNull();
+    expect(harness.testid('tests-withheld')).toBeNull();
+    expect(harness.element.querySelector('.callout--danger')?.textContent ?? '').toContain(
+      'the database is on fire',
+    );
+    expect(harness.testid('tab-runs')).not.toBeNull();
   });
 
   it('reports a load that genuinely failed as a failure, not as a refusal', () => {

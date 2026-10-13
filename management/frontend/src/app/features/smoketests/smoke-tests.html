@@ -22,6 +22,13 @@
       membership of it: a run puts every question to that use case's pipeline and spends its budget
       doing so. Ask an administrator of the use case you want tested, or IT Security.
     </div>
+  } @else if (!answered()) {
+    <!-- Not the tabs yet: the server has not said whether this screen is the reader's, and tabs
+         shown now would be withdrawn under a click the moment a refusal arrived. -->
+    <p class="loading" data-testid="tests-loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the pipeline tests…
+    </p>
   } @else {
     <div class="tabs" role="tablist" aria-label="Pipeline test sections">
       <button

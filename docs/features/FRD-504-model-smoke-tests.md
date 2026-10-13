@@ -402,7 +402,10 @@ volume are visible in reporting without a second mechanism.
   (The draft's version of this line said a use-case administrator could do neither; §5.8 is why it
   changed, twice and in both directions.)
 - **Frontend** — a 403 on load withholds the screen and names who runs the catalogue; a 500 does
-  not, because "ask an administrator" would send that reader to somebody who cannot help.
+  not, because "ask an administrator" would send that reader to somebody who cannot help. **No tab
+  is shown before the server has answered**: shown early, the tabs were withdrawn under the reader's
+  click the moment a refusal arrived — the browser suite's comparison of an administrator with a
+  plain member failed on that, on a runner slow enough for the click to win.
 - **Mutation** — `Q1f` removes the administration half of the rule, `Q1g` the gateway half. Each
   must make a test fail on its own: a composition guarded only as a whole is a composition that can
   quietly lose a half.
