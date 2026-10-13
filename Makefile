@@ -84,7 +84,8 @@ COMPOSE_FULL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) $(RELEASE_F) \
 # the containers an integrated `up` started. `tools/tests/test_a_release_runs_from_the_registry.py`
 # holds both halves of that: no new service, and the same project.
 COMPOSE_ALL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) \
-               --profile observability --profile demo --profile verify --profile debug
+               --profile observability --profile demo --profile verify --profile debug \
+               --profile windows-sso
 ENV_FILE := $(COMPOSE_DIR)/.env
 ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
@@ -147,7 +148,8 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         run-frontend up-full demo-ready down-full logs-apps build-images next-version \
         current-version release-tag release-check release-notes release-subject ci wait-healthy \
         prune mutants \
-        ui-audit release-pull up-integrated kafka-topics-external
+        ui-audit release-pull up-integrated kafka-topics-external \
+        windows-sso-up windows-sso-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -694,6 +696,21 @@ ui-audit: ## Walk every page, tab and window per role: screenshots + checks → 
 	@# walks a subset.
 	cd e2e && npm install --silent && npx playwright test -c ui-audit.config.ts
 	@echo "report: e2e/ui-audit-report/report.md"
+
+# ---- Windows sign-on (FRD-140) -------------------------------------------------------------------
+#
+# A Windows domain beside the stack — Samba as domain controller (`ad`, profile `windows-sso`),
+# whose KDC issues the tickets and whose directory Keycloak reads. `tools/windows_sso.py` makes both
+# administrators' changes: the domain's (Keycloak's service principal and its keytab) and the
+# realm's (the directory as a federation, Kerberos allowed). `make down` stops the domain with
+# everything else.
+windows-sso-up: env ## Start a Windows domain beside the stack and let the realm sign its people on
+	$(COMPOSE_FULL) --profile windows-sso up -d $(BUILD_FLAG) --wait ad
+	python3 tools/windows_sso.py apply
+
+windows-sso-down: ## Take the realm's Windows sign-on away again and stop the domain
+	python3 tools/windows_sso.py remove
+	$(COMPOSE_FULL) --profile windows-sso rm -sf ad
 
 lint: lint-py lint-frontend ## Run all linters/type-checks (check mode)
 

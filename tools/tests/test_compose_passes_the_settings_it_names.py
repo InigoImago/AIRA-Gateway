@@ -143,6 +143,9 @@ COMPOSE_ONLY = {
     # keeps. Read by `tools/otlp_inspector.py`, which is a debugging tool rather than a plane.
     "AIRA_PUBLISH_OTLP_INSPECTOR_PORT",
     "AIRA_OTLP_INSPECTOR_KEEP",
+    # The development domain's KDC (`windows-sso` profile, `FRD-140`), for the browser that stands
+    # in for a workstation. Read by Compose and by the suite that asks it for a ticket.
+    "AIRA_PUBLISH_KDC_PORT",
     "AIRA_PUBLISH_GATEWAY_PORT",
     "AIRA_PUBLISH_MANAGEMENT_PORT",
     "AIRA_PUBLISH_FRONTEND_PORT",

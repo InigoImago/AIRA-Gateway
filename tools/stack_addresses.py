@@ -67,6 +67,9 @@ PUBLISHED = {
     #: the wrong end of the wire.
     "otlp_inspector": "AIRA_PUBLISH_OTLP_INSPECTOR_PORT",
     "ollama": "AIRA_PUBLISH_OLLAMA_PORT",
+    #: The development domain's KDC (`windows-sso` profile, `FRD-140`). Not HTTP: a workstation's
+    #: Kerberos asks it for Keycloak's service ticket, and takes it as `netloc`.
+    "kdc": "AIRA_PUBLISH_KDC_PORT",
 }
 
 

@@ -207,3 +207,51 @@ services:
         condition: service_started
     networks: [aira]
     restart: "no"
+
+  # ---- a Windows domain, for proving the Windows sign-on (`FRD-140`) -------------------------
+  #
+  # Samba as an Active Directory domain controller: the directory Keycloak reads over LDAP, and
+  # the KDC whose tickets a Windows sign-on presents. It stands in for an installation's own AD,
+  # so it is behind a profile of its own — `make windows-sso-up` starts it and gives the realm
+  # its half, `make test-windows-sso` proves both halves and takes the realm's half away again.
+  ad:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/ad/Dockerfile
+    image: aira-ad:dev
+    container_name: ${AIRA_STACK:-aira}-ad
+    profiles: ["windows-sso"]
+    # The domain controller's own name, `dc.aira.test`. Keycloak reaches it as `ad`, by service.
+    hostname: dc
+    domainname: aira.test
+    environment:
+      # `tools/windows_sso.py` holds the same facts, and `tools/tests/test_windows_sso.py` fails
+      # when the two disagree — a realm named twice is a sign-on that fails with no message.
+      AD_REALM: AIRA.TEST
+      AD_NETBIOS: AIRA
+      # The development realm's role groups (`/aira/…`): a person in one of these is in the
+      # Keycloak group of the same name, and so holds the role it carries.
+      AD_ROLE_GROUPS: global-admins it-security it-steuerung
+      # And its departments (`/abteilungen/…`), which a use case is granted to like any group.
+      AD_DEPARTMENTS: kundendienst entwicklung
+      # The suffix of people's principal names: the mail domain, not the realm. Their tickets are
+      # still `<account>@AIRA.TEST`, which is the difference a federation has to get right.
+      AD_UPN_SUFFIX: firma.example
+    ports:
+      # The KDC, for the browser that stands in for a workstation: it asks for Keycloak's service
+      # ticket itself, as Windows does. Only TCP — the workstation's Kerberos is told to use it.
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_KDC_PORT:-1088}:88"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_KDC_PORT:-1088}:88"
+    healthcheck:
+      # The KDC and the directory, both answering. Provisioning runs before either opens.
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import socket; [socket.create_connection(('127.0.0.1', p), 2).close() for p in (88, 389)]"
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+    networks: [aira]
+    restart: unless-stopped
