@@ -19,6 +19,8 @@
     "audit/**/*.ts",
     "playwright.config.ts",
     "ui-audit.config.ts",
+    "windows-sso/**/*.ts",
+    "windows-sso.config.ts",
     "stack.ts",
     "created.ts",
     "teardown.ts"

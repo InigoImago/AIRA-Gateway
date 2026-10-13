@@ -25,6 +25,7 @@ import windows_sso
 ROOT = Path(__file__).resolve().parents[2]
 PROVISION = ROOT / "deploy" / "compose" / "ad" / "provision.sh"
 REALM_FILE = ROOT / "deploy" / "compose" / "keycloak" / "realms" / "aira-realm.json"
+SUITE = ROOT / "e2e" / "windows-sso"
 
 
 @pytest.fixture(autouse=True)
@@ -241,6 +242,20 @@ def test_keycloak_is_handed_the_key_the_domain_exported(monkeypatch) -> None:
     assert write[-1] == windows_sso.KEYTAB_IN_KEYCLOAK == _federation()["keyTab"][0]
     assert "umask 077" in write[-3]
     assert given == b"\x05\x02 the key"
+
+
+def test_every_fact_the_browser_suite_reads_is_one_the_tool_gives() -> None:
+    """The suite asks the tool for the domain's facts rather than writing them down; a name it reads
+    that the tool does not give is `undefined`, and the test that uses it fails about something
+    else."""
+    read = {
+        name
+        for path in SUITE.glob("*.ts")
+        for name in re.findall(r"\bDOMAIN\.(\w+)", path.read_text())
+    }
+
+    assert read, "the suite reads no fact at all; the search is wrong"
+    assert read <= set(windows_sso.facts()), read - set(windows_sso.facts())
 
 
 # == only where the realm is a fixture =============================================================

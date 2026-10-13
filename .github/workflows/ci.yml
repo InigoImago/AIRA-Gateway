@@ -162,6 +162,12 @@ jobs:
         working-directory: e2e
         run: npx playwright test
 
+      # A Windows domain beside the stack (`FRD-140`): Samba as the domain controller, and the
+      # browser as one of its workstations. Last, because its suite gives the realm a federation for
+      # the length of the run, and every suite above runs against a realm of local accounts.
+      - name: Windows sign-on
+        run: make test-windows-sso
+
       # Container logs are the only way to explain a failure that happened inside the stack.
       # Printed once: followed (`make logs-apps` locally), the step never ends and the job is
       # cancelled at its timeout with the failure's cause scrolled away.

@@ -70,3 +70,16 @@ would read stored content (every read is recorded, `ADR-0016`). Output: `ui-audi
 what a person — or an agent — reviews for what no rule can see: hierarchy, spacing, wording.
 `AIRA_AUDIT_ROLES=global-admin,use-case-user make ui-audit` walks a subset.
 
+
+## Windows sign-on (`make test-windows-sso`)
+
+Its own config (`windows-sso.config.ts`, specs in `windows-sso/`), because it needs what every other
+spec must not have: a Windows domain beside the stack (Samba, profile `windows-sso`) and a realm
+federated with it. The target starts the domain; the global setup gives the realm its half of the
+sign-on and the teardown takes it away again, passed or not.
+
+Each test makes the people it needs in the domain and opens one browser per person — a workstation
+of the domain, holding that person's Kerberos ticket or none — and asks the console, and with the
+token it got the gateway, who gets in. Chromium answers Keycloak's `Negotiate` challenge only with
+MIT Kerberos' `libgssapi_krb5.so.2` on the machine; the setup refuses to run without it, and without
+a running domain, rather than skip. What it proves and what it measured: `docs/features/FRD-140`.

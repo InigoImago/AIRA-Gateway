@@ -149,7 +149,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         current-version release-tag release-check release-notes release-subject ci wait-healthy \
         prune mutants \
         ui-audit release-pull up-integrated kafka-topics-external \
-        windows-sso-up windows-sso-down
+        windows-sso-up windows-sso-down test-windows-sso
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -702,8 +702,12 @@ ui-audit: ## Walk every page, tab and window per role: screenshots + checks → 
 # A Windows domain beside the stack — Samba as domain controller (`ad`, profile `windows-sso`),
 # whose KDC issues the tickets and whose directory Keycloak reads. `tools/windows_sso.py` makes both
 # administrators' changes: the domain's (Keycloak's service principal and its keytab) and the
-# realm's (the directory as a federation, Kerberos allowed). `make down` stops the domain with
-# everything else.
+# realm's (the directory as a federation, Kerberos allowed).
+#
+# **The suite gives the realm its half and takes it away again, passed or not**, in its own global
+# setup and teardown: every other suite runs against a realm of local accounts, and a federation
+# left in it would answer their directory searches with people from the domain. The domain itself
+# stays up between runs; `make down` stops it with everything else.
 windows-sso-up: env ## Start a Windows domain beside the stack and let the realm sign its people on
 	$(COMPOSE_FULL) --profile windows-sso up -d $(BUILD_FLAG) --wait ad
 	python3 tools/windows_sso.py apply
@@ -711,6 +715,12 @@ windows-sso-up: env ## Start a Windows domain beside the stack and let the realm
 windows-sso-down: ## Take the realm's Windows sign-on away again and stop the domain
 	python3 tools/windows_sso.py remove
 	$(COMPOSE_FULL) --profile windows-sso rm -sf ad
+
+test-windows-sso: ## Prove the Windows sign-on, console and gateway, getting in and not (FRD-140)
+	$(COMPOSE_FULL) --profile windows-sso up -d $(BUILD_FLAG) --wait ad
+	@( cd e2e && npm install --silent && npx playwright test -c windows-sso.config.ts ); status=$$?; \
+	$(MAKE) --no-print-directory purge-e2e-use-cases || true; \
+	exit $$status
 
 lint: lint-py lint-frontend ## Run all linters/type-checks (check mode)
 
