@@ -1753,6 +1753,14 @@ reading code.
   request the answer must not change anyway — the pre-dispatch checks and the dispatch that follows
   are supposed to be deciding about the same declaration, and re-reading was how they could quietly
   disagree.
+
+  *And the cache need not be ours.* Keycloak's user cache decides who is enabled and in which
+  groups, and with its default policy it keeps a person until something evicts them. Measured while
+  proving the Windows sign-on (`FRD-140`): a person disabled in AD went on renewing their session,
+  and a person taken out of an AD group received it in every new token — after a fresh Kerberos
+  sign-on too. Nothing in AIRA was wrong, and every revocation still ended at Keycloak's copy.
+  **When access is revoked somewhere else, follow it through every cache on the way to the token**;
+  a bounded lifespan turns "eventually" into a number an auditor can be given.
 - **Per-process state is correct until there are two processes.** The anomaly evaluator held its
   touched scopes, its cooldown and its right to run in memory; at N=1 every one of those is right,
   and at N=2 they produce duplicate findings, duplicate suspensions, and an evaluator that measures

@@ -814,7 +814,9 @@ In words, for a reader who cannot see the diagram:
 1. The person opens the console. Finding no valid token, it sends them to Keycloak, remembering a
    one-time secret (the PKCE verifier) that never leaves the browser.
 2. Keycloak shows its own login page and applies whatever the organisation requires there —
-   password, MFA, a hardware token. **AIRA never sees any of it.**
+   password, MFA, a hardware token — or, at a PC of a Windows domain, accepts the Kerberos ticket
+   the browser presents and shows no page at all (`ADR-0035`, `docs/INTEGRATIONS.md` §2).
+   **AIRA never sees any of it**, and gets the same token either way.
 3. Keycloak sends the browser back with a short-lived authorization code.
 4. The console exchanges that code, together with the PKCE verifier, for an access token. Without
    the verifier the code is worthless, which is what makes it safe for an application that cannot

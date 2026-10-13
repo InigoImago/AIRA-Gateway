@@ -216,6 +216,7 @@ make ci                # what CI checks: lint + types + unit tests with coverage
 make demo-ready        # block until the models and keys have reached the gateway
 make test-integration  # against the live stack
 make test-e2e          # real browser (Playwright)
+make test-windows-sso  # Windows sign-on against a stand-in domain: console and gateway (FRD-140)
 make mutants           # break each guarded property and check the tests notice
 
 make next-version      # what the next release tag would be

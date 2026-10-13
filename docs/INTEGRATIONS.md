@@ -324,11 +324,127 @@ a group nobody has used, so on a fresh installation the first grant of a new gro
 - **Client description length**: Keycloak stores it in `varchar(255)`. A longer one breaks the
   realm import, and the failure looks like Keycloak not starting.
 
+### Windows sign-on (Kerberos) — optional
+
+People at a PC of your Windows domain can reach the console **without typing a password**: the
+browser presents the Kerberos ticket Windows gave them at logon, Keycloak accepts it (SPNEGO) and
+issues the tokens a password would have produced. Somebody without a ticket — a PC outside the
+domain, a browser not set up for it — sees Keycloak's form, and their domain password works there
+as before.
+
+**AIRA changes nothing for it** (`ADR-0035`). The console, the gateway and the tokens are the same;
+AIRA cannot even tell which way somebody signed in. The whole change is configuration in three
+places, and this repository proves it end to end against a Samba domain — console and gateway, who
+gets in and who does not: `make test-windows-sso` (`FRD-140`). `tools/windows_sso.py` makes exactly
+the changes below against that stand-in, which makes it the most precise version of this list.
+
+#### 1. In the domain (your AD administrators)
+
+- **An account of its own for Keycloak's service principal** — not the account the LDAP federation
+  binds with. Exporting a keytab resets the account's password (`ktpass … -pass`), and a reset bind
+  password stops Keycloak reading the directory at all.
+- **The SPN, for the host in the browser's address bar**: `setspn -S HTTP/sso.firma.example
+  FIRMA\svc-keycloak-http`. That host is the host of `AIRA_OIDC_ISSUER` — the console sends the
+  browser there — and a browser asks for a ticket to *exactly* that name: an SPN for any other name
+  is one no browser ever requests. Several names in use means several SPNs.
+- **AES**: tick *This account supports Kerberos AES 128 bit / 256 bit encryption* on the account
+  (`msDS-SupportedEncryptionTypes` = `0x18`). Without it the KDC issues RC4 tickets, which Keycloak's
+  Java refuses — and everybody silently gets the form.
+- **The keytab**, for Keycloak and nobody else:
+
+  ```
+  ktpass -out keycloak.keytab -princ HTTP/sso.firma.example@FIRMA.LOCAL ^
+         -mapUser FIRMA\svc-keycloak-http -crypto AES256-SHA1 -ptype KRB5_NT_PRINCIPAL -pass *
+  ```
+
+  Copy it to the Keycloak host (e.g. `/opt/keycloak/conf/kerberos/keycloak.keytab`), readable by
+  Keycloak only. **Every password change of that account makes the keytab stale** — export it again,
+  or every ticket is refused and everybody gets the form.
+
+#### 2. In Keycloak — on the LDAP federation you already have
+
+| Setting | Value | Why |
+|---|---|---|
+| *Allow Kerberos authentication* | on | also turns the browser flow's *Kerberos* step to **Alternative** |
+| *Kerberos realm* | `FIRMA.LOCAL` | the AD domain, in capitals |
+| *Server principal* | `HTTP/sso.firma.example@FIRMA.LOCAL` | the SPN above |
+| *Key tab* | the keytab's path | Keycloak only *accepts* tickets; it needs the key and never asks the KDC |
+| *Kerberos principal attribute* | **empty** | see below |
+| *Username LDAP attribute* | `sAMAccountName` | what a ticket names |
+| *Cache policy* | **Max lifespan**, e.g. 5 minutes | see below — the setting that decides when somebody is out |
+| mapper *MSAD account controls* | **must exist** | see below — what keeps a disabled account out |
+
+- **Leave the *Kerberos principal attribute* empty.** A ticket names its person
+  `<sAMAccountName>@FIRMA.LOCAL`. Set to `userPrincipalName`, Keycloak looks for a UPN of exactly
+  that — and finds nobody wherever the UPN ends in the mail domain (`anna.schmidt@firma.de`), which
+  is most installations. Empty, it matches the account name and checks the realm. **Keycloak fills
+  `userPrincipalName` in when an Active Directory federation is created**, so clear it afterwards.
+- **The *Kerberos* step of the browser flow stays *Alternative*.** *Required* locks out everybody
+  without a ticket, including every PC outside the domain.
+- **The users DN (and any LDAP filter) decide who may sign on at all.** An account outside it has a
+  valid ticket and no way in — which is how to keep service and admin accounts out of AIRA.
+- **Edit the federation; never delete and recreate it.** Deleting removes the people it imported,
+  and with them the `sub` AIRA binds every person to (`ADR-0007`): everybody would arrive as a new
+  account, with nothing they were granted by name.
+
+**When does somebody disabled or moved in AD lose access?** That is Keycloak's *cache policy*, and
+its default has no bound: Keycloak keeps its copy of a person until something evicts it. A person
+disabled in AD can keep renewing their session, and a person taken out of a group keeps it — in
+every new token, even after a fresh Windows sign-on. With **Max lifespan**, a change in AD reaches
+AIRA at most *lifespan + one access-token lifetime* later (5 + 5 minutes with Keycloak's defaults);
+*No cache* makes it one token lifetime, at the price of a directory lookup per sign-in and renewal.
+This is not a Kerberos property: password sign-ons through the same federation behave the same.
+
+**Keep the mapper *MSAD account controls*.** It is the only thing that reads AD's *account disabled*
+flag: without it, a disabled person still signs on with a ticket issued before, and still renews
+their session. Keycloak creates it only when the federation's vendor is *Active Directory*.
+
+#### 3. On the PCs (your client IT)
+
+- The PC is in the domain, and the person logged on with their domain account.
+- **Edge and Chrome**: the policy `AuthServerAllowlist` names the Keycloak host
+  (`sso.firma.example`), by GPO or Intune. Without it the browser never offers the ticket — the
+  sign-on fails safe, into the form.
+- **Firefox**: the policy `Authentication` → `SPNEGO` (or `network.negotiate-auth.trusted-uris`)
+  names `https://sso.firma.example`.
+- Users open Keycloak under the host the SPN names. If that name is a DNS **alias**, Edge and Chrome
+  ask for a ticket to the canonical name instead (policy `DisableAuthNegotiateCnameLookup`), so the
+  SPN must name that one.
+
+**Checking it on a PC:** open the console, then `klist` in a command prompt — a ticket for
+`HTTP/sso.firma.example` means the browser asked for one; none means the browser never tried.
+
+#### What AIRA sees
+
+The same token as from the form: `sub`, `preferred_username` (the `sAMAccountName`) and `groups` —
+the paths your group mappers produce. A role or a use case is granted to those paths exactly as to
+any other group; mapping AD groups onto the paths `AIRA_ROLE_GROUPS` already names means nothing in
+AIRA changes at all.
+
+#### When the form appears on a domain PC
+
+Keycloak logs the cause as a warning. **Read the line before** *Received kerberos token, but there
+is no user storage provider that handles kerberos credentials* — that one follows every failure and
+names none.
+
+| In Keycloak's log | Cause |
+|---|---|
+| nothing at all | the browser offered no ticket — the allowlist policy, a host the SPN does not name, no domain logon — or the person is disabled in AD, which is the intended answer |
+| `Checksum failed` | the keytab is stale (the account's password changed) or for another account |
+| `Not found LDAP user with kerberos principal [x@FIRMA.LOCAL]` | the *Kerberos principal attribute* is set, or the person is outside the users DN |
+| only the line above, with no cause | Kerberos is not allowed on any federation of the realm |
+
+A person disabled in AD whose session is still open is refused at its next renewal:
+`REFRESH_TOKEN_ERROR … reason="User disabled"` — within the cache lifespan, not before.
+
 > done three role groups named in `AIRA_ROLE_GROUPS` · a **`groups` claim with full paths on
 > every client, including service accounts** — without it nobody holds any role at all · an
 > **audience mapper**, without which the services do not start · a public PKCE client
 > with pinned URIs · password grant off · issuer reachable from both services **at the same URL the
-> browser uses** · *(optional)* a read-only service account for directory search
+> browser uses** · *(optional)* a read-only service account for directory search · *(optional)*
+> Windows sign-on: an SPN and an AES keytab in AD, Kerberos on the federation with the principal
+> attribute **empty**, a **bounded cache policy**, the *MSAD account controls* mapper, and the
+> browsers' allowlist policy
 
 ---
 

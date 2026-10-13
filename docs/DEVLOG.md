@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Windows sign-on, proven for the console and the gateway (2026-10-13)
+
+The owner asked whether people could sign in with their Windows identity rather than a username
+and a password, and — their accounts already reaching Keycloak from AD over LDAP — for it to be
+proven on both components, for the people who get in and for those who must not. It needs nothing
+from AIRA (`ADR-0035`): the browser presents the Kerberos ticket from the Windows logon, Keycloak
+opens it with its keytab and issues the usual tokens. What was built is the proof (`FRD-140`).
+
+**A domain beside the stack.** `deploy/compose/ad` is Samba as an AD domain controller (profile
+`windows-sso`), provisioned without privileges — ACLs in a TDB, because an unprivileged container
+may not write `security.*` attributes — and atomically: `samba-tool domain trust namespaces` needs a
+running controller, failed during provisioning, and the restart policy brought up a domain without
+its OUs that reported healthy. The UPN suffix is now written where *Domains and Trusts* writes it,
+and a marker file decides whether a domain was finished. `tools/windows_sso.py` makes both
+administrators' changes — SPN, AES and keytab in the domain, the keytab handed to Keycloak as a
+file; the federation, its group mappers and a bounded cache in the realm — as edits, and takes the
+realm's half away again.
+
+**The browser suite** (`e2e/windows-sso`, own config, `make test-windows-sso`, last in CI's stack
+job): Playwright's Chromium as a workstation — the person's logon ticket in a credential cache,
+`krb5.conf` for the published KDC, `--auth-server-allowlist` as the browser policy. Ten tests, about
+75 seconds: in with no form and the AD group's role; the form without a ticket, and the domain
+password through it; the form for a browser not told to trust Keycloak; a disabled account kept out
+even with a ticket issued before; an account outside `OU=People` kept out; a ticket for a key
+Keycloak does not hold refused, then accepted once the key is exported again; a role and a
+department taken away, and a disabled account's renewal refused, each within the bound. At the
+gateway, the sign-on's token gets `mock-1` for a use case granted to the person's AD department and
+`403` for another department, compared after the member was let through.
+
+**Measured on the way**, each now in the guide (`docs/INTEGRATIONS.md` §2, *Windows sign-on*):
+
+- **Keycloak's default cache has no bound.** A person disabled in AD renewed their session until
+  the cache was cleared; a person taken out of a group kept it in every new token, after a fresh
+  Kerberos sign-on too. *Max lifespan* 20 s: both ended after 22 s. *No cache*: at once. Not a
+  Kerberos property — every federation of AD has it.
+- **The *MSAD account controls* mapper is the only thing that reads AD's disabled flag.** Deleted,
+  a disabled person signed on with an earlier ticket and renewed. `apply` now makes sure of it.
+- **A UPN in the mail domain hides a person from a lookup by UPN**, and Keycloak fills
+  `userPrincipalName` in as the principal attribute when it creates an AD federation, even when it
+  is sent empty; only an edit clears it. The suite's people carry `@firma.example`.
+- **MIT Kerberos appends the search domain to `localhost`** before asking the KDC; the workstation's
+  `krb5.conf` turns every rewrite off. **RC4 fails everybody**; the account is AES-only.
+- **Keycloak does not compare a ticket's service name** with its configured principal: the key is
+  the account's, so a ticket for any SPN of that account opens. The KDC is what enforces the host.
+
+**Proved able to fail.** Nine properties broken against the development realm by editing what the
+suite applies, nine caught: Kerberos off, lookup by UPN, the default cache, no role groups, the
+whole domain as the search base, RC4 only, no departments, an SPN for another host — which survived
+first, because the stand-in still carried the right SPN from an earlier run, and was caught against
+a fresh domain — and the account-controls mapper deleted. In the default run,
+`tools/tests/test_windows_sso.py` (18) guards the configuration and the facts the domain, the realm
+file, Compose and the suite share; `WSSO-1`–`WSSO-15`, all caught. `CLAUDE.md`: 1686 properties.
+
+The privacy notice does not change: AIRA receives the same claims, and the ticket is Keycloak's.
+
 ## The browser suite on a fresh stack, after the refactoring (2026-10-13)
 
 CI's first run of the refactoring failed two browser tests twice and two once. None reproduced on

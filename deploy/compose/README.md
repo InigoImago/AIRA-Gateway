@@ -16,6 +16,7 @@ demo mode. It is driven from the repo root via the `Makefile` (preferred), or di
 | otel-collector  | `otel/opentelemetry-collector-contrib`  | 4317, 4318   | OTLP ingest (profile `observability`)                                 |
 | otel-lgtm       | `grafana/otel-lgtm`                     | 3000         | Grafana + Tempo + Prometheus + Loki (profile `observability`)         |
 | otlp-inspector  | `python:3.14-slim`                      | 4319         | What the **forwarding** leg sends, on a page (profile `debug`, `make otlp-inspector`) |
+| ad              | `aira-ad` (Samba AD DC, built here)     | 1088 (KDC)   | A Windows domain for proving the Windows sign-on (profile `windows-sso`, `make test-windows-sso`) |
 
 > Image tags are pinned per `ADR-0003`. Observability is Grafana `otel-lgtm` per **ADR-0004**,
 > which supersedes the SigNoz choice in ADR-0002. `make up` includes the `observability` profile;
@@ -90,6 +91,30 @@ provides. Their secrets are in the realm file: **dev only**, never a template fo
 
 A stack whose realm predates these clients will not have them — the import runs only when the
 realm does not exist. The `keycloak-init` service notices and re-imports the realm; see below.
+
+## A Windows domain beside the realm (`windows-sso`)
+
+`deploy/compose/ad` is Samba as an Active Directory domain controller, in the showcase file behind
+the profile `windows-sso` (`FRD-140`). It stands in for an installation's AD so the Windows sign-on
+can be proven against a real KDC and directory: people, role groups and departments under
+`OU=AIRA`, an LDAP bind account, and the mail domain as an alternative UPN suffix. The domain is
+made on the container's first start; a recreated container is a new domain with new keys.
+
+`tools/windows_sso.py apply` makes both administrators' changes — Keycloak's service principal and
+its keytab in the domain, the federation with Kerberos in the realm — and `remove` takes the realm's
+half away. The keytab is handed to Keycloak as a file, the way a domain administrator hands it
+over, readable by Keycloak alone; a recreated Keycloak has lost it, and `apply` hands it over
+again.
+
+```bash
+make windows-sso-up     # start the domain, federate the realm (five-minute cache)
+make test-windows-sso   # prove it: console and gateway, getting in and not; the realm is restored after
+make windows-sso-down   # take the realm's half away, stop the domain
+```
+
+**Not a template for a real domain**: its LDAP accepts a simple bind in plain text inside the
+stack's network, and its bind password is random, per domain, and never leaves the container. What
+an installation sets is in [`docs/INTEGRATIONS.md`](../../docs/INTEGRATIONS.md) §2, *Windows sign-on*.
 
 ## Changing the Keycloak realm
 

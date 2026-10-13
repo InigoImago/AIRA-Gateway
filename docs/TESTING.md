@@ -117,6 +117,18 @@ renders and does nothing, a layout that only a viewport has an opinion about. An
 *user token* belongs here — the dev realm has the password grant off, so a token only comes from
 the real flow.
 
+### Beside it: the Windows sign-on (`make test-windows-sso`)
+Its own suite and its own config (`e2e/windows-sso`), because its precondition is one every other
+spec must not have: a Windows domain beside the stack — Samba as the domain controller, profile
+`windows-sso` — and a realm federated with it. The target starts the domain; the suite's global
+setup gives the realm its half of the sign-on (`tools/windows_sso.py apply`) and its teardown takes
+it away again, passed or not. Each test makes the people it needs in the domain and opens a browser
+that stands in for one of its workstations, holding that person's ticket or none — console and
+gateway, the people who get in and those who must not ([`FRD-140`](features/FRD-140-windows-sign-on.md)).
+It **refuses rather than skips** when the domain is down or Chromium cannot load MIT Kerberos
+(`libgssapi_krb5.so.2`). CI runs it last in the stack job. The configuration it stands on is
+guarded in the default run too, by `tools/tests/test_windows_sso.py`.
+
 ### Beside it: the UI audit (`make ui-audit`)
 Not a test and never red: a walk through every page, tab and window for each of the five demo roles,
 at desktop and phone width, that writes `e2e/ui-audit-report/report.md` and a screenshot per state
