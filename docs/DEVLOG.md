@@ -408,8 +408,9 @@ belongs in the gate).
     local model).
   - `make ui-audit`: **128 states** across five roles at 1440 px and 390 px, **0 findings** with
     the three new checks — after fixing the one it found once the round was done (the link above).
-- The per-finding record — location, failure, evidence, fix, test — is kept untracked in
-  `security-audit/REVIEW-2026-10-13/`, beside the September assessment.
+- The per-finding record — location, failure, evidence, fix, test — was kept outside the
+  repository, beside the September assessment, and deleted with it once the round had landed. What
+  is still open is the list under *Left for the owner* above.
 
 ## Unpriced is not unlimited: the last hole in spend control (2026-10-12)
 
