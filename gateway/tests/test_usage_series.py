@@ -419,6 +419,40 @@ def test_the_endpoint_serves_a_series_when_asked(client) -> None:
     assert body["series"]["split"] == "model"
 
 
+def test_a_window_given_with_an_offset_is_bucketed_on_the_axis_it_draws(
+    client, sessionmaker
+) -> None:
+    """Every figure is in UTC (`ADR-0028`): the buckets are UTC text from the database, so the
+    axis must be built from the window in UTC too. Built in the caller's offset, a request on the
+    first evening of the window landed in a column after the end of the chart — and on SQLite,
+    which drops the offset from the comparison, outside the window altogether."""
+    import anyio
+
+    with anyio.from_thread.start_blocking_portal() as portal:
+        # 01:30 on 1 August in +02:00.
+        portal.call(lambda: _log(sessionmaker, when=datetime(2026, 7, 31, 23, 30, tzinfo=UTC)))
+
+    body = client.get(
+        "/v1beta/reporting",
+        params={
+            "from": "2026-08-01T00:00:00+02:00",
+            "to": "2026-08-03T00:00:00+02:00",
+            "series": "day",
+        },
+    ).json()
+
+    assert body["totals"]["requests"] == 1, "a request inside the window was not counted"
+    assert body["series"]["buckets"] == ["2026-07-31", "2026-08-01", "2026-08-02"]
+    assert [point["bucket"] for point in body["series"]["points"]] == ["2026-07-31"]
+
+
+def test_a_moment_that_has_no_utc_is_the_callers_mistake(client) -> None:
+    """The first instant of year one in an eastern offset is before the first instant UTC has."""
+    response = client.get("/v1beta/reporting", params={"from": "0001-01-01T00:00:00+05:00"})
+
+    assert response.status_code == 400, response.text
+
+
 def test_a_granularity_this_endpoint_does_not_have_is_named(client) -> None:
     response = client.get("/v1beta/reporting", params={"series": "weekly"})
 
@@ -658,10 +692,12 @@ async def test_a_priced_request_is_neither(sessionmaker) -> None:
 
 async def test_a_refusal_is_not_counted_as_unmetered(sessionmaker) -> None:
     """Nothing ran, so there was nothing to meter. Counting it would make the caveat permanent for
-    any use case with a rate limit — the same rule `unpriced_requests` already follows."""
-    await _log(
-        sessionmaker, status=429, outcome="budget_exceeded", cost=None, prompt=0, completion=0
-    )
+    any use case with a rate limit — the same rule `unpriced_requests` already follows.
+
+    Seeded as a refusal is written — no usage at all, so `total_tokens` is NULL. With zero tokens
+    the row was not unmetered whatever `_was_served` said, and the test could not fail.
+    """
+    await _unmetered(sessionmaker, status=429, outcome="budget_exceeded")
 
     totals = (await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER))["totals"]
 

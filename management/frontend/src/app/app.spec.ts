@@ -130,9 +130,7 @@ describe('App', () => {
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
 
-    // The tabs are gone from the navigation…
-    expect(el.querySelector('.aira-nav__item.is-disabled')).toBeNull();
-    // …and what they encoded — the console follows the roles in the token — is now a chip per
+    // What the removed tabs encoded — the console follows the roles in the token — is a chip per
     // role in the header, carrying the slug so it stays assertable without depending on wording.
     expect(el.querySelector('.aira-user__role[data-role="it-security"]')).not.toBeNull();
     expect(el.querySelector('.aira-user__role[data-role="global-admin"]')).not.toBeNull();
@@ -154,9 +152,26 @@ describe('App', () => {
 
     expect(chip('controlling')?.textContent?.trim()).toBe('Controlling');
     expect(chip('global-admin')?.textContent?.trim()).toBe('Global Administrator');
-    expect(chip('global-admin')?.getAttribute('title')).toContain('price a model');
     expect(chip('unnamed')?.textContent?.trim()).toBe('unnamed');
-    expect(chip('controlling')?.getAttribute('title')).toBe('');
+  });
+
+  it('does not describe a role in words the server did not give', () => {
+    // What a role may do is the server's answer, and `/me` lists the caller's permissions, not one
+    // set per role — so a chip cannot honestly say what *its* role permits. A sentence written here
+    // instead goes stale the day a role is edited, and the built-in ones were already wrong: IT
+    // Security was told it sees "configuration, not content" while holding `payload.read_any`.
+    configure(true, ['it-security', 'global-admin', 'it-steuerung'], BUILTIN['it-security']);
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const chips = [...(fixture.nativeElement as HTMLElement).querySelectorAll('.aira-user__role')];
+
+    expect(chips.length).toBe(3);
+    for (const chip of chips) {
+      expect(chip.hasAttribute('title'), chip.getAttribute('data-role') ?? '').toBe(false);
+    }
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('.aira-user')?.textContent,
+    ).not.toMatch(/not its content|price a model|change none of it/);
   });
   it('signs the user out from the header', async () => {
     configure(true);

@@ -16,6 +16,7 @@ from guardian.shortcuts import assign_perm, remove_perm
 from rest_framework.exceptions import ValidationError
 
 from aira_common.directory import DirectoryUnavailable
+from aira_management.apps.api.authentication import namesakes_of, signs_in_as
 from aira_management.apps.api.models import PendingIdentity
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.directory.service import known_person
@@ -25,6 +26,7 @@ from aira_management.apps.usecases.access import VIEW as _VIEW
 from aira_management.apps.usecases.access import holds_a_grant
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseMembership
+from aira_management.apps.usecases.views.payloads import _membership_payload
 
 
 def _grant(holder: Any, usecase: UseCase, role: str) -> None:
@@ -38,6 +40,20 @@ def _grant(holder: Any, usecase: UseCase, role: str) -> None:
 def _revoke(holder: Any, usecase: UseCase) -> None:
     for perm in (_VIEW, _CHANGE, _MANAGE):
         remove_perm(perm, holder, usecase)
+
+
+def _admit(usecase: UseCase, user: Any, role: str) -> UseCaseMembership:
+    """Make ``user`` a direct member of ``usecase`` as ``role`` — the one sequence every writer of
+    a membership runs: the row, the object permissions for exactly that role (revoked first, so
+    lowering an administrator to a user lowers them), and the event the gateway's direct
+    memberships are built from (`FRD-209` §2.1). Call it inside the change's transaction."""
+    membership, _created = UseCaseMembership.objects.update_or_create(
+        use_case=usecase, user=user, defaults={"role": role}
+    )
+    _revoke(user, usecase)
+    _grant(user, usecase, role)
+    emit("membership.upserted", _membership_payload(usecase, user.get_username(), role))
+    return membership
 
 
 def _resolve_user(username: str) -> Any:
@@ -66,6 +82,7 @@ def _resolve_or_invite(username: str, *, invited_by: str) -> Any:
     """
     user = get_user_model().objects.filter(username=username).first()
     if user is not None:
+        _refuse_a_name_the_gateway_reads_differently(user)
         return user
     try:
         found = known_person(username)
@@ -86,6 +103,41 @@ def _resolve_or_invite(username: str, *, invited_by: str) -> Any:
         created = get_user_model().objects.create(username=found.id, email=found.detail[:254])
         PendingIdentity.objects.create(user=created, invited_by=invited_by[:150])
     return created
+
+
+def _refuse_a_name_the_gateway_reads_differently(user: Any) -> None:
+    """Refuse a direct membership whose name would reach a different person at the gateway.
+
+    A membership crosses to the gateway as this plane's username, and the gateway matches it
+    against the token's `preferred_username` (`FRD-209` §2.1). The two coincide until provisioning
+    has to rename somebody whose sign-in name was already taken here (`_suffixed`): from then on
+    one name stands for two people, and the second person's own account name for nobody.
+    """
+    name = user.get_username()
+    namesakes = sorted(other.get_username() for other in namesakes_of(name))
+    if namesakes:
+        raise ValidationError(
+            {
+                "username": [
+                    f"'{name}' is ambiguous: the account {', '.join(namesakes)} also signs in as "
+                    f"'{name}'. The gateway grants a direct membership to whoever signs in under "
+                    "that name, which is no longer the account shown here, so the grant is "
+                    "refused. Grant access through a Keycloak group instead."
+                ]
+            }
+        )
+    signed_in_as = signs_in_as(user)
+    if signed_in_as is not None:
+        raise ValidationError(
+            {
+                "username": [
+                    f"'{name}' signs in as '{signed_in_as}' — the account was renamed here because "
+                    "that name was taken — and the gateway matches a direct membership by the "
+                    "sign-in name, so a membership under this name would reach nobody there. "
+                    "Grant access through a Keycloak group instead."
+                ]
+            }
+        )
 
 
 def _revoke_key(key: ApiKey, slug: str) -> None:

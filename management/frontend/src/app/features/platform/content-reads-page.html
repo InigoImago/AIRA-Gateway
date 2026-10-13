@@ -1,7 +1,7 @@
 <div class="stack">
   <header>
     <h2 class="card__title" style="margin: 0">Content reads</h2>
-    <p class="muted" style="margin: 0.25rem 0 0">
+    <p class="muted lead">
       Every time somebody opened a request's stored prompt and response: when, who, from which use
       case, and in which role. Kept after the content itself has expired.
     </p>
@@ -35,7 +35,10 @@
   </div>
 
   @if (view.loading() && !view.rows().length) {
-    <p class="muted" data-testid="reads-loading">Loading…</p>
+    <p class="loading" data-testid="reads-loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the content-read log…
+    </p>
   } @else if (!view.rows().length) {
     <p class="empty" data-testid="no-reads">
       @if (filtered()) {

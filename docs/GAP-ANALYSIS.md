@@ -21,7 +21,7 @@ scheduled` here while `FRD-118` had shipped.
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 1 | Unified provision of models | partly | Vertex (Gemini + Anthropic) done, OpenAI-compatible/self-hosted done, Foundry built but **hermetic only** — no Azure subscription has ever run it |
+| 1 | Unified provision of models | partly | Vertex (Gemini + Anthropic) done, Agent Platform's managed open models (GLM, DeepSeek) done — served only at `global`, so each is permitted by name (`ADR-0034`), OpenAI-compatible/self-hosted done, Foundry built but **hermetic only** — no Azure subscription has ever run it |
 | 2 | Role assignment | done | `FRD-201`, `ADR-0009`, `ADR-0017`/`FRD-605` — a role is held **through a Keycloak group and nothing else**; a realm role assigned directly grants nothing. What a role may do is a permission set, and an installation defines its own roles, each bound to one checked group (`FRD-614`, `ADR-0025`) |
 | 3 | KIRA API compatibility | done | `FRD-107` Stage A+B — text, documents, thinking, structured output, batch embedding |
 | 4 | Auditability | done | `FRD-122` — refusals recorded at the exception boundary, requested vs. served model, degradation per row |
@@ -55,7 +55,7 @@ rather than correctness — each does what it says for what it covers.
 | # | Feature | Stand |
 |--:|---|---|
 | 18 | Document processing (PDF, images) | done `FRD-110` — 15 media types, signature checks, a model that cannot read it is **refused by name** |
-| 19 | Extensibility as a measurable property | done the assertion passes and the claim has now been tested **three** times — Vertex/Gemini, Vertex/Anthropic, and Foundry, which reused the OpenAI dialect without a line of change |
+| 19 | Extensibility as a measurable property | done the assertion passes and the claim has now been tested **four** times — Vertex/Gemini, Vertex/Anthropic, Foundry, which reused the OpenAI dialect without a line of change, and Vertex's managed open models, which reused it on a second transport; the dialect gained two readings (`reasoning_content`, a `usage` with no count) that every OpenAI-compatible server benefits from |
 | 20 | Secrets from Vault | done `FRD-116` — a settings source, fail-closed |
 | 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS done; outgoing calls traced since 2026-08-31 (**FR-5 was recorded here as done from 2026-08-06 and had never been built** — see `FRD-117` §5.3); **FR-7 (a second OpenAPI 3.0 document) not built** |
 | 22 | Masking sensitive content in stored payloads | partly `FRD-406` (2026-08-08) — **credentials** are masked; PII deliberately is not |

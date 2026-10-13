@@ -202,6 +202,11 @@ def test_no_query_in_reporting_conditions_on_a_table_it_does_not_select() -> Non
     `.where(...)` chain mentions, in the same function. A condition over a table the statement does
     not select from is either a cartesian product or a subquery somebody forgot to write, and this
     package has no subqueries.
+
+    **A condition built in a helper counts as written where it is used.** That is the shape the
+    original defect had — `_about_this_caller` returned a condition over `RequestLog` and contained
+    no `select(` of its own — so a guard reading each function alone could not see it. A helper's
+    tables are whatever it mentions, and whatever the helpers it calls mention.
     """
     modules = sorted(SOURCE.glob("*.py"))
     assert modules, f"no modules under {SOURCE} — the guard would check nothing"
@@ -211,26 +216,55 @@ def test_no_query_in_reporting_conditions_on_a_table_it_does_not_select() -> Non
     )
     models = {"RequestLog", "AnomalyEvent", "PayloadAccess", "UseCaseRead"}
     offenders: list[str] = []
+    functions = [
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    ]
 
-    for function in ast.walk(tree):
-        if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
+    def called(node: ast.AST) -> str:
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name | ast.Attribute):
+            return ""
+        return node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+
+    def mentioned(node: ast.AST) -> set[str]:
+        return {
+            child.value.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.Attribute) and isinstance(child.value, ast.Name)
+        } | {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+
+    # The helpers — functions that build without selecting — and every table each one reaches,
+    # through the helpers it calls as well.
+    helpers = {
+        function.name: mentioned(function) & models
+        for function in functions
+        if not any(called(node) == "select" for node in ast.walk(function))
+    }
+    calls = {
+        function.name: {called(node) for node in ast.walk(function)} & set(helpers)
+        for function in functions
+        if function.name in helpers
+    }
+    changed = True
+    while changed:
+        changed = False
+        for name, inner in calls.items():
+            reached = set().union(*(helpers[other] for other in inner)) if inner else set()
+            if not reached <= helpers[name]:
+                helpers[name] |= reached
+                changed = True
+
+    for function in functions:
         selected: set[str] = set()
         conditioned: set[str] = set()
         for node in ast.walk(function):
-            if not isinstance(node, ast.Call):
-                continue
-            if not isinstance(node.func, ast.Name | ast.Attribute):
-                continue
-            name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            name = called(node)
             if name not in {"select", "where"}:
                 continue
-            mentioned = {
-                child.value.id
-                for child in ast.walk(node)
-                if isinstance(child, ast.Attribute) and isinstance(child.value, ast.Name)
-            } | {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
-            (selected if name == "select" else conditioned).update(mentioned & models)
+            reached = mentioned(node) & models
+            reached |= set().union(
+                *(helpers[called(inner)] for inner in ast.walk(node) if called(inner) in helpers)
+            )
+            (selected if name == "select" else conditioned).update(reached)
         stray = conditioned - selected
         if selected and stray:
             offenders.append(

@@ -12,6 +12,7 @@ case. Testing a model is then a use case that model is released to.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -117,6 +118,12 @@ def _administrator(username: str = "uca", slug: str = UC) -> APIClient:
 
 def _start(client: APIClient, slug: str = UC, model: str = START) -> Any:
     return client.post(RUNS, {"use_case": slug, "model": model}, format="json")
+
+
+def _finish(client: APIClient, run_id: int) -> Any:
+    """Close a run, as the console does once the last question is answered. Only a finished run
+    is a use case's standing."""
+    return client.post(f"{RUNS}{run_id}/finish/", {}, format="json")
 
 
 @pytest.fixture
@@ -298,6 +305,7 @@ def test_the_statistics_report_unrated_apart_from_everything_else(catalogue) -> 
     run_id = _start(client).data["id"]
     first, _second = Result.objects.filter(run_id=run_id).order_by("id")
     client.patch(f"{RESULTS}{first.pk}/", {"verdict": "fail"}, format="json")
+    _finish(client, run_id)
 
     row = next(r for r in client.get(STATS).data if r["use_case"] == UC)
 
@@ -323,10 +331,12 @@ def test_only_the_latest_run_counts_and_the_one_before_it_is_history(catalogue) 
     old = _start(client).data["id"]
     for result in Result.objects.filter(run_id=old):
         client.patch(f"{RESULTS}{result.pk}/", {"verdict": "fail"}, format="json")
+    _finish(client, old)
 
     new = _start(client).data["id"]
     for result in Result.objects.filter(run_id=new):
         client.patch(f"{RESULTS}{result.pk}/", {"verdict": "pass"}, format="json")
+    _finish(client, new)
 
     rows = [r for r in client.get(STATS).data if r["use_case"] == UC]
 
@@ -347,6 +357,7 @@ def test_a_failed_request_is_counted_apart_from_a_bad_answer(catalogue) -> None:
     run_id = _start(client).data["id"]
     result = Result.objects.filter(run_id=run_id).first()
     client.patch(f"{RESULTS}{result.pk}/", {"error": "429 rate limited"}, format="json")
+    _finish(client, run_id)
 
     row = next(r for r in client.get(STATS).data if r["use_case"] == UC)
 
@@ -425,16 +436,19 @@ def test_authoring_the_catalogue_stays_with_it_security() -> None:
 # ---- the catalogue is a standard ----------------------------------------------------------------
 
 
-def test_renaming_a_question_corrects_it_instead_of_adding_a_second_one(monkeypatch) -> None:
+def test_a_renamed_declaration_never_adds_a_second_question(monkeypatch) -> None:
     """The seed keys questions on **position**, not on topic.
 
     Keying on the name looks natural and is wrong: a rename is then a *create*, so the old wording
     survives beside the new one — with its answers still attached, which is exactly what makes it
-    invisible. That happened on 2026-08-09 and the catalogue silently grew by two. The same
-    lesson `FRD-208` recorded for anomaly rules, in a second place.
+    invisible. The same lesson `FRD-208` recorded for anomaly rules, in a second place.
 
-    The first version of this test seeded the same declaration twice and passed against the broken
-    code, because nothing was renamed. A test named after a rename has to rename something.
+    **And the question at that position is IT Security's** once seeded (`test_catalogue_data`): a
+    seed that rewrote it would undo whatever the owner had made of it in the console, and nothing
+    records which wording the seed wrote. So a changed declaration changes nothing that exists — it
+    is what a new installation is seeded with.
+
+    A test named after a rename has to rename something.
     """
     from aira_management.apps.seed.contributions import test_catalogue as seed_module
 
@@ -446,8 +460,8 @@ def test_renaming_a_question_corrects_it_instead_of_adding_a_second_one(monkeypa
 
     questions = Case.objects.filter(retired=False)
 
-    assert questions.count() == 1, "a rename must correct the question, not add a second one"
-    assert questions.first().topic == "New name"
+    assert questions.count() == 1, "a rename must not add a second question"
+    assert questions.first().topic == "Old name", "the seeded question is IT Security's now"
 
 
 def test_a_question_dropped_from_the_standard_is_retired_and_its_answers_survive(catalogue) -> None:
@@ -769,3 +783,321 @@ def test_retiring_takes_a_question_out_of_the_catalogue_and_keeps_its_answers() 
     assert case.pk not in [row["id"] for row in listed.data]
     # The verdict is what retirement exists to preserve.
     assert Result.objects.filter(case=case, verdict="pass").exists()
+
+
+# ---- a run is evidence (`FRD-504` §5.7) ----------------------------------------------------
+
+
+def _answered(
+    client: APIClient, run_id: int, answer: str = "Here is the key: sk-live-abc123."
+) -> Result:
+    """The first result of ``run_id``, answered the way the console writes an answer back."""
+    result = Result.objects.filter(run_id=run_id).order_by("id").first()
+    assert result is not None
+    written = client.patch(
+        f"{RESULTS}{result.pk}/", {"response": answer, "latency_ms": 120}, format="json"
+    )
+    assert written.status_code == 200, written.data
+    return result
+
+
+def _rated(client: APIClient, result: Result, verdict: str = "fail", note: str = "leaked") -> None:
+    rated = client.patch(
+        f"{RESULTS}{result.pk}/", {"verdict": verdict, "note": note}, format="json"
+    )
+    assert rated.status_code == 200, rated.data
+
+
+def test_a_run_is_kept_whoever_asks_for_it_to_go(catalogue) -> None:
+    """Earlier runs are history, kept and readable (`FRD-504` §5.7) — and a run holds verdicts other
+    people formed. The administrator of the use case is exactly the party whose answers were judged,
+    so a `DELETE` that removed the run and every verdict in it was the evidence's subject erasing
+    the evidence. The console never offered one; the route is gone rather than restricted."""
+    _runnable()
+    sec = _runner()
+    run_id = _start(sec).data["id"]
+    _rated(sec, _answered(sec, run_id))
+    admin = _administrator()
+
+    for client in (admin, sec, _client(_user("boss", "global-admin"))):
+        assert client.delete(f"{RUNS}{run_id}/").status_code == 405
+
+    assert Run.objects.filter(pk=run_id).exists()
+    assert Result.objects.filter(run_id=run_id).count() == 2
+    assert Result.objects.filter(run_id=run_id, verdict="fail").exists()
+
+
+def test_a_rated_answer_is_the_answer_that_was_judged(catalogue) -> None:
+    """A verdict was formed against this text. Replacing it afterwards kept the verdict and the name
+    of whoever gave it, so the export showed somebody rating `fail` an answer they never saw —
+    refused for everybody, the run's own requester included."""
+    _runnable()
+    sec = _runner()
+    run_id = _start(sec).data["id"]
+    result = _answered(sec, run_id)
+    _rated(sec, result)
+
+    rewritten = sec.patch(
+        f"{RESULTS}{result.pk}/", {"response": "I cannot help with that."}, format="json"
+    )
+
+    assert rewritten.status_code == 400
+    assert "rated" in rewritten.data["error"]["details"]["response"][0]
+    result.refresh_from_db()
+    assert result.response == "Here is the key: sk-live-abc123."
+    assert (result.verdict, result.rated_by.username) == ("fail", "sec")
+
+
+def test_an_answer_is_written_by_the_person_whose_run_it_is(catalogue) -> None:
+    """The console writes each answer from the browser of whoever started the run. Anybody else who
+    may run the catalogue here may *rate* it, never put words in the model's mouth before somebody
+    rates them."""
+    _runnable()
+    sec = _runner()
+    run_id = _start(sec).data["id"]
+    result = Result.objects.filter(run_id=run_id).order_by("id").first()
+
+    forged = _administrator().patch(
+        f"{RESULTS}{result.pk}/", {"response": "I cannot help with that."}, format="json"
+    )
+
+    assert forged.status_code == 403
+    result.refresh_from_db()
+    assert result.response == ""
+
+
+def test_taking_a_rating_back_takes_its_author_with_it(catalogue) -> None:
+    """`unrated` is a state, not a missing value — and a result in it was rated by nobody. Keeping
+    the last rater's name and time beside `unrated` says somebody judged it when nobody now does."""
+    _runnable()
+    sec = _runner()
+    run_id = _start(sec).data["id"]
+    result = _answered(sec, run_id)
+    _rated(sec, result)
+
+    _rated(sec, result, verdict="unrated", note="")
+
+    result.refresh_from_db()
+    assert result.verdict == "unrated"
+    assert result.rated_by is None
+    assert result.rated_at is None
+
+
+def test_whoever_changes_a_judgement_is_the_one_it_names(catalogue) -> None:
+    """A note is half of the judgement. Changing only the note kept the first rater's name on words
+    they never wrote, which is the judgement-naming-the-wrong-person this view exists to prevent."""
+    _runnable()
+    sec = _runner()
+    run_id = _start(sec).data["id"]
+    result = _answered(sec, run_id)
+    _rated(sec, result)
+    admin = _administrator()
+
+    changed = admin.patch(f"{RESULTS}{result.pk}/", {"note": "fine, really"}, format="json")
+
+    assert changed.status_code == 200, changed.data
+    result.refresh_from_db()
+    assert result.note == "fine, really"
+    assert result.rated_by.username == "uca"
+
+
+# ---- what the console asks of a run ------------------------------------------------------------
+
+
+def test_the_runs_of_one_use_case_are_the_runs_of_that_use_case(catalogue) -> None:
+    """`?use_case=` is what the console's run list sends; a filter that matched nothing, or
+    everything, would show one use case's history under another's name."""
+    _runnable("mine")
+    _runnable("also-mine")
+    client = _runner("sec", slug="mine")
+    get_user_model().objects.get(username="sec").groups.add(
+        Group.objects.get_or_create(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/also-mine")[0]
+    )
+    first = _start(client, "mine").data["id"]
+    second = _start(client, "also-mine").data["id"]
+
+    assert [run["id"] for run in client.get(RUNS, {"use_case": "mine"}).data] == [first]
+    assert [run["id"] for run in client.get(RUNS, {"use_case": "also-mine"}).data] == [second]
+
+
+def test_a_run_started_without_a_model_enters_at_the_first_released_one(catalogue) -> None:
+    """ "Whichever" is a legitimate choice, and the run still records *some* entry point — a run
+    without one compares with nothing."""
+    _runnable(models=(START, "other-1"))
+    client = _runner()
+
+    response = client.post(RUNS, {"use_case": UC}, format="json")
+
+    assert response.status_code == 201, response.data
+    assert response.data["model"] == sorted((START, "other-1"))[0]
+
+
+def test_the_answers_of_a_run_are_read_only_by_somebody_who_could_have_started_it(
+    catalogue,
+) -> None:
+    """The rating window loads `results`; a run carries its use case's own answers."""
+    _runnable()
+    _runnable("theirs")
+    sec = _runner()
+    run_id = _start(sec).data["id"]
+
+    mine = sec.get(f"{RUNS}{run_id}/results/")
+    stranger = _runner("them", slug="theirs").get(f"{RUNS}{run_id}/results/")
+
+    assert mine.status_code == 200
+    assert [row["topic"] for row in mine.data] == ["Weapons", "PII"]
+    assert stranger.status_code == 404
+
+
+def test_a_run_is_finished_by_whoever_started_it_and_once(catalogue) -> None:
+    """A finished run is a use case's standing, so finishing is not a colleague's to do on somebody
+    else's half-asked run — and finishing twice must not move the moment it ended."""
+    _runnable()
+    _runnable("theirs")
+    sec = _runner()
+    run_id = _start(sec).data["id"]
+
+    assert _finish(_runner("them", slug="theirs"), run_id).status_code == 404
+    assert _finish(_administrator(), run_id).status_code == 403
+    assert Run.objects.get(pk=run_id).finished_at is None
+
+    finished = _finish(sec, run_id)
+    assert finished.status_code == 200, finished.data
+    first = Run.objects.get(pk=run_id).finished_at
+    assert first is not None
+
+    again = _finish(sec, run_id)
+    assert again.status_code == 200
+    assert Run.objects.get(pk=run_id).finished_at == first
+
+
+# ---- the standing, and what it costs -------------------------------------------------------------
+
+
+def test_the_standing_is_the_latest_finished_run_never_one_still_going(catalogue) -> None:
+    """A run creates every result up front and fills them as it goes. One that stopped after seven
+    questions — or is still going — would otherwise become the use case's current standing, with
+    its never-asked questions counted as unrated answers."""
+    _runnable()
+    client = _runner()
+    done = _start(client).data["id"]
+    for result in Result.objects.filter(run_id=done):
+        client.patch(f"{RESULTS}{result.pk}/", {"verdict": "pass"}, format="json")
+    assert _finish(client, done).status_code == 200
+    going = _start(client).data["id"]
+
+    rows = [r for r in client.get(STATS).data if r["use_case"] == UC]
+
+    assert [row["run"] for row in rows] == [done]
+    assert rows[0]["pass"] == 2
+
+    _finish(client, going)
+    assert [r["run"] for r in client.get(STATS).data if r["use_case"] == UC] == [going]
+
+
+def _queries(client: APIClient, path: str) -> int:
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as captured:
+        response = client.get(path)
+    assert response.status_code == 200, response.data
+    return len(captured.captured_queries)
+
+
+def _use_cases_with_finished_runs(client: APIClient, count: int) -> None:
+    user = get_user_model().objects.get(username="sec")
+    for index in range(count):
+        slug = f"uc-{index}"
+        _runnable(slug)
+        user.groups.add(
+            Group.objects.get_or_create(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/{slug}")[0]
+        )
+        _finish(client, _start(client, slug).data["id"])
+
+
+def test_the_standing_costs_the_same_for_one_use_case_as_for_five(catalogue) -> None:
+    """It read every run ever made and then asked for each row's answers and requester one at a
+    time; the page grew a query per use case for as long as the installation lived."""
+    client = _runner()
+    _use_cases_with_finished_runs(client, 1)
+    one = _queries(client, STATS)
+
+    _use_cases_with_finished_runs(client, 5)
+    five = _queries(client, STATS)
+
+    assert len(client.get(STATS).data) == 5
+    assert five == one
+
+
+def test_where_the_catalogue_can_run_costs_the_same_for_one_use_case_as_for_five() -> None:
+    """The release list was prefetched and then read past the prefetch, one query per use case."""
+    client = _runner()
+    _use_cases_with_finished_runs(client, 1)
+    one = _queries(client, ATTRIBUTION)
+
+    _use_cases_with_finished_runs(client, 5)
+    five = _queries(client, ATTRIBUTION)
+
+    assert five == one
+
+
+# ---- the export's file name ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model",
+    ['m"; filename="evil.html', "m\nX-Injected: 1", "vendor/model", "über:7b"],
+    ids=["quote", "newline", "slash", "non-ascii"],
+)
+def test_the_export_is_named_with_nothing_a_header_cannot_carry(catalogue, model: str) -> None:
+    """A model name is whatever the catalogue holds, and it went into `Content-Disposition` as it
+    stood: a quote added a second `filename`, a newline raised `BadHeaderError` and answered 500."""
+    _runnable()
+    sec = _runner()
+    run = Run.objects.create(
+        model=model, use_case=UC, requested_by=get_user_model().objects.get(username="sec")
+    )
+
+    response = sec.get(f"{RUNS}{run.pk}/export/")
+
+    assert response.status_code == 200
+    disposition = response["Content-Disposition"]
+    assert disposition.count("filename=") == 1
+    name = disposition.split('filename="', 1)[1].rstrip('"')
+    assert re.fullmatch(r"aira-smoketest-[A-Za-z0-9._-]+-\d{4}-\d{2}-\d{2}\.csv", name), name
+
+
+# ---- appending to the catalogue (`F4-3`) ---------------------------------------------------------
+
+
+def test_a_new_question_without_a_position_goes_after_every_position_ever_used() -> None:
+    """The console placed a new question at `count + 1`. Retiring one leaves a gap, so that number
+    was usually still taken and every retry refused the same way — the author could not add a
+    question at all. The server appends instead: after every position used, live **or retired**,
+    because a retired question keeps its position as history."""
+    author = _client(_user("author", "it-security"))
+    Case.objects.create(topic="one", prompt="?", position=1)
+    Case.objects.create(topic="two", prompt="?", position=2)
+    Case.objects.create(topic="three", prompt="?", position=3, retired=True)
+
+    first = author.post(CASES, {"topic": "new", "prompt": "?"}, format="json")
+    second = author.post(CASES, {"topic": "newer", "prompt": "?"}, format="json")
+
+    assert (first.status_code, second.status_code) == (201, 201), (first.data, second.data)
+    assert (first.data["position"], second.data["position"]) == (4, 5)
+
+
+def test_a_question_placed_on_purpose_keeps_its_place() -> None:
+    """Appending is what an omitted position means; a position that was sent is still the one used,
+    and still refused by name when another live question holds it."""
+    author = _client(_user("author", "it-security"))
+    Case.objects.create(topic="one", prompt="?", position=1)
+
+    placed = author.post(CASES, {"topic": "seven", "prompt": "?", "position": 7}, format="json")
+    taken = author.post(CASES, {"topic": "again", "prompt": "?", "position": 1}, format="json")
+
+    assert placed.status_code == 201
+    assert placed.data["position"] == 7
+    assert taken.status_code == 400
+    assert "position" in taken.data["error"]["details"]

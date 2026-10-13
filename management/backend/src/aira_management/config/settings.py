@@ -14,7 +14,12 @@ from aira_common.observability import set_payload_rendering
 from aira_management.config.database import build_databases
 from aira_management.config.observability import setup_observability
 from aira_management.config.runtime import get_settings
-from aira_management.config.security import effective_debug, enforce_safe_settings, is_local
+from aira_management.config.security import (
+    effective_debug,
+    enforce_safe_settings,
+    is_local,
+    proxy_ssl_header,
+)
 
 _settings = get_settings()
 configure_logging(_settings.log_level, json_output=_settings.log_json)
@@ -78,8 +83,12 @@ ANONYMOUS_USER_NAME = None
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # What a request asks about its caller, answered once per request (`aira_management.memo`).
+    "aira_management.memo.RequestMemo",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Innermost, so its refusal still passes through every response header above it.
+    "aira_management.apps.api.middleware.RefuseNulCharacters",
 ]
 
 # Response hardening (ADR-0007). The API is bearer-authenticated JSON with no cookies, so the
@@ -93,6 +102,9 @@ X_FRAME_OPTIONS = "DENY"
 # and a redirect here would loop unless the proxy header is also configured.
 SECURE_HSTS_SECONDS = 0 if is_local(_settings) else 31_536_000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not is_local(_settings)
+# HSTS is sent only on a request Django considers secure; behind the proxy that terminates TLS,
+# that is the proxy's `X-Forwarded-Proto` (`config.security.proxy_ssl_header`).
+SECURE_PROXY_SSL_HEADER = proxy_ssl_header(_settings)
 
 ROOT_URLCONF = "aira_management.config.urls"
 
@@ -133,4 +145,7 @@ REST_FRAMEWORK = {
     # through the usual error envelope.
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.UserRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {"user": _settings.throttle_user},
+    # Where a caller's address is read from `X-Forwarded-For`: this many entries from the right,
+    # which is what the failed-authentication bound counts against (`apps.api.attempts`).
+    "NUM_PROXIES": _settings.trusted_proxy_hops,
 }

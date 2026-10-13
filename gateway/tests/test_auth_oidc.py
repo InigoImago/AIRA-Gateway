@@ -187,6 +187,36 @@ def test_malformed_token_rejected() -> None:
     assert validator.validate("not.a.jwt") is None
 
 
+def test_a_payload_nested_past_the_parser_is_rejected_not_raised() -> None:
+    """Routing reads the unverified `iss`, so the payload is parsed before any verifier runs. A
+    payload nested deeper than `json` follows raises `RecursionError`, which PyJWT does not wrap,
+    and a worker thread with a small stack reaches that depth with a token of a few kilobytes."""
+    import base64
+    import threading
+
+    _private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+    header = base64.urlsafe_b64encode(b'{"alg":"RS256"}').rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(b"[" * 5000).rstrip(b"=").decode()
+    outcome: list[object] = []
+
+    def _validate() -> None:
+        try:
+            outcome.append(validator.validate(f"{header}.{payload}.c2ln"))
+        except BaseException as exc:  # noqa: BLE001 - what escapes is the finding
+            outcome.append(exc)
+
+    previous = threading.stack_size(256 * 1024)
+    try:
+        worker = threading.Thread(target=_validate)
+        worker.start()
+        worker.join()
+    finally:
+        threading.stack_size(previous)
+
+    assert outcome == [None]
+
+
 def test_build_validator_disabled() -> None:
     assert build_oidc_validator(GatewaySettings(oidc_enabled=False)) is None
     assert build_oidc_validator(GatewaySettings(oidc_enabled=True, oidc_issuer="")) is None
@@ -198,11 +228,113 @@ def test_build_validator_enabled() -> None:
 
 
 def test_build_validator_with_audience_skips_the_warning() -> None:
-    """An explicit audience is the configuration we want; no warning path is taken."""
+    """An explicit audience is the configuration we want; no warning path is taken — and without
+    one the warning is given, or this would pass on either path."""
+    from structlog.testing import capture_logs
+
+    with capture_logs() as named:
+        validator = build_oidc_validator(
+            GatewaySettings(oidc_enabled=True, oidc_issuer=ISSUER, oidc_audience="aira-gateway")
+        )
+    with capture_logs() as unnamed:
+        build_oidc_validator(GatewaySettings(oidc_enabled=True, oidc_issuer=ISSUER))
+
+    assert validator is not None
+    assert not [event for event in named if event["event"] == "oidc_audience_unset"]
+    assert [event for event in unnamed if event["event"] == "oidc_audience_unset"]
+
+
+# ---- what the one `algorithms=("RS256",)` line defends, and the settings that reach it -------
+
+
+def _segment(value: bytes) -> str:
+    import base64
+
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+
+
+def _claims(**overrides: object) -> dict[str, object]:
+    now = dt.datetime.now(dt.UTC)
+    claims: dict[str, object] = {
+        "iss": ISSUER,
+        "sub": "user-123",
+        "aud": "aira-gateway",
+        "iat": int(now.timestamp()),
+        "exp": int((now + dt.timedelta(minutes=5)).timestamp()),
+    }
+    claims.update(overrides)
+    return {key: value for key, value in claims.items() if value is not None}
+
+
+def test_a_token_mac_ed_with_the_realms_public_key_is_refused() -> None:
+    """Algorithm confusion: HS256 keyed with the RSA public key, which anybody can fetch. A verifier
+    that let the token choose its algorithm would check the MAC with that same public key."""
+    import hashlib
+    import hmac
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+
+    _private, public = _keypair()
+    secret = public.public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    signing_input = (
+        f"{_segment(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode())}."
+        f"{_segment(json.dumps(_claims()).encode())}"
+    )
+    mac = hmac.new(secret, signing_input.encode(), hashlib.sha256).digest()
+
+    validator = OidcValidator(ISSUER, "aira-gateway", _Resolver(public))
+    assert validator.validate(f"{signing_input}.{_segment(mac)}") is None
+
+
+def test_an_unsigned_token_is_refused() -> None:
+    _private, public = _keypair()
+    unsigned = jwt.encode(_claims(), None, algorithm="none")
+
+    assert OidcValidator(ISSUER, "aira-gateway", _Resolver(public)).validate(unsigned) is None
+
+
+def test_a_token_without_an_audience_is_refused_where_one_is_configured() -> None:
+    private, public = _keypair()
+    token = jwt.encode(_claims(aud=None), private, algorithm="RS256")
+
+    assert OidcValidator(ISSUER, "aira-gateway", _Resolver(public)).validate(token) is None
+    assert OidcValidator(ISSUER, None, _Resolver(public)).validate(token) is not None
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "offsets", "accepted"),
+    [
+        ("oidc_clock_skew_seconds", 5.0, {"iat": 30}, False),
+        ("oidc_clock_skew_seconds", 60.0, {"iat": 30}, True),
+        ("oidc_expiry_leeway_seconds", 0.0, {"exp": -20}, False),
+        ("oidc_expiry_leeway_seconds", 60.0, {"exp": -20}, True),
+    ],
+    ids=["skew-too-small", "skew-enough", "no-leeway", "leeway-enough"],
+)
+def test_the_clock_tolerances_reach_the_verifier_from_the_settings(
+    setting: str, value: float, offsets: dict[str, int], accepted: bool
+) -> None:
+    """Both halves were tested — the settings parse, `JwtVerifier` honours what it is handed — and
+    the wire between them, `build_oidc_validator`, was not."""
+    private, public = _keypair()
+    now = int(dt.datetime.now(dt.UTC).timestamp())
+    expires = now + offsets["exp"] if "exp" in offsets else now + 300
+    issued = now + offsets.get("iat", -60)
+    token = jwt.encode(_claims(iat=issued, exp=expires), private, algorithm="RS256")
+
     validator = build_oidc_validator(
-        GatewaySettings(oidc_enabled=True, oidc_issuer=ISSUER, oidc_audience="aira-gateway")
+        GatewaySettings(
+            oidc_enabled=True, oidc_issuer=ISSUER, oidc_audience="aira-gateway", **{setting: value}
+        )
     )
     assert validator is not None
+    for _issuer, verifier in validator._verifiers:
+        verifier._jwks = _Resolver(public)  # the key set is not what is under test
+
+    assert (validator.validate(token) is not None) is accepted
 
 
 def test_a_configured_group_confers_its_role(role_groups) -> None:

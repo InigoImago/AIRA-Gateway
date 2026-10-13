@@ -47,7 +47,11 @@ trusts.
 - **FR-1** A `pii_filter` step, configured with a model, an instruction, a notice and a failure
   policy. Every field optional except that a model must resolve.
 - **FR-2 The rewritten prompt is what is dispatched.** Only the last user message's text; its
-  attachments and tool parts are kept.
+  attachments and tool parts are kept. **A stated blind spot**: a chat client resends the whole
+  conversation every turn, and its own copy of earlier turns was never redacted — so from the
+  second turn on, what was typed earlier reaches the model and the stored payload as typed, while
+  the step records `unchanged` or `redacted` for the last message only. Redacting every turn is a
+  redactor call per turn on every request — a cost and latency decision, not made here.
 - **FR-3 The rewritten prompt is what is stored.** `request_logs.request_payload` carries the
   rewritten body; where the substitution cannot be applied the payload is **dropped**, never kept.
   Both halves of that, since 2026-08-27: a body whose text cannot be matched is dropped
@@ -55,9 +59,15 @@ trusts.
   unreachable redactor, a refused request on two verbs kept the caller's name and address on a row
   nobody was served. `on_failure: allow` drops it as well: that flag says keep *serving*, and
   keeping *storing* is a second decision nobody made.
-- **FR-4 A rewrite that cannot be trusted is a failure, not a redaction.** Empty, or far shorter
-  than its input — a summary, a refusal or a preamble applied would send the model a different
-  question than the caller asked, with a 200.
+- **FR-4 A rewrite that cannot be trusted is a failure, not a redaction.** Empty, far shorter
+  than its input, **cut off** (a finish reason other than `stop` — the end of the caller's prompt
+  is missing and nothing about the rest says so), or **far longer** than its input (more than half
+  as long again, beyond an allowance for placeholders) — a summary, a refusal, a truncation or a
+  preamble applied would send the model a different question than the caller asked, with a 200.
+  The text reaches the redactor between two markers carrying a nonce made for the request, so a
+  prompt holding a marker cannot close the data region; what the model writes outside an echoed
+  pair is its own, never the caller's text. An answer *in place of* a short rewrite still passes
+  these checks: a summary of a short prompt is indistinguishable from a rewrite.
 - **FR-5 A failure blocks by default**, and `on_failure: allow` is recorded on the audit row as the
   choice it is (`FRD-125`).
 - **FR-6 The decision records that it redacted, never what.** A step, an action, the model. No

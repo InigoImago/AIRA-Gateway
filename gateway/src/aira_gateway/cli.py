@@ -1,7 +1,7 @@
 """Gateway admin CLI (FRD-101): mint and revoke API keys.
 
 Usage:
-  python -m aira_gateway.cli api-key create --subject <id> [--label <text>]
+  python -m aira_gateway.cli api-key create --subject <id> [--label <text>] [--days <n>]
   python -m aira_gateway.cli api-key revoke --prefix <prefix>
 """
 
@@ -12,33 +12,39 @@ import asyncio
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 
+from aira_common.apikeys import KeyLifetimeOutOfRange
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 
-
-def _use_sqlite(settings: GatewaySettings) -> bool:
-    return settings.test_database or ("pytest" in sys.modules)
+#: The exit status of a refused request, the one argparse gives a command line it cannot parse.
+_REFUSED = 2
 
 
 @asynccontextmanager
 async def _key_service() -> AsyncIterator[ApiKeyService]:
     """An `ApiKeyService` on a fresh engine, disposed of on the way out."""
     settings = GatewaySettings()
-    engine = build_engine(settings.database_url(use_sqlite=_use_sqlite(settings)))
-    await create_all(engine)
+    engine = build_engine(settings.database_url(use_sqlite=settings.uses_sqlite()))
     try:
+        # SQLite only, as in the application: Alembic owns the schema of any real database, and
+        # this CLI runs from whichever image is at hand during an upgrade (`FRD-114`).
+        if engine.dialect.name == "sqlite":
+            await create_all(engine)
         async with build_sessionmaker(engine)() as session:
             yield ApiKeyService(session)
     finally:
         await engine.dispose()
 
 
-async def _create(subject: str, label: str | None, days: int | None) -> tuple[str, str]:
+async def _create(
+    subject: str, label: str | None, days: int | None
+) -> tuple[str, str, datetime | None]:
     async with _key_service() as service:
         full, record = await service.create(subject, label, expires_in_days=days)
-        return full, record.prefix
+        return full, record.prefix, record.expires_at
 
 
 async def _revoke(prefix: str) -> bool:
@@ -54,13 +60,14 @@ def main(argv: list[str] | None = None) -> int:
     create = api_key.add_parser("create")
     create.add_argument("--subject", required=True)
     create.add_argument("--label", default=None)
-    # Bounded like every key Management issues. No `--never-expires`: a credential minted by hand
-    # during an incident is the one nobody remembers to take away.
+    # Bounded like every key Management issues, by the same rule (`check_key_lifetime`). No
+    # `--never-expires`: a credential minted by hand during an incident is the one nobody
+    # remembers to take away.
     create.add_argument(
         "--days",
         type=int,
         default=None,
-        help="Lifetime in days (default: AIRA_API_KEY_DEFAULT_DAYS).",
+        help="Lifetime in days, 1 to AIRA_API_KEY_MAX_DAYS (default: AIRA_API_KEY_DEFAULT_DAYS).",
     )
 
     revoke = api_key.add_parser("revoke")
@@ -69,9 +76,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.action == "create":
-        full, prefix = asyncio.run(_create(args.subject, args.label, args.days))
+        try:
+            full, prefix, expires_at = asyncio.run(_create(args.subject, args.label, args.days))
+        except KeyLifetimeOutOfRange as exc:
+            print(f"aira-gateway: --days {args.days}: {exc} No key was created.", file=sys.stderr)
+            return _REFUSED
         days = args.days if args.days is not None else GatewaySettings().api_key_default_days
-        print(f"API key created (prefix={prefix}), valid for {days} days.")
+        until = f" (until {expires_at.date().isoformat()})" if expires_at else ""
+        print(f"API key created (prefix={prefix}), valid for {days} days{until}.")
         print(f"Shown once — store it now:\n{full}")
         return 0
 

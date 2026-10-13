@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from aira_common.permissions import RoleDefinition
+from aira_management.apps.outbox.models import KEPT_AFTER_DAYS
 from aira_management.apps.privacy.activities import ACTIVITIES, PERSONAL_DATA_PERMISSIONS
 from aira_management.apps.privacy.edition import EDITION
 from aira_management.apps.privacy.texts import (
@@ -90,6 +91,8 @@ def values(language: Language, installation: Installation) -> dict[str, str]:
     filled["default_retention"] = _days(language, installation.default_retention_days)
     filled["key_lifetime"] = language.values["days"].format(days=installation.api_key_default_days)
     filled["key_max_lifetime"] = language.values["days"].format(days=installation.api_key_max_days)
+    # Not configuration but the relay's own constant, read rather than restated.
+    filled["outbox_retention"] = language.values["days"].format(days=KEPT_AFTER_DAYS)
     return filled
 
 

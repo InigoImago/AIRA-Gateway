@@ -17,34 +17,16 @@ Run it after `make demo`:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import os
 import sys
 
 import httpx
 import stack_addresses
+from demo_keys import key_for
 
 GATEWAY = os.environ.get("AIRA_GATEWAY_URL") or stack_addresses.url("gateway")
 CHAT = os.environ.get("AIRA_DEMO_CHAT_MODEL", "qwen3:0.6b")
 EMBED = os.environ.get("AIRA_DEMO_EMBED_MODEL", "all-minilm")
-
-#: Must match `apps/seed/contributions/showcase.py`. Duplicated across a process boundary rather
-#: than imported, because this script runs outside Django — and a mismatch is loud (401), not
-#: silent, which is the only reason that is acceptable.
-DEMO_KEY_SALT = "aira-showcase-demo-not-a-secret"
-
-
-def key_for(slug: str, person: str | None = None) -> str:
-    """The demo key a use case is called with — its own, or a named member's.
-
-    ``None`` is the use case's **own** key, derived from the slug alone: that is the one printed
-    examples and both hand-over scripts re-derive (`FRD-130` FR-4), and it belongs to the use case's
-    first member. A name is the second key the seed issues to that person, so more than one person
-    appears in the demo's per-person figures.
-    """
-    material = f"{DEMO_KEY_SALT}:{slug}" if person is None else f"{DEMO_KEY_SALT}:{slug}:{person}"
-    digest = hashlib.sha256(material.encode()).hexdigest()
-    return f"aira_{digest[:8]}_{digest[8:56]}"
 
 
 #: Who sends each use case's traffic. ``None`` is the use case's own key — the first member's — and
@@ -174,7 +156,8 @@ def _story_not_told(injection_code: int, embedding_code: int) -> list[str]:
     if problems:
         problems.append(
             "\n  make showcase-doctor              (checks the chain link by link)\n"
-            "  docker exec aira-postgres psql -U aira -d aira_gateway \\\n"
+            f"  docker exec {stack_addresses.container('postgres')} "
+            "psql -U aira -d aira_gateway \\\n"
             '    -c "select use_case, status, outcome from request_logs order by created_at '
             'desc limit 10"\n'
             "                                    (what the audit trail actually recorded)"
@@ -248,10 +231,14 @@ async def main(*, assert_controls: bool = False) -> int:
     # a budget doing its job. 429 and 400 are controls working; 401 is a key that does not exist,
     # and nothing downstream of it means anything.
     if 401 in codes:
+        relay = stack_addresses.container("management-relay")
         print(
             "\nsome requests were refused with 401, so the demo is calling as somebody the seed\n"
-            "did not issue a key to. A key is issued per member and announced over Kafka.\n"
+            "did not issue a key to. A key is issued per member and announced over Kafka, and a\n"
+            "key belonging to a use case that was once deleted stays revoked for ever —\n"
+            "deliberately, so no event can resurrect one.\n"
             "  make showcase-doctor              (says which link is broken)\n"
+            f"  docker logs {relay:<20} (are the events leaving Management?)\n"
             "  docker compose ... run --rm management-seed   (did the seed run on this build?)",
             file=sys.stderr,
         )
@@ -281,22 +268,16 @@ async def main(*, assert_controls: bool = False) -> int:
             "\nnothing was served, so every screen in the walkthrough will be empty.",
             file=sys.stderr,
         )
-        if 401 in codes:
-            print(
-                "Every request was refused with 401: the gateway does not accept these keys.\n"
-                "They are announced over Kafka, and a key belonging to a use case that was once\n"
-                "deleted stays revoked for ever — deliberately, so no event can resurrect one.\n"
-                "  make showcase-doctor              (says which it is)\n"
-                "  docker logs aira-management-relay (are the events leaving Management?)",
-                file=sys.stderr,
-            )
-        elif 400 in codes:
+        # A 401 has returned above, with its own explanation, so it is not among these.
+        if 400 in codes:
+            pull = stack_addresses.container("ollama-pull")
+            seed = stack_addresses.container("management-seed")
             print(
                 "The requests were refused with 400, which here is usually an empty model\n"
                 "catalog: a model has to be pulled *and* catalogued, and only a catalogued,\n"
                 "approved model may be used.\n"
-                "  docker logs aira-ollama-pull      (was the model fetched?)\n"
-                "  docker logs aira-management-seed  (did local_models declare anything?)",
+                f"  docker logs {pull:<20} (was the model fetched?)\n"
+                f"  docker logs {seed:<20} (did local_models declare anything?)",
                 file=sys.stderr,
             )
         else:
@@ -308,9 +289,22 @@ async def main(*, assert_controls: bool = False) -> int:
     return 0
 
 
+async def run(*, assert_controls: bool = False) -> int:
+    """`main`, with a gateway that does not answer said in one line rather than a traceback."""
+    try:
+        return await main(assert_controls=assert_controls)
+    except httpx.HTTPError as error:
+        print(
+            f"the gateway at {GATEWAY} did not answer ({type(error).__name__}: {error}).\n"
+            "  make wait-healthy                 (is the stack up, on the port this asks?)",
+            file=sys.stderr,
+        )
+        return 1
+
+
 if __name__ == "__main__":
     # **Only where a reset precedes it.** `make showcase` clears what earlier runs consumed and
     # then drives this traffic, so its run *must* tell the whole story. `make showcase-traffic`
     # deliberately does not reset — it exists for watching the bars fill and a limit be reached —
     # so there the two requests being refused by an allowance is the point rather than the defect.
-    raise SystemExit(asyncio.run(main(assert_controls="--assert-controls" in sys.argv[1:])))
+    raise SystemExit(asyncio.run(run(assert_controls="--assert-controls" in sys.argv[1:])))

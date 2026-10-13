@@ -1,4 +1,4 @@
-import { HttpErrorResponse, HttpHandlerFn, HttpRequest } from '@angular/common/http';
+import { HttpErrorResponse, HttpHandlerFn, HttpRequest, HttpResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
 import { authInterceptor } from './auth.interceptor';
@@ -18,15 +18,18 @@ function runInterceptor(url: string, token: string): HttpRequest<unknown> {
   return captured;
 }
 
-/** Run the interceptor against a failing handler, reporting whether it sent us back to the login. */
+/** Run the interceptor against a failing handler, reporting which planes it said refused. */
 function runFailing(url: string, status: number) {
   TestBed.resetTestingModule();
-  let reauthenticated = 0;
+  const refusedBy: (string | null)[] = [];
   TestBed.configureTestingModule({
     providers: [
       {
         provide: AuthService,
-        useValue: { accessToken: 'tok', reauthenticate: () => (reauthenticated += 1) },
+        useValue: {
+          accessToken: 'tok',
+          reauthenticate: (plane: string | null) => refusedBy.push(plane),
+        },
       },
     ],
   });
@@ -36,7 +39,33 @@ function runFailing(url: string, status: number) {
   TestBed.runInInjectionContext(() =>
     authInterceptor(request, next).subscribe({ error: (e: unknown) => (seen = e) }),
   );
-  return { reauthenticated, seen };
+  return { reauthenticated: refusedBy.length, refusedBy, seen };
+}
+
+/**
+ * Run the interceptor against a handler that answers, reporting which planes it said answered.
+ *
+ * The handler emits a real `HttpResponse`: a stand-in that emits nothing never reaches the branch
+ * this is about, and that branch is what ends a login loop.
+ */
+function runAnswering(url: string): string[] {
+  TestBed.resetTestingModule();
+  const answeredBy: string[] = [];
+  TestBed.configureTestingModule({
+    providers: [
+      {
+        provide: AuthService,
+        useValue: {
+          accessToken: 'tok',
+          noteFirstPartySuccess: (plane: string) => answeredBy.push(plane),
+        },
+      },
+    ],
+  });
+  const request = new HttpRequest<unknown>('GET', url);
+  const next: HttpHandlerFn = () => of(new HttpResponse({ status: 200, url, body: {} }));
+  TestBed.runInInjectionContext(() => authInterceptor(request, next).subscribe());
+  return answeredBy;
 }
 
 describe('authInterceptor', () => {
@@ -75,6 +104,11 @@ describe('authInterceptor', () => {
     expect(seen).toBeInstanceOf(HttpErrorResponse);
   });
 
+  it('names the plane that refused, so only its answer can end a login loop', () => {
+    expect(runFailing('/api/v1/use-cases/', 401).refusedBy).toEqual(['/api/']);
+    expect(runFailing('/gw/v1beta/reports', 401).refusedBy).toEqual(['/gw/']);
+  });
+
   it('leaves a 403 alone, because that is a real answer about a real permission', () => {
     // Logging somebody out over a permission boundary would hide the boundary behind a login
     // screen — and they are signed in perfectly well.
@@ -83,5 +117,16 @@ describe('authInterceptor', () => {
 
   it('does not react to a third party answering 401', () => {
     expect(runFailing('https://evil.example/collect', 401).reauthenticated).toBe(0);
+  });
+
+  it('reports an answer from either plane as that plane answering', () => {
+    expect(runAnswering('/api/v1/me')).toEqual(['/api/']);
+    expect(runAnswering('/gw/v1beta/usage/demo-uc')).toEqual(['/gw/']);
+  });
+
+  it('does not take a third party answering for the API answering', () => {
+    // Somebody else's server answering says nothing about whether AIRA accepts the token.
+    expect(runAnswering('https://evil.example/collect')).toEqual([]);
+    expect(runAnswering('/assets/logo.png')).toEqual([]);
   });
 });

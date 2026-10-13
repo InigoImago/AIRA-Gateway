@@ -162,3 +162,51 @@ async def test_the_identity_columns_are_bounded_like_the_model_name(make_session
 
     assert len(row.subject) == SUBJECT_COLUMN
     assert row.username is not None and len(row.username) == SUBJECT_COLUMN
+
+
+async def test_a_figure_no_column_can_hold_costs_the_row_nothing(make_session) -> None:
+    """The counts come from the upstream adapter as reported, and a misbehaving server can report
+    anything. Every one of them goes into a 32-bit column, where a value of 2³¹ or a negative one
+    fails the INSERT on Postgres and loses the row — SQLite stores it, so only the bound is
+    observable here. A count is held to what the column can say, as `_fits` holds a string."""
+    from aira_gateway.persistence.service import COUNT_CEILING
+
+    absurd = 2**40
+    async with make_session() as session:
+        await RequestLogService(session).record(
+            subject="u",
+            auth_method="api_key",
+            use_case=None,
+            source_ip=None,
+            operation="generateContent",
+            model="mock-1",
+            status=200,
+            usage=CanonicalUsage(
+                prompt_tokens=absurd,
+                completion_tokens=-5,
+                cached_input_tokens=absurd,
+                cache_write_tokens=absurd,
+                reasoning_tokens=absurd,
+            ),
+            latency_ms=absurd,
+            trace_id=None,
+            api="gemini",
+            request_payload=None,
+            response_payload=None,
+            request_bytes=absurd,
+        )
+
+    async with make_session() as session:
+        row = (await session.execute(select(RequestLog))).scalar_one()
+    assert COUNT_CEILING == 2**31 - 1
+    for column in (
+        "prompt_tokens",
+        "cached_input_tokens",
+        "cache_write_tokens",
+        "reasoning_tokens",
+        "total_tokens",
+        "latency_ms",
+        "request_bytes",
+    ):
+        assert getattr(row, column) == COUNT_CEILING, column
+    assert row.completion_tokens == 0

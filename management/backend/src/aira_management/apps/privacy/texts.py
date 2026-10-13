@@ -73,6 +73,7 @@ PLACEHOLDERS: frozenset[str] = frozenset(
         "default_retention",
         "key_lifetime",
         "key_max_lifetime",
+        "outbox_retention",
     }
 )
 
@@ -135,6 +136,18 @@ def strings(language: Language) -> dict[str, str]:
     for key, fields in language.activities.items():
         found |= {f"activities.{key}.{name}": text for name, text in fields.items()}
     return found
+
+
+def filled_in(where: str) -> bool:
+    """Whether `notice.render` fills placeholders into the text at ``where``.
+
+    Paragraphs, items and an activity's fields — not a title or a label, which are printed as
+    written: a `{controller}` allowed there would reach the reader as braces.
+    """
+    parts = where.split(".")
+    if parts[0] == "sections":
+        return len(parts) == 4 and parts[2] in ("paragraphs", "items")
+    return parts[0] == "activities" and parts[-1] in ACTIVITY_FIELDS
 
 
 def _keys(where: str, table: Any, expected: tuple[str, ...], code: str) -> dict[str, Any]:
@@ -211,7 +224,7 @@ def parse(code: str, raw: dict[str, Any]) -> Language:
         allowed = {"days"} if where == "values.days" else set()
         if where == "values.days" and placeholders(text) != allowed:
             raise NoticeTextError(f"{code}.toml: values.days must contain {{days}}")
-        allowed = allowed if where.startswith(("values.", "access.")) else set(PLACEHOLDERS)
+        allowed = set(PLACEHOLDERS) if filled_in(where) else allowed
         unknown_names = placeholders(text) - allowed
         if unknown_names:
             raise NoticeTextError(

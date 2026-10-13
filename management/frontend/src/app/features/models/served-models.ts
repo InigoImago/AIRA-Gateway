@@ -1,4 +1,4 @@
-import { Component, computed, inject, output, signal } from '@angular/core';
+import { Component, computed, inject, input, output, signal } from '@angular/core';
 import { ServedModel } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -21,6 +21,12 @@ export class ServedModels {
   /** Raised with the served model somebody chose to catalogue. */
   readonly catalogue = output<ServedModel>();
 
+  /**
+   * The names the catalog holds now. The gateway's `airaDeclared` follows the catalog over the
+   * event bus, so it lags a save; a model saved a moment ago is not offered as missing again.
+   */
+  readonly catalogued = input<ReadonlySet<string>>(new Set());
+
   /** What the gateway serves, or `null` until asked. */
   protected readonly served = signal<ServedModel[] | null>(null);
   protected readonly discovering = signal(false);
@@ -29,13 +35,18 @@ export class ServedModels {
    * (catalogued, no capabilities declared): one needs an entry, the other a measurement.
    */
   protected readonly notCatalogued = computed(() =>
-    (this.served() ?? []).filter((model) => model.airaDeclared === false),
+    (this.served() ?? []).filter(
+      (model) => model.airaDeclared === false && !this.catalogued().has(model.name),
+    ),
   );
   protected readonly alreadyCatalogued = computed(
     () => (this.served() ?? []).length - this.notCatalogued().length,
   );
 
   protected discover(): void {
+    // A new question replaces the last one's outcome: a failure left above the answer that has
+    // since arrived would contradict it.
+    this.feedback.clear();
     this.discovering.set(true);
     this.service.servedModels().subscribe({
       next: (models) => {

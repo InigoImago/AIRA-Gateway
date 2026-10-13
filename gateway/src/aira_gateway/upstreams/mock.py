@@ -24,6 +24,7 @@ from aira_gateway.core.canonical import (
     CanonicalResponse,
     CanonicalUsage,
     DataPart,
+    FinishReason,
     ToolCallPart,
 )
 from aira_gateway.core.schema import ResponseSchema, SchemaType
@@ -39,6 +40,9 @@ _SPEECH_RATE = 24000
 _SPEECH_SECONDS_PER_WORD = 0.25
 _SPEECH_TOKENS_PER_SECOND = 25
 _SPEECH_CHUNK_BYTES = 4800
+#: The longest the mock speaks, however long the prompt: its audio grows with the text, and an
+#: unbounded prompt would be an unbounded buffer of fiction built in memory, on the event loop.
+_SPEECH_MAX_SECONDS = 60.0
 
 
 class MockProvider:
@@ -58,8 +62,6 @@ class MockProvider:
     sampling_controls = frozenset(SAMPLING_CONTROLS)
     thinking_modes = frozenset(ThinkingMode)
     expresses_thinking_levels = True
-    #: A schema and the caller's tools are kept apart, as Gemini and the OpenAI dialect do.
-    tools_with_schema = True
     #: Speaks deterministic PCM, so the speech path is tested without a cloud (`FRD-624`).
     speaks = True
 
@@ -116,11 +118,11 @@ class MockProvider:
             f"{_attachments(request)}{_thinking(request)}{_caching(request)}"
         ).split()
 
-        finish_reason = "stop"
+        finish_reason = FinishReason.STOP
         limit = request.max_output_tokens
         if limit is not None and limit < len(words):
             words = words[:limit]
-            finish_reason = "max_tokens"
+            finish_reason = FinishReason.MAX_TOKENS
 
         usage = CanonicalUsage(
             prompt_tokens=self._prompt_tokens(request),
@@ -132,15 +134,16 @@ class MockProvider:
         )
 
     def _speech(self, request: CanonicalRequest) -> CanonicalResponse:
-        """Deterministic PCM whose length follows the text (`FRD-624`).
+        """Deterministic PCM whose length follows the text (`FRD-624`), up to a minute.
 
         Derived from the voice and the text, so two prompts sound different and one prompt always
-        the same. The output cap truncates it and still says `stop`, as Google does.
+        the same. The output cap truncates it and still says `stop`, as Google does. Built by
+        repeating a 32-byte seed, not byte by byte: this runs on the event loop.
         """
         assert request.speech is not None
         text = request.last_user_text().strip()
         voices = request.speech.voice or ",".join(entry.voice for entry in request.speech.speakers)
-        seconds = max(1, len(text.split())) * _SPEECH_SECONDS_PER_WORD
+        seconds = min(max(1, len(text.split())) * _SPEECH_SECONDS_PER_WORD, _SPEECH_MAX_SECONDS)
         tokens = max(1, round(seconds * _SPEECH_TOKENS_PER_SECOND))
         size = int(_SPEECH_RATE * seconds) * 2
         limit = request.max_output_tokens
@@ -148,7 +151,7 @@ class MockProvider:
             size = size * limit // tokens // 2 * 2
             tokens = limit
         seed = hashlib.sha256(f"{voices}\x00{text}".encode()).digest()
-        data = bytes(seed[index % len(seed)] for index in range(size))
+        data = (seed * (size // len(seed) + 1))[:size]
         usage = CanonicalUsage(prompt_tokens=self._prompt_tokens(request), completion_tokens=tokens)
         return CanonicalResponse(
             model=request.model,
@@ -179,7 +182,7 @@ class MockProvider:
         return CanonicalResponse(
             model=request.model,
             text="",
-            finish_reason="tool_use",
+            finish_reason=FinishReason.TOOL_USE,
             usage=usage,
             tool_calls=(ToolCallPart(id=f"mock-{tool.name}", name=tool.name, arguments=arguments),),
         )
@@ -198,7 +201,7 @@ class MockProvider:
         return CanonicalResponse(
             model=request.model,
             text=text[: limit * 4] if truncated and limit else text,
-            finish_reason="max_tokens" if truncated else "stop",
+            finish_reason=FinishReason.MAX_TOKENS if truncated else FinishReason.STOP,
             usage=CanonicalUsage(
                 prompt_tokens=self._prompt_tokens(request),
                 completion_tokens=max(1, len(text) // 4) + _thinking_tokens(request),

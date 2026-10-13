@@ -226,6 +226,35 @@ def test_a_non_string_text_is_refused_rather_than_converted(
     assert f"'{would_have_become}'" not in message.replace("input_value", "")
 
 
+@pytest.mark.parametrize("field", ["data", "mime_type", "mimeType"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(None, id="null"),
+        pytest.param(12345678, id="number"),
+        pytest.param(True, id="boolean"),
+        pytest.param({"a": 1}, id="object"),
+    ],
+)
+def test_a_non_string_attachment_field_is_refused_rather_than_converted(
+    field: str, value: object
+) -> None:
+    """The same conversion, one field over. `"data": null` became `"None"` — four characters that
+    happen to be valid base64 — so a client bug sent the model three bytes of nothing with a 200,
+    and a number or a boolean did the same."""
+    part: dict[str, object] = {"mime_type": "text/plain", "data": "aGFsbG8="}
+    if field == "mimeType":
+        part = {"mimeType": "text/plain", "data": "aGFsbG8="}
+    part[field] = value
+
+    with pytest.raises(ValidationError) as raised:
+        schemas.RequestContent.model_validate({"parts": [part]})
+
+    message = str(raised.value)
+    assert f"'{field}' must be a string" in message
+    assert type(value).__name__ in message, "the refusal must name what was sent"
+
+
 def test_a_string_still_passes_untouched() -> None:
     """The paired case. A check that refuses everything is not a stricter check, and an assertion
     about a refusal is only defended by one that shows the accepted case still works."""

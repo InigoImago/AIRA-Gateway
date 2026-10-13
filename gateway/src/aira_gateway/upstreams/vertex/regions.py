@@ -7,15 +7,16 @@ not permitted by being told (`RegionNotAllowed`), so the rule keeps exactly one 
 
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any
 
 from aira_gateway.core.canonical import CanonicalChunk
 from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.upstreams.base import AmbiguousModel, UpstreamError
-from aira_gateway.upstreams.vertex.transport import VertexTransport
+from aira_gateway.upstreams.exchange import sse_payloads
+from aira_gateway.upstreams.vertex.transport import NAME, VertexTransport
 
 #: Upstream statuses that mean **try the next region**, and nothing else. A `404` (not deployed
 #: here), `429` (no quota here) or `5xx` (unwell here) is a fact about a *place*; a `400` or
@@ -128,26 +129,34 @@ async def _open_stream(
     url: str,
     body: dict[str, Any],
     reader: Callable[[], ChunkReader],
-) -> AsyncIterator[CanonicalChunk]:
-    """Open a streamed call and return an iterator over its chunks.
+    region: str,
+) -> AsyncGenerator[CanonicalChunk]:
+    """Open a streamed call in ``region`` and return an iterator over its chunks.
 
     Split from the iteration on purpose — the split **is** the failover boundary. Everything that
     can go wrong about a region goes wrong while opening, before any byte reaches the caller; once
     this returns, the stream is committed. ``reader`` is called once per attempt, so a stateful
     reader never carries half a tool call into another region's response. The stream is closed by
     the iterator's ``finally``.
+
+    The first chunk names the region that opened the stream (`CanonicalChunk.served_region`): the
+    streamed answer's residency evidence, exactly as `generate` reports where it was answered.
     """
     context = transport.stream(url, body)
     response = await context.__aenter__()
     read = reader()
 
-    async def chunks() -> AsyncIterator[CanonicalChunk]:
+    async def chunks() -> AsyncGenerator[CanonicalChunk]:
+        located = False
         try:
-            async for line in response.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                chunk = read(json.loads(line[len("data: ") :]))
-                if chunk is not None:
+            async with aclosing(sse_payloads(response, NAME)) as payloads:
+                async for payload in payloads:
+                    chunk = read(payload)
+                    if chunk is None:
+                        continue
+                    if not located:
+                        chunk = chunk.model_copy(update={"served_region": region})
+                        located = True
                     yield chunk
         finally:
             await context.__aexit__(None, None, None)

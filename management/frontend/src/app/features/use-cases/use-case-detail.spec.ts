@@ -2,8 +2,11 @@ import { Type, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import {
+  AnomalyEvent,
+  AnomalyPage,
+  AnomalyRule,
   ApiKey,
   Budget,
   BudgetUsage,
@@ -92,13 +95,21 @@ interface Overrides {
   useCaseReportPerCall?: () => Observable<Report>;
   /** The chart's load (`FRD-626`) — the same endpoint, asked for a series. */
   useCaseSeries?: Observable<Report>;
+  /** One answer per chart load, in order — for answers that arrive out of order. */
+  useCaseSeriesPerCall?: Observable<Report>[];
+  /** One answer per budget-usage load, in order; the last repeats. */
+  budgetUsagePerCall?: Observable<{ usage: BudgetUsage[]; enforced?: boolean }>[];
+  /** The newest findings, which the Warnings badge counts. */
+  anomalies?: Observable<AnomalyPage>;
+  /** The use case's anomaly rules, which the Rules badge counts. */
+  useCaseRules?: Observable<AnomalyRule[]>;
   /**
    * Who is reading. `null` is a signed-in account whose username the server did not give — the
    * condition under which the reader's own cards are not rendered at all.
    */
   me?: { username: string } | null;
   addMember?: Observable<Membership>;
-  removeMember?: Observable<void>;
+  removeMember?: Observable<{ revoked_keys: string[] }>;
   issueApiKey?: Observable<unknown>;
   models?: Observable<unknown>;
   kiraModels?: Observable<unknown>;
@@ -111,7 +122,7 @@ interface Overrides {
 }
 
 interface Detail {
-  slug: string;
+  slug: () => string;
   tab: () => string;
   selectTab: (tab: string) => void;
   loading: () => boolean;
@@ -155,11 +166,14 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
   const reportCalls: string[] = [];
   const seriesCalls: string[] = [];
   let keyLoads = 0;
+  let seriesLoads = 0;
+  let usageLoads = 0;
   const service = {
-    // Each panel loads its own; stubbed so the walkthrough below can visit all eight tabs.
-    useCaseRules: () => of([]),
+    // Stubbed so the walkthrough below can visit all eight tabs.
+    useCaseRules: () => overrides.useCaseRules ?? of([]),
     groupGrants: () => of([]),
-    anomalies: () => of({ events: [], next_cursor: null, scope: 'use_cases' }),
+    anomalies: () =>
+      overrides.anomalies ?? of({ events: [], next_cursor: null, scope: 'use_cases' }),
     suspensions: () => of({ suspensions: [] }),
     traces: () => of({ traces: [], next_cursor: null, scope: 'use_cases' }),
     get: () => overrides.get ?? of(USE_CASE),
@@ -173,7 +187,12 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
       return overrides.apiKeys ?? of([]);
     },
     budgets: () => overrides.budgets ?? of([]),
-    budgetUsage: () => overrides.budgetUsage ?? of({ usage: [] }),
+    budgetUsage: () => {
+      const answers = overrides.budgetUsagePerCall;
+      usageLoads += 1;
+      if (answers) return answers[Math.min(usageLoads - 1, answers.length - 1)];
+      return overrides.budgetUsage ?? of({ usage: [] });
+    },
     // Kept out of `calls`, which records **mutations**: a load there would break every "nothing
     // was sent" assertion.
     useCaseReport: (
@@ -187,7 +206,11 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
         `${slug}:${from}:${to}` +
           (series ? `:${series.granularity}:${series.split}:${person ?? '(nobody)'}` : ''),
       );
-      if (series) return overrides.useCaseSeries ?? of(emptyReport());
+      if (series) {
+        seriesLoads += 1;
+        const held = overrides.useCaseSeriesPerCall?.[seriesLoads - 1];
+        return held ?? overrides.useCaseSeries ?? of(emptyReport());
+      }
       if (overrides.useCaseReportPerCall) return overrides.useCaseReportPerCall();
       return overrides.useCaseReport ?? of(emptyReport());
     },
@@ -197,7 +220,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     },
     removeMember: (_s: string, username: string) => {
       calls.push(`removeMember:${username}`);
-      return overrides.removeMember ?? of(undefined as unknown as void);
+      return overrides.removeMember ?? of({ revoked_keys: [] });
     },
     // The page reads the catalogue and the KIRA listing on init; a harness missing a method the
     // component calls fails every test in the file at once.
@@ -363,6 +386,19 @@ describe('UseCaseDetail', () => {
     expect(text()).not.toContain('No UseCase matches');
   });
 
+  it("reports a catalogue it could not load in the server's words, once, for every panel", () => {
+    // The release panel loaded its own copy and reported a fixed sentence without the reason; the
+    // catalogue is loaded here now and its failure is carried down rather than read as "empty".
+    const harness = setup({
+      get: of({ ...USE_CASE, allowed_models: ['gemini-2.5-flash'] }),
+      models: httpError(502, 'Management is restarting.'),
+    });
+
+    expect(harness.component.feedback.error()).toBe('Management is restarting.');
+    expect(harness.html().querySelector('[data-testid="release-unchecked"]')).not.toBeNull();
+    expect(harness.html().querySelector('[data-testid="withdrawn-models"]')).toBeNull();
+  });
+
   it('reports failures of the secondary loads', () => {
     expect(setup({ members: httpError(500) }).component.feedback.error()).toBe(
       'Could not load the members.',
@@ -410,6 +446,23 @@ describe('UseCaseDetail — the keys tab', () => {
     );
     expect(harness.text()).toContain('Only members of this use case may issue API keys.');
     expect(keys.issued()).toBeNull();
+  });
+
+  it('writes only released models into the OpenCode file it hands out', () => {
+    // The gateway refuses every model not released to the use case (`FRD-308`); a configuration
+    // naming one fails on its first request.
+    const harness = setup({
+      get: of({ ...USE_CASE, allowed_models: ['qwen2.5:3b'] }),
+      models: of([
+        { name: 'claude-sonnet-4-5', capabilities: ['tools'] },
+        { name: 'qwen2.5:3b', capabilities: ['generate', 'tools'] },
+      ]),
+    });
+    const keys = keysPanel(harness);
+    keys.issueKey();
+    const config = JSON.parse(keys.openCodeConfig(keys.issued()!));
+
+    expect(Object.keys(config.provider.aira.models)).toEqual(['qwen2.5:3b']);
   });
 
   it('still issues a key when the catalog cannot be read', () => {
@@ -477,6 +530,22 @@ describe('UseCaseDetail interactions', () => {
     harness.fixture.detectChanges();
     click(harness.fixture, '[aria-label="Remove bob"]');
     expect(harness.calls).toContain('removeMember:bob');
+  });
+
+  it('reads the keys again after an access change, which revokes the keys of who lost access', () => {
+    // "bob removed. 1 API key revoked with it: ab12." — and the keys tab still listed ab12 as
+    // active, with a Revoke button that could only fail (`FRD-613`).
+    const harness = setup({
+      members: of([{ username: 'bob', role: 'user' }]),
+      removeMember: of({ revoked_keys: ['ab12'] }),
+    });
+    harness.component.selectTab('members');
+    harness.fixture.detectChanges();
+    const before = harness.keyLoads();
+
+    click(harness.fixture, '[aria-label="Remove bob"]');
+
+    expect(harness.keyLoads()).toBe(before + 1);
   });
 });
 
@@ -621,6 +690,72 @@ describe('UseCaseDetail — the overview settings', () => {
   });
 });
 
+describe('UseCaseDetail — drafts survive a look at another tab', () => {
+  it('keeps a description being edited, rather than dropping it on the way out', async () => {
+    // The about panel sat inside the Overview's `@if`: switching tabs destroyed it, and the
+    // description being typed was gone without a word.
+    const harness = setup();
+    harness.html().querySelector<HTMLElement>('[data-testid="about-edit"]')!.click();
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    const field = harness
+      .html()
+      .querySelector<HTMLTextAreaElement>('[data-testid="uc-description"]')!;
+    field.value = 'A draft nobody saved';
+    field.dispatchEvent(new Event('input'));
+    harness.fixture.detectChanges();
+
+    harness.component.selectTab('keys');
+    harness.fixture.detectChanges();
+    harness.component.selectTab('overview');
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+
+    expect(
+      harness.html().querySelector<HTMLTextAreaElement>('[data-testid="uc-description"]')?.value,
+    ).toBe('A draft nobody saved');
+  });
+
+  it('keeps a release that is not saved yet', () => {
+    const harness = setup({ get: of({ ...USE_CASE, allowed_models: [] }) });
+    harness
+      .html()
+      .querySelector<HTMLButtonElement>('[data-testid="release-picker-toggle"]')!
+      .click();
+    harness.fixture.detectChanges();
+    harness
+      .html()
+      .querySelector<HTMLButtonElement>('[data-testid="release-picker-option-qwen2.5:3b"]')!
+      .click();
+    harness.fixture.detectChanges();
+    expect(harness.html().querySelector('[data-testid="release-unsaved"]')).not.toBeNull();
+
+    harness.component.selectTab('budgets');
+    harness.fixture.detectChanges();
+    harness.component.selectTab('overview');
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="release-unsaved"]')).not.toBeNull();
+  });
+});
+
+describe('UseCaseDetail — two forms on one overview', () => {
+  it('labels only the form whose save is in flight, not the one beside it', () => {
+    // One page-wide busy flag relabelled both Save buttons "Saving…" whichever was pressed.
+    const harness = setup({ update: new Subject<UseCase>() });
+    const capabilities = panel<CapabilitiesView>(harness, CapabilitiesPanel);
+    capabilities.promptCaching.set(true);
+    capabilities.saveCapabilities();
+    harness.fixture.detectChanges();
+
+    const labels = [...harness.html().querySelectorAll('button[type="submit"]')].map((button) =>
+      button.textContent?.trim(),
+    );
+    expect(labels).toContain('Saving…');
+    expect(labels).toContain('Save storage settings');
+  });
+});
+
 describe('UseCaseDetail — what a reader may do', () => {
   /** The same use case, seen by somebody who belongs to it but administers nothing. */
   const asReader = () =>
@@ -669,14 +804,17 @@ describe('UseCaseDetail — what a reader may do', () => {
   });
 
   it('assumes nothing while the answer has not arrived', () => {
-    // Defaulting to "yes" would flash every button and then take them away.
-    const harness = setup({ get: of({ ...USE_CASE, permissions: undefined }) });
-    harness.component.selectTab('members');
-    harness.fixture.detectChanges();
+    // Defaulting to "yes" would flash every button and then take them away. The use case has not
+    // answered at all here, and the control asserted on is the one an administrator does get.
+    const pending = setup({ get: new Subject<UseCase>() });
+    pending.component.selectTab('members');
+    pending.fixture.detectChanges();
+    expect(pending.html().querySelector('[data-testid="access-search"]')).toBeNull();
 
-    expect((harness.fixture.nativeElement as HTMLElement).textContent).not.toContain(
-      '+ Add member',
-    );
+    const answered = setup();
+    answered.component.selectTab('members');
+    answered.fixture.detectChanges();
+    expect(answered.html().querySelector('[data-testid="access-search"]')).not.toBeNull();
   });
 
   it('assumes the safe answer when the server reports no permissions at all', () => {
@@ -770,12 +908,97 @@ describe('UseCaseDetail — every tab has a panel behind it', () => {
     // A zero beside a tab reads as a figure worth looking at; an absent badge reads as nothing.
     const harness = setup();
     expect(harness.html().querySelector('#tab-warnings .tab__count')).toBeNull();
+  });
+});
 
-    (
-      harness.component as unknown as { warningCount: { set: (v: number) => void } }
-    ).warningCount.set(3);
+/**
+ * The tab bar's counts exist before any tab is opened (`CLAUDE.md` §3): the page loads what it
+ * counts. The Rules badge read "0" and the Warnings badge was absent until each tab had been
+ * visited, because only the tab loaded them.
+ */
+describe('UseCaseDetail — counts before a tab is opened', () => {
+  const finding = (over: Partial<AnomalyEvent> = {}): AnomalyEvent => ({
+    id: 'e1',
+    created_at: new Date(Date.now() - 60_000).toISOString(),
+    rule: 'spend spike',
+    kind: 'spend_spike',
+    use_case: 'demo-uc',
+    target: 'use_case',
+    target_value: 'demo-uc',
+    observed: 437,
+    threshold: 311,
+    sample: 40,
+    window_minutes: 60,
+    action_taken: 'alert',
+    detail: '',
+    ...over,
+  });
+  const rule = (id: number): AnomalyRule => ({
+    id,
+    use_case: 'demo-uc',
+    is_global: false,
+    name: `rule ${id}`,
+    kind: 'refusal_rate',
+    window_minutes: 15,
+    threshold: 50,
+    parameter: null,
+    min_sample: 20,
+    action: 'block',
+    target: 'subject',
+    action_minutes: 30,
+    throttle_rpm: null,
+    enabled: true,
+  });
+
+  it('counts the rules on the tab bar while another tab is open', () => {
+    const harness = setup({ useCaseRules: of([rule(1), rule(2)]) });
+
+    expect(harness.component.tab()).toBe('overview');
+    expect(harness.html().querySelector('[data-testid="rules-count"]')?.textContent).toBe('2');
+  });
+
+  it('shows no figure for the rules until they are known', () => {
+    const harness = setup({ useCaseRules: new Subject<AnomalyRule[]>() });
+
+    expect(harness.html().querySelector('[data-testid="rules-count"]')).toBeNull();
+  });
+
+  it('says the rules could not be loaded, rather than that none are watched', () => {
+    const harness = setup(
+      { useCaseRules: httpError(500, 'Management is restarting.') },
+      true,
+      'rules',
+    );
     harness.fixture.detectChanges();
-    expect(harness.html().querySelector('#tab-warnings .tab__count')?.textContent).toContain('3');
+
+    expect(harness.component.feedback.error()).toBe('Management is restarting.');
+    expect(harness.html().querySelector('[data-testid="no-rules"]')).toBeNull();
+    expect(harness.html().querySelector('[data-testid="rules-unavailable"]')).not.toBeNull();
+    expect(harness.html().querySelector('[data-testid="rules-count"]')).toBeNull();
+  });
+
+  it('counts recent findings on the Warnings tab before it is opened', () => {
+    const harness = setup({
+      anomalies: of({
+        events: [
+          finding(),
+          finding({ id: 'e2' }),
+          finding({ id: 'old', created_at: '2026-01-01T00:00:00Z' }),
+        ],
+        next_cursor: null,
+        scope: 'use_cases',
+      }),
+    });
+
+    expect(harness.html().querySelector('[data-testid="warnings-count"]')?.textContent).toBe('2');
+  });
+
+  it('says "+" when the page of recent findings may not be all of them', () => {
+    const harness = setup({
+      anomalies: of({ events: [finding()], next_cursor: 'more', scope: 'use_cases' }),
+    });
+
+    expect(harness.html().querySelector('[data-testid="warnings-count"]')?.textContent).toBe('1+');
   });
 });
 
@@ -789,6 +1012,42 @@ describe('UseCaseDetail — consumption (FRD-603)', () => {
     expect(harness.reportCalls[0]).toMatch(/^demo-uc:\d{4}-\d{2}-01:/);
     const [, todayFrom, todayTo] = harness.reportCalls[1].split(':');
     expect(new Date(todayTo).getTime() - new Date(todayFrom).getTime()).toBe(24 * 3600 * 1000);
+  });
+
+  it('asks for the UTC day the budget counters are on, wherever the browser is', () => {
+    // 00:30 in Berlin is 22:30 UTC the day before: the counter that refuses is still on the 12th,
+    // and asking for the 13th showed an untouched allowance beside a gateway refusing.
+    const env = (globalThis as unknown as { process: { env: Record<string, string | undefined> } })
+      .process.env;
+    const zone = env['TZ'];
+    env['TZ'] = 'Europe/Berlin';
+    vi.useFakeTimers({ now: new Date('2026-10-12T22:30:00Z'), toFake: ['Date'] });
+    try {
+      const harness = setup();
+
+      expect(harness.reportCalls[0]).toBe('demo-uc:2026-10-01:2026-11-01');
+      expect(harness.reportCalls[1]).toBe('demo-uc:2026-10-12:2026-10-13');
+    } finally {
+      vi.useRealTimers();
+      if (zone === undefined) delete env['TZ'];
+      else env['TZ'] = zone;
+    }
+  });
+
+  it('says which window it cannot show, when only that one failed', () => {
+    // This month timed out and today arrived. With no daily allowance the panel reads the month,
+    // and it said "you have not called this use case" beside a card calling the month unknown.
+    let call = 0;
+    const harness = setup({
+      useCaseReport: undefined,
+      useCaseReportPerCall: () => {
+        call += 1;
+        return call === 1 ? httpError(504) : of(emptyReport());
+      },
+    });
+
+    expect(harness.html().querySelector('[data-testid="people-unavailable"]')).not.toBeNull();
+    expect(harness.html().querySelector('[data-testid="people-empty"]')).toBeNull();
   });
 
   it('asks for no series on either consumption window', () => {
@@ -949,6 +1208,20 @@ describe('UseCaseDetail — the reader’s own usage chart (FRD-626 FR-15)', () 
     expect(from.endsWith('-01')).toBe(true);
   });
 
+  it('draws the period that is chosen, whichever answer arrives last', () => {
+    // A slow 30-day answer landing after the 7-day one drew thirty days under a control that said
+    // seven.
+    const thirty = new Subject<Report>();
+    const seven = new Subject<Report>();
+    const harness = setup({ useCaseSeriesPerCall: [thirty, seven] });
+    harness.component.chooseChartPeriod('last-7-days');
+
+    seven.next(emptyReport({ series: series({ buckets: ['7-day answer'] }) }));
+    thirty.next(emptyReport({ series: series({ buckets: ['30-day answer'] }) }));
+
+    expect(harness.component.chartSeries()?.buckets).toEqual(['7-day answer']);
+  });
+
   it('re-asks for the same person when the granularity changes', () => {
     const harness = setup();
     harness.component.chooseChartGranularity('hour');
@@ -983,7 +1256,13 @@ describe('UseCaseDetail — whether budgets are enforced', () => {
   it('forgets the answer when the gateway refuses or vanishes', () => {
     // The limits still render from Management's own data, so the page stays useful — but the last
     // enforcement answer may be stale, and a stale "enforced" is the reassuring kind of wrong.
-    const harness = setup({ budgetUsage: httpError(403) });
+    // An answer first, so there is something to forget.
+    const harness = setup({
+      budgetUsagePerCall: [of({ usage: [], enforced: true }), httpError(403)],
+    });
+    expect(harness.component.enforced()).toBe(true);
+
+    (harness.component as unknown as { loadBudgets: () => void }).loadBudgets();
 
     expect(harness.component.enforced()).toBeNull();
   });

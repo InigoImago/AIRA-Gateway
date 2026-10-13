@@ -6,7 +6,6 @@ apps with their own settings. The production entry point is `main`.
 
 from __future__ import annotations
 
-import sys
 from collections.abc import AsyncIterator, Callable, MutableMapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
@@ -15,6 +14,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from aira_common.counters import DegradationLog, ScriptRunner, build_runner
+from aira_common.logging import get_logger
 from aira_common.observability import redact_query_string
 from aira_gateway import __version__
 from aira_gateway.anomalies import AnomalyService
@@ -29,6 +29,7 @@ from aira_gateway.api.reporting import router as reporting_router
 from aira_gateway.api.usage import router as usage_router
 from aira_gateway.auth.dependencies import require_attribution
 from aira_gateway.auth.grants import GroupGrantResolver
+from aira_gateway.auth.keys import DEMO_KEY_PREFIX
 from aira_gateway.auth.oidc import build_oidc_validator
 from aira_gateway.auth.role_definitions import RoleResolver
 from aira_gateway.auth.service import ApiKeyService
@@ -59,8 +60,8 @@ from aira_gateway.ratelimit.buckets import (
 from aira_gateway.ratelimit.service import RateLimitService
 from aira_gateway.reporting.service import ReportingService
 from aira_gateway.routes.health import router as health_router
-from aira_gateway.security import enforce_safe_settings
-from aira_gateway.telemetry import instrument_outgoing_calls
+from aira_gateway.security import enforce_safe_settings, is_local_environment, is_local_or_demo
+from aira_gateway.telemetry import instrument_outgoing_calls, redact_span_urls
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.foundry import build_foundry_upstreams
 from aira_gateway.upstreams.gemini import build_gemini_upstream
@@ -69,6 +70,8 @@ from aira_gateway.upstreams.openai import build_openai_upstreams
 from aira_gateway.upstreams.vertex import build_vertex_upstreams
 
 __all__ = ["CorsMisconfigured", "create_app", "redact_span_query"]
+
+_log = get_logger("aira_gateway")
 
 
 def create_app(settings: GatewaySettings | None = None) -> FastAPI:
@@ -79,17 +82,23 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     enforce_safe_settings(settings)
     otel_enabled = configure_process(settings)
 
-    use_sqlite = settings.test_database or ("pytest" in sys.modules)
+    use_sqlite = settings.uses_sqlite()
     engine = build_engine(settings.database_url(use_sqlite=use_sqlite))
     sessionmaker = build_sessionmaker(engine)
     # Shared counters for rate limits and budget reservations (ADR-0008). An empty URL yields a
     # runner that reports itself unavailable, so both take their documented fallback.
     counters = build_runner(settings.redis_url, settings.redis_sentinel())
 
+    # The API's own map — every route, the incident and content-read ones with their parameters —
+    # is for whoever develops against it, not for anybody who can reach a deployment's port.
+    documented = is_local_or_demo(settings)
     app = FastAPI(
         title=settings.app_name,
         version=__version__,
         lifespan=_lifespan(settings, engine, sessionmaker, counters, use_sqlite=use_sqlite),
+        docs_url="/docs" if documented else None,
+        redoc_url="/redoc" if documented else None,
+        openapi_url="/openapi.json" if documented else None,
     )
     app.state.settings = settings
     _assemble_services(app, settings, engine, sessionmaker, counters)
@@ -102,13 +111,17 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         instrument_outgoing_calls(engine)
 
     # Middleware runs **outermost-last**, and the order decides which responses carry the headers.
-    # The body limit sits inside the header middleware so a 413 is headered too; it wraps
-    # `receive`, which nothing above it calls, so nothing is buffered earlier either way.
-    configure_cors(app, settings)
-    app.add_middleware(UseCasePathMiddleware)
+    # The body limit is innermost: it wraps `receive`, which nothing above it calls, so nothing is
+    # buffered earlier — and every layer below adds its headers to its 413 as well.
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+    # Outside the ceiling, so it refuses on the path every route sees: `/uc/<slug>/kira/…` is a KIRA
+    # request when it is too large, too, and is audited as one.
+    app.add_middleware(UseCasePathMiddleware)
+    # Outside both, so a browser can read a refusal from either rather than a network error.
+    configure_cors(app, settings)
     app.add_middleware(SecurityHeadersMiddleware)
-    # Outermost, so a response produced by an exception handler still carries it (`FRD-117` FR-4).
+    # Outermost of ours, so a response produced by an exception handler still carries it (`FRD-117`
+    # FR-4). Starlette answers an unhandled error outside all of them (`_handle_unexpected`).
     app.add_middleware(TraceIdMiddleware)
 
     _include_routers(app)
@@ -125,7 +138,7 @@ def _build_providers(settings: GatewaySettings) -> ProviderRegistry:
     providers: list[Upstream] = []
     # Deterministic fiction: right for the demo and the hermetic suite, never registered elsewhere —
     # a fake model serving real traffic, billed as free, cannot be "approved" (`FRD-307`).
-    if settings.environment == "local" or settings.demo_mode:
+    if is_local_or_demo(settings):
         providers.append(MockProvider())
     gemini = build_gemini_upstream(settings)
     if gemini is not None:
@@ -223,7 +236,9 @@ def _lifespan(
             await create_all(engine)
         if settings.demo_mode:
             async with sessionmaker() as session:
-                await ApiKeyService(session).ensure_demo_key()
+                await ApiKeyService(session, demo_mode=True).ensure_demo_key()
+        elif not is_local_environment(settings):
+            await _revoke_the_published_demo_key(sessionmaker)
         await app.state.log_writer.start()
         # One probe *before* serving, so the first readiness answer is a verdict, not an absence.
         probe = app.state.upstream_probe
@@ -241,6 +256,31 @@ def _lifespan(
         await engine.dispose()
 
     return lifespan
+
+
+async def _revoke_the_published_demo_key(sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+    """Revoke a demo key a demo run left in a database that now serves a deployment.
+
+    Verification refuses it already outside demo mode (`ApiKeyService.verify`). The row is revoked
+    as well, terminally like any revoked key, because its plaintext is published and this database
+    now serves without the declaration that made that acceptable. Locally a demo is switched on
+    and off against one database, so the row is kept there. Never fails the start: the refusal at
+    verification is the protection, and an unreachable database is `/readyz`'s to report.
+    """
+    try:
+        async with sessionmaker() as session:
+            revoked = await ApiKeyService(session).revoke(DEMO_KEY_PREFIX)
+    except Exception as exc:  # noqa: BLE001 - see above: never a reason not to start
+        _log.warning("demo_key_not_checked", error_type=type(exc).__name__)
+        return
+    if revoked:
+        _log.warning(
+            "demo_key_revoked",
+            detail=(
+                "This database held the published demo key from a run with AIRA_DEMO_MODE on. "
+                "It has been revoked: outside demo mode it is a credential anybody can read."
+            ),
+        )
 
 
 def _include_routers(app: FastAPI) -> None:
@@ -261,8 +301,10 @@ def _include_routers(app: FastAPI) -> None:
 def redact_span_query(span: Any, scope: MutableMapping[str, Any]) -> None:
     """OTel server-request hook: keep credentials out of exported spans (`ADR-0007`).
 
-    Gemini clients may authenticate with ``?key=<api key>``, which the ASGI instrumentation would
-    otherwise record verbatim as a span attribute.
+    Gemini clients may authenticate with ``?key=<api key>``, which the ASGI instrumentation records
+    verbatim. The query and the target are rewritten from the scope; then **every** string
+    attribute is scrubbed (`telemetry.redact_span_urls`), because the instrumentation also records
+    the whole URL, under a name of its own choosing.
     """
     if span is None or not span.is_recording():
         return
@@ -272,3 +314,4 @@ def redact_span_query(span: Any, scope: MutableMapping[str, Any]) -> None:
     redacted = redact_query_string(query)
     span.set_attribute("url.query", redacted)
     span.set_attribute("http.target", f"{scope.get('path', '')}?{redacted}")
+    redact_span_urls(span)

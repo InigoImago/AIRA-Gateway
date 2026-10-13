@@ -1,13 +1,15 @@
-import { Component, computed, inject, input } from '@angular/core';
-import { MeService, unitSuffix } from '../../core/api/me.service';
+import { Component, computed, input } from '@angular/core';
+import { unitSuffix } from '../../core/api/me.service';
 import { Budget, BudgetUsage, PersonRow } from '../../core/api/models';
 import { InfoHint } from '../../core/ui/info-hint';
+import { displayAmount, displayCount, nanosOf, storedAmount } from '../../core/ui/money';
+import { PERIOD_CLOCK } from '../../core/ui/periods';
 
 /** One person's row, ready to render: their totals, the two halves, and what is left. */
 interface PersonView {
   name: string;
-  requests: number;
-  tokens: number;
+  requests: string;
+  tokens: string;
   cost: string;
   /** What came from a Keycloak sign-in and what from a key. `null` where that half is nothing. */
   signedIn: string | null;
@@ -19,6 +21,9 @@ interface PersonView {
   over: boolean;
 }
 
+/** The most decimals an amount can have: one nano-unit. */
+const MAX_PLACES = 9;
+
 /**
  * Significant decimals in an amount, ignoring trailing zeros: a limit stored as `0.010000` has
  * two, not six.
@@ -27,18 +32,14 @@ function decimals(value: string): number {
   return (value.split('.')[1] ?? '').replace(/0+$/, '').length;
 }
 
-/** An amount without its trailing zeros: `0.010000` reads as `0.01`. */
-function trimmed(value: string): string {
-  return Number(value).toFixed(Math.max(2, decimals(value)));
-}
-
 /**
  * Nano-units as a decimal string, in the precision the figures beside it use. Fixed at two places
  * a small remainder vanishes; more places than those shown would claim precision never measured.
+ * Half-up and never a non-zero amount as zero — the rule every other amount here follows.
  */
 function money(nanos: number, ...alongside: string[]): string {
   const places = Math.max(2, ...alongside.map((value) => decimals(value)));
-  return (nanos / 1_000_000_000).toFixed(Math.min(places, 9));
+  return displayAmount(nanos, Math.min(places, MAX_PLACES));
 }
 
 /**
@@ -72,7 +73,7 @@ function half(person: PersonRow, method: string): string | null {
   template: `
     <div class="card">
       <div class="spread">
-        <h3 class="section-title" style="margin: 0">
+        <h3 class="section-title">
           {{ mine() ? 'What you used' : 'What each person used' }}
           <app-info-hint label="What each person used" testid="people-consumption" [wide]="true">
             Recorded requests for this use case. Somebody who calls with an API key and also signs
@@ -82,11 +83,11 @@ function half(person: PersonRow, method: string): string | null {
           </app-info-hint>
         </h3>
         @if (whyOnly()) {
-          <span class="muted" style="font-size: 0.85rem" data-testid="people-why-only">
+          <span class="muted text-sm" data-testid="people-why-only">
             {{ whyOnly() }}
           </span>
         }
-        <span class="muted" style="font-size: 0.85rem" data-testid="people-window">
+        <span class="muted text-sm" data-testid="people-window">
           {{ windowLabel() }}
           <app-info-hint
             label="the period these figures cover"
@@ -140,7 +141,7 @@ function half(person: PersonRow, method: string): string | null {
                     <code>{{ person.name }}</code>
                     <!-- The split under the name, not in two more columns between name and spend. -->
                     @if (person.signedIn || person.viaKey) {
-                      <div class="muted" style="font-size: 0.78rem">
+                      <div class="muted text-sm">
                         @if (person.signedIn) {
                           <span>signed in: {{ person.signedIn }}</span>
                         }
@@ -178,7 +179,7 @@ function half(person: PersonRow, method: string): string | null {
         dividing it per head would invent an allowance nobody configured.
       -->
       @if (sharedLeft().length) {
-        <p class="muted" style="margin: 0.75rem 0 0; font-size: 0.85rem" data-testid="shared-left">
+        <p class="muted text-sm shared-left" data-testid="shared-left">
           Left of this use case's shared {{ sharedPeriod() }} budget:
           @for (figure of sharedLeft(); track figure.label) {
             <span
@@ -195,7 +196,7 @@ function half(person: PersonRow, method: string): string | null {
     tbody th {
       text-transform: none;
       letter-spacing: 0;
-      font-size: 0.9rem;
+      font-size: var(--aira-text-base);
       color: var(--aira-text);
       text-align: left;
     }
@@ -207,17 +208,26 @@ function half(person: PersonRow, method: string): string | null {
       color: var(--aira-danger);
       font-weight: 600;
     }
+    .shared-left {
+      margin: 0.75rem 0 0;
+    }
   `,
 })
 export class PeoplePanel {
   /** Consumption over the month, and over today — the budget's period decides which is used. */
   readonly month = input<PersonRow[]>([]);
-  private readonly currency = inject(MeService).currency;
-  protected readonly unit = computed(() => unitSuffix(this.currency()));
   readonly today = input<PersonRow[]>([]);
   readonly budgets = input<Budget[]>([]);
-  readonly unavailable = input(false);
+  /**
+   * Which window did not arrive. Each on its own: the panel reads one window or the other, and a
+   * window that failed must not read as "nobody called" because the *other* one arrived.
+   */
+  readonly monthUnavailable = input(false);
+  readonly todayUnavailable = input(false);
   readonly reason = input('');
+  /** The unit money is in, as the page has it (`AIRA_CURRENCY`). */
+  readonly currency = input('');
+  protected readonly unit = computed(() => unitSuffix(this.currency()));
   /**
    * Narrow the panel to one person — the signed-in reader, on the use-case overview. The same
    * component, so the remainder arithmetic exists once and the two views cannot disagree.
@@ -245,23 +255,24 @@ export class PeoplePanel {
     const used = budget?.id === undefined ? undefined : this.usage()[budget.id];
     if (!budget || !used) return [];
     const out: { label: string; value: string }[] = [];
-    if (budget.limit_cost && used.used_cost_nanos != null) {
-      const left = Math.round(Number(budget.limit_cost) * 1_000_000_000) - used.used_cost_nanos;
+    const limitNanos = budget.limit_cost ? nanosOf(budget.limit_cost) : null;
+    if (budget.limit_cost && limitNanos !== null && used.used_cost_nanos != null) {
+      const left = limitNanos - used.used_cost_nanos;
       out.push({
-        label: `of ${trimmed(budget.limit_cost)} spend`,
+        label: `of ${storedAmount(budget.limit_cost) ?? budget.limit_cost} spend`,
         value: money(Math.max(0, left), budget.limit_cost, used.used_cost ?? ''),
       });
     }
     if (budget.limit_requests != null && used.used_requests != null) {
       out.push({
-        label: `of ${budget.limit_requests} requests`,
-        value: `${Math.max(0, budget.limit_requests - used.used_requests)}`,
+        label: `of ${displayCount(budget.limit_requests)} requests`,
+        value: displayCount(Math.max(0, budget.limit_requests - used.used_requests)),
       });
     }
     if (budget.limit_tokens != null && used.used_tokens != null) {
       out.push({
-        label: `of ${budget.limit_tokens} tokens`,
-        value: `${Math.max(0, budget.limit_tokens - used.used_tokens)}`,
+        label: `of ${displayCount(budget.limit_tokens)} tokens`,
+        value: displayCount(Math.max(0, budget.limit_tokens - used.used_tokens)),
       });
     }
     return out;
@@ -282,6 +293,11 @@ export class PeoplePanel {
     this.perHead()?.period === 'day' ? this.today() : this.month(),
   );
 
+  /** Whether the window this panel reads arrived — the other one's fate is not this panel's. */
+  protected readonly unavailable = computed(() =>
+    this.perHead()?.period === 'day' ? this.todayUnavailable() : this.monthUnavailable(),
+  );
+
   protected readonly people = computed(() => {
     const only = this.only();
     return only === null ? this.window() : this.window().filter((row) => row.key === only);
@@ -292,8 +308,8 @@ export class PeoplePanel {
 
   protected readonly sharedPeriod = computed(() => this.shared()?.period ?? 'month');
 
-  protected readonly windowLabel = computed(() =>
-    this.perHead()?.period === 'day' ? 'today' : 'this month',
+  protected readonly windowLabel = computed(
+    () => `${this.perHead()?.period === 'day' ? 'today' : 'this month'} (${PERIOD_CLOCK})`,
   );
 
   /**
@@ -308,28 +324,29 @@ export class PeoplePanel {
    */
   protected readonly windowReason = computed(() =>
     this.perHead()?.period === 'day'
-      ? `Today, because the per-person allowance on this use case resets daily — a remainder is only
-         meaningful against the period it is measured in. For a longer view, use the period control
-         on the usage chart above.`
-      : `This month, which is the period the per-person allowance on this use case is measured in.
-         For a shorter or longer view, use the period control on the usage chart above.`,
+      ? `Today in ${PERIOD_CLOCK}, because the per-person allowance on this use case resets at
+         midnight ${PERIOD_CLOCK} — a remainder is only meaningful against the period it is measured
+         in. For a longer view, use the period control on the usage chart above.`
+      : `This month in ${PERIOD_CLOCK}, which is the period the per-person allowance on this use case
+         is measured in. For a shorter or longer view, use the period control on the usage chart
+         above.`,
   );
 
   protected readonly view = computed<PersonView[]>(() =>
     this.people().map((person) => {
       const budget = this.perHead();
       const limit = budget?.limit_cost ?? null;
-      // In integer nano-units, so the remainder stays exact.
-      const limitNanos = limit === null ? null : Math.round(Number(limit) * 1_000_000_000);
+      // In integer nano-units, read on the digits, so the remainder stays exact.
+      const limitNanos = limit === null ? null : nanosOf(limit);
       const left = limitNanos === null ? null : limitNanos - person.cost_nanos;
       return {
         name: person.key,
-        requests: person.requests,
-        tokens: person.total_tokens,
+        requests: displayCount(person.requests),
+        tokens: displayCount(person.total_tokens),
         cost: person.cost,
         signedIn: half(person, 'oidc'),
         viaKey: half(person, 'api_key'),
-        allowance: limit === null ? null : trimmed(limit),
+        allowance: limit === null ? null : (storedAmount(limit) ?? limit),
         // Clamped at zero for reading; running out is carried by `over`.
         remaining: left === null ? null : money(Math.max(0, left), limit ?? '', person.cost),
         over: left !== null && left < 0,

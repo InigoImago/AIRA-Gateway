@@ -6,6 +6,7 @@ import {
   grantGroup,
   login,
   logout,
+  openUseCase,
   uniqueSlug,
 } from './support';
 
@@ -17,7 +18,12 @@ import {
  * different from one that works. Both are things a person sees and a unit test cannot.
  */
 
+/** A department `ucuser` is in. Granted `user` here and never `admin`: a demo user made the
+ *  administrator of a use case is installation state the next test — and the next suite —
+ *  inherits, since "administers any use case" opens doors across the console. */
 const DEPARTMENT = '/abteilungen/kundendienst';
+/** A department nobody is in: where a test that needs an `admin` grant makes it. */
+const EMPTY_DEPARTMENT = '/abteilungen/entwicklung';
 
 /** Grant a group through the API, so a test can start from a known state. */
 test.describe('Access by group', () => {
@@ -70,19 +76,21 @@ test.describe('Access by group', () => {
     // Nothing chosen yet: the button is inert.
     await expect(page.locator('[data-testid="access-grant"]')).toBeDisabled();
 
-    await page.fill('[data-testid="access-search"]', 'kundendienst');
+    // The department nobody is in, because the role chosen is `admin`. Searched by its name and
+    // picked by its parent, since `/use-cases/entwicklung` answers the same search.
+    await page.fill('[data-testid="access-search"]', 'entwicklung');
     const results = page.locator('[data-testid="access-results"]');
     await expect(results).toBeVisible({ timeout: 20_000 });
     await expect(results).toContainText('group');
 
-    await results.locator('button').first().click();
+    await results.locator('button', { hasText: '/abteilungen' }).first().click();
     await page.selectOption('[data-testid="access-role"]', 'admin');
     await page.click('[data-testid="access-grant"]');
 
     await expect(page.locator('[role="status"]')).toContainText('Everyone in that group', {
       timeout: 20_000,
     });
-    const row = page.locator(`tr:has(code:text-is("${DEPARTMENT}"))`);
+    const row = page.locator(`tr:has(code:text-is("${EMPTY_DEPARTMENT}"))`);
     await expect(row).toContainText('admin');
     // The picker clears itself, so the next grant does not start from the last one's text.
     await expect(page.locator('[data-testid="access-search"]')).toHaveValue('');
@@ -131,8 +139,18 @@ test.describe('Access by group', () => {
     page,
   }) => {
     // `FRD-206`: an action nobody can carry out reads as a broken system rather than a boundary.
+    //
+    // A use case of its own that the reader is a **member** of, made here: `demo-uc` is created
+    // by nothing, and the page still renders every tab for a slug Management does not have — so
+    // this passed about a use case that did not exist, and saw no member's view at all.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('member');
+    await createUseCase(page, slug, 'Member view probe');
+    await grantGroup(page, slug, DEPARTMENT, 'user');
+    await logout(page);
+
     await login(page, USERS.useCaseUser);
-    await page.goto('/use-cases/demo-uc?tab=members');
+    await openUseCase(page, slug, 'members');
 
     await expect(page.locator('[data-testid="access-readonly"]')).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('[data-testid="access-search"]')).toHaveCount(0);

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 
@@ -44,8 +43,8 @@ class Budget(models.Model):
     PERIOD_CHOICES = [(DAY, "Daily"), (MONTH, "Monthly")]
 
     #: Null for an **installation** budget, which belongs to no use case by definition (`FRD-610`).
-    #: Every other scope requires one, and `clean()` refuses the two wrong combinations rather than
-    #: leaving a row whose scope and owner disagree.
+    #: Every other scope requires one: each route's serializer refuses the scope that is not its
+    #: own, and `ck_budget_scope_matches_owner` holds the same rule for every other writer.
     use_case = models.ForeignKey(
         UseCase, on_delete=models.CASCADE, related_name="budgets", null=True, blank=True
     )
@@ -79,8 +78,8 @@ class Budget(models.Model):
                 condition=models.Q(use_case__isnull=True),
                 name="uq_installation_budget",
             ),
-            # Scope and owner must agree, enforced where the row is stored: `clean()` does not run
-            # for a fixture, a shell or a migration.
+            # Scope and owner must agree, enforced where the row is stored: a fixture, a shell or a
+            # migration writes past the serializers.
             models.CheckConstraint(
                 condition=(
                     models.Q(scope="installation", use_case__isnull=True)
@@ -89,16 +88,6 @@ class Budget(models.Model):
                 name="ck_budget_scope_matches_owner",
             ),
         ]
-
-    def clean(self) -> None:
-        """The same rule as the constraint above, said where a form can show it."""
-        super().clean()
-        if self.scope == self.INSTALLATION and self.use_case_id is not None:
-            raise ValidationError(
-                {"use_case": "An installation budget belongs to no use case; leave it empty."}
-            )
-        if self.scope != self.INSTALLATION and self.use_case_id is None:
-            raise ValidationError({"use_case": f"A '{self.scope}' budget needs a use case."})
 
     def __str__(self) -> str:
         owner = self.use_case.slug if self.use_case is not None else "installation"

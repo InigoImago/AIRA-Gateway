@@ -118,6 +118,24 @@ def test_a_tolerance_beyond_a_token_lifetime_is_refused_at_construction() -> Non
     assert "AIRA_OIDC_EXPIRY_LEEWAY_SECONDS" in str(expiry.value)
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")], ids=str)
+@pytest.mark.parametrize(
+    ("setting", "name"),
+    [
+        ("clock_skew_seconds", "AIRA_OIDC_CLOCK_SKEW_SECONDS"),
+        ("expiry_leeway_seconds", "AIRA_OIDC_EXPIRY_LEEWAY_SECONDS"),
+    ],
+)
+def test_a_tolerance_that_is_not_a_number_is_refused_too(
+    value: float, setting: str, name: str
+) -> None:
+    """NaN fails both comparisons of a range check, so it passed one. With both tolerances NaN,
+    every comparison against `exp` is false, and a token that expired a year ago verified."""
+    with pytest.raises(ToleranceOutOfRange) as refused:
+        JwtVerifier(ISSUER, None, _Resolver(object()), **{setting: value})  # type: ignore[arg-type]
+    assert name in str(refused.value)
+
+
 def test_the_defaults_are_the_ones_argued_for() -> None:
     """A default is the decision every installation gets; naming it in a test is what stops it
     drifting back to a library's."""

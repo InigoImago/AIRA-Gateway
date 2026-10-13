@@ -24,14 +24,14 @@ protocol; since our surface is already Gemini-shaped (FRD-100), the mapping is n
   (FRD-302), Microsoft Foundry adapter, multimodal/tools. Those are separate.
 
 ## 3. Functional Requirements
-- **FR-1 generate**: map canonical → Gemini request body, `POST /models/{model}:generateContent?key=…`,
-  parse `candidates`/`usageMetadata` → canonical.
+- **FR-1 generate**: map canonical → Gemini request body, `POST /models/{model}:generateContent`
+  (the model percent-encoded as one path segment), parse `candidates`/`usageMetadata` → canonical.
 - **FR-2 stream**: `:streamGenerateContent?alt=sse` → parse `data:` events → canonical chunks.
 - **FR-3 embed**: `:embedContent` → values.
 - **FR-4 models**: expose the configured model names; the registry resolves them to this provider.
 - **FR-5 async protocol**: `Upstream.generate/stream_generate/embed` become async; routes `await` them.
 - **FR-6 errors**: non-2xx / transport error → `GeminiHTTPError(502, …, "UNAVAILABLE")`; the API key is
-  sent as a query param and **never** logged.
+  sent in the `x-goog-api-key` header, never in a URL, and **never** logged.
 - **FR-7 config**: `google_api_key`, `gemini_models` (csv), `gemini_base_url`; provider built +
   registered only when a key is present.
 
@@ -43,8 +43,9 @@ protocol; since our surface is already Gemini-shaped (FRD-100), the mapping is n
 - App registers `[MockProvider(), *gemini]`; `build_gemini_upstream(settings)` returns None when no key.
 
 ## 5. Security & Privacy
-- API key from Vault/env; sent to Google as `?key=`; excluded from logs/spans. Prompts/responses are
-  persisted per FRD-103 (redaction hook applies).
+- API key from Vault/env; sent to Google as the `x-goog-api-key` header, so no URL — and no proxy or
+  access log — ever holds it; excluded from logs/spans. Prompts/responses are persisted per FRD-103
+  (redaction hook applies).
 
 ## 6. Testing & Acceptance
 - Hermetic tests (httpx `MockTransport`): request mapping (contents/generationConfig), response

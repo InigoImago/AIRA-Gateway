@@ -1,7 +1,9 @@
 import { Component, OnInit, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { finalize } from 'rxjs';
 import { UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { ConfirmService } from '../../core/ui/confirm.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
 /** The longest retention period the server accepts, in days. */
@@ -94,9 +96,12 @@ export class DataProtectionPanel implements OnInit {
   readonly saved = output<UseCase>();
 
   private readonly service = inject(UseCaseService);
+  private readonly confirmService = inject(ConfirmService);
   protected readonly feedback = inject(PageFeedback);
 
   protected readonly modes = CONTENT_MODES;
+  /** This panel's save is in flight — its own, so the form beside it keeps its label. */
+  protected readonly saving = signal(false);
   protected readonly retentionDays = signal<number | null>(null);
   protected readonly mode = signal<ContentMode>('members');
 
@@ -143,14 +148,21 @@ export class DataProtectionPanel implements OnInit {
     }
     const days = this.retentionDays();
     const fields = fieldsFor(this.mode());
+    const deletes = this.whatIsDeleted(fields.store_payloads, days);
+    if (deletes && !this.confirmService.ask(deletes)) {
+      return;
+    }
+    this.saving.set(true);
     this.feedback.run(
-      this.service.update(this.slug(), {
-        // Named, not spread: every field this form writes is visible where it is sent. Not stored
-        // leaves the restriction `undefined`, which is not sent at all.
-        store_payloads: fields.store_payloads,
-        payload_visibility: fields.payload_visibility,
-        ...(fields.store_payloads && days != null ? { retention_days: days } : {}),
-      }),
+      this.service
+        .update(this.slug(), {
+          // Named, not spread: every field this form writes is visible where it is sent. Not stored
+          // leaves the restriction `undefined`, which is not sent at all.
+          store_payloads: fields.store_payloads,
+          payload_visibility: fields.payload_visibility,
+          ...(fields.store_payloads && days != null ? { retention_days: days } : {}),
+        })
+        .pipe(finalize(() => this.saving.set(false))),
       {
         failure: 'Could not change the data-protection settings.',
         success: (useCase: UseCase) => {
@@ -164,6 +176,30 @@ export class DataProtectionPanel implements OnInit {
         },
       },
     );
+  }
+
+  /**
+   * The question to ask before saving, when the save deletes stored content: switching storage
+   * off, or shortening the period. Deleting is the one thing here that cannot be undone, so it is
+   * asked before — as revoking a key or removing a budget is — not only announced after.
+   */
+  private whatIsDeleted(store: boolean, days: number | null): string | null {
+    const saved = this.useCase();
+    if (saved?.store_payloads === false) return null;
+    if (!store) {
+      return (
+        'Stop storing prompts and responses for this use case? Everything already stored for it ' +
+        'is deleted on the next retention run, and cannot be brought back.'
+      );
+    }
+    const before = saved?.retention_days ?? null;
+    if (days != null && before != null && days < before) {
+      return (
+        `Keep prompts and responses for ${days} day(s) instead of ${before}? Everything stored ` +
+        `longer ago than that is deleted on the next retention run, and cannot be brought back.`
+      );
+    }
+    return null;
   }
 
   private fill(useCase: UseCase | null): void {

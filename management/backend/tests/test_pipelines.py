@@ -113,8 +113,6 @@ def test_put_saves_and_emits(captured_events) -> None:
             "use_case": "demo-uc",
             "steps": _STEPS,
             "fallback_models": ["backup-1"],
-            # Where a caller who names no model enters (`ADR-0020`). Blank here, which is a real
-            # state: this pipeline is only ever reached by a request that names its own model.,
         }
     ]
 
@@ -298,11 +296,20 @@ def test_rejects_overlong_category_name() -> None:
 
 
 def test_rejects_too_many_fallback_models() -> None:
-    assert _save([], [f"m{i}" for i in range(20)]).status_code == 400
+    """Every name released, so the release check has nothing to say and the bound has to."""
+    chain = [f"m{i}" for i in range(20)]
+
+    response = _save([], chain, releases=tuple(chain))
+
+    assert response.status_code == 400
+    assert "At most 16 fallback models are allowed." in str(response.json())
 
 
 def test_rejects_overlong_fallback_model_name() -> None:
-    assert _save([], ["x" * 200]).status_code == 400
+    response = _save([], ["x" * 200], releases=("x" * 200,))
+
+    assert response.status_code == 400
+    assert "Model names are limited to 128 characters." in str(response.json())
 
 
 def test_the_undetermined_policy_is_validated_where_it_is_authored() -> None:
@@ -471,17 +478,158 @@ def test_a_step_chain_of_released_models_saves() -> None:
 
 
 @pytest.mark.parametrize(
-    ("chain", "why"),
+    ("chain", "said"),
     [
-        ([f"m{index}" for index in range(20)], "longer than the chain is allowed to be"),
-        (["x" * 200], "a name longer than a model name can be"),
-        ("cheap-1", "a string where a list belongs"),
-        ([{"model": "cheap-1"}], "an object where a name belongs"),
+        ([f"m{index}" for index in range(20)], "allows at most 16 items"),
+        (["x" * 200], "strings of at most 128 characters"),
+        ("cheap-1", "fallback_models must be a list"),
+        ([{"model": "cheap-1"}], "strings of at most 128 characters"),
     ],
 )
-def test_a_step_chain_is_bounded_where_it_is_authored(chain: object, why: str) -> None:
+def test_a_step_chain_is_bounded_where_it_is_authored(chain: object, said: str) -> None:
     """Same bounds as the dispatch chain, because it is the same thing one level in — and this
-    read-model is executed by the gateway on every request of the use case (`ADR-0007`)."""
-    resp = _save([{"type": "pii_filter", "config": {"model": "m", "fallback_models": chain}}])
+    read-model is executed by the gateway on every request of the use case (`ADR-0007`).
 
-    assert resp.status_code == 400, why
+    Every name in the chain is **released**, so the release check passes and only the bound can
+    refuse: with the names unreleased, each case was refused by the release check whether or not
+    the bound existed.
+    """
+    names = [name for name in chain if isinstance(name, str)] if isinstance(chain, list) else []
+    resp = _save(
+        [{"type": "pii_filter", "config": {"model": "m", "fallback_models": chain}}],
+        releases=("m", "cheap-1", *names),
+    )
+
+    assert resp.status_code == 400
+    assert said in str(resp.json()), resp.json()
+
+
+# ---- the closed vocabularies are refused by name (`M2-3`) -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "field"),
+    [
+        ({"mode": "heuristic", "action": "Block"}, "action"),
+        ({"mode": "heuristic", "action": "blok"}, "action"),
+        ({"mode": "heuristic", "action": "block", "scope": "system-user"}, "scope"),
+        ({"mode": "LLM", "action": "block"}, "mode"),
+        ({"mode": "heuristic", "use_builtins": "false"}, "use_builtins"),
+        ({"mode": "heuristic", "action": ["block"]}, "action"),
+    ],
+)
+def test_a_filter_word_outside_its_vocabulary_is_refused_by_name(config: dict, field: str) -> None:
+    """The gateway blocks only on the exact word `block`, reads an unknown scope as the narrower
+    one, and takes the string `"false"` as true — so each of these saved, showed as configured,
+    and did the opposite of what was typed. `on_undetermined` was already refused where it is
+    written; the words where a typo is *unsafe* are refused the same way."""
+    response = _save([{"type": "injection_filter", "config": config}])
+
+    assert response.status_code == 400, response.json()
+    assert f"step.config.{field}" in str(response.json()), response.json()
+
+
+def test_every_word_of_each_vocabulary_is_accepted() -> None:
+    """The other half: a validator that refused everything would pass every case above."""
+    from aira_common.pipelines import FilterAction, InjectionMode, ScanScope
+
+    admin = _user("vocabulary-admin", "global-admin")
+    _make_uc(admin, "vocabulary-uc")
+    client = _client(admin)
+    for mode in InjectionMode:
+        for action in FilterAction:
+            for scope in ScanScope:
+                for use_builtins in (True, False):
+                    config = {
+                        "mode": str(mode),
+                        "action": str(action),
+                        "scope": str(scope),
+                        "use_builtins": use_builtins,
+                    }
+                    response = client.put(
+                        f"{BASE}vocabulary-uc/pipeline/",
+                        {"steps": [{"type": "injection_filter", "config": config}]},
+                        format="json",
+                    )
+                    assert response.status_code == 200, (config, response.json())
+
+
+# ---- a value of the wrong kind is refused, never a server error (`M2-5`) ---------------------
+
+
+@pytest.mark.parametrize("step_type", [["model_route"], {"a": 1}])
+def test_a_step_type_that_is_not_a_word_is_refused(step_type: object) -> None:
+    """Membership in the step-type `set` hashed the value, and a list or an object raised
+    `TypeError` — a `500` for a value the caller typed."""
+    response = _save([{"type": step_type}])
+
+    assert response.status_code == 400, response.content
+    assert "Each step needs a type" in str(response.json())
+
+
+# ---- a step carries only what the gateway reads ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("step", "said"),
+    [
+        ({"type": "pii_filter", "config": {}, "label": "x"}, "does not take 'label'"),
+        ({"type": "model_route", "config": {"notes": "x" * 1_500_000}}, "does not take 'notes'"),
+        ({"type": "injection_filter", "config": {"notice": "hi"}}, "does not take 'notice'"),
+        (
+            {"type": "model_route", "config": {"categories": [{"name": "c", "pad": 1}]}},
+            "does not take 'pad'",
+        ),
+    ],
+)
+def test_a_key_nothing_reads_is_refused_by_name(step: dict, said: str) -> None:
+    """A step's configuration travels to the gateway on every save and is executed on every request
+    of the use case. A plain administrator saved a 1.5 MB key nothing reads, which became an event
+    larger than the bus carries; and a key nothing reads is a setting somebody tunes and then
+    wonders why nothing changes. The keys are the ones the gateway's step reads."""
+    response = _save([step])
+
+    assert response.status_code == 400, str(response.json())[:300]
+    assert said in str(response.json())[:2000]
+
+
+@pytest.mark.parametrize(
+    ("config", "said"),
+    [
+        ({"model": ["router-1"]}, "step.config.model must be a model name"),
+        ({"default_model": "x" * 200}, "step.config.default_model must be a model name"),
+        (
+            {"categories": [{"name": "c", "model": "x" * 200}]},
+            "step.config.categories[0].model must be a model name",
+        ),
+        ({"categories": [{"name": "x" * 5000}]}, "step.config.categories[0].name must be text"),
+    ],
+)
+def test_a_model_a_step_names_is_a_model_name_and_said_where(config: dict, said: str) -> None:
+    """A category's model was reported as `step.config.model … 4000 characters` — the wrong path,
+    and a bound that is not a model name's — and a list where a name belongs reached the release
+    check as its printed form."""
+    response = _save([{"type": "model_route", "config": config}])
+
+    assert response.status_code == 400
+    assert said in str(response.json()), response.json()
+
+
+def test_both_planes_read_one_set_of_bounds() -> None:
+    """The bounds Management refuses at are the ones the gateway truncates at, because they are
+    the same objects."""
+    from aira_management.apps.pipelines import serializers
+
+    from aira_common import patterns, pipelines
+
+    for name in (
+        "MAX_STEPS",
+        "MAX_FALLBACK_MODELS",
+        "MAX_MODEL_LENGTH",
+        "MAX_TEXT_LENGTH",
+        "MAX_CATEGORIES",
+    ):
+        assert getattr(serializers, name) is getattr(pipelines, name), name
+    assert set(serializers.STEP_TYPES) == set(pipelines.STEP_CONFIG_KEYS)
+    for name in ("MAX_PATTERNS", "MAX_PATTERN_LENGTH"):
+        assert getattr(serializers, name) is getattr(patterns, name), name

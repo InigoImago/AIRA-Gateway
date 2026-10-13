@@ -19,6 +19,7 @@ were right and one branch decided which verbs saw them.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -28,7 +29,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from aira_common.apikeys import generate_api_key
+from aira_gateway.audit import PIPELINE_OPERATION_PREFIX
 
 from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, LOCAL_EMBED_MODEL_ID, wait_for_row
 
@@ -80,30 +81,13 @@ def _route(**config: Any) -> dict[str, Any]:
     }
 
 
-async def _use_case(engine: AsyncEngine, slug: str) -> str:
-    full, prefix, key_hash = generate_api_key()
-    async with engine.begin() as connection:
-        await connection.execute(
-            text(
-                "INSERT INTO use_cases (slug, name, allowed_models, store_payloads)"
-                " VALUES (:slug, :slug, CAST(:models AS json), true)"
-            ),
-            {"slug": slug, "models": json.dumps([CHAT, EMBED, UNREACHABLE])},
-        )
-        await connection.execute(
-            text(
-                "INSERT INTO api_keys (id, prefix, key_hash, subject, use_case, label, is_active)"
-                " VALUES (:id, :prefix, :hash, :subject, :slug, 'itest-redaction', true)"
-            ),
-            {
-                "id": f"{prefix}-rd",
-                "prefix": prefix,
-                "hash": key_hash,
-                "subject": f"itest-{slug}",
-                "slug": slug,
-            },
-        )
-    return full
+async def _use_case(read_model) -> tuple[str, str]:
+    """``(slug, key)`` for a use case that may call both models and the unreachable redactor."""
+    return await read_model.use_case(
+        f"itest-rd-{uuid.uuid4().hex[:8]}",
+        released=[CHAT, EMBED, UNREACHABLE],
+        store_payloads=True,
+    )
 
 
 async def _pipeline(engine: AsyncEngine, slug: str, steps: list[dict[str, Any]]) -> None:
@@ -246,6 +230,7 @@ SHAPES: list[tuple[str, list[dict[str, Any]], set[str], set[str]]] = [
 @pytest.mark.parametrize("which", list(CALLS), ids=list(CALLS))
 async def test_which_steps_a_verb_runs(
     engine: AsyncEngine,
+    read_model,
     which: str,
     shape: str,
     steps: list[dict[str, Any]],
@@ -259,8 +244,7 @@ async def test_which_steps_a_verb_runs(
     reads it and because a step that ran and changed nothing is invisible in an answer.
     """
     del shape
-    slug = f"itest-rd-{uuid.uuid4().hex[:8]}"
-    key = await _use_case(engine, slug)
+    slug, key = await _use_case(read_model)
     await _pipeline(engine, slug, steps)
 
     response = await _send(key, which)
@@ -277,18 +261,41 @@ async def test_which_steps_a_verb_runs(
     assert await _steps_that_spent(engine, slug) <= expected
 
 
+async def _callers_rows(engine: AsyncEngine, slug: str, count: int) -> list[Any]:
+    """Every caller's row of ``slug`` — waited for until there are ``count``, and refused if there
+    are more. A request that made three refused calls is three rows, and reading whichever landed
+    first checks one verb of three."""
+    deadline = asyncio.get_running_loop().time() + 25.0
+    while True:
+        async with engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT operation, outcome, status, request_payload::text"
+                        " FROM request_logs WHERE use_case = :slug"
+                        " AND operation NOT LIKE :prefix ORDER BY created_at"
+                    ),
+                    {"slug": slug, "prefix": f"{PIPELINE_OPERATION_PREFIX}%"},
+                )
+            ).all()
+        if len(rows) >= count or asyncio.get_running_loop().time() >= deadline:
+            assert len(rows) == count, f"expected {count} caller rows, saw {len(rows)}: {rows}"
+            return list(rows)
+        await asyncio.sleep(0.25)
+
+
 async def test_a_redactor_that_cannot_be_reached_refuses_an_embedding(
-    engine: AsyncEngine,
+    engine: AsyncEngine, read_model
 ) -> None:
     """The deterministic half, and the one that matters most (`FRD-309` FR-5).
 
     A redactor has no lesser version of itself: either the personal data was removed or it was not,
     and passing the original through would send exactly what the step exists to withhold. So it
     blocks — and the audit row of the refused request keeps **no payload**, because there is no
-    rewritten version and the original is the content the step exists to remove (FR-3).
+    rewritten version and the original is the content the step exists to remove (FR-3). Asserted
+    for **each** verb's row, not for whichever of the three landed first.
     """
-    slug = f"itest-rd-{uuid.uuid4().hex[:8]}"
-    key = await _use_case(engine, slug)
+    slug, key = await _use_case(read_model)
     await _pipeline(engine, slug, [{"type": "pii_filter", "config": {"model": UNREACHABLE}}])
 
     for which in EMBEDDING_CALLS:
@@ -296,19 +303,19 @@ async def test_a_redactor_that_cannot_be_reached_refuses_an_embedding(
         assert response.status_code == 400, f"{which}: {response.text}"
         assert "Personal data could not be removed" in response.text
 
-    row = await _callers_row(engine, slug)
-    assert row[0] == "blocked_by_pipeline"
-    assert row[3] is None, f"a refused request kept a payload no redactor redacted: {row[3]}"
+    rows = await _callers_rows(engine, slug, len(EMBEDDING_CALLS))
+    for operation, outcome, _status, payload in rows:
+        assert outcome == "blocked_by_pipeline", operation
+        assert payload is None, f"{operation} kept a payload no redactor redacted: {payload}"
 
 
-async def test_serving_anyway_is_not_storing_anyway(engine: AsyncEngine) -> None:
+async def test_serving_anyway_is_not_storing_anyway(engine: AsyncEngine, read_model) -> None:
     """`on_failure: allow` keeps the request going and still drops the payload.
 
     Two decisions, and the flag names one of them: keep **serving** when the redactor is down.
     Keeping **storing** is a second decision nobody made.
     """
-    slug = f"itest-rd-{uuid.uuid4().hex[:8]}"
-    key = await _use_case(engine, slug)
+    slug, key = await _use_case(read_model)
     await _pipeline(
         engine,
         slug,
@@ -325,7 +332,7 @@ async def test_serving_anyway_is_not_storing_anyway(engine: AsyncEngine) -> None
 
 
 async def test_a_batch_leaves_one_decision_carrying_its_two_numbers(
-    engine: AsyncEngine,
+    engine: AsyncEngine, read_model
 ) -> None:
     """One decision for the step, however many texts it saw (`FRD-309` FR-11).
 
@@ -333,8 +340,7 @@ async def test_a_batch_leaves_one_decision_carrying_its_two_numbers(
     256 parts, and the fact somebody opened the row for — *did the redactor do anything, and to how
     much of this* — would have to be counted out of it.
     """
-    slug = f"itest-rd-{uuid.uuid4().hex[:8]}"
-    key = await _use_case(engine, slug)
+    slug, key = await _use_case(read_model)
     await _pipeline(engine, slug, [_pii()])
 
     response = await _send(key, "gemini:batchEmbed")
@@ -349,7 +355,7 @@ async def test_a_batch_leaves_one_decision_carrying_its_two_numbers(
 
 
 async def test_an_injection_reaches_the_embedding_model_and_refuses_the_chat(
-    engine: AsyncEngine,
+    engine: AsyncEngine, read_model
 ) -> None:
     """The other half of `TEXT_ONLY_STEPS`, over the real service.
 
@@ -358,8 +364,7 @@ async def test_an_injection_reaches_the_embedding_model_and_refuses_the_chat(
     configuration refuses the chat and serves the embedding — which is a *decision*, and is
     asserted here so that changing it has to be deliberate.
     """
-    slug = f"itest-rd-{uuid.uuid4().hex[:8]}"
-    key = await _use_case(engine, slug)
+    slug, key = await _use_case(read_model)
     await _pipeline(engine, slug, [_injection()])
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client:

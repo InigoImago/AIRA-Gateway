@@ -95,6 +95,67 @@ describe('InfoHint', () => {
     expect(harness.button.getAttribute('aria-expanded')).toBe('true');
     expect(harness.panel()?.getAttribute('role')).toBe('note');
   });
+
+  it('closes on Escape, pinned or hovered', () => {
+    // Content that appears on hover or focus has to be dismissible without moving the pointer or
+    // the focus (WCAG 1.4.13) — a panel covering the figure somebody is reading is in the way.
+    const harness = setup();
+    const escape = () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      harness.fixture.detectChanges();
+    };
+
+    harness.click();
+    escape();
+    expect(harness.panel()).toBeNull();
+
+    harness.fire('mouseenter');
+    escape();
+    expect(harness.panel()).toBeNull();
+  });
+
+  it('lets go of a pinned panel on a click anywhere else', () => {
+    const harness = setup();
+    harness.click();
+
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    harness.fixture.detectChanges();
+
+    expect(harness.panel()).toBeNull();
+  });
+
+  it('forgets a pinned hint whose page has gone', () => {
+    // Held at module level, the pin outlived its component: the view it belonged to stayed in
+    // memory after the navigation, and the next page's hints compared themselves against it.
+    const harness = setup();
+    harness.click();
+    const hint = harness.fixture.debugElement.query(
+      (node) => node.componentInstance instanceof InfoHint,
+    ).componentInstance as unknown as { pinned: () => boolean };
+    expect(hint.pinned()).toBe(true);
+
+    harness.fixture.destroy();
+
+    expect(hint.pinned()).toBe(false);
+  });
+
+  it('follows its "i" when the page scrolls under a pinned panel', () => {
+    // `position: fixed` and placed once per open: the panel stayed where the "i" had been while
+    // the page scrolled the "i" away.
+    const harness = setup();
+    let bottom = 120;
+    vi.spyOn(harness.button, 'getBoundingClientRect').mockImplementation(
+      () => ({ top: bottom - 20, bottom, left: 50, right: 70, width: 20, height: 20 }) as DOMRect,
+    );
+    harness.click();
+    const panel = harness.panel() as HTMLElement;
+    expect(panel.style.top).toBe('126px');
+
+    bottom = 60;
+    document.dispatchEvent(new Event('scroll'));
+
+    expect(panel.style.top).toBe('66px');
+  });
 });
 
 @Component({

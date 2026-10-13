@@ -31,9 +31,10 @@ class Model(models.Model):
     approved = models.BooleanField(
         default=False,
         help_text=(
-            "Only a Global Administrator may approve a model, and only an approved model may be "
-            "used by a use case (FRD-307). Default off: a model appearing on an upstream is not "
-            "the same event as somebody deciding it may be used here."
+            "Approving a model takes the permission to write the catalogue (catalog.write), and "
+            "only an approved model may be used by a use case (FRD-307). Default off: a model "
+            "appearing on an upstream is not the same event as somebody deciding it may be used "
+            "here."
         ),
     )
     provider = models.CharField(max_length=64, blank=True)

@@ -120,4 +120,46 @@ describe('errorMessage', () => {
       'Could not save.',
     );
   });
+
+  it('names an answer that is not the API, rather than echoing a parser', () => {
+    // A 2xx that is not JSON — an SSO proxy's login page, an HTML fallback — reaches the caller as
+    // `{error: SyntaxError, text}`. Its `message` is the parser's ("Unexpected token '<'…").
+    const response = {
+      status: 200,
+      error: {
+        error: new SyntaxError('Unexpected token \'<\', "<!doctype "... is not valid JSON'),
+        text: '<!doctype html>',
+      },
+    };
+    const said = errorMessage(response, 'Could not load the use cases.');
+
+    expect(said).not.toMatch(/Unexpected token|not valid JSON/);
+    expect(said).toContain('not the AIRA API');
+  });
+
+  it('takes no error object for an envelope', () => {
+    const response = { status: 500, error: { error: new Error('internal detail') } };
+    expect(errorMessage(response, 'Could not save.')).toBe('Could not save.');
+  });
+
+  it('spells out nested validation details instead of printing [object Object]', () => {
+    const response = {
+      status: 400,
+      error: {
+        error: {
+          message: 'Request failed.',
+          details: {
+            permissions: [{ name: ['This field is required.'] }],
+            addressing: { regions: ['Unknown region.'] },
+          },
+        },
+      },
+    };
+    const said = errorMessage(response, 'fallback');
+
+    expect(said).not.toContain('[object Object]');
+    expect(said).toBe(
+      'Request failed. permissions.name: This field is required. addressing.regions: Unknown region.',
+    );
+  });
 });

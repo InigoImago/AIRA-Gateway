@@ -2,7 +2,7 @@
   <header class="spread">
     <div>
       <h2 class="card__title" style="margin: 0">Roles</h2>
-      <p class="muted" style="margin: 0.25rem 0 0">
+      <p class="muted lead">
         What each role may do across the installation. Keycloak decides who holds a role, through
         its group; AIRA decides what the role may do.
       </p>
@@ -14,7 +14,8 @@
     }
   </header>
 
-  @if (feedback.error(); as error) {
+  <!-- While the window is open, the form shows the outcome itself (`RoleEditor`). -->
+  @if (!editor() && feedback.error(); as error) {
     <div class="callout callout--danger" role="alert">{{ error }}</div>
   }
   @if (feedback.notice(); as notice) {
@@ -28,7 +29,10 @@
   }
 
   @if (loading()) {
-    <p class="muted" data-testid="roles-loading">Loading…</p>
+    <p class="loading" data-testid="roles-loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the roles…
+    </p>
   } @else if (!roles().length) {
     <p class="empty" data-testid="no-roles">No roles to show.</p>
   } @else {
@@ -95,7 +99,7 @@
       <div class="spread">
         <h3 class="card__title">{{ role.label }}</h3>
         @if (canManage() && !role.fixed) {
-          <button type="button" class="btn" data-testid="edit-role" (click)="edit()">
+          <button type="button" class="btn btn--sm" data-testid="edit-role" (click)="edit()">
             Edit role
           </button>
         }
@@ -108,22 +112,38 @@
         </p>
       }
       <div class="role-areas" data-testid="role-permissions">
-        @for (area of heldAreas(); track area.area) {
+        @if (catalogueFailed() && role.permissions.length) {
           <div class="role-area">
-            <h4 class="role-area__title">{{ area.area }}</h4>
+            <p class="field__hint">
+              Shown by name: the permission catalogue that names and groups them could not be
+              loaded.
+            </p>
             <ul class="role-held">
-              @for (permission of area.permissions; track permission.name) {
-                <li [attr.data-testid]="'held-' + permission.name">
-                  {{ permission.label }}
-                  @if (permission.sensitive) {
-                    <span class="role-sensitive" [title]="sensitiveExplained">⚠ Sensitive</span>
-                  }
+              @for (name of role.permissions; track name) {
+                <li [attr.data-testid]="'held-' + name">
+                  <code>{{ name }}</code>
                 </li>
               }
             </ul>
           </div>
-        } @empty {
-          <p class="muted" style="margin: 0">This role may do nothing yet.</p>
+        } @else {
+          @for (area of heldAreas(); track area.area) {
+            <div class="role-area">
+              <h4 class="role-area__title">{{ area.area }}</h4>
+              <ul class="role-held">
+                @for (permission of area.permissions; track permission.name) {
+                  <li [attr.data-testid]="'held-' + permission.name">
+                    {{ permission.label }}
+                    @if (permission.sensitive) {
+                      <span class="role-sensitive" [title]="sensitiveExplained">⚠ Sensitive</span>
+                    }
+                  </li>
+                }
+              </ul>
+            </div>
+          } @empty {
+            <p class="muted" style="margin: 0">This role may do nothing yet.</p>
+          }
         }
       </div>
     </section>

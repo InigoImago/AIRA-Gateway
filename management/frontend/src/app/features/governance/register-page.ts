@@ -1,12 +1,23 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Subscription } from 'rxjs';
+import { errorMessage } from '../../core/api/error-message';
 import { CatalogModel, Register, RegisterEntry } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Markdown, plainText } from '../../core/ui/markdown';
+import { displayCount } from '../../core/ui/money';
 import { PageFeedback } from '../../core/ui/page-feedback';
-import { Preset, windowFor } from '../../core/ui/periods';
+import {
+  DayWindow,
+  Preset,
+  lastDayOf,
+  periodText,
+  windowError,
+  windowFor,
+} from '../../core/ui/periods';
+import { saveBlob } from '../../core/ui/save-blob';
 import { TableView } from '../../core/ui/table-view';
 import { TablePager } from '../../core/ui/table-pager';
 
@@ -29,6 +40,8 @@ import { TablePager } from '../../core/ui/table-pager';
 export class RegisterPage implements OnInit {
   /** One line of a purpose for the table, without its Markdown markers; the row opens to the rest. */
   protected readonly plain = plainText;
+  /** A count as a person reads it, grouped like every other figure in the console. */
+  protected readonly count = displayCount;
 
   private readonly service = inject(UseCaseService);
   protected readonly feedback = inject(PageFeedback);
@@ -36,8 +49,24 @@ export class RegisterPage implements OnInit {
   protected readonly register = signal<Register | null>(null);
   /** Management's catalogue — the other half of the comparison in `FRD-608` §4. */
   protected readonly authored = signal<CatalogModel[] | null>(null);
+  /**
+   * Why Management's catalogue could not be read, in the backend's words — or `null`. Said on the
+   * page, because no drift card looks exactly like two planes that agree.
+   */
+  protected readonly catalogueError = signal<string | null>(null);
   protected readonly loading = signal(true);
   protected readonly exporting = signal(false);
+
+  /**
+   * The window the rows on screen were asked for — what a download exports. Not the date fields:
+   * those hold whatever was typed into Custom… since, and a file for a period nobody has looked at
+   * is not the register on screen.
+   */
+  private readonly shown = signal<DayWindow | null>(null);
+  /** The register request in flight. The next load cancels it, so the period asked for last wins. */
+  private request: Subscription | null = null;
+  /** The catalogue request in flight, so a quick second load does not ask it twice. */
+  private catalogueRequest: Subscription | null = null;
 
   protected readonly preset = signal<Preset>('this-month');
   protected readonly from = signal('');
@@ -98,6 +127,12 @@ export class RegisterPage implements OnInit {
     return !!drift && (drift.onlyInGateway.length > 0 || drift.onlyInManagement.length > 0);
   });
 
+  /** Whether a download has a period to export — the one on screen. */
+  protected readonly canExport = computed(() => !!this.shown() && !this.exporting());
+
+  /** The period the measured half is for, as a person reads it: first and last day included. */
+  protected readonly shownPeriod = computed(() => periodText(this.shown()));
+
   ngOnInit(): void {
     this.applyPreset('this-month');
   }
@@ -113,19 +148,33 @@ export class RegisterPage implements OnInit {
     this.load();
   }
 
+  protected validationError(): string | null {
+    return windowError({ from: this.from(), to: this.to() });
+  }
+
+  protected canLoad(): boolean {
+    return !this.validationError() && !this.loading();
+  }
+
+  /** The end date as a person reads it: the last day included, not the exclusive bound. */
+  protected inclusiveEnd(): string {
+    return lastDayOf(this.to());
+  }
+
   protected load(): void {
-    if (!this.from() || !this.to()) {
+    if (this.validationError()) {
       return;
     }
+    const window: DayWindow = { from: this.from(), to: this.to() };
     this.loading.set(true);
-    // A failure leaves `authored` null and the comparison unshown, never a diff against nothing.
-    this.service.models().subscribe({
-      next: (models) => this.authored.set(models),
-      error: () => this.authored.set(null),
-    });
-    this.service.register(this.from(), this.to()).subscribe({
+    // A banner about the last load is about a period no longer asked for.
+    this.feedback.clear();
+    this.loadCatalogue();
+    this.request?.unsubscribe();
+    this.request = this.service.register(window.from, window.to).subscribe({
       next: (register) => {
         this.register.set(register);
+        this.shown.set(window);
         this.view.search(this.search());
         this.loading.set(false);
       },
@@ -135,6 +184,27 @@ export class RegisterPage implements OnInit {
         this.feedback.fail(response, 'Could not load the register.');
         this.loading.set(false);
       },
+    });
+  }
+
+  /**
+   * Management's half of the comparison, asked once: it does not depend on the period. Asked again
+   * on the next load only while it has never answered, so one blip is not the page's last word.
+   */
+  private loadCatalogue(): void {
+    if (this.authored() || this.catalogueRequest?.closed === false) {
+      return;
+    }
+    this.catalogueRequest = this.service.models().subscribe({
+      next: (models) => {
+        this.catalogueError.set(null);
+        this.authored.set(models);
+      },
+      // `authored` stays null, so no diff is drawn against a list that never arrived.
+      error: (response: unknown) =>
+        this.catalogueError.set(
+          errorMessage(response, 'Management’s catalogue could not be read.'),
+        ),
     });
   }
 
@@ -181,16 +251,16 @@ export class RegisterPage implements OnInit {
   }
 
   protected download(): void {
+    const shown = this.shown();
+    if (!shown || this.exporting()) {
+      return;
+    }
     this.exporting.set(true);
-    this.service.registerCsv(this.from(), this.to()).subscribe({
+    this.service.registerCsv(shown.from, shown.to).subscribe({
       next: (blob) => {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `aira-register_${this.from()}_${this.to()}.csv`;
-        link.click();
-        // Released at once: an object URL held open pins the blob for the life of the page.
-        URL.revokeObjectURL(url);
+        // Named by the last day included, as a person reads the period: by the exclusive bound, a
+        // file of October's register would carry the first of November.
+        saveBlob(blob, `aira-register_${shown.from}_${lastDayOf(shown.to)}.csv`);
         this.exporting.set(false);
       },
       error: (response: unknown) => {

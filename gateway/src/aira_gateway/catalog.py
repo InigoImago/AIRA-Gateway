@@ -30,11 +30,12 @@ MAX_MODEL_NAME = 128
 
 #: The largest token figure this gateway can account for, and so the largest a caller may ask for.
 #:
-#: Derived, not chosen: `budget_usage.tokens` and `budgets.limit_tokens` are `Integer`. A larger
-#: figure would overflow the reservation's 64-bit `HINCRBY`, which reads as the counter store being
-#: away and switches budget enforcement to its racy fallback (`FRD-405` §4.2). Both caller-named
-#: figures — `maxOutputTokens` and a `limited` thinking budget — are checked against it
-#: unconditionally, because the model's own bounds are nullable.
+#: Derived, not chosen: `budgets.limit_tokens` is `Integer`, as Management's field is, so no token
+#: budget can be larger — and the period totals in `budget_usage` are 64-bit so they hold many such
+#: requests. Unbounded, a figure would overflow the reservation's 64-bit `HINCRBY`, which reads as
+#: the counter store being away and switches budget enforcement to its racy fallback (`FRD-405`
+#: §4.2). Both caller-named figures — `maxOutputTokens` and a `limited` thinking budget — are
+#: checked against it unconditionally, because the model's own bounds are nullable.
 MAX_ACCOUNTABLE_TOKENS = 2**31 - 1
 
 _log = structlog.get_logger(__name__)
@@ -300,18 +301,6 @@ class ModelCatalog:
             )
             raise AmbiguousModelId(numeric_id, sorted(names))
         return names[0]
-
-    async def exceeds_output_cap(self, model: str, requested: int | None) -> int | None:
-        """The model's cap if ``requested`` is above it, else ``None``.
-
-        Refused here rather than by the provider, so the same mistake gets the same error on every
-        vendor.
-        """
-        if requested is None:
-            return None
-        declaration = await self.declaration(model)
-        cap = declaration.max_output_tokens
-        return cap if cap is not None and requested > cap else None
 
 
 class _MemoisedCatalog(ModelCatalog):

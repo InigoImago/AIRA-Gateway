@@ -599,6 +599,9 @@ def test_the_endpoint_lists_what_was_found() -> None:
 
     assert body["scope"] == "all"
     assert body["events"][0]["rule"] == "rule"
+    # By id as well as by name: a global rule and a use case's may share a name, and the console
+    # explains a finding by the rule that wrote it.
+    assert body["events"][0]["rule_id"] == 1
     assert body["events"][0]["observed"] == 90
     # The row says what was *done*, which `ADR-0014` §3 keeps separate from what was detected.
     assert body["events"][0]["action_taken"] == "alert"
@@ -645,3 +648,209 @@ def test_the_endpoint_requires_a_credential() -> None:
     """A finding names a caller and an address. It is not public."""
     with TestClient(create_app(GatewaySettings(auth_required=True))) as client:
         assert client.get("/v1beta/anomalies").status_code == 401
+
+
+#: What a `new_source_ip` finding says about itself: how many addresses, and which.
+NEW_ADDRESSES = "used from 1 address(es) not seen before: 198.51.100.23"
+
+#: Who reads a finding, and whether that reader may see the addresses in it.
+READERS_OF_A_FINDING = [
+    pytest.param((), False, id="a-member"),
+    pytest.param(("it-steuerung",), False, id="every-figure-and-no-incident"),
+    pytest.param(("it-security",), True, id="an-incident-role"),
+]
+
+
+@pytest.mark.parametrize(("roles", "sees_addresses"), READERS_OF_A_FINDING)
+def test_a_findings_addresses_are_shown_only_to_an_incident_role(
+    roles: tuple[str, ...], sees_addresses: bool
+) -> None:
+    """The source address is an incident field (`FRD-502` FR-12): the request list shows it to a
+    role that may investigate and to nobody else. A finding about new addresses names them in its
+    description, so every other reader gets the description without them — the count stays,
+    which is what says that something happened."""
+    caller = Principal(subject="alice", method="oidc", roles=roles, use_cases=("demo-uc",))
+    app = create_app(GatewaySettings(auth_required=False))
+    app.dependency_overrides[require_principal] = lambda: caller
+    with TestClient(app) as client:
+        with anyio.from_thread.start_blocking_portal() as portal:
+            portal.call(
+                functools.partial(
+                    _event,
+                    kind="new_source_ip",
+                    target="use_case",
+                    target_value="demo-uc",
+                    observed=1,
+                    detail=NEW_ADDRESSES,
+                ),
+                client.app.state.db_sessionmaker,
+            )
+        (event,) = client.get("/v1beta/anomalies").json()["events"]
+
+    assert ("198.51.100.23" in event["detail"]) is sees_addresses
+    assert event["detail"].startswith("used from 1 address(es) not seen before")
+
+
+async def test_the_description_without_addresses_is_cut_where_they_start(sessions) -> None:
+    """The cut is made on what the evaluator writes, so the two are checked together."""
+    from aira_gateway.anomalies.evaluator import without_addresses
+
+    await _seed(
+        sessions,
+        _log(minutes_ago=20, credential="ab12cd34", source_ip="10.0.0.1"),
+        _log(minutes_ago=5, credential="ab12cd34", source_ip="203.0.113.9"),
+        _log(minutes_ago=5, credential="ab12cd34", source_ip="198.51.100.7"),
+    )
+    (finding,) = await _evaluate(
+        sessions, _rule(kind="new_source_ip", target="credential", threshold=1, min_sample=0)
+    )
+
+    assert "203.0.113.9" in finding.detail
+    assert without_addresses(finding.detail) == "used from 2 address(es) not seen before"
+    # Every other description is left exactly as it is.
+    assert without_addresses("60% refusal rate over 5 requests in 15 min") == (
+        "60% refusal rate over 5 requests in 15 min"
+    )
+
+
+# ---- what is not traffic, and what is exactly a threshold ---------------------------------------
+
+
+async def test_a_model_check_is_not_traffic_for_any_rule(sessions) -> None:
+    """An administrator's model check (`FRD-610`) is recorded as `diagnostic`, apart from
+    `served` — and "anything not served" read eight successful checks as eight refusals, so a
+    global rule blocked the administrator on every use case for pressing a button."""
+    await _seed(
+        sessions,
+        *[
+            _log(subject="kc-admin", use_case=None, outcome=Outcome.DIAGNOSTIC.value)
+            for _ in range(8)
+        ],
+    )
+
+    assert await _evaluate(sessions, _rule(use_case=None, threshold=50, min_sample=5)) == []
+
+
+async def test_a_model_check_is_left_out_of_both_sides_of_a_rate(sessions) -> None:
+    await _seed(
+        sessions,
+        *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(4)],
+        *[_log() for _ in range(4)],
+        *[_log(outcome=Outcome.DIAGNOSTIC.value) for _ in range(8)],
+    )
+
+    (finding,) = await _evaluate(sessions, _rule(threshold=50, min_sample=4))
+
+    assert (finding.observed, finding.sample) == (50, 8)
+
+
+async def test_a_rate_just_below_its_threshold_does_not_fire(sessions) -> None:
+    """37.5 % is below 38 %, and rounding it first made it 38: a threshold is compared with the
+    measurement, never with how it is displayed — a `block` rule acts on the comparison."""
+    await _seed(
+        sessions,
+        *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(3)],
+        *[_log() for _ in range(5)],
+    )
+
+    assert await _evaluate(sessions, _rule(threshold=38, min_sample=4)) == []
+    (finding,) = await _evaluate(sessions, _rule(threshold=37, min_sample=4))
+    assert finding.observed == 38  # displayed rounded, which is all rounding is for
+
+
+async def test_a_ratio_just_below_its_threshold_does_not_fire(sessions) -> None:
+    await _seed(
+        sessions,
+        *[_log(minutes_ago=20) for _ in range(8)],
+        *[_log(minutes_ago=5) for _ in range(3)],
+    )
+
+    assert await _evaluate(sessions, _rule(kind="request_spike", threshold=38, min_sample=1)) == []
+    assert await _evaluate(sessions, _rule(kind="request_spike", threshold=37, min_sample=1))
+
+
+# ---- a finding the database can hold, and a rule that fails alone ------------------------------
+
+
+async def test_a_spike_beyond_what_the_column_holds_is_written_at_its_ceiling(sessions) -> None:
+    """A use case going from one tiny embedding call to a burst of chat is a ratio in the billions
+    of percent — past what `anomaly_events.observed` holds. On Postgres the insert failed, the tick
+    with it, every tick after it, and with them every rule of every use case. The exact figures
+    stay in the description; the column holds the most it can."""
+    from aira_gateway.anomalies.service import OBSERVED_CEILING
+
+    await _rule_row(sessions, kind="spend_spike", threshold=500, min_sample=1)
+    await _seed(
+        sessions, _log(minutes_ago=20, cost_nanos=1), _log(minutes_ago=1, cost_nanos=10**12)
+    )
+
+    (event,) = await AnomalyService(sessions).tick(NOW)
+
+    assert OBSERVED_CEILING == 2**31 - 1
+    assert event.observed == OBSERVED_CEILING
+    assert "1000000000000 against 1" in event.detail
+
+
+async def test_a_rule_whose_finding_cannot_be_written_costs_no_other_rule_its_own(sessions) -> None:
+    """Each rule is written inside its own savepoint, so a database error in one — the column above,
+    or any other — rolls back that rule alone and the tick goes on."""
+    from sqlalchemy import event as orm_event
+    from sqlalchemy.exc import DataError
+    from sqlalchemy.orm import Session
+
+    await _rule_row(sessions, id=1, name="doomed", threshold=50)
+    await _rule_row(sessions, id=2, name="fine", threshold=50)
+    await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
+
+    def refuse_the_doomed(session, _context, _instances) -> None:  # noqa: ANN001
+        if any(getattr(row, "rule_name", "") == "doomed" for row in session.new):
+            raise DataError("INSERT INTO anomaly_events", {}, Exception("integer out of range"))
+
+    orm_event.listen(Session, "before_flush", refuse_the_doomed)
+    try:
+        written = await AnomalyService(sessions).tick(NOW)
+    finally:
+        orm_event.remove(Session, "before_flush", refuse_the_doomed)
+
+    assert [event.rule_name for event in written] == ["fine"]
+    assert [event.rule_name for event in await _events(sessions)] == ["fine"]
+
+
+def test_belonging_to_a_restricted_use_case_hides_no_global_finding() -> None:
+    """The finding's half of the same NULL: a global rule on a subject or a credential stores its
+    finding with no use case, and `use_case NOT IN (…)` dropped every one of them for a reader who
+    sees every finding and is a plain member of one use case on `own`."""
+    from aira_gateway.db.models import UseCaseRead
+
+    reader = Principal(subject="gov", method="oidc", roles=("it-steuerung",), use_cases=("uc-own",))
+    app = create_app(GatewaySettings(auth_required=False))
+    app.dependency_overrides[require_principal] = lambda: reader
+
+    async def own_use_case(sessionmaker) -> None:  # noqa: ANN001
+        async with sessionmaker() as session:
+            session.add(UseCaseRead(slug="uc-own", name="own", payload_visibility="own"))
+            await session.commit()
+
+    with TestClient(app) as client:
+        sessions = client.app.state.db_sessionmaker
+        with anyio.from_thread.start_blocking_portal() as portal:
+            portal.call(own_use_case, sessions)
+            portal.call(functools.partial(_event, use_case=None, target_value="mallory"), sessions)
+            portal.call(
+                functools.partial(_event, use_case="uc-other", target_value="bob"), sessions
+            )
+        seen = {event["target_value"] for event in client.get("/v1beta/anomalies").json()["events"]}
+
+    assert seen == {"mallory", "bob"}, seen
+
+
+async def test_a_blank_name_is_grouped_under_its_subject(sessions) -> None:
+    """The detector's half of the one reading `test_reporting` pins for the report."""
+    await _seed(
+        sessions,
+        *[_log(subject="ada", username="", outcome=Outcome.RATE_LIMITED.value) for _ in range(5)],
+    )
+
+    (finding,) = await _evaluate(sessions, _rule(threshold=50))
+
+    assert finding.target_value == "ada"

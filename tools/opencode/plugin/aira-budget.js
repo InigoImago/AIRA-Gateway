@@ -189,6 +189,28 @@ const TIMEOUT_MS = 5000;
 /** How long a figure stays on screen. Longer for the ones that mean something. */
 const DURATION = { info: 4000, warning: 8000, error: 12000 };
 
+/** A non-empty string, or `""`. */
+function text(value) {
+  return typeof value === "string" && value ? value : "";
+}
+
+/**
+ * The provider entry that describes the AIRA gateway, or `null` when none can be told apart.
+ *
+ * `aira` is what the console generates, and it is the gateway by name (`own`). Another name is
+ * accepted only for the **one** provider that carries both a key and an address — a developer may
+ * have named the gateway after their installation. **A key and an address are never taken from two
+ * entries**: that pairing sends a credential to a host it was never issued for, an OpenAI key to a
+ * box on the LAN or the AIRA key to `api.openai.com`.
+ */
+function gateway(providers) {
+  if (providers.aira) return { own: true, options: providers.aira?.options ?? {} };
+  const complete = Object.values(providers).filter(
+    (provider) => text(provider?.options?.apiKey) && text(provider?.options?.baseURL),
+  );
+  return complete.length === 1 ? { own: false, options: complete[0].options } : null;
+}
+
 /**
  * Where to ask, and with what.
  *
@@ -196,7 +218,9 @@ const DURATION = { info: 4000, warning: 8000, error: 12000 };
  * console's generated `opencode.json` has the gateway's URL and their own key in the file OpenCode
  * has already loaded; asking them to export two environment variables as well is the kind of
  * second step that makes a feature optional in practice. The environment still wins when set — it
- * is the explicit answer, and it is how a shared project configuration gets a personal key.
+ * is the explicit answer, and it is how a shared project configuration gets a personal key — but
+ * it completes only the `aira` entry. An entry that is merely the only one may be any vendor's, so
+ * a value from the environment is never paired with it: the missing half is reported instead.
  *
  * The provider's `baseURL` ends in `/v1beta` (it is a Gemini-shaped surface) and this endpoint is
  * `/v1beta/me/budget`, so the version segment is taken off rather than doubled.
@@ -217,25 +241,19 @@ async function credential(client) {
     providers = {};
   }
 
-  // `aira` is what the console generates; any other name is accepted too, because a developer may
-  // have named the provider after their own installation.
-  const names = providers.aira ? ["aira"] : Object.keys(providers);
-  let base = "";
-  let key = "";
-  for (const name of names) {
-    const options = providers[name]?.options ?? {};
-    if (!key && typeof options.apiKey === "string" && options.apiKey) key = options.apiKey;
-    if (!base && typeof options.baseURL === "string" && options.baseURL) base = options.baseURL;
-    if (key && base) break;
-  }
+  const entry = gateway(providers);
+  const paired = entry !== null && (entry.own || (!env.key && !env.base));
+  const configured = paired ? entry.options : {};
+  const key = env.key || text(configured.apiKey);
+  const base = env.base || text(configured.baseURL);
 
   return {
     // **Never a guessed default.** A shipped file that falls back to a loopback address is right
     // where it was written and wrong everywhere it is installed — and it turns "nobody told me
     // where the gateway is" into a connection error about a host the reader never named. Unknown
     // is reported as unknown, below. (The console obeys the same rule for itself.)
-    base: (env.base || base).replace(/\/v1beta\/?$/, "").replace(/\/+$/, ""),
-    key: env.key || key,
+    base: base.replace(/\/v1beta\/?$/, "").replace(/\/+$/, ""),
+    key,
     // Named in the complaint, so a developer is told which of the two places to fix.
     source: env.key ? "environment" : key ? "configuration" : "nowhere",
   };

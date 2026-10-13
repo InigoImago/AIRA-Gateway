@@ -10,6 +10,7 @@ learns that a third dialect exists; the architecture assertion in ``test_vertex.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from typing import Any
 
 from aira_common.models import ThinkingMode
@@ -20,21 +21,24 @@ from aira_gateway.core.canonical import (
     CanonicalResponse,
     EmbeddingVectors,
 )
-from aira_gateway.upstreams.base import OfferedModel, UpstreamModel
+from aira_gateway.core.schema import ResponseSchema
+from aira_gateway.upstreams.base import ModelNotListed, OfferedModel, UpstreamModel
+from aira_gateway.upstreams.exchange import sse_payloads
 from aira_gateway.upstreams.openai.mapping import (
     SAMPLING as OPENAI_SAMPLING,
 )
 from aira_gateway.upstreams.openai.mapping import (
-    StreamedToolCalls,
+    StreamAssembler,
     canonical_to_openai,
     canonical_to_openai_embedding,
     embedding_values,
-    openai_chunk_to_canonical,
     openai_to_canonical,
-    parse_sse_line,
+)
+from aira_gateway.upstreams.openai.mapping import (
+    schema_refusal as strict_schema_refusal,
 )
 from aira_gateway.upstreams.openai.routes import Routes, StandardRoutes
-from aira_gateway.upstreams.openai.transport import OpenAITransport
+from aira_gateway.upstreams.openai.transport import NAME, OpenAITransport
 
 CHAT_METHODS = ("generateContent", "streamGenerateContent")
 EMBED_METHODS = ("embedContent", "batchEmbedContents")
@@ -55,8 +59,6 @@ class OpenAIAdapter:
     #: explicit count cannot be honoured exactly and "you decide" cannot be said (`FRD-111` §5.2).
     thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.LIMITED, ThinkingMode.AUTO}
     expresses_thinking_levels = True
-    #: `response_format` and `tools` are separate fields in this dialect.
-    tools_with_schema = True
 
     def __init__(
         self,
@@ -144,36 +146,52 @@ class OpenAIAdapter:
         """The cheapest remote question there is (`FRD-117` §5.2): a GET of the listing.
 
         Never a generation, which would cost money and wake a scaled-to-zero model on every check.
+        Where the listing names what a caller can use (`Routes.names_models`), a model asked about
+        is looked for in it: an endpoint that answers is no evidence that a catalogue entry names
+        a model on it.
         """
         listing = await self._transport.get(self._routes.listing())
-        count = len(listing.get("data") or [])
-        return f"{count} model(s) listed" if count else "endpoint answered"
+        entries = [entry for entry in listing.get("data") or [] if isinstance(entry, dict)]
+        if not model or not self._routes.names_models():
+            return f"{len(entries)} model(s) listed" if entries else "endpoint answered"
+        if model not in {str(entry.get("id")) for entry in entries}:
+            raise ModelNotListed(
+                f"The endpoint answered, and its listing of {len(entries)} model(s) does not "
+                f"include '{model}'."
+            )
+        return f"{model} is listed"
+
+    def schema_refusal(self, schema: ResponseSchema) -> str | None:
+        """Why this platform cannot take ``schema`` strict, or ``None`` (`ADR-0012` §3).
+
+        Only where the platform enforces strict mode's rules (`Routes.validates_strict_schemas`):
+        a self-hosted server constrains decoding by the schema as sent, so a constraint strict mode
+        lacks is honoured there rather than refused.
+        """
+        if not self._routes.validates_strict_schemas():
+            return None
+        return strict_schema_refusal(schema)
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
-        body = self._named(canonical_to_openai(request), request.model)
+        body = self._named(self._body(request), request.model)
         data = await self._transport.post(self._routes.chat(request.model), body)
         # The use case's switch, carried to the mapper: this dialect returns reasoning whether or
         # not it was asked for (`FRD-135` FR-3).
         return openai_to_canonical(data, request.model, include_reasoning=request.include_reasoning)
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
-        body = self._named(canonical_to_openai(request, stream=True), request.model)
-        # Tool calls arrive in fragments and are assembled here: assembling is stateful, and the
-        # per-chunk mapper is not (`FRD-131` FR-6).
-        calls = StreamedToolCalls()
-        async with self._transport.stream(self._routes.chat(request.model), body) as response:
-            async for line in response.aiter_lines():
-                payload = parse_sse_line(line)
-                if payload is None:
-                    continue
-                calls.add(_tool_call_deltas(payload))
-                chunk = openai_chunk_to_canonical(payload)
-                if chunk is None:
-                    continue
-                if chunk.finish_reason is not None and calls.pending:
-                    # Emitted whole, on the chunk that ends the message — never in pieces.
-                    chunk = chunk.model_copy(update={"tool_calls": calls.finish()})
-                yield chunk
+        body = self._named(self._body(request, stream=True), request.model)
+        # Tool calls arrive in fragments and are assembled across the stream: assembling is
+        # stateful, and the per-chunk mapper is not (`FRD-131` FR-6).
+        assembler = StreamAssembler()
+        async with (
+            self._transport.stream(self._routes.chat(request.model), body) as response,
+            aclosing(sse_payloads(response, NAME)) as payloads,
+        ):
+            async for payload in payloads:
+                chunk = assembler.feed(payload)
+                if chunk is not None:
+                    yield chunk
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> EmbeddingVectors:
         body = self._named(canonical_to_openai_embedding(request), request.model)
@@ -183,6 +201,12 @@ class OpenAIAdapter:
     async def aclose(self) -> None:
         """Close the connection pool this adapter owns (`ProviderRegistry.aclose`)."""
         await self._transport.aclose()
+
+    def _body(self, request: CanonicalRequest, *, stream: bool = False) -> dict[str, Any]:
+        """The chat body, with the output cap in the field this platform reads."""
+        return canonical_to_openai(
+            request, stream=stream, output_cap_field=self._routes.output_cap_field()
+        )
 
     def _named(self, body: dict[str, Any], model: str) -> dict[str, Any]:
         """Set the body's model field the way the *platform* wants it (`FRD-120` §5.1).
@@ -196,11 +220,3 @@ class OpenAIAdapter:
         else:
             body["model"] = named
         return body
-
-
-def _tool_call_deltas(payload: dict[str, Any]) -> Any:
-    """The `delta.tool_calls` of one SSE payload, or nothing."""
-    choices = payload.get("choices") or []
-    if not choices:
-        return ()
-    return (choices[0].get("delta") or {}).get("tool_calls") or ()

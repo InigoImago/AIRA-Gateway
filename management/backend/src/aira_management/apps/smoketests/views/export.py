@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 
 from django.http import HttpResponse
 
 from aira_common.spreadsheet import safe_cell
 from aira_management.apps.smoketests.models import TestRun
+
+#: Everything a file name in `Content-Disposition` may carry; the rest becomes `_`. A model name is
+#: whatever the catalogue holds, and a quote in it adds a second `filename`, a newline a header.
+#: The console's own `csvFileName` keeps the same characters.
+_UNSAFE_IN_A_FILE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
 #: The export's columns, in order.
 COLUMNS = [
@@ -50,7 +56,9 @@ def run_as_csv(run: TestRun) -> HttpResponse:
                 safe_cell(row.rated_at.isoformat() if row.rated_at else ""),
             ]
         )
-    name = f"aira-smoketest-{run.model.replace('/', '_')}-{run.started_at.date()}.csv"
+    name = (
+        f"aira-smoketest-{_UNSAFE_IN_A_FILE_NAME.sub('_', run.model)}-{run.started_at.date()}.csv"
+    )
     # A plain `HttpResponse`: DRF's `Response` re-encodes the body through a renderer and loses
     # the BOM.
     response = HttpResponse(

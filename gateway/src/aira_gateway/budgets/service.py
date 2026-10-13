@@ -35,7 +35,8 @@ from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger, Limits
 from aira_gateway.budgets.store import accumulate, applicable, read_usage
 from aira_gateway.db.models import BudgetRead
-from aira_gateway.scopes import EACH_MEMBER
+from aira_gateway.scopes import EACH_MEMBER, Scope
+from aira_gateway.shielding import uninterrupted
 
 __all__ = ["Amounts", "BudgetExceeded", "BudgetService", "Reservation"]
 
@@ -108,15 +109,21 @@ class BudgetService:
         ``estimated`` cannot be exact — cost depends on the answer — so :meth:`settle` corrects
         it; erring high is the safe direction for a spend limit. A request naming no use case is
         **not exempt**: it books against the installation budget, where one exists (`FRD-610`).
+
+        **With enforcement off it reserves nothing and refuses nobody — and still counts**: the
+        reservation names the budgets, so :meth:`settle` books the request like any other. The
+        figures stay true, and a limit switched back on starts from what was actually spent.
         """
-        if not self._enforce:
-            return Reservation()
         now = now or datetime.now(UTC)
         amounts = estimated or Amounts(requests=1)
         async with self._sessionmaker() as session:
             budgets = await applicable(session, use_case, subject)
             if not budgets:
                 return Reservation()
+            # Each budget is booked under the period it was admitted in, whenever the request ends.
+            periods = {budget.id: keys.period_key(budget.period, now) for budget in budgets}
+            if not self._enforce:
+                return Reservation(budgets=budgets, subject=subject, period_keys=periods)
             if self._ledger is not None:
                 partial = Reservation(
                     budgets=budgets,
@@ -138,8 +145,15 @@ class BudgetService:
                         self.FEATURE,
                         "Postgres read-then-book; concurrent requests can overshoot a limit",
                     )
+                except BaseException:
+                    # Anything else part-way through — a database error reading the next budget's
+                    # figure, a cancellation — leaves the budgets already reserved holding headroom
+                    # nothing will settle. Handed back; the failure itself goes on.
+                    if not partial.resolved:
+                        await self._release_quietly(partial)
+                    raise
             await self._check_only(session, budgets, now, subject)
-        return Reservation(budgets=budgets, subject=subject, atomic=False)
+        return Reservation(budgets=budgets, subject=subject, period_keys=periods, atomic=False)
 
     async def _reserve(
         self, session: AsyncSession, reservation: Reservation, now: datetime
@@ -214,7 +228,8 @@ class BudgetService:
         that are then refused.
         """
         # No use case, no pipeline to protect (`FRD-125c`); `guard` bounds unattributed spend.
-        if not use_case:
+        # With enforcement off nothing is refused, however far over a limit the figures are.
+        if not use_case or not self._enforce:
             return
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
@@ -229,18 +244,24 @@ class BudgetService:
         """Guarantee that a reservation is resolved, whatever happens inside the block.
 
         Structural rather than a release at each failure site, so a malformed upstream body, a
-        database hiccup or a future exit path cannot leave a reservation behind.
+        database hiccup or a future exit path cannot leave a reservation behind. The release runs
+        to its end even when the block was left by a cancellation (`shielding.uninterrupted`): a
+        dropped connection is when a reservation most needs giving back, and a release cancelled
+        at its first await would leave it in the counter, refreshed by every reservation after it.
         """
         try:
             yield reservation
         finally:
             if not reservation.resolved:
-                try:
-                    await self.release(reservation)
-                except Exception as exc:  # cleanup must not replace the original failure
-                    _log.error(
-                        "budget_release_failed", error=str(exc), error_type=type(exc).__name__
-                    )
+                await self._release_quietly(reservation)
+
+    async def _release_quietly(self, reservation: Reservation) -> None:
+        """Release ``reservation`` to the end, and log rather than raise if that fails: this runs
+        while another failure is on its way out, and must not replace it."""
+        try:
+            await uninterrupted(self.release(reservation))
+        except Exception as exc:  # cleanup must not replace the original failure
+            _log.error("budget_release_failed", error=str(exc), error_type=type(exc).__name__)
 
     async def settle(
         self,
@@ -260,6 +281,9 @@ class BudgetService:
         if not reservation.budgets:
             return
         now = now or datetime.now(UTC)
+        # Under the period the request was admitted in, in both stores: one admitted at 23:59:59
+        # and settled after midnight belongs to the counter it reserved against — booked into the
+        # next period instead, neither period's counter would ever see it.
         await self.record(
             reservation.budgets,
             tokens,
@@ -267,6 +291,7 @@ class BudgetService:
             now=now,
             requests=requests,
             subject=reservation.subject,
+            periods=reservation.period_keys,
         )
         if not reservation.atomic or self._ledger is None:
             return
@@ -314,12 +339,14 @@ class BudgetService:
         now: datetime | None = None,
         requests: int = 1,
         subject: str | None = None,
+        periods: dict[int, str] | None = None,
     ) -> None:
         """Book a request — or a batch counted as the many it is — against every budget.
 
         Keyword-only, so an amount of money and a timestamp cannot be swapped as positionals.
         ``cost_nanos`` of ``None`` is counted as unpriced, not as free (`FRD-403`). ``subject`` is
-        required by a per-person budget, whose counter key is the caller.
+        required by a per-person budget, whose counter key is the caller. ``periods`` names the
+        period a budget was reserved in; one it does not name is booked under ``now``'s.
         """
         if not budgets:
             return
@@ -330,7 +357,8 @@ class BudgetService:
                     accumulate(
                         session,
                         scope_key=keys.scope_key(budget, subject),
-                        period_key=keys.period_key(budget.period, now),
+                        period_key=(periods or {}).get(budget.id)
+                        or keys.period_key(budget.period, now),
                         tokens=tokens,
                         requests=requests,
                         cost_nanos=cost_nanos,
@@ -438,6 +466,9 @@ class BudgetService:
             )
             out: list[dict[str, Any]] = []
             for budget in result.scalars():
+                # Only `each_member` depends on the reader; any other row resolves to its own scope.
+                caller = subject if budget.scope == EACH_MEMBER else None
+                scope = Scope.applying(scope=budget.scope, use_case=budget.use_case, caller=caller)
                 measured_for = subject if budget.scope == EACH_MEMBER else budget.subject
                 row: dict[str, Any] = {
                     "id": budget.id,
@@ -457,7 +488,10 @@ class BudgetService:
                     "limit_tokens": budget.limit_tokens,
                     "limit_requests": budget.limit_requests,
                 }
-                if budget.scope == EACH_MEMBER and not subject:
+                if scope is None:
+                    # No counter to read: a per-person budget asked about by nobody, or a scope this
+                    # build does not know — reported as stored, with no figures, rather than a 500
+                    # for every budget of the use case. Enforcement skips the same row.
                     row.update(
                         used_tokens=None,
                         used_requests=None,
@@ -471,13 +505,8 @@ class BudgetService:
                     )
                     out.append(row)
                     continue
-                # Only `each_member` depends on the reader. Any other row resolves to its own
-                # subject; passing the reader as its caller would fail `scope_key`'s assertion.
-                caller = subject if budget.scope == EACH_MEMBER else None
                 usage = await read_usage(
-                    session,
-                    keys.scope_key(budget, caller),
-                    keys.period_key(budget.period, now),
+                    session, scope.usage_key, keys.period_key(budget.period, now)
                 )
                 left_cost = _left(budget.limit_cost_nanos, usage.cost_nanos)
                 row.update(

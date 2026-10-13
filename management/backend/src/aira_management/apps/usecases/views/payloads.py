@@ -1,10 +1,17 @@
-"""The event payloads the gateway's read-model is built from, one shape per record kind."""
+"""The event payloads the gateway's read-model is built from, one shape per record kind.
+
+**Every writer of an event builds it here** — the views and the seeds alike. A payload written out
+by hand beside its builder is a second definition of the event, and the field a view adds next
+would not reach what the seed sends (`test_outbox_routing.py` holds every `emit` to its builder).
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
+from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.budgets.models import Budget
+from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.ratelimits.models import RateLimit
 from aira_management.apps.usecases.models import UseCase
 
@@ -60,4 +67,31 @@ def _rate_limit_payload(limit: RateLimit, slug: str) -> dict[str, Any]:
         "limit_rpm": limit.limit_rpm,
         "burst": limit.burst,
         "enabled": limit.enabled,
+    }
+
+
+def _membership_payload(usecase: UseCase, username: str, role: str) -> dict[str, Any]:
+    """A direct membership, by the username the gateway matches it on (`FRD-209` §2.1)."""
+    return {"slug": usecase.slug, "username": username, "role": role}
+
+
+def _pipeline_payload(slug: str, config: PipelineConfig) -> dict[str, Any]:
+    return {"use_case": slug, "steps": config.steps, "fallback_models": config.fallback_models}
+
+
+def _api_key_payload(key: ApiKey) -> dict[str, Any]:
+    """An active key: its hash, never the plaintext, and the lifetime the gateway enforces."""
+    return {
+        "prefix": key.prefix,
+        "key_hash": key.key_hash,
+        # The **owner**, the name every audit row carries: a row describes what called, not who
+        # authorised the credential (`FRD-604` §5.3).
+        "subject": key.owner.get_username(),
+        "issued_by": key.issued_by,
+        "use_case": key.use_case.slug,
+        "label": key.label,
+        "status": "active",
+        # The gateway enforces it; Management only decides it. None only for a key issued before
+        # keys expired at all.
+        "expires_at": key.expires_at.isoformat() if key.expires_at is not None else None,
     }

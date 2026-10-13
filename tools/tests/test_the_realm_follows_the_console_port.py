@@ -24,6 +24,8 @@ import json
 import re
 from pathlib import Path
 
+import compose_files
+
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_DIR = ROOT / "deploy" / "compose"
 REALM = COMPOSE_DIR / "keycloak" / "realms" / "aira-realm.json"
@@ -185,3 +187,24 @@ def test_both_schemes_are_offered_for_a_named_host() -> None:
 
     assert f"http://{HOST_PLACEHOLDER}" in source, source
     assert f"https://{HOST_PLACEHOLDER}" in source, source
+
+
+def test_every_service_that_imports_the_realm_is_told_both() -> None:
+    """**Two paths import the realm**, and the guard above watched one. Keycloak's own import gets
+    the port and the host; the repair (`keycloak-init`) deletes and re-imports the realm whenever
+    anything is missing, substituting the placeholders itself — and was given neither, so a
+    repaired realm pinned `localhost:4200` and the login failed on a console that had moved."""
+    importers: dict[str, dict] = {}
+    for path in compose_files.ALL:
+        for name, service in (compose_files.load(path).get("services") or {}).items():
+            command = " ".join(service.get("command") or [])
+            mounts = " ".join(str(volume) for volume in service.get("volumes") or [])
+            if "--import-realm" in command or "keycloak/realms" in mounts:
+                importers[name] = service.get("environment") or {}
+
+    assert {"keycloak", "keycloak-init"} <= set(importers), sorted(importers)
+    for name, environment in importers.items():
+        assert environment.get(VARIABLE) == BROWSER_CHAIN, f"{name} is not told the console's port"
+        assert environment.get(HOST_VARIABLE) == f"${{{HOST_VARIABLE}:-localhost}}", (
+            f"{name} is not told the console's host"
+        )

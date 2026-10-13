@@ -103,7 +103,7 @@ version you can name.
   refuses the **whole file** for a dependency on an undefined service, so this one fails for every
   integrated deployment at the first `up`; the dependencies between the applications themselves —
   a migration before the process that reads the schema — are kept.
-- **FR-12** Creating the eight compacted Kafka topics is **opt-in** (`--profile create-topics`).
+- **FR-12** Creating the nine compacted Kafka topics is **opt-in** (`--profile create-topics`).
   Against a broker reached over SASL or TLS the one-shot cannot work, and two services wait on it
   completing successfully and would never start.
 - **FR-13** The `aira` network **and the Compose project name** are declared by the integrated

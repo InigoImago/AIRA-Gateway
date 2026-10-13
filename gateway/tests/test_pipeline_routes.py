@@ -236,9 +236,9 @@ def test_a_dry_run_still_honours_a_model_the_caller_named() -> None:
                 "config": {
                     "model": "mock-1",
                     # A name no classifier reply can contain by accident: the router matches a
-                    # category by **substring**, and a one-letter name matches the mock's own
-                    # prose. What is being tested here is which model the run starts from, not
-                    # whether a category matched.
+                    # category named as a **whole word** in the reply, and a short common word can
+                    # appear in the mock's own prose. What is being tested here is which model the
+                    # run starts from, not whether a category matched.
                     "categories": [
                         {"name": "zzq-nomatch", "description": "d", "model": "elsewhere"}
                     ],

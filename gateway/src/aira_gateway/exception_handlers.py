@@ -14,21 +14,36 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from aira_common.errors import AiraError, ErrorDetail, ErrorResponse
+from aira_common.errors import ErrorDetail, ErrorResponse
 from aira_common.logging import get_logger
 from aira_common.observability import trace_context_fields
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
-from aira_gateway.api.kira import BASE as KIRA_BASE
+from aira_gateway.api.kira.errors import VALIDATION_ERROR as KIRA_VALIDATION_ERROR
 from aira_gateway.api.kira.errors import KiraError, kira_error_response
 from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
 from aira_gateway.api.kira.errors import (
     code_for_unauthenticated as kira_code_for_unauthenticated,
 )
+from aira_gateway.api.kira.headers import surface_headers, surface_refusal
 from aira_gateway.api.serving.accounting import release_reservation
-from aira_gateway.middleware import RequestTooLarge, SecurityHeadersMiddleware
+from aira_gateway.cors import apply_cors
+from aira_gateway.middleware import (
+    RequestTooLarge,
+    SecurityHeadersMiddleware,
+    TraceIdMiddleware,
+    is_kira_path,
+    too_large_response,
+)
 
 #: The Gemini surface's path prefix.
 GEMINI_BASE = "/v1beta"
+
+#: A wrong URL and a wrong method, named per surface by status rather than all called "not found".
+#: KIRA's contract has a word for neither, so these name the case (`MIGRATION-KIRA.md`: extra codes
+#: name cases the predecessor had no word for); Google's vocabulary has no 405, and
+#: `INVALID_ARGUMENT` is its word for "fix the request".
+_KIRA_ROUTING_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
+_AIRA_ROUTING_CODES = {404: "not_found", 405: "method_not_allowed"}
 
 _log = get_logger("aira_gateway")
 
@@ -36,7 +51,6 @@ _log = get_logger("aira_gateway")
 def register_exception_handlers(app: FastAPI) -> None:
     """Install every handler in this module on ``app``."""
     app.exception_handler(RequestTooLarge)(_handle_too_large)
-    app.exception_handler(AiraError)(_handle_aira_error)
     app.exception_handler(GeminiHTTPError)(_handle_gemini_error)
     app.exception_handler(KiraError)(_handle_kira_error)
     app.exception_handler(StarletteHTTPException)(_handle_routing_error)
@@ -46,7 +60,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 def _kira(request: Request) -> bool:
     """Whether this request was aimed at the KIRA compatibility surface."""
-    return request.url.path.startswith(KIRA_BASE)
+    return is_kira_path(request.url.path)
 
 
 def _gemini(request: Request) -> bool:
@@ -55,17 +69,7 @@ def _gemini(request: Request) -> bool:
 
 
 async def _handle_too_large(request: Request, exc: RequestTooLarge) -> JSONResponse:
-    message = "Request body too large."
-    if _kira(request):
-        return kira_error_response(413, kira_code_for_status(413), message)
-    return gemini_error_response(413, message, "INVALID_ARGUMENT")
-
-
-async def _handle_aira_error(_request: Request, exc: AiraError) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=exc.to_response().model_dump(exclude_none=True),
-    )
+    return too_large_response(request)
 
 
 async def _handle_gemini_error(request: Request, exc: GeminiHTTPError) -> JSONResponse:
@@ -82,30 +86,42 @@ async def _handle_gemini_error(request: Request, exc: GeminiHTTPError) -> JSONRe
             code = kira_code_for_unauthenticated(
                 bool(getattr(request.state, "credential_presented", False))
             )
-        return kira_error_response(exc.code, code, exc.message)
+        # `Retry-After` included: the bound on failed authentications is a 429 from here too.
+        return surface_refusal(request, exc.code, code, exc.message, headers=exc.headers)
     return exc.to_response()
 
 
-async def _handle_kira_error(_request: Request, exc: KiraError) -> JSONResponse:
+async def _handle_kira_error(request: Request, exc: KiraError) -> JSONResponse:
     """A refusal the KIRA surface named itself, raised from a route that did not catch it.
 
     Without this it leaves as a 500 in Google's envelope — for a permission check, a refusal
     reported as our own fault. Routes keep their own ``except``: they need it to close out the
     accounting, and a refusal already rendered never reaches here.
     """
-    return kira_error_response(exc.status, exc.code, exc.message, exc.details)
+    return surface_refusal(request, exc.status, exc.code, exc.message, exc.details)
 
 
 async def _handle_routing_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-    """A wrong URL or method, in the surface's envelope rather than the framework's ``detail``."""
+    """A wrong URL or method, in the surface's envelope rather than the framework's ``detail``.
+
+    The framework's headers travel with it: a 405 names the methods that are allowed (`Allow`,
+    RFC 9110 §15.5.6), which is the one thing a caller needs to fix the request.
+    """
     detail = str(exc.detail) if exc.detail else "Not found."
+    headers = dict(exc.headers or {})
     if _kira(request):
-        return kira_error_response(exc.status_code, "NOT_FOUND", detail)
+        code = _KIRA_ROUTING_CODES.get(exc.status_code) or kira_code_for_status(exc.status_code)
+        return surface_refusal(request, exc.status_code, code, detail, headers=headers)
     if _gemini(request):
         status = "NOT_FOUND" if exc.status_code == 404 else "INVALID_ARGUMENT"
-        return gemini_error_response(exc.status_code, detail, status)
-    envelope = ErrorResponse(error=ErrorDetail(code="not_found", message=detail))
-    return JSONResponse(status_code=exc.status_code, content=envelope.model_dump())
+        return gemini_error_response(exc.status_code, detail, status, headers)
+    code = _AIRA_ROUTING_CODES.get(exc.status_code, "invalid_request")
+    envelope = ErrorResponse(error=ErrorDetail(code=code, message=detail))
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=envelope.model_dump(exclude_none=True),
+        headers=headers,
+    )
 
 
 async def _handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -120,19 +136,22 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
     field = ".".join(location) or "request"
     message = f"{field}: {first.get('msg', 'is not acceptable')}."
     if _kira(request):
-        return kira_error_response(400, "INVALID_REQUEST", message)
+        # The contract's own word for a value it will not take (`errors.VALIDATION_ERROR`).
+        return surface_refusal(request, 400, KIRA_VALIDATION_ERROR, message)
     if _gemini(request):
         return gemini_error_response(400, message, "INVALID_ARGUMENT")
     envelope = ErrorResponse(error=ErrorDetail(code="invalid_request", message=message))
-    return JSONResponse(status_code=400, content=envelope.model_dump())
+    return JSONResponse(status_code=400, content=envelope.model_dump(exclude_none=True))
 
 
 async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
     """Last resort: log full context server-side, return a safe, shaped error to the client.
 
-    The one response `SecurityHeadersMiddleware` cannot reach: Starlette answers an unhandled
-    exception from `ServerErrorMiddleware`, outside the whole user middleware stack. So the headers
-    are applied here, from that middleware's own tuple rather than a second copy that could drift.
+    The one response no user middleware reaches: Starlette answers an unhandled exception from
+    `ServerErrorMiddleware`, outside the whole stack. So what the middleware adds to every other
+    response is added here, from its own definitions rather than second copies that could drift:
+    the security headers, the trace id — which the log line below carries, and a failure is what
+    somebody quotes it for (`FRD-117` FR-4) — the KIRA surface's headers, and the CORS headers.
     """
     # A bug between the reservation and the accounting block would otherwise hold a slice of the
     # use case's month until it expired; `accounting` records the row for the failures it sees.
@@ -150,6 +169,7 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
     )
     if _kira(request):
         response = kira_error_response(500, kira_code_for_status(500), "Internal server error.")
+        response.headers.update(surface_headers(request))
     elif _gemini(request):
         response = gemini_error_response(
             500, "Internal error while processing the request.", "INTERNAL"
@@ -161,4 +181,9 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
         response = JSONResponse(status_code=500, content=envelope.model_dump(exclude_none=True))
     for name, value in SecurityHeadersMiddleware.HEADERS:
         response.headers.setdefault(name.decode("ascii"), value.decode("ascii"))
+    trace_id = trace_context_fields().get("trace_id")
+    if trace_id:
+        response.headers.setdefault(TraceIdMiddleware.HEADER.decode("ascii"), trace_id)
+    # And the cross-origin headers, or a browser reports a network error instead of this 500.
+    await apply_cors(request, response)
     return response

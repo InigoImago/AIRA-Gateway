@@ -27,6 +27,7 @@ from aira_common.observability import consuming
 from aira_gateway.config import GatewaySettings, configure_worker
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_engine, build_sessionmaker
+from aira_gateway.db.errors import loggable
 
 _log = get_logger("aira_gateway.consumer")
 
@@ -40,12 +41,36 @@ def subscriptions(stage: str) -> tuple[str, ...]:
     return tuple(staged(topic, stage) for topic in CONFIG_TOPICS)
 
 
-def decode_event_type(headers: list[tuple[str, bytes]] | None) -> str | None:
-    """Extract the ``event_type`` header from a Kafka message."""
+def decode_event_type(headers: list[tuple[str, bytes | None]] | None) -> str | None:
+    """The ``event_type`` header of a Kafka message, or ``None`` if it carries no readable one.
+
+    Headers are bytes anybody with access to the topic chose, so a value that is null or is not
+    UTF-8 names no event rather than raising: the caller skips such a message, by name.
+    """
     for key, value in headers or []:
         if key == EVENT_TYPE_HEADER:
-            return value.decode("utf-8")
+            if value is None:
+                return None
+            try:
+                return value.decode("utf-8")
+            except UnicodeDecodeError:
+                return None
     return None
+
+
+def event_payload(value: object) -> dict[str, Any]:
+    """A message's value as the event payload every handler reads — a JSON object.
+
+    Decoded here rather than by the client's deserializer, which runs before
+    :func:`apply_one_message` can contain anything: a value that is not JSON, or a compacted
+    topic's tombstone (a null value), raised inside the client and ended the consumer. Raises
+    ``ValueError`` for anything but an object, which the caller skips like any unappliable event.
+    """
+    if isinstance(value, bytes | bytearray):
+        value = json.loads(value.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"the message value is {type(value).__name__}, not a JSON object")
+    return value
 
 
 async def apply_one_message(
@@ -84,8 +109,9 @@ async def apply_one_message(
         },
     ) as processing:
         try:
+            payload = event_payload(message.value)
             async with sessionmaker() as session:
-                await apply_event(session, event_type, message.value)
+                await apply_event(session, event_type, payload)
         except Exception as exc:  # noqa: BLE001 — see the docstring: never take the consumer down
             # Marked on the span as well: the `except` keeps the failure from reaching it on its
             # own, and a green trace beside a red log is read as the green one.
@@ -96,7 +122,8 @@ async def apply_one_message(
                 topic=topic,
                 partition=getattr(message, "partition", None),
                 offset=getattr(message, "offset", None),
-                error=str(exc),
+                # Never the values: a configuration event carries fields logged by name only.
+                error=loggable(exc),
                 error_type=type(exc).__name__,
             )
             return None
@@ -154,7 +181,8 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=group,
         auto_offset_reset="earliest",
-        value_deserializer=lambda value: json.loads(value.decode("utf-8")),
+        # No `value_deserializer`: the value is decoded inside `apply_one_message`'s guard, where a
+        # message that is not JSON is skipped by name instead of stopping the consumer.
         # Authenticated like the relay that publishes: an open broker is a way to write straight
         # into the read-model this gateway's authorization is read from (`KafkaSecurity`).
         **settings.kafka_security().client_kwargs(),

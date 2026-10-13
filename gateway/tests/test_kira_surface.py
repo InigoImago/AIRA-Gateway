@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -216,8 +217,8 @@ async def test_thinking_reaches_the_model_it_was_asked_for() -> None:
         response = client.post(f"{BASE}/chat", json=_chat(thinking={"mode": "medium"}))
 
     assert response.status_code == 200, response.text
-    # The level was translated to this model's own budget for it — the catalog's table, not a
-    # constant in our code, which is what keeps a new model from being a code change.
+    # The level goes upstream as the vendor's own word, with no number invented for it
+    # (`ADR-0021`): a model declares the words it takes, so a new one is not a code change.
     assert "thinking:medium]" in response.json()["parts"][0]["text"]
 
 
@@ -294,6 +295,9 @@ async def test_a_model_without_structured_output_refuses_rather_than_answering_i
 
     assert response.status_code == 400
     assert "structured output" in response.json()["message"]
+    # The model exists: the request as written cannot be served by it. `MODEL_NOT_FOUND` sends a
+    # migrating client to re-resolve an id that was right all along.
+    assert response.json()["code"] == "VALIDATION_ERROR"
 
 
 async def test_an_unknown_schema_field_is_named_rather_than_dropped() -> None:
@@ -647,6 +651,77 @@ async def test_a_refusal_on_this_surface_is_recorded_too() -> None:
     assert rows[0].status == 422
 
 
+async def test_a_refusal_is_logged_by_the_shape_of_its_body_never_its_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The log is outside every control on stored content: a use case's `store_payloads`, the
+    installation's kill switch, redaction, the retention clock and the recorded read all apply to
+    the audit row and none of them to a log line. The privacy notice promises log lines never carry
+    the content of a request — so the refusal line names the fields and each part's kind and size,
+    which is what diagnosing a `422` needs, and never a value."""
+    marker = "Patient Max Mustermann, DOB 1970-01-01; api key sk-live-123"
+    encoded = base64.b64encode(PDF).decode()
+    app = _app()
+    with caplog.at_level(logging.INFO), TestClient(app) as client:
+        await _catalogue(app)
+        response = client.post(
+            f"{BASE}/chat",
+            json=_chat(
+                request={
+                    "parts": [{"text": marker}, {"mime_type": "application/pdf", "data": encoded}]
+                },
+                temperature=9,
+                client_trace="trace-value-0451",
+            ),
+        )
+
+    assert response.status_code == 400, response.text
+    lines = [record.getMessage() for record in caplog.records]
+    refused = [json.loads(line) for line in lines if "kira_request_refused" in line]
+    assert len(refused) == 1, lines
+    for leaked in ("Mustermann", "sk-live-123", encoded[:24], "trace-value-0451"):
+        assert not any(leaked in line for line in lines), f"{leaked!r} reached the log"
+    # What it *was* survives, which is what makes the line worth having.
+    shape = refused[0]["request_shape"]
+    assert sorted(shape) == ["client_trace", "model_id", "request", "temperature"]
+    text = {"text": f"str({len(marker)})"}
+    attachment = {"data": f"str({len(encoded)})", "mime_type": "str(15)"}
+    assert shape["request"] == {"parts": [text, attachment]}
+    assert shape["temperature"] == "number"
+    assert refused[0]["unmodelled_fields"] == ["client_trace"]
+
+
+async def test_a_validation_refusal_logs_which_fields_failed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The shape alone says what was sent; the paths say which of it a `422` is about."""
+    app = _app()
+    with caplog.at_level(logging.INFO), TestClient(app) as client:
+        await _catalogue(app)
+        response = client.post(f"{BASE}/chat", json={"model_id": "Mustermann"})
+
+    assert response.status_code == 422, response.text
+    (line,) = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if "kira_request_refused" in record.getMessage()
+    ]
+    assert line["invalid_fields"] == ["request", "model_id"]
+    assert line["request_shape"] == {"model_id": "str(10)"}
+    assert "Mustermann" not in caplog.text
+
+
+def test_the_logged_shape_is_bounded_however_large_the_body() -> None:
+    from aira_gateway.api.kira.routes import SHAPE_ENTRIES, body_shape
+
+    shape = body_shape({"request": {"parts": [{"text": "x" * 50}] * 100_000}})
+
+    parts = shape["request"]["parts"]
+    assert len(parts) < SHAPE_ENTRIES
+    assert parts[-1].endswith("more"), "the rest is counted, not silently dropped"
+    assert len(json.dumps(shape)) < 16 * 1024
+
+
 async def test_models_reports_what_a_client_needs_to_ask_for_the_features() -> None:
     """A client reads this list to decide what to *request* — so a surface
     that serves thinking and task types while reporting neither leaves every caller concluding the
@@ -694,9 +769,10 @@ async def test_a_model_that_declares_no_thinking_reports_none_rather_than_an_emp
 
 
 async def test_a_truncated_document_is_refused_on_the_streaming_path_too() -> None:
-    """This surface's "stream" delivers one terminal event carrying the whole answer, so an
-    incomplete document would arrive looking exactly like complete data. The check belongs on both
-    paths or on neither."""
+    """The terminal `completed` event carries the whole answer, and a client that reads only that
+    event would take an incomplete document for complete data. The `update` events have already
+    carried the partial text by then, so what is withheld is the event that says "this is all of
+    it". The check belongs on both paths or on neither."""
     app = _app()
     with TestClient(app) as client:
         await _catalogue(app, capabilities=["generate", "structured_output"], max_output_tokens=64)

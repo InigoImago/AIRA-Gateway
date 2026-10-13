@@ -14,7 +14,6 @@ interface Overrides {
 interface Tab {
   showForm: { set: (v: boolean) => void; (): boolean };
   rlScope: { set: (v: 'use_case' | 'each_member') => void; (): string };
-  rlSubject: { set: (v: string) => void; (): string };
   rlRpm: { set: (v: number | null) => void; (): number | null };
   rlBurst: { set: (v: number | null) => void; (): number | null };
   validationError: () => string | null;
@@ -22,8 +21,6 @@ interface Tab {
   add: () => void;
   remove: (id: number | undefined) => void;
   labelFor: (l: RateLimit) => string;
-  unmatchedSubject: () => boolean;
-  reachesNobodyKnown: (scope: string, subject?: string | null) => boolean;
   effectiveBurst: (l: RateLimit) => number;
   setEnabled: (l: RateLimit, enabled: boolean) => void;
   feedback: PageFeedback;
@@ -40,6 +37,7 @@ function setup(
 ) {
   TestBed.resetTestingModule();
   const calls: string[] = [];
+  const asked: string[] = [];
   const service = {
     createRateLimit: (_s: string, limit: RateLimit) => {
       calls.push(
@@ -58,7 +56,15 @@ function setup(
     providers: [
       PageFeedback,
       { provide: UseCaseService, useValue: service },
-      { provide: ConfirmService, useValue: { ask: () => confirmAnswer } },
+      {
+        provide: ConfirmService,
+        useValue: {
+          ask: (question: string) => {
+            asked.push(question);
+            return confirmAnswer;
+          },
+        },
+      },
     ],
   });
 
@@ -73,6 +79,7 @@ function setup(
   return {
     fixture,
     calls,
+    asked,
     changes,
     component: fixture.componentInstance as unknown as Tab,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
@@ -171,14 +178,15 @@ describe('RateLimitsTab', () => {
   });
 
   it('renders the configured limits', () => {
-    const harness = setup([{ id: 1, scope: 'each_member', limit_rpm: 90, burst: 9 }]);
+    // Two figures that are not inside each other: "9" was satisfied by the "90" beside it.
+    const harness = setup([{ id: 1, scope: 'each_member', limit_rpm: 90, burst: 17 }]);
     const text = harness.text();
     // Named by its scope now that no scope names a person — and the wording matters: "Each
     // member, individually" rather than "Whole use case", because the row bounds each of them
     // separately and would otherwise read as a limit forty people share.
     expect(text).toContain('Each member, individually');
     expect(text).toContain('90');
-    expect(text).toContain('9');
+    expect(text).toContain('17');
   });
 
   it('says plainly that no limit means no throttling', () => {
@@ -389,5 +397,55 @@ describe('RateLimitsTab — lifting a limit without losing it', () => {
     page.component.add();
 
     expect(page.calls).toEqual(['create:use_case::30:0:true']);
+  });
+});
+
+/** "+ Add rate limit" for a scope that has one replaces it; it used to say "saved". */
+describe('RateLimitsTab — a new limit where one exists', () => {
+  const existing: RateLimit = { id: 4, scope: 'use_case', subject: '', limit_rpm: 60, burst: 0 };
+
+  function addWholeUseCase(confirmAnswer: boolean) {
+    const harness = setup([existing], {}, confirmAnswer);
+    harness.component.rlScope.set('use_case');
+    harness.component.rlRpm.set(120);
+    harness.component.add();
+    return harness;
+  }
+
+  it('asks first, naming the limit it replaces, and sends nothing on no', () => {
+    const harness = addWholeUseCase(false);
+
+    expect(harness.asked.at(-1)).toContain('Whole use case already has a rate limit');
+    expect(harness.asked.at(-1)).toContain('60 per minute');
+    expect(harness.calls.filter((call) => call.startsWith('create:'))).toEqual([]);
+  });
+
+  it('says "replaced" when the answer is yes', () => {
+    const harness = addWholeUseCase(true);
+
+    expect(harness.calls.some((call) => call.startsWith('create:'))).toBe(true);
+    expect(harness.component.feedback.notice()).toBe('Rate limit replaced.');
+  });
+
+  it('asks nothing for a scope that has no limit yet', () => {
+    const harness = setup([existing]);
+    harness.component.rlScope.set('each_member');
+    harness.component.rlRpm.set(10);
+    harness.component.add();
+
+    expect(harness.asked).toEqual([]);
+    expect(harness.component.feedback.notice()).toBe('Rate limit saved.');
+  });
+
+  it('says why a save was refused inside the window', () => {
+    const harness = setup([], { createRateLimit: httpError(400) });
+    harness.click('add-rate-limit');
+    harness.component.rlRpm.set(10);
+    harness.component.add();
+    harness.fixture.detectChanges();
+
+    const said = harness.testid('rate-limit-editor-error');
+    expect(said?.textContent).toContain('refused');
+    expect(said?.closest('[data-testid="rate-limit-editor"]')).not.toBeNull();
   });
 });

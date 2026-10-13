@@ -57,8 +57,16 @@ def test_the_spa_proxy_resolves_its_upstreams_at_request_time() -> None:
     """
     import subprocess
 
+    import stack_addresses
+
     rendered = subprocess.run(
-        ["docker", "exec", "aira-frontend", "cat", "/etc/nginx/conf.d/default.conf"],
+        [
+            "docker",
+            "exec",
+            stack_addresses.container("frontend"),
+            "cat",
+            "/etc/nginx/conf.d/default.conf",
+        ],
         capture_output=True,
         text=True,
         check=True,

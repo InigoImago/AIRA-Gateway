@@ -1,5 +1,6 @@
 import { Page, Response, expect } from '@playwright/test';
 import { rememberUseCase } from '../created';
+import { NOT_A_ROW_CONTROL, SMALL_BY_DESIGN } from '../audit/rows';
 
 /** Demo accounts seeded into the Keycloak realm (deploy/compose/keycloak/realms). */
 export const USERS = {
@@ -130,6 +131,56 @@ export async function createUseCase(page: Page, slug: string, name: string) {
 }
 
 /**
+ * One call to the console's own API, with the token the page holds — for a fixture a test needs
+ * rather than a walkthrough of a screen. The body comes back parsed where it is JSON.
+ *
+ * One helper, so the `sessionStorage` + `fetch` block is written once: copies of it in each spec
+ * and the teardown differ a little each, and a fix reaches only the copy somebody remembers.
+ */
+export async function api<T = unknown>(
+  page: Page,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; body: T }> {
+  return (await page.evaluate(
+    async ({ method, path, body }) => {
+      const token =
+        sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token') ?? '';
+      const response = await fetch(path, {
+        method,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await response.text();
+      let parsed: unknown = text;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        // not JSON; the text is the answer
+      }
+      return { status: response.status, body: parsed };
+    },
+    { method, path, body },
+  )) as { status: number; body: T };
+}
+
+/**
+ * Open a use case's page and wait until it **is** that use case.
+ *
+ * The page renders every tab even when Management has no such use case — the gateway may still
+ * know it — so a test that only waited for a tab could pass a whole permission check on a slug
+ * that does not exist. The header naming the slug is what says the page found it.
+ */
+export async function openUseCase(page: Page, slug: string, tab?: string) {
+  await page.goto(`/use-cases/${slug}${tab ? `?tab=${tab}` : ''}`);
+  await expect(page.locator('.card code', { hasText: slug }).first()).toHaveText(slug, {
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId('use-case-missing')).toHaveCount(0);
+}
+
+/**
  * Grant a Keycloak group path on a use case, through the API.
  *
  * Shared because a fixture is not a walkthrough: a test whose *subject* is the picker drives the
@@ -139,18 +190,10 @@ export async function createUseCase(page: Page, slug: string, name: string) {
  * an earlier run had left it behind.
  */
 export async function grantGroup(page: Page, slug: string, path: string, role = 'user') {
-  const status = await page.evaluate(
-    async ({ slug, path, role }) => {
-      const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
-      const response = await fetch(`/api/v1/use-cases/${slug}/groups/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ group_path: path, role }),
-      });
-      return response.status;
-    },
-    { slug, path, role },
-  );
+  const { status } = await api(page, 'POST', `/api/v1/use-cases/${slug}/groups/`, {
+    group_path: path,
+    role,
+  });
   expect(status, `could not grant ${path} on ${slug}`).toBeLessThan(300);
 }
 
@@ -163,20 +206,13 @@ export async function grantGroup(page: Page, slug: string, path: string, role = 
  * should say out loud is that a use case without a release is a use case that refuses everything.
  */
 export async function releaseAllModels(page: Page, slug: string) {
-  const status = await page.evaluate(async (slug) => {
-    const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-    const catalog = await (await fetch('/api/v1/models/', { headers })).json();
-    const approved = catalog
-      .filter((model: { approved?: boolean }) => model.approved !== false)
-      .map((model: { name: string }) => model.name);
-    const response = await fetch(`/api/v1/use-cases/${slug}/`, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ allowed_models: approved }),
-    });
-    return response.status;
-  }, slug);
+  const catalog = await api<{ name: string; approved?: boolean }[]>(page, 'GET', '/api/v1/models/');
+  const approved = catalog.body
+    .filter((model) => model.approved !== false)
+    .map((model) => model.name);
+  const { status } = await api(page, 'PATCH', `/api/v1/use-cases/${slug}/`, {
+    allowed_models: approved,
+  });
   expect(status, `could not release models on ${slug}`).toBeLessThan(300);
 }
 
@@ -195,16 +231,13 @@ export async function awaitGatewayMembership(page: Page, slug: string) {
   await expect
     .poll(
       async () =>
-        page.evaluate(async (slug) => {
-          const token =
-            sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
-          const response = await fetch('/gw/v1beta/pipeline:dryRun', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ use_case: slug, user: 'ping', pipeline: {} }),
-          });
-          return response.status;
-        }, slug),
+        (
+          await api(page, 'POST', '/gw/v1beta/pipeline:dryRun', {
+            use_case: slug,
+            user: 'ping',
+            pipeline: {},
+          })
+        ).status,
       { timeout: 30_000, intervals: [500] },
     )
     .not.toBe(403);
@@ -257,59 +290,63 @@ export async function expectFormControlsAligned(page: Page, context: string) {
   // empty page is the thing it guards against, one level up.
   await page.locator('form.form-inline, .filter-row').first().waitFor({ timeout: 20_000 });
 
-  const rows = await page.evaluate(() => {
-    const out: { group: number; line: number; controls: string[] }[] = [];
+  const rows = await page.evaluate(
+    ({ exempt, small }) => {
+      const out: { group: number; line: number; controls: string[] }[] = [];
 
-    document.querySelectorAll('form.form-inline, .filter-row').forEach((row, group) => {
-      // **A line is a set of flex items whose boxes overlap vertically**, not a band of pixels.
-      //
-      // This used to group controls by `round(top / 40)`, which is a guess at "same row" that
-      // fails in exactly the case the guard exists for: a staircase **taller than the band reads
-      // as two rows**. It let 12 px through once, and then 43 px on the access panel — a
-      // misalignment a person spotted immediately while the suite stayed green.
-      //
-      // The flex items themselves always overlap on a line, however their inner controls are
-      // aligned, so they are what says where the lines are; the controls are what is compared.
-      const items = Array.from(row.children) as HTMLElement[];
-      const lines: { top: number; bottom: number; items: HTMLElement[] }[] = [];
-      for (const item of items) {
-        const box = item.getBoundingClientRect();
-        if (!box.width && !box.height) continue;
-        const line = lines.find((l) => box.top < l.bottom && box.bottom > l.top);
-        if (line) {
-          line.top = Math.min(line.top, box.top);
-          line.bottom = Math.max(line.bottom, box.bottom);
-          line.items.push(item);
-        } else {
-          lines.push({ top: box.top, bottom: box.bottom, items: [item] });
-        }
-      }
-
-      lines.forEach((line, index) => {
-        const controls: string[] = [];
-        for (const item of line.items) {
-          const inside = item.matches('input, select, button')
-            ? [item]
-            : Array.from(
-                item.querySelectorAll<HTMLElement>('input:not([type=checkbox]), select, button'),
-              );
-          for (const element of inside) {
-            const rect = element.getBoundingClientRect();
-            if (rect.width === 0) continue;
-            // An info hint's trigger lives *inside a `<label>`* and therefore sits at label height
-            // by construction, one line above the control it explains. Counting it as a row
-            // control reports a staircase for every labelled field that carries an explanation —
-            // which is not the defect this guard was written for. Excluded by *where it is*, not
-            // by what it is called, so a real button placed in a row is still compared.
-            if (element.tagName === 'BUTTON' && element.closest('label')) continue;
-            controls.push(`${element.id || element.tagName.toLowerCase()}@${Math.round(rect.top)}`);
+      document.querySelectorAll('form.form-inline, .filter-row').forEach((row, group) => {
+        // **A line is a set of flex items whose boxes overlap vertically**, not a band of pixels.
+        //
+        // This used to group controls by `round(top / 40)`, which is a guess at "same row" that
+        // fails in exactly the case the guard exists for: a staircase **taller than the band reads
+        // as two rows**. It let 12 px through once, and then 43 px on the access panel — a
+        // misalignment a person spotted immediately while the suite stayed green.
+        //
+        // The flex items themselves always overlap on a line, however their inner controls are
+        // aligned, so they are what says where the lines are; the controls are what is compared.
+        const items = Array.from(row.children) as HTMLElement[];
+        const lines: { top: number; bottom: number; items: HTMLElement[] }[] = [];
+        for (const item of items) {
+          const box = item.getBoundingClientRect();
+          if (!box.width && !box.height) continue;
+          const line = lines.find((l) => box.top < l.bottom && box.bottom > l.top);
+          if (line) {
+            line.top = Math.min(line.top, box.top);
+            line.bottom = Math.max(line.bottom, box.bottom);
+            line.items.push(item);
+          } else {
+            lines.push({ top: box.top, bottom: box.bottom, items: [item] });
           }
         }
-        if (controls.length > 1) out.push({ group, line: index, controls });
+
+        lines.forEach((line, index) => {
+          const controls: string[] = [];
+          for (const item of line.items) {
+            const inside = item.matches('input, select, button')
+              ? [item]
+              : Array.from(item.querySelectorAll<HTMLElement>('input, select, button'));
+            for (const element of inside) {
+              const rect = element.getBoundingClientRect();
+              if (rect.width === 0) continue;
+              // Not a row control (`audit/rows.ts`, shared with the audit): an info hint's
+              // trigger lives *inside a `<label>`* and sits at label height by construction, a
+              // checkbox or a radio is sized by its glyph. Excluded by *where it is* and what it
+              // is, not by what it is called, so a real button placed in a row is still compared.
+              if (element.matches(exempt)) continue;
+              // A small button is small on purpose and is compared by where it starts only.
+              const height = element.matches(small) ? '' : `^${Math.round(rect.height)}`;
+              controls.push(
+                `${element.id || element.tagName.toLowerCase()}@${Math.round(rect.top)}${height}`,
+              );
+            }
+          }
+          if (controls.length > 1) out.push({ group, line: index, controls });
+        });
       });
-    });
-    return out;
-  });
+      return out;
+    },
+    { exempt: NOT_A_ROW_CONTROL, small: SMALL_BY_DESIGN },
+  );
 
   expect(
     rows.length,
@@ -317,12 +354,26 @@ export async function expectFormControlsAligned(page: Page, context: string) {
   ).toBeGreaterThan(0);
 
   for (const { group, line, controls } of rows) {
-    const tops = controls.map((c) => Number(c.split('@')[1]));
+    const tops = controls.map((c) => Number(c.split('@')[1].split('^')[0]));
     const spread = Math.max(...tops) - Math.min(...tops);
     expect(
       spread,
       `${context}: row group ${group}, line ${line} is a staircase — ${controls.join(', ')}`,
     ).toBeLessThanOrEqual(2);
+
+    // **And one height.** Starting at the same y is half of a straight row: a text field, a
+    // select and a button beside each other measured 42, 39 and 39 px, so the row was level at
+    // the top and ragged at the bottom, and the comparison above passed it.
+    const heights = controls
+      .map((c) => c.split('^')[1])
+      .filter((h): h is string => h !== undefined)
+      .map(Number);
+    if (heights.length > 1) {
+      expect(
+        Math.max(...heights) - Math.min(...heights),
+        `${context}: row group ${group}, line ${line} is ragged — ${controls.join(', ')}`,
+      ).toBeLessThanOrEqual(1);
+    }
   }
 }
 

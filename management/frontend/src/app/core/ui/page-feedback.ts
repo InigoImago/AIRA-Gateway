@@ -15,12 +15,31 @@ export class PageFeedback {
   readonly error = signal<string | null>(null);
   /** The last success, in the user's terms. */
   readonly notice = signal<string | null>(null);
-  /** Set while a mutation is in flight, so the triggering control can disable itself. */
+  /**
+   * Set while a mutation is in flight, so the triggering control can disable itself. True until
+   * **every** run has settled: two panels share one page, and the first to finish must not
+   * re-enable the other's controls while its request is still on its way.
+   */
   readonly busy = signal(false);
 
-  /** Report a failure that did not come through `run` — a failed load, typically. */
-  fail(response: unknown, fallback: string): void {
-    this.error.set(errorMessage(response, fallback));
+  private running = 0;
+
+  /**
+   * Report a failure that did not come through `run` — a failed load, typically. Returns what is
+   * now shown, so a load that later succeeds can {@link withdraw} exactly that.
+   */
+  fail(response: unknown, fallback: string): string {
+    const message = errorMessage(response, fallback);
+    this.error.set(message);
+    return message;
+  }
+
+  /**
+   * Take back a failure this caller reported, once it no longer holds — a live view whose next
+   * poll answered. Someone else's failure, reported since, stays.
+   */
+  withdraw(message: string): void {
+    if (this.error() === message) this.error.set(null);
   }
 
   /** Report a success in the user's terms. */
@@ -36,19 +55,31 @@ export class PageFeedback {
   /**
    * Run a mutation, reporting its outcome either way — the error branch is the one that gets
    * forgotten. `failure` is the fallback wording; the backend's own message is preferred.
+   *
+   * Settled by its answer, its failure **or its completion**: a request that completes without
+   * answering would otherwise leave every control on the page disabled.
    */
   run<T>(request: Observable<T>, handlers: { failure: string; success: (value: T) => void }): void {
+    this.running += 1;
     this.busy.set(true);
     this.clear();
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      this.running -= 1;
+      this.busy.set(this.running > 0);
+    };
     request.subscribe({
       next: (value) => {
-        this.busy.set(false);
+        settle();
         handlers.success(value);
       },
       error: (response: unknown) => {
-        this.busy.set(false);
+        settle();
         this.fail(response, handlers.failure);
       },
+      complete: settle,
     });
   }
 }

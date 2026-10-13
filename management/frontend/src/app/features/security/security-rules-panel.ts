@@ -8,7 +8,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
 import { NEW_RULE, RuleForm } from './rule-form';
-import { describeRule, unitOf } from './rule-language';
+import { describeRule, thresholdText } from './rule-language';
 
 /**
  * The anomaly rules this caller can see, and authoring the ones that apply everywhere (`FRD-500`).
@@ -26,8 +26,9 @@ import { describeRule, unitOf } from './rule-language';
 })
 export class SecurityRulesPanel {
   /**
-   * Whether this panel's tab is the open one. The panel stays on the page either way, so a
-   * half-typed form survives a look at another tab.
+   * Whether this panel's tab is the open one. The panel is hidden rather than removed while it is
+   * not: an open edit form holds what has been typed into it (`rule-form.ts`), and a look at
+   * another tab must not cost it.
    */
   readonly shown = input(false);
   readonly rules = input<AnomalyRule[]>([]);
@@ -60,9 +61,9 @@ export class SecurityRulesPanel {
     return describeRule(rule);
   }
 
-  /** What a threshold is counted in — "% of requests" reads very differently from "× as much". */
-  protected unit(rule: AnomalyRule): string {
-    return unitOf(rule.kind);
+  /** A threshold with its unit, in the terms a reader means: a spike's stored 300 is "3×". */
+  protected threshold(rule: AnomalyRule): string {
+    return thresholdText(rule.kind, rule.threshold);
   }
 
   /**

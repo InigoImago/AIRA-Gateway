@@ -24,11 +24,13 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.anomalies import RuleAction, RuleTarget
 from aira_gateway.anomalies.evaluator import Finding, evaluate_rule
 from aira_gateway.anomalies.suspensions import SuspensionService, suspension_from_rule
+from aira_gateway.db.errors import loggable
 from aira_gateway.db.models import AnomalyEvent, AnomalyRuleRead, RequestLog
 
 _log = structlog.get_logger(__name__)
@@ -42,6 +44,15 @@ TICK_LOCK_KEY = 0x4149_5241_414E_4F4D
 #: What an event records when a rule's action could not be carried out (a `block` rule without
 #: `action_minutes`, say) — said on the row rather than looking enforced (`FRD-125`).
 NOT_ENFORCED = "detected_not_enforced"
+
+#: What an event records as having been done when a rule's action wrote a suspension — the reason
+#: the cache of suspensions is dropped once the tick has committed.
+ENFORCED = frozenset({"blocked", "throttled"})
+
+#: The largest measurement `anomaly_events.observed` holds. A ratio is unbounded — a use case going
+#: from one tiny call to a burst is billions of percent — and a value the column cannot hold fails
+#: the row; the exact figures are in the event's description either way.
+OBSERVED_CEILING = 2**31 - 1
 
 
 @dataclass
@@ -82,7 +93,7 @@ class AnomalyService:
                 raise
             except Exception as exc:  # pragma: no cover - defensive
                 # A detector that dies on one bad tick is off when it matters.
-                _log.warning("anomaly_tick_failed", error=str(exc))
+                _log.warning("anomaly_tick_failed", error=loggable(exc))
 
     # -- one round -------------------------------------------------------------------------
 
@@ -104,6 +115,10 @@ class AnomalyService:
             if written:
                 await session.commit()
         self._since = moment
+        if self.suspensions is not None and any(e.action_taken in ENFORCED for e in written):
+            # After the commit, not when the suspension was added: a request arriving while later
+            # rules were evaluated would reload the set without it and keep that for the TTL.
+            self.suspensions.invalidate()
         return written
 
     async def _claim_the_tick(self, session: AsyncSession) -> bool:
@@ -138,11 +153,47 @@ class AnomalyService:
         rules = await self._applicable(session, scoped)
         written: list[AnomalyEvent] = []
         for rule in rules:
-            for finding in await evaluate_rule(session, rule, moment):
-                event = await self._record(session, rule, finding, moment)
-                if event is not None:
-                    written.append(event)
+            # **One savepoint per rule**: a database error writing one rule's findings rolls back
+            # that rule's rows and nothing else. Otherwise the tick raises and keeps its watermark,
+            # the next tick fails in the same place, and every rule of every use case stops while
+            # one rule's finding cannot be stored.
+            try:
+                async with session.begin_nested():
+                    events = await self._evaluate_rule(session, rule, moment)
+                    await session.flush()
+            except SQLAlchemyError as exc:
+                _log.error(
+                    "anomaly_rule_failed",
+                    rule_id=rule.id,
+                    rule=rule.name,
+                    error_type=type(exc).__name__,
+                    error=loggable(exc),
+                )
+                continue
+            for event in events:
+                # Said once the row is written, never about a finding that was not stored.
+                _log.info(
+                    "anomaly_detected",
+                    rule=rule.name,
+                    kind=rule.kind,
+                    target=rule.target,
+                    target_value=event.target_value,
+                    observed=event.observed,
+                    threshold=rule.threshold,
+                )
+            written.extend(events)
         return written
+
+    async def _evaluate_rule(
+        self, session: AsyncSession, rule: AnomalyRuleRead, moment: datetime
+    ) -> list[AnomalyEvent]:
+        """Every finding of ``rule`` that is not in its cooldown, added to the session."""
+        events: list[AnomalyEvent] = []
+        for finding in await evaluate_rule(session, rule, moment):
+            event = await self._record(session, rule, finding, moment)
+            if event is not None:
+                events.append(event)
+        return events
 
     async def _applicable(self, session: AsyncSession, touched: set[str]) -> list[AnomalyRuleRead]:
         """The enabled rules that could have been affected: global ones, and those of a use case
@@ -181,8 +232,6 @@ class AnomalyService:
                 now=now,
             )
         )
-        # The writer sees its own decision on the next request rather than after the TTL.
-        self.suspensions.invalidate()
         return "blocked" if action is RuleAction.BLOCK else "throttled"
 
     async def _fired_recently(
@@ -246,7 +295,7 @@ class AnomalyService:
             else (finding.target_value if rule.target == RuleTarget.USE_CASE.value else None),
             target=rule.target,
             target_value=finding.target_value,
-            observed=finding.observed,
+            observed=min(finding.observed, OBSERVED_CEILING),
             threshold=rule.threshold,
             sample=finding.sample,
             window_minutes=rule.window_minutes,
@@ -254,13 +303,4 @@ class AnomalyService:
             detail=finding.detail[:500],
         )
         session.add(event)
-        _log.info(
-            "anomaly_detected",
-            rule=rule.name,
-            kind=rule.kind,
-            target=rule.target,
-            target_value=finding.target_value,
-            observed=finding.observed,
-            threshold=rule.threshold,
-        )
         return event

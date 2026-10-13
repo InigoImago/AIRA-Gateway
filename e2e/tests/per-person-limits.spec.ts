@@ -71,7 +71,9 @@ test.describe('Per-person limits', () => {
     await expect(card).toBeVisible();
     // Named as what it is. "Whole use case" here would describe a shared pot, which is the
     // opposite governance decision.
-    await expect(card).toContainText('/ 25.000000');
+    // The limit as every amount on the console is written, not as Management stores it.
+    await expect(card).toContainText('/ 25.00');
+    await expect(card).not.toContainText('25.000000');
   });
 
   test('the same scope exists for a rate limit, and Burst says what it does', async ({ page }) => {

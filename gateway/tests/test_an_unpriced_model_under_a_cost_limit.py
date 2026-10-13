@@ -288,7 +288,7 @@ async def test_the_installations_own_cost_budget_binds_a_caller_with_no_use_case
     app = _app(None, _Echo("free-lunch"))
     with TestClient(app) as client:
         await _catalogue(app, "free-lunch", priced=False)
-        await _budget(app, use_case="", scope="use_case", limit_cost_nanos=ONE_EURO)
+        await _budget(app, use_case="", scope="installation", limit_cost_nanos=ONE_EURO)
         response = _post(client, "free-lunch", slug=None)
 
     assert response.status_code == 400, response.text

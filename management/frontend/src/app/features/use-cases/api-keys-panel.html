@@ -1,24 +1,24 @@
 <div class="card" role="tabpanel" aria-labelledby="tab-keys">
   <div class="spread">
-    <h3 class="section-title" style="margin: 0">API keys</h3>
+    <h3 class="section-title">API keys</h3>
     @if (isMember()) {
       <button
         type="button"
         class="btn btn--sm btn--primary"
-        (click)="showIssueKey.set(true)"
+        (click)="openIssueKey()"
         data-testid="issue-key"
       >
         + Issue key
       </button>
     }
   </div>
-  <p class="muted" style="margin: 0.25rem 0 0">
+  <p class="muted lead">
     Keys are bound to this use case — requests made with them are attributed here automatically.
     Only members of the use case can issue one.
   </p>
 
   @if (!isMember()) {
-    <p class="muted" style="margin: 0.25rem 0 0" data-testid="keys-readonly">
+    <p class="muted lead" data-testid="keys-readonly">
       A key is data-plane access, so only members of this use case may issue one — seeing a use case
       is deliberately not enough.
     </p>
@@ -30,13 +30,23 @@
     [open]="showIssueKey() && isMember()"
     title="Issue an API key"
     testid="key-editor"
+    [error]="feedback.error()"
     (closed)="showIssueKey.set(false)"
   >
     <div modal-body>
+      <!-- Worded from the owner field: issued on behalf of somebody, the key is theirs to answer
+           for, and saying "yours" would be a false statement about accountability. -->
       <p class="callout" style="margin-top: 1rem" data-testid="key-responsibility">
-        Requests made with this key are recorded under <strong>your name</strong>, and it is you who
-        answers for how it is used — including by anything you hand it to. If it is meant for a team
-        or a service rather than for you personally, issue it under an account that says so.
+        @if (ownerToBe(); as owner) {
+          Requests made with this key are recorded under <strong>{{ owner }}</strong
+          >, who answers for how it is used — including by anything it is handed to. The console
+          also records that <strong>you</strong> issued it.
+        } @else {
+          Requests made with this key are recorded under <strong>your name</strong>, and it is you
+          who answers for how it is used — including by anything you hand it to. If it is meant for
+          a team or a service rather than for you personally, issue it under an account that says
+          so.
+        }
       </p>
       <!-- A stack, not `.form-inline`: every field carries a hint, so a window holds one control
            per line whatever class it claims. -->
@@ -112,8 +122,10 @@
   </app-modal>
 
   @if (issued(); as key) {
-    <div class="callout callout--warning stack" style="margin-top: 1rem" role="alert">
-      <strong>Copy this key now — it is shown only once.</strong>
+    <!-- The alert is the sentence, not the box: an assertive live region around the secret would
+         have a screen reader read the plaintext key aloud. -->
+    <div class="callout callout--warning stack" style="margin-top: 1rem">
+      <strong role="alert">Copy this key now — it is shown only once.</strong>
       <code class="secret">{{ key.api_key }}</code>
       <div class="row">
         <button type="button" class="btn btn--sm btn--primary" (click)="copyKey(key.api_key)">
@@ -159,8 +171,14 @@
       </span>
       <!-- Repeated beside the plaintext: the last moment the reader sees the key. -->
       <span class="field__hint" data-testid="key-issued-responsibility">
-        This key is recorded as yours. Whatever is done with it — by you, by a tool, or by an agent
-        you give it to — is attributed to your name.
+        @if (key.issued_by && key.owner) {
+          This key is recorded as <strong>{{ key.owner }}</strong
+          >'s, with you as the one who issued it. Whatever is done with it — by a person, a tool, or
+          an agent it is given to — is attributed to {{ key.owner }}.
+        } @else {
+          This key is recorded as yours. Whatever is done with it — by you, by a tool, or by an
+          agent you give it to — is attributed to your name.
+        }
       </span>
       @if (copyFailed()) {
         <span class="field__hint field__hint--error">
@@ -202,16 +220,17 @@
               {{ key.owner }}
               <!-- Only when issuer and owner differ; on every row it would be noise. -->
               @if (key.issued_by) {
-                <span class="muted" style="display: block; font-size: 0.78rem">
-                  issued by {{ key.issued_by }}
-                </span>
+                <div class="muted text-sm">issued by {{ key.issued_by }}</div>
               }
             </td>
             <td>
-              @if (key.is_active) {
-                <span class="badge badge--success">active</span>
-              } @else {
+              <!-- Three answers, not two: a lapsed key is neither working nor taken away. -->
+              @if (!key.is_active) {
                 <span class="badge badge--danger">revoked</span>
+              } @else if (expired(key)) {
+                <span class="badge badge--muted" data-testid="key-expired">expired</span>
+              } @else {
+                <span class="badge badge--success">active</span>
               }
             </td>
             <td>
@@ -225,7 +244,9 @@
             </td>
             <td class="table__actions">
               <div class="actions">
-                @if (key.is_active && canManage()) {
+                <!-- Not offered on a lapsed key: it already works nowhere, and revoking it would
+                     overwrite "it ran out as planned" with "somebody took it away". -->
+                @if (key.is_active && !expired(key) && canManage()) {
                   <button
                     type="button"
                     class="btn btn--sm btn--danger"

@@ -108,9 +108,25 @@ def test_a_token_signed_by_one_realm_but_naming_another_is_refused(realms: dict[
 
 
 def test_a_token_naming_no_configured_realm_is_refused(realms: dict[str, Any]) -> None:
-    validator, _, _ = _validator(realms)
+    """Without asking any key set: each verifier checks `iss` exactly and would refuse it, so
+    trying them could only make each one refetch its keys for a `kid` it never held."""
+    validator, keys_a, keys_b = _validator(realms)
 
     assert validator.validate(_token(realms["a"], "https://elsewhere.test/realms/x")) is None
+    assert keys_a.asked == keys_b.asked == 0
+
+
+def test_a_token_naming_no_issuer_at_all_is_refused_the_same_way(realms: dict[str, Any]) -> None:
+    validator, keys_a, keys_b = _validator(realms)
+    now = dt.datetime.now(dt.UTC)
+    unnamed = jwt.encode(
+        {"sub": "u-1", "iat": now, "exp": now + dt.timedelta(minutes=5), "aud": "aira-gateway"},
+        realms["a"],
+        algorithm="RS256",
+    )
+
+    assert validator.validate(unnamed) is None
+    assert keys_a.asked == keys_b.asked == 0
 
 
 def test_one_realms_traffic_does_not_make_the_other_fetch_its_keys(realms: dict[str, Any]) -> None:

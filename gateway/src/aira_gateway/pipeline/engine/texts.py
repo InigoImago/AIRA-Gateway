@@ -30,22 +30,31 @@ def _one_message(text: str, model: str) -> CanonicalRequest:
     return CanonicalRequest(model=model, messages=[CanonicalMessage(role=Role.USER, text=text)])
 
 
-def _summed(step: str, calls: list[ModelCall]) -> ModelCall | None:
-    """One `ModelCall` for a step that made several — the money exact, the row count sane.
+def _summed(step: str, calls: list[ModelCall]) -> list[ModelCall]:
+    """One `ModelCall` per model a step called over a batch — the money exact, the row count sane.
 
-    256 rows named `pipeline:pii_filter` for one request would bury the caller's own row; the summed
-    usage prices the same. Only calls to one model can be summed, which a step guarantees: its model
-    comes from its configuration, not from the text.
+    256 rows named `pipeline:pii_filter` for one request would bury the caller's own row, and the
+    summed usage prices the same — **every** usage figure, because cache reads, cache writes and
+    reasoning are priced apart (`FRD-133`, `FRD-135`). **Per model**, because a step's chain can
+    answer different texts with different models (`FRD-302` FR-7), and a row names the model whose
+    price it carries.
     """
-    if not calls:
-        return None
-    return ModelCall(
-        step=step,
-        model=calls[0].model,
-        usage=CanonicalUsage(
-            prompt_tokens=sum(call.usage.prompt_tokens for call in calls),
-            completion_tokens=sum(call.usage.completion_tokens for call in calls),
-        ),
+    by_model: dict[str, list[ModelCall]] = {}
+    for call in calls:
+        by_model.setdefault(call.model, []).append(call)
+    return [
+        ModelCall(step=step, model=model, usage=_total(made)) for model, made in by_model.items()
+    ]
+
+
+def _total(calls: list[ModelCall]) -> CanonicalUsage:
+    """The usage of ``calls`` added up, figure by figure."""
+    return CanonicalUsage(
+        prompt_tokens=sum(call.usage.prompt_tokens for call in calls),
+        completion_tokens=sum(call.usage.completion_tokens for call in calls),
+        cached_input_tokens=sum(call.usage.cached_input_tokens for call in calls),
+        cache_write_tokens=sum(call.usage.cache_write_tokens for call in calls),
+        reasoning_tokens=sum(call.usage.reasoning_tokens for call in calls),
     )
 
 

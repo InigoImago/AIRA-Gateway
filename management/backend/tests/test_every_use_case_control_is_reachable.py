@@ -39,10 +39,13 @@ def _arguments(source: str, call: str) -> list[str]:
 
     A regex to the first `)` would stop inside `this.slug()`, and a regex to the last would swallow
     the file. The console writes a use case from four different panels, so this has to be right in
-    all four rather than in the one that was looked at.
+    all four rather than in the one that was looked at. Whitespace is allowed around the dots and
+    before the parenthesis: the formatter breaks a long chain as `this.service` and `.update(` on
+    two lines, and a call the scan cannot see reads as a control nobody can reach.
     """
     found: list[str] = []
-    for match in re.finditer(re.escape(call) + r"\(", source):
+    spelled = r"\s*\.\s*".join(re.escape(part) for part in call.split("."))
+    for match in re.finditer(spelled + r"\s*\(", source):
         index, depth = match.end(), 1
         while index < len(source) and depth:
             depth += (source[index] == "(") - (source[index] == ")")

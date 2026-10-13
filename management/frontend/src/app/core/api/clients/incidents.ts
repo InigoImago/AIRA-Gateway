@@ -125,8 +125,10 @@ export function withIncidents<T extends ApiClientClass>(Base: T) {
       return this.http.post<AnomalyRule>(`${this.base}${seg(slug)}/anomaly-rules/`, rule);
     }
 
+    /** The trailing slash is part of the address: Management's router requires it and does not
+     *  redirect (`APPEND_SLASH = False`), so without it every delete is a 404. */
     deleteUseCaseRule(slug: string, id: number): Observable<void> {
-      return this.http.delete<void>(`${this.base}${seg(slug)}/anomaly-rules/${id}`);
+      return this.http.delete<void>(`${this.base}${seg(slug)}/anomaly-rules/${id}/`);
     }
 
     /** Anomaly rules that apply everywhere, plus the ones on use cases the caller may see. */

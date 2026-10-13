@@ -86,6 +86,64 @@ def consumer_group(stage: str) -> str:
 #: The header naming a record's event type.
 EVENT_TYPE_HEADER = "event_type"
 
+#: Kafka's own port, for a broker written without one.
+DEFAULT_KAFKA_PORT = 9092
+
+
+def parse_bootstrap_servers(value: str) -> tuple[tuple[str, int], ...]:
+    """``(host, port)`` per entry of a comma-separated broker list, as a Kafka client dials it.
+
+    A bare host takes Kafka's port, and an IPv6 broker is written ``[address]:port`` — the brackets
+    are not part of the host. An entry nothing could dial raises `ValueError` naming it, so a
+    settings validator can refuse it at startup rather than a readiness probe at every request.
+    """
+    return tuple(_broker(entry.strip()) for entry in value.split(",") if entry.strip())
+
+
+def _broker(entry: str) -> tuple[str, int]:
+    port_text: str | None
+    if entry.startswith("["):
+        host, closed, rest = entry[1:].partition("]")
+        if not closed or (rest and not rest.startswith(":")):
+            raise ValueError(f"{entry!r} is neither [address] nor [address]:port")
+        port_text = rest[1:] if rest else None
+    elif entry.count(":") > 1:
+        raise ValueError(f"{entry!r}: write an IPv6 broker as [address]:port")
+    else:
+        host, colon, after = entry.partition(":")
+        port_text = after if colon else None
+    if not host:
+        raise ValueError(f"{entry!r} names no host")
+    if port_text is None:
+        return host, DEFAULT_KAFKA_PORT
+    if not (port_text.isascii() and port_text.isdigit() and 0 < int(port_text) < 65536):
+        raise ValueError(f"{entry!r}: the port must be a number from 1 to 65535")
+    return host, int(port_text)
+
+
+#: The largest request the producer sends — aiokafka's own `max_request_size` default, passed to it
+#: explicitly, so this is the producer's limit rather than a copy of it.
+MAX_REQUEST_BYTES = 1_048_576
+
+#: The largest event value either plane writes or sends. Below the request limit by room for the
+#: key, the headers and the record's framing, so a value within it is never refused for its size;
+#: Management refuses a larger one while the change can still be rolled back.
+MAX_EVENT_BYTES = 1_000_000
+
+
+def encode_event(payload: dict[str, Any]) -> bytes:
+    """An event's value as it goes on the wire — the producer's serializer, and what every bound
+    on an event's size measures, so the two cannot disagree about a byte."""
+    return json.dumps(payload).encode("utf-8")
+
+
+class RecordRefused(Exception):
+    """The broker will never accept this record, however often it is sent — it is too large.
+
+    Distinct from every other send failure, which may pass: a publisher retrying this one at the
+    head of an ordered queue would hold back everything behind it for good.
+    """
+
 
 @dataclass(frozen=True, slots=True)
 class KafkaSecurity:
@@ -193,7 +251,8 @@ class AiokafkaProducer:
         ):
             self._producer = self._factory(
                 bootstrap_servers=self._bootstrap_servers,
-                value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+                value_serializer=encode_event,
+                max_request_size=MAX_REQUEST_BYTES,
                 **self._security.client_kwargs(),
             )
             await self._producer.start()
@@ -215,15 +274,31 @@ class AiokafkaProducer:
             event_type=record.event_type,
             traced=bool(record.traceparent),
         ) as call:
-            metadata = await self._producer.send_and_wait(
-                record.topic, value=record.payload, key=record.key.encode("utf-8"), headers=headers
-            )
+            try:
+                metadata = await self._producer.send_and_wait(
+                    record.topic,
+                    value=record.payload,
+                    key=record.key.encode("utf-8"),
+                    headers=headers,
+                )
+            except Exception as exc:
+                if _refused_for_good(exc):
+                    raise RecordRefused(str(exc)) from exc
+                raise
             # Where it landed: what somebody takes to `kafka-console-consumer` when the far end
             # says it never saw the event.
             call.note(
                 partition=getattr(metadata, "partition", None),
                 offset=getattr(metadata, "offset", None),
             )
+
+
+def _refused_for_good(exc: Exception) -> bool:
+    """Whether aiokafka refused a record for its size — the client's own check or the broker's.
+    Imported here for the reason `_aiokafka_producer` is."""
+    from aiokafka.errors import MessageSizeTooLargeError
+
+    return isinstance(exc, MessageSizeTooLargeError)
 
 
 def _aiokafka_producer(**kwargs: Any) -> Any:  # pragma: no cover - the real client, by name

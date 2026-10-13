@@ -29,10 +29,8 @@ class Routing:
     reply: str = ""
     #: Whether the model was **reached** — ``False`` only where the call itself failed. This is
     #: what a step's chain moves on for (`FRD-302` FR-8): a model that answered has answered, even
-    #: when the answer is *undetermined*, and a chain that tried the next one would be a filter
-    #: shopping for a verdict. A field rather than an inference from a missing `ModelCall`: the
-    #: heuristic classifier has no call either, and reading that as "not reached" would send it
-    #: down a chain it never asked for.
+    #: when it named no category, and a chain that tried the next one would be a router shopping
+    #: for a route.
     reached: bool = True
 
 

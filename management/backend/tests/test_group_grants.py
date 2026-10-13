@@ -12,6 +12,7 @@ So most of these assert an *effect on an ordinary request*, not the row that pro
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant
@@ -305,10 +306,11 @@ def test_a_realm_group_named_after_a_role_does_not_hand_out_the_role() -> None:
 
     assert not user.groups.filter(name="it-security").exists()
     assert user.groups.filter(name=django_group_name("/it-security")).exists()
-    # …and the role predicate does not see it.
-    from aira_management.rbac import role_slugs
+    # …and the permission engine does not see it.
+    from aira_management.rbac import held_roles_of, permissions_of
 
-    assert role_slugs(user) == set()
+    assert held_roles_of(user) == ()
+    assert permissions_of(user) == frozenset()
 
 
 def test_a_malformed_groups_claim_grants_nothing_rather_than_failing() -> None:
@@ -424,3 +426,136 @@ def test_a_use_case_reports_whether_the_gateway_would_accept_this_caller() -> No
     grouped = _user("call-grouped", groups=(GROUP,))
     client.post(f"{BASE}call-uc/groups/", {"group_path": GROUP, "role": "user"}, format="json")
     assert _client(grouped).get(f"{BASE}call-uc/").json()["permissions"]["may_call"] is True
+
+
+# ---- a group path longer than a mirror's name ------------------------------------------------
+
+#: The finding's own example, 160 characters — a real department tree, three levels down.
+DEEP = (
+    "/Konzern/Geschaeftsbereich Finanzen und Controlling/Konzernrechnungswesen und Steuern"
+    "/Team Konsolidierung und Berichterstattung International/Arbeitsgruppe IFRS"
+)
+
+
+def test_a_mirror_group_is_named_within_its_column_whatever_the_path() -> None:
+    """`auth_group.name` is 150 characters and only PostgreSQL enforces it: every sign-in of
+    somebody in a deeper group used to fail there, as a `DataError`, on every request. A path that
+    fits is still mirrored verbatim, so the existing mirror groups keep their names."""
+    from aira_management.rbac import GROUP_NAME_MAX_LENGTH, VERBATIM_PATH_MAX_LENGTH
+
+    assert len(DEEP) > VERBATIM_PATH_MAX_LENGTH
+    for path in (DEEP, "/" + "g" * 254, "/a\x00b", "#looks-like-a-digest"):
+        assert len(django_group_name(path)) <= GROUP_NAME_MAX_LENGTH, path
+    assert django_group_name(GROUP) == f"kc:{GROUP}"
+    fits = "/" + "g" * (VERBATIM_PATH_MAX_LENGTH - 1)
+    assert django_group_name(fits) == f"kc:{fits}"
+    assert django_group_name(DEEP) != django_group_name(DEEP + "x"), (
+        "distinct paths, distinct names"
+    )
+
+
+def test_a_grant_on_a_path_longer_than_a_mirror_name_reaches_its_members() -> None:
+    """The whole chain, on a path the column could not hold: granted, synced from a token, and
+    resolved back to the path by every predicate — seeing it, being a member, and calling it."""
+    admin = _user("a", "global-admin")
+    client = _client(admin)
+    _create(client, "uc-a")
+    granted = client.post(f"{BASE}uc-a/groups/", {"group_path": DEEP}, format="json")
+    assert granted.status_code == 201, granted.content
+    assert client.get(f"{BASE}uc-a/groups/").data[0]["reaches"] == 0
+
+    member = _user("b", groups=(DEEP,))
+
+    listed = _client(member).get(BASE).data
+    assert [row["slug"] for row in listed["results"]] == ["uc-a"]
+    assert listed["results"][0]["permissions"]["is_member"] is True
+    assert listed["results"][0]["permissions"]["may_call"] is True
+    assert client.get(f"{BASE}uc-a/groups/").data[0]["reaches"] == 1
+
+    revoked = client.delete(f"{BASE}uc-a/groups/revoke/?group_path={quote(DEEP)}")
+    assert revoked.status_code == 200, revoked.content
+    assert _client(member).get(BASE).data["count"] == 0
+
+
+def test_a_stored_role_bound_to_a_long_path_is_held_through_its_mirror() -> None:
+    """A role an installation defines is held through the mirror of its group, asked by the
+    mirror's name — so a digest-named mirror confers the role like any other."""
+    from aira_management.apps.roles.models import StoredRole
+    from aira_management.rbac import held_roles_of
+
+    StoredRole.objects.create(
+        slug="ifrs", label="IFRS", group_path=DEEP, permissions=["report.read_all"]
+    )
+    member = _user("b", groups=(DEEP,))
+
+    assert [role.slug for role in held_roles_of(member)] == ["ifrs"]
+
+
+def test_a_member_name_longer_than_its_column_is_refused_by_name(monkeypatch) -> None:
+    """An invited account is created under the very name typed, and `auth_user.username` is 150
+    characters — enforced by PostgreSQL alone, as a `500`. Asked of a directory that knows the
+    name, so the refusal is the bound's and nothing else's."""
+    from aira_management.apps.usecases.views import grants
+
+    from aira_common.access import SubjectKind
+    from aira_common.directory import DirectoryEntry
+
+    long_name = "u" * 151
+    monkeypatch.setattr(
+        grants,
+        "known_person",
+        lambda name: DirectoryEntry(kind=SubjectKind.USER, id=name, label=name),
+    )
+    admin = _user("a", "global-admin")
+    client = _client(admin)
+    _create(client, "uc-a")
+
+    refused = client.post(f"{BASE}uc-a/members/", {"username": long_name}, format="json")
+
+    assert refused.status_code == 400
+    assert refused.json()["error"]["details"]["username"] == [
+        "Ensure this field has no more than 150 characters."
+    ]
+    assert not get_user_model().objects.filter(username=long_name).exists()
+
+
+@pytest.mark.parametrize(
+    ("path", "accepted"),
+    [
+        ("/Finance Department/Team A", True),
+        ("/x", True),
+        ("/ Finance", False),
+        ("/Finance\tDepartment", False),
+        ("/Finance\nDepartment", False),
+        ("Finance", False),
+        ("/", False),
+    ],
+)
+def test_a_group_path_is_whatever_the_realm_calls_it_and_nothing_a_token_cannot_carry(
+    path: str, accepted: bool
+) -> None:
+    """Keycloak names a department what it is called, spaces included, and a grant names the path
+    the token will carry — so inner spaces are a path and a tab, a newline or an edge space is a
+    copy-and-paste accident that would match nobody."""
+    admin = _user("a", "global-admin")
+    client = _client(admin)
+    _create(client, "uc-a")
+
+    response = client.post(f"{BASE}uc-a/groups/", {"group_path": path}, format="json")
+
+    assert (response.status_code == 201) is accepted, response.content
+
+
+def test_a_group_path_copied_with_a_trailing_space_is_stored_without_it() -> None:
+    """The edges are trimmed before the shape is checked, so the grant names the path a token
+    carries rather than refusing a paste."""
+    admin = _user("a", "global-admin")
+    client = _client(admin)
+    _create(client, "uc-a")
+
+    response = client.post(
+        f"{BASE}uc-a/groups/", {"group_path": "/Finance Department "}, format="json"
+    )
+
+    assert response.status_code == 201
+    assert UseCaseGroupGrant.objects.get().group_path == "/Finance Department"

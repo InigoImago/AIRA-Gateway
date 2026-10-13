@@ -63,8 +63,10 @@ class AnomalyRuleViewSet(viewsets.ModelViewSet[AnomalyRule]):
 
     def get_queryset(self) -> QuerySet[AnomalyRule]:
         # Global rules are visible to everybody: a rule that can block your traffic is a rule you
-        # are entitled to know about, whoever wrote it.
-        visible = scope_queryset(self.request.user, VIEW, UseCase.objects.all())
+        # are entitled to know about, whoever wrote it. A retired use case's rules are not: this
+        # route reaches them without the use-case viewset, so it asks the same live filter, or
+        # retiring one would leave its administrator able to read, change and delete them.
+        visible = scope_queryset(self.request.user, VIEW, UseCase.objects.live())
         return AnomalyRule.objects.filter(
             Q(use_case__isnull=True) | Q(use_case__in=visible)
         ).select_related("use_case")
@@ -106,10 +108,16 @@ class AnomalyRuleViewSet(viewsets.ModelViewSet[AnomalyRule]):
 
 
 def upsert_use_case_rule(user: Any, usecase: UseCase, data: dict[str, Any]) -> Response:
-    """Create or replace a rule on one use case. Shared by the use-case viewset's action."""
+    """Create or replace a rule on one use case. Shared by the use-case viewset's action.
+
+    Validated against the rule of that name when there is one, as a `PATCH` is: a re-post that
+    leaves out `action` keeps the stored throttle. Read as a default alert instead, it would clear
+    the throttle's expiry and rate while the row still said `throttle`.
+    """
     if not may_manage(user, usecase):
         raise PermissionDenied("You cannot edit the anomaly rules of this use case.")
-    serializer = AnomalyRuleSerializer(data=data)
+    existing = AnomalyRule.objects.filter(use_case=usecase, name=data.get("name")).first()
+    serializer = AnomalyRuleSerializer(existing, data=data, context={"use_case": usecase})
     serializer.is_valid(raise_exception=True)
     values = dict(serializer.validated_data)
     name = values.pop("name")

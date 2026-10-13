@@ -1,23 +1,24 @@
 <div class="card" role="tabpanel" aria-labelledby="tab-budgets">
   <div class="spread">
-    <h3 class="section-title" style="margin: 0">Budgets</h3>
+    <h3 class="section-title">Budgets</h3>
     @if (canManage()) {
       <button
         type="button"
         class="btn btn--sm btn--primary"
-        (click)="showForm.set(true)"
+        (click)="openForm()"
         data-testid="add-budget"
       >
         + Add budget
       </button>
     }
   </div>
-  <p class="muted" style="margin: 0.25rem 0 0">
-    Token / request limits per period. The gateway rejects requests over budget with 429.
+  <p class="muted lead">
+    Spend, token and request limits per period. While budgets are enforced, the gateway refuses a
+    request over a limit with 429.
   </p>
 
   @if (!canManage()) {
-    <p class="muted" style="margin: 0.25rem 0 0" data-testid="budgets-readonly">
+    <p class="muted lead" data-testid="budgets-readonly">
       You can see what this use case may spend and how much of it is gone. Setting a limit is done
       by its administrators.
     </p>
@@ -27,6 +28,7 @@
     [open]="showForm() && canManage()"
     title="Add a budget"
     testid="budget-editor"
+    [error]="feedback.error()"
     (closed)="showForm.set(false)"
   >
     <div modal-body>
@@ -132,7 +134,7 @@
       }
       <button type="button" class="btn" (click)="showForm.set(false)">Cancel</button>
       <button type="submit" form="budget-form" class="btn btn--primary" [disabled]="!canAdd()">
-        Add
+        {{ feedback.busy() ? 'Saving…' : 'Add' }}
       </button>
     </div>
   </app-modal>
@@ -181,7 +183,7 @@
 
   <div class="stack" style="margin-top: 1rem">
     @for (budget of budgets(); track budget.id) {
-      <div class="card" style="padding: 0.9rem 1rem">
+      <div class="card card--compact">
         <div class="spread">
           <div class="row">
             <strong>{{ labelFor(budget) }}</strong>
@@ -226,8 +228,10 @@
           </div>
         </div>
 
-        @if (!measured(budget)) {
-          <p class="muted" style="margin: 0.4rem 0 0; font-size: 0.82rem">
+        <!-- Not when the gateway is unreachable: the callout above says that, and this sentence
+             would give the wrong reason for the missing figures. -->
+        @if (!usageUnavailable() && !measured(budget)) {
+          <p class="muted text-sm" style="margin: 0.4rem 0 0" data-testid="budget-not-yours">
             Counted per person, so the limits below apply to each member separately. You have no
             consumption of your own here, so no figures are shown.
           </p>
@@ -235,11 +239,11 @@
 
         @if (budget.limit_cost) {
           <div style="margin-top: 0.6rem">
-            <div class="spread" style="font-size: 0.82rem">
+            <div class="spread text-sm">
               <span class="muted">Spend{{ costUnit() }}</span>
-              <span>
+              <span [attr.data-testid]="'budget-spend-' + budget.id">
                 {{ measured(budget) ? usedFor(budget).used_cost : '—' }} /
-                {{ budget.limit_cost }}
+                {{ limitText(budget.limit_cost) }}
               </span>
             </div>
             @if (measured(budget)) {
@@ -263,11 +267,11 @@
         }
         @if (budget.limit_requests != null) {
           <div style="margin-top: 0.6rem">
-            <div class="spread" style="font-size: 0.82rem">
+            <div class="spread text-sm">
               <span class="muted">Requests</span>
-              <span>
-                {{ measured(budget) ? usedFor(budget).used_requests : '—' }} /
-                {{ budget.limit_requests }}
+              <span [attr.data-testid]="'budget-requests-' + budget.id">
+                {{ measured(budget) ? count(usedFor(budget).used_requests) : '—' }} /
+                {{ count(budget.limit_requests) }}
               </span>
             </div>
             @if (measured(budget)) {
@@ -291,11 +295,11 @@
         }
         @if (budget.limit_tokens != null) {
           <div style="margin-top: 0.6rem">
-            <div class="spread" style="font-size: 0.82rem">
+            <div class="spread text-sm">
               <span class="muted">Tokens</span>
-              <span>
-                {{ measured(budget) ? usedFor(budget).used_tokens : '—' }} /
-                {{ budget.limit_tokens }}
+              <span [attr.data-testid]="'budget-tokens-' + budget.id">
+                {{ measured(budget) ? count(usedFor(budget).used_tokens) : '—' }} /
+                {{ count(budget.limit_tokens) }}
               </span>
             </div>
             @if (measured(budget)) {
@@ -323,7 +327,7 @@
           is no denominator, and inventing one would mean "how close to a limit nobody set".
         -->
         @if (measured(budget) && alsoUsed(budget).length) {
-          <p class="muted" style="margin: 0.6rem 0 0; font-size: 0.82rem">
+          <p class="muted text-sm" style="margin: 0.6rem 0 0">
             Also used this {{ budget.period }}:
             @for (figure of alsoUsed(budget); track figure.label) {
               <span>{{ figure.value }} {{ figure.label }}{{ $last ? '' : ' · ' }}</span>

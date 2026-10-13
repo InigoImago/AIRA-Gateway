@@ -11,7 +11,7 @@
   @if (canEdit()) {
     <div class="card">
       <div class="spread">
-        <h3 class="section-title" style="margin: 0">Model declarations</h3>
+        <h3 class="section-title">Model declarations</h3>
         <div class="row">
           <!--
             One entrance, and it starts with the provider: every model lives somewhere, and
@@ -28,18 +28,22 @@
           </button>
         </div>
       </div>
-      <p class="muted" style="margin: 0.5rem 0 0">
+      <p class="muted lead">
         A declaration is what the gateway enforces: the output cap, what the model can be asked to
         do, and what it costs. Open a row below to see everything on file for a model, and to
         correct or remove it.
       </p>
 
-      <app-served-models (catalogue)="importServed($event)" />
+      <app-served-models [catalogued]="catalogued()" (catalogue)="importServed($event)" />
     </div>
   }
 
+  <!-- While the editor is open it shows this outcome itself, where the reader is looking; a copy
+       behind its backdrop would be a second report of the same thing. -->
   @if (feedback.error(); as message) {
-    <p class="callout callout--danger" role="alert">{{ message }}</p>
+    @if (!modelEditor.showAdd()) {
+      <p class="callout callout--danger" role="alert">{{ message }}</p>
+    }
   }
   @if (feedback.notice(); as message) {
     <p class="callout" role="status">{{ message }}</p>
@@ -58,11 +62,11 @@
     </p>
   }
 
-  <div class="card" style="padding: 0">
+  <div class="card card--flush">
     <!-- Outside the loading branch, so a reload never takes the search box away mid-typing
          (`tools/tests/test_console_info_hints.py`). -->
     @if (models().length) {
-      <div class="table-tools" style="padding: 0.9rem 1rem 0">
+      <div class="table-tools card__inset card__inset--above">
         <label class="search">
           <span>Find a model</span>
           <input
@@ -78,7 +82,7 @@
     }
 
     @if (loading()) {
-      <p class="loading" style="padding: 1rem">
+      <p class="loading card__inset">
         <span class="spinner" aria-hidden="true"></span>
         Loading catalog…
       </p>
@@ -127,15 +131,13 @@
                   <td>
                     <code>{{ model.name }}</code>
                     @if (model.display_name) {
-                      <div class="muted" style="font-size: 0.8rem">{{ model.display_name }}</div>
+                      <div class="muted text-sm">{{ model.display_name }}</div>
                     }
                   </td>
                   <td>{{ model.provider || '—' }}</td>
                   <td>
                     @if (model.is_declared) {
-                      <span class="muted" style="font-size: 0.8rem">{{
-                        (model.capabilities ?? []).join(', ')
-                      }}</span>
+                      <span class="muted text-sm">{{ (model.capabilities ?? []).join(', ') }}</span>
                     } @else {
                       <span class="badge badge--warning">undeclared</span>
                     }
@@ -175,15 +177,18 @@
                       <!-- Declared is not reachable: without a credential no adapter is registered,
                            and every request for the model comes back `model_not_found`. -->
                       <div class="row" style="margin-bottom: 0.75rem">
-                        <button
-                          type="button"
-                          class="btn btn--sm"
-                          [disabled]="checking()"
-                          (click)="runCheck(model)"
-                          [attr.data-testid]="'check-' + model.name"
-                        >
-                          {{ checking() ? 'Checking…' : 'Check reachability' }}
-                        </button>
+                        <!-- Offered to whoever the gateway would answer (`operations.diagnose`). -->
+                        @if (canDiagnose()) {
+                          <button
+                            type="button"
+                            class="btn btn--sm"
+                            [disabled]="checking()"
+                            (click)="runCheck(model)"
+                            [attr.data-testid]="'check-' + model.name"
+                          >
+                            {{ checking() ? 'Checking…' : 'Check reachability' }}
+                          </button>
+                        }
                         @if (check(); as verdict) {
                           <span
                             class="badge"
@@ -194,7 +199,7 @@
                           >
                             {{ checkVerdict(verdict) }}
                           </span>
-                          <span class="muted" style="font-size: 0.8rem" data-testid="check-detail">
+                          <span class="muted text-sm" data-testid="check-detail">
                             {{ verdict.detail }}
                           </span>
                         }
@@ -230,7 +235,7 @@
           </table>
         </div>
 
-        <div style="padding: 0 1rem 0.9rem">
+        <div class="card__inset card__inset--below">
           <app-table-pager [view]="view" noun="models" testid="model-pager" />
         </div>
       }
@@ -238,235 +243,248 @@
   </div>
 </div>
 
-<app-model-editor (saved)="reload()" />
+<app-model-editor
+  #modelEditor
+  [catalogued]="models()"
+  [canDiagnose]="canDiagnose()"
+  (saved)="reload()"
+/>
 
 <!--
   What a vendor offers this installation's credential (`FRD-507` stage C). A window, because the
   answer can be fifty models: it lists rather than picks, marks what the catalog already has, and
   hands exactly one model to the editor.
 -->
-@if (showBrowse()) {
-  <div class="modal-backdrop" (click)="closeBrowse()"></div>
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="browse-title" tabindex="-1">
-    <div class="modal__head">
-      <h3 id="browse-title" style="margin: 0">Add a model from a provider</h3>
-      <button
-        type="button"
-        class="btn btn--sm btn--ghost"
-        aria-label="Close"
-        (click)="closeBrowse()"
-      >
-        ✕
-      </button>
+<app-modal
+  [open]="showBrowse()"
+  title="Add a model from a provider"
+  testid="browse"
+  (closed)="closeBrowse()"
+>
+  <div modal-body>
+    <div class="form-inline">
+      <div class="field grow">
+        <label for="browse-provider">Provider</label>
+        <select
+          id="browse-provider"
+          name="browse_provider"
+          [ngModel]="browseProvider()"
+          (ngModelChange)="chooseBrowseProvider($event)"
+          data-testid="browse-provider"
+        >
+          <option value="">
+            {{ loadingProviders() ? 'Asking the gateway…' : 'Choose a provider…' }}
+          </option>
+          @for (upstream of askable(); track upstream.name) {
+            <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
+          }
+          <!-- Listed, not filtered out: an absent provider reads as a credential that failed. -->
+          @for (upstream of unaskable(); track upstream.name) {
+            <option [value]="upstream.name">
+              {{ providerLabel(upstream) }} — publishes no list
+            </option>
+          }
+        </select>
+        <span class="field__hint">
+          A platform that publishes no list is not broken: its models are named in the gateway's
+          configuration, and cataloguing one here is how it becomes usable. Choose it to see the way
+          in.
+        </span>
+      </div>
     </div>
 
-    <div class="modal__body">
-      <div class="form-inline">
-        <div class="field grow">
-          <label for="browse-provider">Provider</label>
-          <select
-            id="browse-provider"
-            name="browse_provider"
-            [ngModel]="browseProvider()"
-            (ngModelChange)="chooseBrowseProvider($event)"
-            data-testid="browse-provider"
-          >
-            <option value="">
-              {{ loadingProviders() ? 'Asking the gateway…' : 'Choose a provider…' }}
-            </option>
-            @for (upstream of askable(); track upstream.name) {
-              <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
+    @if (chosenBrowseProvider(); as upstream) {
+      @if (!upstream.canEnumerate) {
+        <div class="callout" data-testid="provider-not-askable">
+          <p style="margin: 0 0 0.6rem">
+            <strong>{{ providerLabel(upstream) }}</strong> publishes no model list this credential
+            may read, so there is nothing to browse. That is a property of the platform, not a fault
+            here — Agent Platform answers <code>API keys are not supported by this API</code> to a
+            listing request, and Azure's listing names models that still need a deployment before
+            any request reaches them.
+          </p>
+          <p style="margin: 0 0 0.6rem" data-testid="provider-not-askable-way-in">
+            The way in is the same one step later: name the model yourself. What this platform tells
+            us about itself — the provider and its dialect — is filled in for you,
+            @if (upstream.cataloguedIsEnough) {
+              and cataloguing the model is enough to reach it — no configuration entry needed.
+            } @else {
+              and the model must also be named in the gateway's configuration
+              (<code>AIRA_FOUNDRY_DEPLOYMENTS</code>, for example) before it will answer.
             }
-            <!-- Listed, not filtered out: an absent provider reads as a credential that failed. -->
-            @for (upstream of unaskable(); track upstream.name) {
-              <option [value]="upstream.name">
-                {{ providerLabel(upstream) }} — publishes no list
-              </option>
-            }
-          </select>
-          <span class="field__hint">
-            A platform that publishes no list is not broken: its models are named in the gateway's
-            configuration, and cataloguing one here is how it becomes usable. Choose it to see the
-            way in.
-          </span>
+          </p>
+          <button type="button" class="btn" (click)="addManually()" data-testid="add-manually">
+            Add a model on {{ providerLabel(upstream) }}
+          </button>
         </div>
-      </div>
-
-      @if (chosenBrowseProvider(); as upstream) {
-        @if (!upstream.canEnumerate) {
-          <div class="callout" data-testid="provider-not-askable">
-            <p style="margin: 0 0 0.6rem">
-              <strong>{{ providerLabel(upstream) }}</strong> publishes no model list this credential
-              may read, so there is nothing to browse. That is a property of the platform, not a
-              fault here — Agent Platform answers
-              <code>API keys are not supported by this API</code> to a listing request, and Azure's
-              listing names models that still need a deployment before any request reaches them.
-            </p>
-            <p style="margin: 0 0 0.6rem">
-              The way in is the same one step later: name the model yourself. What this platform
-              tells us about itself — the provider and its dialect — is filled in for you, and the
-              model must also be named in the gateway's configuration
-              (<code>AIRA_VERTEX_MODELS</code>, <code>AIRA_FOUNDRY_DEPLOYMENTS</code>) before it
-              will answer.
-            </p>
-            <button type="button" class="btn" (click)="addManually()" data-testid="add-manually">
-              Add a model on {{ providerLabel(upstream) }}
-            </button>
-          </div>
-        }
       }
-      @if (providersError(); as message) {
-        <p class="callout callout--danger" role="alert" data-testid="browse-providers-error">
-          {{ message }}
-        </p>
-      } @else if (!loadingProviders() && !(providers() ?? []).length) {
-        <!-- No provider configured is a missing credential; none publishing a list (below) is a
-             missing capability. Fixed in different places, so said differently. -->
-        <p class="empty" data-testid="browse-no-providers">
-          This gateway has no upstream configured, so there is nobody to ask. An adapter is
-          registered only when its credential is — set one (a Google AI Studio key, a Vertex service
-          account, a self-hosted server) and restart the gateway. You can still declare a model by
-          name in the meantime; it will not be servable until an adapter reaches it.
-        </p>
+    }
+    @if (providersError(); as message) {
+      <!-- The catalog is Management's: a gateway that cannot be asked degrades to naming the
+             model by hand, with the provider typed, rather than to a window with no way in. -->
+      <p class="callout callout--danger" role="alert" data-testid="browse-providers-error">
+        {{ message }}
+      </p>
+      <div class="row">
         <button type="button" class="btn" (click)="addByName()" data-testid="add-by-name">
           Declare a model by name
         </button>
-      } @else if (!loadingProviders() && !askable().length) {
-        <p class="empty" data-testid="browse-none-askable">
-          This gateway's providers are configured, but none of them publishes a model list. That is
-          a property of the platform rather than a fault. Choose the provider above to name a model
-          on it — that fills in where it lives — and use the reachability check to see whether
-          anything serves it.
-        </p>
-      }
+        <button
+          type="button"
+          class="btn btn--ghost"
+          (click)="askProviders()"
+          data-testid="browse-providers-retry"
+        >
+          Ask the gateway again
+        </button>
+      </div>
+    } @else if (!loadingProviders() && !(providers() ?? []).length) {
+      <!-- No provider configured is a missing credential; none publishing a list (below) is a
+             missing capability. Fixed in different places, so said differently. -->
+      <p class="empty" data-testid="browse-no-providers">
+        This gateway has no upstream configured, so there is nobody to ask. An adapter is registered
+        only when its credential is — set one (a Google AI Studio key, a Vertex service account, a
+        self-hosted server) and restart the gateway. You can still declare a model by name in the
+        meantime; it will not be servable until an adapter reaches it.
+      </p>
+      <button type="button" class="btn" (click)="addByName()" data-testid="add-by-name">
+        Declare a model by name
+      </button>
+    } @else if (!loadingProviders() && !askable().length) {
+      <p class="empty" data-testid="browse-none-askable">
+        This gateway's providers are configured, but none of them publishes a model list. That is a
+        property of the platform rather than a fault. Choose the provider above to name a model on
+        it — that fills in where it lives — and use the reachability check to see whether anything
+        serves it.
+      </p>
+    }
 
-      @if (loadingOfferings()) {
-        <p class="loading" data-testid="offerings-loading">
-          <span class="spinner" aria-hidden="true"></span>
-          Asking {{ browseProvider() }} what it offers…
-        </p>
-      } @else if (offeringsError(); as message) {
-        <p class="callout callout--danger" role="alert" data-testid="offerings-error">
-          {{ message }}
-        </p>
-      } @else if (offerings(); as list) {
-        <div class="table-tools" style="padding: 0 0 0.6rem">
-          <label class="search">
-            <span>Find a model</span>
-            <input
-              type="search"
-              [value]="browseSearch()"
-              (input)="browseSearch.set($any($event.target).value)"
-              placeholder="part of a model name"
-              data-testid="offerings-search"
-              autocomplete="off"
-            />
-          </label>
-          <span class="muted" style="font-size: 0.85rem" data-testid="offerings-count">
-            {{ list.length }} offered by this credential
-          </span>
-          <!-- A list is not a limit: a model the listing does not carry can still be named, with
+    @if (loadingOfferings()) {
+      <p class="loading" data-testid="offerings-loading">
+        <span class="spinner" aria-hidden="true"></span>
+        Asking {{ browseProvider() }} what it offers…
+      </p>
+    } @else if (offeringsError(); as message) {
+      <p class="callout callout--danger" role="alert" data-testid="offerings-error">
+        {{ message }}
+      </p>
+    } @else if (offerings(); as list) {
+      <div class="table-tools" style="padding: 0 0 0.6rem">
+        <label class="search">
+          <span>Find a model</span>
+          <input
+            type="search"
+            [value]="browseSearch()"
+            (input)="browseSearch.set($any($event.target).value)"
+            placeholder="part of a model name"
+            data-testid="offerings-search"
+            autocomplete="off"
+          />
+        </label>
+        <span class="muted text-sm" data-testid="offerings-count">
+          {{ list.length }} offered by this credential
+        </span>
+        <!-- A list is not a limit: a model the listing does not carry can still be named, with
                the provider's facts filled in. -->
-          <button
-            type="button"
-            class="btn btn--sm btn--ghost"
-            (click)="addManually()"
-            data-testid="name-it-yourself"
-          >
-            Not listed? Name it yourself
-          </button>
-        </div>
+        <button
+          type="button"
+          class="btn btn--sm btn--ghost"
+          (click)="addManually()"
+          data-testid="name-it-yourself"
+        >
+          Not listed? Name it yourself
+        </button>
+      </div>
 
-        @if (!list.length) {
-          <p class="empty" data-testid="offerings-empty">
-            This provider answered with no models at all. That is a fact about the credential, not
-            about the provider — a key with no models enabled lists none.
-          </p>
-        } @else if (!browseMatches().length) {
-          <p class="empty" data-testid="offerings-no-match">
-            No model matches “{{ browseSearch() }}”. The provider offers {{ list.length }}.
-          </p>
-        } @else {
-          <!-- Bounded by the viewport, so a long list never pushes the window's footer off. -->
-          <div class="table-wrap" style="max-height: 45vh; overflow-y: auto">
-            <table class="table">
-              <thead>
+      @if (!list.length) {
+        <p class="empty" data-testid="offerings-empty">
+          This provider answered with no models at all. That is a fact about the credential, not
+          about the provider — a key with no models enabled lists none.
+        </p>
+      } @else if (!browseMatches().length) {
+        <p class="empty" data-testid="offerings-no-match">
+          No model matches “{{ browseSearch() }}”. The provider offers {{ list.length }}.
+        </p>
+      } @else {
+        <!-- Bounded by the viewport, so a long list never pushes the window's footer off. -->
+        <div class="table-wrap" style="max-height: 45vh; overflow-y: auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                <th scope="col">The provider says</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (model of browseMatches(); track model.name) {
                 <tr>
-                  <th scope="col">Model</th>
-                  <th scope="col">The provider says</th>
-                  <th scope="col"><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (model of browseMatches(); track model.name) {
-                  <tr>
-                    <td>
-                      <code>{{ model.name }}</code>
-                      @if (model.displayName && model.displayName !== model.name) {
-                        <div class="muted" style="font-size: 0.8rem">{{ model.displayName }}</div>
-                      }
-                    </td>
-                    <td>
-                      <!-- What the vendor stated, and only that: silence renders as nothing,
+                  <td>
+                    <code>{{ model.name }}</code>
+                    @if (model.displayName && model.displayName !== model.name) {
+                      <div class="muted text-sm">{{ model.displayName }}</div>
+                    }
+                  </td>
+                  <td>
+                    <!-- What the vendor stated, and only that: silence renders as nothing,
                            never as "no". -->
-                      @if (model.canGenerate) {
-                        <span class="badge">generates</span>
-                      }
-                      @if (model.canEmbed) {
-                        <span class="badge">embeds</span>
-                      }
-                      @if (model.canCachePrompts) {
-                        <span class="badge">caches prompts</span>
-                      }
-                      @if (model.thinking) {
-                        <span class="badge badge--warning">reasons — measure it</span>
-                      }
-                      @if (model.maxOutputTokens) {
-                        <span class="muted" style="font-size: 0.8rem">
-                          up to {{ model.maxOutputTokens }} output tokens
-                        </span>
-                      }
-                    </td>
-                    <td class="table__actions">
-                      @if (isCatalogued(model)) {
-                        <span class="badge badge--success">in the catalog</span>
-                        <button
-                          type="button"
-                          class="btn btn--sm"
-                          (click)="catalogueOffered(model)"
-                          [attr.data-testid]="'offered-' + model.name"
-                        >
-                          Open it
-                        </button>
-                      } @else {
-                        <button
-                          type="button"
-                          class="btn btn--sm btn--primary"
-                          (click)="catalogueOffered(model)"
-                          [attr.data-testid]="'offered-' + model.name"
-                        >
-                          Catalogue…
-                        </button>
-                      }
-                    </td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-          <p class="muted" style="margin: 0.5rem 0 0; font-size: 0.85rem">
-            Offered by an endpoint, not ready to use. Choosing one opens the editor with the name
-            and where it is reached filled in; the price and what the model can actually do are
-            still yours to enter, and nothing is servable until you release it. An endpoint listing
-            a model is not a promise that it answers — one listed here returned
-            <em>no longer available to new users</em> on its first request.
-          </p>
-        }
+                    @if (model.canGenerate) {
+                      <span class="badge">generates</span>
+                    }
+                    @if (model.canEmbed) {
+                      <span class="badge">embeds</span>
+                    }
+                    @if (model.canCachePrompts) {
+                      <span class="badge">caches prompts</span>
+                    }
+                    @if (model.thinking) {
+                      <span class="badge badge--warning">reasons — measure it</span>
+                    }
+                    @if (model.maxOutputTokens) {
+                      <span class="muted text-sm">
+                        up to {{ model.maxOutputTokens }} output tokens
+                      </span>
+                    }
+                  </td>
+                  <td class="table__actions">
+                    @if (isCatalogued(model)) {
+                      <span class="badge badge--success">in the catalog</span>
+                      <button
+                        type="button"
+                        class="btn btn--sm"
+                        (click)="catalogueOffered(model)"
+                        [attr.data-testid]="'offered-' + model.name"
+                      >
+                        Open it
+                      </button>
+                    } @else {
+                      <button
+                        type="button"
+                        class="btn btn--sm btn--primary"
+                        (click)="catalogueOffered(model)"
+                        [attr.data-testid]="'offered-' + model.name"
+                      >
+                        Catalogue…
+                      </button>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="muted text-sm" style="margin: 0.5rem 0 0">
+          Offered by an endpoint, not ready to use. Choosing one opens the editor with the name and
+          where it is reached filled in; the price and what the model can actually do are still
+          yours to enter, and nothing is servable until you release it. An endpoint listing a model
+          is not a promise that it answers — one listed here returned
+          <em>no longer available to new users</em> on its first request.
+        </p>
       }
-    </div>
-
-    <div class="modal__foot">
-      <button type="button" class="btn" (click)="closeBrowse()">Close</button>
-    </div>
+    }
   </div>
-}
+
+  <div modal-foot>
+    <button type="button" class="btn" (click)="closeBrowse()">Close</button>
+  </div>
+</app-modal>

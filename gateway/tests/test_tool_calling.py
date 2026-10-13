@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.mapping import canonical_to_gemini, gemini_to_canonical
 from aira_gateway.core.canonical import (
@@ -405,9 +407,11 @@ async def test_an_unknown_use_case_is_refused_rather_than_assumed_permissive() -
     assert response.status_code == 400
 
 
-async def test_a_request_without_tools_never_reads_the_use_case_row() -> None:
-    """The ordinary request pays nothing for a capability it does not use — no use case configured
-    at all, and it still succeeds exactly as before."""
+async def test_a_request_without_tools_is_not_asked_for_the_tool_permission() -> None:
+    """The ordinary request is not held to a capability it does not use: its use case has no row,
+    so it has not enabled tool calling — and a request that declares no functions still succeeds
+    exactly as before. (The row itself is read by other controls, once per request; what this
+    pins is that the tool check refuses nothing it was not asked about.)"""
     from fastapi.testclient import TestClient
 
     app = _app()
@@ -881,3 +885,235 @@ async def test_a_refused_request_still_records_what_it_declared() -> None:
     assert rows[-1].tool_calls == {"declared": 1, "called": []}, (
         "a refused request that offered a function recorded nothing about it"
     )
+
+
+# ---- a result names the call it answers, on every dialect (G3-5) -----------------------------
+
+#: A Gemini-surface conversation as google-genai sends it: the model's call replayed — with the id
+#: this gateway gave it — and each result built from the function's **name** alone, no id.
+REPLAYED = [
+    {"role": "user", "parts": [{"text": "compare a.py and b.py"}]},
+    {
+        "role": "model",
+        "parts": [
+            {"functionCall": {"name": "read_file", "args": {"path": "a.py"}, "id": "toolu_1"}},
+            {"functionCall": {"name": "read_file", "args": {"path": "b.py"}}},
+        ],
+    },
+    {
+        "role": "user",
+        "parts": [
+            {"functionResponse": {"name": "read_file", "response": {"text": "print(1)"}}},
+            {"functionResponse": {"name": "read_file", "response": {"text": "print(2)"}}},
+        ],
+    },
+]
+
+
+def test_every_result_answers_a_call_of_the_turn_before_it_on_the_id_dialects() -> None:
+    """**An agent loop failed at its second turn on every model but Gemini's.** Gemini pairs a
+    result with its call by name; Anthropic and OpenAI pair by id and refuse a result whose id
+    matches no call before it. A call took the id it was given or one generated from its position,
+    a result the bare function name — two different strings for one exchange. Each result now
+    takes the id of the earliest unanswered call of the same name: Google's rule, where an id is
+    required."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    request = gemini_to_canonical("m", _gemini_request(contents=REPLAYED))
+
+    anthropic = canonical_to_anthropic(request, max_tokens=256)["messages"]
+    calls = [block["id"] for block in anthropic[1]["content"]]
+    results = [block["tool_use_id"] for block in anthropic[2]["content"]]
+    assert results == calls
+    assert calls[0] == "toolu_1", "an id the caller echoed is kept"
+
+    openai = canonical_to_openai(request)["messages"]
+    called = [call["id"] for call in openai[1]["tool_calls"]]
+    answered = [message["tool_call_id"] for message in openai[2:4]]
+    assert answered == called
+
+
+def test_a_result_that_already_names_its_call_is_left_alone() -> None:
+    from aira_gateway.core.canonical import paired_tool_results
+
+    messages = [
+        CanonicalMessage(
+            role=Role.MODEL,
+            parts=[ToolCallPart(id="c1", name="f"), ToolCallPart(id="c2", name="f")],
+        ),
+        CanonicalMessage(
+            role=Role.USER,
+            parts=[
+                ToolResultPart(call_id="c2", name="f", content="second"),
+                ToolResultPart(call_id="f", name="f", content="first"),
+            ],
+        ),
+    ]
+
+    paired = paired_tool_results(messages)
+
+    assert [part.call_id for part in paired[1].tool_results] == ["c2", "c1"]
+
+
+def test_a_result_for_a_call_of_an_earlier_turn_is_not_paired_with_the_latest() -> None:
+    """Only the latest model turn's calls are open: a result answering nothing in it is left as the
+    caller sent it, for the provider to judge, rather than attached to a call it does not answer."""
+    from aira_gateway.core.canonical import paired_tool_results
+
+    messages = [
+        CanonicalMessage(role=Role.MODEL, parts=[ToolCallPart(id="c1", name="f")]),
+        CanonicalMessage(
+            role=Role.USER, parts=[ToolResultPart(call_id="c1", name="f", content="")]
+        ),
+        CanonicalMessage(role=Role.MODEL, text="done"),
+        CanonicalMessage(role=Role.USER, parts=[ToolResultPart(call_id="f", name="f", content="")]),
+    ]
+
+    assert paired_tool_results(messages)[3].tool_results[0].call_id == "f"
+
+
+# ---- a function call is a complete turn, with a schema too (G3-9) ----------------------------
+
+
+async def test_a_call_instead_of_the_document_is_served_on_every_dialect() -> None:
+    """**An agent framework that always sends its output schema with its tools stopped working on
+    every non-Gemini model at the first tool call.** A turn ending in a function call is an
+    ordinary agent turn; the structured-output check took the mock's (and Anthropic's, and
+    OpenAI's) word for it — `tool_use` — for an incomplete document and answered 502, while the same
+    turn from Gemini, which calls it `STOP`, passed."""
+    from fastapi.testclient import TestClient
+
+    from aira_gateway.db.models import ModelRead
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "schema-uc", tools_enabled=True)
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                ModelRead(model="mock-1", capabilities=["generate", "tools", "structured_output"])
+            )
+            await session.commit()
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={
+                **BODY,
+                "generationConfig": {
+                    "responseSchema": {"type": "OBJECT", "properties": {"a": {"type": "STRING"}}}
+                },
+            },
+            headers={"x-aira-use-case": "schema-uc"},
+        )
+
+    assert response.status_code == 200, response.text
+    candidate = response.json()["candidates"][0]
+    assert candidate["content"]["parts"][0]["functionCall"]["name"] == "read_file"
+    # In Google's own vocabulary: a Gemini client knows `STOP`, not `TOOL_USE`.
+    assert candidate["finishReason"] == "STOP"
+
+
+@pytest.mark.parametrize(
+    ("reason", "google"),
+    [
+        ("stop", "STOP"),
+        ("max_tokens", "MAX_TOKENS"),
+        ("tool_use", "STOP"),
+        ("refusal", "SAFETY"),
+        ("other", "OTHER"),
+    ],
+)
+def test_a_finish_reason_leaves_in_googles_vocabulary(reason: str, google: str) -> None:
+    """`TOOL_USE` and `REFUSAL` are not values of Google's `FinishReason`; a Gemini client switching
+    on it met words it had never heard of."""
+    response = canonical_to_gemini(
+        CanonicalResponse(
+            model="m",
+            text="x",
+            finish_reason=reason,
+            usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+        )
+    )
+
+    assert response.candidates[0].finishReason == google
+
+
+# ---- a thinking model's signature goes back on its call (G3-7) -------------------------------
+
+
+def test_a_signature_on_a_replayed_call_reaches_the_canonical_call() -> None:
+    request = gemini_to_canonical(
+        "m",
+        _gemini_request(
+            contents=[
+                {"role": "user", "parts": [{"text": "go"}]},
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "functionCall": {"name": "read_file", "args": {}},
+                            "thoughtSignature": "c2ln",
+                        }
+                    ],
+                },
+            ]
+        ),
+    )
+
+    assert request.messages[1].tool_calls[0].signature == "c2ln"
+
+
+def test_a_signature_anywhere_but_on_a_call_is_refused_rather_than_dropped() -> None:
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match="thoughtSignature"):
+        _gemini_request(
+            contents=[{"role": "user", "parts": [{"text": "go", "thoughtSignature": "c2ln"}]}]
+        )
+
+
+class _SignsItsCalls:
+    """A thinking model's answer: a call with the signature it will want to see again."""
+
+    is_test_double = True
+
+    def models(self) -> list:
+        from aira_gateway.upstreams.base import UpstreamModel
+
+        return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]
+
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        return CanonicalResponse(
+            model=request.model,
+            text="",
+            finish_reason="tool_use",
+            usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+            tool_calls=(ToolCallPart(id="c1", name="read_file", signature="c2lnbmF0dXJl"),),
+        )
+
+
+async def test_the_caller_gets_the_signature_and_the_audit_row_does_not() -> None:
+    """**Gemini 3 refuses its own call replayed without its `thoughtSignature`** — "Function call is
+    missing a thought_signature in functionCall parts" — and the surface could neither return one
+    nor accept one back, so every agent loop on such a model failed at its second turn. The
+    signature is returned beside the call; it is model state, not part of what was said, so the
+    stored answer leaves it out."""
+    from fastapi.testclient import TestClient
+
+    from aira_gateway.upstreams.base import ProviderRegistry
+
+    app = _app()
+    with TestClient(app) as client:
+        app.state.providers = ProviderRegistry([_SignsItsCalls()])
+        await _use_case(app, "sig-uc", tools_enabled=True)
+        await _declare_tools(app)
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=BODY,
+            headers={"x-aira-use-case": "sig-uc"},
+        )
+        rows = await _rows(app)
+
+    assert response.status_code == 200, response.text
+    part = response.json()["candidates"][0]["content"]["parts"][0]
+    assert part["thoughtSignature"] == "c2lnbmF0dXJl"
+    assert "c2lnbmF0dXJl" not in json.dumps(rows[-1].response_payload)
+    assert rows[-1].response_payload["candidates"][0]["content"]["parts"][0]["functionCall"]

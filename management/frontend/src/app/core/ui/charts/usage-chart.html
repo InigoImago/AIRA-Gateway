@@ -1,16 +1,17 @@
 <div class="card" data-testid="usage-chart">
   <div class="spread">
-    <h3 class="section-title" style="margin: 0">{{ heading() }}</h3>
+    <h3 class="section-title">{{ heading() }}</h3>
     @if (resolved(); as grain) {
-      <span class="muted" data-testid="usage-grain"> One column per {{ grain }} </span>
+      <!-- UTC, the clock the gateway buckets in and every budget here resets on. -->
+      <span class="muted" data-testid="usage-grain"> One column per {{ grain }} (UTC) </span>
     }
   </div>
-  <p class="muted" style="margin: 0.25rem 0 0">
+  <p class="muted lead">
     {{ subject() }}, and what each {{ noun() }} was responsible for. From the request log — the same
     record the tables below and the audit trail are built from.
   </p>
 
-  <div class="filter-row" style="margin-top: 0.75rem">
+  <div class="filter-row usage-chart__controls">
     <div class="field">
       <label for="chart-metric">
         Show
@@ -90,7 +91,7 @@
       <strong>unknown, not zero</strong>.
     </p>
   } @else if (chart(); as chart) {
-    <div class="stack" style="margin-top: 1rem">
+    <div class="stack usage-chart__body">
       <app-usage-histogram
         [model]="chart"
         [emptyText]="'Nothing was used in this period, so there is nothing to plot.'"
@@ -112,19 +113,13 @@
 
       <div>
         <div class="spread">
-          <p class="muted" style="margin: 0 0 0.35rem; font-size: 0.82rem">
-            The whole period, in blocks
-          </p>
-          <p class="muted" style="margin: 0 0 0.35rem; font-size: 0.82rem">
+          <p class="muted text-sm usage-chart__caption">The whole period, in blocks</p>
+          <p class="muted text-sm usage-chart__caption">
             <strong data-testid="chart-total">{{ chart.display }}</strong>
             {{ metricLabel().toLowerCase() }}
           </p>
         </div>
-        <app-composition-bar
-          [bands]="chart.bands"
-          [noun]="noun()"
-          [emptyText]="'Nothing was used in this period.'"
-        />
+        <app-composition-bar [bands]="chart.bands" [noun]="noun()" [emptyText]="blocksEmpty()" />
       </div>
 
       @if (chart.folded) {
@@ -137,9 +132,15 @@
 
       @if (chart.unpriced > 0 && chart.metric === 'cost') {
         <p class="callout callout--warning" role="status" data-testid="chart-unpriced">
-          {{ chart.unpriced }} request(s) in this period ran on a model with no price on file. They
-          add nothing to the bars above, so the spend is a <strong>lower bound</strong> — switch to
-          Requests to see where they fall.
+          @if (chart.costUnknown) {
+            {{ chart.unpriced }} request(s) in this period ran on a model with no price on file —
+            every one of them, so its spend is <strong>unknown, not zero</strong>. Switch to
+            Requests to see when they ran.
+          } @else {
+            {{ chart.unpriced }} request(s) in this period ran on a model with no price on file.
+            They add nothing to the bars above, so the spend is a <strong>lower bound</strong> —
+            switch to Requests to see where they fall.
+          }
         </p>
       }
 
@@ -158,10 +159,16 @@
       -->
       <details class="days-fold">
         <summary>
-          Day by day — what was used, and what it cost
+          {{ bucket() === 'hour' ? 'Hour by hour' : 'Day by day' }} — what was used, and what it
+          cost
           <span class="muted">{{ daysLabel() }}</span>
         </summary>
-        <app-usage-days [days]="days()" [unit]="unit()" [noun]="noun()" />
+        <app-usage-days
+          [days]="days()"
+          [granularity]="chart.granularity"
+          [unit]="unit()"
+          [noun]="noun()"
+        />
       </details>
     </div>
   }

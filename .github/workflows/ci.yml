@@ -1,9 +1,11 @@
 name: CI
 
 # The quality gates existed as `make` targets long before this file did, which meant they were
-# only enforced when somebody remembered to run them. This workflow is deliberately thin: every
-# step calls the same target a developer runs locally, so CI and a local run cannot drift, and
-# moving to another CI system is a rewrite of this file only.
+# only enforced when somebody remembered to run them. The jobs run **the commands those targets
+# run** — `make lint-py` and `test-py` in `python`, `make lint-frontend` and `test-frontend` in
+# `frontend` — written out here so each job installs its toolchain once rather than per target.
+# Written out twice they can drift, so `tools/tests/test_ci_runs_what_a_developer_runs.py` checks
+# every command of those targets appears in its job.
 
 on:
   push:
@@ -78,7 +80,9 @@ jobs:
         run: npm ci
 
       - name: Format check
-        run: npx prettier --check "src/**/*.{ts,html,scss}"
+        run: |
+          npx prettier --check "src/**/*.{ts,html,scss}"
+          npx prettier --check "proxy.conf.cjs"
 
       # A production build, because that is where the CSP once silently disabled the entire
       # stylesheet — a development build would not have shown it.
@@ -196,7 +200,23 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # **The tag's name reaches every script through the environment, and is quoted there.**
+    # Written into a script as `${{ github.ref_name }}` it is spliced in as *code* before the shell
+    # runs: Git allows `$(…)`, `;` and backticks in a tag name, `v*.*.*` matches such a name, and
+    # the jobs that read it hold `contents: write` and `packages: write`. The first step refuses
+    # any name that is not a release version, before a single command has used it.
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
+      # The same spelling `tools/release_version.py` accepts — ASCII digits, no leading zero —
+      # checked before checkout, so nothing below ever runs with any other name in `$TAG`.
+      - name: Refuse a tag name that is not a release version
+        run: |
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::the pushed tag is not a release version (vX.Y.Z)"
+            exit 1
+          fi
+
       # Full history and tags: the notes quote the commits since the previous release, and
       # `--depth 1` would make every release look like the first one.
       - uses: actions/checkout@v4
@@ -224,18 +244,17 @@ jobs:
       # again, the release must stop here and say so, not publish the nearest available prose.
       - name: Restore the annotated tag object
         run: |
-          git fetch --force origin \
-            "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
-          kind="$(git cat-file -t "refs/tags/${{ github.ref_name }}")"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          kind="$(git cat-file -t "refs/tags/$TAG")"
           if [ "$kind" != tag ]; then
-            echo "::error::refs/tags/${{ github.ref_name }} is a $kind, not an annotated tag"
+            echo "::error::refs/tags/$TAG is a $kind, not an annotated tag"
             exit 1
           fi
 
       # The same command `make release-check VERSION=…` runs, so the refusal a tagger meets here is
       # the one they could have met before pushing.
       - name: Check the annotation
-        run: uv run python tools/release_notes.py --check "${{ github.ref_name }}"
+        run: uv run python tools/release_notes.py --check "$TAG"
 
       - name: Refuse a tag that is not on the default branch
         # A tag can be pushed from anywhere, so "which branch" is not a property of the push — the
@@ -249,7 +268,7 @@ jobs:
           # line above just produced, which is exactly the thing being asked about.
           git fetch --no-tags origin main
           if ! git merge-base --is-ancestor "${{ github.sha }}" FETCH_HEAD; then
-            echo "::error::${{ github.ref_name }} names a commit that is not on main"
+            echo "::error::$TAG names a commit that is not on main"
             exit 1
           fi
 
@@ -258,8 +277,8 @@ jobs:
         # second moving tag per series, which is a feature and not an oversight (`FRD-137` §6).
         run: |
           newest="$(uv run python tools/release_version.py --current)"
-          if [ "$newest" != "${{ github.ref_name }}" ]; then
-            echo "::error::${{ github.ref_name }} is older than $newest; releases go forward only"
+          if [ "$newest" != "$TAG" ]; then
+            echo "::error::$TAG is older than $newest; releases go forward only"
             exit 1
           fi
 
@@ -271,6 +290,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # As in `described`: the tag's name only ever reaches a script through `$TAG`.
+    env:
+      TAG: ${{ github.ref_name }}
 
     permissions:
       # `packages: write` is what GHCR accepts `GITHUB_TOKEN` for in the repository's own
@@ -280,6 +302,15 @@ jobs:
       packages: write
 
     steps:
+      # The same spelling `tools/release_version.py` accepts — ASCII digits, no leading zero —
+      # checked before checkout, so nothing below ever runs with any other name in `$TAG`.
+      - name: Refuse a tag name that is not a release version
+        run: |
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::the pushed tag is not a release version (vX.Y.Z)"
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -305,20 +336,19 @@ jobs:
       # again, the release must stop here and say so, not publish the nearest available prose.
       - name: Restore the annotated tag object
         run: |
-          git fetch --force origin \
-            "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
-          kind="$(git cat-file -t "refs/tags/${{ github.ref_name }}")"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          kind="$(git cat-file -t "refs/tags/$TAG")"
           if [ "$kind" != tag ]; then
-            echo "::error::refs/tags/${{ github.ref_name }} is a $kind, not an annotated tag"
+            echo "::error::refs/tags/$TAG is a $kind, not an annotated tag"
             exit 1
           fi
 
       - name: Name the release
         id: release
         run: |
-          echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
           # GHCR rejects an upper-case path, and this owner has capitals in it.
-          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" \
+          echo "owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')" \
             >> "$GITHUB_OUTPUT"
 
       - name: Refuse to republish a version that is already released
@@ -329,8 +359,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-            echo "::error::${{ github.ref_name }} is already released; tag a new version instead"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG is already released; tag a new version instead"
             exit 1
           fi
 
@@ -392,9 +422,11 @@ jobs:
       - name: Publish the release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.release.outputs.owner }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          owner="${{ steps.release.outputs.owner }}"
-          version="${{ steps.release.outputs.version }}"
+          owner="$OWNER"
+          version="$VERSION"
           uv run python tools/release_notes.py "$version" \
             --image "ghcr.io/$owner/aira-gateway:$version" \
             --image "ghcr.io/$owner/aira-management:$version" \

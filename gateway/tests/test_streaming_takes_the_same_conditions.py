@@ -21,9 +21,10 @@ adapter was still the one that serves the model the *caller* named, so the answe
 A and was recorded, priced and audited as having come from server B — which is exactly the claim
 `FRD-115` exists to make checkable.
 
-What is deliberately **not** asserted here is a fallback. A stream still has none: once the first
-chunk is on the wire the status is 200 and the answer has begun. The change is that a candidate
-which does not qualify is refused *before* any of that, with a status the caller can read.
+What is deliberately **not** asserted here is the fallback itself — a stream falls back until its
+first chunk is out (`stream_with_fallback`, `test_a_stream_falls_back_until_a_chunk_is_out.py`),
+and after that the answer has begun with a 200. What is asserted is that a candidate which does not
+qualify is refused *before* any of that, with a status the caller can read.
 """
 
 from __future__ import annotations

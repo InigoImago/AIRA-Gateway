@@ -6,8 +6,12 @@ cross-origin access is making a deliberate choice.
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from typing import Any
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import Response
+from starlette.types import Message, Receive, Scope, Send
 
 from aira_gateway.config import GatewaySettings
 
@@ -19,6 +23,10 @@ EXPOSED_HEADERS = ("x-trace-id", "retry-after", "deprecation", "sunset", "warnin
 
 class CorsMisconfigured(Exception):
     """A CORS policy that would disable the protection it looks like it is providing."""
+
+
+async def _no_app(_scope: Scope, _receive: Receive, _send: Send) -> None:
+    """The policy kept for `apply_cors` decides headers only; it never forwards a request."""
 
 
 def configure_cors(app: FastAPI, settings: GatewaySettings) -> None:
@@ -37,11 +45,36 @@ def configure_cors(app: FastAPI, settings: GatewaySettings) -> None:
             "AIRA_CORS_ORIGINS='*' together with credentials would let any site call this API "
             "with a user's credentials. Name the origins instead."
         )
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=settings.cors_allow_credentials,
-        allow_methods=ALLOWED_METHODS,
-        allow_headers=ALLOWED_HEADERS,
-        expose_headers=EXPOSED_HEADERS,
-    )
+    policy: dict[str, Any] = {
+        "allow_origins": origins,
+        "allow_credentials": settings.cors_allow_credentials,
+        "allow_methods": ALLOWED_METHODS,
+        "allow_headers": ALLOWED_HEADERS,
+        "expose_headers": EXPOSED_HEADERS,
+    }
+    app.add_middleware(CORSMiddleware, **policy)
+    # The same policy once more, for the one response the middleware never sees (`apply_cors`).
+    app.state.cors = CORSMiddleware(_no_app, **policy)
+
+
+async def apply_cors(request: Request, response: Response) -> None:
+    """Give ``response`` the headers the CORS middleware gives every other response.
+
+    For Starlette's answer to an unhandled error, which is written outside every middleware: without
+    them a cross-origin console sees a network error where the status and message are. Decided by
+    the middleware's own code (`CORSMiddleware.send`), so the rule is not restated here.
+    """
+    policy: CORSMiddleware | None = getattr(request.app.state, "cors", None)
+    if policy is None or "origin" not in request.headers:
+        return
+    start: Message = {
+        "type": "http.response.start",
+        "status": response.status_code,
+        "headers": list(response.raw_headers),
+    }
+
+    async def _keep(_message: Message) -> None:
+        return None
+
+    await policy.send(start, _keep, request.headers)
+    response.raw_headers = start["headers"]

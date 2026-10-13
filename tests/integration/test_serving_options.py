@@ -12,14 +12,14 @@ data — and nothing in-process compares the two.
 
 from __future__ import annotations
 
-import uuid
+import asyncio
 
 import httpx
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL, Fixture
+from .conftest import GATEWAY_URL, Fixture, declare_mock
 from .test_config_distribution import (
     _management_engine,
     _queue_outbox_event,
@@ -146,15 +146,21 @@ async def test_the_schema_bounds_hold_on_a_deployed_gateway(fixture: Fixture) ->
 
 
 async def test_a_batch_is_recorded_under_the_verb_that_ran(
-    engine: AsyncEngine, fixture: Fixture
+    engine: AsyncEngine, fixture: Fixture, mock_catalogue_row
 ) -> None:
     """Both embedding verbs write to one audit table and reporting has to tell them apart. A batch
     recorded as `embedContent` makes "how much of our embedding traffic is batched" unanswerable —
-    and the difference is invisible to every hermetic test, which shares one in-process writer."""
-    name = f"itest-embed-{uuid.uuid4().hex[:8]}"
-    await _declare(engine, name, {"capabilities": ["embed"], "embedding": {"supports_batch": True}})
-    try:
-        async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+    and the difference is invisible to every hermetic test, which shares one in-process writer.
+
+    The double is declared a batch embedder for the length of the test (`mock_catalogue_row` puts
+    the shared row back), so the batch is **served** rather than possibly refused, and the row read
+    is this request's — the fixture's — rather than the newest in the table.
+    """
+    await declare_mock(
+        engine, capabilities=["generate", "embed"], embedding={"supports_batch": True}
+    )
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+        for _ in range(20):
             response = await client.post(
                 "/v1beta/models/mock-1:batchEmbedContents",
                 json={
@@ -165,16 +171,12 @@ async def test_a_batch_is_recorded_under_the_verb_that_ran(
                 },
                 headers=fixture.headers(),
             )
-        assert response.status_code in (200, 400), response.text
-        if response.status_code == 200:
-            assert len(response.json()["embeddings"]) == 2
+            if response.status_code == 200:
+                break
+            await asyncio.sleep(0.5)
+    assert response.status_code == 200, response.text
+    assert len(response.json()["embeddings"]) == 2
 
-            async with engine.connect() as connection:
-                row = (
-                    await connection.execute(
-                        text("SELECT operation FROM request_logs ORDER BY created_at DESC LIMIT 1")
-                    )
-                ).first()
-            assert row is not None and row[0] == "batchEmbedContents"
-    finally:
-        await _cleanup(engine, name)
+    rows = await fixture.wait_for_rows(1)
+    served = [row for row in rows if row["status"] == 200]
+    assert [row["operation"] for row in served] == ["batchEmbedContents"], rows

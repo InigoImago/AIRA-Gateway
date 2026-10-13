@@ -14,7 +14,6 @@ the console demonstrates. Saying so is the point of this docstring.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import pathlib
@@ -26,12 +25,8 @@ import stack_addresses
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "libs" / "src"))
 
-from aira_common.apikeys import NAMESPACE  # noqa: E402
+from demo_keys import key_for  # noqa: E402
 
-#: Must match `apps/seed/contributions/showcase.py`. Duplicated rather than imported because this
-#: runs outside Django, and the seed's own tests compare what it stored against what it reported —
-#: so a divergence is caught there rather than showing up here as a key that does not work.
-DEMO_KEY_SALT = "aira-showcase-demo-not-a-secret"
 SLUG = "coding-assistant"
 
 GATEWAY = os.environ.get("AIRA_GATEWAY_URL") or stack_addresses.url("gateway")
@@ -39,8 +34,8 @@ CHAT_MODEL = os.environ.get("AIRA_DEMO_CHAT_MODEL", "qwen3:0.6b")
 
 
 def demo_key(slug: str) -> str:
-    digest = hashlib.sha256(f"{DEMO_KEY_SALT}:{slug}".encode()).hexdigest()
-    return f"{NAMESPACE}_{digest[:8]}_{digest[8:56]}"
+    """The use case's own demo key — `demo_keys`' derivation, which the seed's tests compare."""
+    return key_for(slug)
 
 
 def serves(key: str) -> list[dict]:

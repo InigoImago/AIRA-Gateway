@@ -181,3 +181,53 @@ def _keys_for(events: list[tuple[str, dict[str, object]]]) -> list[str]:
     finally:
         module.OutboxEvent = original  # type: ignore[misc]
     return keys
+
+
+#: The one builder each of these events is made by (`usecases.views.payloads` and its siblings).
+#: A payload written out by hand beside its builder is a second definition of the event, and the
+#: field a view adds next would not reach what a seed sends.
+BUILT_BY = {
+    "usecase.upserted": "_snapshot",
+    "usecase.deleted": "_snapshot",
+    "membership.upserted": "_membership_payload",
+    "api_key.created": "_api_key_payload",
+    "pipeline.upserted": "_pipeline_payload",
+    "budget.upserted": "_budget_payload",
+    "ratelimit.upserted": "_rate_limit_payload",
+    "anomaly_rule.upserted": "rule_payload",
+    "model.upserted": "_payload",
+}
+
+
+def _emits() -> list[tuple[str, str, ast.Call]]:
+    """Every literal `emit("<type>", …)` with the file it is in."""
+    found: list[tuple[str, str, ast.Call]] = []
+    for path in SOURCE.rglob("*.py"):
+        if "migrations" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or len(node.args) < 2:
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            first = node.args[0]
+            if name == "emit" and isinstance(first, ast.Constant) and isinstance(first.value, str):
+                found.append((str(path.relative_to(SOURCE)), first.value, node))
+    return found
+
+
+def test_every_event_with_a_builder_is_built_by_it() -> None:
+    wrong = []
+    for where, event_type, call in _emits():
+        builder = BUILT_BY.get(event_type)
+        if builder is None:
+            continue
+        payload = call.args[1]
+        called = payload.func if isinstance(payload, ast.Call) else None
+        name = getattr(called, "id", None) or getattr(called, "attr", None)
+        if name != builder:
+            wrong.append(f"{where}:{call.lineno} {event_type} is not built by {builder}")
+
+    assert not wrong, wrong
+    assert {event for _where, event, _call in _emits()} >= set(BUILT_BY), "every builder is used"

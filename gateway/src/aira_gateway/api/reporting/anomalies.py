@@ -11,6 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.anomalies import RuleTarget
 from aira_common.permissions import Permission
+from aira_gateway.anomalies.evaluator import without_addresses
 from aira_gateway.api.reporting.common import parse_cursor, router, scope_label, visible_scope
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -30,11 +31,17 @@ def _about_this_caller(restricted: list[str], principal: Principal) -> ColumnEle
     foreign column joins its table with no predicate — a cartesian product that fails open
     (`test_scoped_reads_stay_on_their_table.py`). What is withheld is other people's activity:
 
+    - a finding with no use case is in none of the restricted ones, and is kept.
     - ``target = use_case`` names nobody, and is kept.
     - ``target = subject`` is kept where it is this caller.
     - ``target = credential`` is kept where it is this caller's own key prefix.
     """
-    own: list[ColumnElement[bool]] = [AnomalyEvent.target == RuleTarget.USE_CASE.value]
+    own: list[ColumnElement[bool]] = [
+        # Said, because SQL reads `NULL NOT IN (…)` as unknown: every global rule's finding about a
+        # subject or a credential is stored with no use case, and would be dropped.
+        AnomalyEvent.use_case.is_(None),
+        AnomalyEvent.target == RuleTarget.USE_CASE.value,
+    ]
     # Either alphabet: `target_value` is grouped from `RequestLog.subject`, a directory id for an
     # OIDC caller and a username for an API key — the widening `payloads.own_requests` makes.
     names = {name for name in (principal.subject, principal.person) if name}
@@ -110,9 +117,11 @@ async def anomalies(
     has_more = len(rows) > limit
     rows = rows[:limit]
     next_cursor = f"{rows[-1].created_at.isoformat()}|{rows[-1].id}" if has_more and rows else None
+    # The rule the request list keeps for the source address (`FRD-502` FR-12).
+    investigating = principal.allows(Permission.INCIDENT_INVESTIGATE)
     return JSONResponse(
         {
-            "events": [_event(row) for row in rows],
+            "events": [_event(row, investigating=investigating) for row in rows],
             "next_cursor": next_cursor,
             "scope": scope_label(scope),
             "in_scope": True,
@@ -120,11 +129,13 @@ async def anomalies(
     )
 
 
-def _event(row: AnomalyEvent) -> dict[str, Any]:
-    """One finding on the wire."""
+def _event(row: AnomalyEvent, *, investigating: bool) -> dict[str, Any]:
+    """One finding on the wire — its addresses only to a reader who may investigate."""
     return {
         "id": row.id,
         "created_at": row.created_at.isoformat(),
+        # The rule by id as well as by name: a global rule and a use case's may share a name.
+        "rule_id": row.rule_id,
         "rule": row.rule_name,
         "kind": row.kind,
         "use_case": row.use_case,
@@ -136,5 +147,5 @@ def _event(row: AnomalyEvent) -> dict[str, Any]:
         "window_minutes": row.window_minutes,
         # What was *done*, kept apart from what was detected (`ADR-0014` §3).
         "action_taken": row.action_taken,
-        "detail": row.detail,
+        "detail": row.detail if investigating else without_addresses(row.detail),
     }

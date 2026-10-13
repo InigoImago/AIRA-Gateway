@@ -32,6 +32,26 @@ LOOPS = {
 }
 #: Where it is written out in full, as an operator reads it.
 DOCUMENTS = {"the deployment documentation": ROOT / "docs/DEPLOYMENT.md"}
+#: Where every topic must at least be named: the above, and the page the external overlay sends a
+#: platform team to, which their ACLs are written from. Not checked for strays — it also documents
+#: telemetry attributes, which share the `aira.` prefix.
+NAMED_IN = {**DOCUMENTS, "the integration contract": ROOT / "docs/INTEGRATIONS.md"}
+
+#: Everywhere the number of topics is stated in words. A platform team that grants `Write` "on the
+#: eight topics" leaves the ninth unwritable, and the relay's failure to publish to it is silent.
+COUNTED = (
+    ROOT / "docs/DEPLOYMENT.md",
+    ROOT / "docs/INTEGRATIONS.md",
+    ROOT / "docs/SETUP.md",
+    ROOT / "docs/deployment/integrated.md",
+    ROOT / "deploy/compose/docker-compose.external.yml",
+    ROOT / "Makefile",
+)
+_NUMBERS = {"seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+_STATED = re.compile(
+    r"\b(\d+|seven|eight|nine|ten|eleven|twelve)(?:\s|<[^>]*>)+(?:compacted\s+)?(?:Kafka\s+)?topics",
+    re.IGNORECASE,
+)
 
 
 def _declared_topics() -> set[str]:
@@ -72,9 +92,9 @@ def test_every_declared_topic_is_created_and_nothing_else(where: str) -> None:
     )
 
 
-@pytest.mark.parametrize("where", sorted(DOCUMENTS))
+@pytest.mark.parametrize("where", sorted(NAMED_IN))
 def test_every_declared_topic_is_documented(where: str) -> None:
-    text = DOCUMENTS[where].read_text()
+    text = NAMED_IN[where].read_text()
     missing = sorted(topic for topic in _declared_topics() if topic not in text)
     assert not missing, f"{where} does not name {', '.join(missing)}"
 
@@ -87,3 +107,26 @@ def test_the_documentation_names_no_topic_the_code_never_publishes_to() -> None:
         found = set(re.findall(r"aira\.[a-z-]+(?![a-z0-9.-])", path.read_text()))
         stray = sorted(found - declared)
         assert not stray, f"{where} names {', '.join(stray)}, which nothing publishes to"
+
+
+def _number(word: str) -> int:
+    return int(word) if word.isdigit() else _NUMBERS[word.lower()]
+
+
+def test_every_stated_number_of_topics_is_the_number_there_are() -> None:
+    stated = [
+        f"{path.relative_to(ROOT)}: {match.group(0)!r}"
+        for path in COUNTED
+        for match in _STATED.finditer(path.read_text())
+        if _number(match.group(1)) != len(kafka.CONFIG_TOPICS)
+    ]
+    assert not stated, (
+        f"there are {len(kafka.CONFIG_TOPICS)} configuration topics, and these say otherwise:\n  "
+        + "\n  ".join(stated)
+    )
+
+
+def test_the_count_check_finds_the_counts() -> None:
+    """A guard on the guard: a phrasing the pattern stopped matching would make it vacuous."""
+    found = [match.group(0) for path in COUNTED for match in _STATED.finditer(path.read_text())]
+    assert len(found) >= 5, found

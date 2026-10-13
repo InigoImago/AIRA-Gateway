@@ -12,11 +12,15 @@ from typing import Any
 
 from fastapi import Request
 
+from aira_common.logging import get_logger
 from aira_common.observability import set_span_attributes, trace_context_fields
 from aira_gateway.audit import Outcome, was_flagged
 from aira_gateway.core.canonical import CanonicalUsage
+from aira_gateway.db.errors import loggable
 from aira_gateway.persistence.writer import PendingLog
 from aira_gateway.state import settings_of, writer_of
+
+_log = get_logger("aira_gateway.persistence")
 
 
 def _tool_attributes(tool_calls: dict[str, Any] | None) -> dict[str, object]:
@@ -93,6 +97,7 @@ async def record_request(
     response_payload: dict[str, Any] | None,
     cost_nanos: int | None = None,
     outcome: str = Outcome.SERVED,
+    usage_basis: str | None = None,
     requested_model: str | None = None,
     model_selection: str | None = None,
     pipeline_decisions: list[dict[str, Any]] | None = None,
@@ -105,6 +110,12 @@ async def record_request(
     ``outcome`` defaults to ``served``; a refusal passes its own from :mod:`aira_gateway.audit`.
     ``api`` has **no default**: it travels on the :class:`AuditTrail`, set once by the surface
     that owns the request, because a discriminator with a default stops discriminating.
+
+    **A row that cannot be written does not become the caller's error.** By now the upstream has
+    answered and the cost is booked; an error would send the caller to retry and pay again. So the
+    loss is logged, as the writer's worker logs one, and this returns — unless the installation
+    writes every row before its response (:attr:`RequestLogWriter.synchronous`), which is a request
+    that an answer it could not record is not returned.
     """
     attribution = request.state.attribution
     source_ip = client_ip(request)
@@ -129,36 +140,50 @@ async def record_request(
         }
     )
 
-    await writer_of(request).submit(
-        PendingLog(
-            subject=attribution.subject,
-            username=attribution.username,
-            auth_method=attribution.method,
-            use_case=attribution.use_case,
-            source_ip=source_ip,
-            credential=attribution.credential,
-            issuer=attribution.issuer,
+    writer = writer_of(request)
+    entry = PendingLog(
+        subject=attribution.subject,
+        username=attribution.username,
+        auth_method=attribution.method,
+        use_case=attribution.use_case,
+        source_ip=source_ip,
+        credential=attribution.credential,
+        issuer=attribution.issuer,
+        operation=operation,
+        model=model,
+        status=status,
+        usage=usage,
+        latency_ms=latency_ms,
+        trace_id=trace_context_fields().get("trace_id"),
+        request_payload=request_payload,
+        response_payload=response_payload,
+        cost_nanos=cost_nanos,
+        outcome=str(outcome),
+        usage_basis=str(usage_basis) if usage_basis is not None else None,
+        requested_model=requested_model,
+        model_selection=model_selection,
+        pipeline_decisions=pipeline_decisions,
+        # Derived once, here, rather than at each call site that records a request.
+        flagged=was_flagged(pipeline_decisions, outcome),
+        tool_calls=tool_calls,
+        degraded=_degradation_snapshot(request),
+        provider=provenance[0] if provenance else None,
+        publisher=provenance[1] if provenance else None,
+        region=provenance[2] if provenance else None,
+        api=api,
+        request_bytes=_request_bytes(request),
+    )
+    try:
+        await writer.submit(entry)
+    except Exception as exc:
+        if writer.synchronous:
+            raise
+        _log.error(
+            "audit_row_not_recorded",
             operation=operation,
             model=model,
             status=status,
-            usage=usage,
-            latency_ms=latency_ms,
-            trace_id=trace_context_fields().get("trace_id"),
-            request_payload=request_payload,
-            response_payload=response_payload,
-            cost_nanos=cost_nanos,
             outcome=str(outcome),
-            requested_model=requested_model,
-            model_selection=model_selection,
-            pipeline_decisions=pipeline_decisions,
-            # Derived once, here, rather than at each call site that records a request.
-            flagged=was_flagged(pipeline_decisions, outcome),
-            tool_calls=tool_calls,
-            degraded=_degradation_snapshot(request),
-            provider=provenance[0] if provenance else None,
-            publisher=provenance[1] if provenance else None,
-            region=provenance[2] if provenance else None,
-            api=api,
-            request_bytes=_request_bytes(request),
+            error_type=type(exc).__name__,
+            error=loggable(exc),
         )
-    )

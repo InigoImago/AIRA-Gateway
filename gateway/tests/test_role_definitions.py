@@ -167,3 +167,41 @@ async def test_without_a_resolver_the_built_in_roles_decide() -> None:
     resolved = await _with_permissions(request, principal)  # type: ignore[arg-type]
 
     assert resolved.permissions == IT_SECURITY_PERMISSIONS
+
+
+async def test_callers_finding_the_cache_expired_together_read_the_table_once(sessions) -> None:
+    """The `GroupGrantResolver` shape, with the same defect it had: one reload per concurrent
+    caller at every expiry."""
+    import asyncio
+
+    await _role(sessions, ["report.read_all"])
+    opened = 0
+
+    def counting_sessionmaker():  # noqa: ANN202
+        nonlocal opened
+        opened += 1
+        return sessions()
+
+    resolver = RoleResolver(counting_sessionmaker, MAPPING)  # type: ignore[arg-type]
+    definitions = await asyncio.gather(*(resolver.definitions() for _ in range(50)))
+
+    granted = [effective([CONTROLLING], each) for each in definitions]
+    assert granted == [{Permission.REPORT_READ_ALL}] * 50
+    assert opened == 1
+
+
+async def test_a_failed_read_is_not_repeated_by_every_caller_queued_behind_it() -> None:
+    import asyncio
+
+    attempts = 0
+
+    def broken():  # noqa: ANN202
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("the database went away")
+
+    resolver = RoleResolver(broken, MAPPING)  # type: ignore[arg-type]
+    definitions = await asyncio.gather(*(resolver.definitions() for _ in range(50)))
+
+    assert all(effective([CONTROLLING], each) == frozenset() for each in definitions)
+    assert attempts == 1

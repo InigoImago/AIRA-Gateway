@@ -1,7 +1,7 @@
 import { Observable } from 'rxjs';
 import { GW } from '../prefixes';
 import { Granularity, Register, Report, SeriesSplit } from '../types/reporting';
-import { ApiClientClass } from './base';
+import { ApiClientClass, readableErrors } from './base';
 
 /**
  * What a caller asks of the time series (`FRD-626`): how wide a bucket is, and what the bands are.
@@ -69,11 +69,13 @@ export function withReporting<T extends ApiClientClass>(Base: T) {
 
     /** The same report as a spreadsheet (FRD-602). */
     reportCsv(from: string, to: string, breakdown: string): Observable<Blob> {
-      return this.http.get(`${GW}/v1beta/reporting`, {
-        params: { from, to, breakdown },
-        headers: { Accept: 'text/csv' },
-        responseType: 'blob',
-      });
+      return this.http
+        .get(`${GW}/v1beta/reporting`, {
+          params: { from, to, breakdown },
+          headers: { Accept: 'text/csv' },
+          responseType: 'blob',
+        })
+        .pipe(readableErrors());
     }
 
     /** The register of processing activities (`FRD-608`), one row per use case. */
@@ -83,11 +85,13 @@ export function withReporting<T extends ApiClientClass>(Base: T) {
 
     /** The same register as a spreadsheet (`FRD-608` §2.2). */
     registerCsv(from: string, to: string): Observable<Blob> {
-      return this.http.get(`${GW}/v1beta/register`, {
-        params: { from, to },
-        headers: { Accept: 'text/csv' },
-        responseType: 'blob',
-      });
+      return this.http
+        .get(`${GW}/v1beta/register`, {
+          params: { from, to },
+          headers: { Accept: 'text/csv' },
+          responseType: 'blob',
+        })
+        .pipe(readableErrors());
     }
   };
 }

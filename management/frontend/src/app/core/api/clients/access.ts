@@ -57,8 +57,9 @@ export function withAccess<T extends ApiClientClass>(Base: T) {
 
     /**
      * Issue a key. `expiresInDays` and `owner` are **omitted when absent** rather than sent as
-     * null: a key with no end date is the default, and you own what you create unless you name
-     * somebody else.
+     * null: an omitted lifetime takes the installation's default, and you own what you create
+     * unless you name somebody else. A lifetime that is present is sent as it is — `0` included —
+     * so the server's refusal reaches the reader instead of a default nobody chose.
      */
     issueApiKey(
       slug: string,
@@ -67,7 +68,7 @@ export function withAccess<T extends ApiClientClass>(Base: T) {
       owner?: string | null,
     ): Observable<IssuedApiKey> {
       const body: { label: string; expires_in_days?: number; owner?: string } = { label };
-      if (expiresInDays) {
+      if (expiresInDays !== null && expiresInDays !== undefined) {
         body.expires_in_days = expiresInDays;
       }
       if (owner) {

@@ -14,7 +14,7 @@ from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.serving.prepare import Prepared
 from aira_gateway.audit import AuditTrail
 from aira_gateway.catalog import ModelDeclaration
-from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
+from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, FinishReason
 
 WITHHELD_STRUCTURED = (
     "the answer is a document the caller parses, and a sentence would invalidate it"
@@ -29,8 +29,15 @@ def check_structured_result(canonical: CanonicalRequest, response: CanonicalResp
     A document truncated at the output cap still looks like JSON up to where it stops, and a model
     that answered in prose produced no document at all; returning either as the requested shape
     hands someone else's application a broken or half-parsed result.
+
+    **A turn that ends in a function call is complete** (`FRD-131`): with a schema and tools both
+    offered, the model may call a function instead of writing the document — an ordinary agent
+    turn, whatever the vendor calls its ending. Read through `FinishReason`, so a call is one word
+    on every dialect.
     """
     if canonical.response_schema is None or response.finish_reason == "stop":
+        return
+    if response.finish_reason == FinishReason.TOOL_USE and response.tool_calls:
         return
     raise GeminiHTTPError(
         502,
@@ -111,7 +118,7 @@ class StreamedNotice:
 
     Same rule as :func:`withheld_because`: a structured answer is refused up front, and a tool call
     or an answer without text never produces a delta, so nothing is shown. :meth:`outcome` records
-    which case happened, exactly as a buffered answer does.
+    which case happened, in the words a buffered answer's row uses.
     """
 
     def __init__(self, notices: tuple[str, ...], *, structured: bool = False) -> None:
@@ -119,6 +126,11 @@ class StreamedNotice:
         self._configured = tuple(notices)
         self._structured = structured
         self._shown = False
+        self._tool_call = False
+
+    def saw_tool_call(self) -> None:
+        """A tool call passed: when no text carried the notice, that is the reason recorded."""
+        self._tool_call = True
 
     def lead(self, text_delta: str) -> str:
         """The delta to send: the first non-empty one carries the notice, the rest are unchanged."""
@@ -135,5 +147,10 @@ class StreamedNotice:
             return None
         if self._shown:
             return {"step": "notice", "action": "shown", "why": ""}
-        why = WITHHELD_STRUCTURED if self._structured else WITHHELD_NO_TEXT
+        if self._structured:
+            why = WITHHELD_STRUCTURED
+        elif self._tool_call:
+            why = WITHHELD_TOOL_CALL
+        else:
+            why = WITHHELD_NO_TEXT
         return {"step": "notice", "action": "withheld", "why": why}

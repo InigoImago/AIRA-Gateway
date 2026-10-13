@@ -1,5 +1,10 @@
+import { GATEWAY_URL } from '../stack';
 import { Page, expect, test } from '@playwright/test';
 import {
+  api,
+  openUseCase,
+  logout,
+  grantGroup,
   USERS,
   createUseCase,
   expectNoHorizontalOverflow,
@@ -8,6 +13,7 @@ import {
   openModelEditor,
   uniqueSlug,
 } from './support';
+import { forget, remember } from '../created';
 
 /**
  * The console reads, explains and does not move (`FRD-207`).
@@ -27,6 +33,9 @@ import {
  * data is inconvenient is a test that reports green about nothing.
  */
 async function createRule(page: Page, name: string): Promise<void> {
+  // Written down before it exists: a rule is a policy every tick applies, and one a failed test
+  // left behind acts on every caller until somebody notices.
+  remember('rule', name);
   const status = await page.evaluate(async (ruleName) => {
     const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
     const response = await fetch('/api/v1/anomaly-rules/', {
@@ -72,6 +81,33 @@ async function deleteRule(page: Page, name: string): Promise<void> {
       }
     }
   }, name);
+  forget((entry) => entry.kind === 'rule' && entry.name === name);
+}
+
+/**
+ * A few requests the gateway refuses, recorded against ``slug``: a key issued for it, waited for
+ * until the gateway knows it (it travels over Kafka), then three calls for a model that does not
+ * exist. Traffic for a report and refusals for a rule, without asking any model anything.
+ */
+async function refuseSomeRequests(page: Page, slug: string): Promise<void> {
+  const issued = await api<{ api_key: string }>(
+    page,
+    'POST',
+    `/api/v1/use-cases/${slug}/api-keys/`,
+    {
+      label: 'e2e-refusals',
+    },
+  );
+  expect(issued.status, JSON.stringify(issued.body)).toBe(201);
+  const send = async () =>
+    (
+      await page.request.post(`${GATEWAY_URL}/v1beta/models/no-such-model:generateContent`, {
+        headers: { 'x-goog-api-key': issued.body.api_key, 'content-type': 'application/json' },
+        data: { contents: [{ parts: [{ text: 'hi' }] }] },
+      })
+    ).status();
+  await expect.poll(send, { timeout: 60_000, intervals: [1_000] }).toBe(404);
+  for (let i = 0; i < 3; i += 1) expect(await send()).toBe(404);
 }
 
 test.describe('The page holds still', () => {
@@ -130,9 +166,14 @@ test.describe('The page holds still', () => {
   test('the trace filters sit on one line', async ({ page }) => {
     // A bare checkbox beside a field with a label above its control ends up on a different line
     // from the control it is read as a pair with — jsdom has no layout at all, so this is the
-    // only place the two can be compared.
+    // only place the two can be compared. On a use case made here and opened by its header:
+    // `demo-uc` is created by nothing, and its tabs render all the same.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('filters');
+    await createUseCase(page, slug, 'Trace filters probe');
+    await logout(page);
     await login(page, USERS.governance);
-    await page.goto('/use-cases/demo-uc?tab=traces');
+    await openUseCase(page, slug, 'traces');
     await expect(page.locator('[data-testid="refusals-only"]')).toBeVisible();
 
     const geometry = await page.evaluate(() => {
@@ -173,16 +214,39 @@ test.describe('The console explains itself', () => {
   });
 
   test('a finding opens to show what it was drawn from', async ({ page }) => {
+    // **A finding of its own**, made here: a use case with a rule that any refusal crosses, a few
+    // refused requests, and the gateway's own evaluator — which runs every minute, hence the
+    // room. Not a skip when the installation happens to be quiet, which on a clean stack is
+    // always: that would be a control nobody exercised, reported as skipped.
+    test.slow();
+    await login(page, USERS.globalAdmin);
+    const slug = await createUseCase(page, uniqueSlug('finding'), 'Finding probe');
+    const rule = await api(page, 'POST', `/api/v1/use-cases/${slug}/anomaly-rules/`, {
+      name: 'any refusal',
+      kind: 'refusal_rate',
+      threshold: 1,
+      min_sample: 1,
+      window_minutes: 15,
+    });
+    expect(rule.status, JSON.stringify(rule.body)).toBe(201);
+    await refuseSomeRequests(page, slug);
+    await logout(page);
+
     await login(page, USERS.security);
+    await expect
+      .poll(
+        async () =>
+          (await api<{ events: unknown[] }>(page, 'GET', `/gw/v1beta/anomalies?use_case=${slug}`))
+            .body.events.length,
+        { timeout: 100_000, intervals: [2_000] },
+      )
+      .toBeGreaterThan(0);
     await page.goto('/security');
 
     // Waited for, not counted the instant the tab is clicked: the findings arrive from the
     // gateway, and a count taken before the response reads as "there are none".
     const toggles = page.locator('[data-testid^="event-toggle-"]');
-    await expect(toggles.first().or(page.locator('.empty')).first()).toBeVisible({
-      timeout: 20_000,
-    });
-    test.skip((await toggles.count()) === 0, 'nothing has crossed a threshold here');
+    await expect(toggles.first()).toBeVisible({ timeout: 20_000 });
 
     await toggles.first().click();
     await expect(page.locator('[data-testid^="event-detail-"]').first()).toBeVisible();
@@ -203,15 +267,17 @@ test.describe('The console explains itself', () => {
     // person would hit, and what this test hit the moment paging landed.
     await page.getByTestId('rule-search').fill(name);
 
-    const row = page.locator(`tr:has-text("${name}")`);
-    await expect(row).toBeVisible({ timeout: 20_000 });
-    await row.locator('[data-testid^="rule-toggle-"]').click();
-    const detail = page.locator('[data-testid^="rule-detail-"]').first();
-    await expect(detail).toBeVisible();
-    await expect(detail).toContainText('Watches');
-    await expect(detail).toContainText('minutes');
-
-    await deleteRule(page, name);
+    try {
+      const row = page.locator(`tr:has-text("${name}")`);
+      await expect(row).toBeVisible({ timeout: 20_000 });
+      await row.locator('[data-testid^="rule-toggle-"]').click();
+      const detail = page.locator('[data-testid^="rule-detail-"]').first();
+      await expect(detail).toBeVisible();
+      await expect(detail).toContainText('Watches');
+      await expect(detail).toContainText('minutes');
+    } finally {
+      await deleteRule(page, name);
+    }
   });
 
   test('a global rule can be edited by IT Security and not by oversight', async ({ page }) => {
@@ -223,6 +289,14 @@ test.describe('The console explains itself', () => {
     await page.click('[role="tab"]:has-text("Rules")');
     await page.getByTestId('rule-search').fill(name);
 
+    try {
+      await editTheRule(page, name);
+    } finally {
+      await deleteRule(page, name);
+    }
+  });
+
+  async function editTheRule(page: Page, name: string): Promise<void> {
     const row = page.locator(`tr:has-text("${name}")`);
     await expect(row).toBeVisible({ timeout: 20_000 });
     await row.locator('[data-testid^="rule-toggle-"]').click();
@@ -244,18 +318,23 @@ test.describe('The console explains itself', () => {
     await page.click('[role="tab"]:has-text("Rules")');
     await page.getByTestId('rule-search').fill(name);
     await expect(page.locator(`tr:has-text("${name}")`)).toContainText('65');
-
-    await deleteRule(page, name);
-  });
+  }
 
   test('the export column explanations open on hover', async ({ page }) => {
+    // Traffic of its own in this period: the explanations sit on a table's headings, and a quiet
+    // installation has no table — which made this skip on exactly the clean stacks CI runs.
+    test.slow();
+    await login(page, USERS.globalAdmin);
+    const slug = await createUseCase(page, uniqueSlug('export'), 'Export probe');
+    await refuseSomeRequests(page, slug);
+    await logout(page);
+
     await login(page, USERS.governance);
     await page.goto('/reporting');
     await expect(page.locator('[data-testid="export-breakdown"]')).toBeVisible();
 
     const hint = page.locator('[data-testid="info-table-tokens"]');
-    await expect(hint.or(page.locator('.table__empty')).first()).toBeVisible({ timeout: 20_000 });
-    test.skip((await hint.count()) === 0, 'no traffic in this period to break down');
+    await expect(hint).toBeVisible({ timeout: 20_000 });
 
     await hint.hover();
     const help = page.locator('[data-testid="help-table-tokens"]');
@@ -438,9 +517,17 @@ test.describe("A use case's own anomaly rules", () => {
   });
 
   test('is read-only for somebody who does not administer it', async ({ page }) => {
-    // `ucuser` is a member of `demo-uc` and administers nothing.
+    // `ucuser` is made a **member** of a use case of its own — a `user` grant to a department it
+    // is in — and administers nothing. Opened by its header: a slug Management does not have
+    // renders every tab too, read-only for everybody, which is how this passed on `demo-uc`.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('rules-ro');
+    await createUseCase(page, slug, 'Read-only rules probe');
+    await grantGroup(page, slug, '/abteilungen/kundendienst', 'user');
+    await logout(page);
+
     await login(page, USERS.useCaseUser);
-    await page.goto('/use-cases/demo-uc?tab=rules');
+    await openUseCase(page, slug, 'rules');
 
     await expect(page.locator('[data-testid="rules-readonly"]')).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('[data-testid="rule-add"]')).toHaveCount(0);

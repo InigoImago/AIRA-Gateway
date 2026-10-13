@@ -24,6 +24,7 @@ from aira_management.apps.usecases.serializers import (
 )
 from aira_management.apps.usecases.views.base import UseCaseViewBase
 from aira_management.apps.usecases.views.grants import (
+    _admit,
     _grant,
     _resolve_or_invite,
     _resolve_user,
@@ -52,15 +53,7 @@ class MembersMixin(UseCaseViewBase):
         role = payload.validated_data["role"]
 
         with transaction.atomic():
-            membership, _created = UseCaseMembership.objects.update_or_create(
-                use_case=usecase, user=user, defaults={"role": role}
-            )
-            _revoke(user, usecase)
-            _grant(user, usecase, role)
-            emit(
-                "membership.upserted",
-                {"slug": usecase.slug, "username": user.get_username(), "role": role},
-            )
+            membership = _admit(usecase, user, role)
         return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["delete"], url_path="members/(?P<username>[^/]+)")

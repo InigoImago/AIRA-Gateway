@@ -65,6 +65,35 @@ class Outcome(StrEnum):
     DIAGNOSTIC = "diagnostic"
 
 
+class UsageBasis(StrEnum):
+    """How a row's usage was established, where it is not the vendor's own final report — which
+    is the ordinary case and stored as NULL (`FRD-128` FR-6).
+
+    Either way the figure is a **floor**: the caller left before the vendor's last word, so the
+    answer it went on producing, and its thinking, are in no count. A report says so.
+    """
+
+    #: Counted at the vendor's own counting endpoint after the caller left, because the vendor had
+    #: reported nothing: the request as sent and the answer as received.
+    COUNTED = "counted"
+    #: What the vendor had reported when the caller left — its running total, short of the last
+    #: report: a Claude stream says its input at the start and its output only at the end.
+    PARTIAL = "partial"
+
+
+#: Outcomes that are **no caller's traffic**: a row the gateway wrote about something other than a
+#: request somebody sent through it — an administrator asking a model about itself. Measured by no
+#: detector rule, on either side of a rate, so the next such outcome is decided here and nowhere
+#: else.
+NOT_TRAFFIC: frozenset[str] = frozenset({Outcome.DIAGNOSTIC.value})
+
+#: Outcomes that are a **failure to serve**: the upstream failed, or this gateway did. A refusal is
+#: a decision and is reported under its own outcome; a caller who hung up is neither, and a model
+#: check is not traffic. Counted by status instead, every refusal was a failure too and the two
+#: headline figures counted it twice (`FRD-601` FR-6).
+FAILURES: frozenset[str] = frozenset({Outcome.UPSTREAM_ERROR.value, Outcome.INTERNAL_ERROR.value})
+
+
 def fallback_selection(index: int) -> str:
     """``fallback:N`` for candidate ``index`` of the dispatch chain (0 is the primary)."""
     return SELECTION_DIRECT if index == 0 else f"fallback:{index}"

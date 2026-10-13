@@ -1,3 +1,3 @@
-# Written by the laboratory overlay when LAB_PAYLOAD_PATH names a file in here.
+# Written by the collector when `AIRA_OTEL_ARRIVED_FILE` names a file in here (`/payload/…`).
 *
 !.gitignore

@@ -20,8 +20,11 @@ from __future__ import annotations
 import dataclasses
 import gzip
 import json
+import socket
 import threading
+import tracemalloc
 import urllib.request
+import zlib
 from http.server import ThreadingHTTPServer
 
 import otlp_inspector
@@ -518,3 +521,82 @@ def test_the_server_takes_hec_where_a_sender_posts_it_and_answers_as_hec_does() 
 
     assert inspector.summary()["records"]["hec"] == 4
     assert inspector.summary()["records"]["traces"] == 1
+
+
+# ---- what a request may cost --------------------------------------------------------------------
+#
+# The keep limit bounded what was *kept* and not what a request *cost*: the whole announced body was
+# read and fully gunzipped before the limit was looked at. 255 KiB of gzip is 256 MiB of zeros, a
+# handful of those in parallel takes the container down, and the page is unauthenticated.
+
+
+def _zeros_gzipped(mebibytes: int) -> bytes:
+    """`mebibytes` MiB of zeros as gzip, built a chunk at a time so the test itself stays small."""
+    compressor = zlib.compressobj(9, zlib.DEFLATED, 16 + zlib.MAX_WBITS)
+    chunk = b"\0" * (1 << 20)
+    return b"".join(compressor.compress(chunk) for _ in range(mebibytes)) + compressor.flush()
+
+
+def test_a_compression_bomb_costs_no_more_than_the_keep_limit() -> None:
+    inspector = Inspector()
+    bomb = _zeros_gzipped(64)
+    assert len(bomb) < inspector.max_body, "the bomb must pass the wire check to test inflating"
+
+    tracemalloc.start()
+    try:
+        arrival = inspector.record(
+            signal="traces", raw=bomb, content_type="application/json", content_encoding="gzip"
+        )
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 2 * inspector.max_body + len(bomb), f"inflating it cost {peak} bytes"
+    assert not arrival.readable
+    assert "keep limit" in arrival.undecoded
+    assert inspector.summary()["batches"]["traces"] == 1, "refused content is still counted"
+
+
+def test_a_body_that_is_not_gzip_after_all_is_kept_as_it_arrived() -> None:
+    """Corrupt or truncated gzip used to raise out of the request handler — a dropped connection
+    instead of a page that says what came."""
+    arrival = Inspector().record(
+        signal="traces",
+        raw=gzip.compress(json.dumps(TRACES).encode())[:-9],
+        content_type="application/json",
+        content_encoding="gzip",
+    )
+
+    assert not arrival.readable
+    assert arrival.undecoded
+
+
+def _raw_request(port: int, headers: str) -> bytes:
+    """A request written by hand: announcing a body and sending none is the point."""
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+        connection.sendall(headers.encode())
+        return connection.recv(4096)
+
+
+@pytest.mark.parametrize(
+    ("length", "status"),
+    [("10000000000", b" 413 "), ("-5", b" 400 "), ("twelve", b" 400 ")],
+)
+def test_an_announced_length_is_checked_before_anything_is_read(length: str, status: bytes) -> None:
+    inspector = Inspector()
+    handler = type("BoundHandler", (otlp_inspector.Handler,), {"inspector": inspector})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        reply = _raw_request(
+            server.server_address[1],
+            "POST /v1/traces HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {length}\r\n\r\n",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert status in reply.split(b"\r\n", 1)[0], reply[:80]
+    if status == b" 413 ":
+        assert inspector.summary()["batches"]["traces"] == 1, "a refused batch is still counted"

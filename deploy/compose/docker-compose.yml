@@ -115,7 +115,10 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       # empty host (://:PORT) binds all interfaces without polluting advertised.listeners with 0.0.0.0
       KAFKA_LISTENERS: CONTROLLER://:9093,PLAINTEXT://:9092,PLAINTEXT_HOST://:29092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      # The host-facing listener advertises the port the host actually reaches, which follows
+      # `AIRA_PUBLISH_KAFKA_PORT`: a client bootstraps there and is then told where to reconnect,
+      # and a fixed `29092` sends it to whatever the port was moved away from.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:${AIRA_PUBLISH_KAFKA_PORT:-29092}
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT

@@ -355,13 +355,15 @@ graph TB
 ([`ADR-0017`](adr/ADR-0017-a-role-is-held-through-a-group.md), amending
 [`ADR-0009`](adr/ADR-0009-gateway-knows-roles.md)); both planes resolve the same `groups` claim
 through `AIRA_ROLE_GROUPS`, and a realm role assigned directly grants nothing.
-Two distinctions inside them cost real defects and are therefore explicit:
+Questions that cost real defects when one answered for another are separate permissions
+([`ADR-0025`](adr/ADR-0025-aira-defines-what-a-role-may-do.md), `aira_common.permissions`), and
+every check asks one of them — never a role name:
 
-| Question | Predicate | Who |
+| Question | Permission | Held by default |
 |---|---|---|
-| may **see** every use case | `has_oversight` | global-admin, it-steuerung, it-security |
-| may see every **figure** | `is_governance` | global-admin, it-steuerung |
-| may **act** in an incident | `may_act_on_incidents` | global-admin, it-security |
+| may **see** every use case | `usecase.read_all` | global-admin, it-security, it-steuerung |
+| may see every **figure** | `report.read_all` | global-admin, it-security, it-steuerung |
+| may **act** in an incident | `incident.suspend` | global-admin, it-security |
 
 Collapsing the first two left IT Security with an empty console; collapsing the first and third let
 a read-only governance role stop traffic. Both are recorded in
@@ -579,7 +581,7 @@ graph TB
     prep --> canon
     canon --> chain
     chain --> vt & ft & ot
-    vt --> gd & ad
+    vt --> gd & ad & od
     ft --> od
     ot --> od
     gemini --> acct

@@ -224,8 +224,11 @@ def test_a_failure_inside_the_channel_is_swallowed(capsys) -> None:
     """`FR-6`. This runs inside an exporter's background thread and on the authentication path."""
     configure_integration_debug("kafka")
     report("kafka", "producer.send", key=Unprintable())
-    # It said nothing rather than raising; the caller's work is unaffected.
-    assert capsys.readouterr() is not None
+    # It said nothing rather than raising — not half a line either …
+    assert calls(capsys) == []
+    # … and the failure cost that one line, not the channel: the next call is reported as usual.
+    report("kafka", "producer.send", key="k-1")
+    assert [line["key"] for line in calls(capsys)] == ["k-1"]
 
 
 def test_a_watched_call_returns_what_the_callee_returned() -> None:

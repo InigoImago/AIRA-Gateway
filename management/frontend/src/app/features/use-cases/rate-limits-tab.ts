@@ -7,6 +7,7 @@ import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { bindsEachMember, scopeLabel } from './limit-scope';
 
 /**
  * The rate-limit panel of a use case (`FRD-405`).
@@ -51,8 +52,26 @@ export class RateLimitsTab {
     return !this.validationError() && !this.feedback.busy();
   }
 
+  /** Open the window afresh: an earlier failure on the page is not this window's outcome. */
+  protected openForm(): void {
+    this.feedback.clear();
+    this.showForm.set(true);
+  }
+
   protected add(): void {
     if (!this.canAdd()) {
+      return;
+    }
+    // The endpoint upserts on the scope, so "+ Add" for a scope that has a limit replaces it —
+    // asked first, and said afterwards.
+    const replaced = this.limits().find((row) => row.scope === this.rlScope() && !row.subject);
+    if (
+      replaced &&
+      !this.confirmService.ask(
+        `${this.labelFor(replaced)} already has a rate limit (${replaced.limit_rpm} per minute, ` +
+          `bursts of ${this.effectiveBurst(replaced)}). Saving replaces it.`,
+      )
+    ) {
       return;
     }
     const limit: RateLimit = {
@@ -68,7 +87,7 @@ export class RateLimitsTab {
     this.feedback.run(this.service.createRateLimit(this.slug(), limit), {
       failure: 'Could not save the rate limit.',
       success: () => {
-        this.feedback.succeed('Rate limit saved.');
+        this.feedback.succeed(replaced ? 'Rate limit replaced.' : 'Rate limit saved.');
         this.rlRpm.set(null);
         this.rlBurst.set(null);
         this.showForm.set(false);
@@ -117,12 +136,11 @@ export class RateLimitsTab {
 
   /** True where a per-head row exists, which is what makes the two-allowance note relevant. */
   protected hasPerHead(): boolean {
-    return this.limits().some((row) => row.scope === 'each_member');
+    return bindsEachMember(this.limits());
   }
 
   protected labelFor(limit: RateLimit): string {
-    // A per-person row bounds each member separately; "Whole use case" would read as shared.
-    return limit.scope === 'each_member' ? 'Each member, individually' : 'Whole use case';
+    return scopeLabel(limit.scope);
   }
 
   /** What the bucket allows at once — an unset burst means the per-minute figure. */

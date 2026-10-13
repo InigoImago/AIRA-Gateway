@@ -30,8 +30,11 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 from aira_gateway.api.gemini import routes as gemini_routes
+from aira_gateway.api.kira import info_routes as kira_info_routes
 from aira_gateway.api.kira import routes as kira_routes
 from aira_gateway.app import create_app
+from aira_gateway.auth.dependencies import require_principal
+from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 
 KIRA = "/kira/api/external"
@@ -214,3 +217,81 @@ def test_every_kira_route_renders_this_surfaces_envelope() -> None:
         "no application-level handler for KiraError, so every route is one forgotten `try` away "
         f"from answering 500 in Google's envelope. Routes that would be affected: {paths}"
     )
+
+    # And asked of each route: every one of them sets this surface's headers on whatever it
+    # answers, so a `KiraError` raised there escapes the route's own handling — a refusal the
+    # route did not catch — and has to come back in the envelope all the same.
+    def escaped(_request: object) -> dict[str, str]:
+        raise KiraError(418, "ESCAPED_THE_ROUTE", "raised where no route catches it")
+
+    methods = {
+        route.path: sorted(route.methods or ()) for route, _ in _routes() if route.path in paths
+    }
+    # Someone who may read every figure, and a period, so no route refuses before it gets there.
+    app.dependency_overrides[require_principal] = lambda: Principal(
+        subject="root", method="oidc", roles=("global-admin",)
+    )
+    period = {"startDatum": "2026-08-01", "endDatum": "2026-08-31"}
+    with (
+        mock.patch.object(kira_routes, "surface_headers", escaped),
+        mock.patch.object(kira_info_routes, "surface_headers", escaped),
+        TestClient(app, raise_server_exceptions=False) as client,
+    ):
+        for path in paths:
+            for method in methods[path]:
+                response = client.request(method, path, params=period, json={})
+
+                assert (response.status_code, response.json()) == (
+                    418,
+                    {"code": "ESCAPED_THE_ROUTE", "message": "raised where no route catches it"},
+                ), f"{method} {path}"
+
+
+# == the headers every exit of the surface owes, refusals outside a route included ===============
+
+_SUNSET = "Wed, 01 Jul 2027 00:00:00 GMT"
+
+
+def test_the_kira_bound_on_failed_authentications_says_when_to_come_back() -> None:
+    """The 429 from the failed-authentication bound kept `Retry-After` on the Gemini surface and
+    lost it on this one, leaving a KIRA client the immediate retry the header exists to prevent."""
+    app = create_app(
+        GatewaySettings(
+            auth_required=True, max_auth_failures_per_minute=1, redis_url="", log_queue_size=0
+        )
+    )
+    with TestClient(app) as client:
+        headers = {"x-goog-api-key": "aira_x_y"}
+        statuses = [client.post(f"{KIRA}/chat", json=_BODY, headers=headers) for _ in range(2)]
+
+    assert [response.status_code for response in statuses] == [401, 429]
+    assert statuses[1].json()["code"] == "EXTERNAL_KI_API_TOO_MANY_REQUEST"
+    assert int(statuses[1].headers["Retry-After"]) >= 1
+
+
+def test_every_kira_refusal_announces_that_the_surface_is_transitional() -> None:
+    """`headers.surface_headers` is "one function, so every exit carries them" — and the exits a
+    route never sees (no credential, a wrong URL or method, an oversized body, a bug) carried none
+    of them, so the deprecation notice reached only the callers who were served."""
+    app = create_app(
+        GatewaySettings(auth_required=True, kira_sunset=_SUNSET, max_request_bytes=1000)
+    )
+
+    @app.get(f"{KIRA}/boom")
+    async def _boom() -> None:
+        raise RuntimeError("kaboom")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        refusals = {
+            401: client.post(f"{KIRA}/chat", json=_BODY),
+            404: client.get(f"{KIRA}/no-such-thing"),
+            405: client.get(f"{KIRA}/chat"),
+            413: client.post(f"{KIRA}/chat", content=b"x", headers={"content-length": str(10**6)}),
+            500: client.get(f"{KIRA}/boom"),
+        }
+
+    for status, response in refusals.items():
+        assert response.status_code == status, (status, response.text)
+        assert response.headers.get("Deprecation") == "true", status
+        assert response.headers.get("Sunset") == _SUNSET, status
+        assert "error" not in response.json(), status

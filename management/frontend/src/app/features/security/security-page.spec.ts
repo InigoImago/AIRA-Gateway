@@ -2,8 +2,8 @@ import { Type, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
-import { Observable, Subject, of, throwError } from 'rxjs';
-import { AnomalyEvent, AnomalyRule, Me, Suspension } from '../../core/api/models';
+import { Observable, Subject, defer, of, throwError } from 'rxjs';
+import { AnomalyEvent, AnomalyPage, AnomalyRule, Me, Suspension } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -93,7 +93,13 @@ interface Options {
   /** A cursor on the first page, so the "load older" control appears. */
   moreEvents?: string | null;
   olderEvents?: Observable<{ events: AnomalyEvent[]; next_cursor: string | null; scope: string }>;
+  /** The first page, one answer per load in order — the last one repeats. Default: `events`. */
+  firstPages?: Observable<AnomalyPage>[];
   confirmAnswer?: boolean;
+  /** `/me` answers with this failure instead of a caller. */
+  meFails?: unknown;
+  /** The use-case list answers with this failure. */
+  listFails?: unknown;
 }
 
 function setup(options: Options = {}) {
@@ -101,20 +107,32 @@ function setup(options: Options = {}) {
   const calls: string[] = [];
   /** Read calls, kept apart from writes: several cases assert that nothing was *written*. */
   const fetches: string[] = [];
+  /** How often each list was asked for — a live view is one that asks again. */
+  const counts = { firstPages: 0, suspensions: 0 };
   const service = {
     anomalies: (_limit?: number, _useCase?: string, cursor?: string) => {
       fetches.push(cursor ?? '');
       if (cursor) return options.olderEvents ?? of({ events: [], next_cursor: null, scope: 'all' });
+      const pages = options.firstPages;
+      if (pages?.length) return pages[Math.min(counts.firstPages++, pages.length - 1)];
+      counts.firstPages += 1;
       return of({
         events: options.events ?? [EVENT],
         next_cursor: options.moreEvents ?? null,
         scope: 'all',
       });
     },
-    suspensions: () => options.suspensions ?? of({ suspensions: [SUSPENSION] }),
+    suspensions: () =>
+      defer(() => {
+        counts.suspensions += 1;
+        return options.suspensions ?? of({ suspensions: [SUSPENSION] });
+      }),
     globalRules: () => of(options.rules ?? [RULE]),
     // The scope picker's source: without it a stop could only ever apply everywhere.
-    list: () => of([{ slug: 'kundenservice' }, { slug: 'entwicklung' }]),
+    list: () =>
+      options.listFails
+        ? throwError(() => options.listFails)
+        : of([{ slug: 'kundenservice' }, { slug: 'entwicklung' }]),
     suspend: (body: Record<string, unknown>) => {
       calls.push(
         `suspend:${body['target']}:${body['target_value']}:${body['use_case']}:${body['action']}:${body['throttle_rpm']}`,
@@ -150,12 +168,17 @@ function setup(options: Options = {}) {
         useValue: {
           currency: signal(''),
           get: () =>
-            of({
-              username: 'itsec',
-              roles: options.roles ?? [],
-              permissions: options.permissions ?? ['incident.suspend', 'anomaly.rule.global.write'],
-              use_cases: [],
-            } as unknown as Me),
+            options.meFails
+              ? throwError(() => options.meFails)
+              : of({
+                  username: 'itsec',
+                  roles: options.roles ?? [],
+                  permissions: options.permissions ?? [
+                    'incident.suspend',
+                    'anomaly.rule.global.write',
+                  ],
+                  use_cases: [],
+                } as unknown as Me),
         },
       },
       { provide: ConfirmService, useValue: { ask: () => options.confirmAnswer ?? true } },
@@ -178,11 +201,37 @@ function setup(options: Options = {}) {
       never
     >;
   };
+  /**
+   * Type into a field, or choose in a select, the way a person does: through its DOM event.
+   *
+   * Awaited, because a control inside a `<form>` is attached to it in a microtask
+   * (`NgForm.addControl`): typing into a field that has just appeared reaches no handler, and a
+   * test that does not wait proves nothing about the form.
+   */
+  const enter = async (selector: string, value: string) => {
+    await fixture.whenStable();
+    const field = element.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!;
+    field.value = value;
+    field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? 'change' : 'input'));
+    fixture.detectChanges();
+    await fixture.whenStable();
+  };
+  /** Submit a form the way the Enter key or its submit button does. */
+  const submit = (selector: string) => {
+    element.querySelector<HTMLFormElement>(selector)!.dispatchEvent(new Event('submit'));
+    fixture.detectChanges();
+  };
   return {
     fixture,
     calls,
+    counts,
     fetches,
     element,
+    enter,
+    submit,
+    /** The banner the page reports through. */
+    alert: () => element.querySelector('[role="alert"]')?.textContent?.trim() ?? null,
+    notice: () => element.querySelector('[role="status"]')?.textContent?.trim() ?? null,
     component: fixture.componentInstance as unknown as Record<string, never>,
     text: () => element.textContent ?? '',
     testid: (id: string) => element.querySelector(`[data-testid="${id}"]`),
@@ -190,6 +239,7 @@ function setup(options: Options = {}) {
       element.querySelector<HTMLElement>(selector)?.click();
       fixture.detectChanges();
     },
+    toTab,
     toRules: () => toTab('rules'),
     toSuspensions: () => toTab('suspensions'),
     /** The suspensions tab's panel, which owns the kill switch. */
@@ -258,22 +308,19 @@ describe('SecurityPage — suspensions and the kill switch', () => {
     expect(testid('stop-readonly')?.textContent).toContain('IT Security');
   });
 
-  it('stops traffic through the server, with a reason', () => {
+  it('stops traffic through the server, with a reason, from the form', async () => {
+    // Driven through the form a person submits: a method call would stay green with the form's
+    // `(ngSubmit)` unbound or bound to the wrong handler.
     const harness = setup();
-    const panel = harness.suspensionsPanel() as unknown as {
-      showStop: { set: (v: boolean) => void };
-      targetValue: { set: (v: string) => void };
-      reason: { set: (v: string) => void };
-      stop: () => void;
-    };
-    panel.showStop.set(true);
-    panel.targetValue.set('ada');
-    panel.reason.set('probing');
-    harness.fixture.detectChanges();
+    harness.toSuspensions();
+    harness.click('[data-testid="stop-toggle"]');
+    await harness.enter('[data-testid="stop-value"]', 'ada');
+    await harness.enter('#stop-reason', 'probing');
 
-    panel.stop();
+    harness.submit('form.disclosure');
 
     expect(harness.calls).toContain('suspend:subject:ada:null:block:null');
+    expect(harness.notice()).toContain('ada is stopped');
   });
 
   it('keeps a half-typed stop while the reader looks at another tab', () => {
@@ -296,33 +343,45 @@ describe('SecurityPage — suspensions and the kill switch', () => {
     expect(harness.testid('stop-toggle')?.textContent).toContain('Cancel');
   });
 
-  it('scopes a stop to one use case, and holds a caller to a rate', () => {
+  it('scopes a stop to one use case, and holds a caller to a rate', async () => {
     /** A scope, a throttle and its rate: the table renders them (a *rule* can produce them), and a
      *  person must be able to set them too, or every manual decision is a full block everywhere. */
     const harness = setup();
-    const panel = harness.suspensionsPanel() as unknown as {
-      showStop: { set: (v: boolean) => void };
-      targetValue: { set: (v: string) => void };
-      scope: { set: (v: string) => void };
-      action: { set: (v: string) => void };
-      throttleRpm: { set: (v: number | null) => void };
-      canSubmit: () => boolean;
-      stop: () => void;
-    };
-    panel.showStop.set(true);
-    panel.targetValue.set('ada');
-    panel.action.set('throttle');
-    harness.fixture.detectChanges();
+    harness.toSuspensions();
+    harness.click('[data-testid="stop-toggle"]');
+    await harness.enter('[data-testid="stop-value"]', 'ada');
+    await harness.enter('[data-testid="stop-action"]', 'throttle');
 
     // The server refuses a throttle without a rate; the form refuses it first.
-    expect(panel.canSubmit()).toBe(false);
+    const submitButton = harness.testid('stop-submit') as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
 
-    panel.throttleRpm.set(10);
-    panel.scope.set('kundenservice');
-    harness.fixture.detectChanges();
-    panel.stop();
+    await harness.enter('[data-testid="stop-rpm"]', '10');
+    await harness.enter('[data-testid="stop-scope"]', 'kundenservice');
+    harness.submit('form.disclosure');
 
     expect(harness.calls).toContain('suspend:subject:ada:kundenservice:throttle:10');
+    // A throttle holds traffic to a rate; "stopped" would tell the reader it is refused outright.
+    expect(harness.notice()).toContain('ada is held to 10 requests a minute');
+    expect(harness.notice()).not.toContain('stopped');
+  });
+
+  it('asks no "Where" of a whole use case, and sends no scope for one', async () => {
+    /** The matcher needs the request's use case to equal the scope **and** the stopped value, so
+     *  "uc-a, only in kundenservice" matched no request at all while it was listed as in force. A
+     *  whole use case is stopped wherever it is called. */
+    const harness = setup();
+    harness.toSuspensions();
+    harness.click('[data-testid="stop-toggle"]');
+    await harness.enter('[data-testid="stop-scope"]', 'kundenservice');
+
+    await harness.enter('[data-testid="stop-target"]', 'use_case');
+    expect(harness.testid('stop-scope')).toBeNull();
+
+    await harness.enter('[data-testid="stop-value"]', 'uc-a');
+    harness.submit('form.disclosure');
+
+    expect(harness.calls).toContain('suspend:use_case:uc-a:null:block:null');
   });
 
   it('offers the scope and action controls, with the use cases it could load', () => {
@@ -358,31 +417,44 @@ describe('SecurityPage — suspensions and the kill switch', () => {
   });
 
   it('asks before restoring access, and does nothing when declined', () => {
+    const restore = '[aria-label="Restore access for ada"]';
     const declined = setup({ confirmAnswer: false });
-    (declined.suspensionsPanel() as unknown as { lift: (row: Suspension) => void }).lift(
-      SUSPENSION,
-    );
+    declined.toSuspensions();
+    declined.click(restore);
     expect(declined.calls).toEqual([]);
 
     const accepted = setup({ confirmAnswer: true });
-    (accepted.suspensionsPanel() as unknown as { lift: (row: Suspension) => void }).lift(
-      SUSPENSION,
-    );
+    accepted.toSuspensions();
+    accepted.click(restore);
     expect(accepted.calls).toContain('lift:s1');
   });
 
   it('keeps lifted and expired ones out of the active list but on the page', () => {
     // "Blocked for two hours last Tuesday" is exactly what a review asks.
-    const lifted = { ...SUSPENSION, id: 's2', lifted_at: '2026-08-08T11:00:00Z' };
-    const expired = { ...SUSPENSION, id: 's3', expires_at: '2020-01-01T00:00:00Z' };
-    const harness = setup({ suspensions: of({ suspensions: [SUSPENSION, lifted, expired] }) });
-    const component = harness.component as unknown as {
-      active: () => Suspension[];
-      past: () => Suspension[];
+    const now = { ...SUSPENSION, target_value: 'still-stopped' };
+    const lifted = {
+      ...SUSPENSION,
+      id: 's2',
+      target_value: 'was-lifted',
+      lifted_at: '2026-08-08T11:00:00Z',
     };
+    const expired = {
+      ...SUSPENSION,
+      id: 's3',
+      target_value: 'ran-out',
+      expires_at: '2020-01-01T00:00:00Z',
+    };
+    const harness = setup({ suspensions: of({ suspensions: [now, lifted, expired] }) });
+    harness.toSuspensions();
+    const active = harness.testid('active-suspensions')?.textContent ?? '';
+    const past = harness.testid('past-suspensions')?.textContent ?? '';
 
-    expect(component.active().map((r) => r.id)).toEqual(['s1']);
-    expect(component.past().map((r) => r.id)).toEqual(['s2', 's3']);
+    expect(active).toContain('still-stopped');
+    expect(active).not.toContain('was-lifted');
+    expect(active).not.toContain('ran-out');
+    expect(past).toContain('was-lifted');
+    expect(past).toContain('ran-out');
+    expect(past).not.toContain('still-stopped');
   });
 
   it('does not report a refused suspension list as a page failure', () => {
@@ -610,13 +682,301 @@ describe('SecurityPage — a finding opens', () => {
   });
 
   it('names the rule behind the finding when the reader can see it too', () => {
+    // As the gateway records it: a global rule raised about API keys carries no use case.
     const harness = setup({
-      events: [{ ...EVENT, rule: 'new address', kind: 'new_source_ip' }],
+      events: [
+        {
+          ...EVENT,
+          rule: 'new address',
+          kind: 'new_source_ip',
+          use_case: null,
+          target: 'credential',
+        },
+      ],
       rules: [RULE],
     });
     harness.click('[data-testid="event-toggle-e1"]');
 
     expect(harness.text()).toContain('The rule behind it');
+  });
+});
+
+describe('SecurityPage — which rule a finding came from', () => {
+  /** A global rule and a use-case rule may share a name (two separate unique constraints), and a
+   *  finding carries the name, not the rule's id. Listed use-case rule first, so a lookup by name
+   *  alone finds the wrong one. */
+  const LOCAL: AnomalyRule = {
+    ...RULE,
+    id: 2,
+    name: 'spend spike',
+    kind: 'spend_spike',
+    target: 'subject',
+    is_global: false,
+    use_case: 'uc-a',
+    threshold: 200,
+    min_sample: 20,
+    action: 'alert',
+  };
+  const GLOBAL: AnomalyRule = {
+    ...LOCAL,
+    id: 3,
+    is_global: true,
+    use_case: null,
+    threshold: 300,
+    action: 'block',
+    action_minutes: 30,
+  };
+  const FINDING: AnomalyEvent = {
+    ...EVENT,
+    rule: 'spend spike',
+    kind: 'spend_spike',
+    target: 'subject',
+    observed: 450,
+    threshold: 300,
+  };
+
+  function behind(event: AnomalyEvent): string {
+    const harness = setup({ events: [event], rules: [LOCAL, GLOBAL] });
+    harness.click('[data-testid="event-toggle-e1"]');
+    const sentences = [...harness.element.querySelectorAll('.detail-sentence')];
+    return sentences.find((p) => p.textContent?.includes('The rule behind it'))?.textContent ?? '';
+  }
+
+  it('explains a finding with no use case by the global rule', () => {
+    const sentence = behind({ ...FINDING, use_case: null });
+
+    expect(sentence).toContain('3× the previous window');
+    expect(sentence).toContain('stopped for 30 minutes');
+  });
+
+  it("explains a use case's finding by that use case's rule", () => {
+    const sentence = behind({ ...FINDING, use_case: 'uc-a', threshold: 200 });
+
+    expect(sentence).toContain('2× the previous window');
+    expect(sentence).toContain('nothing is taken away');
+  });
+});
+
+describe('SecurityPage — a threshold in the unit it means', () => {
+  it('shows a spike rule as the multiple it is, in the table and the detail grid', () => {
+    /** Stored as 300 — percent of the previous window — and printed "300 × the previous window"
+     *  in the table, three hundred times, while the sentence below said 3×. */
+    const harness = setup({
+      rules: [{ ...RULE, kind: 'spend_spike', threshold: 300, min_sample: 20, target: 'subject' }],
+    });
+    harness.toRules();
+    const row = harness.element.querySelector('[data-testid="rules-panel"] tbody tr')!;
+    expect(row.textContent).toContain('3× the previous window');
+    expect(row.textContent).not.toContain('300');
+
+    harness.click('[data-testid="rule-toggle-1"]');
+    const grid = harness.element.querySelector('[data-testid="rules-panel"] .detail-grid')!;
+    expect(grid.textContent).toContain('3× the previous window');
+    expect(grid.textContent).not.toContain('300');
+  });
+
+  it("shows a spike finding's measurement as a multiple too", () => {
+    const harness = setup({
+      events: [{ ...EVENT, kind: 'spend_spike', observed: 450, threshold: 300 }],
+    });
+    const measured =
+      harness.element.querySelector('[data-testid="findings-table"] tbody tr td:nth-child(5)')!
+        .textContent ?? '';
+
+    expect(measured).toContain('4.5×');
+    expect(measured).toContain('3×');
+    expect(measured).not.toContain('450');
+  });
+});
+
+describe('SecurityPage — what live refreshes', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('re-reads what is stopped on the live tick, and lets an expired stop leave "in force"', () => {
+    /** A rule's `block` creates a suspension when it fires, so a page that only re-polled findings
+     *  never showed it; and "in force" was judged against a clock read once, so a 30-minute block
+     *  stayed listed, with a Restore button, long after it had run out. */
+    vi.useFakeTimers({ now: new Date('2026-10-12T10:00:00Z') });
+    const expiring = { ...SUSPENSION, expires_at: '2026-10-12T10:00:30Z' };
+    const harness = setup({ suspensions: of({ suspensions: [expiring] }) });
+    expect(harness.testid('active-banner')).not.toBeNull();
+    const asked = harness.counts.suspensions;
+
+    vi.advanceTimersByTime(5 * 60 * 1000);
+    harness.fixture.detectChanges();
+
+    expect(harness.counts.suspensions).toBeGreaterThan(asked);
+    expect(harness.testid('active-banner')).toBeNull();
+  });
+
+  it('reports a failed findings load, and stops saying it is loading', () => {
+    // The call-site half of `Live` requiring `onError`: "Loading findings…" for ever, with no
+    // banner, is how a gateway outage looked from here.
+    const harness = setup({
+      firstPages: [
+        throwError(() => ({ status: 502, error: { error: { message: 'gateway down' } } })),
+      ],
+    });
+
+    expect(harness.alert()).toContain('gateway down');
+    expect(harness.element.querySelector('.spinner')).toBeNull();
+    // Nothing was read, so nothing may be said about the traffic.
+    expect(harness.text()).not.toContain('Nothing has crossed a threshold');
+    expect(harness.testid('findings-failed')).not.toBeNull();
+  });
+
+  it('takes its own banner down once the findings load again', () => {
+    const harness = setup({
+      firstPages: [
+        throwError(() => ({ status: 502, error: { error: { message: 'gateway down' } } })),
+        of({ events: [EVENT], next_cursor: null, scope: 'all' }),
+      ],
+    });
+    expect(harness.alert()).toContain('gateway down');
+
+    harness.click('[data-testid="refresh-now"]');
+
+    expect(harness.alert()).toBeNull();
+    expect(harness.text()).toContain('too many refusals');
+  });
+});
+
+describe('SecurityPage — how stale the screen is', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('lets the "updated" stamp age by itself while nothing reloads', async () => {
+    /** Zoneless, a label computed from `new Date()` re-renders only when something else does —
+     *  with live off, never, so it said "updated 0s ago" indefinitely. The stamp is `Live.ago`, a
+     *  signal over a ticking clock, and the scheduler re-renders it on its own. */
+    vi.useFakeTimers();
+    const harness = setup();
+    harness.fixture.autoDetectChanges();
+    harness.click('[data-testid="live-toggle"]');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.testid('live-stamp')?.textContent).toContain('updated 0s ago');
+
+    // Half a second past the twentieth tick, so the render that tick scheduled has landed.
+    await vi.advanceTimersByTimeAsync(20_500);
+
+    expect(harness.testid('live-stamp')?.textContent).toContain('updated 20s ago');
+  });
+});
+
+describe('SecurityPage — paging findings under a live refresh', () => {
+  it('keeps the older findings when a refresh that was in flight lands afterwards', () => {
+    const inFlight = new Subject<AnomalyPage>();
+    const older = { ...EVENT, id: 'e2', rule: 'an older finding' };
+    const harness = setup({
+      firstPages: [of({ events: [EVENT], next_cursor: 'c1', scope: 'all' }), inFlight],
+      olderEvents: of({ events: [older], next_cursor: null, scope: 'all' }),
+    });
+    harness.click('[data-testid="refresh-now"]');
+    harness.click('[data-testid="events-load-more"]');
+    expect(harness.text()).toContain('an older finding');
+
+    inFlight.next({ events: [EVENT], next_cursor: 'c1', scope: 'all' });
+    inFlight.complete();
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('an older finding');
+  });
+
+  it('counts what is loaded, and says when there is more', () => {
+    // The tab counted the first page as if it were every finding.
+    expect(setup({ moreEvents: 'c1' }).testid('findings-count')?.textContent?.trim()).toBe('1+');
+    expect(setup().testid('findings-count')?.textContent?.trim()).toBe('1');
+  });
+});
+
+describe('SecurityPage — saying what could not be read', () => {
+  it('says at the scope picker that the use cases could not be loaded', () => {
+    /** Mid-incident, a picker offering only "everywhere" with nothing said reads as "nothing
+     *  narrower exists" — and everywhere is the broadest stop there is. */
+    const harness = setup({
+      listFails: { status: 500, error: { error: { message: 'Management is unreachable.' } } },
+    });
+    harness.toSuspensions();
+    harness.click('[data-testid="stop-toggle"]');
+
+    expect(harness.testid('stop-scope-error')?.textContent).toContain('Management is unreachable.');
+  });
+
+  it('reports a failed /me, and does not tell the reader who else stops traffic', () => {
+    // An IT Security user whose `/me` failed was told stopping traffic is done by IT Security.
+    const harness = setup({ meFails: { status: 503 } });
+    expect(harness.alert()).toContain('Could not load your permissions');
+
+    harness.toSuspensions();
+    const readonly = harness.testid('stop-readonly')?.textContent ?? '';
+    expect(readonly).toContain('could not be loaded');
+    expect(readonly).not.toContain('done by IT');
+  });
+
+  it("says when only the findings on the reader's own use cases are shown", () => {
+    const narrowed = setup({
+      firstPages: [of({ events: [EVENT], next_cursor: null, scope: 'use_cases' })],
+    });
+    expect(narrowed.testid('findings-scope')?.textContent).toContain('your own use cases');
+
+    expect(setup().testid('findings-scope')).toBeNull();
+  });
+});
+
+describe('SecurityPage — the record of past decisions', () => {
+  it('says when each one started and ended, what it did, and where it applied', () => {
+    /** "Was this key blocked everywhere or only in uc-a, and for how long?" — a review's question,
+     *  which a name, an author and a reason cannot answer. */
+    const lifted: Suspension = {
+      ...SUSPENSION,
+      id: 's2',
+      created_at: '2026-08-08T12:00:00Z',
+      lifted_at: '2026-08-08T13:30:00Z',
+      lifted_by: 'user:boss',
+      action: 'throttle',
+      throttle_rpm: 12,
+    };
+    const expired: Suspension = {
+      ...SUSPENSION,
+      id: 's3',
+      use_case: null,
+      created_at: '2026-08-01T12:00:00Z',
+      expires_at: '2026-08-01T13:00:00Z',
+    };
+    const harness = setup({ suspensions: of({ suspensions: [lifted, expired] }) });
+    harness.toSuspensions();
+    const headers = [
+      ...harness.element.querySelectorAll('[data-testid="past-suspensions"] th'),
+    ].map((th) => th.textContent?.trim());
+    const when = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/g;
+
+    expect(headers).toEqual(['Target', 'Action', 'From', 'Ended', 'By', 'Reason']);
+    const first = harness.testid('past-s2')?.textContent ?? '';
+    expect(first.match(when)?.length).toBe(2);
+    expect(first).toContain('subject · kundenservice');
+    expect(first).toContain('12/min');
+    expect(first).toContain('lifted by user:boss');
+    const second = harness.testid('past-s3')?.textContent ?? '';
+    expect(second.match(when)?.length).toBe(2);
+    expect(second).toContain('everywhere');
+    expect(second).toContain('blocked');
+    expect(second).toContain('expired');
+  });
+});
+
+describe('SecurityPage — the two tabs look like one page', () => {
+  it('gives the rules and the suspensions tabs one card-header pattern', () => {
+    // Switching tabs moved the title by 8 px and the create action changed size.
+    const harness = setup();
+    harness.toRules();
+    const rules = harness.testid('rules-panel') as HTMLElement;
+    expect(rules.getAttribute('style')).toBeNull();
+    expect(rules.querySelector(':scope > .spread')?.getAttribute('style')).toBeNull();
+    expect(harness.testid('new-global-rule')?.className).toBe('btn btn--sm btn--primary');
+
+    harness.toSuspensions();
+    const stops = harness.element.querySelector('app-suspensions-panel .card') as HTMLElement;
+    expect(stops.getAttribute('style')).toBeNull();
+    expect(harness.testid('stop-toggle')?.classList.contains('btn--sm')).toBe(true);
   });
 });
 
@@ -661,13 +1021,16 @@ describe('SecurityPage — a rule opens and can be changed', () => {
   });
 
   it('asks before deleting a rule, and says what stops being watched', () => {
-    const declined = setup({ confirmAnswer: false });
-    (declined.rulesPanel() as unknown as { removeRule: (r: AnomalyRule) => void }).removeRule(RULE);
+    const declined = onRules({ confirmAnswer: false });
+    declined.click('[data-testid="rule-toggle-1"]');
+    declined.click('[data-testid="rule-delete-1"]');
     expect(declined.calls).toEqual([]);
 
-    const accepted = setup({ confirmAnswer: true });
-    (accepted.rulesPanel() as unknown as { removeRule: (r: AnomalyRule) => void }).removeRule(RULE);
+    const accepted = onRules({ confirmAnswer: true });
+    accepted.click('[data-testid="rule-toggle-1"]');
+    accepted.click('[data-testid="rule-delete-1"]');
     expect(accepted.calls).toContain('delete-rule:1');
+    expect(accepted.notice()).toContain('"new address" deleted.');
   });
 });
 
@@ -705,58 +1068,71 @@ describe('SecurityPage — the rule editor is wired to the server', () => {
   // The form's own behaviour lives in `rule-form.spec.ts`. What belongs here is that this screen
   // opens it, and that what it emits reaches the right endpoint.
 
-  function opened() {
+  async function opened() {
     const harness = setup();
-    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('rules');
-    harness.fixture.detectChanges();
+    harness.toRules();
     harness.click('[data-testid="rule-toggle-1"]');
     harness.click('[data-testid="rule-edit-1"]');
+    // The form fills its fields from an effect and `ngModel` writes in a microtask.
+    await harness.fixture.whenStable();
     return harness;
   }
 
-  it('opens the shared form on the rule that was pressed', () => {
-    const harness = opened();
+  it('opens the shared form on the rule that was pressed', async () => {
+    const harness = await opened();
 
     expect(harness.element.querySelector('app-rule-form')).not.toBeNull();
-    expect(harness.testid('rule-1-threshold')).not.toBeNull();
+    expect((harness.testid('rule-1-threshold') as HTMLInputElement).value).toBe('1');
   });
 
-  it('sends what the form emits to that rule, and nothing else', () => {
-    const harness = opened();
-    (
-      harness.rulesPanel() as unknown as {
-        saveRule: (rule: AnomalyRule, changes: Partial<AnomalyRule>) => void;
-      }
-    ).saveRule(RULE, { threshold: 65, action: 'block' });
+  it('sends what the form emits to that rule, from the form', async () => {
+    // Through the submitted form, so the panel's `(saved)` binding is what is under test.
+    const harness = await opened();
+    await harness.enter('[data-testid="rule-1-threshold"]', '3');
+    await harness.enter('[data-testid="rule-1-action"]', 'block');
+    await harness.enter('[data-testid="rule-1-minutes"]', '30');
+
+    harness.submit('app-rule-form form');
 
     const sent = harness.calls.find((call) => call.startsWith('update:1:'));
     expect(sent).toBeDefined();
-    expect(JSON.parse(sent!.slice('update:1:'.length))).toEqual({
-      threshold: 65,
+    expect(JSON.parse(sent!.slice('update:1:'.length))).toMatchObject({
+      kind: 'new_source_ip',
+      threshold: 3,
       action: 'block',
+      action_minutes: 30,
     });
+    expect(harness.calls.some((call) => call.startsWith('createGlobalRule:'))).toBe(false);
   });
 
-  it('says the change takes a moment to reach the gateway', () => {
-    const harness = opened();
-    (
-      harness.rulesPanel() as unknown as {
-        saveRule: (rule: AnomalyRule, changes: Partial<AnomalyRule>) => void;
-      }
-    ).saveRule(RULE, { threshold: 65 });
+  it('says the change takes a moment to reach the gateway', async () => {
+    const harness = await opened();
+    await harness.enter('[data-testid="rule-1-threshold"]', '2');
+    harness.submit('app-rule-form form');
 
-    expect(
-      (
-        harness.component as unknown as { feedback: { notice: () => string | null } }
-      ).feedback.notice(),
-    ).toContain('few seconds');
+    expect(harness.notice()).toContain('few seconds');
   });
 
-  it('abandons an open form when the row is closed', () => {
+  it('keeps a half-typed edit while the reader looks at another tab', async () => {
+    /** The panel's own comment promised it: the form owns what was typed, and a panel removed on
+     *  a tab switch rebuilt the form from the stored rule — Save would then store the old value. */
+    const harness = await opened();
+    await harness.enter('[data-testid="rule-1-threshold"]', '450');
+
+    harness.toTab('findings');
+    expect((harness.testid('rules-panel') as HTMLElement).hidden).toBe(true);
+    harness.toRules();
+    await harness.fixture.whenStable();
+
+    expect((harness.testid('rule-1-threshold') as HTMLInputElement).value).toBe('450');
+  });
+
+  it('abandons an open form when the row is closed', async () => {
     // Otherwise a hidden form saves fields the reader can no longer see.
-    const harness = opened();
+    const harness = await opened();
     harness.click('[data-testid="rule-toggle-1"]');
 
+    expect(harness.element.querySelector('app-rule-form')).toBeNull();
     expect(
       (harness.rulesPanel() as unknown as { editing: () => number | null }).editing(),
     ).toBeNull();
@@ -860,15 +1236,25 @@ describe('SecurityPage — while older findings are in flight', () => {
     expect(harness.testid('new-global-rule')).toBeNull();
   });
 
-  it('creates the rule it was given, and says where it applies', () => {
+  it('creates the rule it was given, and says where it applies', async () => {
+    // Through the window's form: 200 percent of the previous window is "spend doubled", which is
+    // the threshold the server accepts — `2` it refuses as no growth at all.
     const harness = setup({ permissions: ['anomaly.rule.global.write'] });
-    const panel = harness.rulesPanel() as unknown as {
-      createRule: (changes: Record<string, unknown>) => void;
-    };
-    panel.createRule({ name: 'spend doubled', kind: 'spend_spike', threshold: 2 });
-    harness.fixture.detectChanges();
+    harness.toRules();
+    harness.click('[data-testid="new-global-rule"]');
+    await harness.fixture.whenStable();
+    await harness.enter('[data-testid="new-global-rule-name"]', 'spend doubled');
+    await harness.enter('[data-testid="new-global-rule-kind"]', 'spend_spike');
+    await harness.enter('[data-testid="new-global-rule-threshold"]', '200');
 
-    expect(harness.calls.some((call) => call.startsWith('createGlobalRule:'))).toBe(true);
+    harness.submit('[data-testid="global-rule-editor"] form');
+
+    const sent = harness.calls.find((call) => call.startsWith('createGlobalRule:'));
+    expect(JSON.parse(sent!.slice('createGlobalRule:'.length))).toMatchObject({
+      name: 'spend doubled',
+      kind: 'spend_spike',
+      threshold: 200,
+    });
     expect(harness.text()).toContain('every use case');
   });
 

@@ -208,3 +208,53 @@ def test_nothing_addresses_a_container_by_a_name_aira_stack_could_move() -> None
         f"{offenders}: a container addressed by a literal name. Write "
         "`${AIRA_STACK:-aira}-<service>` so it follows the variable that moves it."
     )
+
+
+# ---- what the infrastructure file carries, said where the stack is started ----------------------
+#
+# The applications file carries no demo. The **infrastructure** file does carry development
+# provisioning — its Keycloak imports the development realm, six accounts with published passwords
+# and client secrets that are in this repository, and its Vault runs in `-dev` mode — and both
+# `docs/SETUP.md` and `make help` said `make up-apps` started "no demo provisioning". An operator
+# who believed them and bound the stack beyond loopback published a global administrator's
+# password. The documents follow the file, checked rather than remembered.
+
+MAKEFILE = ROOT / "Makefile"
+SETUP = ROOT / "docs" / "SETUP.md"
+
+
+def _development_infrastructure() -> list[str]:
+    """What the infrastructure file carries for development, read from the file itself."""
+    found: list[str] = []
+    for name, body in _services(compose_files.INFRA).items():
+        command = body.get("command") or []
+        words = command if isinstance(command, list) else str(command).split()
+        mounts = " ".join(str(volume) for volume in body.get("volumes") or [])
+        if "--import-realm" in words or "keycloak/realms" in mounts:
+            found.append(f"{name} imports the development realm")
+        if "-dev" in words or "start-dev" in words:
+            found.append(f"{name} runs in development mode")
+    return found
+
+
+def test_what_the_core_stack_carries_for_development_is_said_where_it_is_started() -> None:
+    assert {"keycloak", "vault"} <= set(_services(compose_files.INFRA)), "the scan read nothing"
+    facts = _development_infrastructure()
+    if not facts:
+        return  # Moved behind the showcase: the documents may then say the core carries none.
+
+    help_line = next(
+        line for line in MAKEFILE.read_text().splitlines() if line.startswith("up-apps:")
+    )
+    setup = SETUP.read_text()
+
+    assert "no demo provisioning" not in help_line and "development" in help_line, (
+        f"`make help` describes up-apps as {help_line!r}, and {facts}"
+    )
+    assert "imports the development realm" in setup and "`-dev` mode" in setup, (
+        f"docs/SETUP.md does not say what `make up-apps` starts: {facts}"
+    )
+    assert "are all in `docker-compose.showcase.yml`" not in setup, (
+        "docs/SETUP.md places the development realm and Vault in the showcase file; "
+        f"the infrastructure file carries them: {facts}"
+    )

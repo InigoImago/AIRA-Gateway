@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, wait_for_row
 
 pytestmark = pytest.mark.integration
 
@@ -52,35 +52,54 @@ async def test_the_provenance_columns_exist_and_are_indexed(engine: AsyncEngine)
     assert "region" in indexes
 
 
-async def test_a_served_request_records_which_upstream_answered(
+async def test_a_request_no_upstream_could_take_invents_no_provenance(
     engine: AsyncEngine, fixture
 ) -> None:
-    """The demo stack runs the mock, which declares no provenance — so the columns stay NULL, and
-    that is the correct answer rather than a guess. What this pins is that the *path* works: the
-    lookup runs, the row is written, and nothing invents a region nobody configured."""
+    """A model no adapter serves has no provenance, and its row says so instead of inventing one.
+    What this pins is that the *path* works — the request is attributed and recorded — and that
+    nothing writes a region nobody configured. **This** request's row: the model name is this
+    test's own and the row is the fixture's, waited for rather than read once."""
+    nowhere = f"nowhere-{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         response = await client.post(
-            "/v1beta/models/nowhere-at-all:generateContent",
+            f"/v1beta/models/{nowhere}:generateContent",
             json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
             headers=fixture.headers(),
         )
-    assert response.status_code != 401, "the credential was refused"
+    assert response.status_code == 404, response.text
 
-    async with engine.connect() as connection:
-        row = (
-            await connection.execute(
-                text(
-                    "SELECT provider, region FROM request_logs"
-                    " WHERE requested_model = 'nowhere-at-all' ORDER BY created_at DESC LIMIT 1"
-                )
-            )
-        ).first()
+    row = await wait_for_row(
+        engine,
+        "SELECT provider, region, outcome FROM request_logs"
+        " WHERE use_case = :slug AND requested_model = :model",
+        {"slug": fixture.slug, "model": nowhere},
+        timeout=20.0,
+    )
+    assert row.outcome == "model_not_found", row.outcome
+    assert row.provider is None
+    assert row.region is None
 
-    if row is None:
-        pytest.skip("the request was refused before attribution; nothing to assert")
-    # A model no adapter serves has no provenance, and the row says so instead of inventing one.
-    assert row[0] is None
-    assert row[1] is None
+
+async def test_a_served_request_records_which_upstream_answered(
+    engine: AsyncEngine, fixture
+) -> None:
+    """The other half, without which the one above passes against a recorder that never writes
+    provenance at all: a request an adapter **did** serve names it."""
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+        response = await client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+            headers=fixture.headers(),
+        )
+    assert response.status_code == 200, response.text
+
+    row = await wait_for_row(
+        engine,
+        "SELECT provider FROM request_logs WHERE use_case = :slug AND model = 'mock-1'",
+        {"slug": fixture.slug},
+        timeout=20.0,
+    )
+    assert row.provider == "mock", row.provider
 
 
 async def test_reporting_still_answers_with_the_new_columns(governance_token: str) -> None:

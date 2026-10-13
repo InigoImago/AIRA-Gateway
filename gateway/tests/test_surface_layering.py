@@ -133,24 +133,24 @@ def test_every_surface_reports_a_lost_audit_row_under_the_same_name() -> None:
     """One event name, or the search that looks for missing rows finds one surface's worth.
 
     Both surfaces record a refusal through the shared `serving.record_refusal`, which owns the name.
-    A surface that catches refusals must use it; one that writes a row any other way must report a
-    failure under the same name.
+    A surface that catches refusals must use it — and no surface writes a row any other way: one
+    written by hand would need its own report of a failed write, under its own name, which is the
+    search that finds one surface's worth.
     """
     shared = (API / "serving" / "accounting.py").read_text()
     assert "async def record_refusal(" in shared
     assert "audit_refusal_not_recorded" in shared
     for surface in SURFACES:
-        source = surface.read_text()
-        if "REFUSALS" in source:
-            assert "record_refusal" in _called_names(surface), (
+        called = _called_names(surface)
+        if "REFUSALS" in surface.read_text():
+            assert "record_refusal" in called, (
                 f"{surface.parent.name} catches refusals without recording them through "
                 "`record_refusal`."
             )
-        if "_record" not in source and "record_request" not in source:
-            continue
-        assert "audit_refusal_not_recorded" in source, (
-            f"{surface.parent.name} records refusals but has no way to report failing to. "
-            "An operator searching for lost evidence would see the other surface only."
+        assert "record_request" not in called, (
+            f"{surface.parent.name} writes an audit row itself. Refusals go through "
+            "`record_refusal` and everything after dispatch through `accounting`, which own how "
+            "a row that could not be written is reported."
         )
 
 

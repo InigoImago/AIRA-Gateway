@@ -44,8 +44,8 @@ That is the **causal** version of the old assertion rather than a weaker one, an
 left is a liveness bound that a slow machine can make *less* likely to fire, never more. Verified
 the way this project verifies a guard, on both surfaces: `QA15` reintroduces the buffering
 implementation on the KIRA side and is caught; the Gemini side was buffered by hand — draining
-`model_call_chunks` into a list before the loop — and is caught too, in both cases with the stall
-message rather than a number.
+the stream into a list before the loop — and is caught too, in both cases with the stall message
+rather than a number.
 
 There is no live counterpart. This docstring named
 `tests/integration/test_streams_actually_stream.py` until 2026-09-09 and no such file has ever

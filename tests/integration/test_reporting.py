@@ -19,9 +19,24 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aira_common.money import to_nanos
 
+from . import installation
 from .conftest import GATEWAY_URL
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+async def window_slug(engine: AsyncEngine):
+    """A use case name for rows written into a future window, and those rows removed afterwards.
+
+    The windows are years ahead so that nothing else writes into them — which also makes every row
+    left there the newest in the audit trail until that year arrives: retention prunes by age and
+    never reaches it, and a newest-first view opens on it.
+    """
+    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", slug)
+    yield slug
+    await installation.delete_gateway_rows(engine, slug)
 
 
 async def _log(
@@ -34,15 +49,18 @@ async def _log(
     model: str = "mock-1",
     status: int = 200,
     latency: int = 40,
+    outcome: str | None = None,
 ) -> None:
+    """One audit row as the writer records it — with an outcome, which every row since `FRD-122`
+    carries: `served`, or the refusal's own (a rate limit unless another is named)."""
     async with engine.begin() as connection:
         await connection.execute(
             text(
                 "INSERT INTO request_logs (id, created_at, subject, auth_method, use_case, api,"
                 " operation, model, status, prompt_tokens, completion_tokens, total_tokens,"
-                " cost_nanos, latency_ms)"
+                " cost_nanos, latency_ms, outcome)"
                 " VALUES (:id, :ts, :subject, 'api_key', :uc, 'gemini', 'generateContent',"
-                " :model, :status, 10, 20, 30, :cost, :latency)"
+                " :model, :status, 10, 20, 30, :cost, :latency, :outcome)"
             ),
             {
                 "id": f"rep-{uuid.uuid4().hex[:12]}",
@@ -53,6 +71,7 @@ async def _log(
                 "status": status,
                 "cost": cost,
                 "latency": latency,
+                "outcome": outcome or ("served" if status == 200 else "rate_limited"),
             },
         )
 
@@ -69,11 +88,11 @@ async def _report(token: str, start: datetime, end: datetime) -> dict:
 
 
 async def test_the_figures_match_what_was_recorded(
-    engine: AsyncEngine, governance_token: str
+    engine: AsyncEngine, governance_token: str, window_slug: str
 ) -> None:
     """Hand-computed against real Postgres: the sums, the split, the unpriced count, and the
     money — all of which SQLite could get right for reasons Postgres does not share."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    slug = window_slug
     start = datetime(2031, 3, 1, tzinfo=UTC)  # a window nothing else in the stack writes into
     end = start + timedelta(days=31)
 
@@ -83,24 +102,38 @@ async def test_the_figures_match_what_was_recorded(
     )
     await _log(engine, use_case=slug, subject="bob", when=start, cost=None)  # unpriced
     await _log(engine, use_case=slug, subject="bob", when=start, cost=None, status=429)
+    await _log(
+        engine,
+        use_case=slug,
+        subject="bob",
+        when=start,
+        cost=None,
+        status=502,
+        outcome="upstream_error",
+    )
 
     report = await _report(governance_token, start, end)
     mine = next(row for row in report["by_use_case"] if row["key"] == slug)
 
-    assert mine["requests"] == 4
-    assert mine["prompt_tokens"] == 40
-    assert mine["completion_tokens"] == 80
-    assert mine["total_tokens"] == 120
+    assert mine["requests"] == 5
+    assert mine["prompt_tokens"] == 50
+    assert mine["completion_tokens"] == 100
+    assert mine["total_tokens"] == 150
     assert mine["cost"] == "3.75"
     assert mine["cost_nanos"] == to_nanos("3.75")
-    assert mine["unpriced_requests"] == 2, "unpriced traffic must not be summed as free"
+    # One: the served request with no price. The refusal and the failure have no cost either,
+    # because nothing was served, and counting them would make "spend is a lower bound" permanent
+    # for any use case with a limit.
+    assert mine["unpriced_requests"] == 1, "unpriced traffic must not be summed as free"
+    # One: the upstream that failed. The refusal is a decision, counted under its outcome, and
+    # counting it here as well reported one request as both refused and failed (`FRD-601` FR-6).
     assert mine["failed_requests"] == 1
 
 
 async def test_the_window_excludes_what_falls_outside_it(
-    engine: AsyncEngine, governance_token: str
+    engine: AsyncEngine, governance_token: str, window_slug: str
 ) -> None:
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    slug = window_slug
     start = datetime(2031, 5, 1, tzinfo=UTC)
     end = start + timedelta(days=31)
 
@@ -122,16 +155,17 @@ async def test_the_window_excludes_what_falls_outside_it(
 
 
 async def test_a_caller_without_oversight_does_not_see_another_use_case(
-    engine: AsyncEngine, member_token: str, governance_token: str
+    engine: AsyncEngine, member_token: str, governance_token: str, window_slug: str
 ) -> None:
     """The security-relevant one, over the real token. The member client holds no
-    organisation-wide role (`ADR-0017`) and is a member of nothing, so it must see an empty report
-    while oversight sees the traffic.
+    organisation-wide role (`ADR-0017`) and nothing grants it this use case, which exists only as
+    rows in a window nothing else writes into — so it must see an empty report while oversight sees
+    the traffic.
 
     Both halves in one test on purpose: separately, the first would pass against an endpoint that
     is simply broken and returns nothing to anyone.
     """
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    slug = window_slug
     start = datetime(2031, 7, 1, tzinfo=UTC)
     end = start + timedelta(days=31)
     await _log(engine, use_case=slug, subject="somebody", when=start, cost=to_nanos("5.00"))

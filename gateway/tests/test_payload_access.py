@@ -628,3 +628,46 @@ def test_the_mode_is_not_a_second_way_to_say_not_stored() -> None:
     # The role that may read is told the truth about the data: there is none.
     assert oversight.status_code == 200
     assert oversight.json()["reason"] == "not_stored"
+
+
+@pytest.mark.parametrize(
+    ("operation", "outcome", "use_case"),
+    [
+        ("pipeline:injection_filter", "served", "uc-a"),
+        ("generateContent", "diagnostic", None),
+    ],
+    ids=["a-pipeline-step", "a-model-check"],
+)
+def test_a_call_the_gateway_made_itself_is_not_reported_as_expired(
+    operation: str, outcome: str, use_case: str | None
+) -> None:
+    """A pipeline step's model call and a model check are answered and never keep their text — by
+    design, not by a clock. "Stored and expired" about them is a false statement about retention,
+    and FR-7 is that each absence gets its own answer."""
+
+    async def seed(sessionmaker) -> None:  # noqa: ANN001
+        async with sessionmaker() as session:
+            session.add(UseCaseRead(slug="uc-a", name="A", store_payloads=True))
+            session.add(
+                RequestLog(
+                    id="own-call",
+                    subject="sec",
+                    auth_method="oidc",
+                    use_case=use_case,
+                    api="gemini",
+                    operation=operation,
+                    model="mock-1",
+                    status=200,
+                    outcome=outcome,
+                )
+            )
+            await session.commit()
+
+    with _client(IT_SECURITY) as client:
+        with anyio.from_thread.start_blocking_portal() as portal:
+            portal.call(seed, client.app.state.db_sessionmaker)
+        body = client.get("/v1beta/traces/own-call/payload").json()
+
+    assert body["available"] is False
+    assert body["reason"] == "never_kept"
+    assert "expired" not in body["message"]

@@ -23,6 +23,12 @@ export interface ReportRow {
    * fixes the second and does nothing for the first. Absent on a report from before this existed.
    */
   unmetered_requests?: number;
+  /**
+   * Requests booked at a **floor**: the caller left a stream before the provider's last report, so
+   * what is booked is what could be established (`FRD-128` FR-6) — counted at the provider, or its
+   * running total. The spend is then a lower bound. Absent on a report from before this existed.
+   */
+  partial_usage_requests?: number;
   failed_requests: number;
   avg_latency_ms: number | null;
   max_latency_ms: number | null;

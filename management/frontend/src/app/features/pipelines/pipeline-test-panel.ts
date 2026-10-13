@@ -3,7 +3,13 @@ import { FormsModule } from '@angular/forms';
 import { errorMessage } from '../../core/api/error-message';
 import { DryRunResult, PipelineConfig, PipelineStep } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { actionClass, notReachedOf, previewOf, traceCardsOf } from './pipeline-steps';
+import {
+  actionClass,
+  fallbackClause,
+  notReachedOf,
+  previewOf,
+  traceCardsOf,
+} from './pipeline-steps';
 
 /**
  * The builder's test panel: a sample prompt, the live preview, and a dry run through the gateway.
@@ -30,9 +36,16 @@ export class PipelineTestPanel {
    * and **not** the console's membership answer. A missing answer means "no opinion", not "no".
    */
   readonly mayCall = input(true);
+  /**
+   * Whether this reader administers the use case. Running steps past a block is an
+   * administrator's tool — the gateway refuses it to anybody else — so it is offered only to them.
+   * A missing answer is "no opinion", as for `mayCall`.
+   */
+  readonly mayAuthor = input(true);
 
   protected readonly nothingReleased = computed(() => this.released().length === 0);
   protected readonly actionClass = actionClass;
+  protected readonly fallbackClause = fallbackClause;
 
   protected readonly sampleSystem = signal('');
   protected readonly sampleUser = signal('');
@@ -102,7 +115,7 @@ export class PipelineTestPanel {
         // Omitted rather than empty when nobody chose: an empty string is a model name to refuse.
         ...(this.dryRunModel() ? { model: this.dryRunModel() } : {}),
         pipeline: this.config(),
-        past_blocks: this.pastBlocks(),
+        past_blocks: this.mayAuthor() && this.pastBlocks(),
       })
       .subscribe({
         next: (result) => {
@@ -117,11 +130,12 @@ export class PipelineTestPanel {
           this.dryRunError.set(
             // 403 and 401 are different problems. A dry run follows the membership rule a request
             // does (`ADR-0007`), and a Global Administrator is a member of nothing — so a 403 must
-            // not send them to OIDC configuration that is working.
+            // not send them to OIDC configuration that is working. A 401 has two causes: a token
+            // the gateway no longer accepts, and a gateway that cannot verify tokens at all.
             response?.status === 403
               ? 'Dry-run refused — a dry run calls a real model and is charged to this use case, so it follows the same membership rule a request does. Grant yourself access to this use case to test its pipeline.'
               : response?.status === 401
-                ? 'Dry-run rejected — the gateway did not accept your login. Enable OIDC on the gateway (AIRA_OIDC_ENABLED) so it can verify the same Keycloak token.'
+                ? 'Dry-run rejected — the gateway did not accept your login. If your session has expired, reload the page to sign in again. If it keeps happening, the gateway may not have OIDC enabled (AIRA_OIDC_ENABLED), so it cannot verify the same Keycloak token.'
                 : errorMessage(
                     response,
                     'Dry-run failed — is the gateway running and reachable on /gw?',

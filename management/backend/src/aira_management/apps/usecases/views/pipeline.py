@@ -12,6 +12,7 @@ from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.pipelines.serializers import PipelineConfigSerializer
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.views.base import UseCaseViewBase
+from aira_management.apps.usecases.views.payloads import _pipeline_payload
 
 
 class PipelineMixin(UseCaseViewBase):
@@ -39,12 +40,5 @@ class PipelineMixin(UseCaseViewBase):
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             config = serializer.save()
-            emit(
-                "pipeline.upserted",
-                {
-                    "use_case": usecase.slug,
-                    "steps": config.steps,
-                    "fallback_models": config.fallback_models,
-                },
-            )
+            emit("pipeline.upserted", _pipeline_payload(usecase.slug, config))
         return Response(PipelineConfigSerializer(config).data)

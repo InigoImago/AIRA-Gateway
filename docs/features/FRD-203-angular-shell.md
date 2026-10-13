@@ -19,7 +19,9 @@ and the first real screens — a use-case list/detail with membership management
 - Pipeline builder, budgets, anomaly/security consoles (Phases 3–5). API-key issuance UI (FRD-205).
 
 ## 3. Functional Requirements
-- **FR-1 Auth**: login/logout, silent refresh, guarded routes; unauthenticated → login.
+- **FR-1 Auth**: login/logout, renewal ahead of expiry with the refresh token the code flow
+  returns (not a hidden iframe: the content policy frames nothing), guarded routes;
+  unauthenticated → login, coming back to the route that was being entered.
 - **FR-2 API client**: typed services for `me` and `use-cases`; bearer interceptor; error handling
   surfacing the backend error envelope.
 - **FR-3 Nav**: sidebar/menu items shown by role (from `me` roles).
@@ -86,9 +88,14 @@ so instead. Three because one is an ordinary expiry, two is that plus a race bet
 third inside two minutes is the same refusal coming back. Keycloak's own brute-force default trips
 at thirty; the point of this number is to be reached long before an account is locked.
 
-The counter is cleared by the first first-party call that **answers**. That is the only evidence
-worth trusting: everything the console can check about itself — a token that parses, an expiry in
-the future — was just as true on every pass through the loop.
+The counter is cleared by a first-party call that **answers**, from the plane whose refusal started
+the login. That is the only evidence worth trusting: everything the console can check about itself
+— a token that parses, an expiry in the future — was just as true on every pass through the loop.
+And it has to be the plane that refused: the gateway and management validate tokens separately, so
+when one accepts and the other refuses, the accepting one answers on every pass, and counting its
+answers as the end of the loop reset the guard on every page. After a renewal that failed no plane
+refused, and any answer ends it. A refusal after the console has stopped is not counted again, so
+the sentence it prints names the sign-ins that actually happened.
 
 **And the way out ends the session at the provider.** `oauth.logOut()` rather than `logOut(true)`:
 the local-only form clears the tokens here and leaves the SSO session standing, so the next

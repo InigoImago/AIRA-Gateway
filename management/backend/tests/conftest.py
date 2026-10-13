@@ -8,9 +8,11 @@ is thirteen chances for one of them to drift.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from django.core.cache import cache
 
 from aira_common.roles import CONFIGURABLE_ROLES
 
@@ -25,6 +27,17 @@ GROUP_FOR = {
     "it-security": "/aira/it-security",
     "it-steuerung": "/aira/it-steuerung",
 }
+
+
+@pytest.fixture(autouse=True)
+def _a_fresh_cache() -> Iterator[None]:
+    """Every test starts with an empty Django cache, which is where DRF counts each caller's
+    requests. SQLite hands the first user of every test the same primary key after the rollback,
+    so without this a suite running faster than the throttle's window shares one allowance across
+    tests — and answers `429` to whichever test happens to come six hundred requests later."""
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture(autouse=True)

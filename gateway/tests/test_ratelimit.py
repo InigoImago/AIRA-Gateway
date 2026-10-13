@@ -22,7 +22,7 @@ from aira_gateway.ratelimit.buckets import (
     InMemoryTokenBucket,
     RedisTokenBucket,
 )
-from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.ratelimit.errors import RateLimited, TooHeavyForTheLimit
 from aira_gateway.ratelimit.service import CONFIG_CACHE_SECONDS, RateLimitService
 
 
@@ -209,12 +209,22 @@ async def test_a_request_too_heavy_for_the_bucket_says_so_rather_than_stalling(
 ) -> None:
     """A batch larger than the bucket's *capacity* can never be admitted, however long the caller
     waits. A `Retry-After` would still be wrong an hour later, so the refusal names the bound and
-    which of the two — the batch limit or the rate limit — said no (`FRD-113` §11)."""
+    which of the two — the batch limit or the rate limit — said no (`FRD-113` §11).
+
+    **And it is not a `429`.** Answered as a rate limit with `Retry-After: 1`, an SDK that honours
+    both retried it forever. A `400 FAILED_PRECONDITION` with no `Retry-After` says the request has
+    to change."""
     await _limit(sessionmaker, limit_rpm=60, burst=5)
     service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
 
-    with pytest.raises(RateLimited) as exc:
+    with pytest.raises(TooHeavyForTheLimit) as exc:
         await service.check("uc", "alice", 50)
+    assert not isinstance(exc.value, RateLimited)
+    assert (exc.value.code, exc.value.status, exc.value.headers) == (
+        400,
+        "FAILED_PRECONDITION",
+        None,
+    )
     assert "cannot fit" in exc.value.message
     assert "5" in exc.value.message
     # And it did not debit on the way out: the allowance is intact for requests that do fit.
@@ -475,3 +485,102 @@ async def test_a_recovered_store_stops_reporting_the_fallback(sessionmaker) -> N
     assert bucket.degraded is False
     assert log.features == {}
     assert not log
+
+
+# == both implementations answer the same wait (`G4-17`) ==========================================
+
+
+class _Lua:
+    """The production `_TAKE_TOKENS` script, run by fakeredis — what the shared buckets execute."""
+
+    def __init__(self) -> None:
+        import fakeredis.aioredis
+
+        self.client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+    async def run(self, script, keys, args):  # noqa: ANN001, ANN201
+        return await self.client.register_script(script)(keys=list(keys), args=list(args))
+
+
+def _two_scopes() -> list[BucketRequest]:
+    """A use-case bucket that refills in a second and a member bucket that refills in thirty."""
+    return [
+        BucketRequest("rl:{uc}:uc", 1, 1.0, "use case"),
+        BucketRequest("rl:{uc}:member:alice", 1, 1 / 30, "member"),
+    ]
+
+
+@pytest.mark.parametrize("implementation", ["script", "in-process"])
+async def test_a_refusal_waits_for_the_slowest_bucket_and_debits_none(implementation: str) -> None:
+    """The take is all or nothing, so a caller must wait for **every** refusing bucket. The
+    in-process twin reported the first bucket's wait — one second where thirty were needed — and a
+    client that obeyed it was refused again by the member bucket."""
+    runner = _Lua()
+    bucket = RedisTokenBucket(runner) if implementation == "script" else InMemoryTokenBucket()
+
+    assert (await bucket.take(_two_scopes())).allowed
+    refused = await bucket.take(_two_scopes())
+
+    assert not refused.allowed
+    assert refused.retry_after_header == "30"
+    assert refused.refused is not None and refused.refused.label == "use case"
+
+
+async def test_the_script_debits_no_bucket_when_one_refuses() -> None:
+    """Asserted on the real script, which the suite otherwise never runs: the wide bucket keeps
+    its tokens when the narrow one refuses."""
+    runner = _Lua()
+    bucket = RedisTokenBucket(runner)
+    wide = BucketRequest("rl:{uc}:uc", 5, 0.001, "use case")
+    narrow = BucketRequest("rl:{uc}:member:a", 1, 0.001, "member")
+
+    assert (await bucket.take([wide, narrow])).allowed
+    assert not (await bucket.take([wide, narrow])).allowed
+
+    assert float(await runner.client.hget("rl:{uc}:uc", "tokens")) == pytest.approx(4, abs=0.01)
+
+
+# == the per-process buckets forget what is full again (`G4-19`) ==================================
+
+
+async def test_buckets_that_have_filled_up_again_are_forgotten() -> None:
+    """With no Redis every failed-authentication source address added a permanent entry, and with
+    IPv6 a client controls many addresses. A full bucket is the same as an absent one, so the sweep
+    changes no decision."""
+    from aira_gateway.ratelimit.buckets import SWEEP_EVERY
+
+    clock = FakeClock()
+    bucket = InMemoryTokenBucket(clock)
+    for index in range(SWEEP_EVERY - 1):
+        await bucket.take([BucketRequest(f"authfail:{index}", 5, 1.0)])
+    assert len(bucket._state) == SWEEP_EVERY - 1
+
+    clock.advance(60)  # every one of them is full again
+    await bucket.take([BucketRequest("authfail:last", 5, 1.0)])
+
+    assert list(bucket._state) == ["authfail:last"]
+
+
+async def test_a_sweep_keeps_a_bucket_that_is_still_draining() -> None:
+    from aira_gateway.ratelimit.buckets import SWEEP_EVERY
+
+    clock = FakeClock()
+    bucket = InMemoryTokenBucket(clock)
+    slow = BucketRequest("member:alice", 2, 1 / 60)
+    await bucket.take([slow], cost=2)
+    for index in range(SWEEP_EVERY):
+        await bucket.take([BucketRequest(f"other:{index}", 1, 1.0)])
+        clock.advance(0.01)
+
+    assert not (await bucket.take([slow])).allowed, "forgetting it would have refilled it"
+
+
+async def test_the_process_keeps_no_more_buckets_than_its_ceiling(monkeypatch) -> None:  # noqa: ANN001
+    from aira_gateway.ratelimit import buckets
+
+    monkeypatch.setattr(buckets, "MAX_TRACKED_BUCKETS", 3)
+    bucket = InMemoryTokenBucket(FakeClock())
+    for index in range(5):
+        await bucket.take([BucketRequest(f"k{index}", 5, 1.0)])
+
+    assert list(bucket._state) == ["k2", "k3", "k4"], "the least recently used go first"

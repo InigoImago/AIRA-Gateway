@@ -92,6 +92,15 @@ describe('CompositionBar', () => {
     expect(blocks()[1].title).toContain('0.4%');
   });
 
+  it('never writes a band that is there as 0.0%', () => {
+    // One decimal stops at 0.05 %: a band of 0.02 % rounded to "0.0%" is the "0 % is not a
+    // reading" rule broken one decimal further down.
+    const { blocks } = setup([band({ key: 'a', share: 99.98 }), band({ key: 'b', share: 0.02 })]);
+
+    expect(blocks()[1].title).toContain('<0.1%');
+    expect(blocks()[1].title).not.toContain('0.0%');
+  });
+
   it('says there is nothing rather than drawing a bar of nothing', () => {
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({ imports: [CompositionBar] });

@@ -54,3 +54,33 @@ def test_upstream_model_to_gemini() -> None:
     assert gemini.name == "models/mock-1"
     assert gemini.displayName == "mock-1"
     assert gemini.supportedGenerationMethods == ["generateContent"]
+
+
+def test_the_models_earlier_reasoning_is_not_replayed_as_something_it_said() -> None:
+    """Where a use case enables reasoning, an answer carries its thoughts as parts marked
+    `thought` (`FRD-135`), and the google-genai chat helper keeps the whole answer in the history
+    of the next turn. Google does not read a thought part back as conversation; forwarded as plain
+    text, the next model would be told it had *said* its private reasoning. So it is left out of
+    the replayed conversation — Google's own reading — and the answer beside it is kept."""
+    request = schemas.GenerateContentRequest.model_validate(
+        {
+            "contents": [
+                {"role": "user", "parts": [{"text": "Wie spät ist es?"}]},
+                {
+                    "role": "model",
+                    "parts": [
+                        {"text": "INTERNAL REASONING: the clock says noon", "thought": True},
+                        {"text": "Es ist 12 Uhr."},
+                    ],
+                },
+                {"role": "user", "parts": [{"text": "Und in einer Stunde?"}]},
+            ]
+        }
+    )
+
+    canonical = gemini_to_canonical("gemini-2.5-pro", request)
+
+    model_turn = canonical.messages[1]
+    assert model_turn.role == Role.MODEL
+    assert model_turn.text == "Es ist 12 Uhr."
+    assert "INTERNAL REASONING" not in canonical.model_dump_json()

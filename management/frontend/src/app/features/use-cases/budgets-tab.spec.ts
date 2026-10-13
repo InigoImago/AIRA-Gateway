@@ -15,7 +15,7 @@ interface Overrides {
 interface Tab {
   showForm: { set: (v: boolean) => void; (): boolean };
   budgetScope: { set: (v: 'use_case' | 'each_member') => void; (): string };
-  budgetSubject: { set: (v: string) => void; (): string };
+  budgetPeriod: { set: (v: 'day' | 'month') => void; (): string };
   budgetTokens: { set: (v: number | null) => void; (): number | null };
   budgetRequests: { set: (v: number | null) => void; (): number | null };
   budgetCost: { set: (v: string) => void; (): string };
@@ -52,6 +52,7 @@ interface Options {
 function setup(options: Options = {}) {
   TestBed.resetTestingModule();
   const calls: string[] = [];
+  const asked: string[] = [];
   const overrides = options.overrides ?? {};
   const service = {
     createBudget: (_s: string, budget: Budget) => {
@@ -72,7 +73,15 @@ function setup(options: Options = {}) {
       provideRouter([]),
       PageFeedback,
       { provide: UseCaseService, useValue: service },
-      { provide: ConfirmService, useValue: { ask: () => options.confirmAnswer ?? true } },
+      {
+        provide: ConfirmService,
+        useValue: {
+          ask: (question: string) => {
+            asked.push(question);
+            return options.confirmAnswer ?? true;
+          },
+        },
+      },
     ],
   });
 
@@ -96,6 +105,7 @@ function setup(options: Options = {}) {
   return {
     fixture,
     calls,
+    asked,
     changes,
     component: fixture.componentInstance as unknown as Tab,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
@@ -283,7 +293,7 @@ describe('BudgetsTab', () => {
     };
     const harness = setup({
       usage,
-      budgets: [{ id: 1, scope: 'each_member', period: 'month', limit_cost: '10.00' }],
+      budgets: [{ id: 1, scope: 'each_member', period: 'month', limit_cost: '10.000000' }],
     });
 
     expect(harness.text()).toContain('no consumption of your own');
@@ -305,7 +315,7 @@ describe('BudgetsTab', () => {
     };
     const harness = setup({
       usage,
-      budgets: [{ id: 1, scope: 'each_member', period: 'month', limit_cost: '10.00' }],
+      budgets: [{ id: 1, scope: 'each_member', period: 'month', limit_cost: '10.000000' }],
     });
 
     expect(harness.text()).toContain('5.00 / 10.00');
@@ -314,7 +324,7 @@ describe('BudgetsTab', () => {
         id: 1,
         scope: 'each_member',
         period: 'month',
-        limit_cost: '10.00',
+        limit_cost: '10.000000',
       }),
     ).toBe(50);
     expect(harness.fixture.nativeElement.querySelector('.progress')).not.toBeNull();
@@ -385,9 +395,52 @@ describe('BudgetsTab rendering', () => {
     expect(bars.length).toBe(3); // spend, tokens, requests
     const text = harness.text();
     expect(text).toContain('0.50');
-    expect(text).toContain('1.000000');
+    // The limit as every amount here is written, not as it is stored ("1.000000").
+    expect(harness.testid('budget-spend-1')?.textContent).toContain('0.50 / 1.00');
+    expect(text).not.toContain('1.000000');
     expect(text).toContain('400');
     expect(text).toContain('Whole use case');
+  });
+
+  it('groups counts the way the rest of the page does', () => {
+    const harness = setup({
+      budgets: [{ id: 1, scope: 'use_case', period: 'month', limit_tokens: 2_000_000 }],
+      usage: usageFor({ used_tokens: 1_234_567 }),
+    });
+
+    expect(harness.testid('budget-tokens-1')?.textContent).toContain('1,234,567 / 2,000,000');
+  });
+
+  it('draws nothing it did not measure when the gateway is unreachable', () => {
+    // Every budget has no usage entry then, and drawing that as zero — "0.00 / 250.00", an empty
+    // bar — told an administrator nothing was spent of a budget that may be 95 % gone.
+    const harness = setup({
+      budgets: [
+        { id: 1, scope: 'use_case', period: 'month', limit_cost: '250.000000', limit_requests: 50 },
+      ],
+      usageUnavailable: true,
+    });
+
+    expect(harness.testid('budget-spend-1')?.textContent).toContain('— / 250.00');
+    expect(harness.testid('budget-requests-1')?.textContent).toContain('— / 50');
+    expect(
+      (harness.fixture.nativeElement as HTMLElement).querySelector('[role="progressbar"]'),
+    ).toBeNull();
+    expect(harness.text()).not.toContain('Also used');
+    // The callout gives the reason; the per-person sentence would give a wrong one.
+    expect(harness.testid('budget-not-yours')).toBeNull();
+  });
+
+  it('draws a limit of zero as full, because it refuses everything', () => {
+    const harness = setup({
+      budgets: [{ id: 1, scope: 'use_case', period: 'month', limit_requests: 0 }],
+      usage: usageFor({ used_requests: 0 }),
+    });
+
+    const bar = (harness.fixture.nativeElement as HTMLElement).querySelector(
+      '[role="progressbar"]',
+    );
+    expect(bar?.getAttribute('aria-valuenow')).toBe('100');
   });
 
   it('warns before the wall and marks the bar full at it', () => {
@@ -451,6 +504,16 @@ describe('BudgetsTab rendering', () => {
 });
 
 describe('BudgetsTab — a reader', () => {
+  it('reads a limit as it was set, never rounded to two places', () => {
+    const { text } = setup({
+      canManage: false,
+      budgets: [{ id: 1, scope: 'use_case', period: 'month', limit_cost: '0.125000' }],
+    });
+
+    expect(text()).toContain('0.125');
+    expect(text()).not.toContain('0.13');
+  });
+
   it('sees the figures and none of the controls', () => {
     const { fixture, text } = setup({
       canManage: false,
@@ -576,7 +639,7 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
     scope: 'use_case',
     subject: '',
     period: 'month',
-    limit_cost: '10.00',
+    limit_cost: '10.000000',
     limit_tokens: 5000,
   };
 
@@ -594,7 +657,7 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
     const page = setup({ budgets: [BUDGET] });
     page.click('toggle-budget-3');
 
-    expect(page.calls).toEqual(['create:use_case::10.00:5000:false']);
+    expect(page.calls).toEqual(['create:use_case::10.000000:5000:false']);
     expect(page.component.feedback.notice()).toContain('kept on record');
     expect(page.changes).toEqual([1]);
   });
@@ -605,7 +668,7 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
     expect(page.testid('toggle-budget-3')?.textContent?.trim()).toBe('Enable');
     page.click('toggle-budget-3');
 
-    expect(page.calls).toEqual(['create:use_case::10.00:5000:true']);
+    expect(page.calls).toEqual(['create:use_case::10.000000:5000:true']);
     expect(page.component.feedback.notice()).toContain('capped again');
   });
 
@@ -635,6 +698,84 @@ describe('BudgetsTab — lifting a budget without losing it', () => {
  * somebody sits down and configures the limit — said nothing at all, which is the shape this
  * project already knows as a badge on an inactive control.
  */
+describe('BudgetsTab — limits that are not limits', () => {
+  it('refuses a token or request limit that is not a whole number of at least one', () => {
+    // `min="1"` is inert in an Angular form, and the server accepts 0 — a budget that refuses
+    // every request, created by accident and drawn as an empty, reassuring bar.
+    const { component } = setup();
+    component.budgetRequests.set(0);
+    expect(component.validationError()).toContain('request limit is a whole number');
+
+    component.budgetRequests.set(null);
+    component.budgetTokens.set(2.5);
+    expect(component.validationError()).toContain('token limit is a whole number');
+
+    component.budgetTokens.set(1);
+    expect(component.validationError()).toBeNull();
+  });
+});
+
+/**
+ * "+ Add budget" for a scope and period that already have one replaces it — and a limit left empty
+ * in the window is cleared on it. It used to say "Budget saved."
+ */
+describe('BudgetsTab — a new budget where one exists', () => {
+  const existing: Budget = {
+    id: 3,
+    scope: 'use_case',
+    period: 'month',
+    limit_cost: '250.000000',
+    limit_requests: 500,
+  };
+
+  function addMonthly(confirmAnswer: boolean) {
+    const harness = setup({ budgets: [existing], confirmAnswer });
+    harness.component.budgetScope.set('use_case');
+    harness.component.budgetPeriod.set('month');
+    harness.component.budgetTokens.set(1000);
+    harness.component.add();
+    return harness;
+  }
+
+  it('asks first, naming the budget it replaces, and sends nothing on no', () => {
+    const harness = addMonthly(false);
+
+    expect(harness.asked.at(-1)).toContain('monthly budget for whole use case already exists');
+    expect(harness.asked.at(-1)).toContain('250.00');
+    expect(harness.asked.at(-1)).toContain('500 requests');
+    expect(harness.calls.filter((call) => call.startsWith('create:'))).toEqual([]);
+  });
+
+  it('says "replaced" when the answer is yes', () => {
+    const harness = addMonthly(true);
+
+    expect(harness.calls.some((call) => call.startsWith('create:'))).toBe(true);
+    expect(harness.component.feedback.notice()).toBe('Budget replaced.');
+  });
+
+  it('asks nothing for a period that has no budget yet', () => {
+    const harness = setup({ budgets: [existing] });
+    harness.component.budgetPeriod.set('day');
+    harness.component.budgetTokens.set(1000);
+    harness.component.add();
+
+    expect(harness.asked).toEqual([]);
+    expect(harness.component.feedback.notice()).toBe('Budget saved.');
+  });
+
+  it('says why a save was refused inside the window', () => {
+    const harness = setup({ overrides: { createBudget: httpError(400) } });
+    harness.click('add-budget');
+    harness.component.budgetTokens.set(1000);
+    harness.component.add();
+    harness.fixture.detectChanges();
+
+    const said = harness.testid('budget-editor-error');
+    expect(said?.textContent).toContain('refused');
+    expect(said?.closest('[data-testid="budget-editor"]')).not.toBeNull();
+  });
+});
+
 describe('BudgetsTab — enforcement', () => {
   const budgets: Budget[] = [
     { id: 1, scope: 'use_case', subject: '', period: 'month', limit_requests: 100, enabled: true },

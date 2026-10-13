@@ -24,20 +24,35 @@ async def json_body(request: Request) -> Any:
     `aira_common.nesting` holds the bound. Every route reads its body through here —
     `test_a_body_cannot_be_nested_out_of_the_audit_trail.py` fails on a `request.json()` call.
 
+    **UTF-8 only** (RFC 8259 §8.1), and parsed from the text that was measured. `json.loads` reads
+    UTF-16 and UTF-32 too, which the depth scan cannot: an escaped quote there is not the bytes it
+    looks for, so a body passed the bound and still took the decoder down. A leading byte order
+    mark is ignored, as the RFC allows.
+
     Raises `GeminiHTTPError` for a body that is too deep (both surfaces render it), and
-    `ValueError`, like `request.json()`, for one that is not JSON: each surface words that refusal
-    itself.
+    `ValueError`, like `request.json()`, for one that is not JSON or not UTF-8: each surface words
+    that refusal itself.
     """
     raw = await request.body()
+    text = raw.decode("utf-8-sig")
     if nests_deeper_than(raw, MAX_JSON_DEPTH):
-        raise GeminiHTTPError(
-            400,
-            f"The request body nests deeper than {MAX_JSON_DEPTH} levels. Nothing on this path "
-            "can walk a structure that deep — including the writer that records the request — so "
-            "it is refused here rather than half-processed.",
-            "INVALID_ARGUMENT",
-        )
-    return json.loads(raw)
+        raise _too_deep()
+    try:
+        return json.loads(text)
+    except RecursionError:
+        # Not reachable for a body the scan measured; kept so a walk the bound did not foresee
+        # is still the caller's named `400` rather than a server error with no row.
+        raise _too_deep() from None
+
+
+def _too_deep() -> GeminiHTTPError:
+    return GeminiHTTPError(
+        400,
+        f"The request body nests deeper than {MAX_JSON_DEPTH} levels. Nothing on this path can "
+        "walk a structure that deep — including the writer that records the request — so it is "
+        "refused here rather than half-processed.",
+        "INVALID_ARGUMENT",
+    )
 
 
 def ensure_body_is_encodable(body: Any) -> None:

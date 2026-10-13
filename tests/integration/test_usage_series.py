@@ -23,9 +23,20 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aira_common.money import to_nanos
 
+from . import installation
 from .conftest import GATEWAY_URL
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+async def window_slug(engine: AsyncEngine):
+    """A use case name for rows written into a future window, and those rows removed afterwards —
+    left there, each would be the newest row in the audit trail for years (`test_reporting.py`)."""
+    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", slug)
+    yield slug
+    await installation.delete_gateway_rows(engine, slug)
 
 
 async def _log(
@@ -83,7 +94,7 @@ async def test_the_database_session_is_utc(engine: AsyncEngine) -> None:
 
 
 async def test_a_row_lands_in_the_utc_day_it_was_made_in(
-    engine: AsyncEngine, governance_token: str
+    engine: AsyncEngine, governance_token: str, window_slug: str
 ) -> None:
     """The boundary itself, from both sides, in one test.
 
@@ -91,7 +102,7 @@ async def test_a_row_lands_in_the_utc_day_it_was_made_in(
     belongs to. Rendered an hour out in either direction, the two collapse into one — which looks
     like an ordinary busy day rather than like a defect.
     """
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    slug = window_slug
     # A window nothing else in the stack writes into, as the sibling suite does.
     start = datetime(2031, 5, 1, tzinfo=UTC)
 
@@ -105,11 +116,11 @@ async def test_a_row_lands_in_the_utc_day_it_was_made_in(
 
 
 async def test_the_axis_is_the_window_and_not_only_the_busy_days(
-    engine: AsyncEngine, governance_token: str
+    engine: AsyncEngine, governance_token: str, window_slug: str
 ) -> None:
     """Including the quiet ones. Computed in the gateway's process and matched against labels the
     database produced — if the two ever spell a bucket differently, every point lands off-axis."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    slug = window_slug
     start = datetime(2031, 5, 10, tzinfo=UTC)
 
     await _log(engine, use_case=slug, when=start + timedelta(days=2, hours=9))
@@ -127,7 +138,7 @@ async def test_the_axis_is_the_window_and_not_only_the_busy_days(
 
 
 async def test_the_bands_add_up_to_the_totals_over_real_postgres(
-    engine: AsyncEngine, governance_token: str
+    engine: AsyncEngine, governance_token: str, window_slug: str
 ) -> None:
     """The arithmetic, on the store that actually serves it.
 
@@ -135,7 +146,7 @@ async def test_the_bands_add_up_to_the_totals_over_real_postgres(
     answers differently — and the property a reader cares about is that the chart adds up to the
     figure printed above it.
     """
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    slug = window_slug
     start = datetime(2031, 6, 1, tzinfo=UTC)
 
     await _log(engine, use_case=slug, when=start, model="chat-1", cost=to_nanos("1.50"))
@@ -171,7 +182,7 @@ async def test_the_bands_add_up_to_the_totals_over_real_postgres(
 
 
 async def test_a_person_filter_finds_one_person_across_both_their_credentials(
-    engine: AsyncEngine, governance_token: str
+    engine: AsyncEngine, governance_token: str, window_slug: str
 ) -> None:
     """`FRD-626` FR-15, on the store that serves it.
 
@@ -180,7 +191,7 @@ async def test_a_person_filter_finds_one_person_across_both_their_credentials(
     same in both stores, but the rows that exercise it are the ones a real stack writes — so the
     pairing is asserted here as well as hermetically.
     """
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    slug = window_slug
     start = datetime(2031, 8, 1, tzinfo=UTC)
 
     async with engine.begin() as connection:
@@ -215,14 +226,14 @@ async def test_a_person_filter_finds_one_person_across_both_their_credentials(
 
 
 async def test_a_series_outside_the_callers_scope_is_empty_rather_than_somebody_elses(
-    engine: AsyncEngine, member_token: str
+    engine: AsyncEngine, member_token: str, window_slug: str
 ) -> None:
     """The one security-relevant line, asserted over HTTP with a token the realm issued.
 
     The hermetic suite builds a `Principal` directly, which cannot show that the role survives the
     round trip — and the chart is a new `select`, so it is a new chance to build the window by hand.
     """
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    slug = window_slug
     start = datetime(2031, 7, 1, tzinfo=UTC)
     await _log(engine, use_case=slug, when=start, cost=to_nanos("9.00"))
 

@@ -103,7 +103,9 @@ async def test_every_verb_leaves_exactly_one_audit_row_naming_itself(
         )
 
     assert response.status_code == 200, response.text
-    rows = await governed.wait_for_rows(1)
+    # Read once the rows have stopped arriving: "exactly one" read as soon as the first lands is
+    # satisfied by a duplicate that has not landed yet.
+    rows = await governed.quiet_rows()
 
     assert len(rows) == 1, rows
     assert rows[0]["api"] == surface
@@ -295,6 +297,7 @@ async def test_an_impossible_output_cap_is_refused_before_anything_is_spent(
     assert expected in message.lower()
 
 
+@pytest.mark.model_output
 async def test_a_structured_answer_comes_back_as_a_document(governed: Governed) -> None:
     """`FRD-112`. What is asserted is that the answer parses and the row is `served` — never the
     document's contents, which is the model's business."""
@@ -351,9 +354,10 @@ async def test_a_stream_arrives_in_pieces_and_is_recorded_once(governed: Governe
                 events += 1
 
     assert events > 1, f"a stream that is not one: {events} event(s)"
-    row = await governed.last_row()
-    assert row["operation"] == "streamGenerateContent"
-    assert row["outcome"] == "served"
+    rows = await governed.quiet_rows()
+    assert len(rows) == 1, f"one stream, {len(rows)} audit rows"
+    assert rows[0]["operation"] == "streamGenerateContent"
+    assert rows[0]["outcome"] == "served"
 
 
 async def test_the_kira_stream_speaks_the_predecessors_events(governed: Governed) -> None:

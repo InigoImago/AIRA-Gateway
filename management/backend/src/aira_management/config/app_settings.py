@@ -11,7 +11,7 @@ from __future__ import annotations
 from pydantic import field_validator
 
 from aira_common.config import BaseAiraSettings
-from aira_common.kafka import KafkaSecurity, validate_stage
+from aira_common.kafka import KafkaSecurity, parse_bootstrap_servers, validate_stage
 from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
 
 #: The well-known development signing key. ``config.security`` refuses to start any non-local
@@ -58,6 +58,15 @@ class ManagementSettings(BaseAiraSettings):
     throttle_auth_failures: str = "60/minute"
     throttle_user: str = "600/minute"
 
+    #: How many reverse proxies **append** to `X-Forwarded-For` in front of this service — the
+    #: gateway's setting of the same name, read here for the same reason. The source address the
+    #: failed-authentication bound counts against is read that many entries from the **right**:
+    #: a proxy appends, so the left end is whatever the caller sent, and a caller who chose the
+    #: address could rotate it and never be bounded. `1` is the console's nginx, which this
+    #: service always sits behind; `0` when it is reached directly. It also decides whether a
+    #: proxy's `X-Forwarded-Proto` is believed (`config.security.proxy_ssl_header`).
+    trusted_proxy_hops: int = 1
+
     # OIDC (Keycloak) — the Angular SPA sends a bearer JWT that the API validates.
     oidc_issuer: str = ""
     oidc_audience: str = ""
@@ -83,6 +92,17 @@ class ManagementSettings(BaseAiraSettings):
     @classmethod
     def _one_stage(cls, value: str) -> str:
         return validate_stage(value)
+
+    @field_validator("kafka_bootstrap_servers")
+    @classmethod
+    def _brokers_can_be_dialled(cls, value: str) -> str:
+        """At startup: read only by the readiness probe and the relay, an entry nothing can dial
+        was a `500` on every probe and never a refusal anybody saw."""
+        try:
+            parse_bootstrap_servers(value)
+        except ValueError as exc:
+            raise ValueError(f"AIRA_KAFKA_BOOTSTRAP_SERVERS: {exc}") from exc
+        return value
 
     def kafka_security(self) -> KafkaSecurity:
         return KafkaSecurity(
@@ -178,10 +198,8 @@ class ManagementSettings(BaseAiraSettings):
         return [h.strip() for h in self.allowed_hosts.split(",") if h.strip()]
 
     @property
-    def kafka_host_port(self) -> tuple[str, int]:
-        """Return the (host, port) of the first Kafka bootstrap server for TCP checks."""
-        first = self.kafka_bootstrap_servers.split(",")[0].strip()
-        if ":" in first:
-            host, _, port = first.rpartition(":")
-            return host or "localhost", int(port)
-        return first or "localhost", 9092
+    def kafka_host_port(self) -> tuple[str, int] | None:
+        """The first broker's ``(host, port)`` for the readiness check, read as a Kafka client
+        dials it (an IPv6 broker without its brackets); ``None`` when no broker is configured."""
+        brokers = parse_bootstrap_servers(self.kafka_bootstrap_servers)
+        return brokers[0] if brokers else None

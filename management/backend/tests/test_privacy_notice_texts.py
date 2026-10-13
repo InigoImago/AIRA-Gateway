@@ -111,6 +111,27 @@ def test_a_placeholder_nothing_fills_in_is_refused() -> None:
         parse("xx", raw)
 
 
+@pytest.mark.parametrize(
+    "where",
+    [
+        ("sections", "controller", "title"),
+        ("labels", "acknowledge"),
+        ("activities", "account", "title"),
+    ],
+)
+def test_a_placeholder_where_nothing_fills_it_in_is_refused(where: tuple[str, ...]) -> None:
+    """Titles and labels are printed as written; a `{controller}` there reached the reader as
+    braces. A known name is refused there as firmly as an unknown one."""
+    raw = _raw()
+    table = raw
+    for key in where[:-1]:
+        table = table[key]
+    table[where[-1]] += " {controller}"
+
+    with pytest.raises(NoticeTextError, match="controller"):
+        parse("xx", raw)
+
+
 def test_days_without_the_number_is_refused() -> None:
     raw = _raw()
     raw["values"]["days"] = "some days"

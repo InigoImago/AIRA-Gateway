@@ -16,10 +16,16 @@ import { PageFeedback } from '../../core/ui/page-feedback';
   selector: 'app-about-panel',
   imports: [FormsModule, Markdown],
   templateUrl: './about-panel.html',
+  host: { style: 'display: contents' },
 })
 export class AboutPanel {
   readonly slug = input.required<string>();
   readonly canManage = input(false);
+  /**
+   * Whether the Overview tab is open. The panel stays on the page either way, so a description
+   * being edited survives a look at another tab rather than being dropped without a word.
+   */
+  readonly shown = input(true);
   /** The loaded use case, owned by the parent. */
   readonly useCase = input<UseCase | null>(null);
   /** Raised after a save, so the parent takes the new use case as its own. */

@@ -4,8 +4,19 @@ from __future__ import annotations
 
 import httpx
 
-from aira_common.tokens import TokenSource
+from aira_common.logging import get_logger
+from aira_common.tokens import TokenSource, TokenUnavailable
+from aira_gateway.upstreams.base import UpstreamError
 from aira_gateway.upstreams.openai.transport import OpenAITransport
+
+#: What a caller is told when this deployment's Entra credential fails. The cause is the operator's
+#: to fix and goes to the log; an API caller can do nothing with it.
+CREDENTIALS_UNAVAILABLE = (
+    "Azure credentials are unavailable, so the request could not be sent. The gateway's log has "
+    "the cause for its operator."
+)
+
+_log = get_logger("aira_gateway.upstreams")
 
 
 class FoundryTransport(OpenAITransport):
@@ -35,5 +46,12 @@ class FoundryTransport(OpenAITransport):
         if self._azure_key:
             return {"api-key": self._azure_key}
         if self._tokens is not None:
-            return {"Authorization": f"Bearer {await self._tokens.token()}"}
+            try:
+                token = await self._tokens.token()
+            except TokenUnavailable as exc:
+                # An **upstream** failure (503), as on Vertex: the caller did nothing wrong, and an
+                # unhandled exception here would be a 500 blaming the gateway.
+                _log.error("foundry_credentials_unavailable", error=str(exc))
+                raise UpstreamError(CREDENTIALS_UNAVAILABLE, 503) from exc
+            return {"Authorization": f"Bearer {token}"}
         return {}

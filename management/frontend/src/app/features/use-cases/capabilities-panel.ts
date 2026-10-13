@@ -1,5 +1,6 @@
 import { Component, OnInit, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { finalize } from 'rxjs';
 import { UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -39,6 +40,8 @@ export class CapabilitiesPanel implements OnInit {
   protected readonly includeReasoning = signal(true);
   protected readonly promptCaching = signal(false);
   protected readonly cacheTtl = signal('5m');
+  /** This panel's save is in flight — its own, so the form beside it keeps its label. */
+  protected readonly saving = signal(false);
 
   ngOnInit(): void {
     this.fill(this.useCase());
@@ -63,13 +66,16 @@ export class CapabilitiesPanel implements OnInit {
     }
     const caching = this.promptCaching();
     const ttl = this.cacheTtl();
+    this.saving.set(true);
     this.feedback.run(
-      this.service.update(this.slug(), {
-        tools_enabled: this.toolsEnabled(),
-        include_reasoning: this.includeReasoning(),
-        prompt_caching_enabled: caching,
-        prompt_cache_ttl: ttl,
-      }),
+      this.service
+        .update(this.slug(), {
+          tools_enabled: this.toolsEnabled(),
+          include_reasoning: this.includeReasoning(),
+          prompt_caching_enabled: caching,
+          prompt_cache_ttl: ttl,
+        })
+        .pipe(finalize(() => this.saving.set(false))),
       {
         failure: 'Could not change what this use case may do.',
         success: (useCase: UseCase) => {

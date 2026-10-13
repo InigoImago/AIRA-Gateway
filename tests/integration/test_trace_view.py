@@ -30,11 +30,10 @@ from .conftest import GATEWAY_URL
 
 pytestmark = pytest.mark.integration
 
+#: The demo's chat model — served on every stack this layer runs against, and declared in the
+#: catalogue as calling tools (`tools/seed_local_catalog.py`), which is what a trace of the
+#: functions offered needs: the declaration is recorded whether or not the model then calls one.
 MODEL = "qwen3:0.6b"
-#: A model whose catalog entry **declares** tool calling. It has to be a different one: `qwen3:0.6b`
-#: does not, and the gateway refuses it by name rather than answering in prose — which is the
-#: `FRD-131` rule working, not a fixture problem.
-TOOL_MODEL = "qwen2.5:3b"
 SHORT = {"generationConfig": {"maxOutputTokens": 8}}
 #: How long the gateway may take to see a suspension: its cache lifetime, with margin for a loaded
 #: runner (`FRD-503` §4.1).
@@ -64,6 +63,29 @@ async def _traces(client: httpx.AsyncClient, token: str, **params) -> dict:
     return response.json()
 
 
+async def _traces_until(
+    client: httpx.AsyncClient,
+    token: str,
+    holds=lambda body: bool(body["traces"]),
+    *,
+    within: float = TRACE_WRITTEN_WITHIN,
+    **params,
+) -> dict:
+    """Ask until the answer ``holds``, on a clock — and say so when it never does.
+
+    The audit write is off the request path (`FRD-405`), and after a busy suite its queue is
+    deep: twenty back-to-back calls are over in a fraction of a second, long before the row lands,
+    and the test then reports a lost audit row that was merely late.
+    """
+    deadline = time.monotonic() + within
+    body = await _traces(client, token, **params)
+    while not holds(body):
+        assert time.monotonic() < deadline, f"no trace row within {within}s for {params}"
+        await asyncio.sleep(0.5)
+        body = await _traces(client, token, **params)
+    return body
+
+
 async def test_a_real_request_appears_as_a_trace_with_what_it_actually_cost(
     fixture, governance_token
 ) -> None:
@@ -72,11 +94,7 @@ async def test_a_real_request_appears_as_a_trace_with_what_it_actually_cost(
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
         # The audit write is off the hot path (`FRD-405`); the row lands within a moment.
-        for _ in range(20):
-            body = await _traces(client, governance_token, use_case=fixture.slug)
-            if body["traces"]:
-                break
-        rows = body["traces"]
+        rows = (await _traces_until(client, governance_token, use_case=fixture.slug))["traces"]
 
     assert rows, "a served request left no trace row"
     row = rows[0]
@@ -90,18 +108,25 @@ async def test_a_real_request_appears_as_a_trace_with_what_it_actually_cost(
 
 
 async def test_the_prompt_and_the_answer_never_leave_the_database(
-    fixture, governance_token
+    fixture, governance_token, engine
 ) -> None:
     """`FRD-502` FR-11, asserted where it matters: the use case has `store_payloads` on, so the
-    prompt *is* in the row this endpoint selects from. If the allow-list ever became an exclusion
-    list, this is the test that fails."""
+    prompt *is* in the row this endpoint selects from — checked in the database first, since
+    without that the absence below would hold for a payload nobody stored. If the allow-list ever
+    became an exclusion list, this is the test that fails."""
     secret = "zwiebelkuchen-4711"
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture, secret)).status_code == 200
-        for _ in range(20):
-            body = await _traces(client, governance_token, use_case=fixture.slug)
-            if body["traces"]:
-                break
+        body = await _traces_until(client, governance_token, use_case=fixture.slug)
+
+    async with engine.connect() as connection:
+        stored = (
+            await connection.execute(
+                text("SELECT request_payload::text FROM request_logs WHERE use_case = :slug"),
+                {"slug": fixture.slug},
+            )
+        ).scalar()
+    assert stored and secret in stored, "the prompt was not stored, so its absence proves nothing"
 
     assert body["traces"], "no row to check"
     assert secret not in httpx.Response(200, json=body).text
@@ -176,17 +201,14 @@ async def test_paging_over_postgres_repeats_no_row_and_skips_none(
     assert len(second["traces"]) == 3, "the second page lost rows the first did not cover"
 
 
-async def test_a_member_sees_their_own_use_case_and_an_oversight_role_sees_it_too(
+async def test_an_oversight_role_sees_a_use_case_and_a_non_member_is_answered_empty(
     fixture, member_token, governance_token
 ) -> None:
     """The scope comes from the token's roles, not from a test override — which is the only way to
     know Keycloak, the JWKS verification and `visible_scope` agree."""
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
-        for _ in range(20):
-            governance = await _traces(client, governance_token, use_case=fixture.slug)
-            if governance["traces"]:
-                break
+        governance = await _traces_until(client, governance_token, use_case=fixture.slug)
         member = await _traces(client, member_token, use_case=fixture.slug)
 
     assert governance["scope"] == "all"
@@ -235,10 +257,7 @@ async def test_it_security_sees_every_use_case_and_not_an_empty_screen(
     scope function asked for the wrong one — so the role whose job is investigating saw nothing."""
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
-        for _ in range(20):
-            body = await _traces(client, security_token, use_case=fixture.slug)
-            if body["traces"]:
-                break
+        body = await _traces_until(client, security_token, use_case=fixture.slug)
 
     assert body["scope"] == "all", "IT Security must not be scoped to its own memberships"
     assert body["traces"], "IT Security saw no trace of a request that certainly happened"
@@ -251,10 +270,7 @@ async def test_the_calling_machine_is_shown_to_an_incident_role_and_withheld_oth
     and may not act on an incident — **visibility and authority are different answers**."""
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
-        for _ in range(20):
-            security = await _traces(client, security_token, use_case=fixture.slug)
-            if security["traces"]:
-                break
+        security = await _traces_until(client, security_token, use_case=fixture.slug)
         oversight = await _traces(client, governance_token, use_case=fixture.slug)
 
     assert "source_ip" in security["traces"][0]
@@ -278,21 +294,32 @@ async def test_filtering_by_address_is_refused_rather_than_ignored(governance_to
     assert "source address" in response.json()["error"]["message"].lower()
 
 
-async def test_a_filter_narrows_and_never_widens(fixture, member_token) -> None:
+async def test_a_filter_narrows_and_never_widens(fixture, member_token, governance_token) -> None:
     """Every filter is applied after `visible_scope`. No combination of them may reach a use case
     the caller could not already see — which is the property an added parameter is most likely to
-    break, because each one is written next to the last."""
+    break, because each one is written next to the last.
+
+    Asked about a use case that **has** a row the member may not see, with filters that **match**
+    that row: asked about one with no rows at all, every filter returned nothing whether or not it
+    respected the scope. And asked once naming the use case and once naming none.
+    """
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
+        # The row exists, and what would match it is read off it by somebody allowed to see it.
+        theirs = (await _traces_until(client, governance_token, use_case=fixture.slug))["traces"][0]
         for params in (
             {"mine": "true"},
-            {"tools_only": "true"},
-            {"credential": "abcd"},
-            {"subject": "somebody-else"},
+            {"tools_only": "false"},
+            {"credential": theirs["credential"]},
+            {"subject": theirs["subject"]},
         ):
-            body = await _traces(client, member_token, use_case="does-not-exist", **params)
-            assert body["traces"] == [], f"{params} reached outside the caller's scope"
-            assert body["in_scope"] is False
+            named = await _traces(client, member_token, use_case=fixture.slug, **params)
+            assert named["traces"] == [], f"{params} reached outside the caller's scope"
+            assert named["in_scope"] is False, params
+            unnamed = await _traces(client, member_token, **params)
+            assert not [row for row in unnamed["traces"] if row["use_case"] == fixture.slug], (
+                f"{params} with no use case named reached one the caller cannot see"
+            )
 
 
 async def test_only_my_own_requests_is_offered_to_a_role_that_sees_everything(
@@ -302,10 +329,7 @@ async def test_only_my_own_requests_is_offered_to_a_role_that_sees_everything(
     filter must be a real question to the server, not a label."""
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
-        for _ in range(20):
-            everybody = await _traces(client, governance_token, use_case=fixture.slug)
-            if everybody["traces"]:
-                break
+        everybody = await _traces_until(client, governance_token, use_case=fixture.slug)
         mine = await _traces(client, governance_token, use_case=fixture.slug, mine="true")
 
     # The traffic was made by the *fixture's* API key, not by the governance reader, so "mine"
@@ -321,11 +345,12 @@ async def test_a_trace_carries_the_functions_the_model_was_offered(
     fixture, governance_token
 ) -> None:
     """`FRD-131` FR-7: names and a count, never the arguments. Proved on a request that really
-    declared a tool, because the column is filled in by the recorder."""
+    declared a tool, because the column is filled in by the recorder — on the demo model, which
+    every stack serves, so this runs rather than skipping where the larger tool model is absent."""
     await fixture.enable_tools()
     async with httpx.AsyncClient(timeout=180.0) as client:
         response = await client.post(
-            f"{GATEWAY_URL}/v1beta/models/{TOOL_MODEL}:generateContent",
+            f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
             headers=fixture.headers(),
             json={
                 "contents": [{"parts": [{"text": "What is the weather in Berlin?"}]}],
@@ -347,17 +372,16 @@ async def test_a_trace_carries_the_functions_the_model_was_offered(
             },
             timeout=180.0,
         )
-        if response.status_code == 404:
-            # The model is not deployed in this stack. Named, never a bare skip — a skip that hides
-            # a wrong toggle would report green about nothing (`FRD-207`).
-            pytest.skip(f"{TOOL_MODEL} is not available in this stack")
         assert response.status_code == 200, response.text
 
-        for _ in range(20):
-            body = await _traces(client, governance_token, use_case=fixture.slug, tools_only="true")
-            rows = [row for row in body["traces"] if row.get("tool_calls")]
-            if rows:
-                break
+        body = await _traces_until(
+            client,
+            governance_token,
+            lambda body: any(row.get("tool_calls") for row in body["traces"]),
+            use_case=fixture.slug,
+            tools_only="true",
+        )
+        rows = [row for row in body["traces"] if row.get("tool_calls")]
 
     assert rows, "a request that declared a function left no record of having declared one"
     recorded = rows[0]["tool_calls"]
@@ -384,11 +408,7 @@ async def _payload(client: httpx.AsyncClient, token: str, row_id: str) -> httpx.
 
 
 async def _first_trace_id(client: httpx.AsyncClient, token: str, slug: str) -> str:
-    for _ in range(20):
-        body = await _traces(client, token, use_case=slug)
-        if body["traces"]:
-            return str(body["traces"][0]["id"])
-    raise AssertionError("no trace row appeared for a request that certainly happened")
+    return str((await _traces_until(client, token, use_case=slug))["traces"][0]["id"])
 
 
 async def test_an_incident_role_reads_the_prompt_and_the_read_is_recorded(

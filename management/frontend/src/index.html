@@ -6,23 +6,29 @@
     <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <!--
-      Content Security Policy (ADR-0007). The SPA is self-contained: all scripts, styles, and
-      assets ship with the bundle, so nothing needs to be loaded from a third party. Angular
-      injects component styles as inline <style> elements, hence 'unsafe-inline' for styles
-      only — scripts stay locked to same-origin, which is what stops an injected payload from
-      running. `connect-src` covers this origin (the /api and /gw proxies), the Keycloak issuer,
-      any HTTPS backend in a real deployment, and the dev server's live-reload socket.
-      `frame-ancestors` cannot be set from a meta tag; the backend sends X-Frame-Options: DENY.
+      Content Security Policy (ADR-0007), stating what is true of the bundle wherever it is served.
+      The SPA is self-contained: all scripts, styles, and assets ship with the bundle, so nothing
+      needs to be loaded from a third party. Angular injects component styles as inline <style>
+      elements, hence 'unsafe-inline' for styles only — scripts stay locked to same-origin, which
+      is what stops an injected payload from running. Nothing is framed: a session is renewed with
+      the refresh token, not a hidden iframe.
+
+      Connections are the deployment's to narrow. The issuer is configuration (runtime-config.js),
+      which a built file cannot name, so nginx sends a second policy as a header that limits
+      `connect-src` to this origin and the issuer (deploy/aira-headers.inc.template), and a browser
+      enforces both. Under `ng serve` this one is the only policy, and the development realm's
+      issuer on another port has to stay reachable. `frame-ancestors` cannot be set from a meta
+      tag; the header sends it.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      data-aira-note="AIRA_ISSUER_ORIGIN is replaced at container start from AIRA_OIDC_ISSUER; see deploy/10-runtime-config.envsh"
       content="default-src 'self';
                script-src 'self';
                style-src 'self' 'unsafe-inline';
                img-src 'self' data:;
                font-src 'self' data:;
-               connect-src 'self' https: AIRA_ISSUER_ORIGIN ws://localhost:* wss:;
+               connect-src 'self' http: https: ws: wss:;
+               frame-src 'none';
                object-src 'none';
                base-uri 'self';
                form-action 'self'"

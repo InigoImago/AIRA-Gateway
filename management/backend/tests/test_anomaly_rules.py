@@ -525,3 +525,160 @@ def test_changing_an_action_away_from_throttle_leaves_no_rate_behind() -> None:
         None,
         None,
     )
+
+
+# == the use-case route upserts the rule that exists (`M2-7`) =====================================
+
+
+def test_re_posting_a_throttle_without_its_action_keeps_a_whole_throttle() -> None:
+    """The use-case route validated a re-post as if no rule existed, so `action` read as its
+    default `alert` and the branch that clears an alert's expiry and rate ran against the stored
+    `throttle`: the row kept `throttle` with no expiry and no rate, the console showed a throttle,
+    and the gateway answered `detected_not_enforced`. The upsert now validates against the rule
+    of that name, as a `PATCH` on the global route does."""
+    admin = _user("rethrottle-admin", "global-admin")
+    slug = _use_case(admin, "rethrottle-uc")
+    client = _client(admin)
+    body = _rule(
+        name="throttle probers",
+        action=RuleAction.THROTTLE.value,
+        action_minutes=60,
+        throttle_rpm=5,
+        target=RuleTarget.SUBJECT.value,
+    )
+    assert client.post(f"{BASE}{slug}/anomaly-rules/", body, format="json").status_code == 201
+
+    again = client.post(
+        f"{BASE}{slug}/anomaly-rules/", _rule(name="throttle probers", threshold=50), format="json"
+    )
+
+    assert again.status_code == 201, again.content
+    rule = AnomalyRule.objects.get(use_case__slug=slug, name="throttle probers")
+    assert (rule.action, rule.action_minutes, rule.throttle_rpm, rule.threshold) == (
+        RuleAction.THROTTLE.value,
+        60,
+        5,
+        50,
+    )
+
+
+@pytest.mark.parametrize("route", ["use_case", "global"])
+def test_a_rate_rule_created_without_a_sample_floor_takes_the_models_default(route: str) -> None:
+    """The validator read an absent `min_sample` as 0 and refused it with a sentence about a field
+    the caller never sent, although the model's default is 20."""
+    from aira_common.anomalies import DEFAULT_MIN_SAMPLE
+
+    body = {key: value for key, value in _rule(name="no floor").items() if key != "min_sample"}
+    if route == "global":
+        response = _client(_user("floor-sec", "it-security")).post(GLOBAL, body, format="json")
+    else:
+        admin = _user("floor-admin", "global-admin")
+        slug = _use_case(admin, "floor-uc")
+        response = _client(admin).post(f"{BASE}{slug}/anomaly-rules/", body, format="json")
+
+    assert response.status_code == 201, response.content
+    assert response.json()["min_sample"] == DEFAULT_MIN_SAMPLE
+
+
+# == a name is unique where the rule lives (`M2-8`) ===============================================
+
+
+def test_a_use_case_rule_may_share_a_name_with_a_global_rule() -> None:
+    """DRF turned the global rules' conditional constraint into a validator over the global rules
+    and applied it to every write — so a global rule called "too many refusals" stopped every use
+    case from creating, or re-posting, one of that name, with a refusal about a rule the use case
+    cannot see."""
+    _client(_user("name-sec", "it-security")).post(GLOBAL, _rule(), format="json")
+    admin = _user("name-admin", "global-admin")
+    slug = _use_case(admin, "name-uc")
+
+    response = _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(), format="json")
+
+    assert response.status_code == 201, response.content
+    assert AnomalyRule.objects.filter(name="too many refusals").count() == 2
+
+
+def test_two_global_rules_still_may_not_share_a_name() -> None:
+    """The constraint the validator came from, still held — and now by name."""
+    sec = _client(_user("twin-sec", "it-security"))
+    assert sec.post(GLOBAL, _rule(), format="json").status_code == 201
+
+    response = sec.post(GLOBAL, _rule(threshold=60), format="json")
+
+    assert response.status_code == 400, response.content
+    assert "global rules" in str(response.json())
+
+
+def test_renaming_a_rule_onto_a_siblings_name_is_refused_by_name() -> None:
+    """The per-use-case constraint had no validator at all, so the rename reached the database as
+    an `IntegrityError` — a `500`."""
+    admin = _user("rename-admin", "global-admin")
+    slug = _use_case(admin, "rename-uc")
+    client = _client(admin)
+    client.post(f"{BASE}{slug}/anomaly-rules/", _rule(name="first"), format="json")
+    second = client.post(f"{BASE}{slug}/anomaly-rules/", _rule(name="second"), format="json")
+
+    response = client.patch(f"{GLOBAL}{second.json()['id']}/", {"name": "first"}, format="json")
+
+    assert response.status_code == 400, response.content
+    assert slug in str(response.json())
+    assert AnomalyRule.objects.get(pk=second.json()["id"]).name == "second"
+
+
+# == the refusals nothing exercised (`M2-13`) =====================================================
+
+
+def test_a_throttle_without_a_rate_is_refused_by_name() -> None:
+    """`FRD-501` §4.4: a throttle has to say to what. A rate reduced to nothing is a block."""
+    response = _client(_user("rate-sec", "it-security")).post(
+        GLOBAL,
+        _rule(
+            name="no rate",
+            action=RuleAction.THROTTLE.value,
+            action_minutes=60,
+            target=RuleTarget.SUBJECT.value,
+        ),
+        format="json",
+    )
+
+    assert response.status_code == 400, response.content
+    assert "a rate reduced to nothing is a block" in str(response.json())
+
+
+def test_a_rate_sent_with_an_action_that_reduces_none_is_refused() -> None:
+    response = _client(_user("alert-rate-sec", "it-security")).post(
+        GLOBAL, _rule(name="alert with rate", throttle_rpm=5), format="json"
+    )
+
+    assert response.status_code == 400, response.content
+    assert "'alert' does not reduce a rate" in str(response.json())
+
+
+def test_a_throttle_rate_is_bounded_like_a_rate_limit() -> None:
+    """The same unit as `RateLimit.limit_rpm`, which stops at a million: two billion requests a
+    minute throttles nothing and reads as a decision."""
+    response = _client(_user("huge-sec", "it-security")).post(
+        GLOBAL,
+        _rule(
+            name="huge",
+            action=RuleAction.THROTTLE.value,
+            action_minutes=60,
+            throttle_rpm=2_000_000_000,
+            target=RuleTarget.SUBJECT.value,
+        ),
+        format="json",
+    )
+
+    assert response.status_code == 400, response.content
+    assert "throttle_rpm" in str(response.json())
+
+
+def test_a_global_rule_is_deleted_by_whoever_may_author_one(captured_events) -> None:
+    """The success path of the global delete, and the event the gateway drops its copy on."""
+    sec = _client(_user("del-sec", "it-security"))
+    rule_id = sec.post(GLOBAL, _rule(name="everywhere"), format="json").json()["id"]
+
+    assert sec.delete(f"{GLOBAL}{rule_id}/").status_code == 204
+
+    assert not AnomalyRule.objects.filter(pk=rule_id).exists()
+    assert ("anomaly_rule.deleted", {"id": rule_id}) in captured_events

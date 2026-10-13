@@ -30,8 +30,8 @@ export const CAPABILITY_HELP: Record<Capability, string> = {
   prompt_caching: `The provider will honour a cache marker on this model's stable prefix, so a
       repeated tool declaration and system prompt cost a fraction on the next request. The one
       capability here that changes the **price** and not the answer — so a model without it is
-      served normally rather than skipped. Needs the two cache prices above to show up in
-      reporting.`,
+      served normally rather than skipped. The saving shows up in reporting only once the two
+      cache prices on the "What it costs" tab are set.`,
   speech: `The model answers with speech: text in, audio out. A speech model usually declares this
       and **not** generate, so a text request to it is refused by name rather than sent to a
       provider that refuses it without saying why. A model without it is skipped when a caller asks

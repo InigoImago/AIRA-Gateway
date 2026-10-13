@@ -519,3 +519,141 @@ def test_a_block_that_offers_nothing_is_refused() -> None:
 
     errors = validate_thinking({"min_tokens": 128}, max_output_tokens=65536)
     assert any("neither a mode nor a level" in error for error in errors), errors
+
+
+# ---- a value of the wrong kind is refused, never a server error ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("declaration", "expected"),
+    [
+        ({"capabilities": [{"a": 1}]}, "Unknown capabilities"),
+        ({"capabilities": [["generate"]]}, "Unknown capabilities"),
+        ({"thinking": {"modes": [["auto"]]}}, "Unknown thinking modes"),
+        ({"thinking": {"modes": [{"x": 1}]}}, "Unknown thinking modes"),
+        ({"hosting": ["managed"]}, "hosting must be one of"),
+    ],
+)
+def test_a_list_element_that_is_itself_a_list_or_an_object_is_refused_by_name(
+    declaration: dict[str, Any], expected: str
+) -> None:
+    """Membership in a `set` hashes the element, and a list or an object is unhashable: the check
+    raised `TypeError` and the caller's value answered `500`. Each one is just another unknown
+    value, refused with the sentence every other unknown value gets."""
+    errors = validate_declaration(declaration)
+
+    assert any(expected in error for error in errors), errors
+
+
+def test_an_unhashable_capability_is_a_400_through_the_api() -> None:
+    response = _client(_user("ga-shape", "global-admin")).post(
+        BASE, {"name": "shape-1", "capabilities": [{"a": 1}]}, format="json"
+    )
+
+    assert response.status_code == 400, response.content
+    assert "Unknown capabilities" in str(response.json())
+
+
+# ---- a declared level may be the default (both planes, one rule) -----------------------------
+
+
+def test_a_declared_level_word_may_be_the_default() -> None:
+    """The gateway sends whatever word the default names (`thinking._default_for`) and accepts a
+    declared level from a caller, and the console offers modes and levels together. So a level is
+    a default the model can honour, and refusing it made every such save fail with a sentence
+    about modes."""
+    assert (
+        validate_thinking(
+            {"modes": ["auto"], "levels": ["high"], "default": {"mode": "high"}},
+            max_output_tokens=None,
+        )
+        == []
+    )
+
+
+def test_a_model_with_levels_only_may_name_one_as_its_default() -> None:
+    """The seed's `qwen3:4b` shape: level words and no control mode. Without this it could never
+    be given a default at all."""
+    declaration = {"levels": ["low", "medium", "high"], "default": {"mode": "Medium"}}
+
+    assert validate_thinking(declaration, max_output_tokens=None) == []
+
+
+def test_a_default_naming_a_word_declared_nowhere_is_still_refused() -> None:
+    errors = validate_thinking(
+        {"modes": ["auto"], "levels": ["low"], "default": {"mode": "high"}},
+        max_output_tokens=None,
+    )
+
+    assert any("one of the declared modes or levels" in error for error in errors), errors
+
+
+# ---- a figure of zero describes a model that cannot answer -----------------------------------
+
+
+@pytest.mark.parametrize(
+    "field", ["context_window", "max_output_tokens", "default_max_output_tokens"]
+)
+def test_a_token_figure_of_zero_is_refused_by_name(field: str) -> None:
+    """`thinking.*` and `embedding.*` already demand positive figures. A model whose output cap is
+    zero can never answer, and one whose default cap is zero answers every caller who sets none
+    with nothing."""
+    errors = validate_declaration(_declaration(**{field: 0}))
+
+    assert any(f"{field} must be a positive integer" in error for error in errors), errors
+
+
+def test_a_token_figure_of_zero_is_a_400_through_the_api() -> None:
+    response = _client(_user("ga-zero", "global-admin")).post(
+        BASE, {"name": "zero-1", "max_output_tokens": 0}, format="json"
+    )
+
+    assert response.status_code == 400, response.content
+    assert "max_output_tokens must be a positive integer" in str(response.json())
+
+
+# ---- a declaration is bounded, and says only what something reads ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("declaration", "expected"),
+    [
+        ({"thinking": {"modes": ["auto"], "budget": 100}}, "thinking does not take 'budget'"),
+        (
+            {"thinking": {"modes": ["auto"], "default": {"mode": "auto", "why": "x"}}},
+            "thinking.default does not take 'why'",
+        ),
+        ({"embedding": {"dimensions": [8], "pad": "x" * 10}}, "embedding does not take 'pad'"),
+        ({"attachments": {"media_types": {}, "pad": 1}}, "attachments does not take 'pad'"),
+        (
+            {"attachments": {"media_types": {"application/pdf": {"tokens": 1, "pad": 2}}}},
+            "does not take 'pad'",
+        ),
+        ({"thinking": {"levels": [f"l{n}" for n in range(40)]}}, "thinking.levels lists at most"),
+        ({"thinking": {"levels": ["x" * 40]}}, "at most 32 characters"),
+        ({"embedding": {"task_types": [f"T{n}" for n in range(40)]}}, "lists at most"),
+        ({"embedding": {"task_types": ["T" * 200]}}, "at most 64 characters"),
+        ({"embedding": {"supports_batch": "yes"}}, "embedding.supports_batch must be true"),
+        ({"attachments": {"media_types": {"application/" + "x" * 200: None}}}, "at most 128"),
+    ],
+)
+def test_a_declaration_carries_only_what_is_read_and_within_bounds(
+    declaration: dict[str, Any], expected: str
+) -> None:
+    """Every key here travels to the gateway on every save and is read on the request path. A key
+    nothing reads is a setting somebody will tune and wonder why nothing changes, and an unbounded
+    one is an event too large for the bus to carry — so both are refused where they are written,
+    by name."""
+    errors = validate_declaration(declaration)
+
+    assert any(expected in error for error in errors), errors
+
+
+def test_a_thinking_level_is_no_longer_than_a_caller_may_ask_for() -> None:
+    """A caller's thinking word is refused above the gateway's `MAX_MODE_LENGTH`, so a longer
+    declared level could be stored and never requested. One bound, read from both sides."""
+    from aira_management.apps.catalog.validation import MAX_LEVEL_LENGTH
+
+    from aira_gateway.thinking import MAX_MODE_LENGTH
+
+    assert MAX_LEVEL_LENGTH == MAX_MODE_LENGTH

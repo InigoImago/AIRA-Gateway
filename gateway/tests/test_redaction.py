@@ -46,6 +46,77 @@ def test_a_credential_pasted_into_a_prompt_is_removed(secret: str) -> None:
     assert PLACEHOLDER in str(stored)
 
 
+@pytest.mark.parametrize(
+    ("text", "credential"),
+    [
+        ("Authorization: Bearer abc.def.ghi", "abc.def.ghi"),
+        (
+            "curl -H 'Authorization: Bearer ghp_16C7e42F292c6912E7710c838347Ae178B4a' https://api",
+            "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+        ),
+        ("Authorization: Basic dXNlcjpzM2NyZXQtcGFzc3dvcmQ=", "dXNlcjpzM2NyZXQtcGFzc3dvcmQ="),
+        ("authorization:Bearer opaque-token-1234567890", "opaque-token-1234567890"),
+        (
+            'headers = {"Authorization": "Bearer opaque-token-1234567890"}',
+            "opaque-token-1234567890",
+        ),
+        (
+            "Authorization: AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/iam/"
+            "aws4_request, SignedHeaders=host;x-amz-date, Signature=5d672d79c15b13162d9279b0855c",
+            "5d672d79c15b13162d9279b0855c",
+        ),
+    ],
+    ids=["bearer", "curl-header", "basic", "no-space", "a-dict-in-code", "several-parts"],
+)
+def test_the_credential_after_an_authorization_header_is_removed(
+    text: str, credential: str
+) -> None:
+    """**The credential, not the word in front of it.** Asserting that the whole header string
+    is gone proves nothing: it is gone as soon as any part of it changes, which removing the scheme
+    word alone achieves while the token itself stays in the stored prompt."""
+    stored = build_redactor().redact(_prompt(f"Call it with {text} please"))
+
+    assert credential not in str(stored)
+    assert PLACEHOLDER in str(stored)
+
+
+def test_what_follows_a_quoted_header_value_survives() -> None:
+    """The value ends where the quote around it does, so the rest of the command — the address,
+    which is the debugging half — is kept."""
+    text = "curl -H 'Authorization: Bearer abcdef123456' https://api.example.com/v1/items"
+
+    stored = build_redactor().redact(_prompt(text))
+
+    assert "abcdef123456" not in str(stored)
+    assert "https://api.example.com/v1/items" in str(stored)
+
+
+def test_a_private_key_pasted_without_its_end_line_is_removed_too() -> None:
+    """A truncated paste is the common one, and the key material is in its first lines."""
+    pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\nsecretline"
+
+    stored = build_redactor().redact(_prompt(f"Deploy with:\n{pem}"))
+
+    assert "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" not in str(stored)
+    assert "secretline" not in str(stored)
+
+
+def test_a_legacy_encrypted_key_is_removed_with_its_header_lines() -> None:
+    """The one private-key form whose body carries a `-`: its two header lines name the cipher, and
+    the encrypted key after them is still the key."""
+    pem = (
+        "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
+        "DEK-Info: DES-EDE3-CBC,F1E2D3C4B5A69788\n\nMIIEowIBAAK\nsecretline\n"
+        "-----END RSA PRIVATE KEY-----"
+    )
+
+    stored = build_redactor().redact(_prompt(f"Deploy with:\n{pem}\nthanks"))
+
+    assert "secretline" not in str(stored)
+    assert "DEK-Info" not in str(stored)
+    assert "thanks" in str(stored), "the text after the block is not part of it"
+
+
 def test_a_private_key_block_is_removed_body_and_all() -> None:
     """A partial match here would leave the key material and remove only its label."""
     pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAK\nsecretline\n-----END RSA PRIVATE KEY-----"
@@ -135,3 +206,56 @@ def test_a_nested_quantifier_is_refused() -> None:
     a pipeline config for the same reason."""
     with pytest.raises(RedactionMisconfigured):
         build_redactor("(a+)+$")
+
+
+# ---- the cost of redacting what a caller sends ----------------------------------------------
+
+#: How much hostile text each case redacts, and the most it may take. Linear patterns do this in a
+#: few milliseconds; the quadratic shapes this guards against took over five seconds at 160 kB, so
+#: the bound sits two orders of magnitude from either side and does not depend on the machine.
+HOSTILE_CHARS = 200_000
+HOSTILE_SECONDS = 1.0
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "eyJ",
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIE",
+        "authorization:",
+        "Authorization: Bearer x",
+        "aira_aaaa_",
+        "AIza",
+        "sk-",
+    ],
+    ids=[
+        "jwt-prefix",
+        "pem-begin",
+        "pem-begin-and-body",
+        "auth",
+        "auth-value",
+        "aira",
+        "google",
+        "sk",
+    ],
+)
+def test_redacting_hostile_text_takes_linear_time(unit: str) -> None:
+    """Every built-in pattern, on a body built to make it backtrack (G4-3).
+
+    The redactor runs in the audit writer **on the event loop**, over the whole stored payload, so
+    a pattern that is quadratic on caller text stops the instance: a body of the shape a pattern
+    starts on, with nothing that lets it finish, makes it rescan the rest of the text from every
+    start. The JWT pattern restarted at every `eyJ` and the PEM pattern scanned to the end from
+    every `BEGIN`; both are anchored or possessive now, and this pins it for each of them.
+    """
+    import time
+
+    text = unit * (HOSTILE_CHARS // len(unit))
+    redactor = build_redactor()
+
+    started = time.perf_counter()
+    redactor.redact(_prompt(text))
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < HOSTILE_SECONDS, f"{len(text)} chars of {unit!r} took {elapsed:.2f} s"

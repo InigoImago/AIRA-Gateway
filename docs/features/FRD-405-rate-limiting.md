@@ -151,6 +151,11 @@ to seed with. The trade is that reservations still in flight when a counter expi
 briefly reopening the race for whatever is in flight at that instant; a rare under-count of one
 estimate is a far better failure than a permanent over-count nobody can clear.
 
+**The expiry is set when the counter is built and never extended.** Refreshed by every reservation
+and every correction, it was an idle timeout: a counter that saw a request every few minutes was
+never rebuilt, and on exactly the busy counters where drift matters it lasted the whole period. A
+counter is now rebuilt from Postgres five minutes after it was built, however busy it is.
+
 ### 4.3 What happens when Redis is down
 
 Decided in `ADR-0008`, restated here because it is the part most likely to be reconsidered by

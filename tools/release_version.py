@@ -29,7 +29,9 @@ ROOT = Path(__file__).resolve().parents[1]
 #: `v1.2.3` and nothing else. A pre-release (`v1.2.3-rc1`), a two-part tag (`v1.2`) and an
 #: unprefixed one (`1.2.3`) are **not** releases of this project and must not be bumped from: a
 #: pattern loose enough to match them would make the next version depend on somebody's scratch tag.
-_RELEASE_TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+#: Only the canonical spelling, too — ASCII digits, no leading zero — because `v01.2.3` and
+#: `v١.٢.٣` name the same triple as `v1.2.3` without being the tag `render` writes for it.
+_RELEASE_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 Version = tuple[int, int, int]
 
@@ -43,7 +45,7 @@ PARTS = ("major", "minor", "patch")
 
 def parse(tag: str) -> Version | None:
     """The triple a release tag names, or `None` for anything that is not one."""
-    match = _RELEASE_TAG.match(tag.strip())
+    match = _RELEASE_TAG.fullmatch(tag.strip())
     if match is None:
         return None
     major, minor, patch = match.groups()

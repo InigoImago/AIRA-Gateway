@@ -33,6 +33,17 @@ from aira_management.rbac import requires, role_definitions, role_groups
 
 #: The longest label a role may carry; also the column's length.
 LABEL_MAX = 120
+#: The longest group path a role may be bound to: its column's width, which only PostgreSQL
+#: enforces — as a `DataError` on the save, past every check below.
+GROUP_PATH_MAX = StoredRole._meta.get_field("group_path").max_length or 255
+
+
+class ChangedConcurrently(APIException):
+    """Two administrators changed one role at once, and the other change was saved first."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Somebody changed this role at the same moment. Reload it and try again."
+    default_code = "conflict"
 
 
 class DirectoryCannotVerify(APIException):
@@ -118,6 +129,8 @@ def _verified_group(raw: Any, *, keep: str | None = None) -> str:
         raise ValidationError(
             {"group_path": ["A full Keycloak group path, such as '/finance/controlling'."]}
         )
+    if len(path) > GROUP_PATH_MAX:
+        raise ValidationError({"group_path": [f"At most {GROUP_PATH_MAX} characters."]})
     if path == keep:
         return path
     configured = {p for paths in role_groups().values() for p in paths}
@@ -242,7 +255,12 @@ class RoleViewSet(viewsets.ViewSet):
                 _record(RoleChange.CREATED, slug, request.user, None, _snapshot(row))
                 emit("role.upserted", _event(row))
         except IntegrityError as exc:
-            # Two administrators binding one group at once: the constraint decides.
+            # Two administrators saving at once: the constraint decides, and the refusal names the
+            # value that was taken — the name or the group — rather than guessing.
+            if StoredRole.objects.filter(slug=slug).exists():
+                raise ValidationError(
+                    {"label": [f"A role called '{label}' exists already."]}
+                ) from exc
             raise ValidationError(
                 {"group_path": [f"'{group_path}' already confers a role."]}
             ) from exc
@@ -255,8 +273,14 @@ class RoleViewSet(viewsets.ViewSet):
             raise PermissionDenied(f"{role.label} is fixed and cannot be changed.")
         row = StoredRole.objects.filter(slug=role.slug).first()
         if row is None:
-            # IT Steuerung before anybody changed it: its row is created on the first change.
-            row = StoredRole(slug=role.slug, label=role.label, builtin=True, permissions=[])
+            # IT Steuerung before anybody changed it: its row is created on the first change, with
+            # the set it holds until then — a change that names no permissions changes none.
+            row = StoredRole(
+                slug=role.slug,
+                label=role.label,
+                builtin=True,
+                permissions=_ordered(role.permissions),
+            )
         before = (
             _snapshot(row)
             if row.pk
@@ -283,6 +307,10 @@ class RoleViewSet(viewsets.ViewSet):
                 _record(RoleChange.UPDATED, row.slug, request.user, before, _snapshot(row))
                 emit("role.upserted", _event(row))
         except IntegrityError as exc:
+            if row.builtin:
+                # A built-in role's group is configuration, so its only unique value is the slug of
+                # the row its first change creates — which a concurrent first change created too.
+                raise ChangedConcurrently() from exc
             raise ValidationError({"group_path": ["That group already confers a role."]}) from exc
         return Response(_present(self._definition(row.slug)))
 

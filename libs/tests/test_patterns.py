@@ -319,11 +319,21 @@ def test_a_run_inside_a_group_is_found_too() -> None:
 # =================================================================================================
 #
 # Both are private, and both are tested here anyway. The reason is specific rather than a habit:
-# `is_catastrophic` cannot see either of them at full resolution — a *required* repeat resets the
-# run it belongs to, so `a{3}a{3}a{3}` only ever compares two atoms and the product never grows.
-# Breaking `_lengths` for the exact form therefore changed no verdict, which is the survivor that
-# says *the property lives one level down* rather than *nothing depends on it*: delete the line and
-# the function raises `IndexError` on `{3}`. So the contract is asserted where it is stated.
+# `is_catastrophic` cannot see either of them at full resolution — a run of *exact* repeats
+# multiplies ones, so `a{3}a{3}a{3}` never moves the product whatever `_ways` answers for `{3}`.
+# A broken counter there changes no verdict, which is the survivor that says *the property lives
+# one level down* rather than *nothing depends on it*. So the contract is asserted where it is
+# stated — over the bounds `re` itself parses each quantifier into, which are what the rule reads.
+
+
+def _bounds(quantifier: str) -> tuple[int, int]:
+    """The repeat bounds `re` parses ``quantifier`` into; no quantifier is exactly once."""
+    from aira_common.patterns import _parser
+
+    if not quantifier:
+        return 1, 1
+    [(_, (low, high, _body))] = list(_parser.parse("a" + quantifier, 0))
+    return int(low), int(high)
 
 
 @pytest.mark.parametrize(
@@ -334,16 +344,23 @@ def test_a_run_inside_a_group_is_found_too() -> None:
         ("{3}", 1),  # exactly three: `a{3}a{3}` is `a{6}` and there is nothing to redistribute
         ("{2,4}", 3),
         ("{0,10}", 11),
-        ("{4,2}", 1),  # nonsense bounds answer "one way", never a negative count
-        ("*", 1),  # unbounded: the count is the input's length, and `_has_no_upper_limit` says so
+        ("*", 1),  # unbounded: the count is the input's length, and `_grows_with_the_text` says so
         ("+", 1),
         ("{3,}", 1),
     ],
 )
 def test_how_many_ways_a_quantifier_can_match(quantifier: str, ways: int) -> None:
-    from aira_common.patterns import _lengths
+    from aira_common.patterns import _ways
 
-    assert _lengths(quantifier) == ways
+    assert _ways(*_bounds(quantifier)) == ways
+
+
+def test_bounds_that_make_no_sense_answer_one_way() -> None:
+    """`re` refuses `{4,2}` itself, so this never comes from a parse — but a count of ways must
+    never be negative, or a product of them could pass the bound by changing sign."""
+    from aira_common.patterns import _ways
+
+    assert _ways(4, 2) == 1
 
 
 @pytest.mark.parametrize(
@@ -361,6 +378,274 @@ def test_how_many_ways_a_quantifier_can_match(quantifier: str, ways: int) -> Non
 def test_which_quantifiers_grow_with_the_input(quantifier: str, unbounded: bool) -> None:
     """The distinction the whole threshold rests on: a constant number of ways, or one that grows
     with the prompt."""
-    from aira_common.patterns import _has_no_upper_limit
+    from aira_common.patterns import _grows_with_the_text
 
-    assert _has_no_upper_limit(quantifier) is unbounded
+    assert _grows_with_the_text(_bounds(quantifier)[1]) is unbounded
+
+
+# =================================================================================================
+# Two repeats that trade characters, however the pattern spells them
+# =================================================================================================
+#
+# The rule above was read off the pattern's *text*: two repeats were compared by spelling, a group
+# hid what it wrapped, and verbose mode changed what a space meant without telling the reader. Each
+# row below was accepted that way and is refused now, because the rule walks what `re` parses and
+# compares the characters each repeat can consume — as sets, through the engine itself.
+
+#: Each shape, with what `re.search` cost on it — compiled case-insensitively, as the filter runs
+#: it — over inputs of 250 / 500 / 1 000 / 2 000 characters that do not match.
+MEASURED_TRADES = (
+    # Two classes spelled differently that share most of their members.
+    ("[a-z]*[a-y]*!", "33 ms · 243 ms · 1 957 ms · 15 s"),
+    (r"\w*\d*\w*!", "791 ms · 11.6 s, and not finished at 1 000"),
+    (r"\S*\w*@", "6 ms · 48 ms · 371 ms · 3 088 ms"),
+    (r"[\s\S]*[\S\s]*!", "2 ms · 10 ms · 76 ms · 559 ms"),
+    # The same characters under another name.
+    (r"[0-9]+\d+!", "6 ms · 50 ms · 370 ms · 2 949 ms"),
+    (r"\w+\d+!", "6 ms · 49 ms · 387 ms · 2 984 ms"),
+    # A repeat wrapped in a group: the parse sees through it, the text did not.
+    (r"(\d+)\d+X", "23 ms · 188 ms · 1 416 ms · 11 s"),
+    # One letter in two cases — the filter compiles case-insensitively — and the Kelvin sign, which
+    # folds to `k`.
+    ("a+A+!", "8 ms · 62 ms · 484 ms · 3 840 ms"),
+    ("k*K*!", "8 ms · 62 ms · 499 ms · 3 872 ms"),
+    # A character both repeats can consume does not separate them, however required it is.
+    (".*a.*!", "128 ms at 1 000 · 14 s at 5 000"),
+    ("[ab]*ab[ab]*!", "149 ms · 1 040 ms · 7.5 s at 500 / 1 000 / 2 000"),
+    # A repeat inside a lookahead runs at every position the repeat before it can stop at.
+    (r"\d+(?=\d*!)", "49 ms · 420 ms · 3.6 s at 500 / 1 000 / 2 000"),
+    (".*(?=.*!)", "151 ms · 1.2 s · 9.8 s at 1 000 / 2 000 / 4 000"),
+    # A repeat that gives nothing back is still run again for every split of the one before it.
+    (".*a*+!", "53 ms · 434 ms · 3.4 s at 500 / 1 000 / 2 000"),
+    (".*(?>a*)!", "56 ms · 503 ms · 3.6 s at 500 / 1 000 / 2 000"),
+    # A back-reference repeated after the group it names.
+    (r"(a+)\1+b", "108 ms · 814 ms · 7.6 s at 500 / 1 000 / 2 000"),
+)
+
+
+@pytest.mark.parametrize(("pattern", "cost"), MEASURED_TRADES)
+def test_two_repeats_that_can_trade_characters_are_refused(pattern: str, cost: str) -> None:
+    """The dry run let any member post `[a-z]*[a-y]*[a-x]*!` with a sample of 8 000 letters, and
+    the instance it reached stopped serving every use case: a single worker, one event loop."""
+    assert "twice in a row" in (catastrophic_reason(pattern) or ""), cost
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        # Three classes in a row: the reported worst case, quartic in the text.
+        "[a-z]*[a-y]*[a-x]*!",
+        # Every spelling of one repeat wrapped in a group, on either side.
+        r"(?:\d+)\d+!",
+        r"\d+(\d+)",
+        r"(\d+)(\d+)X",
+        # Two ranges that meet only in a script the fixed probes do not cover: found through their
+        # own endpoints, which the check adds to what it tries.
+        r"[一-鿿]*[丁-鿾]*!",
+        r"[\U0001F600-\U0001F64F]*[\U0001F601-\U0001F64E]*!",
+        r"\d*[༐-ཀ]*!",
+        # A group repeated twice in a row is the same characters twice in a row.
+        "(?:ab)+(?:ab)+!",
+    ],
+)
+def test_every_spelling_of_the_shape_is_refused(pattern: str) -> None:
+    assert "twice in a row" in (catastrophic_reason(pattern) or "")
+
+
+@pytest.mark.parametrize(
+    ("pattern", "cost"),
+    [
+        # Verbose mode ignores the space, so this is `(a+)+$`. Measured on 18 / 22 / 26 characters
+        # and `!`: 0.02 s · 0.30 s · 4.87 s, doubling per character.
+        (r"(?x)(a+) +$", "doubles per character"),
+        # Scoped to a group, and with a comment between the group and its quantifier.
+        (r"(?x:(a+) +)$", "the same, scoped"),
+        ("(?x)(a+)#c\n+$", "the same, behind a comment"),
+    ],
+)
+def test_verbose_mode_is_read_the_way_re_reads_it(pattern: str, cost: str) -> None:
+    """Not refused for being verbose: analysed as what it is. A rule that refused the flag would
+    keep the next syntax that changes what the text means unexamined."""
+    assert catastrophic_reason(pattern) == catastrophic_reason("(a+)+$"), cost
+    assert catastrophic_reason(pattern) is not None
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        # `re` reads `a|b` as the class `[ab]`: one way to match, and a class repeated is linear.
+        "(a|b)+",
+        # A tempered dot: the lookahead consumes nothing and divides nothing, even with a branch.
+        r"(?:(?!x).)*!",
+        r"(?:(?!ab|cd).)*",
+        # A back-reference to one character, repeated: one way per length.
+        r"(.)\1{3,}!",
+        r"(\w+)\s*=\s*\1",
+        # Sets that cannot share a character — decided member by member, and by category where a
+        # set is too large to list.
+        r"[A-Za-zÄÖÜäöüß]+\s+[A-Za-zÄÖÜäöüß]+",
+        r"[À-ÿ]+\s+[À-ÿ]+",
+        r"[一-鿿]+\s+[一-鿿]+",
+        r"\S+\s+\S+",
+        r"[^\s]+\s+[^\s]+",
+        r"(?a)\w+\s+\w+",
+        r"\d+\s+\d+",
+        # A possessive repeat gives nothing back, so nothing after it can trade with it.
+        r"a*+a*!",
+    ],
+)
+def test_sets_that_cannot_share_a_character_are_not_a_run(pattern: str) -> None:
+    """The other direction, for the widening this rule took: comparing sets rather than spellings
+    refuses more, and every case here is one it must not — `redaction.py` refuses to start on a
+    false positive."""
+    assert catastrophic_reason(pattern) is None
+
+
+def test_the_category_relations_the_rule_relies_on_hold_for_every_character() -> None:
+    """`_DISJOINT_CATEGORIES` and `_CATEGORY_WITHIN` are claims about Unicode, and a wrong entry is
+    a refusal that silently does not happen. Each is checked against every code point there is, in
+    both of the engine's modes — one search over all of them, for a counterexample."""
+    import re
+
+    from aira_common.patterns import _CATEGORY_WITHIN, _DISJOINT_CATEGORIES
+
+    everything = "".join(map(chr, range(0x110000)))
+    for flags in (0, re.ASCII):
+        for pair in _DISJOINT_CATEGORIES:
+            first, second = sorted(pair)
+            both = re.compile(rf"(?=\{first})\{second}", flags)
+            assert both.search(everything) is None, (pair, flags)
+        for inner, outer in _CATEGORY_WITHIN:
+            outside = re.compile(rf"(?=\{inner})\{outer.upper()}", flags)
+            assert outside.search(everything) is None, (inner, outer, flags)
+    assert ("w", "d") not in _CATEGORY_WITHIN, "a word character is not always a digit"
+
+
+def test_the_parse_the_rule_reads_has_the_shape_it_expects() -> None:
+    """`re._parser` is private, so an interpreter may reshape it. The rule reads opcodes by
+    identity and bounds by position; if either moved, every pattern would walk into
+    `UNKNOWN_CONSTRUCT` — loudly, but at a gateway's start-up rather than here."""
+    from aira_common.patterns import _op, _parser
+
+    [(repeat, (low, high, body))] = list(_parser.parse(r"(?x)(a+) +", 0))
+    assert repeat is _op.MAX_REPEAT and (low, high) == (1, _op.MAXREPEAT)
+    [(group, (_, added, removed, inner))] = list(body)
+    assert group is _op.SUBPATTERN and (added, removed) == (0, 0)
+    [(nested, (nested_low, nested_high, letters))] = list(inner)
+    assert nested is _op.MAX_REPEAT and (nested_low, nested_high) == (1, _op.MAXREPEAT)
+    assert list(letters) == [(_op.LITERAL, ord("a"))]
+    [(charset, items)] = list(_parser.parse(r"[^a-z\d]", 0))
+    assert charset is _op.IN
+    assert items == [(_op.NEGATE, None), (_op.RANGE, (97, 122)), (_op.CATEGORY, _op.CATEGORY_DIGIT)]
+
+
+def test_no_pattern_this_suite_knows_reaches_a_construct_the_rule_cannot_read() -> None:
+    """The fallback for an opcode the walk does not know is a refusal, which is safe and would
+    also hide a gap: every pattern exercised here must be decided by a rule, not by that."""
+    from aira_common.patterns import UNKNOWN_CONSTRUCT
+
+    corpus = [
+        *(pattern for pattern, _ in MEASURED_TRADES),
+        *(pattern for pattern, _ in MEASURED_RUNS),
+        *(pattern for pattern, _ in MEASURED_AT_SCALE),
+        *(pattern for pattern, _ in MEASURED_DISASTERS),
+        r"(?P<n>x)(?P=n)",
+        r"(a)?(?(1)b|c)",
+        r"(?>ab|a)c",
+        r"(?<!a)b(?<=b)",
+        r"\Aa\Z",
+    ]
+    assert [p for p in corpus if catastrophic_reason(p) == UNKNOWN_CONSTRUCT] == []
+
+
+def test_the_check_bounds_its_own_work() -> None:
+    """The gateway asks this on the request path. Sets too large to compare within the check's
+    budget are refused rather than compared for as long as it takes — and quickly."""
+    import time
+
+    from aira_common.patterns import TOO_COMPLEX
+
+    # Sixteen disjoint astral ranges of 60 000 characters each, every one unbounded and adjacent to
+    # the next: deciding that no two of them meet means scanning 120 pairs of them — seven million
+    # characters, past the check's budget.
+    def ranges(count: int) -> str:
+        return "".join(
+            f"[\\U{0x20000 + i * 60_000:08x}-\\U{0x20000 + i * 60_000 + 59_999:08x}]*"
+            for i in range(count)
+        )
+
+    started = time.perf_counter()
+    assert catastrophic_reason(ranges(16) + "!") == TOO_COMPLEX
+    assert time.perf_counter() - started < 2
+    # Twelve of them fit the budget, and are decided rather than refused: they are disjoint.
+    assert catastrophic_reason(ranges(12) + "!") is None
+
+
+# =================================================================================================
+# A choice is a repeat too: optional steps, and bounded repeats beside an unbounded one
+# =================================================================================================
+
+
+def test_a_row_of_optional_steps_over_the_same_characters_is_refused() -> None:
+    """`x?` is `x{0,1}` — two ways — and a row of them doubles the work per step. `a?` twenty-two
+    times took 2.8 s on forty characters; neither rule above counted a `?` at all. Under the bound
+    the product stays a constant: thirteen are 8 192 ways, fourteen are 16 384."""
+    assert catastrophic_reason("a?" * 14 + "!") is not None
+    assert catastrophic_reason("(?:ab)?" * 14 + "!") is not None
+    assert catastrophic_reason("a?" * 13 + "!") is None
+
+
+def test_each_loop_is_counted_once_however_many_paths_left_it_open() -> None:
+    """An optional step leaves two paths — through it and around it — and both keep the loops
+    before it open. Counting a loop once per path would square the product."""
+    assert catastrophic_reason("a?" * 13 + "!") is None
+
+
+@pytest.mark.parametrize(
+    ("pattern", "refused"),
+    [
+        # Sixteen ways multiplying a search already quadratic in the text: 1 900 ms on 4 000.
+        ("[ab]+[ab]{0,3}[ab]{0,3}!", True),
+        # Ninety-nine squared ways: under `MAX_AMBIGUITY`, and catastrophic beside the loop.
+        ("[ab]+[ab]{0,98}[ab]{0,98}!", True),
+        ("[ab]+[ab]?[ab]?!", True),
+        # Three ways is the most the loop-side bound admits: 349 ms where `[ab]+!` took 85.
+        ("[ab]+[ab]{0,2}!", False),
+        ("[ab]+[ab]?!", False),
+        (r"\+?[0-9]{2,4}[ -]?[0-9]{3,}", False),
+        (r"[0-9]+[.,]?[0-9]{0,2}", False),
+    ],
+)
+def test_bounded_repeats_beside_an_unbounded_one_have_a_bound_of_their_own(
+    pattern: str, refused: bool
+) -> None:
+    assert (catastrophic_reason(pattern) is not None) is refused, catastrophic_reason(pattern)
+
+
+def test_the_gateway_takes_the_pattern_bounds_from_the_rule_rather_than_restating_them() -> None:
+    """Two copies of `64` agree until one is raised, and then Management accepts patterns the
+    gateway drops — a filter that shows as configured while matching less. An identity test cannot
+    tell two small integers apart, so this one reads the source: the gateway imports the bounds and
+    assigns no number of its own to them."""
+    import ast
+    import inspect
+
+    from aira_gateway.pipeline.classifiers import injection
+
+    tree = ast.parse(inspect.getsource(injection))
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "aira_common.patterns"
+        for alias in node.names
+    }
+    restated = [
+        target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        for target in node.targets
+        if isinstance(target, ast.Name) and "PATTERN" in target.id
+    ]
+
+    assert {"MAX_PATTERNS", "MAX_PATTERN_LENGTH"} <= imported
+    assert restated == []

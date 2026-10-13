@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from aira_gateway.db.base import build_sessionmaker
 from aira_gateway.retention import RetentionService
 
+from . import installation
+
 pytestmark = pytest.mark.integration
 
 
@@ -44,8 +46,9 @@ async def _seed(engine: AsyncEngine, subject: str, use_case: str, age_days: int)
 
 
 async def test_the_pruner_clears_old_payloads_and_keeps_the_accounting(engine: AsyncEngine) -> None:
-    subject = f"itest-{uuid.uuid4().hex[:8]}"
+    subject = installation.subject()
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", slug)
     async with engine.begin() as connection:
         await connection.execute(
             text(

@@ -52,6 +52,19 @@ const GRANULARITIES: { value: 'auto' | Granularity; label: string }[] = [
   selector: 'app-usage-chart',
   imports: [FormsModule, InfoHint, CompositionBar, UsageHistogram, UsageDays],
   templateUrl: './usage-chart.html',
+  // The card's own rhythm: controls under the lead, the pictures under the controls, a caption
+  // close above the bar it names.
+  styles: `
+    .usage-chart__controls {
+      margin-top: 0.75rem;
+    }
+    .usage-chart__body {
+      margin-top: 1rem;
+    }
+    .usage-chart__caption {
+      margin: 0 0 0.35rem;
+    }
+  `,
 })
 export class UsageChart {
   /** The series, or `null` when it has not arrived — which is not the same as "nothing happened". */
@@ -128,8 +141,30 @@ export class UsageChart {
    * and the number is the one thing they can act on without opening anything.
    */
   protected readonly daysLabel = computed(() => {
-    const days = this.days().length;
-    return days === 1 ? '1 day with traffic' : `${days} days with traffic`;
+    const count = this.days().length;
+    const noun = this.bucket();
+    return `${count} ${count === 1 ? noun : `${noun}s`} with traffic`;
+  });
+
+  /** What one row of the list is — the series decides, and "Today" is read hour by hour. */
+  protected readonly bucket = computed(() =>
+    this.series()?.granularity === 'hour' ? 'hour' : 'day',
+  );
+
+  /**
+   * What the blocks say when there is nothing to divide — which is three different facts. Nothing
+   * was asked; or it was asked and none of it could be priced, which is unknown and not zero; or
+   * it was asked and priced and this measure came to nothing.
+   */
+  protected readonly blocksEmpty = computed(() => {
+    const chart = this.chart();
+    if (!chart || chart.empty) return 'Nothing was used in this period.';
+    if (chart.costUnknown) {
+      return 'No request in this period could be priced, so its spend is unknown, not zero.';
+    }
+    return chart.metric === 'cost'
+      ? 'The requests in this period cost nothing.'
+      : 'No request in this period reported any tokens.';
   });
 
   /** The currency, for the one money heading in the day list. */

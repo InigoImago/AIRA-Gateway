@@ -287,3 +287,56 @@ async def test_a_model_published_with_one_price_missing_stays_unpriced(sessionma
         )
 
     assert await PricingService(sessionmaker).price_for("half-1") is None
+
+
+# ---- what the reservation prices ---------------------------------------------------------------
+
+
+def _estimating_request(sessionmaker):  # noqa: ANN001, ANN202
+    """The smallest stand-in `estimate` reads: settings, the catalogue and the price list."""
+    from types import SimpleNamespace
+
+    from aira_gateway.catalog import ModelCatalog
+    from aira_gateway.config import GatewaySettings
+
+    state = SimpleNamespace(
+        settings=GatewaySettings(budget_estimate_output_tokens=1024),
+        catalog=ModelCatalog(sessionmaker),
+        pricing=PricingService(sessionmaker),
+    )
+    return SimpleNamespace(app=SimpleNamespace(state=state), state=SimpleNamespace())
+
+
+async def test_an_embedding_reserves_what_its_input_costs(sessionmaker) -> None:
+    """An embedding model is priced on input alone. Every reserved token priced at the output
+    rate set aside **nothing** against a cost limit for it, so concurrent batches all passed the
+    check: each side is priced at its own rate."""
+    from aira_common.money import cost_nanos
+    from aira_gateway.api.serving.controls import estimate
+
+    await _add(sessionmaker, _priced("emb-1", "0.15", "0"))
+    request = _estimating_request(sessionmaker)
+
+    texts = ["x" * 4000] * 256
+    expected = await estimate(
+        request, model="emb-1", max_output_tokens=None, units=256, input_texts=texts
+    )
+
+    assert expected.cost_nanos > 0
+    assert expected.cost_nanos == cost_nanos(256_000, to_nanos("0.15"))
+
+
+async def test_a_reservation_is_never_negative(sessionmaker) -> None:
+    """A negative figure on the way in — a resolved budget, a declaration — moved the shared
+    counter down, and every request beside it then passed its check."""
+    from aira_gateway.api.serving.controls import estimate
+
+    await _add(sessionmaker, _priced("gen-1", "1.00", "2.00"))
+    request = _estimating_request(sessionmaker)
+
+    expected = await estimate(
+        request, model="gen-1", max_output_tokens=None, extra_tokens=-1_000_000
+    )
+
+    assert expected.tokens >= 0
+    assert expected.cost_nanos >= 0

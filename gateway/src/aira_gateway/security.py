@@ -49,11 +49,12 @@ def is_local_environment(settings: GatewaySettings) -> bool:
     return settings.environment.strip().lower() == LOCAL_ENVIRONMENT
 
 
-def is_local(settings: GatewaySettings) -> bool:
+def is_local_or_demo(settings: GatewaySettings) -> bool:
     """True locally, or in a deployment that has declared itself a demo.
 
-    Read by `/readyz` to decide whether to show the whole body. Not what `unsafe_settings` waives
-    on — a demo waives `WAIVED_BY_A_DEMO`, not every check.
+    What decides whether the gateway shows itself to whoever asks: the whole `/readyz` body, the
+    API documentation, the mock upstream. Not what `unsafe_settings` waives on — a demo waives
+    `WAIVED_BY_A_DEMO`, not every check.
     """
     return is_local_environment(settings) or settings.demo_mode
 

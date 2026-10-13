@@ -92,6 +92,60 @@ async def test_concurrent_callers_produce_one_fetch() -> None:
     assert set(results) == {"token-1"}
 
 
+async def test_concurrent_callers_share_one_failed_fetch() -> None:
+    """Single-flight holds for a failure too. With no token to fall back on, every caller queued
+    behind a failing fetch made its own, one after another — each paying the identity provider's
+    full timeout, so the k-th waited k times as long for the same refusal."""
+    clock, acquirer = _Clock(), _Counting()
+    acquirer.gate = asyncio.Event()
+    acquirer.fail = True
+    source = TokenSource(acquirer, clock=clock)
+
+    waiters = [asyncio.create_task(source.token()) for _ in range(20)]
+    await asyncio.sleep(0)  # all twenty are waiting: one in the fetch, the rest on the lock
+    acquirer.gate.set()
+    results = await asyncio.gather(*waiters, return_exceptions=True)
+
+    assert acquirer.calls == 1, "each queued caller fetched again after the first fetch failed"
+    assert all(isinstance(result, TokenUnavailable) for result in results)
+
+
+async def test_a_caller_after_a_shared_failure_tries_again() -> None:
+    """Sharing a failure is not a back-off: a caller arriving once it is over asks afresh, so an
+    identity provider that has recovered is used at once, even with no token held."""
+    clock, acquirer = _Clock(), _Counting()
+    acquirer.fail = True
+    source = TokenSource(acquirer, clock=clock)
+    with pytest.raises(TokenUnavailable):
+        await source.token()
+
+    acquirer.fail = False
+    assert await source.token() == "token-2"
+
+
+async def test_only_the_fetch_a_caller_waited_for_is_its_answer() -> None:
+    """A failure from before — followed by a fetch that worked — is not handed to a caller whose
+    wait ended in that success, even when the token it brought is already due again: that caller
+    fetches for itself rather than reporting an outage that is over."""
+    clock, acquirer = _Clock(), _Counting(lifetime=1000.0)
+    source = TokenSource(acquirer, clock=clock)
+    acquirer.fail = True
+    with pytest.raises(TokenUnavailable):
+        await source.token()
+
+    acquirer.fail = False
+    acquirer.gate = asyncio.Event()
+    first = asyncio.create_task(source.token())
+    await asyncio.sleep(0)  # the first caller is inside the fetch
+    second = asyncio.create_task(source.token())
+    await asyncio.sleep(0)  # the second waits on the lock
+    clock.advance(900)  # a slow fetch: its token is due for refreshing by the time it lands
+    acquirer.gate.set()
+
+    assert await first == "token-2"
+    assert await second == "token-3"
+
+
 async def test_a_failed_refresh_keeps_serving_the_still_valid_token() -> None:
     """A refresh that fails while the current token is still good is not an outage. Treating it as
     one converts a brief identity-provider hiccup into a total outage of what the token protects."""

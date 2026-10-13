@@ -10,7 +10,13 @@ from rest_framework.views import APIView
 
 from aira_common.access import usecases_from_group_paths
 from aira_management.config.runtime import get_settings
-from aira_management.rbac import MayRunTests, held_roles_of, permissions_of, role_definitions
+from aira_management.rbac import (
+    MayRunTests,
+    held_roles_of,
+    permissions_of,
+    role_definitions,
+    token_groups,
+)
 from aira_management.roles import ALL_ROLES
 
 
@@ -39,7 +45,8 @@ class MeView(APIView):
                 # What those roles may do (`FRD-614`): the console asks these, never the roles.
                 "permissions": sorted(str(p) for p in permissions_of(request.user)),
                 # Slugs, not raw group paths: the `groups` claim also carries the role groups.
-                "use_cases": list(usecases_from_group_paths(claims.get("groups") or [])),
+                # Read as authentication reads it, so a malformed claim confers nothing here too.
+                "use_cases": list(usecases_from_group_paths(token_groups(claims))),
                 # The key policy the server enforces, so the console states the same numbers.
                 "api_key_default_days": settings.api_key_default_days,
                 "api_key_max_days": settings.api_key_max_days,

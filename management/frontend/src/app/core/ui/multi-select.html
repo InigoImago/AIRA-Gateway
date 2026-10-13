@@ -70,13 +70,15 @@
     @if (open()) {
       <!-- Floats over what follows, with its own height capped, so typing never moves the controls
            below it. -->
-      <ul class="picker" role="listbox" [id]="testid() + '-list'">
+      <ul class="picker" role="listbox" aria-multiselectable="true" [id]="testid() + '-list'">
         @for (option of matches(); track option.value; let i = $index) {
           <li>
+            <!-- Out of the tab order: the arrow keys walk the options, and Tab leaves the control. -->
             <button
               type="button"
               class="picker__item"
               role="option"
+              tabindex="-1"
               [id]="optionId(i)"
               [class.is-active]="i === active()"
               [attr.aria-selected]="isSelected(option.value)"

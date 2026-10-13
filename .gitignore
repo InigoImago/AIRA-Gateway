@@ -7,6 +7,11 @@
 *.crt
 secrets/
 vault/data/
+# The AppRole secret-id `tools/vault_setup.py` writes (`FRD-116`). `secrets/` above covers the
+# default directory already; a credential's exclusion is named rather than left to a pattern
+# written for something else. The second line is the path older checkouts of the tool write to.
+deploy/compose/secrets/
+deploy/compose/.vault-secret-id
 
 # ---- Python ----
 __pycache__/
@@ -52,6 +57,7 @@ kafka-data/
 .DS_Store
 Thumbs.db
 .mutation-journal.json
+.mutation-journal.json.tmp
 
 
 kira_api.md

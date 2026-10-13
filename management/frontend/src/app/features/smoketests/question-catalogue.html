@@ -1,8 +1,32 @@
 @if (shown()) {
   <section class="card">
-    <div class="form-inline" style="align-items: flex-end">
-      <div class="field field--wide">
-        <label for="cat-search">Search</label>
+    <div class="spread">
+      <h3 class="section-title">Questions</h3>
+      @if (mayAuthor()) {
+        <button
+          type="button"
+          class="btn btn--sm btn--primary"
+          (click)="startCase()"
+          data-testid="catalogue-add"
+        >
+          + Add question
+        </button>
+      }
+    </div>
+    <p class="muted lead">
+      {{ cases().length }} question(s). Every run asks all of them, in this order, through the use
+      case's own pipeline — which is what makes two runs comparable at all.
+    </p>
+    @if (!mayAuthor()) {
+      <!-- `FRD-206`: a withheld action names who performs it. -->
+      <p class="muted lead" data-testid="catalogue-readonly">
+        The catalogue is the standard every use case's pipeline is judged against, so it is written
+        by IT Security. You can run it and rate the answers.
+      </p>
+    }
+    <div class="table-tools" style="margin: 0.75rem 0 0">
+      <label class="search">
+        <span>Find a question</span>
         <input
           id="cat-search"
           type="search"
@@ -10,35 +34,19 @@
           (ngModelChange)="search.set($event)"
           placeholder="a keyword or a phrase from a question"
           data-testid="catalogue-search"
+          autocomplete="off"
         />
-      </div>
-      <span class="form-actions__spacer"></span>
-      @if (mayAuthor()) {
-        <button
-          type="button"
-          class="btn btn--primary"
-          (click)="startCase()"
-          data-testid="catalogue-add"
-        >
-          Add question
-        </button>
-      }
+      </label>
     </div>
-    <p class="muted" style="margin: 0.6rem 0 0">
-      {{ cases().length }} question(s). Every model is asked all of them, in this order — which is
-      what makes two models comparable at all.
-    </p>
-    @if (!mayAuthor()) {
-      <!-- `FRD-206`: a withheld action names who performs it. -->
-      <p class="muted" style="margin: 0.35rem 0 0" data-testid="catalogue-readonly">
-        The catalogue is the standard models are judged against, so it is written by IT Security.
-        You can run it and rate the answers.
-      </p>
-    }
   </section>
 
-  <section class="card" style="padding: 0">
-    @if (!visible().length) {
+  <section class="card card--flush">
+    @if (loading()) {
+      <p class="loading card__inset" data-testid="cases-loading">
+        <span class="spinner" aria-hidden="true"></span>
+        Loading the catalogue…
+      </p>
+    } @else if (!visible().length) {
       <p class="empty" data-testid="no-cases">
         @if (cases().length) {
           No question matches that search.
@@ -105,81 +113,73 @@
 
 <!-- Writing a question -->
 @if (editing(); as draft) {
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="case-title">
-    <div class="modal__panel">
-      <div class="modal__head">
-        <h3 id="case-title" style="margin: 0">
-          {{ draft.id ? 'Edit question' : 'New question' }}
-        </h3>
-        <button
-          type="button"
-          class="btn btn--sm btn--ghost"
-          aria-label="Close"
-          (click)="cancelCase()"
-        >
-          Close
-        </button>
+  <app-modal
+    [open]="true"
+    [title]="draft.id ? 'Edit question' : 'New question'"
+    testid="case-editor"
+    (closed)="cancelCase()"
+  >
+    <div modal-body class="stack">
+      @if (tried() && feedback.error(); as error) {
+        <p class="callout callout--danger" role="alert">{{ error }}</p>
+      }
+      <div class="field">
+        <label for="case-topic">Topic</label>
+        <input
+          id="case-topic"
+          [ngModel]="caseTopic()"
+          (ngModelChange)="caseTopic.set($event)"
+          placeholder="e.g. Refusal, medical advice"
+          data-testid="case-topic"
+        />
       </div>
-      <div class="modal__body stack">
-        <div class="field">
-          <label for="case-topic">Topic</label>
-          <input
-            id="case-topic"
-            [ngModel]="caseTopic()"
-            (ngModelChange)="caseTopic.set($event)"
-            placeholder="e.g. Refusal, medical advice"
-            data-testid="case-topic"
-          />
-        </div>
-        <div class="field">
-          <label for="case-prompt">
-            The question put to the model
-            <app-info-hint label="How the question is sent">
-              Sent as written, through the ordinary request path, with no wrapper and no system
-              prompt of ours. What you type here is exactly what the model receives.
-            </app-info-hint>
-          </label>
-          <textarea
-            id="case-prompt"
-            rows="6"
-            [ngModel]="casePrompt()"
-            (ngModelChange)="casePrompt.set($event)"
-            data-testid="case-prompt"
-          ></textarea>
-        </div>
-        <div class="field">
-          <label for="case-expectation">
-            What a good answer looks like
-            <app-info-hint label="Why this is prose and not a rule">
-              This is shown to whoever rates the answer; nothing matches against it. A
-              expected-substring check would turn a judgement into a number nobody trusts and
-              everybody quotes.
-            </app-info-hint>
-          </label>
-          <textarea
-            id="case-expectation"
-            rows="3"
-            [ngModel]="caseExpectation()"
-            (ngModelChange)="caseExpectation.set($event)"
-            data-testid="case-expectation"
-          ></textarea>
-        </div>
+      <div class="field">
+        <label for="case-prompt">
+          The question put to the model
+          <app-info-hint label="How the question is sent">
+            Sent as written, through the ordinary request path, with no wrapper and no system prompt
+            of ours. What you type here is exactly what the model receives.
+          </app-info-hint>
+        </label>
+        <textarea
+          id="case-prompt"
+          rows="6"
+          [ngModel]="casePrompt()"
+          (ngModelChange)="casePrompt.set($event)"
+          data-testid="case-prompt"
+        ></textarea>
       </div>
-      <div class="modal__foot">
-        <span class="form-actions__spacer"></span>
-        <button type="button" class="btn" (click)="cancelCase()" data-testid="case-cancel">
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="btn btn--primary"
-          [disabled]="!caseTopic().trim() || !casePrompt().trim()"
-          (click)="saveCase()"
-          data-testid="case-save"
-        >
-          {{ draft.id ? 'Save question' : 'Add question' }}
-        </button>
+      <div class="field">
+        <label for="case-expectation">
+          What a good answer looks like
+          <app-info-hint label="Why this is prose and not a rule">
+            This is shown to whoever rates the answer; nothing matches against it. An
+            expected-substring check would turn a judgement into a number nobody trusts and
+            everybody quotes.
+          </app-info-hint>
+        </label>
+        <textarea
+          id="case-expectation"
+          rows="3"
+          [ngModel]="caseExpectation()"
+          (ngModelChange)="caseExpectation.set($event)"
+          data-testid="case-expectation"
+        ></textarea>
       </div>
     </div>
-  </div>
+    <div modal-foot>
+      <button type="button" class="btn" (click)="cancelCase()" data-testid="case-cancel">
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="btn btn--primary"
+        [disabled]="feedback.busy() || !caseTopic().trim() || !casePrompt().trim()"
+        (click)="saveCase()"
+        data-testid="case-save"
+      >
+        {{ feedback.busy() ? 'Saving…' : draft.id ? 'Save question' : 'Add question' }}
+      </button>
+    </div>
+  </app-modal>
 }

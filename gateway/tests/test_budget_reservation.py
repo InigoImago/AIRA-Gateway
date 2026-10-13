@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
+import anyio
 import fakeredis.aioredis as fakeredis
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -260,6 +261,39 @@ async def test_a_double_release_does_not_hand_back_more_than_was_taken(
 
     counter = await runner._client.hgetall("budget:uc:uc:2026-08")
     assert int(counter["requests"]) == 0  # not negative, which would be free headroom
+
+
+class _SlowRunner(FakeRunner):
+    """Every script call suspends first, as a call to a counter store across a network does —
+    which is what gives a cancellation somewhere to land."""
+
+    async def run(self, script, keys, args):  # noqa: ANN001, ANN201
+        await asyncio.sleep(0.01)
+        return await super().run(script, keys, args)
+
+
+async def test_hold_gives_the_reservation_back_even_when_its_block_is_cancelled(
+    sessionmaker,
+) -> None:
+    """A dropped connection is when a reservation most needs giving back — and under Starlette the
+    cancellation that drops it is anyio's, which is level-triggered: every await inside the
+    cancelled scope is cancelled again, the release's own call to the counter store included. An
+    unshielded release stops at its first await and the estimate stays in the counter."""
+    await _budget(sessionmaker, limit_requests=5)
+    slow = _SlowRunner()
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(slow))
+    reservation = await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+    counter = await slow._client.hgetall("budget:uc:uc:2026-08")
+    assert int(counter["requests"]) == 1, "the reservation was never taken"
+
+    with anyio.CancelScope() as scope:
+        async with service.hold(reservation):
+            scope.cancel()
+            await anyio.sleep(1)
+
+    counter = await slow._client.hgetall("budget:uc:uc:2026-08")
+    assert int(counter["requests"]) == 0
+    await slow.close()
 
 
 # ---- Redis as a cache, Postgres as the record --------------------------------------------
@@ -526,3 +560,118 @@ async def test_nothing_is_booked_for_a_request_with_no_use_case(sessionmaker, ru
     await service.book_side_call(None, "alice", tokens=99, cost_nanos=999, now=NOW)
 
     assert await _usage(sessionmaker, "uc:uc", "2026-08") is None
+
+
+# ---- the counter's lifetime is a fixed clock, not an idle timeout (`G4-8`) -------------------
+
+
+async def test_a_busy_counter_is_still_rebuilt_on_schedule(sessionmaker, runner) -> None:
+    """Every reservation and every correction refreshed the expiry, so a counter that saw a request
+    every few minutes was never rebuilt from Postgres — and a correction lost to a timeout stayed
+    in it for the whole month. The expiry is set when the counter is built, and never extended."""
+    ledger = BudgetLedger(runner)
+    key = "budget:uc:uc:2026-08"
+    await ledger.reserve(
+        "uc:uc", "2026-08", limits=Limits(requests=1000), amounts=Amounts(5000, 1), seed=Amounts()
+    )
+    await runner._client.expire(key, 10)  # 290 of its 300 seconds have passed
+
+    for _ in range(3):
+        await ledger.reserve(
+            "uc:uc", "2026-08", limits=Limits(requests=1000), amounts=Amounts(10, 1), seed=Amounts()
+        )
+        await ledger.adjust("uc:uc", "2026-08", amounts=Amounts(-10, 0, 0))
+
+    assert 0 < await runner._client.ttl(key) <= 10, "a request moved the rebuild further away"
+
+
+async def test_a_counter_left_without_an_expiry_is_given_one(sessionmaker, runner) -> None:
+    """A counter written without a lifetime — by hand, or by a script that set none — gets one the
+    next time it is touched, and from then on it is not extended either."""
+    ledger = BudgetLedger(runner)
+    key = "budget:uc:uc:2026-08"
+    await runner._client.hset(key, mapping={"tokens": 0, "requests": 0, "cost": 0})
+    assert await runner._client.ttl(key) == -1
+
+    await ledger.adjust("uc:uc", "2026-08", amounts=Amounts(1, 0, 0))
+
+    assert 0 < await runner._client.ttl(key) <= COUNTER_TTL_SECONDS
+
+
+# ---- a request is booked in the period it was admitted in (`G4-20`) ---------------------------
+
+
+async def test_a_request_across_midnight_is_booked_where_it_was_reserved(
+    sessionmaker, runner
+) -> None:
+    """Reserved at 23:59:59 on the last of October and settled after midnight, a request was booked
+    into November in Postgres while its correction went to October's counter: November's warm
+    counter never saw it, and October's record never got it."""
+    await _budget(sessionmaker, limit_requests=1000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    before = datetime(2026, 10, 31, 23, 59, 59, tzinfo=UTC)
+    after = datetime(2026, 11, 1, 0, 0, 1, tzinfo=UTC)
+    # November's counter is already warm.
+    await BudgetLedger(runner).reserve(
+        "uc:uc", "2026-11", limits=Limits(), amounts=Amounts(), seed=Amounts()
+    )
+
+    reservation = await service.guard(
+        "uc", "alice", before, estimated=Amounts(tokens=4000, requests=1)
+    )
+    await service.settle(reservation, 10, now=after)
+
+    october = await _usage(sessionmaker, period_key="2026-10")
+    assert october is not None and (october.tokens, october.requests) == (10, 1)
+    assert await _usage(sessionmaker, period_key="2026-11") is None
+    counter = await runner._client.hgetall("budget:uc:uc:2026-10")
+    assert (int(counter["tokens"]), int(counter["requests"])) == (10, 1)
+
+
+# ---- a negative limit refuses on both paths (`G4-21`) -----------------------------------------
+
+
+@pytest.mark.parametrize("path", ["counter", "postgres"])
+async def test_a_negative_limit_refuses_on_either_path(sessionmaker, runner, path: str) -> None:
+    """Management never writes one; a forged event or a direct write can. The counter read `-1` as
+    "no limit" while Postgres refused everything — one stored figure, two opposite answers. Both
+    refuse now: a figure nobody could have meant is read as the one that stops."""
+    await _budget(sessionmaker, limit_requests=-1)
+    ledger = BudgetLedger(runner if path == "counter" else BrokenRunner())
+    service = BudgetService(sessionmaker, ledger=ledger)
+
+    with pytest.raises(BudgetExceeded):
+        await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+
+
+# ---- a failure part-way through the reservation gives back what it took (`G4-22`) -------------
+
+
+async def test_a_database_error_between_two_budgets_gives_back_what_was_reserved(
+    sessionmaker, runner, monkeypatch
+) -> None:
+    """Only an unreachable counter store released the budgets already reserved. A database error
+    reading the second budget's figure left the first one's reservation in its counter, holding
+    headroom nothing would settle until the counter expired."""
+    from aira_gateway.budgets import service as budgets
+
+    await _budget(sessionmaker, id=1, limit_requests=10)
+    await _budget(sessionmaker, id=2, scope="each_member", limit_requests=10)
+    reads = 0
+    real_read = budgets.read_usage
+
+    async def flaky(session, scope_key, period_key):  # noqa: ANN001, ANN202
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            raise RuntimeError("the database went away")
+        return await real_read(session, scope_key, period_key)
+
+    monkeypatch.setattr(budgets, "read_usage", flaky)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+
+    with pytest.raises(RuntimeError, match="went away"):
+        await service.guard("uc", "alice", NOW, estimated=Amounts(tokens=500, requests=1))
+
+    counter = await runner._client.hgetall("budget:uc:uc:2026-08")
+    assert (int(counter["tokens"]), int(counter["requests"])) == (0, 0)

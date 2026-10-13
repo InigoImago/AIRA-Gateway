@@ -21,14 +21,15 @@ ROOT = Path(__file__).resolve().parents[2]
 HARNESS = ROOT / "tools" / "mutation_check.py"
 CLAUDE = ROOT / "CLAUDE.md"
 
-#: `Mutation(` at the start of a constructor call in the harness's list.
-_MUTATION = re.compile(r"^\s*Mutation\($", re.MULTILINE)
 #: The one sentence in `CLAUDE.md` that states the figure.
 _CLAIM = re.compile(r"does this for \*\*(\d+) properties\*\*")
 
 
 def harness_count() -> int:
-    return len(_MUTATION.findall(HARNESS.read_text()))
+    """How many entries the harness defines, counted from its list rather than from its text."""
+    import mutation_check
+
+    return len(mutation_check.MUTATIONS)
 
 
 def test_the_harness_has_mutations_to_count() -> None:
@@ -72,12 +73,13 @@ def test_every_mutation_has_an_identifier_of_its_own() -> None:
     ids by name and renaming a cited one breaks the prose that explains why the property exists.
     """
     import collections
-    import re
-    from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[2] / "tools/mutation_check.py").read_text()
-    ids = re.findall(r'^    Mutation\(\n        "([A-Za-z0-9]+)"', source, re.M)
-    assert ids, "no mutations found — the pattern stopped matching"
+    import mutation_check
+
+    # The harness's own list, imported: a pattern over its text misses every entry written with a
+    # comment between `Mutation(` and its id.
+    ids = [mutation.ident for mutation in mutation_check.MUTATIONS]
+    assert ids, "no mutations found — the import returned an empty list"
 
     duplicates = sorted(i for i, n in collections.Counter(ids).items() if n > 1)
     assert not duplicates, (

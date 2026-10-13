@@ -17,7 +17,7 @@
       </p>
     }
     <div class="spread">
-      <h3 class="section-title" style="margin: 0">
+      <h3 class="section-title">
         Installation budget
         <app-info-hint label="Installation budget" testid="installation-budget" [wide]="true">
           The cap on spend that belongs to <strong>no use case</strong>: the model checks this
@@ -42,7 +42,7 @@
     </div>
 
     @if (loaded() && !budgets().length) {
-      <p class="muted" style="margin: 0.25rem 0 0" data-testid="no-installation-budget">
+      <p class="muted lead" data-testid="no-installation-budget">
         No limit is set. Spend that belongs to no use case is counted and audited, and nothing stops
         it.
       </p>
@@ -133,7 +133,7 @@
 
     <div class="stack" style="margin-top: 0.75rem">
       @for (budget of budgets(); track budget.id) {
-        <div class="card" style="padding: 0.9rem 1rem">
+        <div class="card card--compact">
           <div class="spread">
             <div class="row">
               <strong>{{ limitsOf(budget).join(' · ') }}</strong>

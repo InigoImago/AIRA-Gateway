@@ -119,12 +119,82 @@ describe('ServerTableView', () => {
   });
 
   it("takes the server's word for which page this is", () => {
-    // Asking for page 9 of a list that shrank to three must not leave the pager claiming 9.
-    const harness = host(() => of(page([{ name: 'a' }], { page: 3, pages: 3, count: 60 })));
+    // Page 3 asked of a list that shrank to one page meanwhile: the server answers page 1, and the
+    // pager has to say 1 — not the 3 it asked for, which a local clamp would also have produced.
+    let shrunk = false;
+    const harness = host((_query, asked) =>
+      of(
+        shrunk
+          ? page([{ name: 'a' }], { page: 1, pages: 1, count: 1 })
+          : page([{ name: 'a' }], { page: asked, pages: 3, count: 60 }),
+      ),
+    );
     harness.view.start();
-    harness.view.go(9);
+    shrunk = true;
+    harness.view.go(3);
 
-    expect(harness.view.current()).toBe(3);
+    expect(harness.instance.asked().at(-1)?.page).toBe(3);
+    expect(harness.view.current()).toBe(1);
+    expect(harness.view.pageCount()).toBe(1);
+  });
+
+  it('keeps the pager on the page whose rows it shows when the next page fails', () => {
+    // The rows on screen are still page one's. A pager that moved on before the answer came
+    // labels them "26–50 of 60", and the next Next skips a page nobody saw.
+    const first = [{ name: 'r0' }, { name: 'r1' }];
+    const harness = host((_query, asked) =>
+      asked === 1 ? of(page(first, { count: 60, pages: 3 })) : throwError(() => ({ status: 500 })),
+    );
+    harness.view.start();
+
+    harness.view.go(2);
+
+    expect(harness.instance.errors().length).toBe(1);
+    expect(harness.view.current()).toBe(1);
+    expect(harness.view.rows()).toEqual(first);
+    expect([harness.view.firstShown(), harness.view.lastShown()]).toEqual([1, 2]);
+  });
+
+  it('counts a second Next from the page still being fetched, not from the one on screen', () => {
+    const harness = host((_query, asked) =>
+      asked === 1 ? of(page([{ name: 'a' }], { count: 75, pages: 3 })) : new Subject<Page<Row>>(),
+    );
+    harness.view.start();
+
+    harness.view.next();
+    harness.view.next();
+
+    expect(harness.instance.asked().map((call) => call.page)).toEqual([1, 2, 3]);
+  });
+
+  it('goes back to the first page when the page on screen no longer exists', () => {
+    // Somebody deleted rows while this was on the last page. The server does not clamp — it answers
+    // 404 "Invalid page." — and stale rows under a banner leave only Previous as a way out.
+    let shrunk = false;
+    const harness = host((_query, asked) => {
+      if (shrunk && asked > 1) {
+        return throwError(() => ({ status: 404, error: { error: { message: 'Invalid page.' } } }));
+      }
+      return of(page([{ name: shrunk ? 'only' : 'row' }], { page: asked, pages: shrunk ? 1 : 3 }));
+    });
+    harness.view.start();
+    harness.view.go(3);
+    shrunk = true;
+
+    harness.view.reload();
+
+    expect(harness.instance.asked().map((call) => call.page)).toEqual([1, 3, 3, 1]);
+    expect(harness.instance.errors()).toEqual([]);
+    expect(harness.view.current()).toBe(1);
+    expect(harness.view.rows()).toEqual([{ name: 'only' }]);
+  });
+
+  it('reports a page that is missing on the first page too, rather than asking forever', () => {
+    const harness = host(() => throwError(() => ({ status: 404 })));
+    harness.view.start();
+
+    expect(harness.instance.asked().length).toBe(1);
+    expect(harness.instance.errors().length).toBe(1);
   });
 
   it('does not walk past either end', () => {

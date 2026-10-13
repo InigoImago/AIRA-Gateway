@@ -27,15 +27,26 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+import stack_addresses
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from aira_gateway.anomalies import AnomalyService
+from aira_gateway.anomalies.service import TICK_LOCK_KEY
 from aira_gateway.anomalies.suspensions import SuspensionService
+from aira_gateway.audit import PIPELINE_OPERATION_PREFIX
 from aira_gateway.db.base import build_sessionmaker
-from aira_gateway.db.models import AnomalyRuleRead
 
-from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, MANAGEMENT_URL, wait_for_row
+from . import installation
+from .conftest import (
+    GATEWAY_URL,
+    LOCAL_CHAT_MODEL_ID,
+    MANAGEMENT_URL,
+    MEMBER_DEPARTMENT,
+    insert_use_case_and_key,
+    wait_for_row,
+    write_suspension,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -68,14 +79,6 @@ async def _generate(client: httpx.AsyncClient, fixture, **kw) -> httpx.Response:
         json=_body(**kw) if kw else _body(),
         timeout=180.0,
     )
-
-
-async def _rows_of(engine: AsyncEngine, slug: str) -> int:
-    async with engine.connect() as connection:
-        result = await connection.execute(
-            text("SELECT count(*) FROM request_logs WHERE use_case = :slug"), {"slug": slug}
-        )
-        return int(result.scalar_one())
 
 
 async def _seed_rows(engine: AsyncEngine, slug: str, count: int, **over) -> None:
@@ -131,22 +134,39 @@ async def _seed_rows(engine: AsyncEngine, slug: str, count: int, **over) -> None
 #:
 #: An hour covers any window these tests use. It also means a round evaluates every *other* scope
 #: with recent traffic in this shared database, which is exactly what production does — and is why
-#: `_by_rule` and `fixture.events()` have always scoped their assertions to this test's own rule
-#: and slug rather than to `events[0]`.
+#: `_by_rule` and `fixture.events()` scope their assertions to this test's own rule and slug
+#: rather than to `events[0]`.
 LOOKBACK_SECONDS = 3600.0
 
 
-async def _tick(engine: AsyncEngine, slug: str) -> list:
-    """Run one evaluation round against the live database, for the given scope."""
-    service = AnomalyService(
-        build_sessionmaker(engine), suspensions=None, interval_seconds=LOOKBACK_SECONDS
+class _WaitingForItsTurn(AnomalyService):
+    """The evaluator, claiming the fleet-wide round with the **blocking** advisory lock.
+
+    The running gateway evaluates every minute under the same lock, and the production claim is a
+    *try*: an instance that loses evaluates nothing and returns `[]` — which reads exactly like
+    "nothing crossed a threshold". A test that ticks while the gateway's own round holds the lock
+    would therefore pass every "no finding" case without evaluating anything, and fail every
+    "a finding" case for no reason. This one waits its turn instead.
+    """
+
+    async def _claim_the_tick(self, session: AsyncSession) -> bool:
+        await session.execute(select(func.pg_advisory_xact_lock(TICK_LOCK_KEY)))
+        return True
+
+
+async def _tick(engine: AsyncEngine, *, interval: float = LOOKBACK_SECONDS) -> list:
+    """Run one evaluation round against the live database — **fleet-wide**, as production does:
+    every enabled rule over every scope with traffic in the lookback, not only this test's."""
+    service = _WaitingForItsTurn(
+        build_sessionmaker(engine), suspensions=None, interval_seconds=interval
     )
     return await service.tick()
 
 
-async def _tick_enforcing(engine: AsyncEngine, slug: str) -> list:
+async def _tick_enforcing(engine: AsyncEngine) -> list:
+    """A round that also carries out what fires — for every scope it evaluates, fleet-wide."""
     sessions = build_sessionmaker(engine)
-    service = AnomalyService(
+    service = _WaitingForItsTurn(
         sessions, suspensions=SuspensionService(sessions), interval_seconds=LOOKBACK_SECONDS
     )
     return await service.tick()
@@ -170,13 +190,6 @@ def _by_rule(events: list, rule_id: int):
     return mine[0]
 
 
-async def _rule_row(engine: AsyncEngine, rule_id: int) -> AnomalyRuleRead:
-    async with build_sessionmaker(engine)() as session:
-        row = await session.get(AnomalyRuleRead, rule_id)
-        assert row is not None
-        return row
-
-
 # =================================================================================================
 # A. The configuration path: authored in Management, evaluated in the gateway
 # =================================================================================================
@@ -192,6 +205,7 @@ async def authored(admin_token: str):
     the account that used to do this held `use-case-admin`, which is no longer a role at all.
     """
     slug = f"anom-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", slug)
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with httpx.AsyncClient(timeout=30.0) as client:
         created = await client.post(
@@ -199,7 +213,8 @@ async def authored(admin_token: str):
             headers=headers,
             json={"slug": slug, "name": "Anomaly probe"},
         )
-        assert created.status_code in (201, 400), created.text
+        # Only a 201: a use case that was not made would surface later as a 404 about a rule.
+        assert created.status_code == 201, created.text
         yield slug, headers, client
         await client.delete(f"{MANAGEMENT_URL}/api/v1/use-cases/{slug}/", headers=headers)
 
@@ -234,7 +249,12 @@ async def test_a1_a_rule_authored_in_management_reaches_the_gateway(authored, en
 
 async def test_a2_a_global_rule_travels_with_a_null_scope(security_token: str, engine) -> None:
     """`NULL` means everywhere. An empty string would be a use case named "" — matching nothing
-    while looking like it matched everything."""
+    while looking like it matched everything.
+
+    **Disabled**: what travels is the scope, and an enabled rule this sensitive would be evaluated
+    against every caller on the installation until its deletion arrived, writing findings about
+    all of them.
+    """
     headers = {"Authorization": f"Bearer {security_token}"}
     name = f"global-{uuid.uuid4().hex[:6]}"
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -247,10 +267,12 @@ async def test_a2_a_global_rule_travels_with_a_null_scope(security_token: str, e
                 "window_minutes": 60,
                 "threshold": 1,
                 "min_sample": 0,
+                "enabled": False,
             },
         )
         assert created.status_code == 201, created.text
         rule_id = created.json()["id"]
+        installation.remember("rule", rule_id)
         try:
             row = await wait_for_row(
                 engine,
@@ -359,6 +381,7 @@ async def test_a6_deleting_a_use_case_takes_its_rules_and_leaves_the_global_ones
     headers = {"Authorization": f"Bearer {admin_token}"}
     security = {"Authorization": f"Bearer {security_token}"}
     slug = f"anom-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", slug)
     global_name = f"survivor-{uuid.uuid4().hex[:6]}"
     async with httpx.AsyncClient(timeout=30.0) as client:
         made = await client.post(
@@ -376,14 +399,17 @@ async def test_a6_deleting_a_use_case_takes_its_rules_and_leaves_the_global_ones
         survivor = await client.post(
             f"{MANAGEMENT_URL}/api/v1/anomaly-rules/",
             headers=security,
+            # Disabled, for the reason a2 gives: the cascade is about the row, not its verdicts.
             json={
                 "name": global_name,
                 "kind": "new_source_ip",
                 "threshold": 1,
                 "min_sample": 0,
+                "enabled": False,
             },
         )
         assert survivor.status_code == 201, survivor.text
+        installation.remember("rule", survivor.json()["id"])
         await wait_for_row(
             engine,
             "SELECT id FROM anomaly_rules WHERE use_case = :slug",
@@ -469,7 +495,7 @@ async def test_b1_a_refusal_rate_is_found(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 6, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 4)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     events = await fixture.events()
     assert len(events) == 1
@@ -483,7 +509,7 @@ async def test_b2_a_refusal_rate_below_the_threshold_is_not(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 6, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 4)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
@@ -493,7 +519,7 @@ async def test_b3_an_error_rate_counts_only_the_provider_s_failures(fixture) -> 
     await _seed_rows(fixture.engine, fixture.slug, 3, outcome="upstream_error", status=502)
     await _seed_rows(fixture.engine, fixture.slug, 7, outcome="rate_limited", status=429)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     # 3 of 10 are the provider's; a `refusal_rate` rule on the same rows would read 100 %.
     assert await fixture.events() == []
@@ -504,7 +530,7 @@ async def test_b4_an_error_rate_above_the_threshold_is_found(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 6, outcome="upstream_error", status=502)
     await _seed_rows(fixture.engine, fixture.slug, 4)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert (await fixture.events())[0]["observed"] == 60
 
@@ -514,7 +540,7 @@ async def test_b5_a_blocked_prompt_rate_is_found(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 5, outcome="blocked_by_pipeline", status=403)
     await _seed_rows(fixture.engine, fixture.slug, 5)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert (await fixture.events())[0]["observed"] == 50
 
@@ -525,7 +551,7 @@ async def test_b6_a_client_hanging_up_counts_as_a_refusal(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 8, outcome="client_gone", status=499)
     await _seed_rows(fixture.engine, fixture.slug, 2)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert (await fixture.events())[0]["observed"] == 80
 
@@ -537,7 +563,7 @@ async def test_b7_a_suspension_refusal_is_visible_to_a_refusal_rule(fixture) -> 
     await _seed_rows(fixture.engine, fixture.slug, 9, outcome="suspended", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 1)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert (await fixture.events())[0]["observed"] == 90
 
@@ -547,7 +573,7 @@ async def test_b8_a_spend_spike_is_measured_against_the_previous_window(fixture)
     await _seed_rows(fixture.engine, fixture.slug, 4, cost_nanos=1_000_000, minutes_ago=2)
     await _seed_rows(fixture.engine, fixture.slug, 4, cost_nanos=100_000, minutes_ago=15)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     events = await fixture.events()
     assert events[0]["observed"] == 1000
@@ -559,7 +585,7 @@ async def test_b9_a_request_spike_counts_rows_rather_than_money(fixture) -> None
     await _seed_rows(fixture.engine, fixture.slug, 12, minutes_ago=2)
     await _seed_rows(fixture.engine, fixture.slug, 4, minutes_ago=15)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert (await fixture.events())[0]["observed"] == 300
 
@@ -569,7 +595,7 @@ async def test_b10_a_large_payload_share_is_found(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 3, request_bytes=900_000)
     await _seed_rows(fixture.engine, fixture.slug, 1, request_bytes=1_000)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert (await fixture.events())[0]["observed"] == 75
 
@@ -582,7 +608,7 @@ async def test_b11_a_new_source_address_is_found(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 2, source_ip="10.0.0.1", minutes_ago=2)
     await _seed_rows(fixture.engine, fixture.slug, 1, source_ip="203.0.113.9", minutes_ago=2)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     events = await fixture.events()
     assert events[0]["target_value"] == "abcd1234"
@@ -595,7 +621,7 @@ async def test_b12_a_credential_with_no_history_is_not_reported_as_new(fixture) 
     )
     await _seed_rows(fixture.engine, fixture.slug, 3, source_ip="203.0.113.9", minutes_ago=2)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
@@ -609,7 +635,7 @@ async def test_b13_the_measurement_groups_by_the_target_the_action_lands_on(fixt
     )
     await _seed_rows(fixture.engine, fixture.slug, 20, subject="quiet")
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert [e["target_value"] for e in await fixture.events()] == ["noisy"]
 
@@ -619,7 +645,7 @@ async def test_b14_a_use_case_target_reports_the_use_case(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 8, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 2)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert (await fixture.events())[0]["target_value"] == fixture.slug
 
@@ -634,7 +660,7 @@ async def test_c1_a_rate_over_too_few_rows_is_not_evaluated(fixture) -> None:
     await fixture.rule(kind="refusal_rate", threshold=50, min_sample=20)
     await _seed_rows(fixture.engine, fixture.slug, 3, outcome="rate_limited", status=429)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
@@ -643,7 +669,7 @@ async def test_c2_growth_from_nothing_is_not_a_spike(fixture) -> None:
     await fixture.rule(kind="request_spike", threshold=200, min_sample=3, window_minutes=10)
     await _seed_rows(fixture.engine, fixture.slug, 10, minutes_ago=2)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
@@ -654,7 +680,7 @@ async def test_c3_a_request_of_unknown_size_is_left_out_of_both_sides(fixture) -
     await _seed_rows(fixture.engine, fixture.slug, 3, request_bytes=900_000)
     await _seed_rows(fixture.engine, fixture.slug, 20, request_bytes=None)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     events = await fixture.events()
     assert events[0]["observed"] == 100
@@ -665,39 +691,38 @@ async def test_c4_traffic_outside_the_window_is_not_measured(fixture) -> None:
     await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4, window_minutes=5)
     await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", minutes_ago=60)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
 
 async def test_c5_a_rule_ignores_another_use_case_s_traffic(fixture, engine) -> None:
+    """**Both halves of the setup are load-bearing**, as in d2. The rule's own use case has served
+    traffic, so the rule *is* evaluated; the refusals are all in another use case, so only a
+    measurement that leaked across use cases would find 50 % refusals here (10 of 20)."""
     other = f"itest-other-{uuid.uuid4().hex[:6]}"
+    installation.remember("read_model", other)
     async with engine.begin() as connection:
         await connection.execute(
             text("INSERT INTO use_cases (slug, name) VALUES (:slug, :slug)"), {"slug": other}
         )
     try:
         await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4)
+        await _seed_rows(engine, fixture.slug, 10)
         await _seed_rows(engine, other, 10, outcome="rate_limited", status=429)
 
-        await _tick(fixture.engine, fixture.slug)
+        await _tick(fixture.engine)
 
         assert await fixture.events() == []
     finally:
-        async with engine.begin() as connection:
-            await connection.execute(
-                text("DELETE FROM request_logs WHERE use_case = :slug"), {"slug": other}
-            )
-            await connection.execute(
-                text("DELETE FROM use_cases WHERE slug = :slug"), {"slug": other}
-            )
+        await installation.delete_gateway_rows(engine, other)
 
 
 async def test_c6_a_disabled_rule_is_not_evaluated(fixture) -> None:
     await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4, enabled=False)
     await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
@@ -709,7 +734,7 @@ async def test_c7_a_kind_this_gateway_does_not_know_measures_nothing(fixture) ->
     await fixture.rule(kind="prompt_similarity", threshold=50, min_sample=1)
     await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
@@ -718,7 +743,7 @@ async def test_c8_a_payload_rule_with_no_byte_figure_measures_nothing(fixture) -
     await fixture.rule(kind="payload_size", threshold=1, parameter=None, min_sample=1)
     await _seed_rows(fixture.engine, fixture.slug, 10, request_bytes=900_000)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
@@ -729,11 +754,20 @@ async def test_c8_a_payload_rule_with_no_byte_figure_measures_nothing(fixture) -
 
 
 async def test_d1_a_tick_with_no_touched_scope_does_nothing(fixture) -> None:
-    await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4)
-    await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
+    """The refusals are inside the rule's window and outside the round's one-minute lookback, so
+    a round that touched only what saw traffic since its last run leaves this rule alone.
 
-    service = AnomalyService(build_sessionmaker(fixture.engine))
-    assert await service.tick() == []
+    Asked of this rule only: the round is fleet-wide, and another test's traffic in the same minute
+    is somebody else's finding.
+    """
+    rule_id = await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4)
+    await _seed_rows(
+        fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429, minutes_ago=2
+    )
+
+    events = await _tick(fixture.engine, interval=60.0)
+
+    assert [e for e in events if getattr(e, "rule_id", None) == rule_id] == []
     assert await fixture.events() == []
 
 
@@ -755,13 +789,15 @@ async def test_d2_a_rule_whose_use_case_saw_no_traffic_is_not_evaluated(fixture)
         fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429, minutes_ago=10
     )
     # Recent traffic elsewhere, so the round has a scope to evaluate and is not simply idle.
-    await _seed_rows(fixture.engine, f"anom-busy-{uuid.uuid4().hex[:6]}", 2)
+    busy = f"anom-busy-{uuid.uuid4().hex[:6]}"
+    installation.remember("read_model", busy)
+    await _seed_rows(fixture.engine, busy, 2)
 
     # The production lookback, deliberately: one minute reaches the row above and not the rule's.
-    service = AnomalyService(
-        build_sessionmaker(fixture.engine), suspensions=None, interval_seconds=60.0
-    )
-    await service.tick()
+    try:
+        await _tick(fixture.engine, interval=60.0)
+    finally:
+        await installation.delete_gateway_rows(fixture.engine, busy)
 
     assert await fixture.events() == []
 
@@ -776,7 +812,7 @@ async def test_d3_a_global_rule_is_evaluated_whatever_was_touched(fixture, engin
     await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
 
     try:
-        await _tick(fixture.engine, fixture.slug)
+        await _tick(fixture.engine)
 
         async with engine.connect() as connection:
             result = await connection.execute(
@@ -798,11 +834,32 @@ async def test_d4_the_same_finding_is_not_written_twice_inside_its_window(fixtur
     await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
 
     sessions = build_sessionmaker(fixture.engine)
-    service = AnomalyService(sessions, interval_seconds=LOOKBACK_SECONDS)
+    service = _WaitingForItsTurn(sessions, interval_seconds=LOOKBACK_SECONDS)
     await service.tick()
     await service.tick()
 
     assert len(await fixture.events()) == 1
+
+
+async def test_d4b_a_test_round_waits_for_the_gateway_s_round_instead_of_skipping(
+    fixture, engine
+) -> None:
+    """The round these tests drive claims the fleet-wide lock the running gateway also takes each
+    minute. Held elsewhere while the round starts, the production claim would give up and find
+    nothing; this one waits and finds the refusals."""
+    rule_id = await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4)
+    await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
+
+    async with engine.connect() as holder:
+        transaction = await holder.begin()
+        await holder.execute(select(func.pg_advisory_xact_lock(TICK_LOCK_KEY)))
+        round_ = asyncio.ensure_future(_tick(fixture.engine))
+        await asyncio.sleep(1.0)
+        assert not round_.done(), "the round did not wait for the lock another instance held"
+        await transaction.rollback()
+    events = await round_
+
+    assert _by_rule(events, rule_id).observed == 100
 
 
 async def test_d5_two_targets_crossing_at_once_are_two_findings(fixture) -> None:
@@ -813,7 +870,7 @@ async def test_d5_two_targets_crossing_at_once_are_two_findings(fixture) -> None
         )
         await _seed_rows(fixture.engine, fixture.slug, 2, subject=who)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert sorted(e["target_value"] for e in await fixture.events()) == ["alice", "bob"]
 
@@ -824,7 +881,7 @@ async def test_d6_the_event_records_the_numbers_it_was_drawn_from(fixture) -> No
     await _seed_rows(fixture.engine, fixture.slug, 7, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 3)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     event = (await fixture.events())[0]
     assert event["observed"] == 70
@@ -840,19 +897,53 @@ async def test_d6_the_event_records_the_numbers_it_was_drawn_from(fixture) -> No
 
 
 async def _wait_until_blocked(fixture, blocked: bool, attempts: int = 14) -> httpx.Response:
-    """Poll the running gateway until its suspension cache has caught up.
+    """Poll the running gateway until its suspension cache has caught up — and fail if it never
+    does, saying which state was wanted.
 
     The cache is deliberately a few seconds behind (`FRD-503` §4.1); a test that read once would be
-    testing the TTL rather than the control.
+    testing the TTL rather than the control. Returning the last answer when the state never came
+    let "lifting restores service" pass against a gateway that had never blocked anybody.
     """
     async with httpx.AsyncClient(timeout=180.0) as client:
-        last = await _generate(client, fixture)
-        for _ in range(attempts):
+        for attempt in range(attempts + 1):
+            last = await _generate(client, fixture)
             if (last.status_code == 429) == blocked:
                 return last
-            await asyncio.sleep(1.0)
-            last = await _generate(client, fixture)
-        return last
+            if attempt < attempts:
+                await asyncio.sleep(1.0)
+    raise AssertionError(
+        f"never {'blocked' if blocked else 'served'} after {attempts + 1} requests: "
+        f"{last.status_code} {last.text[:300]}"
+    )
+
+
+async def _after_a_reload(engine: AsyncEngine) -> None:
+    """Return once the gateway has read the suspensions written **before** this call.
+
+    The gate answers from a cache it reloads every few seconds, and the previous test's polling has
+    usually just loaded it — so "the next request was served" right after a write says nothing
+    about the row written. A control use case is blocked here, after the row under test, and polled
+    until it is refused: the cache that refuses it has read both.
+    """
+    control = f"itest-control-{uuid.uuid4().hex[:6]}"
+    key, _ = await insert_use_case_and_key(
+        engine, control, subject=installation.subject("itest-control")
+    )
+    try:
+        await write_suspension(engine, use_case=control)
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            for _ in range(30):
+                refused = await client.post(
+                    f"{GATEWAY_URL}/v1beta/models/mock-1:generateContent",
+                    headers={"x-goog-api-key": key, "content-type": "application/json"},
+                    json=_body(),
+                )
+                if refused.status_code == 429:
+                    return
+                await asyncio.sleep(0.5)
+        raise AssertionError(f"the control was never refused: {refused.status_code}")
+    finally:
+        await installation.delete_gateway_rows(engine, control)
 
 
 async def test_e1_a_blocked_use_case_is_refused_by_the_running_gateway(fixture) -> None:
@@ -899,16 +990,18 @@ async def test_e4_the_refusal_is_recorded_as_suspended(fixture) -> None:
 
 async def test_e5_an_expired_suspension_stops_nobody(fixture) -> None:
     await fixture.suspend(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+    await _after_a_reload(fixture.engine)
 
-    response = await _wait_until_blocked(fixture, blocked=False, attempts=3)
+    response = await _wait_until_blocked(fixture, blocked=False, attempts=0)
 
     assert response.status_code == 200, response.text
 
 
 async def test_e6_a_lifted_suspension_stops_nobody(fixture) -> None:
     await fixture.suspend(lifted_at=datetime.now(UTC), lifted_by="user:itsec", expires_at=None)
+    await _after_a_reload(fixture.engine)
 
-    response = await _wait_until_blocked(fixture, blocked=False, attempts=3)
+    response = await _wait_until_blocked(fixture, blocked=False, attempts=0)
 
     assert response.status_code == 200, response.text
 
@@ -933,23 +1026,43 @@ async def test_e7_lifting_one_restores_service(fixture) -> None:
 
 async def test_e8_a_suspension_of_somebody_else_does_not_stop_this_caller(fixture) -> None:
     await fixture.suspend(target="subject", target_value="somebody-else")
+    await _after_a_reload(fixture.engine)
 
-    response = await _wait_until_blocked(fixture, blocked=False, attempts=3)
+    response = await _wait_until_blocked(fixture, blocked=False, attempts=0)
 
     assert response.status_code == 200, response.text
 
 
 async def test_e9_a_suspension_scoped_to_another_use_case_does_not_reach_here(fixture) -> None:
     await fixture.suspend(use_case="a-different-use-case", target="subject", target_value="probe")
+    await _after_a_reload(fixture.engine)
 
-    response = await _wait_until_blocked(fixture, blocked=False, attempts=3)
+    response = await _wait_until_blocked(fixture, blocked=False, attempts=0)
 
     assert response.status_code == 200, response.text
 
 
+async def _settled(fixture, *, quiet: float = 2.0, limit: float = 30.0) -> list:
+    """The fixture's rows once they have stopped arriving — for a count no test can state, such
+    as the requests a cache served while catching up."""
+    deadline = asyncio.get_running_loop().time() + limit
+    rows = await fixture.rows()
+    while asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(quiet)
+        again = await fixture.rows()
+        if len(again) == len(rows):
+            return again
+        rows = again
+    raise AssertionError(f"rows kept arriving for {limit}s: {len(rows)}")
+
+
 async def test_e10_a_blocked_caller_is_refused_before_the_pipeline_runs(fixture) -> None:
     """`FRD-126`'s property, for this control: a stopped caller must not pay for a classifier on
-    the way to being told."""
+    the way to being told.
+
+    The classifier is shown to run **first**, on a request made before the block: a pipeline that
+    made no model call would otherwise pass this by counting zero twice.
+    """
     async with fixture.engine.begin() as connection:
         await connection.execute(
             text(
@@ -959,38 +1072,42 @@ async def test_e10_a_blocked_caller_is_refused_before_the_pipeline_runs(fixture)
             ),
             {
                 "slug": fixture.slug,
+                # `flag`, not `block`: what is asked is whether the classifier is *called*, and a
+                # small model that read "Say OK" as an injection would refuse the very request
+                # meant to show it running.
                 "steps": (
-                    '[{"type": "injection_filter", "config": {"mode": "llm", "action": "block",'
+                    '[{"type": "injection_filter", "config": {"mode": "llm", "action": "flag",'
                     f' "model": "{MODEL}"}}}}]'
                 ),
             },
         )
+
+    def classifier_calls(rows: list) -> int:
+        # A pipeline model call leaves a row of its own (`FRD-125b`), under the gateway's prefix.
+        return len([r for r in rows if str(r["operation"]).startswith(PIPELINE_OPERATION_PREFIX)])
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        served = await _generate(client, fixture)
+    assert served.status_code == 200, served.text
+    assert classifier_calls(await fixture.wait_for_rows(2)) >= 1, "the classifier never ran"
+
     await fixture.suspend()
     await _wait_until_blocked(fixture, blocked=True)
-    await asyncio.sleep(2.0)
-
-    async def classifier_calls() -> int:
-        # A pipeline model call leaves a `pipeline:` row of its own (`FRD-125b`).
-        rows = await fixture.rows()
-        return len([r for r in rows if str(r["operation"]).startswith("pipeline:")])
 
     # Counted from **after** the block took effect: the requests served while the cache caught up
     # ran the filter quite correctly, and what is under test is the ones that were refused.
-    before = await classifier_calls()
+    settled = await _settled(fixture)
+    before = classifier_calls(settled)
     async with httpx.AsyncClient(timeout=180.0) as client:
         for _ in range(3):
             response = await _generate(client, fixture)
             assert response.status_code == 429, response.text
-    await asyncio.sleep(3.0)
+    await fixture.wait_for_rows(len(settled) + 3)
+    after = await _settled(fixture)
 
-    assert await classifier_calls() == before, (
+    assert classifier_calls(after) == before, (
         "a suspended caller paid for a classifier on the way to being told"
     )
-
-    async with fixture.engine.begin() as connection:
-        await connection.execute(
-            text("DELETE FROM pipeline_configs WHERE use_case = :slug"), {"slug": fixture.slug}
-        )
 
 
 async def test_e11_the_kira_surface_refuses_a_suspended_caller_too(fixture) -> None:
@@ -1034,42 +1151,88 @@ async def test_e12_an_embedding_is_refused_too(fixture) -> None:
 # =================================================================================================
 
 
-async def test_f1_an_incident_role_can_stop_and_restore(security_token: str) -> None:
+async def _forget_suspension(engine: AsyncEngine, row_id: str) -> None:
+    """Delete a suspension made through the API, which keeps every one on purpose (`FRD-503`).
+
+    The API is what these tests are about; the clean-up is not, and a lifted row the API cannot
+    remove would otherwise sit in the security console as an incident nobody had.
+    """
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("DELETE FROM access_suspensions WHERE id = :id"), {"id": row_id}
+        )
+
+
+async def test_f1_an_incident_role_can_stop_and_restore(security_token: str, engine) -> None:
     headers = {"Authorization": f"Bearer {security_token}", "content-type": "application/json"}
     async with httpx.AsyncClient(timeout=30.0) as client:
         created = await client.post(
             f"{GATEWAY_URL}/v1beta/suspensions",
             headers=headers,
-            json={"target": "subject", "target_value": f"probe-{uuid.uuid4().hex[:6]}"},
+            json={"target": "subject", "target_value": installation.subject("probe")},
         )
         assert created.status_code == 201, created.text
         body = created.json()
-        assert body["author"].startswith("user:")
-        assert body["expires_at"] is None
-
-        listed = await client.get(f"{GATEWAY_URL}/v1beta/suspensions", headers=headers)
-        assert any(row["id"] == body["id"] for row in listed.json()["suspensions"])
-
-        lifted = await client.delete(
-            f"{GATEWAY_URL}/v1beta/suspensions/{body['id']}", headers=headers
-        )
-        assert lifted.status_code == 200
-        assert lifted.json()["lifted_by"].startswith("user:")
-
-        # Kept, not deleted: "blocked for two hours last Tuesday" is what a review asks.
-        again = await client.get(f"{GATEWAY_URL}/v1beta/suspensions", headers=headers)
-        assert any(row["id"] == body["id"] for row in again.json()["suspensions"])
+        try:
+            await _stop_and_restore(client, headers, body)
+        finally:
+            await _forget_suspension(engine, body["id"])
 
 
-async def test_f2_a_use_case_admin_cannot_stop_anybody(member_token: str) -> None:
+async def _stop_and_restore(client: httpx.AsyncClient, headers: dict, body: dict) -> None:
+    assert body["author"].startswith("user:")
+    assert body["expires_at"] is None
+
+    listed = await client.get(f"{GATEWAY_URL}/v1beta/suspensions", headers=headers)
+    assert any(row["id"] == body["id"] for row in listed.json()["suspensions"])
+
+    lifted = await client.delete(f"{GATEWAY_URL}/v1beta/suspensions/{body['id']}", headers=headers)
+    assert lifted.status_code == 200
+    assert lifted.json()["lifted_by"].startswith("user:")
+
+    # Kept, not deleted: "blocked for two hours last Tuesday" is what a review asks.
+    again = await client.get(f"{GATEWAY_URL}/v1beta/suspensions", headers=headers)
+    assert any(row["id"] == body["id"] for row in again.json()["suspensions"])
+
+
+async def test_f2_a_use_case_admin_cannot_stop_anybody(
+    member_token: str, admin_token: str, engine
+) -> None:
+    """Built, not assumed: the member account **administers** a use case here — its department is
+    granted `admin` and the gateway has the grant — and is still refused stopping traffic **in that
+    use case**. Without the grant this would be a test of an account that administers nothing."""
+    slug = f"anom-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", slug)
+    admin = {"Authorization": f"Bearer {admin_token}"}
     headers = {"Authorization": f"Bearer {member_token}", "content-type": "application/json"}
     outside = f"outside-{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(timeout=30.0) as client:
-        created = await client.post(
-            f"{GATEWAY_URL}/v1beta/suspensions",
-            headers=headers,
-            json={"target": "subject", "target_value": "somebody"},
+        made = await client.post(
+            f"{MANAGEMENT_URL}/api/v1/use-cases/",
+            headers=admin,
+            json={"slug": slug, "name": "Administered by the member"},
         )
+        assert made.status_code == 201, made.text
+        granted = await client.post(
+            f"{MANAGEMENT_URL}/api/v1/use-cases/{slug}/groups/",
+            headers=admin,
+            json={"group_path": MEMBER_DEPARTMENT, "role": "admin"},
+        )
+        assert granted.status_code == 201, granted.text
+        await wait_for_row(
+            engine,
+            "SELECT 1 FROM use_case_groups WHERE use_case_slug = :slug AND role = 'admin'",
+            {"slug": slug},
+            timeout=45.0,
+        )
+        try:
+            created = await client.post(
+                f"{GATEWAY_URL}/v1beta/suspensions",
+                headers=headers,
+                json={"target": "subject", "target_value": "somebody", "use_case": slug},
+            )
+        finally:
+            await client.delete(f"{MANAGEMENT_URL}/api/v1/use-cases/{slug}/", headers=admin)
         listed = await client.get(f"{GATEWAY_URL}/v1beta/suspensions", headers=headers)
         scoped = await client.get(
             f"{GATEWAY_URL}/v1beta/suspensions?use_case={outside}", headers=headers
@@ -1166,10 +1329,11 @@ async def test_f6_a_hand_made_suspension_stops_the_real_gateway(
             await client.delete(
                 f"{GATEWAY_URL}/v1beta/suspensions/{created.json()['id']}", headers=headers
             )
+            await _forget_suspension(fixture.engine, created.json()["id"])
 
 
 async def test_f7_a_throttle_created_by_hand_is_stored_with_its_rate(
-    security_token: str,
+    security_token: str, engine
 ) -> None:
     headers = {"Authorization": f"Bearer {security_token}", "content-type": "application/json"}
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1178,18 +1342,18 @@ async def test_f7_a_throttle_created_by_hand_is_stored_with_its_rate(
             headers=headers,
             json={
                 "target": "subject",
-                "target_value": f"slow-{uuid.uuid4().hex[:6]}",
+                "target_value": installation.subject("slow"),
                 "action": "throttle",
                 "throttle_rpm": 3,
                 "minutes": 10,
             },
         )
         assert created.status_code == 201, created.text
-        assert created.json()["throttle_rpm"] == 3
-        assert created.json()["expires_at"] is not None
-        await client.delete(
-            f"{GATEWAY_URL}/v1beta/suspensions/{created.json()['id']}", headers=headers
-        )
+        try:
+            assert created.json()["throttle_rpm"] == 3
+            assert created.json()["expires_at"] is not None
+        finally:
+            await _forget_suspension(engine, created.json()["id"])
 
 
 async def test_f8_the_anomaly_list_is_scoped_like_the_report(
@@ -1198,7 +1362,7 @@ async def test_f8_the_anomaly_list_is_scoped_like_the_report(
     """One `visible_scope`, not two that happen to agree."""
     await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4)
     await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         # **Asked about this use case**, not fished out of the global list.
@@ -1260,12 +1424,12 @@ async def test_g1_the_engine_measures_the_rows_a_real_request_wrote(fixture) -> 
         fixture.engine,
         fixture.slug,
         1,
-        subject="integration-probe",
+        subject=fixture.subject,
         outcome="rate_limited",
         status=429,
     )
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     event = (await fixture.events())[0]
     # Two rows in the window: the one the model served and the one seeded. The sample proves the
@@ -1310,7 +1474,7 @@ async def test_g3_a_real_refusal_is_measured_as_one(fixture) -> None:
     )
     await fixture.rule(kind="refusal_rate", threshold=30, min_sample=2)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     events = await fixture.events()
     assert events, "a real budget refusal was invisible to a refusal-rate rule"
@@ -1332,7 +1496,7 @@ async def test_g4_a_rule_that_blocks_writes_a_decision_that_the_gateway_then_hon
     await _seed_rows(fixture.engine, fixture.slug, 9, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 1)
 
-    events = await _tick_enforcing(fixture.engine, fixture.slug)
+    events = await _tick_enforcing(fixture.engine)
     assert events, "the rule found nothing"
     assert _by_rule(events, rule_id).action_taken == "blocked"
 
@@ -1351,7 +1515,7 @@ async def test_g5_a_rule_that_only_alerts_leaves_the_traffic_alone(fixture) -> N
     await _seed_rows(fixture.engine, fixture.slug, 9, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 1)
 
-    events = await _tick_enforcing(fixture.engine, fixture.slug)
+    events = await _tick_enforcing(fixture.engine)
 
     assert _by_rule(events, rule_id).action_taken == "alert"
     assert await fixture.suspensions() == []
@@ -1373,7 +1537,7 @@ async def test_g6_a_throttling_rule_writes_its_rate(fixture) -> None:
     await _seed_rows(fixture.engine, fixture.slug, 9, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 1)
 
-    events = await _tick_enforcing(fixture.engine, fixture.slug)
+    events = await _tick_enforcing(fixture.engine)
 
     assert _by_rule(events, rule_id).action_taken == "throttled"
     assert (await fixture.suspensions())[0]["throttle_rpm"] == 2
@@ -1391,7 +1555,7 @@ async def test_g7_a_rule_that_cannot_be_carried_out_says_so_on_the_row(fixture, 
     await _seed_rows(fixture.engine, fixture.slug, 9, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 1)
 
-    events = await _tick_enforcing(fixture.engine, fixture.slug)
+    events = await _tick_enforcing(fixture.engine)
 
     assert _by_rule(events, rule_id).action_taken == "detected_not_enforced"
     assert await fixture.suspensions() == []
@@ -1404,7 +1568,7 @@ async def test_g8_the_evaluator_survives_a_rule_row_it_cannot_parse(fixture, eng
     await _seed_rows(fixture.engine, fixture.slug, 9, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 1)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     # The good rule still fired.
     assert [e["kind"] for e in await fixture.events()] == ["refusal_rate"]
@@ -1494,12 +1658,15 @@ async def test_h4_an_anomaly_event_is_readable_through_the_api(
     await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4)
     await _seed_rows(fixture.engine, fixture.slug, 9, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 1)
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
+        # Asked about this use case, as f8 is and for f8's reason: one round writes a finding for
+        # every scope at the same instant, and the unfiltered page is the newest fifty of them.
         listed = await client.get(
             f"{GATEWAY_URL}/v1beta/anomalies",
             headers={"Authorization": f"Bearer {governance_token}"},
+            params={"use_case": fixture.slug},
         )
 
     assert listed.status_code == 200
@@ -1531,20 +1698,9 @@ async def test_h6_readiness_is_unaffected_by_a_suspension(fixture) -> None:
 async def test_h7_the_gateway_still_serves_everybody_else(fixture, engine) -> None:
     """The blast radius of a suspension is what it names, and nothing more."""
     other_slug = f"itest-free-{uuid.uuid4().hex[:6]}"
-    from aira_common.apikeys import generate_api_key
-
-    full_key, prefix, key_hash = generate_api_key()
-    async with engine.begin() as connection:
-        await connection.execute(
-            text("INSERT INTO use_cases (slug, name) VALUES (:slug, :slug)"), {"slug": other_slug}
-        )
-        await connection.execute(
-            text(
-                "INSERT INTO api_keys (id, prefix, key_hash, subject, use_case, label, is_active)"
-                " VALUES (:id, :prefix, :hash, 'free-probe', :slug, 'free', true)"
-            ),
-            {"id": str(uuid.uuid4()), "prefix": prefix, "hash": key_hash, "slug": other_slug},
-        )
+    full_key, _ = await insert_use_case_and_key(
+        engine, other_slug, subject=installation.subject("free-probe"), label="free"
+    )
     try:
         await fixture.suspend()
         await _wait_until_blocked(fixture, blocked=True)
@@ -1557,13 +1713,7 @@ async def test_h7_the_gateway_still_serves_everybody_else(fixture, engine) -> No
             )
         assert free.status_code == 200, free.text
     finally:
-        async with engine.begin() as connection:
-            for statement in (
-                "DELETE FROM request_logs WHERE use_case = :slug",
-                "DELETE FROM api_keys WHERE use_case = :slug",
-                "DELETE FROM use_cases WHERE slug = :slug",
-            ):
-                await connection.execute(text(statement), {"slug": other_slug})
+        await installation.delete_gateway_rows(engine, other_slug)
 
 
 async def test_h8_two_rules_on_one_use_case_each_report_their_own_numbers(fixture) -> None:
@@ -1575,7 +1725,7 @@ async def test_h8_two_rules_on_one_use_case_each_report_their_own_numbers(fixtur
     await _seed_rows(fixture.engine, fixture.slug, 4, outcome="upstream_error", status=502)
     await _seed_rows(fixture.engine, fixture.slug, 1)
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     events = {e["kind"]: e for e in await fixture.events()}
     assert set(events) == {"refusal_rate", "error_rate"}
@@ -1598,7 +1748,7 @@ async def test_h9_the_audit_row_of_a_suspended_request_still_names_the_caller(fi
 
     row = [r for r in await fixture.rows() if r["outcome"] == "suspended"][0]
 
-    assert row["subject"] == "integration-probe"
+    assert row["subject"] == fixture.subject
     assert row["use_case"] == fixture.slug
     # Which *system* called, so a leaked key's blast radius can be assessed (`FRD-122` FR-5).
     assert row["credential"]
@@ -1660,24 +1810,27 @@ async def test_i2_every_topic_the_relay_publishes_to_exists(engine) -> None:
     """
     from aira_common import kafka
 
+    # The broker of **this** stack, under the names its stage gives the topics: a literal container
+    # name would ask another stack's broker, or none, and an unstaged name would compare another
+    # stage's topics with this one's.
     process = await asyncio.create_subprocess_exec(
         "docker",
         "exec",
-        "aira-kafka",
+        stack_addresses.container("kafka"),
         "/opt/kafka/bin/kafka-topics.sh",
         "--bootstrap-server",
         "localhost:9092",
         "--list",
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
     )
-    stdout, _ = await process.communicate()
-    if process.returncode != 0:
-        pytest.skip("the broker is not reachable from here")
+    stdout, stderr = await process.communicate()
+    assert process.returncode == 0, f"could not list the broker's topics: {stderr.decode()}"
 
+    stage = stack_addresses.setting("AIRA_KAFKA_STAGE")
     present = set(stdout.decode().split())
     declared = {
-        value
+        kafka.staged(value, stage)
         for name, value in vars(kafka).items()
         if name.endswith("_TOPIC") and isinstance(value, str) and value.startswith("aira.")
     }
@@ -1710,21 +1863,32 @@ async def test_i3_a_read_only_role_is_refused_by_both_planes_alike(
     assert management.status_code == 403, management.text
 
 
-async def test_i4_a_security_role_is_allowed_by_both_planes_alike(security_token: str) -> None:
-    """The other half of `i3`: the role whose job this is may do both."""
+async def test_i4_a_security_role_is_allowed_by_both_planes_alike(
+    security_token: str, engine
+) -> None:
+    """The other half of `i3`: the role whose job this is may do both — a rule made disabled,
+    because what is asked is whether it may be made, and an enabled one would act everywhere."""
     headers = {"Authorization": f"Bearer {security_token}"}
     name = f"allowed-{uuid.uuid4().hex[:6]}"
     async with httpx.AsyncClient(timeout=30.0) as client:
         gateway = await client.post(
             f"{GATEWAY_URL}/v1beta/suspensions",
             headers=headers,
-            json={"target": "subject", "target_value": f"probe-{uuid.uuid4().hex[:6]}"},
+            json={"target": "subject", "target_value": installation.subject("probe")},
         )
         management = await client.post(
             f"{MANAGEMENT_URL}/api/v1/anomaly-rules/",
             headers=headers,
-            json={"name": name, "kind": "error_rate", "threshold": 50, "min_sample": 5},
+            json={
+                "name": name,
+                "kind": "error_rate",
+                "threshold": 50,
+                "min_sample": 5,
+                "enabled": False,
+            },
         )
+        if management.status_code == 201:
+            installation.remember("rule", management.json()["id"])
         try:
             assert gateway.status_code == 201, gateway.text
             assert management.status_code == 201, management.text
@@ -1733,6 +1897,7 @@ async def test_i4_a_security_role_is_allowed_by_both_planes_alike(security_token
                 await client.delete(
                     f"{GATEWAY_URL}/v1beta/suspensions/{gateway.json()['id']}", headers=headers
                 )
+                await _forget_suspension(engine, gateway.json()["id"])
             if management.status_code == 201:
                 await client.delete(
                     f"{MANAGEMENT_URL}/api/v1/anomaly-rules/{management.json()['id']}/",
@@ -1756,7 +1921,7 @@ async def test_i5_a_real_request_s_byte_count_reaches_a_payload_rule(fixture) ->
         timeout=20.0,
     )
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     events = await fixture.events()
     assert events, "a large real request was invisible to a payload_size rule"
@@ -1777,14 +1942,14 @@ async def test_i6_a_small_real_request_does_not_trip_a_payload_rule(fixture) -> 
         timeout=20.0,
     )
 
-    await _tick(fixture.engine, fixture.slug)
+    await _tick(fixture.engine)
 
     assert await fixture.events() == []
 
 
 async def test_i7_a_refusal_records_the_bytes_it_refused(fixture) -> None:
-    """A 413 is recorded (`FRD-122` §12) — and the size is exactly the interesting thing about it,
-    since "somebody keeps posting 20 MB" is what a `payload_size` rule is for."""
+    """A request refused by a **budget** still records its size: the size is measured on the way
+    in, before any control decides, so every refusal row carries it for a `payload_size` rule."""
     await fixture.budget(limit_requests=0)
     async with httpx.AsyncClient(timeout=180.0) as client:
         response = await _generate(client, fixture, text_in="z" * 3_000)
@@ -1799,3 +1964,40 @@ async def test_i7_a_refusal_records_the_bytes_it_refused(fixture) -> None:
     )
     assert row.request_bytes is not None
     assert row.request_bytes > 3_000
+
+
+async def test_i7b_a_body_over_the_ceiling_is_recorded_with_its_size(fixture) -> None:
+    """A 413 is recorded (`FRD-122` §12) — and the size is exactly the interesting thing about it,
+    since "somebody keeps posting 20 MB" is what a `payload_size` rule is for.
+
+    The refusal comes before any route, so the row names no use case; it is found by a model name
+    nobody else asks for, which the gateway records from the path it refused.
+    """
+    from aira_gateway.config import GatewaySettings
+
+    ceiling = GatewaySettings().max_request_bytes
+    probe = f"ceiling-probe-{uuid.uuid4().hex[:8]}"
+    oversized = b'{"contents":[{"parts":[{"text":"' + b"x" * (ceiling + 1024) + b'"}]}]}'
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        response = await client.post(
+            f"{GATEWAY_URL}/v1beta/models/{probe}:generateContent",
+            headers=fixture.headers(),
+            content=oversized,
+        )
+    assert response.status_code == 413, response.text
+
+    try:
+        row = await wait_for_row(
+            fixture.engine,
+            "SELECT outcome, request_bytes, use_case FROM request_logs WHERE model = :model",
+            {"model": probe},
+            timeout=20.0,
+        )
+    finally:
+        async with fixture.engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM request_logs WHERE model = :model"), {"model": probe}
+            )
+    assert row.outcome == "request_too_large"
+    assert row.use_case is None
+    assert row.request_bytes is not None and row.request_bytes > ceiling, row.request_bytes

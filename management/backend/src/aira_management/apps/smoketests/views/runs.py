@@ -3,6 +3,11 @@
 **A run is somebody's traffic**, and it carries a use case's own answers — what its filter caught,
 what its redactor rewrote. So runs and results are readable only by somebody who could have
 started them: `may_run_tests_queryset`, the same rule that decides who may run.
+
+**And it is evidence** (`FRD-504` §5.7): earlier runs are history, kept and readable. The people
+who may run the catalogue in a use case include its administrator — the party whose answers are
+being judged — so a run is never deleted, an answer is written by the person whose run it is and is
+fixed once somebody has judged it, and a judgement names whoever last made it.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -27,6 +32,11 @@ from aira_management.apps.usecases.access import may_run_tests_queryset
 from aira_management.apps.usecases.models import UseCase
 from aira_management.rbac import MayRunTests
 
+#: What came back from the model: written by the run, never by a rater.
+ANSWER_FIELDS = ("response", "error", "latency_ms")
+#: What a person made of it.
+JUDGEMENT_FIELDS = ("verdict", "note")
+
 
 class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
     """Running the catalogue is **making requests**, in a use case one may run it in.
@@ -37,7 +47,9 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
 
     serializer_class = TestRunSerializer
     permission_classes = [IsAuthenticated, MayRunTests]
-    http_method_names = ["get", "post", "delete", "head", "options"]
+    #: No `delete`: a run holds verdicts other people formed, and the people who may reach it
+    #: include the administrator whose use case was judged.
+    http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self) -> QuerySet[TestRun]:
         runs = TestRun.objects.prefetch_related("results").filter(
@@ -97,12 +109,9 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
         """The use case this run is about, or a refusal.
 
         Asked **per object**: `MayRunTests` only answers "is there any use case this person could
-        run", and a caller who administers one must not then name somebody else's slug.
+        run", and a caller who administers one must not then name somebody else's slug. The slug is
+        never empty here: the serializer refuses a blank `use_case` by name.
         """
-        if not slug:
-            raise ValidationError(
-                {"use_case": ["Name the use case whose pipeline to put the catalogue to."]}
-            )
         use_case = may_run_tests_queryset(
             self.request.user, UseCase.objects.filter(slug=slug)
         ).first()
@@ -127,9 +136,20 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
 
     @action(detail=True, methods=["post"])
     def finish(self, request: Request, pk: str | None = None) -> Response:
+        """Close a run — by whoever started it, once.
+
+        A finished run is its use case's standing (`stats`), so finishing somebody else's half-asked
+        run would make it count; and a second call must not move the moment the run ended.
+        """
         run = self.get_object()
-        run.finished_at = timezone.now()
-        run.save(update_fields=["finished_at"])
+        if run.requested_by_id != request.user.pk:
+            raise PermissionDenied(
+                "Only the person who started this run can finish it: a finished run becomes its "
+                "use case's standing."
+            )
+        if run.finished_at is None:
+            run.finished_at = timezone.now()
+            run.save(update_fields=["finished_at"])
         return Response(TestRunSerializer(run).data)
 
     @action(detail=True, methods=["get"])
@@ -152,13 +172,42 @@ class TestResultViewSet(viewsets.ModelViewSet[TestResult]):
         )
 
     def perform_update(self, serializer: Any) -> None:
-        """Store an answer, or a verdict, or both.
+        """Store an answer, or a judgement, or both.
 
-        The rating stamps its author here rather than accepting one from the caller: a judgement
-        that names somebody who did not make it is worse than an anonymous one.
+        - **The answer** (`ANSWER_FIELDS`) is written by the person whose run it is — the console
+          writes it from their browser as the run proceeds — and is fixed once somebody has rated
+          it: a verdict was formed against that text.
+        - **The judgement** (`JUDGEMENT_FIELDS`) names whoever last wrote it, stamped here rather
+          than accepted from the caller — a judgement that names somebody who did not make it is
+          worse than an anonymous one — and nobody once it is back to `unrated`.
         """
-        verdict = serializer.validated_data.get("verdict")
-        if verdict and verdict != Verdict.UNRATED:
-            serializer.save(rated_by=self.request.user, rated_at=timezone.now())
-        else:
+        result: TestResult = serializer.instance
+        data = serializer.validated_data
+        answer = {
+            field
+            for field in ANSWER_FIELDS
+            if field in data and data[field] != getattr(result, field)
+        }
+        if answer:
+            if result.run.requested_by_id != self.request.user.pk:
+                raise PermissionDenied(
+                    "Only the person who started this run writes its answers; anybody who may run "
+                    "the catalogue here may rate them."
+                )
+            if result.verdict != Verdict.UNRATED:
+                raise ValidationError(
+                    {
+                        field: [
+                            f"This answer has been rated '{result.verdict}', and that verdict was "
+                            "formed against it, so it cannot be changed. Start a new run to ask "
+                            "again."
+                        ]
+                        for field in sorted(answer)
+                    }
+                )
+        if not any(field in data for field in JUDGEMENT_FIELDS):
             serializer.save()
+        elif data.get("verdict", result.verdict) == Verdict.UNRATED:
+            serializer.save(rated_by=None, rated_at=None)
+        else:
+            serializer.save(rated_by=self.request.user, rated_at=timezone.now())

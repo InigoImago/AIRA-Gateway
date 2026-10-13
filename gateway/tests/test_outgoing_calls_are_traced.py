@@ -34,10 +34,10 @@ import aira_gateway.config as config_module
 from aira_common.observability import attribute_model_calls_to
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
-from aira_gateway.telemetry import model_call_chunks, model_call_span
+from aira_gateway.telemetry import model_call_span
 
-#: Shaped like the credential `upstreams/gemini.py` puts in `?key=` on every Google AI Studio
-#: call. A literal rather than a fixture, so a failure prints the thing that leaked.
+#: Shaped like a Google API key in `?key=`, the query parameter Google's own clients authenticate
+#: with. A literal rather than a fixture, so a failure prints the thing that leaked.
 UPSTREAM_KEY = "AIzaSy-this-would-be-the-installations-key"
 
 #: Nothing listens here, and the connection is refused immediately. The span is opened before the
@@ -267,49 +267,76 @@ async def test_each_attempt_of_a_chain_names_the_model_it_tried(
     assert named == ["gemini-2.5-flash", "qwen3:0.6b"]
 
 
-async def test_a_streamed_answer_is_marked_for_as_long_as_it_streams(
+class _StreamsAfterCalling:
+    """A streaming upstream as the real adapters are one: the HTTP request is made on the first
+    ``__anext__``, from **inside** the iteration, not when the iterator is built."""
+
+    def models(self) -> list[Any]:
+        from aira_gateway.upstreams.base import UpstreamModel
+
+        return [UpstreamModel("qwen3:0.6b", "qwen3:0.6b", ("streamGenerateContent",))]
+
+    async def stream_generate(self, request: Any) -> AsyncIterator[Any]:
+        from aira_gateway.core.canonical import CanonicalChunk
+
+        await _call_a_closed_upstream()
+        yield CanonicalChunk(text_delta="delta")
+
+
+def _streamed_request() -> Any:
+    from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
+
+    return CanonicalRequest(
+        model="qwen3:0.6b", messages=[CanonicalMessage(role=Role.USER, text="hi")]
+    )
+
+
+async def test_a_streamed_answer_is_marked_where_its_request_is_made(
     traced: tuple[FastAPI, InMemorySpanExporter],
 ) -> None:
     """**The case that does not work with a context manager around the expression.**
 
     A streaming upstream issues its HTTP request on the first `__anext__`, not when the iterator is
-    built. `model_call_chunks` therefore wraps the iterator rather than the call, and this asserts
-    the wrapping is what makes the span carry the model — with the request deliberately made from
-    *inside* the iteration, which is where a real adapter makes it.
+    built — so the stream chain marks the attempt around **its first chunk**, and this asserts that
+    is what makes the span carry the model, with the request made from inside the iteration, where
+    a real adapter makes it.
     """
+    from aira_gateway.pipeline.dispatch import stream_with_fallback
+    from aira_gateway.upstreams.base import ProviderRegistry
+
     _app, exporter = traced
     attribute_model_calls_to({"aira.subject": "ucadmin"})
 
-    async def chunks() -> AsyncIterator[str]:
-        await _call_a_closed_upstream()
-        yield "delta"
+    streamed = await stream_with_fallback(
+        ProviderRegistry([_StreamsAfterCalling()]), _streamed_request(), ()
+    )
 
-    received = [chunk async for chunk in model_call_chunks("qwen3:0.6b", chunks(), purpose="serve")]
-
-    assert received == ["delta"]
+    assert [chunk.text_delta async for chunk in streamed.chunks] == ["delta"]
     attributes = dict(_client_spans(exporter)[0].attributes or {})
     assert attributes.get("aira.model") == "qwen3:0.6b"
     assert attributes.get("aira.subject") == "ucadmin"
 
 
-async def test_the_stream_stops_marking_when_it_ends(
+async def test_the_mark_ends_with_the_attempt(
     traced: tuple[FastAPI, InMemorySpanExporter],
 ) -> None:
-    """An async generator does not get a context of its own, so what it sets is set in the caller's
-    — which is what makes the wrapper work at all, and what would leave every later call in the
-    request labelled as a model access if the mark were never reset."""
+    """The mark is entered and left around one attempt, in one context: one left standing would
+    label every later call of the request — a database read, the next model — as this model's
+    access."""
+    from aira_gateway.pipeline.dispatch import stream_with_fallback
+    from aira_gateway.upstreams.base import ProviderRegistry
+
     _app, exporter = traced
 
-    async def chunks() -> AsyncIterator[str]:
-        yield "delta"
-
-    async for _chunk in model_call_chunks("qwen3:0.6b", chunks()):
-        pass
+    streamed = await stream_with_fallback(
+        ProviderRegistry([_StreamsAfterCalling()]), _streamed_request(), ()
+    )
+    [chunk async for chunk in streamed.chunks]
     await _call_a_closed_upstream()
 
     attributes = dict(_client_spans(exporter)[-1].attributes or {})
     assert "aira.model" not in attributes, (
-        "the mark outlived the stream, so an unrelated call was recorded as a model access"
+        "the mark outlived the attempt, so an unrelated call was recorded as a model access"
     )
 
 

@@ -154,6 +154,43 @@ describe('buildChart', () => {
     expect(chart.columns).toHaveLength(3);
   });
 
+  it('does not call a period empty because its spend is unknown', () => {
+    // Forty requests on a model with no price on file are forty requests. "Nothing was used" is
+    // decided by what was asked, never by the measure on screen — and the money that could not be
+    // computed is unknown, period and column alike, not `0.00`.
+    const chart = buildChart(
+      series({ points: [point({ requests: 40, cost_nanos: 0, unpriced_requests: 40 })] }),
+      'cost',
+    );
+
+    expect(chart.empty).toBe(false);
+    expect(chart.costUnknown).toBe(true);
+    expect(chart.display).toBe('—');
+    expect(chart.columns[0].costUnknown).toBe(true);
+    expect(chart.columns[0].display).toBe('—');
+    // The empty columns beside it are still quiet days, not unknown ones.
+    expect(chart.columns[1].costUnknown).toBe(false);
+  });
+
+  it('keeps a figure for a period that could be priced in part, and for the other measures', () => {
+    const partly = buildChart(
+      series({
+        points: [point({ requests: 5, cost_nanos: 1_000_000_000, unpriced_requests: 3 })],
+      }),
+      'cost',
+    );
+    expect(partly.costUnknown).toBe(false);
+    expect(partly.display).toBe('1.00');
+
+    // Unpriced traffic is fully counted in requests; only its money is missing.
+    const counted = buildChart(
+      series({ points: [point({ requests: 40, cost_nanos: 0, unpriced_requests: 40 })] }),
+      'requests',
+    );
+    expect(counted.costUnknown).toBe(false);
+    expect(counted.display).toBe('40');
+  });
+
   it('leaves a zero-valued band out of the stack', () => {
     // Drawn, it is a 2px line at the top of the bar that belongs to no band — and it would carry its
     // own separator, so it costs twice what it shows.
@@ -171,8 +208,10 @@ describe('buildChart', () => {
   });
 
   it('carries unpriced requests so a spend figure can admit it is a lower bound', () => {
+    // Six requests, four of them unpriced: never more unpriced than requests, which the gateway
+    // cannot produce and a fixture should not either.
     const chart = buildChart(
-      series({ points: [point({ cost_nanos: 0, unpriced_requests: 4 })] }),
+      series({ points: [point({ requests: 6, cost_nanos: 1_000_000_000, unpriced_requests: 4 })] }),
       'cost',
     );
 
@@ -198,7 +237,9 @@ describe('buildChart', () => {
     ]);
   });
 
-  it('labels a day column with its day and an hour column with its hour', () => {
+  it('labels a day column with its day and an hour column with its hour, on the UTC clock', () => {
+    // The gateway buckets in UTC. A reader in Berlin who reads "14:00" as their own afternoon is two
+    // hours off, so the full form — the tooltip, the day list — says which clock it is.
     const days = buildChart(series(), 'cost');
     const hours = buildChart(
       series({
@@ -212,7 +253,7 @@ describe('buildChart', () => {
     expect(days.columns[0].label).toBe('01');
     expect(days.columns[0].title).toBe('2026-09-01');
     expect(hours.columns[1].label).toBe('14:00');
-    expect(hours.columns[1].title).toBe('2026-09-01 14:00');
+    expect(hours.columns[1].title).toBe('2026-09-01 14:00 UTC');
   });
 });
 
@@ -230,10 +271,13 @@ describe('the palette', () => {
     expect(colorFor('c', 6)).toBe(SERIES_COLORS[6]);
   });
 
-  it('holds exactly as many hues as the gateway keeps bands', () => {
-    // The gateway folds the eighth band onward into `(other)`; if these two ever disagree, either a
-    // band draws a wrapped colour or a hue is never used.
+  it('holds seven hues, the number of bands the gateway keeps before it folds the rest', () => {
+    // A pin, not a comparison: `DEFAULT_TOP = 7` and `OTHER = "(other)"` live in the gateway's
+    // `reporting/series.py`, which a browser test cannot read. If the gateway changes either, this
+    // stays green while a band draws a wrapped colour or `(other)` is drawn as an entity — only a
+    // test that reads both planes can see that.
     expect(SERIES_COLORS).toHaveLength(7);
+    expect(OTHER).toBe('(other)');
   });
 
   it('puts a legible ink on every colour a label can sit on', () => {

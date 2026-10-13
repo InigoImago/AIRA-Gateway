@@ -43,16 +43,18 @@ DEFAULT_MEDIA_TYPES: frozenset[str] = frozenset(
     }
 )
 
-#: Leading bytes a type must start with, where the format has a recognisable one. Text formats are
-#: absent on purpose: "does this look like Markdown" has no answer.
-_SIGNATURES: dict[str, tuple[bytes, ...]] = {
-    "application/pdf": (b"%PDF-",),
-    "image/png": (b"\x89PNG\r\n\x1a\n",),
-    "image/jpg": (b"\xff\xd8\xff",),
-    "image/jpeg": (b"\xff\xd8\xff",),
-    "image/webp": (b"RIFF",),
-    "image/heic": (b"\x00\x00\x00",),
-    "image/heif": (b"\x00\x00\x00",),
+#: What a type's bytes must carry, where the format has a recognisable mark: ``(offset, bytes)``
+#: pairs that must **all** match. Text formats are absent on purpose: "does this look like
+#: Markdown" has no answer. A container is named by its kind, not its wrapper: WAV and AVI are RIFF
+#: as WebP is, so WebP is the `WEBP` at byte 8; HEIC and HEIF are ISO media files, `ftyp` at byte 4.
+_SIGNATURES: dict[str, tuple[tuple[int, bytes], ...]] = {
+    "application/pdf": ((0, b"%PDF-"),),
+    "image/png": ((0, b"\x89PNG\r\n\x1a\n"),),
+    "image/jpg": ((0, b"\xff\xd8\xff"),),
+    "image/jpeg": ((0, b"\xff\xd8\xff"),),
+    "image/webp": ((0, b"RIFF"), (8, b"WEBP")),
+    "image/heic": ((4, b"ftyp"),),
+    "image/heif": ((4, b"ftyp"),),
 }
 
 MAX_PART_BYTES = 6 * 1024 * 1024
@@ -69,6 +71,12 @@ _MIME_KEYS = ("mimeType", "mime_type")
 _INLINE_KEYS = ("inlineData", "inline_data")
 
 
+#: The URL-safe alphabet's two letters, mapped onto the standard one's. Google's API reads bytes
+#: in either alphabet, padded or not — proto3 JSON — and the google-genai SDK sends URL-safe
+#: (`Part.from_bytes`), so a decoder that knew only one refused practically every real upload.
+_URL_SAFE = str.maketrans("-_", "+/")
+
+
 class AttachmentRejected(Exception):
     """An attachment cannot be accepted. Carries a message naming the part and the reason —
     a caller who cannot tell *which* of five parts was refused has to bisect their own request."""
@@ -82,6 +90,16 @@ class Limits:
     max_parts: int = MAX_PARTS
 
 
+def _b64decode(raw: str) -> bytes:
+    """Base64 in either alphabet, padding optional — strictly otherwise.
+
+    `validate=True`: without it, characters outside the alphabet are silently discarded and a
+    corrupted upload becomes a shorter, valid-looking document.
+    """
+    text = raw.translate(_URL_SAFE)
+    return base64.b64decode(text + "=" * (-len(text) % 4), validate=True)
+
+
 def decode(raw: str, *, index: int) -> bytes:
     """Base64 → bytes, or a refusal naming the part.
 
@@ -89,9 +107,7 @@ def decode(raw: str, *, index: int) -> bytes:
     caller's.
     """
     try:
-        # `validate=True`: without it, characters outside the alphabet are silently discarded and
-        # a corrupted upload becomes a shorter, valid-looking document.
-        decoded = base64.b64decode(raw, validate=True)
+        decoded = _b64decode(raw)
     except (binascii.Error, ValueError) as exc:
         raise AttachmentRejected(f"Part {index}: data is not valid base64.") from exc
     if not decoded:
@@ -109,10 +125,10 @@ def check_media_type(media_type: str, limits: Limits, *, index: int) -> None:
 
 def check_signature(media_type: str, data: bytes, *, index: int) -> None:
     """Catch a mislabelled upload. Not a scanner — see the module docstring."""
-    signatures = _SIGNATURES.get(media_type)
-    if signatures is None:
+    marks = _SIGNATURES.get(media_type)
+    if marks is None:
         return
-    if not any(data.startswith(signature) for signature in signatures):
+    if not all(data.startswith(mark, offset) for offset, mark in marks):
         raise AttachmentRejected(f"Part {index}: the content does not look like '{media_type}'.")
 
 
@@ -165,7 +181,7 @@ def _measure(raw: Any) -> tuple[int, str]:
     that is not base64 must not cost the audit row.
     """
     try:
-        decoded = base64.b64decode(str(raw), validate=True)
+        decoded = _b64decode(str(raw))
     except ValueError:
         return 0, ""
     return len(decoded), sha256(decoded).hexdigest()

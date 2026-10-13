@@ -132,13 +132,13 @@ async def check_thinking_levels(
     for asked_region in asked_regions:
         for word in words:
             started = time.monotonic()
-            verdict, usage = await _accepts(upstream, model, word, asked_region)
+            verdict, usage, contacted = await _accepts(upstream, model, word, asked_region)
             await _record_diagnostic(
                 request,
                 principal,
                 operation=f"models:checkThinking:{word}",
                 model=model,
-                region=asked_region,
+                region=contacted,
                 usage=usage,
                 status=200 if verdict["accepted"] else 400,
                 latency_ms=elapsed_ms(started),
@@ -172,10 +172,13 @@ def _expressible_modes(upstream: Any) -> set[str]:
 
 async def _accepts(
     upstream: Any, model: str, word: str, region: str
-) -> tuple[dict[str, Any], CanonicalUsage | None]:
-    """Ask one model in one region whether it takes one level word, and what that cost.
+) -> tuple[dict[str, Any], CanonicalUsage | None, str]:
+    """Ask one model in one region whether it takes one level word, what that cost, and where.
 
-    The usage travels with the verdict because the answer is the only place it exists.
+    The usage travels with the verdict because the answer is the only place it exists. So does the
+    region that answered: a model `AIRA_VERTEX_MODELS` pins to one region is reached there whatever
+    was asked, and a verdict — or an audit row — naming the asked region would stand for a place
+    nobody contacted.
     """
     probe = CanonicalRequest(
         model=model,
@@ -190,16 +193,28 @@ async def _accepts(
                 upstream.generate(probe), timeout=MODEL_CHECK_TIMEOUT_SECONDS
             )
     except TimeoutError:
-        return {
-            "accepted": False,
-            "detail": f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s.",
-        }, None
+        return (
+            {
+                "accepted": False,
+                "detail": f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s.",
+            },
+            None,
+            region,
+        )
     except RegionNotAllowed as exc:
-        return {"accepted": False, "detail": str(exc)}, None
+        return {"accepted": False, "detail": str(exc)}, None, region
     except (UpstreamError, DialectUnsupported) as exc:
         # The provider's own words are the whole value of this button.
-        return {"accepted": False, "detail": str(exc)}, None
+        return {"accepted": False, "detail": str(exc)}, None, region
     except Exception as exc:  # noqa: BLE001 — anything else means "we could not tell"
         # The type, not the message: an arbitrary provider error can carry a URL with a key.
-        return {"accepted": False, "detail": f"Could not ask ({type(exc).__name__})."}, None
-    return {"accepted": True, "detail": "The model accepted it."}, getattr(answer, "usage", None)
+        return {"accepted": False, "detail": f"Could not ask ({type(exc).__name__})."}, None, region
+    usage = getattr(answer, "usage", None)
+    served = str(getattr(answer, "served_region", "") or "")
+    if region and served and served != region:
+        detail = (
+            f"The model accepted it in {served}, the only region this deployment reaches it in; "
+            f"{region} was not contacted."
+        )
+        return {"accepted": True, "detail": detail}, usage, served
+    return {"accepted": True, "detail": "The model accepted it."}, usage, served or region

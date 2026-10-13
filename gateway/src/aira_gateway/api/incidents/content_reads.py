@@ -34,6 +34,8 @@ READ_FIELDS = (
     "username",
     "ground",
     "roles",
+    "auth_method",
+    "credential",
 )
 
 #: Rows per page by default, and the most one page may hold.

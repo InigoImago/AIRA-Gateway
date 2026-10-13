@@ -30,6 +30,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.access import GrantRole, strongest
 from aira_common.permissions import Permission
+from aira_gateway.audit import PIPELINE_OPERATION_PREFIX, Outcome
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import RequestLog, UseCaseMemberRead, UseCaseRead
 
@@ -78,6 +79,9 @@ class PayloadRefusal(StrEnum):
     EXPIRED = "expired"
     #: This request never had one — a refusal recorded before dispatch has nothing to show.
     NEVER_HAD_ONE = "never_had_one"
+    #: A model call the gateway made itself — a pipeline step deciding about a request, or a model
+    #: check — which keeps no text by design, whatever the use case stores.
+    NEVER_KEPT = "never_kept"
 
 
 #: Refusals about **authority** (403); the rest are about the data being absent (200 with a
@@ -117,6 +121,11 @@ MESSAGES = {
     ),
     PayloadRefusal.NEVER_HAD_ONE: (
         "This request never reached a model, so there is no prompt or response to show."
+    ),
+    PayloadRefusal.NEVER_KEPT: (
+        "This is a model call the gateway made itself — a pipeline step deciding about a request, "
+        "or a model check. Such calls keep no prompt or response; a pipeline step's input is the "
+        "request's own, stored with that request."
     ),
 }
 
@@ -235,6 +244,8 @@ async def may_read_payload(
     ).scalar_one_or_none()
 
     if row.request_payload is None and row.response_payload is None:
+        if _is_the_gateways_own_call(row):
+            return PayloadVerdict(allowed=False, refusal=PayloadRefusal.NEVER_KEPT)
         if use_case is not None and not use_case.store_payloads:
             return PayloadVerdict(allowed=False, refusal=PayloadRefusal.NOT_STORED)
         if row.status is not None and 200 <= row.status < 300:
@@ -243,6 +254,15 @@ async def may_read_payload(
         return PayloadVerdict(allowed=False, refusal=PayloadRefusal.NEVER_HAD_ONE)
 
     return PayloadVerdict(allowed=True, ground=ground)
+
+
+def _is_the_gateways_own_call(row: RequestLog) -> bool:
+    """Whether ``row`` records a model call the gateway made rather than one a caller sent.
+
+    Its success says nothing about retention: such a row is written without a payload on purpose
+    (`api/serving/pipeline_run.record_pipeline_calls`, `api/incidents/diagnostics`).
+    """
+    return row.operation.startswith(PIPELINE_OPERATION_PREFIX) or row.outcome == Outcome.DIAGNOSTIC
 
 
 async def _authority(

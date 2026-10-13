@@ -2000,6 +2000,13 @@ reading code.
   an embedding. A plausible explanation that is cheap to verify should be verified: one `curl` to
   the upstream settled it. **When a test's docstring states a fact about something outside the
   repository, that sentence is an untested claim sitting in the most trusted place in the codebase.**
+
+  The same shape one layer up: a test of a **helper** pins a rule its **callers** pay for. `Live`'s
+  spec asserted that switching a live view off drops the load in flight — right for a refresh, and
+  for the first load it left the Requests tab saying "Loading requests…" for good, because the flag
+  that never cleared belongs to the component, which that spec never builds. The helper's suite was
+  green under mutation; the browser suite found it. When a helper's rule *drops* something, ask what
+  each caller was waiting for it to deliver.
 - **An ADR that cites a control as an existing fact is not a check that it exists.** `ADR-0021` §5
   named `Upstream.thinking_modes` in passing — *"beside the existing `thinking_modes`"* — and the
   declaration was read by nothing, so the document described a control the code did not have and

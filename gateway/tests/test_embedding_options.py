@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from aira_common.models import Capability
+from aira_gateway.api.serving.controls import text_tokens
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest
 from aira_gateway.embedding import (
@@ -25,7 +26,6 @@ from aira_gateway.embedding import (
     NO_EMBEDDING_CAPABILITIES,
     EmbeddingBounds,
     EmbeddingRejected,
-    estimated_tokens,
     validate,
 )
 from aira_gateway.ratelimit.buckets import BucketRequest, InMemoryTokenBucket
@@ -194,10 +194,11 @@ def test_the_models_default_dimensionality_applies_when_none_is_asked_for() -> N
 
 
 def test_the_input_estimate_scales_with_the_batch() -> None:
-    """Unlike generation, an embedding's input is the whole request and is knowable up front —
-    so the reservation for a large batch is not the reservation for a sentence."""
-    assert estimated_tokens(_request("x" * 400)) > estimated_tokens(_request("x" * 40))
-    assert estimated_tokens(_request("a")) >= 1  # never zero: unknown is not free
+    """An embedding's input is the whole request and is knowable up front — so the reservation
+    for a large batch is not the reservation for a sentence. (One rule counts it for generation
+    too: the prompt is input the same way, `controls.text_tokens`.)"""
+    assert text_tokens(_request("x" * 400).texts) > text_tokens(_request("x" * 40).texts)
+    assert text_tokens(_request("a").texts) >= 1  # never zero: unknown is not free
 
 
 # == what the provider does with it ==============================================================

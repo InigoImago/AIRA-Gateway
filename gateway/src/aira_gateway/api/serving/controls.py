@@ -6,16 +6,21 @@ Each is a single rule. The order they run in is itself a guarantee, and it is ow
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterable, Iterator
+
 from fastapi import Request
 
 from aira_common.models import Capability
 from aira_common.money import cost_nanos
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.serving.context import attribution_of, catalog_of, use_case_record
+from aira_gateway.attachments import Limits, check_bounds
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
 from aira_gateway.catalog import MAX_ACCOUNTABLE_TOKENS, ModelDeclaration
-from aira_gateway.core.canonical import CanonicalRequest
+from aira_gateway.core.canonical import CanonicalRequest, TextPart, ToolCallPart, ToolResultPart
+from aira_gateway.pricing import Price
 from aira_gateway.ratelimit.buckets import per_minute
 from aira_gateway.state import (
     budgets_of,
@@ -31,6 +36,10 @@ EMBEDDING_METHODS = frozenset({"embedContent", "batchEmbedContents"})
 
 #: The prompt-cache lifetime a use case gets unless it chose the long one (`FRD-133`).
 DEFAULT_CACHE_TTL = "5m"
+
+#: Characters per token where a reservation counts text it has not tokenised — about what prose
+#: averages. Close rather than exact: `settle` replaces the estimate with the provider's figure.
+CHARACTERS_PER_TOKEN = 4
 
 #: The range every supported dialect accepts for each sampling control, under the name a caller
 #: sends (`FRD-124`). Checked before dispatch, so an out-of-range value is the caller's `400` naming
@@ -48,6 +57,14 @@ SAMPLING_BOUNDS: dict[str, tuple[str, float, float]] = {
 # == refusals that need no model ==================================================================
 
 
+class UseCaseRetired(GeminiHTTPError):
+    """A request to a retired use case (`FRD-607`).
+
+    Its own type so the audit outcome names what happened, rather than inferring it from a status
+    another refusal could share.
+    """
+
+
 async def refuse_if_retired(request: Request) -> None:
     """Refuse a request to a retired use case (`FRD-607`).
 
@@ -60,7 +77,7 @@ async def refuse_if_retired(request: Request) -> None:
     record = await use_case_record(request, slug)
     if record is not None and record.deleted_at is not None:
         # 403, not 404: the credential and the membership are real; "wrong slug" would mislead.
-        raise GeminiHTTPError(
+        raise UseCaseRetired(
             403,
             f"Use case '{slug}' has been retired and no longer serves requests. Its record is "
             "kept for audit; ask a Global Administrator if you believe this is wrong.",
@@ -77,6 +94,17 @@ def check_not_empty(canonical: CanonicalRequest) -> None:
             "nothing.",
             "INVALID_ARGUMENT",
         )
+
+
+def check_attachment_bounds(canonical: CanonicalRequest) -> None:
+    """Refuse a request carrying more attachments, or more bytes of them, than one request may.
+
+    Across the whole request — one document split over five messages is still one large request —
+    and here, for every surface, rather than in one surface's parser: there the other surface had
+    none, and a KIRA request carried hundreds of attachments, each decoded, hashed, forwarded and
+    reserved for.
+    """
+    check_bounds([part.size for part in canonical.attachments], Limits())
 
 
 def check_sampling(canonical: CanonicalRequest) -> None:
@@ -247,11 +275,41 @@ async def cache_ttl_for(request: Request) -> str:
     """The cache lifetime this use case chose; anything unrecognised reads as the cheap default."""
     slug = getattr(attribution_of(request), "use_case", None)
     record = await use_case_record(request, slug)
-    chosen = getattr(record, "prompt_cache_ttl", "5m") if record is not None else "5m"
+    chosen = getattr(record, "prompt_cache_ttl", None)
     return "1h" if chosen == "1h" else DEFAULT_CACHE_TTL
 
 
 # == the reservation ==============================================================================
+
+
+def prompt_texts(canonical: CanonicalRequest) -> Iterator[str]:
+    """Every text a request sends a model, which it is billed as input for: the conversation with
+    the tool calls and results in it, the functions it declares and the schema it asks for.
+    Attachments are not text; the model's declaration prices them (`estimate`)."""
+    for message in canonical.messages:
+        for part in message.parts:
+            if isinstance(part, TextPart):
+                yield part.text
+            elif isinstance(part, ToolCallPart):
+                yield part.name
+                yield json.dumps(part.arguments, ensure_ascii=False, default=str)
+            elif isinstance(part, ToolResultPart):
+                yield part.name
+                yield part.content
+    for tool in canonical.tools:
+        yield tool.name
+        yield tool.description
+        if tool.parameters is not None:
+            yield tool.parameters.model_dump_json(exclude_none=True)
+    if canonical.response_schema is not None:
+        yield canonical.response_schema.model_dump_json(exclude_none=True)
+
+
+def text_tokens(texts: Iterable[str]) -> int:
+    """What text is expected to cost as input, counted rather than tokenised: its characters at
+    `CHARACTERS_PER_TOKEN`, rounded up, so any text costs a token and none costs less than nothing.
+    """
+    return -(-sum(len(text) for text in texts) // CHARACTERS_PER_TOKEN)
 
 
 async def estimate(
@@ -261,27 +319,49 @@ async def estimate(
     max_output_tokens: int | None,
     attachments: list[str] | None = None,
     units: int = 1,
+    input_texts: Iterable[str] = (),
     extra_tokens: int = 0,
 ) -> Amounts:
     """What this request is expected to consume, for the reservation (FRD-405).
 
-    Deliberately conservative — every token priced at the output rate — because over-reserving
-    briefly is the safe direction for a spend limit, and `settle` replaces the estimate with the
-    real figure. An unpriced model estimates zero cost: unknown cannot constrain a cost limit.
+    Deliberately on the high side, because over-reserving briefly is the safe direction for a
+    spend limit, and `settle` replaces the estimate with the real figure:
+
+    - **output**: the cap that will be sent — the caller's, else the model's default, else the
+      installation's estimate — and ``extra_tokens``, a thinking budget, which bills as output;
+    - **input**: the request's own text (``input_texts``, `text_tokens`) and each attachment at
+      what the model declares it costs. Without the prompt, an agent's 100 000-token context
+      reserved what its answer might cost, and twelve such requests in flight all passed a limit
+      with room for one.
+
+    Each side is priced at its own rate: one rate for every token reserved nothing against a cost
+    limit for a model priced on input alone, an embedding model. An unpriced model estimates zero
+    cost: unknown cannot constrain a cost limit. Never negative, whatever a declaration or a
+    resolved budget says — a negative reservation lowers the shared counter every other request
+    is checked against.
     """
     settings = settings_of(request)
     declaration = await catalog_of(request).declaration(model)
     tokens = declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens
-    # Attachments are input a character count cannot predict (FRD-110 §5.3).
-    tokens += declaration.attachment_tokens(attachments or [])
     # A thinking budget is billed as output and is often the largest number on the request.
     tokens += extra_tokens
+    output = tokens = max(0, tokens)
+    tokens += text_tokens(input_texts)
+    # Attachments are input a character count cannot predict (FRD-110 §5.3).
+    tokens += max(0, declaration.attachment_tokens(attachments or []))
     # Clamped here, where no single caller wrote the sum (caller-named figures are refused by name
     # in `check_declaration`): a figure the counters cannot hold would disable enforcement.
     tokens = min(tokens, MAX_ACCOUNTABLE_TOKENS)
     price = await pricing_of(request).price_for(model)
-    cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
+    cost = 0 if price is None else _reserved_cost(tokens, min(output, tokens), price)
     return Amounts(tokens=tokens, requests=units, cost_nanos=cost)
+
+
+def _reserved_cost(tokens: int, output: int, price: Price) -> int:
+    """``output`` of the reserved ``tokens`` at the output rate, the rest at the input rate."""
+    return cost_nanos(output, price.output_per_million_nanos) + cost_nanos(
+        tokens - output, price.input_per_million_nanos
+    )
 
 
 async def enforce_pre_dispatch(
@@ -291,13 +371,15 @@ async def enforce_pre_dispatch(
     max_output_tokens: int | None,
     attachments: list[str] | None = None,
     units: int = 1,
+    input_texts: Iterable[str] = (),
     extra_tokens: int = 0,
 ) -> Reservation:
     """Reserve budget against the model **routing** chose — so it runs after the pipeline.
 
     The reservation makes requests in flight visible to each other's check. ``units`` is how many
-    requests this call is (one per text in an embedding batch, `FRD-113` FR-6); ``extra_tokens`` is
-    consumption the body does not predict, today a thinking budget (`FRD-111` FR-5).
+    requests this call is (one per text in an embedding batch, `FRD-113` FR-6); ``input_texts`` is
+    what the request sends (`prompt_texts`, or the texts to embed); ``extra_tokens`` is consumption
+    the body does not predict, today a thinking budget (`FRD-111` FR-5).
     """
     if not getattr(request.state, "early_gate_taken", False):
         # Reserving without the early gate would serve traffic nobody is rate-limiting.
@@ -317,6 +399,7 @@ async def enforce_pre_dispatch(
         max_output_tokens=max_output_tokens,
         attachments=attachments,
         units=units,
+        input_texts=input_texts,
         extra_tokens=extra_tokens,
     )
     reservation = await budgets_of(request).guard(use_case, caller, estimated=expected)

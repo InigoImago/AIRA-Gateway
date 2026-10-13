@@ -107,9 +107,9 @@ class PipelineEngine:
             evaluations = await self._evaluate_each(step, outcome.texts, model, declaration_of)
 
             # Spend and rewrites first, as in `run`: recorded whether or not the step refuses.
-            call = _summed(str(step.type), [e.call for e in evaluations if e.call])
-            if call is not None:
-                outcome.model_calls.append(call)
+            outcome.model_calls.extend(
+                _summed(str(step.type), [e.call for e in evaluations if e.call])
+            )
             outcome.rewrites.extend(e.rewrote for e in evaluations if e.rewrote is not None)
 
             notable = _worst(evaluations)

@@ -117,15 +117,45 @@ def test_the_gemini_path_selector_is_authorised_too() -> None:
     assert response.status_code == 403
 
 
-def test_a_member_still_gets_through_on_both_surfaces() -> None:
+async def test_a_member_still_gets_through_on_both_surfaces() -> None:
     """The other half of "keep the functionality": the fix must refuse the right people only."""
+    from aira_gateway.db.models import ModelRead
+
     member = Principal(subject="ada", method="oidc", use_cases=("uc-a",))
 
     with _client(member) as client:
+        async with client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
+            session.add(ModelRead(model="mock-1", numeric_id=1, capabilities=["generate"]))
+            await session.commit()
         gemini = client.post(
             "/v1beta/models/mock-1:generateContent",
             json=BODY,
             headers={"X-AIRA-Use-Case": "uc-a"},
         )
+        kira = client.post(
+            "/kira/api/external/chat", json=KIRA_BODY, headers={"X-AIRA-Use-Case": "uc-a"}
+        )
 
     assert gemini.status_code == 200, gemini.text
+    assert kira.status_code == 200, kira.text
+
+
+@pytest.mark.parametrize("method", ["mtls", "service-account", ""])
+def test_a_credential_type_this_gateway_does_not_know_is_admitted_nowhere(method: str) -> None:
+    """The decision named two cases to refuse and admitted everything else, so a fourth credential
+    type added later would have reached every use case by default — refusal by exception, the
+    shape that fails open."""
+    from aira_gateway.auth.dependencies import use_case_refusal
+    from aira_gateway.auth.principal import Principal
+
+    assert use_case_refusal(Principal(subject="x", method=method), "uc-a") is not None
+
+
+def test_the_three_known_credential_types_keep_their_rules() -> None:
+    from aira_gateway.auth.dependencies import use_case_refusal
+    from aira_gateway.auth.principal import Principal
+
+    assert use_case_refusal(Principal(subject="demo", method="demo"), "uc-a") is None
+    assert use_case_refusal(Principal(subject="op", method="api_key"), "uc-a") is None
+    member = Principal(subject="ada", method="oidc", use_cases=("uc-a",))
+    assert use_case_refusal(member, "uc-a") is None

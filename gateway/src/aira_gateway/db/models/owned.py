@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Index, Integer, String, func
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aira_gateway.db.base import Base, new_id
@@ -41,17 +41,6 @@ class RequestLog(Base):
     """A persisted API request and response with its attribution (`FRD-103`)."""
 
     __tablename__ = "request_logs"
-    __table_args__ = (
-        # The trace view's keyset page (`FRD-502`, `0033`): it filters `use_case IN (…)` and orders
-        # by `(created_at DESC, id DESC)`, so the index is shaped like the cursor.
-        Index(
-            "ix_request_logs_use_case_page",
-            "use_case",
-            "created_at",
-            "id",
-            postgresql_ops={"created_at": "DESC", "id": "DESC"},
-        ),
-    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     created_at: Mapped[datetime] = mapped_column(
@@ -91,6 +80,10 @@ class RequestLog(Base):
     status: Mapped[int] = mapped_column(Integer)
     #: Why the request ended this way (:class:`aira_gateway.audit.Outcome`). Indexed for reporting.
     outcome: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    #: How the usage was established where it is not the vendor's final report: `counted` or
+    #: `partial` (`aira_gateway.audit.UsageBasis`). NULL is the vendor's own last word — every row
+    #: before this column, and every request that ran to its end.
+    usage_basis: Mapped[str | None] = mapped_column(String(16), nullable=True)
     #: Which pipeline steps ran and what each decided — never the classifier's reasoning text.
     pipeline_decisions: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     #: A pipeline step blocked or flagged this request (`FRD-505` FR-5). A column rather than a
@@ -133,6 +126,26 @@ class RequestLog(Base):
     )
 
 
+# The trace view's keyset page (`FRD-502`, `0033`): it filters `use_case IN (…)` and orders by
+# `(created_at DESC, id DESC)`, so the index is shaped like the cursor. The order is said with the
+# columns' own `.desc()`: `postgresql_ops` names operator classes, renders the same index, and is
+# a declaration `alembic --autogenerate` cannot match against it — it proposed rebuilding the index
+# on the table that takes a row per request.
+Index(
+    "ix_request_logs_use_case_page",
+    RequestLog.use_case,
+    RequestLog.created_at.desc(),
+    RequestLog.id.desc(),
+)
+
+#: Whose request a row is, in SQL: :func:`aira_gateway.scopes.person` asked of a stored row — the
+#: name where one was recorded, the subject otherwise, so one person's key and browser traffic are
+#: one person. `nullif` because SQL reads `""` as a value where `person` reads it as absence. The
+#: one spelling for every query that groups or filters by person: two that differ disagree about a
+#: row.
+REQUEST_PERSON = func.coalesce(func.nullif(RequestLog.username, ""), RequestLog.subject)
+
+
 class PayloadAccess(Base):
     """One reading of a stored prompt or response (`FRD-505` FR-6).
 
@@ -160,8 +173,15 @@ class PayloadAccess(Base):
     #: On what authority: `incident`, `use_case_admin` or `use_case_member`.
     ground: Mapped[str] = mapped_column(String(32), default="")
     #: The reader's organisation-wide roles at that moment, comma-separated (`FRD-622` FR-3). NULL
-    #: for a read recorded before they were kept — unknown, which is not "none".
-    roles: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: for a read recorded before they were kept — unknown, which is not "none". Unbounded: a role
+    #: slug may be 64 characters, and a record that does not fit is a read that does not happen.
+    roles: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: **What** read it, beside who (`FRD-622` FR-6): the sign-in method, and the credential the way
+    #: `RequestLog.credential` names one — an API key's prefix or an OIDC client. A key reads on its
+    #: owner's grant, so without these a key's reads are filed under the person who owns it. NULL
+    #: for a read recorded before they were kept.
+    auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    credential: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class AnomalyEvent(Base):
@@ -258,9 +278,12 @@ class BudgetUsage(Base):
 
     scope_key: Mapped[str] = mapped_column(String(320), primary_key=True)
     period_key: Mapped[str] = mapped_column(String(10), primary_key=True)
-    tokens: Mapped[int] = mapped_column(Integer, default=0)
-    requests: Mapped[int] = mapped_column(Integer, default=0)
+    #: Running totals for a whole day or month of a scope, so 64-bit: one request is bounded by
+    #: `catalog.MAX_ACCOUNTABLE_TOKENS`, and a period adds up thousands of them. A total that
+    #: cannot hold the next booking fails every request in the scope after it.
+    tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    requests: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_nanos: Mapped[int] = mapped_column(BigInteger, default=0)
     #: Requests served by a model with no price on file, counted apart so they cannot read as free
     #: (`FRD-403`).
-    unpriced_requests: Mapped[int] = mapped_column(Integer, default=0)
+    unpriced_requests: Mapped[int] = mapped_column(BigInteger, default=0)

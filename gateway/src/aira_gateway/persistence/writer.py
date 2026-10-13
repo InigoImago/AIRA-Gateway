@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from aira_common.logging import get_logger
 from aira_gateway.attachments import strip_attachments
 from aira_gateway.core.canonical import CanonicalUsage
+from aira_gateway.db.errors import loggable
 from aira_gateway.db.models import UseCaseRead
 from aira_gateway.persistence.redaction import Redactor
 from aira_gateway.persistence.sanitize import (
@@ -76,6 +77,8 @@ class PendingLog:
     #: A name for grouping a display, not an identity (`FRD-606`).
     username: str | None = None
     outcome: str | None = None
+    #: How the usage was established where it is not the vendor's final report (`UsageBasis`).
+    usage_basis: str | None = None
     requested_model: str | None = None
     model_selection: str | None = None
     pipeline_decisions: list[dict[str, Any]] | None = None
@@ -126,9 +129,26 @@ class RequestLogWriter:
             self._worker = asyncio.create_task(self._run())
 
     async def drain(self) -> None:
-        """Wait until everything queued has been written."""
-        if self._worker is not None:
-            await self._queue.join()
+        """Wait until everything queued has been written — or until the worker has stopped.
+
+        Only the worker marks entries done, so after it dies `join()` alone would wait for ever: a
+        defect in the write path would show up as a hang rather than as the missing rows it is.
+        The same race :meth:`stop` runs.
+        """
+        if self._worker is None:
+            return
+        drained = asyncio.create_task(self._queue.join())
+        await asyncio.wait({drained, self._worker}, return_when=asyncio.FIRST_COMPLETED)
+        if not drained.done():
+            drained.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drained
+
+    @property
+    def synchronous(self) -> bool:
+        """Whether every row is written before its response: a queue size of zero, chosen by an
+        installation that needs each row durable first (see :meth:`start`)."""
+        return self._max_queue <= 0
 
     @property
     def pending(self) -> int:
@@ -174,7 +194,7 @@ class RequestLogWriter:
             except Exception as exc:  # noqa: BLE001 — see above
                 _log.error(
                     "request_log_write_failed_during_shutdown",
-                    error=str(exc),
+                    error=loggable(exc),
                     error_type=type(exc).__name__,
                     operation=entry.operation,
                 )
@@ -202,7 +222,7 @@ class RequestLogWriter:
             except Exception as exc:  # a failed write must never take the worker down with it
                 _log.error(
                     "request_log_write_failed",
-                    error=str(exc),
+                    error=loggable(exc),
                     error_type=type(exc).__name__,
                     operation=entry.operation,
                 )
@@ -216,6 +236,10 @@ class RequestLogWriter:
             def _maybe(payload: dict[str, Any] | None) -> dict[str, Any] | None:
                 if not store or payload is None:
                     return None
+                # An object before anything walks it. A list or a string is wrapped here, not after
+                # the redactor: a redactor is handed the mapping its signature names, and one handed
+                # anything else returned it unredacted.
+                payload = as_object(payload)
                 # Bound the structure first: each walk below recurses (see `within_depth`).
                 bounded: dict[str, Any] = within_depth(payload)
                 # Strip, then redact: binary the gateway never inspected stays out of the row and
@@ -226,6 +250,12 @@ class RequestLogWriter:
                 redacted: dict[str, Any] = self._redactor.redact(stripped)
                 return as_object(storable(redacted))
 
+            # On a worker thread: these walks are pure, and over a body of up to 8 MiB they take a
+            # few hundred milliseconds that every request on this event loop would wait for. Off
+            # it, the loop is held at most for one regular expression's pass.
+            request_payload, response_payload = await asyncio.to_thread(
+                lambda: (_maybe(entry.request_payload), _maybe(entry.response_payload))
+            )
             await RequestLogService(session).record(
                 subject=entry.subject,
                 username=entry.username,
@@ -238,12 +268,13 @@ class RequestLogWriter:
                 usage=entry.usage,
                 latency_ms=entry.latency_ms,
                 trace_id=entry.trace_id,
-                request_payload=_maybe(entry.request_payload),
-                response_payload=_maybe(entry.response_payload),
+                request_payload=request_payload,
+                response_payload=response_payload,
                 cost_nanos=entry.cost_nanos,
                 credential=entry.credential,
                 issuer=entry.issuer,
                 outcome=entry.outcome,
+                usage_basis=entry.usage_basis,
                 requested_model=entry.requested_model,
                 model_selection=entry.model_selection,
                 pipeline_decisions=entry.pipeline_decisions,

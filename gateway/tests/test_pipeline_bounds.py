@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from aira_gateway.pipeline.config import (
     MAX_CATEGORIES,
     MAX_FALLBACK_MODELS,
@@ -77,14 +79,21 @@ def test_a_category_list_is_bounded_and_each_field_in_it_too() -> None:
         assert len(kept[0][field]) == MAX_TEXT_LENGTH
 
 
-def test_a_malformed_category_is_carried_through_rather_than_dropped() -> None:
-    """Forward compatibility, exactly as `from_dict` treats an unknown step: this build does not
-    know what it is, and the step that reads it can decide. Dropping it here would make a newer
-    Management's configuration silently smaller."""
+def test_a_category_that_is_not_an_object_is_left_out_and_the_rest_kept() -> None:
+    """The router reads a category's name and model off an object; a string there made every
+    request of the use case a 500 rather than reaching a step that could decide anything. Left out
+    with a log line — and only it: the well-formed categories beside it still route."""
     parsed = Pipeline.from_dict(
-        {"steps": [{"type": "model_route", "config": {"categories": ["not-an-object"]}}]}
+        {
+            "steps": [
+                {
+                    "type": "model_route",
+                    "config": {"categories": ["not-an-object", {"name": "code", "model": "m"}]},
+                }
+            ]
+        }
     )
-    assert parsed.steps[0].config["categories"] == ["not-an-object"]
+    assert parsed.steps[0].config["categories"] == [{"name": "code", "model": "m"}]
 
 
 def test_the_bounds_that_were_already_asked_still_are() -> None:
@@ -128,3 +137,89 @@ def test_a_step_type_this_build_does_not_know_is_still_dropped() -> None:
     )
 
     assert [step.type for step in parsed.steps] == [StepType.INJECTION_FILTER]
+
+
+# == a stored row of the wrong shape degrades a step, not the use case (`G4-10`) ==================
+#
+# The same parser feeds the read-model, which a direct write or a forged event can reach
+# (`ADR-0018`). A stored `steps: null` made every request of the use case answer 500.
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        None,
+        "steps",
+        {"steps": None},
+        {"steps": "injection_filter"},
+        {"steps": 5},
+        {"fallback_models": 5},
+        {"steps": [None, 7, "x", {"type": ["injection_filter"]}]},
+    ],
+)
+def test_a_pipeline_of_the_wrong_shape_parses_to_what_can_be_used(document: Any) -> None:
+    assert Pipeline.from_dict(document) == Pipeline()
+
+
+def test_each_field_a_step_cannot_use_is_left_out_and_the_step_kept() -> None:
+    parsed = Pipeline.from_dict(
+        {
+            "steps": [
+                {
+                    "type": "injection_filter",
+                    "config": {
+                        "patterns": ["ok", 1, None],
+                        "instruction": 5,
+                        "model": ["guard"],
+                        "fallback_models": [None, 7, "second"],
+                    },
+                },
+                {"type": "model_route", "config": {"categories": "oops", "default_model": 3}},
+            ],
+            "fallback_models": ["a", 5, None],
+        }
+    )
+
+    assert parsed.steps[0].config == {"patterns": ["ok"], "fallback_models": ["second"]}
+    assert parsed.steps[1].config == {}
+    assert parsed.fallback_models == ("a",)
+
+
+def test_a_word_outside_a_closed_vocabulary_is_read_the_way_that_refuses_or_reads_more() -> None:
+    """`M2-3`: the parser answers each closed vocabulary itself, so no step meets a word it does not
+    know — an `action` of `Block` is `block`, never `flag`; a `scope` of `system-user` reads every
+    message; a policy nobody can name blocks; and a `mode` of `LLM` is the heuristic."""
+    parsed = Pipeline.from_dict(
+        {
+            "steps": [
+                {
+                    "type": "injection_filter",
+                    "config": {
+                        "action": "Block",
+                        "scope": "system-user",
+                        "mode": "LLM",
+                        "on_undetermined": "Allow",
+                    },
+                },
+                {"type": "pii_filter", "config": {"on_failure": "ALLOW"}},
+            ]
+        }
+    )
+
+    assert parsed.steps[0].config == {
+        "action": "block",
+        "scope": "system_user",
+        "mode": "heuristic",
+        "on_undetermined": "block",
+    }
+    assert parsed.steps[1].config == {"on_failure": "block"}
+
+
+def test_a_known_word_and_an_absent_one_are_left_as_written() -> None:
+    """The other direction: nothing is invented for a field nobody wrote, and a word the gateway
+    knows is kept — `flag` stays `flag`."""
+    parsed = Pipeline.from_dict(
+        {"steps": [{"type": "injection_filter", "config": {"action": "flag"}}]}
+    )
+
+    assert parsed.steps[0].config == {"action": "flag"}

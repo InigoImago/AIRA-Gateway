@@ -102,7 +102,10 @@ and the seed **clears** all three on the accounts it owns, so an installation th
 seed is repaired by the next run.
 
 **FR-5** — Issuing a key **owned by somebody else** requires administering the use case, and the
-owner must hold a grant on it that can be taken away — not the Global Administrator blanket.
+owner must hold a grant on it that can be taken away — not the Global Administrator blanket. The
+same holds for a key the caller owns: a Global Administrator issuing one on a use case they hold no
+grant on is recorded as a member (`user`) in the same transaction, so the key rests on access an
+administrator can see and end, rather than on the blanket the sweep in FR-6 cannot recognise.
 
 **FR-6** — When somebody's access to a use case ends — a membership removed, or the group grant
 they reached it through revoked — every active API key of that use case whose owner no longer holds
@@ -110,7 +113,9 @@ a grant is revoked, and the answer says which.
 
 **FR-7** — Nothing a directory can put in a claim makes a first sign-in fail: a name is bounded to
 its column and validated, an unusable one falls back to the subject, a malformed `groups` claim
-confers nothing rather than raising.
+confers nothing rather than raising, a group path longer than a Django group's name is mirrored
+under its digest, and an address no column can hold (a NUL) is left out. A subject no account can
+be bound to (a NUL, or longer than its column) is refused as a token — `401`, never a `500`.
 
 **FR-8** — A member may be addressed by any username Django will store, including one containing a
 dot.
@@ -183,3 +188,16 @@ installation that ran the *older* seed.
   inherits the other. Folding case would be a second answer to "who is this" beside the `sub`
   binding, which is the mechanism `ADR-0017` abolished roles to avoid.
 - **A suspension typed as a directory id** stops tokens only — §3.
+- **Leaving a group in the directory does not revoke a key.** FR-6 runs when access ends *here* —
+  a membership removed, a group grant revoked. Removing somebody from a group in Keycloak is not
+  something Management hears of: groups are re-read from a person's token, and somebody who has
+  left signs in no more, so their last-known groups still hold the key up and it serves until it
+  expires (`AIRA_API_KEY_DEFAULT_DAYS`, at most `AIRA_API_KEY_MAX_DAYS`). Offboarding therefore
+  revokes a person's keys explicitly. Closing it needs a reconciliation against the directory — a
+  scheduled job asking it for each key owner's groups — which is a decision about running another
+  job against Keycloak, not a fix (`docs/INTEGRATIONS.md` §2).
+- **A direct membership crosses to the gateway as a username**, matched there against the token's
+  `preferred_username`. Where provisioning had to rename a second person who signs in under a name
+  already taken here, a direct grant by either name is refused with a sentence, and such a person
+  is granted through a group. Carrying the bound subject on `membership.*` events would close it on
+  both planes.

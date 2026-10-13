@@ -14,14 +14,12 @@ not something a TestClient reproduces — it buffers the whole body first.
 from __future__ import annotations
 
 import asyncio
-import uuid
 
 import httpx
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from aira_common.apikeys import generate_api_key
 from aira_common.money import to_nanos
 
 from .conftest import GATEWAY_URL
@@ -29,29 +27,6 @@ from .conftest import GATEWAY_URL
 pytestmark = pytest.mark.integration
 
 BODY = {"contents": [{"role": "user", "parts": [{"text": "hallo"}]}]}
-
-
-async def _use_case_with_key(engine: AsyncEngine, slug: str) -> str:
-    """A use case and an API key bound to it. Returns the plaintext key."""
-    full, prefix, key_hash = generate_api_key()
-    async with engine.begin() as connection:
-        await connection.execute(
-            text("INSERT INTO use_cases (slug, name) VALUES (:slug, :slug)"), {"slug": slug}
-        )
-        await connection.execute(
-            text(
-                "INSERT INTO api_keys (id, prefix, key_hash, subject, use_case, label, is_active)"
-                " VALUES (:id, :prefix, :hash, :subject, :slug, 'itest', true)"
-            ),
-            {
-                "id": f"{prefix}-rp",
-                "prefix": prefix,
-                "hash": key_hash,
-                "subject": f"itest-{slug}",
-                "slug": slug,
-            },
-        )
-    return full
 
 
 async def _price(engine: AsyncEngine, model: str, inp: str, out: str) -> None:
@@ -93,11 +68,10 @@ async def _wait_for_log(engine: AsyncEngine, subject: str, timeout: float = 15.0
 
 
 async def test_a_dispatched_request_is_recorded_with_its_attribution_and_cost(
-    engine: AsyncEngine,
+    engine: AsyncEngine, read_model, mock_catalogue_row
 ) -> None:
     """Everything the spend reporting will read, written by the real service on the real path."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    key = await _use_case_with_key(engine, slug)
+    slug, key = await read_model.use_case()
     await _price(engine, "mock-1", "1.00", "10.00")
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=20.0) as client:
@@ -117,7 +91,7 @@ async def test_a_dispatched_request_is_recorded_with_its_attribution_and_cost(
     assert row.status == 200
     assert row.operation == "generateContent"
     assert row.total_tokens == row.prompt_tokens + row.completion_tokens
-    assert row.latency_ms is not None
+    assert row.latency_ms is not None and row.latency_ms > 0
     assert row.source_ip  # the audit trail names who called
 
     # Priced from the prompt/completion split, not from a total at one rate (FRD-403 §1).
@@ -128,11 +102,12 @@ async def test_a_dispatched_request_is_recorded_with_its_attribution_and_cost(
     assert row.cost_nanos == expected, f"expected {expected} nano-units, got {row.cost_nanos}"
 
 
-async def test_an_unpriced_model_records_no_cost_rather_than_zero(engine: AsyncEngine) -> None:
+async def test_an_unpriced_model_records_no_cost_rather_than_zero(
+    engine: AsyncEngine, read_model, mock_catalogue_row
+) -> None:
     """ "Unknown is not zero" all the way to the stored row: a spend figure summed over these must
     be able to tell "free" from "we do not know"."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    key = await _use_case_with_key(engine, slug)
+    slug, key = await read_model.use_case()
     async with engine.begin() as connection:
         await connection.execute(text("DELETE FROM model_catalog WHERE model = 'mock-1'"))
 
@@ -151,11 +126,12 @@ async def test_an_unpriced_model_records_no_cost_rather_than_zero(engine: AsyncE
     assert row.total_tokens  # the usage itself is still known
 
 
-async def test_a_streamed_request_is_recorded_once_it_finishes(engine: AsyncEngine) -> None:
+async def test_a_streamed_request_is_recorded_once_it_finishes(
+    engine: AsyncEngine, read_model, mock_catalogue_row
+) -> None:
     """The streaming path settles and writes its audit row inside a generator, after the headers
     have already gone out. Nothing but a real HTTP stream exercises that ordering."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    key = await _use_case_with_key(engine, slug)
+    slug, key = await read_model.use_case()
     await _price(engine, "mock-1", "1.00", "10.00")
 
     chunks = 0
@@ -180,11 +156,10 @@ async def test_a_streamed_request_is_recorded_once_it_finishes(engine: AsyncEngi
     assert row.cost_nanos
 
 
-async def test_sse_is_served_when_the_client_asks_for_it(engine: AsyncEngine) -> None:
+async def test_sse_is_served_when_the_client_asks_for_it(read_model) -> None:
     """The google-genai SDK asks for `?alt=sse` and reads `data:` frames; the default form is a
     JSON array. Serving the wrong one to either caller breaks it in a way no status code shows."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    key = await _use_case_with_key(engine, slug)
+    _, key = await read_model.use_case()
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         sse = await client.post(
@@ -206,7 +181,7 @@ async def test_sse_is_served_when_the_client_asks_for_it(engine: AsyncEngine) ->
 
 
 async def test_a_client_that_stops_reading_still_leaves_the_request_accounted_for(
-    engine: AsyncEngine,
+    engine: AsyncEngine, read_model
 ) -> None:
     """A client that walks away mid-body still leaves an accounted-for request.
 
@@ -227,8 +202,7 @@ async def test_a_client_that_stops_reading_still_leaves_the_request_accounted_fo
     shielded. A test that fails one time in eight is a defect reporting itself quietly, and the
     temptation to re-run it away is exactly what this note exists to prevent.
     """
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    key = await _use_case_with_key(engine, slug)
+    slug, key = await read_model.use_case()
 
     async with (
         httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client,

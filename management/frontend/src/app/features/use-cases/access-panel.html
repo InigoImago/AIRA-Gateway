@@ -1,6 +1,6 @@
 <div class="card" role="tabpanel">
   <div class="spread">
-    <h3 class="section-title" style="margin: 0">
+    <h3 class="section-title">
       Access
       <app-info-hint label="access to this use case" testid="access-scope" [wide]="true">
         Who may call the gateway as this use case, and see it here. A grant names either a
@@ -22,7 +22,7 @@
 
   <!-- ── The picker ───────────────────────────────────────────────────────────────────────── -->
   @if (canManage()) {
-    <div class="filter-row" style="margin-top: 0.9rem; position: relative">
+    <div class="filter-row" style="position: relative">
       <div class="field grow">
         <label for="access-search">Grant access to</label>
         <input
@@ -70,9 +70,8 @@
         [disabled]="!picked() || feedback.busy()"
         (click)="grant()"
         data-testid="access-grant"
-        style="margin-bottom: 0.05rem"
       >
-        {{ feedback.busy() ? 'Granting…' : 'Grant' }}
+        {{ granting() ? 'Granting…' : 'Grant' }}
       </button>
     </div>
 
@@ -90,7 +89,7 @@
           </li>
         }
       </ul>
-    } @else if (query().trim().length >= 2 && !searching()) {
+    } @else if (query().trim().length >= 2 && !searching() && !searchFailed()) {
       <p class="muted" style="margin: 0.4rem 0 0" data-testid="access-no-match">
         Nothing matches “{{ query() }}”.
         @if (source() === 'local') {

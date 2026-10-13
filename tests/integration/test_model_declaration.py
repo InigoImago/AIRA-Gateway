@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from . import installation
 from .conftest import MANAGEMENT_URL
 from .test_config_distribution import (
     _management_engine,
@@ -85,12 +86,12 @@ async def test_a_declaration_published_by_the_relay_reaches_the_gateway(
     when this route is broken, **nothing fails**. The gateway simply keeps deciding from an empty
     declaration, which presents as "the feature does not work" and looks like a gateway bug.
 
-    Published through the outbox rather than the API because authoring is Global-Admin-only
-    (§5.4) and the dev realm's service accounts deliberately are not. The restriction is a
-    requirement, not an obstacle to route around — and the hop under test is the transport, which
-    is the same either way.
+    Published through the outbox rather than the API because the hop under test is the transport,
+    which is the same either way — and a model made through the API would be catalogued in
+    Management too, where it would have to be removed again.
     """
     name = f"itest-model-{uuid.uuid4().hex[:8]}"
+    installation.remember("catalog_row", name)
     management = await _management_engine()
     try:
         await _queue_outbox_event(
@@ -146,15 +147,22 @@ async def test_a_declaration_published_by_the_relay_reaches_the_gateway(
         await management.dispose()
 
 
-async def test_management_refuses_a_declaration_that_cannot_work(governance_token: str) -> None:
+async def test_management_refuses_a_declaration_that_cannot_work(admin_token: str) -> None:
     """The catalog is a runtime authority, so a self-contradictory declaration is refused where it
-    is written — not discovered as a vendor error on every request against that model."""
+    is written — not discovered as a vendor error on every request against that model.
+
+    Asked by somebody who **may** write the catalogue (`catalog.write`): asked by IT Steuerung, the
+    answer was the permission's `403`, and the validation never ran. Registered all the same, so a
+    validator that let it through leaves nothing behind.
+    """
+    name = f"itest-impossible-{uuid.uuid4().hex[:8]}"
+    installation.remember("model", name)
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=30.0) as client:
         response = await client.post(
             "/api/v1/models/",
-            headers={"authorization": f"Bearer {governance_token}"},
+            headers={"authorization": f"Bearer {admin_token}"},
             json={
-                "name": f"itest-impossible-{uuid.uuid4().hex[:8]}",
+                "name": name,
                 "capabilities": ["generate", "thinking"],
                 "max_output_tokens": 4096,
                 # Anthropic draws thinking tokens from the output allowance, so this model could
@@ -162,8 +170,6 @@ async def test_management_refuses_a_declaration_that_cannot_work(governance_toke
                 "thinking": {"modes": ["limited"], "max_tokens": 8192},
             },
         )
-    if response.status_code == 403:
-        pytest.skip("this token may not author the catalog; the restriction is the requirement")
     assert response.status_code == 400, response.text
     assert "max_output_tokens" in response.text
 

@@ -42,11 +42,14 @@ EXEMPT = {
     "providers.py",
     # The KIRA surface's `/models`, for the same reason as `providers.py`.
     "kira/info_routes.py",
-    # `FRD-506`'s reachability check. Bounded by role rather than by use case because it describes
-    # the *installation*, and it is **never a generation** (`FRD-117`): a self-deployed model must
-    # not be woken and billed by the question "does this work". There is no use case to charge and
-    # no budget to check.
-    "incidents/",
+    # The operator's diagnostics resolve their upstream here — bounded by role rather than by use
+    # case, because they describe the *installation* and there is no use case to charge. Not every
+    # one is free: `:checkModel` (`FRD-506`) is `:countTokens` and never a generation (`FRD-117`),
+    # but `:checkThinking` makes **real** one-token generations, up to `MAX_LEVELS_PER_CHECK` words
+    # per region, recorded as `diagnostic` rows and capped by no budget — `FRD-610` §3 names the
+    # gap. The module, not the package: the next endpoint under `incidents/` that reaches a
+    # provider is checked like any other.
+    "incidents/diagnostics.py",
 }
 
 

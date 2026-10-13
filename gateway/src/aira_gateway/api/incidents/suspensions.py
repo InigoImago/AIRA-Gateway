@@ -11,18 +11,19 @@ from typing import Any
 
 from fastapi import Depends, Query, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, not_, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.anomalies import RuleAction, RuleTarget
 from aira_common.permissions import Permission
-from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
+from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict, in_force
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.incidents.common import _body_of, router
 from aira_gateway.api.reporting.common import visible_scope
 from aira_gateway.auth.attribution import is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
+from aira_gateway.persistence.sanitize import printable
 from aira_gateway.state import sessionmaker_of, suspensions_of
 
 #: What a suspension may name: `AccessSuspension.target_value`'s width, stated as a decision rather
@@ -41,7 +42,9 @@ MAX_SUSPENSION_MINUTES = 100 * 365 * 24 * 60
 #: How much of a caller's ``reason`` is stored.
 MAX_REASON = 500
 
-#: How many suspensions the list returns, newest first.
+#: How many suspensions **no longer in force** the list returns, newest first. Every one in force
+#: is listed whatever its age: lifting one takes its id, and the enforcement path already loads
+#: them all on every instance.
 LISTED = 200
 
 
@@ -172,13 +175,26 @@ async def list_suspensions(
                 )
             )
         audience = "all"
-    stmt = stmt.order_by(AccessSuspension.created_at.desc()).limit(LISTED)
+    now = datetime.now(UTC)
+    newest_first = (AccessSuspension.created_at.desc(), AccessSuspension.id.desc())
     async with sessionmaker_of(request)() as session:
-        rows = list((await session.execute(stmt)).scalars().all())
-    # Lifted and expired ones included: "who was blocked last Tuesday" is what an incident review
-    # asks (`FRD-503` FR-8).
+        rows = list(
+            (await session.execute(stmt.where(in_force(now)).order_by(*newest_first))).scalars()
+        )
+        rows += (
+            await session.execute(
+                stmt.where(not_(in_force(now))).order_by(*newest_first).limit(LISTED)
+            )
+        ).scalars()
+    addresses = principal.allows(Permission.INCIDENT_INVESTIGATE)
+    # In force first, then lifted and expired ones: "who was blocked last Tuesday" is what an
+    # incident review asks (`FRD-503` FR-8).
     return JSONResponse(
-        {"suspensions": [as_dict(row) for row in rows], "scope": audience, "in_scope": True}
+        {
+            "suspensions": [as_dict(row, addresses=addresses) for row in rows],
+            "scope": audience,
+            "in_scope": True,
+        }
     )
 
 
@@ -206,11 +222,35 @@ async def create_suspension(
             f"'target_value' is limited to {MAX_TARGET_VALUE} characters.",
             "INVALID_ARGUMENT",
         )
+    if printable(value) != value:
+        # No subject, key prefix or slug has one, so it would stop nobody — and Postgres refuses a
+        # NUL outright, which would answer this caller's mistake with our 500.
+        raise GeminiHTTPError(
+            400, "'target_value' may not contain control characters.", "INVALID_ARGUMENT"
+        )
+    if target == RuleTarget.USE_CASE.value and not is_valid_use_case(value):
+        # A use case is stopped by its slug; a display name typed in a hurry matches nothing and
+        # would be listed as a stop in force.
+        raise GeminiHTTPError(
+            400,
+            "'target_value' must be a use case's identifier (its slug) when 'target' is "
+            "'use_case'.",
+            "INVALID_ARGUMENT",
+        )
     scope = str(body.get("use_case") or "").strip()
     if scope and not is_valid_use_case(scope):
         # The charset every caller-supplied slug meets (`ADR-0007`): a suspension scoped to a use
         # case that cannot exist stops nothing and looks active.
         raise GeminiHTTPError(400, "Invalid use case identifier.", "INVALID_ARGUMENT")
+    if target == RuleTarget.USE_CASE.value and scope and scope != value:
+        # A stop on a whole use case matches the requests naming it, and a scope admits only the
+        # requests naming another: no request satisfies both, so it would stop nothing.
+        raise GeminiHTTPError(
+            400,
+            f"A stop on the whole use case '{value}' applies inside that use case: leave "
+            f"'use_case' empty or name '{value}' there.",
+            "INVALID_ARGUMENT",
+        )
     action = str(body.get("action") or RuleAction.BLOCK.value)
     if action not in {RuleAction.BLOCK.value, RuleAction.THROTTLE.value}:
         raise GeminiHTTPError(400, "'action' must be 'block' or 'throttle'.", "INVALID_ARGUMENT")
@@ -231,7 +271,9 @@ async def create_suspension(
         # (`ADR-0014` §2).
         expires_at=(datetime.now(UTC) + timedelta(minutes=minutes) if minutes else None),
         author=_author(principal),
-        reason=str(body.get("reason") or "")[:MAX_REASON],
+        # Free text, so cleaned rather than refused: losing the stop over a stray byte would be
+        # the worst answer during an incident.
+        reason=printable(str(body.get("reason") or ""))[:MAX_REASON],
     )
     async with sessionmaker_of(request)() as session:
         session.add(row)
@@ -254,6 +296,6 @@ async def lift_suspension(
             row.lifted_at = datetime.now(UTC)
             row.lifted_by = _author(principal)
             await session.commit()
-        payload = as_dict(row)
+        payload = as_dict(row, addresses=principal.allows(Permission.INCIDENT_INVESTIGATE))
     suspensions_of(request).invalidate()
     return JSONResponse(payload)

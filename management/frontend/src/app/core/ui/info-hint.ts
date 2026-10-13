@@ -1,8 +1,11 @@
 import {
   Component,
+  DestroyRef,
   ElementRef,
   afterRenderEffect,
   computed,
+  effect,
+  inject,
   input,
   signal,
   viewChild,
@@ -27,10 +30,17 @@ const MARGIN = 8;
  * - The panel is `position: fixed`, placed from the button's rectangle and clamped into the
  *   viewport. An absolutely positioned panel extends its scroll container (a flicker loop near the
  *   bottom of a page) and leaves its container when centred near an edge. It stays invisible for
- *   the one frame it is measured, so it never visibly jumps.
+ *   the one frame it is measured, so it never visibly jumps — and while it is open it follows the
+ *   "i" through a scroll or a resize, which a fixed panel otherwise would not.
+ * - **Dismissible where it is** (WCAG 1.4.13): Escape closes it however it opened, and a click
+ *   anywhere else lets go of a pinned one.
  */
 @Component({
   selector: 'app-info-hint',
+  host: {
+    '(document:keydown.escape)': 'dismiss()',
+    '(document:click)': 'onDocumentClick($event)',
+  },
   template: `
     <span class="info-hint">
       <button
@@ -78,11 +88,29 @@ export class InfoHint {
 
   private readonly trigger = viewChild.required<ElementRef<HTMLElement>>('trigger');
   private readonly panel = viewChild<ElementRef<HTMLElement>>('panel');
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   /** Whether the panel has been measured and put where it belongs. */
   protected readonly placed = signal(false);
 
   constructor() {
+    // The pin is module-wide, so it has to be let go of here: held past its component, it keeps
+    // that component's whole view alive after the page it was on has gone.
+    inject(DestroyRef).onDestroy(() => {
+      if (pinnedHint() === this) pinnedHint.set(null);
+    });
+    // Listening only while open: a page carries dozens of these, and a scroll is frequent. Captured
+    // on the document, because a scroll inside a table or a window does not bubble.
+    effect((onCleanup) => {
+      if (!this.shown()) return;
+      const follow = () => this.follow();
+      document.addEventListener('scroll', follow, { capture: true, passive: true });
+      window.addEventListener('resize', follow, { passive: true });
+      onCleanup(() => {
+        document.removeEventListener('scroll', follow, { capture: true });
+        window.removeEventListener('resize', follow);
+      });
+    });
     afterRenderEffect(() => {
       const panel = this.panel();
       if (!panel) {
@@ -128,5 +156,24 @@ export class InfoHint {
 
   protected togglePin(): void {
     pinnedHint.set(this.pinned() ? null : this);
+  }
+
+  /** Close it, however it was opened. */
+  protected dismiss(): void {
+    if (this.pinned()) pinnedHint.set(null);
+    this.hovered.set(false);
+  }
+
+  /** A click on anything but this hint lets go of its pin. Its own "i" toggles instead. */
+  protected onDocumentClick(event: Event): void {
+    if (this.pinned() && !this.host.nativeElement.contains(event.target as Node)) {
+      pinnedHint.set(null);
+    }
+  }
+
+  /** Put the open panel back beside its "i" after the page moved under it. */
+  private follow(): void {
+    const panel = this.panel()?.nativeElement;
+    if (panel) this.place(this.trigger().nativeElement, panel);
   }
 }

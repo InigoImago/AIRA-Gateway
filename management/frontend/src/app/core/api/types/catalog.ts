@@ -203,6 +203,9 @@ export interface GatewayConfiguration {
   providers: GatewayProvider[];
   /** Empty means *the gateway did not say* — an older one — never *nothing is allowed*. */
   allowedRegions: string[];
+  /** Regions single models are permitted **by name**, beyond `allowedRegions`
+   *  (`AIRA_ALLOWED_MODEL_REGIONS`): model name → its further regions. */
+  modelRegions: Record<string, string[]>;
 }
 
 /**

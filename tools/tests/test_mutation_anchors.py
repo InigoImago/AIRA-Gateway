@@ -34,6 +34,7 @@ codebase rather than about a previous one.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 from pathlib import Path
@@ -117,9 +118,9 @@ def test_every_mutation_changes_something() -> None:
 
 def test_every_test_selection_names_files_that_exist() -> None:
     """A selection naming a deleted file is a mutation checked against a narrower suite than it
-    claims — and `pytest` treats a missing path as an error, so the harness would read the run as
-    *failed*, which it scores as `caught`. A renamed test file would therefore turn every mutation
-    pointing at it green at once."""
+    claims. `pytest` refuses a missing path as a usage error, which the harness reads as a run that
+    asked the tests nothing: its baseline check stops there, and every property behind that
+    selection goes unchecked until somebody runs the whole set — hours, and not in CI."""
     missing = [
         f"{mutation.ident} -> {selection}"
         for mutation in _mutations()
@@ -130,7 +131,64 @@ def test_every_test_selection_names_files_that_exist() -> None:
     assert not missing, (
         "these mutations run a test selection that does not exist:\n  "
         + "\n  ".join(missing)
-        + "\n\nA missing path makes pytest exit non-zero, which the harness reads as the mutation "
-        "having been caught. Every entry pointing at it would report green without a single test "
-        "having run."
+        + "\n\nA missing path is a usage error to pytest, so the harness stops at its baseline "
+        "and checks none of the properties behind that selection."
     )
+
+
+def _python_mutants() -> list[tuple[Any, str, str]]:
+    """`(mutation, original, mutant)` for every Python entry whose anchor is still there."""
+    found = []
+    for mutation in _mutations():
+        if not mutation.path.endswith(".py"):
+            continue
+        original = (ROOT / mutation.path).read_text()
+        if mutation.old in original:  # a stale anchor is the first test's finding, not this one's
+            found.append((mutation, original, original.replace(mutation.old, mutation.new, 1)))
+    return found
+
+
+def test_every_python_mutant_still_compiles() -> None:
+    """**A mutant that does not parse is caught whatever the tests do.** Every test that imports the
+    module fails on the `SyntaxError`, so the harness reports `caught` for a property nobody
+    defends — four entries did, one of them for "one failing write does not stop every later one",
+    whose test turned out to *hang* rather than fail once the mutant was made to parse."""
+    broken = []
+    for mutation, _, mutant in _python_mutants():
+        try:
+            compile(mutant, mutation.path, "exec", dont_inherit=True)
+        except SyntaxError as error:
+            broken.append(f"{mutation.ident}  {mutation.path}:{error.lineno}  {error.msg}")
+
+    assert not broken, (
+        "these mutants do not compile, so they are 'caught' by the import error:\n  "
+        + "\n  ".join(broken)
+        + "\n\nRewrite the replacement so the file still parses and the property it names is "
+        "broken — an anchor that is a prefix of its line, or a block left without a body, are the "
+        "usual causes."
+    )
+
+
+def test_every_python_mutation_changes_the_program() -> None:
+    """A replacement that changes only a comment or the layout edits nothing the interpreter sees,
+    so the suite passes and the harness reports a survivor that was never broken."""
+    inert = [
+        mutation.ident
+        for mutation, original, mutant in _python_mutants()
+        if ast.dump(ast.parse(original)) == ast.dump(ast.parse(mutant))
+    ]
+
+    assert not inert, f"these mutations change no statement, only text around it: {inert}"
+
+
+def test_every_console_spec_selection_is_one_ng_test_can_include() -> None:
+    """The harness runs a `*.spec.ts` selection under `ng test --include`, relative to the console's
+    own directory — a spec anywhere else cannot be included, and the selection could never run."""
+    outside = [
+        f"{mutation.ident} -> {selection}"
+        for mutation in _mutations()
+        for selection in mutation.tests.split()
+        if selection.endswith(".spec.ts") and not selection.startswith("management/frontend/")
+    ]
+
+    assert not outside, f"these console specs are outside management/frontend: {outside}"

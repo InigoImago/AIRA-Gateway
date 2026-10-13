@@ -30,6 +30,17 @@ from aira_common.counters import CountersUnavailable, DegradationLog, ScriptRunn
 #: rate, and the floor keeps the two implementations agreeing.
 MINIMUM_RPM = 1
 
+#: How many takes the per-process buckets serve between two sweeps for buckets that have filled
+#: up again. A full bucket is indistinguishable from an absent one, so dropping it changes no
+#: decision — and without the sweep every failed-authentication source address and every person
+#: ever limited stays in memory for the life of the process.
+SWEEP_EVERY = 1024
+
+#: The most buckets one process keeps, even between sweeps. Past it the least recently used is
+#: dropped — a bucket that was not full starts full again, a burst for that one key, which is the
+#: price of a process that does not grow without bound under a flood of new addresses.
+MAX_TRACKED_BUCKETS = 100_000
+
 # Refill, test, take — over every bucket, in one indivisible step, on Redis' own clock (``TIME``):
 # the instances sharing these buckets do not share a clock. Two passes on purpose: the first reads
 # and decides, the second writes, so no bucket is debited before a later one could refuse.
@@ -170,8 +181,10 @@ class InMemoryTokenBucket:
     """
 
     def __init__(self, clock: object = None) -> None:
-        self._state: dict[str, tuple[float, float]] = {}
+        #: ``key → (tokens, when, the moment it is full again)``, least recently written first.
+        self._state: dict[str, tuple[float, float, float]] = {}
         self._clock = clock or time.monotonic
+        self._takes = 0
 
     async def take(self, requests: Sequence[BucketRequest], cost: int = 1) -> BucketDecision:
         if not requests:
@@ -180,25 +193,46 @@ class InMemoryTokenBucket:
 
         # The same two passes as the script: decide over all of them before debiting any.
         available: list[float] = []
-        decision = ALLOWED
+        refused: BucketRequest | None = None
+        wait = 0.0
         for request in requests:
-            tokens, ts = self._state.get(request.key, (float(request.capacity), now))
+            tokens, ts, _ = self._state.get(request.key, (float(request.capacity), now, now))
             tokens = min(
                 float(request.capacity),
                 tokens + max(0.0, now - ts) * request.refill_per_second,
             )
             available.append(tokens)
-            if tokens < cost and decision.allowed:
-                wait = (
+            if tokens < cost:
+                # The take is all or nothing, so the caller waits for **every** refusing bucket:
+                # the longest wait, as the script reports it. Told the first, a client that obeys
+                # is refused again by the next.
+                refused = refused or request
+                wait = max(
+                    wait,
                     (cost - tokens) / request.refill_per_second
                     if request.refill_per_second > 0
-                    else float("inf")
+                    else float("inf"),
                 )
-                decision = BucketDecision(allowed=False, retry_after_seconds=wait, refused=request)
 
+        allowed = refused is None
         for request, tokens in zip(requests, available, strict=True):
-            self._state[request.key] = (tokens - cost if decision.allowed else tokens, now)
-        return decision
+            left = tokens - cost if allowed else tokens
+            full_at = now + max(0.0, request.capacity - left) / max(request.refill_per_second, 1e-9)
+            # Written last, so the dictionary's order is the order of use.
+            self._state.pop(request.key, None)
+            self._state[request.key] = (left, now, full_at)
+        self._forget(now)
+        return ALLOWED if allowed else BucketDecision(False, wait, refused)
+
+    def _forget(self, now: float) -> None:
+        """Drop the buckets that are full again, every `SWEEP_EVERY` takes, and the least recently
+        used beyond `MAX_TRACKED_BUCKETS` on every one."""
+        self._takes += 1
+        if self._takes % SWEEP_EVERY == 0:
+            for key in [key for key, (_, _, full_at) in self._state.items() if full_at <= now]:
+                del self._state[key]
+        while len(self._state) > MAX_TRACKED_BUCKETS:
+            del self._state[next(iter(self._state))]
 
 
 class FallbackTokenBucket:

@@ -1,36 +1,22 @@
 import pytest
 from aira_management.apps.usecases import events
-from aira_management.apps.usecases.models import UseCase, UseCaseMembership
+from aira_management.apps.usecases.models import MAX_PROSE_LENGTH, UseCase, UseCaseMembership
 from aira_management.apps.usecases.views import _grant
 from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
+
+from .conftest import role_claims
 
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
 
 
-#: What an installation configures (`ADR-0017`), read as the string a deployment sets.
-ROLE_GROUPS = (
-    "global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung"
-)
-GROUP_FOR = {
-    "global-admin": "/aira/global-admins",
-    "it-security": "/aira/it-security",
-    "it-steuerung": "/aira/it-steuerung",
-}
-
-
-@pytest.fixture(autouse=True)
-def _role_groups(settings):
-    settings.AIRA_ROLE_GROUPS = ROLE_GROUPS
-
-
 def _user(username: str, *roles: str):
     """A user holding organisation-wide ``roles``, via **group membership** (`ADR-0017`)."""
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"groups": [GROUP_FOR[role] for role in roles]})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -73,7 +59,9 @@ def captured_events():
 # ---- create -----------------------------------------------------------------------------
 
 
-def test_create_as_use_case_admin() -> None:
+def test_a_global_administrator_creates_one_and_administers_it() -> None:
+    """Creating is `usecase.create` (`ADR-0017`); the creator becomes its administrator, by a
+    membership like any other rather than by the role that let them create it."""
     admin = _user("admin1", "global-admin")
     resp = _create(_client(admin), "my-uc")
     assert resp.status_code == 201
@@ -566,13 +554,17 @@ def test_a_member_who_does_not_administer_it_cannot(captured_events) -> None:
     _approved("gemini-2.5-flash")
     usecase = UseCase.objects.create(slug="uc", name="UC")
     member = _user("plain")
+    # A member as the API makes one: the membership **and** its view grant, so the request reaches
+    # the administration check instead of stopping at a `404` for a use case it cannot see.
+    _grant(member, usecase, UseCaseMembership.USER)
     UseCaseMembership.objects.create(use_case=usecase, user=member, role=UseCaseMembership.USER)
+    assert _client(member).get(f"{BASE}uc/").status_code == 200, "it sees the use case"
 
     response = _client(member).patch(
         f"{BASE}uc/", {"allowed_models": ["gemini-2.5-flash"]}, format="json"
     )
 
-    assert response.status_code in (403, 404)
+    assert response.status_code == 403
     assert list(UseCase.objects.get(slug="uc").allowed_models.all()) == []
 
 
@@ -727,3 +719,61 @@ def test_the_event_still_carries_the_retired_boolean_for_a_gateway_that_reads_it
     # Oversight is narrower than the boolean can say, so it says the narrowest it can.
     assert sent["oversight"]["restrict_members_to_own_requests"] is True
     assert sent["oversight"]["payload_visibility"] == "oversight"
+
+
+def test_a_reader_is_refused_by_who_they_are_before_what_they_sent() -> None:
+    """IT Steuerung reads every use case and administers none. Validating its body first told it
+    to correct a field it may not set at all, and refused it only once the values were valid."""
+    root = _user("root", "global-admin")
+    _create(_client(root), "uc")
+    reader = _user("reader", "it-steuerung")
+
+    invalid = _client(reader).patch(f"{BASE}uc/", {"retention_days": 0}, format="json")
+    valid = _client(reader).patch(f"{BASE}uc/", {"retention_days": 30}, format="json")
+
+    assert invalid.status_code == 403, invalid.content
+    assert valid.status_code == 403
+    assert UseCase.objects.get(slug="uc").retention_days != 30
+
+
+@pytest.mark.parametrize("field", ["description", "processing_notes"])
+def test_prose_is_bounded_where_it_is_written(field: str) -> None:
+    """Both travel in every `usecase.upserted`, and the event channel carries about a megabyte:
+    unbounded, one save could produce an event the relay can never send. Refused by name."""
+    root = _user("root", "global-admin")
+    _create(_client(root), "uc")
+
+    too_long = _client(root).patch(
+        f"{BASE}uc/", {field: "€" * (MAX_PROSE_LENGTH + 1)}, format="json"
+    )
+    at_the_bound = _client(root).patch(f"{BASE}uc/", {field: "€" * MAX_PROSE_LENGTH}, format="json")
+
+    assert too_long.status_code == 400
+    assert field in too_long.json()["error"]["details"]
+    assert at_the_bound.status_code == 200, at_the_bound.content
+
+
+def _queries_for_the_list(rows: int) -> int:
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    member = _user(f"member-{rows}")
+    for index in range(rows):
+        usecase = UseCase.objects.create(slug=f"q{rows}-{index:02}", name=f"UC {index}")
+        _grant(member, usecase, UseCaseMembership.USER)
+        UseCaseMembership.objects.create(use_case=usecase, user=member, role=UseCaseMembership.USER)
+    client = _client(get_user_model().objects.get(pk=member.pk))
+    with CaptureQueriesContext(connection) as captured:
+        response = client.get(BASE)
+    assert response.status_code == 200
+    assert response.json()["count"] == rows
+    return len(captured.captured_queries)
+
+
+def test_a_page_of_use_cases_costs_the_same_however_many_rows_it_has() -> None:
+    """Each row says what this caller may do there, and every predicate re-read the caller's
+    roles, groups, grants and memberships: about sixteen queries a row, four hundred for a page of
+    twenty-five. They are the request's answers now (`aira_management.memo`), and the object
+    permissions and releases are read for the page at once."""
+    one_row = _queries_for_the_list(1)  # first, so it pays for the process-wide caches
+    assert _queries_for_the_list(25) == one_row

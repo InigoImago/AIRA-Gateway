@@ -64,11 +64,6 @@ function setup(inputs: Record<string, unknown> = {}) {
       find<HTMLElement>(testid)!.click();
       fixture.detectChanges();
     },
-    rows: () =>
-      Array.from(element.querySelectorAll<HTMLElement>('[data-testid="chart-table"] tbody tr')).map(
-        (row) =>
-          Array.from(row.querySelectorAll('th,td')).map((cell) => (cell.textContent ?? '').trim()),
-      ),
   };
 }
 
@@ -228,6 +223,29 @@ describe('UsageChart', () => {
     );
   });
 
+  it('calls an hour an hour, and says which clock it is on', () => {
+    // An hourly series — what "Today" asks for — listed as "3 days with traffic" under a "Day"
+    // heading holding hours. And the buckets are UTC, which a reader in Berlin reads two hours off
+    // unless something says so.
+    const hours = ['2026-09-01T09', '2026-09-01T10', '2026-09-01T11'];
+    const { element, find } = setup({
+      series: series({
+        granularity: 'hour',
+        buckets: hours,
+        points: hours.map((bucket) => point({ bucket })),
+      }),
+    });
+    const summary = element.querySelector('details.days-fold summary')?.textContent ?? '';
+
+    expect(summary).toContain('Hour by hour');
+    expect(summary).toContain('3 hours with traffic');
+    expect(summary).not.toContain('day');
+    expect(find('usage-grain')?.textContent).toContain('UTC');
+    expect(element.querySelector('[data-testid="usage-days"] thead th')?.textContent?.trim()).toBe(
+      'Hour (UTC)',
+    );
+  });
+
   it('keeps the money in the day list whichever measure the picture draws', () => {
     // Switching the chart to Requests must not take the money off the list: the money is half the
     // sentence somebody opened this card to read.
@@ -249,17 +267,38 @@ describe('UsageChart', () => {
 
   it('warns that spend is a lower bound when any traffic was unpriced', () => {
     const { find } = setup({
-      series: series({ points: [point({ cost_nanos: 0, unpriced_requests: 3 })] }),
+      series: series({
+        points: [point({ requests: 5, cost_nanos: 1_000_000_000, unpriced_requests: 3 })],
+      }),
     });
 
     expect(find('chart-unpriced')?.textContent).toContain('3 request(s)');
+    expect(find('chart-unpriced')?.textContent).toContain('lower bound');
+  });
+
+  it('does not say nothing was used when everything used was unpriced', () => {
+    // A team on a local model with no price on file: forty requests, and no spend that could be
+    // computed. "Nothing was used in this period" there is a measurement nobody made, in the same
+    // card that says forty requests ran — and `0.00` beside it is the same mistake in numbers.
+    const { find, text } = setup({
+      series: series({ points: [point({ requests: 40, cost_nanos: 0, unpriced_requests: 40 })] }),
+    });
+
+    expect(text()).not.toContain('Nothing was used');
+    expect(find('histogram-unknown')).not.toBeNull();
+    expect(find('blocks-empty')?.textContent).toContain('unknown');
+    expect(find('chart-total')?.textContent?.trim()).toBe('—');
+    expect(find('chart-unpriced')?.textContent).toContain('40 request(s)');
+    expect(find('chart-unpriced')?.textContent).not.toContain('lower bound');
   });
 
   it('drops the unpriced caveat when the measure is not money', () => {
     // Unpriced traffic is fully counted in requests and tokens; the caveat is about the spend figure
     // alone, and a warning that is always there is one nobody reads.
     const { choose, find } = setup({
-      series: series({ points: [point({ cost_nanos: 0, unpriced_requests: 3 })] }),
+      series: series({
+        points: [point({ requests: 5, cost_nanos: 1_000_000_000, unpriced_requests: 3 })],
+      }),
     });
 
     choose('chart-metric-select', 'requests');

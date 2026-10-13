@@ -201,18 +201,15 @@ def test_who_may_catalogue_is_one_definition_both_planes_read() -> None:
     exactly this permission — and both ask `catalog.write` (`FRD-614`).
     """
     from aira_management.apps.catalog.views import ModelViewSet
-    from aira_management.rbac import requires, role_definitions
+    from aira_management.rbac import requires
 
     from aira_common.permissions import Permission
-    from aira_common.roles import may_catalogue
 
     view = ModelViewSet()
     view.action = "create"
+    # The gateway's half is `test_provider_offerings.py`: its listing refuses without the same
+    # permission, so both planes ask one question and no role-name predicate stands in for it.
     assert any(isinstance(p, requires(Permission.CATALOG_WRITE)) for p in view.get_permissions())
-    # And the gateway's predicate agrees with the engine, in both directions — the check that
-    # catches a role added to one and not the other.
-    for role in role_definitions():
-        assert may_catalogue([role.slug]) is (Permission.CATALOG_WRITE in role.permissions), role
 
 
 # ---- the KIRA id -----------------------------------------------------------------------
@@ -332,3 +329,160 @@ def test_clearing_one_price_of_a_pair_is_still_refused() -> None:
 
     assert response.status_code == 400
     assert Model.objects.get(name="priced-2").output_price_per_million == Decimal("2.000000")
+
+
+# ---- a model's name is one the gateway can look up (`aira_common.model_names`) ---------------
+
+
+@pytest.mark.parametrize("name", ["m\nX-Injected: 1", "tab\there", "bell\x07", "del\x7f"])
+def test_a_name_with_a_control_character_is_refused_by_name(name: str) -> None:
+    """The gateway refuses such a name as unlookupable, so an approved model by that name could
+    never be served — and a line break in it reached the smoke-test export's
+    `Content-Disposition`, where it raised `BadHeaderError` (a 500)."""
+    response = _client(_user("ga-name", "global-admin")).post(BASE, {"name": name}, format="json")
+
+    assert response.status_code == 400, response.content
+    assert "control character" in str(response.json())
+    assert not Model.objects.exists()
+
+
+def test_the_name_rule_is_the_one_the_gateway_looks_up_by() -> None:
+    """One rule, two planes: what Management lets somebody catalogue is what the gateway's catalogue
+    can look up, in both directions."""
+    from aira_common.model_names import MAX_MODEL_NAME, is_lookupable
+    from aira_gateway import catalog as gateway_catalog
+
+    assert Model._meta.get_field("name").max_length == MAX_MODEL_NAME
+    assert gateway_catalog.MAX_MODEL_NAME == MAX_MODEL_NAME
+    for name in ["gemini-2.5-flash", "a/b", "q:8b", "", "x" * 129, "a\nb", "a\x7fb", "ü"]:
+        assert gateway_catalog.is_lookupable(name) is is_lookupable(name), name
+
+
+SLASHED = "meta-llama/Llama-3.1-8B-Instruct"
+
+
+def test_a_model_named_with_a_slash_can_be_read_changed_and_removed() -> None:
+    """The ordinary name on an OpenAI-compatible server. It could be catalogued and then never
+    addressed again: the console percent-encodes it, the server decodes `%2F` before routing, and
+    the route matched one path segment — so Remove answered "not found" for ever."""
+    from urllib.parse import quote
+
+    client = _client(_user("ga-slash", "global-admin"))
+    assert client.post(BASE, {"name": SLASHED}, format="json").status_code == 201
+    # Exactly what `catalog.ts` builds with `encodeURIComponent`.
+    path = f"{BASE}{quote(SLASHED, safe='')}/"
+
+    assert client.get(path).json()["name"] == SLASHED
+    assert client.patch(path, {"display_name": "Llama"}, format="json").status_code == 200
+    assert client.delete(path).status_code == 204
+    assert not Model.objects.filter(name=SLASHED).exists()
+
+
+# ---- removing a model ends its releases on the gateway too (`FRD-308`) ------------------------
+
+
+def test_removing_a_released_model_announces_the_use_cases_that_released_it(
+    captured_events,
+) -> None:
+    """The release rows cascade here, and the gateway keeps its copy of each use case's list —
+    so a name catalogued again later was callable there by every use case that once had it, while
+    this console showed nothing released. Each affected **live** use case is announced again; a
+    retired one is not, because an upsert after its retirement would bring it back."""
+    from aira_management.apps.usecases.models import UseCase
+    from django.utils import timezone
+
+    client = _client(_user("ga-release", "global-admin"))
+    client.post(BASE, {"name": "m-1", "approved": True}, format="json")
+    live = UseCase.objects.create(slug="uc-live", name="Live")
+    retired = UseCase.objects.create(slug="uc-gone", name="Gone", deleted_at=timezone.now())
+    for usecase in (live, retired):
+        usecase.allowed_models.set([Model.objects.get(name="m-1")])
+    captured_events.clear()
+
+    assert client.delete(f"{BASE}m-1/").status_code == 204
+
+    assert ("model.deleted", {"name": "m-1"}) in captured_events
+    announced = [p for kind, p in captured_events if kind == "usecase.upserted"]
+    assert [p["slug"] for p in announced] == ["uc-live"]
+    assert announced[0]["allowed_models"] == []
+
+
+# ---- addressing is bounded configuration (`FRD-609`) -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("addressing", "expected"),
+    [
+        ("europe-west4", "addressing must be an object"),
+        ({"regions": "europe-west4"}, "addressing.regions must be a list"),
+        ({"regions": ["europe-west4", ""]}, "addressing.regions must be a list"),
+        ({"regions": [f"r{n}" for n in range(40)]}, "addressing.regions lists at most"),
+        ({"regions": ["x" * 100]}, "at most 64 characters"),
+        ({"deployment": "x" * 300}, "at most 256 characters"),
+        ({"deployment": {"nested": "object"}}, "must be text or a list of text"),
+        ({f"k{n}": "v" for n in range(20)}, "at most 8 keys"),
+        ({"regions": ["eu"], "pad": "x" * 1_500_000}, "at most 256 characters"),
+    ],
+)
+def test_addressing_is_refused_where_it_is_unbounded_or_misshapen(
+    addressing: object, expected: str
+) -> None:
+    """`addressing` was stored as whatever arrived: three megabytes of it answered `201` and became
+    an event larger than the bus carries. It stays open to a platform's own keys (`ADR-0011`), so
+    it is bounded rather than closed: the regions as a list of names, every other value short."""
+    response = _client(_user("ga-addr", "global-admin")).post(
+        BASE, {"name": "addr-1", "addressing": addressing}, format="json"
+    )
+
+    assert response.status_code == 400, response.content
+    assert expected in str(response.json())
+
+
+def test_ordinary_addressing_is_accepted() -> None:
+    """The console's shape, and a platform's own key beside it."""
+    response = _client(_user("ga-addr-ok", "global-admin")).post(
+        BASE,
+        {"name": "addr-2", "addressing": {"regions": ["europe-west4", "eu"], "deployment": "p"}},
+        format="json",
+    )
+
+    assert response.status_code == 201, response.content
+
+
+# ---- the KIRA id is positive -----------------------------------------------------------------
+
+
+def test_a_kira_id_of_zero_is_refused_by_name() -> None:
+    """Dropping DRF's generated validators to name the clashing model also dropped the field's own
+    range check, which `validate_numeric_id` restores — and nothing asserted that it does."""
+    response = _client(_user("ga-zero-id", "global-admin")).post(
+        BASE, {"name": "zero-id-1", "numeric_id": 0}, format="json"
+    )
+
+    assert response.status_code == 400, response.content
+    assert "A KIRA id is a positive integer." in str(response.json())
+
+
+# ---- two writers at once ---------------------------------------------------------------------
+
+
+def test_an_insert_that_loses_a_race_is_a_conflict_with_a_sentence(monkeypatch) -> None:
+    """Two creates read the same highest KIRA id, or both find no model of the name, and the second
+    insert meets the unique constraint. Postgres serialises catalog writes with a lock; anything
+    that still reaches the constraint is answered `409` with what to do, never a `500`."""
+    from aira_management.apps.catalog import serializers as catalog_serializers
+    from django.db import IntegrityError
+
+    def clash(self, validated_data):
+        raise IntegrityError("duplicate key value violates unique constraint")
+
+    monkeypatch.setattr(catalog_serializers.ModelSerializer, "create", clash)
+
+    response = _client(_user("ga-race", "global-admin")).post(
+        BASE, {"name": "race-1"}, format="json"
+    )
+
+    assert response.status_code == 409, response.content
+    body = response.json()
+    assert body["error"]["code"] == "conflict"
+    assert "try again" in body["error"]["message"].lower()

@@ -48,30 +48,36 @@ sequenceDiagram
 
 ## 2. Before any route: the middleware
 
-Four things run outside the application, in this order (outermost first):
+Up to five things run outside the application, in this order (outermost first):
 
-| Middleware                 | Does                                            | If it refuses              |
-| -------------------------- | ----------------------------------------------- | -------------------------- |
-| `TraceIdMiddleware`        | puts `x-trace-id` on **every** response         | —                          |
-| `SecurityHeadersMiddleware`| `nosniff` · `no-referrer` · `DENY` · `no-store` | —                          |
-| body-size ceiling          | counts bytes, enforces `AIRA_MAX_REQUEST_BYTES` | **413**, and records a row |
-| `UseCasePathMiddleware`    | reads `/uc/<slug>` from the path                | 400 on an invalid slug     |
+| Middleware                  | Does                                                   | If it refuses              |
+| --------------------------- | ------------------------------------------------------ | -------------------------- |
+| `TraceIdMiddleware`         | puts `x-trace-id` on **every** traced response         | —                          |
+| `SecurityHeadersMiddleware` | `nosniff` · `no-referrer` · `DENY` · `no-store`        | —                          |
+| `CORSMiddleware`            | the cross-origin headers, with `AIRA_CORS_ORIGINS` set | —                          |
+| `UseCasePathMiddleware`     | reads `/uc/<slug>` from the path                       | 400 on an invalid slug     |
+| body-size ceiling           | counts bytes, enforces `AIRA_MAX_REQUEST_BYTES`        | **413**, and records a row |
 
-**The order of the last two is the whole of what it buys**, and this table had it the other way
-round with the security headers missing altogether. The ceiling is enforced by wrapping `receive`,
-so nothing above it buffers anything either way; what the order decides is **which responses carry
-the headers**. With the ceiling outermost, the two answers that never reach a route — a 413 and a
-500 — came out bare: no `nosniff`, no `no-store` and no trace id, which is precisely the pair
-`TraceIdMiddleware` exists for.
+**The order is what decides which responses carry the headers.** The ceiling is enforced by
+wrapping `receive`, so nothing above it buffers anything either way, and it is innermost: its 413
+passes through every layer above it, headers, trace id and CORS included. It sits inside the path
+selector, so it refuses on the path every route sees — `/uc/<slug>/kira/…` is a KIRA request when it
+is too large too, answered in KIRA's envelope and audited as `api="kira"`. The one response no
+middleware reaches is Starlette's answer to an unhandled error, a 500 written outside all of them;
+its handler adds the security headers, the trace id, the KIRA surface's headers and the CORS
+headers itself.
 
-The last one has two exits — a declared `Content-Length` that is too large, and a body that lies and
+The ceiling has two exits — a declared `Content-Length` that is too large, and a body that lies and
 is cut off mid-read — and **both record an audit row** under the outcome `request_too_large`. That
 row carries **no identity**: the credential was never verified at that point, and recording an
 unverified claim would let anyone write another system's name into the audit trail with one
-oversized request ([`FRD-122` §12](features/FRD-122-complete-audit-trail.md)).
+oversized request ([`FRD-122` §12](features/FRD-122-complete-audit-trail.md)). It does carry where
+the request came from, by the same trusted-proxy rule as every other row, and its size.
 
-The byte count it takes is also what `payload_size` anomaly rules measure against, so it is carried
-onto the row rather than counted twice.
+That size — the declared `Content-Length`, or the bytes counted when the body was cut off — is what
+`payload_size` anomaly rules measure against, so it is carried onto the row rather than counted
+twice. A declared length is the caller's own number, so it is recorded at most at what the column
+holds.
 
 ---
 
@@ -180,14 +186,24 @@ Per use case, config-driven, authored in the SPA's graph builder
 | `model_route`      | an LLM classifier picks a category → model |                                                                   |
 | `pii_filter`       | a trusted model rewrites the user's text   | **blocks** by default when it cannot; the caller is told ([`FRD-309`](features/FRD-309-pii-filter.md)) |
 
-**What the filter reads — twice worth stating, because both are limits of *reach* rather than of
+**What the filter reads — worth stating, because each is a limit of *reach* rather than of
 verdict.** Its `scope` defaults to `user`, which is **the last user message**: an injection planted
 in an earlier turn of a conversation is not re-scanned when the next one arrives. A conversational
-use case should set `system_user`, which reads every system and user message. And no scope reads
+use case should set `system_user`, which reads every system and user message; a scope the gateway
+does not know reads them all as well, and an `action` it does not know blocks. No scope reads
 **attachments** — the text view of a message excludes them ([`FRD-110` §8](features/FRD-110-multimodal-content.md)),
-so an injection inside a PDF is invisible to every step here. Neither is a bug; both are the
-difference between "the filter ran" and "the prompt was checked", and a reader who assumes the
-second has been misled by omission.
+so an injection inside a PDF is invisible to every step here. And the **heuristic reads at most
+`MAX_SCANNED_CHARS` (20 000) characters of a text — its first and last 10 000** when it is longer:
+the patterns run on the event loop and one unbounded repeat costs time in the square of what it
+reads. What lies between the two ends is not scanned; the dry run shows how much, and the gateway
+logs `injection_scan_partial`. None of these is a bug; each is the difference between "the filter
+ran" and "the prompt was checked", and a reader who assumes the second has been misled by omission.
+
+**The PII filter rewrites the last user message only** ([`FRD-309`](features/FRD-309-pii-filter.md)
+FR-2). A chat client sends the whole conversation every turn, and its own copy of earlier turns was
+never redacted — so from the second turn on, what the caller typed earlier reaches the model and the
+stored payload as it was typed, while the step records `unchanged` or `redacted` for the last one.
+A stated blind spot, like the filter's scope above.
 
 **An embedding runs the steps that are about the text it carries, and not the others.** A step
 about the *answer* has nothing to act on — a router chooses a model to generate with, and an
@@ -211,7 +227,10 @@ Refused when the pipeline is saved and again at dispatch, and the builder offers
 dry run follows the same rule and the membership rule with it: it calls a real model, so it belongs
 to a use case exactly as a request does — and it asks the installation's own approval
 ([`FRD-307`](features/FRD-307-model-catalog.md)) of every model it will *call*, which the release
-alone could not: the release has a "nobody has told us" state and approval has none.
+alone could not: the release has a "nobody has told us" state and approval has none. **Trying a
+pipeline is authoring one**: an unsaved pipeline, and steps run past a block, are for the use case's
+administrators; a member may test the saved pipeline and sees what each step decided, not what its
+model wrote. A malformed `pipeline` is a `400` naming the field.
 
 **A step reaches only the models written in its own configuration.** One that names none used to
 borrow the first model in the registry — a model nobody chose, which no gate covers, since none of
@@ -261,6 +280,12 @@ Budgets **reserve** before dispatch and settle or release afterwards
 ([`FRD-405`](features/FRD-405-rate-limiting.md)). Without it, N concurrent requests all pass a limit
 with room for one — proved by a test pair: 20/20 passed the old path, 1/20 the new.
 
+What is reserved is the request's **whole** expected consumption: the output cap that will be sent
+and a thinking budget (output), and the prompt — counted at four characters a token — with each
+attachment at what the model declares (input), each side at its own price. A reservation of the
+output alone let a dozen agentic requests, each carrying a 100 000-token context, all pass a
+50 000-token limit together.
+
 ---
 
 ## 5. Dispatch
@@ -299,6 +324,16 @@ Five conditions share this mechanism rather than each inventing one: **residency
 **sampling expressibility** — the last is a property of the _dialect_, since no catalog entry can
 say whether `top_k` exists.
 
+A candidate whose **wire format cannot carry** the request — found while its body is built, one
+step after the conditions: a thinking budget that does not fit Anthropic's output cap, thinking on a
+Claude turn that continues a function call — is skipped the same way, by name. Where every candidate
+was skipped for that reason, the dialect's own refusal is the answer (a `400` naming what to
+change). And a stream counts as **failed**, not finished, when the provider reports an error inside
+its `200` or the connection breaks: before the first chunk the chain moves on, after it the audit
+row says `upstream_error`, what was reported is settled, and a Gemini client receives Google's own
+error element as the stream's last — which the google-genai SDK raises, where a stream that merely
+stopped would read as a complete answer.
+
 **The rule that matters:** a model that cannot read the attachment is refused **by name**, never
 sent the prompt without it. A dropped attachment produces no error — it produces a fluent wrong
 answer with a 200, and the caller blames the model.
@@ -314,7 +349,7 @@ graph TB
     exit{"How did it end?"}
     exit -->|"answered"| settle["settle the reservation<br/>with what was really used"]
     exit -->|"refused"| release["release the reservation"]
-    exit -->|"client hung up"| cancel["release, or settle what was already reported<br/>status 499 · outcome <b>client_gone</b>"]
+    exit -->|"client hung up"| cancel["settle what was reported, or what the vendor counts<br/>of the request and the answer received — else release<br/>status 499 · outcome <b>client_gone</b>"]
     exit -->|"the gateway failed"| fail["release · status 500 · outcome <b>internal_error</b>"]
     settle --> row["audit row"]
     release --> row
@@ -330,8 +365,25 @@ model was chosen, provider/publisher/**region**, status and outcome, pipeline de
 latency, cost in nano-units, request bytes, trace id, and which controls were degraded at the time.
 
 **A request that reached this point is recorded however it ended.** Four of six paths once lost the
-row when a caller went away mid-answer; a dropped socket _cancels_ the response task, so the settle
-and the write are `asyncio.shield`ed.
+row when a caller went away mid-answer; a dropped socket _cancels_ the response task, so settling or
+releasing the reservation and writing the row run to their end as one unit
+(`shielding.uninterrupted`). Shielding the wait was not enough: Starlette cancels a streamed body
+through anyio, whose cancellation is re-delivered to every await in the cancelled scope, so control
+left the exit while the settle still ran and the reservation was resolved twice. A stream whose body
+never began — cancelled while its headers were sent — is accounted for by its response instead
+(`AccountedStream`).
+
+A refusal raised **after** the upstream answered — a document the model did not finish — was paid
+for: what it spent is settled, and its row carries the tokens and the cost.
+
+**A stream left before its vendor said what it used is counted, not estimated**
+([`FRD-128`](features/FRD-128-one-post-dispatch-sequence.md) FR-6). Vertex's Gemini reports usage
+only in a stream's last chunk, so in the exit — the caller gone, nobody waiting — the vendor's own
+free token count is asked for the request as it was sent and the answer as it was received, in the
+region that answered. That is booked as a **floor** and the row says so (`usage_basis`): the answer
+the vendor produced after the caller left is in no count, and reports call the spend a lower bound.
+A vendor that cannot count, a count that fails, or `AIRA_COUNT_CANCELLED_STREAMS=false` leaves the
+usage unknown and releases the reservation.
 
 **Refusals are recorded at the route's exception boundary** — one site, because a fact repeated at
 every `return` is a fact eventually forgotten at one of them.
@@ -372,6 +424,7 @@ period has passed (default 7 days). It must be scheduled or nothing is deleted.
 | Stopped by a rule or an operator  | **429** + `Retry-After`                        | `suspended`                 |
 | Over the rate limit               | 429 + `Retry-After`                            | `rate_limited`              |
 | Over budget                       | 429                                            | `budget_exceeded`           |
+| Use case retired                  | 403                                            | `invalid_request`           |
 | Blocked by the pipeline           | 403                                            | `blocked_by_pipeline`       |
 | No candidate could serve it       | 400 `FAILED_PRECONDITION`                      | `no_capable_model`          |
 | Unknown model                     | 404                                            | `model_not_found`           |
@@ -379,6 +432,7 @@ period has passed (default 7 days). It must be scheduled or nothing is deleted.
 | Declared, but the dialect has no field for it | 400 `FAILED_PRECONDITION`, **naming the reason** | `invalid_request`           |
 | Upstream said 400                 | 400 `FAILED_PRECONDITION`, carrying its reason | `upstream_error`            |
 | Upstream 401/403                  | 502, **masked**                                | `upstream_error`            |
+| Document left incomplete          | 502, with what it cost                         | `upstream_error`            |
 | This gateway failed (a defect)    | 500                                            | `internal_error`            |
 | Caller hung up                    | —                                              | `client_gone`               |
 

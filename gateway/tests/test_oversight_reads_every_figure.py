@@ -97,3 +97,48 @@ def test_the_compatibility_surface_says_the_rule_it_applies() -> None:
 
     assert refusal["code"] == "ADMIN_PERMISSION_REQUIRED"
     assert "report.read_all" in refusal["message"]
+
+
+async def test_ki_usage_answers_once_there_is_traffic_to_report() -> None:
+    """The figures above are asked of an empty installation, where every report is empty — and an
+    endpoint that fails as soon as one request exists passes all of them.
+
+    `/ki-usage` reports per user with model id `0` (the report does not cross-tabulate user and
+    model). The response row reused the *request* validator for a model id, which starts at `1`, so
+    the first row ever reported turned the answer into a 500 for an authorised caller.
+    """
+    from datetime import UTC, datetime
+
+    from aira_gateway.db.models import RequestLog
+
+    with _client(GLOBAL_ADMIN) as client:
+        async with client.app.state.db_sessionmaker() as session:
+            session.add(
+                RequestLog(
+                    subject="ada",
+                    auth_method="oidc",
+                    use_case="uc-a",
+                    api="kira",
+                    operation="chat",
+                    model="mock-1",
+                    status=200,
+                    outcome="served",
+                    prompt_tokens=11,
+                    completion_tokens=7,
+                    total_tokens=18,
+                    created_at=datetime(2026, 8, 14, 12, 0, tzinfo=UTC),
+                )
+            )
+            await session.commit()
+        response = client.get(FIGURES["ki-usage"])
+
+    assert response.status_code == 200, response.text
+    assert response.json() == [
+        {
+            "user_id": "ada",
+            "model_id": 0,
+            "entry_count": 1,
+            "token_input_sum": 11,
+            "token_output_sum": 7,
+        }
+    ]

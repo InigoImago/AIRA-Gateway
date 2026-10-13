@@ -54,7 +54,7 @@ class _Provider:
         text = request.messages[-1].text
         self.asked.append(text)
         if self.fail_on and self.fail_on in text:
-            raise UpstreamError(503, "the redactor is down")
+            raise UpstreamError("the redactor is down", 503)
         return CanonicalResponse(
             model="trusted",
             text=text.replace("Max Mustermann", "<PERSON>").replace("Hauptstrasse 3", "<ADDRESS>"),
@@ -432,3 +432,57 @@ async def test_a_redactor_chain_reaches_an_embedding_too() -> None:
     assert [row.model for row in rows if row.operation == "pipeline:pii_filter"] == ["trusted-2"]
     # And nothing personal survived into the caller's own row.
     assert "Max Mustermann" not in str([row.request_payload for row in _caller_rows(rows)])
+
+
+# ---- a batch billed by the model that answered each text (`G4-16`) -------------------------
+
+
+class _Cached(_Provider):
+    """A redactor reporting a cache read and reasoning, so a row that drops either misprices."""
+
+    def __init__(self, name: str, fail_on: str | None = None) -> None:
+        super().__init__(fail_on=fail_on)
+        self.name = name
+
+    def models(self) -> list[UpstreamModel]:
+        return [UpstreamModel(self.name, self.name, ("generateContent",))]
+
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        answer = await super().generate(request)
+        return answer.model_copy(
+            update={
+                "model": self.name,
+                "usage": CanonicalUsage(
+                    prompt_tokens=100,
+                    completion_tokens=20,
+                    cached_input_tokens=80,
+                    cache_write_tokens=10,
+                    reasoning_tokens=5,
+                ),
+            }
+        )
+
+
+async def test_a_batch_answered_by_two_models_leaves_a_row_for_each_priced_in_full() -> None:
+    """One summed row named after the first model billed the fallback's text at the wrong price,
+    and dropped the cache and reasoning figures that price apart (`FRD-133`, `FRD-135`)."""
+    engine = PipelineEngine(
+        ProviderRegistry([_Cached("primary", fail_on=PERSONAL), _Cached("fallback")])
+    )
+    pipeline = Pipeline(
+        steps=(
+            PipelineStep(
+                type=StepType.PII_FILTER,
+                config={"model": "primary", "fallback_models": ["fallback"]},
+            ),
+        )
+    )
+
+    outcome = await engine.run_over_texts(pipeline, [PERSONAL, OTHER])
+
+    by_model = {call.model: call.usage for call in outcome.model_calls}
+    assert set(by_model) == {"primary", "fallback"}
+    for usage in by_model.values():
+        assert (usage.prompt_tokens, usage.cached_input_tokens) == (100, 80)
+        assert (usage.cache_write_tokens, usage.reasoning_tokens) == (10, 5)
+    assert {call.step for call in outcome.model_calls} == {"pii_filter"}

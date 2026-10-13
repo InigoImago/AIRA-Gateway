@@ -231,3 +231,52 @@ def test_the_log_is_paged_and_counts_every_read_the_filters_match() -> None:
     assert third["next_cursor"] is None
     assert everyone["count"] == 6
     assert len(everyone["reads"]) == 2
+
+
+# ═══ what read it: a person at the console, or a machine credential ══════════════════════════════
+
+#: A key bound to the use case its owner administers. It reads on the owner's grant (`FRD-505`).
+KEY_OF_UC_ADMIN = Principal(
+    subject="boss", method="api_key", username="boss", credential="a1b2c3d4", use_cases=("uc-a",)
+)
+
+
+def _recorded(client: TestClient) -> list[PayloadAccess]:
+    async def recorded() -> list[PayloadAccess]:
+        async with client.app.state.db_sessionmaker() as session:
+            return list((await session.execute(select(PayloadAccess))).scalars())
+
+    return _run(client, recorded)  # type: ignore[return-value]
+
+
+def test_a_read_names_the_credential_and_the_method_that_made_it() -> None:
+    """A key reads on its owner's grant, so the subject alone files a read by a key — an agent's,
+    perhaps a leaked one, bulk-reading prompts — under the person who owns it. The record names
+    *what* read as well, as `request_logs.credential` does for a request (`FRD-622` FR-6)."""
+    with _client(KEY_OF_UC_ADMIN) as client:
+        _seed_request(client)
+        response = client.get("/v1beta/traces/row-1/payload")
+        rows = _recorded(client)
+
+    assert response.status_code == 200, response.text
+    assert [(row.subject, row.auth_method, row.credential) for row in rows] == [
+        ("boss", "api_key", "a1b2c3d4")
+    ]
+
+
+def test_the_log_shows_which_credential_read() -> None:
+    """The record is only evidence if a reviewer can see it."""
+    with _client(GLOBAL_ADMIN) as client:
+        read = _read(1)
+        read.auth_method, read.credential = "api_key", "a1b2c3d4"
+        _seed_reads(client, read)
+        (row,) = client.get("/v1beta/content-reads").json()["reads"]
+
+    assert (row["auth_method"], row["credential"]) == ("api_key", "a1b2c3d4")
+
+
+def test_a_reader_with_many_roles_has_them_all_recorded() -> None:
+    """A custom role's slug may be 64 characters, so five of them comma-joined do not fit 255 — and
+    on Postgres a record that does not fit is a read that does not happen, for that person on every
+    payload. SQLite enforces no length, so the declaration is what is asserted."""
+    assert PayloadAccess.__table__.c.roles.type.length is None

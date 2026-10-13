@@ -22,7 +22,7 @@ from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
-from aira_gateway.residency import parse_allowed
+from aira_gateway.residency import parse_allowed, parse_model_regions
 from aira_gateway.state import providers_of, settings_of
 from aira_gateway.upstreams.base import (
     OfferedModel,
@@ -147,18 +147,22 @@ async def list_providers(
     this installation permits processing.
 
     ``allowedRegions`` rides along so the console can refuse an unpermitted region when a model is
-    catalogued, reading the gateway's policy rather than holding a copy (`ADR-0012` §6).
+    catalogued, reading the gateway's policy rather than holding a copy (`ADR-0012` §6) — and
+    ``modelRegions``, the regions single models are permitted by name, so the one model somebody
+    permitted at `global` is not refused in the editor that catalogues it (`FRD-611`).
     """
     _require_catalog_role(principal)
     registry = providers_of(request)
     grouped = _grouped(registry)
     settings = settings_of(request)
+    by_name = parse_model_regions(settings.allowed_model_regions)
     return JSONResponse(
         {
             "providers": [
                 _entry(name, upstreams, registry) for name, upstreams in sorted(grouped.items())
             ],
             "allowedRegions": sorted(parse_allowed(settings.allowed_regions)),
+            "modelRegions": {model: sorted(regions) for model, regions in sorted(by_name.items())},
         }
     )
 

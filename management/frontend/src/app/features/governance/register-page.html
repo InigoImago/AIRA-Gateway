@@ -2,7 +2,7 @@
   <div class="spread">
     <div>
       <h2 class="page-title">Register of processing activities</h2>
-      <p class="muted" style="margin: 0.25rem 0 0">
+      <p class="muted lead">
         One row per use case — what it is for, whether prompts are kept, and whether anything
         disagrees. Open a row for the rest: how the processing happens, which models it may call and
         where those live, and where its traffic actually went. Read-only.
@@ -14,7 +14,10 @@
     <p class="callout callout--danger" role="alert">{{ message }}</p>
   }
 
-  <div class="card">
+  <!-- The period is the form; the search and the filter are not part of it. Inside it, the search
+       box would be the form's only text field, and Enter in it would submit the period and reload
+       the register. -->
+  <div class="card stack">
     <form class="form-inline" (ngSubmit)="load()">
       <div class="field">
         <label for="register-preset">Period</label>
@@ -55,15 +58,33 @@
             [ngModel]="to()"
             (ngModelChange)="to.set($event)"
           />
+          <span class="field__hint">
+            Not counted itself, so the period ends on {{ inclusiveEnd() || '—' }}.
+          </span>
         </div>
-        <button type="submit" class="btn">Show</button>
+        <button type="submit" class="btn btn--primary" [disabled]="!canLoad()">Show</button>
       }
+      <!-- The register for the period on screen, which is not always the one in the fields. -->
+      <button
+        type="button"
+        class="btn"
+        [disabled]="!canExport() || loading()"
+        (click)="download()"
+        data-testid="register-export"
+      >
+        {{ exporting() ? 'Preparing…' : 'Download (CSV)' }}
+      </button>
+    </form>
+    @if (validationError(); as message) {
+      <p class="field__hint field__hint--error" role="alert">{{ message }}</p>
+    }
+
+    <div class="filter-row">
       <div class="field grow">
         <label for="register-search">Search</label>
         <input
           id="register-search"
           type="search"
-          name="search"
           placeholder="part of a name, an id, a purpose"
           [ngModel]="search()"
           (ngModelChange)="onSearch($event)"
@@ -76,7 +97,6 @@
         <input
           id="register-findings"
           type="checkbox"
-          name="findings"
           [ngModel]="findingsOnly()"
           (ngModelChange)="toggleFindings($event)"
           data-testid="register-findings-only"
@@ -90,16 +110,7 @@
           </app-info-hint>
         </span>
       </label>
-      <button
-        type="button"
-        class="btn"
-        [disabled]="exporting() || loading()"
-        (click)="download()"
-        data-testid="register-export"
-      >
-        {{ exporting() ? 'Exporting…' : 'Download (CSV)' }}
-      </button>
-    </form>
+    </div>
   </div>
 
   @if (register(); as compiled) {
@@ -113,11 +124,16 @@
           The use cases you are a member of. An oversight role sees all of them.
         }
       </p>
+      <!-- From the request that produced these rows: the date fields may hold a custom period
+           typed since and not yet shown. -->
+      <p class="muted" style="margin: 0.4rem 0 0" data-testid="register-period">
+        Traffic measured from {{ shownPeriod() }}.
+      </p>
       @if (compiled.last_erasure; as erasure) {
         <p class="muted" style="margin: 0.4rem 0 0" data-testid="register-erasure">
           Retention last ran {{ erasure.ran_at | date: 'yyyy-MM-dd HH:mm:ss' }} —
-          {{ erasure.payloads_cleared }} payload(s) cleared, {{ erasure.rows_deleted }} row(s)
-          deleted.
+          {{ count(erasure.payloads_cleared) }} payload(s) cleared,
+          {{ count(erasure.rows_deleted) }} row(s) deleted.
         </p>
       } @else {
         <p
@@ -136,7 +152,7 @@
       <!-- `FRD-608` §4. Shown only when the planes disagree: a panel always saying "in agreement"
            is one nobody reads on the day it stops. -->
       <div class="card" data-testid="register-drift">
-        <h3 class="section-title" style="margin: 0">The two planes disagree about the catalogue</h3>
+        <h3 class="section-title">The two planes disagree about the catalogue</h3>
         @if (drift.onlyInGateway.length) {
           <p class="callout callout--warning" style="margin: 0.5rem 0 0">
             The gateway can serve {{ drift.onlyInGateway.join(', ') }}, and Management has no row
@@ -151,13 +167,23 @@
         }
       </div>
     }
+  } @else if (seesEverything() && catalogueError(); as reason) {
+    <!-- The comparison above could not be made. Said, because no drift card is also exactly what
+         two planes that agree look like. -->
+    <p class="callout callout--warning" data-testid="register-drift-unknown">
+      The catalogue comparison could not be made, so whether the gateway and Management agree about
+      the models is not known: {{ reason }}
+    </p>
   }
 
   <div class="card">
     @if (loading()) {
-      <p class="muted" style="margin: 0">Loading the register…</p>
+      <p class="loading">
+        <span class="spinner" aria-hidden="true"></span>
+        Loading the register…
+      </p>
     } @else if (view.matches().length === 0) {
-      <p class="muted" style="margin: 0" data-testid="register-empty">
+      <p class="empty" data-testid="register-empty">
         @if (entries().length === 0) {
           No use cases are visible to you.
         } @else {
@@ -321,7 +347,8 @@
                         <dd>
                           @for (where of entry.processed_in; track where.region + where.provider) {
                             <div>
-                              {{ where.region }} · {{ where.provider }}: {{ where.requests }}
+                              {{ where.region }} · {{ where.provider }}:
+                              {{ count(where.requests) }}
                             </div>
                           } @empty {
                             <span class="muted">no traffic in this period</span>
@@ -330,7 +357,7 @@
                       </div>
                       <div>
                         <dt>Requests</dt>
-                        <dd>{{ entry.requests }} in this period</dd>
+                        <dd>{{ count(entry.requests) }} in this period</dd>
                       </div>
                       <div>
                         <dt>Controls</dt>
@@ -343,7 +370,7 @@
                       <div>
                         <dt>People</dt>
                         <dd>
-                          {{ entry.members }} member(s), {{ entry.groups }} group(s)
+                          {{ count(entry.members) }} member(s), {{ count(entry.groups) }} group(s)
                           @if (entry.content_visibility === 'own') {
                             <div class="muted">members see only their own requests</div>
                           } @else if (entry.content_visibility === 'oversight') {
@@ -388,7 +415,7 @@
                 <tr>
                   <td>{{ where.region }}</td>
                   <td>{{ where.provider || 'unknown' }}</td>
-                  <td>{{ where.requests }}</td>
+                  <td>{{ count(where.requests) }}</td>
                 </tr>
               }
             </tbody>

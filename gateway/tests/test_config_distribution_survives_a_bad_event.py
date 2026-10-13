@@ -31,7 +31,7 @@ import pytest
 from sqlalchemy import select
 
 from aira_common.kafka import EVENT_TYPE_HEADER, USECASE_TOPIC
-from aira_gateway.consumer.worker import apply_one_message
+from aira_gateway.consumer.worker import apply_one_message, consume_forever
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import UseCaseRead
 
@@ -108,3 +108,64 @@ async def test_an_unknown_event_type_is_still_forward_compatible(sessionmaker: A
 
     assert await apply_one_message(sessionmaker, message) == "something.newer"
     assert await _slugs(sessionmaker) == []
+
+
+# ---- what a message can be before anybody has read it ------------------------------------------
+
+
+@dataclass
+class _Raw:
+    """A message as aiokafka hands it over with no deserializer: bytes, or a tombstone's `None`."""
+
+    value: bytes | None
+    headers: list[tuple[str, bytes | None]]
+    topic: str = USECASE_TOPIC
+    partition: int = 0
+    offset: int = 0
+
+
+class _Broker:
+    """A consumer yielding fixed messages, as `consume_forever` iterates one."""
+
+    def __init__(self, messages: list[_Raw]) -> None:
+        self._messages = messages
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    async def __aiter__(self):  # noqa: ANN204
+        for message in self._messages:
+            yield message
+
+
+def _typed(value: bytes | None, *extra: tuple[str, bytes | None]) -> _Raw:
+    return _Raw(value=value, headers=[(EVENT_TYPE_HEADER, b"usecase.upserted"), *extra])
+
+
+async def test_no_shape_of_message_stops_the_consumer(sessionmaker: Any) -> None:
+    """**Every step that depends on the message's shape runs inside the guard.** The value is
+    decoded there, not by a deserializer inside the client — which raised on bytes that are not
+    JSON and on a compacted topic's tombstone before the guard was ever reached — and the headers
+    are read without trusting their bytes. Each of these ended the loop, and the restarted
+    consumer read the same message and died again, while revoked keys went on working.
+
+    The last message is the claim: distribution continues past all of them.
+    """
+    poison = [
+        _typed(b"not json"),
+        _typed(None),
+        _typed(b"[1, 2]"),
+        _Raw(value=b'{"slug": "x"}', headers=[(EVENT_TYPE_HEADER, b"\xff\xfe")]),
+        _Raw(value=b'{"slug": "x"}', headers=[(EVENT_TYPE_HEADER, None)]),
+    ]
+    # A header of no use to us does not cost a good event its application.
+    binary_header = _typed(b'{"slug": "eins", "name": "Eins"}', ("schema", b"\x00\x9f"))
+    good_after = _typed(b'{"slug": "zwei", "name": "Zwei"}')
+
+    seen = await consume_forever(_Broker([*poison, binary_header, good_after]), sessionmaker)
+
+    assert seen == len(poison) + 2
+    assert await _slugs(sessionmaker) == ["eins", "zwei"]

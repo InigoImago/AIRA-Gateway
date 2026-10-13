@@ -21,8 +21,9 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.money import format_display
-from aira_gateway.audit import Outcome
+from aira_gateway.audit import FAILURES, Outcome
 from aira_gateway.db.models import RequestLog
+from aira_gateway.db.models.owned import REQUEST_PERSON
 from aira_gateway.reporting import series as series_module
 
 #: What a caller may see: ``None`` is every use case, a tuple exactly those, and the empty tuple
@@ -33,8 +34,8 @@ Scope = tuple[str, ...] | None
 #: How a **person** is grouped (`FRD-606`): the name where the credential carried one, the subject
 #: otherwise. An OIDC subject is a directory id and an API key's is its owner's username, so
 #: grouping by subject alone reports one person as two rows. A display only; `subject` stays the
-#: identity.
-_PERSON = func.coalesce(RequestLog.username, RequestLog.subject)
+#: identity. The detector groups by the same expression.
+_PERSON = REQUEST_PERSON
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,9 @@ class Figures:
     #: a different remedy, and the screens said only the second until an embedding model that *has*
     #: a price turned up on one of them reading `0.00`.
     unmetered_requests: int
+    #: Requests booked at a **floor**: the caller left a stream before the vendor's last report, so
+    #: what is booked is what could be established (`FRD-128` FR-6) — the spend is a lower bound.
+    partial_usage_requests: int
     failed_requests: int
     avg_latency_ms: int | None
     max_latency_ms: int | None
@@ -75,6 +79,7 @@ class Figures:
             "cost": format_display(self.cost_nanos),
             "unpriced_requests": self.unpriced_requests,
             "unmetered_requests": self.unmetered_requests,
+            "partial_usage_requests": self.partial_usage_requests,
             "failed_requests": self.failed_requests,
             "avg_latency_ms": self.avg_latency_ms,
             "max_latency_ms": self.max_latency_ms,
@@ -132,8 +137,16 @@ def _measures() -> list[Any]:
                 else_=0,
             )
         ).label("unmetered_requests"),
-        # A failed request still used a rate limit and possibly an upstream call (FR-6).
-        func.sum(case((RequestLog.status >= 400, 1), else_=0)).label("failed_requests"),
+        # Booked at a floor, counted or reported short of the end (`UsageBasis`): every such row
+        # makes the spend above a lower bound, which is what the screens say.
+        func.sum(case((RequestLog.usage_basis.is_not(None), 1), else_=0)).label(
+            "partial_usage_requests"
+        ),
+        # A request that could not be served still used a rate limit and possibly an upstream call
+        # (FR-6). A refusal is not one: it is a decision, counted under its outcome.
+        func.sum(case((RequestLog.outcome.in_(sorted(FAILURES)), 1), else_=0)).label(
+            "failed_requests"
+        ),
         func.avg(RequestLog.latency_ms).label("avg_latency_ms"),
         func.max(RequestLog.latency_ms).label("max_latency_ms"),
     ]
@@ -150,6 +163,7 @@ def _figures(key: str, row: Any) -> Figures:
         cost_nanos=int(row.cost_nanos or 0),
         unpriced_requests=int(row.unpriced_requests or 0),
         unmetered_requests=int(row.unmetered_requests or 0),
+        partial_usage_requests=int(row.partial_usage_requests or 0),
         failed_requests=int(row.failed_requests or 0),
         avg_latency_ms=None if row.avg_latency_ms is None else round(float(row.avg_latency_ms)),
         max_latency_ms=None if row.max_latency_ms is None else int(row.max_latency_ms),

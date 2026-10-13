@@ -1,5 +1,15 @@
-import { expect, test } from '@playwright/test';
+import { Page, expect, test } from '@playwright/test';
 import { USERS, createUseCase, login, uniqueSlug } from './support';
+
+/** Accept the next confirmation and hand back what it asked. */
+function acceptNextDialog(page: Page): Promise<string> {
+  return new Promise((resolve) =>
+    page.once('dialog', (dialog) => {
+      resolve(dialog.message());
+      void dialog.accept();
+    }),
+  );
+}
 
 /**
  * Payload retention (FRD-404) through the UI.
@@ -30,8 +40,12 @@ test.describe('Retention', () => {
 
     await page.goto(`/use-cases/${slug}`);
     await page.fill('#retention-days', '1');
+    // Shortening the period deletes what is older on the next run, so the console asks first —
+    // and Playwright dismisses a dialog unless told otherwise, which would cancel the save.
+    const asked = acceptNextDialog(page);
     await page.click('button:has-text("Save storage settings")');
 
+    expect(await asked).toContain('1 day(s) instead of 7');
     await expect(page.locator('[role="status"]')).toContainText('kept for 1 day');
     await page.reload();
     await expect(page.locator('#retention-days')).toHaveValue('1');
@@ -72,7 +86,9 @@ test.describe('Payload storage', () => {
       'Nothing a caller sends or receives is written',
     );
 
+    const asked = acceptNextDialog(page);
     await page.click('button:has-text("Save storage settings")');
+    expect(await asked).toContain('Stop storing prompts and responses');
     await expect(page.locator('[role="status"]')).toContainText('no longer stored');
 
     await page.reload();
@@ -87,9 +103,12 @@ test.describe('Payload storage', () => {
 
     await page.goto(`/use-cases/${slug}`);
     await page.check('[data-testid="content-mode-not-stored"]');
+    const asked = acceptNextDialog(page);
     await page.click('button:has-text("Save storage settings")');
+    await asked;
     await expect(page.locator('[role="status"]')).toContainText('no longer stored');
 
+    // Switching storage back on deletes nothing, so nothing is asked.
     await page.check('[data-testid="content-mode-members"]');
     await expect(page.locator('#retention-days')).toBeVisible();
     await page.fill('#retention-days', '3');

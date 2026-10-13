@@ -1,5 +1,6 @@
-import { KEYCLOAK_URL } from '../stack';
 import { Page, expect, test } from '@playwright/test';
+import { forget } from '../created';
+import { createRealmUser, deleteRealmUser, logoutRealmUser } from './realm';
 import { USERS, login, logout } from './support';
 
 test.describe('Authentication', () => {
@@ -67,41 +68,33 @@ test.describe('Authentication', () => {
     await expect(page).toHaveURL(/\/use-cases/);
   });
 
-  test('a session ended in Keycloak lands on the login form, not on an error', async ({
-    page,
-    request,
-  }) => {
+  test('a session ended in Keycloak lands on the login form, not on an error', async ({ page }) => {
     // The case the report actually described: Keycloak restarted, so the SSO session is gone and
     // there is nothing left to renew from. Ending the user's sessions through the admin API is
     // the same state without the restart.
-    await login(page, USERS.useCaseAdmin);
-    await page.goto('/use-cases');
-
-    const admin = await request.post(
-      `${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token`,
-      {
-        form: {
-          grant_type: 'password',
-          client_id: 'admin-cli',
-          username: 'admin',
-          password: 'admin',
-        },
-      },
+    //
+    // **For a person of this test's own.** Ending every session of a shared demo account signs
+    // out whoever else is using it — a person at the console, or the next spec — and each admin
+    // call is checked, or a refused one would leave the test asserting about a session that never
+    // ended.
+    const person = await createRealmUser(
+      `e2e-session-${Date.now().toString(36)}`,
+      `E2e-${Math.random().toString(36).slice(2, 12)}-9x`,
     );
-    const token = (await admin.json()).access_token as string;
-    const users = await request.get(`${KEYCLOAK_URL}/admin/realms/aira/users?username=ucadmin`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const userId = (await users.json())[0].id as string;
-    await request.post(`${KEYCLOAK_URL}/admin/realms/aira/users/${userId}/logout`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    try {
+      await login(page, person);
+      await page.goto('/use-cases');
 
-    await breakStoredToken(page);
-    await page.reload();
+      await logoutRealmUser(person.id);
+      await breakStoredToken(page);
+      await page.reload();
 
-    await expect(page.locator('#kc-login')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('body')).not.toContainText('invalid credentials');
+      await expect(page.locator('#kc-login')).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator('body')).not.toContainText('invalid credentials');
+    } finally {
+      await deleteRealmUser(person.id);
+      forget((entry) => entry.kind === 'keycloak-user' && entry.name === person.id);
+    }
   });
 
   /**
@@ -169,6 +162,93 @@ test.describe('Authentication', () => {
     await expect(page.locator('#kc-login').or(page.locator('#username')).first()).toBeVisible({
       timeout: 30_000,
     });
+  });
+
+  /**
+   * The same loop with **one** plane refusing, which is the realistic shape of it.
+   *
+   * Two planes validate tokens separately (the gateway per issuer and audience, management its
+   * own), so a mismatch usually refuses on one of them. Here management accepts the token and the
+   * gateway refuses it: the shell's own `/api/v1/me` answers on every pass. An answer from the
+   * plane that accepts says nothing about the one that refuses — counted as "the loop is over", it
+   * reset the guard on every page and the console went round for ever.
+   */
+  test('stops signing in again when only the gateway refuses the session', async ({ page }) => {
+    await login(page, USERS.useCaseAdmin);
+
+    let authorizations = 0;
+    page.on('request', (request) => {
+      if (request.url().includes('/protocol/openid-connect/auth')) authorizations += 1;
+    });
+    await page.route(/\/gw\//, (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { message: 'this gateway does not accept that token' } }),
+      }),
+    );
+
+    // The reporting page asks the gateway on arrival, and the shell asks management for `/me`.
+    await page.goto('/reporting');
+
+    await expect(page.getByTestId('login-loop')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('login-loop')).toContainText('did not help 3 times');
+    expect(authorizations).toBeLessThanOrEqual(4);
+  });
+
+  /**
+   * **A session renews itself without leaving the page** (`auth.config.ts`, `useSilentRefresh`).
+   *
+   * The renewal ran through a hidden iframe that loaded the issuer, which the console's own content
+   * policy refuses to frame. Every renewal failed quietly, the token lapsed, and the next API call
+   * sent the reader through a full-page login — every five minutes with the realm's default
+   * lifetime, and on a live page without anybody touching anything. Whatever was typed into a form
+   * went with it.
+   *
+   * The browser's clock is moved past three quarters of the token's 300-second lifetime, which is
+   * when the client renews. The proof is that the page is the same page afterwards — a marker set
+   * on `window` survives, which no navigation allows — that the renewal was a refresh-token grant,
+   * that nobody was sent to the authorization endpoint, and that the API takes the renewed token.
+   */
+  test('renews the session with the refresh token, without leaving the page', async ({ page }) => {
+    await page.clock.install();
+    await login(page, USERS.useCaseAdmin);
+    await page.goto('/use-cases');
+    await expect(page.locator('.aira-user__name')).toHaveText('ucadmin', { timeout: 30_000 });
+
+    await page.evaluate(() => {
+      (window as unknown as { airaMarker?: string }).airaMarker = 'the same page';
+    });
+    const before = await page.evaluate(() => window.sessionStorage.getItem('access_token'));
+    let authorizations = 0;
+    page.on('request', (request) => {
+      if (request.url().includes('/protocol/openid-connect/auth')) authorizations += 1;
+    });
+    const renewal = page.waitForRequest(
+      (request) =>
+        request.url().includes('/protocol/openid-connect/token') &&
+        (request.postData() ?? '').includes('grant_type=refresh_token'),
+      { timeout: 30_000 },
+    );
+
+    await page.clock.fastForward('04:00');
+    // The library waits a second after the expiry warning before it renews.
+    await page.clock.runFor(2_000);
+    await renewal;
+
+    await expect
+      .poll(() => page.evaluate(() => window.sessionStorage.getItem('access_token')))
+      .not.toBe(before);
+    expect(
+      await page.evaluate(() => (window as unknown as { airaMarker?: string }).airaMarker),
+    ).toBe('the same page');
+    expect(authorizations).toBe(0);
+    const status = await page.evaluate(async () => {
+      const token = window.sessionStorage.getItem('access_token') ?? '';
+      const response = await fetch('/api/v1/me', { headers: { Authorization: `Bearer ${token}` } });
+      return response.status;
+    });
+    expect(status).toBe(200);
   });
 });
 

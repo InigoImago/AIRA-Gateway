@@ -1,21 +1,24 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
-import { AnomalyEvent, Suspension } from '../../core/api/models';
+import { AnomalyEvent, AnomalyPage, Suspension } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
-import { WarningsTab } from './warnings-tab';
+import { RecentFindings, WarningsTab, recentFindings } from './warnings-tab';
+
+/** A finding from a minute ago — recent, as far as the tab's badge is concerned. */
+const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 const EVENT: AnomalyEvent = {
   id: 'e1',
-  created_at: '2026-08-08T10:00:00Z',
+  created_at: minutesAgo(1),
   rule: 'spend spike',
   kind: 'spend_spike',
   use_case: 'uc-a',
   target: 'use_case',
   target_value: 'uc-a',
-  observed: 4,
-  threshold: 3,
+  observed: 437,
+  threshold: 311,
   sample: 40,
   window_minutes: 60,
   action_taken: 'alert',
@@ -49,29 +52,44 @@ const SUSPENSION: Suspension = {
 })
 class Host {
   readonly slug = signal('uc-a');
-  readonly count = signal(-1);
+  readonly count = signal<RecentFindings | null>(null);
 }
 
 interface Options {
   events?: AnomalyEvent[];
-  suspensions?: Observable<{ suspensions: Suspension[] }>;
+  nextCursor?: string | null;
+  /** What a "load older" press answers. */
+  older?: AnomalyEvent[];
+  /** What every first-page load fails with. */
+  anomaliesFail?: unknown;
+  /** The stops each poll answers, in order; the last repeats. */
+  suspensions?: Observable<{ suspensions: Suspension[] }>[];
   inScope?: boolean;
 }
 
 function setup(options: Options = {}) {
   TestBed.resetTestingModule();
-  const asked: (string | undefined)[] = [];
+  const asked: { useCase?: string; cursor?: string }[] = [];
   const askedStops: (string | undefined)[] = [];
+  const stops = options.suspensions ?? [of({ suspensions: [SUSPENSION] })];
   TestBed.configureTestingModule({
     imports: [Host],
     providers: [
       {
         provide: UseCaseService,
         useValue: {
-          anomalies: (limit: number, useCase?: string) => {
-            asked.push(useCase);
+          anomalies: (
+            limit: number,
+            useCase?: string,
+            cursor?: string,
+          ): Observable<AnomalyPage> => {
+            asked.push({ useCase, cursor });
+            if (cursor) {
+              return of({ next_cursor: null, events: options.older ?? [], scope: 'use_cases' });
+            }
+            if (options.anomaliesFail) return throwError(() => options.anomaliesFail);
             return of({
-              next_cursor: null,
+              next_cursor: options.nextCursor ?? null,
               events: options.events ?? [EVENT],
               scope: 'use_cases',
               ...(options.inScope === undefined ? {} : { in_scope: options.inScope }),
@@ -79,7 +97,7 @@ function setup(options: Options = {}) {
           },
           suspensions: (useCase?: string) => {
             askedStops.push(useCase);
-            return options.suspensions ?? of({ suspensions: [SUSPENSION] });
+            return stops[Math.min(askedStops.length - 1, stops.length - 1)];
           },
         },
       },
@@ -94,8 +112,13 @@ function setup(options: Options = {}) {
     asked,
     askedStops,
     host: fixture.componentInstance,
+    feedback: () => fixture.debugElement.injector.get(PageFeedback),
     text: () => element.textContent ?? '',
     testid: (id: string) => element.querySelector(`[data-testid="${id}"]`),
+    click: (id: string) => {
+      element.querySelector<HTMLElement>(`[data-testid="${id}"]`)?.click();
+      fixture.detectChanges();
+    },
   };
 }
 
@@ -105,15 +128,15 @@ describe('WarningsTab', () => {
     const { text } = setup();
 
     expect(text()).toContain('spend spike');
-    expect(text()).toContain('4');
-    expect(text()).toContain('3');
+    expect(text()).toContain('437');
+    expect(text()).toContain('311');
   });
 
   it('asks the server for this use case rather than filtering a global page', () => {
     // Filtering in the browser would show a quiet use case nothing on a busy installation: its
     // findings would have been pushed off the end of the newest hundred by somebody else's.
     const { asked } = setup();
-    expect(asked).toContain('uc-a');
+    expect(asked.map((ask) => ask.useCase)).toContain('uc-a');
   });
 
   it('does not print "nothing found" when the truth is "you cannot see this"', () => {
@@ -124,9 +147,9 @@ describe('WarningsTab', () => {
     expect(text()).toContain('/use-cases/uc-a');
   });
 
-  it('tells the parent how many there are, so the tab badge is not a second source of truth', () => {
+  it('tells the parent how many recent findings there are, for the tab badge', () => {
     const { host } = setup({ events: [EVENT, { ...EVENT, id: 'e2' }] });
-    expect(host.count()).toBe(2);
+    expect(host.count()).toEqual({ count: 2, more: false });
   });
 
   it('puts "you are stopped right now" above everything else', () => {
@@ -142,7 +165,7 @@ describe('WarningsTab', () => {
   it('does not claim a lifted or expired suspension is in force', () => {
     const lifted = { ...SUSPENSION, id: 's2', lifted_at: '2026-08-08T11:00:00Z' };
     const expired = { ...SUSPENSION, id: 's3', expires_at: '2020-01-01T00:00:00Z' };
-    const { testid } = setup({ suspensions: of({ suspensions: [lifted, expired] }) });
+    const { testid } = setup({ suspensions: [of({ suspensions: [lifted, expired] })] });
 
     expect(testid('stopped-banner')).toBeNull();
   });
@@ -150,23 +173,147 @@ describe('WarningsTab', () => {
   it('stays a working page when suspensions are refused', () => {
     // A caller the gateway refuses gets a 403. That is a real answer about a real permission, and
     // must not turn the whole tab into an error.
-    const { text, testid } = setup({ suspensions: throwError(() => ({ status: 403 })) });
+    const harness = setup({ suspensions: [throwError(() => ({ status: 403 }))] });
 
-    expect(testid('stopped-banner')).toBeNull();
-    expect(text()).toContain('spend spike');
+    expect(harness.testid('stopped-banner')).toBeNull();
+    expect(harness.testid('stops-unknown')).toBeNull();
+    expect(harness.feedback().error()).toBeNull();
+    expect(harness.text()).toContain('spend spike');
   });
 
   it('says "nothing found" rather than showing an empty table', () => {
     const { testid, host } = setup({ events: [] });
 
     expect(testid('no-warnings')).not.toBeNull();
-    expect(host.count()).toBe(0);
+    expect(host.count()).toEqual({ count: 0, more: false });
+  });
+});
+
+describe('WarningsTab — when something cannot be read', () => {
+  it('reports a failed load in the page banner instead of loading for ever', () => {
+    // No load reported anything: a gateway that was down left "Loading warnings…" on screen
+    // indefinitely, with the server's explanation nowhere.
+    const harness = setup({
+      anomaliesFail: { status: 503, error: { error: { message: 'The gateway is restarting.' } } },
+    });
+
+    expect(harness.feedback().error()).toBe('The gateway is restarting.');
+    expect(harness.element.querySelector('.loading')).toBeNull();
+  });
+
+  it('says the stops could not be checked, rather than that nothing is stopped', () => {
+    // "You are stopped" is the fact a member most needs; a failed check that left the banner
+    // away said the opposite without anybody having looked.
+    const harness = setup({
+      suspensions: [
+        throwError(() => ({ status: 500, error: { error: { message: 'stops unreachable' } } })),
+      ],
+    });
+
+    expect(harness.testid('stops-unknown')).not.toBeNull();
+    expect(harness.feedback().error()).toBe('stops unreachable');
+    // The findings beside it still arrived, and are shown.
+    expect(harness.text()).toContain('spend spike');
+  });
+});
+
+describe('WarningsTab — what changes while the tab is open', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('reads the stops again with every poll, so a lifted stop stops being shown', () => {
+    vi.useFakeTimers();
+    const harness = setup({
+      suspensions: [of({ suspensions: [SUSPENSION] }), of({ suspensions: [] })],
+    });
+    expect(harness.testid('stopped-banner')).not.toBeNull();
+
+    vi.advanceTimersByTime(20_000);
+    harness.fixture.detectChanges();
+
+    expect(harness.askedStops.length).toBe(2);
+    expect(harness.testid('stopped-banner')).toBeNull();
+  });
+
+  it('stops showing a stop as in force once it has run out, without a reload', () => {
+    vi.useFakeTimers();
+    const soon = new Date(Date.now() + 5_000).toISOString();
+    const harness = setup({
+      suspensions: [of({ suspensions: [{ ...SUSPENSION, expires_at: soon }] })],
+    });
+    harness.click('warnings-live'); // live off: only the clock moves
+    expect(harness.testid('stopped-banner')).not.toBeNull();
+
+    vi.advanceTimersByTime(6_000);
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('stopped-banner')).toBeNull();
+  });
+
+  it('keeps counting while live is off, instead of saying "0s ago" for good', () => {
+    vi.useFakeTimers();
+    const harness = setup();
+    harness.click('warnings-live');
+
+    vi.advanceTimersByTime(3 * 60 * 1000);
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('warnings-stamp')?.textContent).toContain('3m ago');
+  });
+});
+
+describe('WarningsTab — older findings', () => {
+  it('offers the older findings when there are more, and appends them', () => {
+    // The listing is all-time and paged by cursor; the tab showed the newest page and nothing
+    // said there was more.
+    const harness = setup({
+      nextCursor: 'c1',
+      older: [
+        { ...EVENT, id: 'old', rule: 'an older finding', created_at: '2026-01-01T00:00:00Z' },
+      ],
+    });
+
+    harness.click('warnings-load-older');
+
+    expect(harness.asked.at(-1)?.cursor).toBe('c1');
+    expect(harness.text()).toContain('spend spike');
+    expect(harness.text()).toContain('an older finding');
+    // Paused, or the next refresh would replace the first page and drop what was appended.
+    expect((harness.testid('warnings-live') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('offers nothing more when there is nothing more', () => {
+    expect(setup().testid('warnings-load-older')).toBeNull();
+  });
+});
+
+describe('recentFindings', () => {
+  const page = (events: AnomalyEvent[], next: string | null = null): AnomalyPage => ({
+    events,
+    next_cursor: next,
+    scope: 'use_cases',
+  });
+  const now = new Date('2026-10-12T12:00:00Z');
+
+  it('counts the last day, not all history', () => {
+    // A finding from last month is history the tab lists; a red badge is a call to look now.
+    const events = [
+      { ...EVENT, id: 'a', created_at: '2026-10-12T11:00:00Z' },
+      { ...EVENT, id: 'b', created_at: '2026-10-11T12:30:00Z' },
+      { ...EVENT, id: 'c', created_at: '2026-09-01T00:00:00Z' },
+    ];
+    expect(recentFindings(page(events, 'more'), now)).toEqual({ count: 2, more: false });
+  });
+
+  it('says when a full page of recent findings may not be all of them', () => {
+    const events = [{ ...EVENT, created_at: '2026-10-12T11:00:00Z' }];
+    expect(recentFindings(page(events, 'more'), now)).toEqual({ count: 1, more: true });
+    expect(recentFindings(page(events, null), now)).toEqual({ count: 1, more: false });
   });
 });
 
 describe('WarningsTab — reading the stopped banner', () => {
   function stopped(over: Partial<Suspension>) {
-    return setup({ suspensions: of({ suspensions: [{ ...SUSPENSION, ...over }] }) });
+    return setup({ suspensions: [of({ suspensions: [{ ...SUSPENSION, ...over }] })] });
   }
 
   it('asks for the stops of this use case, which a member may read', () => {

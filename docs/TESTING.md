@@ -38,12 +38,21 @@ refused a request that should have been served. **Give a test its own slug**; th
 
 ## Tier 1b — Mutation checks (hermetic, on demand)
 `make mutants` (`tools/mutation_check.py`) breaks one property at a time and requires a named test
-to notice. **1000 properties**; the figure is stated in `CLAUDE.md` and a test
-fails when the two disagree, because a claim about how much of a system is checked is exactly the
-sort that rots quietly. It is the answer to *"a green test proves only that the code and the test agree"*: a
-property nothing would notice losing is reported as a **survivor**, and a mutation whose anchor has
-moved as **stale** — never as a pass. Run it when adding a rule worth keeping, and add the mutation
-that reintroduces a bug you have just fixed.
+to notice. How many properties it guards is stated in one place, `CLAUDE.md`, and a test fails
+when that figure disagrees with the harness, because a claim about how much of a system is checked
+is exactly the sort that rots quietly — which is also why it is not repeated here. It is the
+answer to *"a green test proves only that the code and the test agree"*: a property nothing would
+notice losing is reported as a **survivor**, and a mutation whose anchor has moved as **stale** —
+never as a pass. Run it when adding a rule worth keeping, and add the mutation that reintroduces a
+bug you have just fixed.
+
+A selection's Python paths run under pytest and its console specs (`*.spec.ts`) under
+`ng test --include`, and both must be green for the baseline. A mutant that does not parse or does
+not build is reported **broken** rather than caught — it fails every test that loads it, whatever
+the tests check. Each run has a time limit (`--timeout`, 900 s by default), so a mutant that makes a
+test hang is reported rather than waited for; select a subset with `--only A1,B2`. A run that is
+killed leaves a journal, and the next one restores the file first — but only a file that still
+holds the mutant, never one somebody has edited since.
 
 ## Tier 2 — Integration tests (need the live stack, opt-in)
 Marked `@pytest.mark.integration` and **excluded from the default run** (`-m 'not integration'` in

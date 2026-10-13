@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { Page, expect, test } from '@playwright/test';
+import { forget, remember } from '../created';
 import {
   USERS,
   createUseCase,
@@ -28,7 +29,10 @@ test.describe('Cost budgets', () => {
     await page.fill('#budget-cost', '250.00');
     await (await submitOfOpenForm(page)).click();
 
-    await expect(page.locator('text=/\\/ 250.000000/')).toBeVisible();
+    // Written like every other amount on the page, not as the stored `250.000000`.
+    const spend = page.locator('[data-testid^="budget-spend-"]');
+    await expect(spend).toContainText('/ 250.00');
+    await expect(spend).not.toContainText('250.000000');
     await expect(page.locator('[role="progressbar"]')).toHaveCount(1);
   });
 
@@ -52,6 +56,21 @@ test.describe('Cost budgets', () => {
 
     await openModelEditor(page);
     const model = uniqueSlug('priced');
+    const unpriced = uniqueSlug('unpriced');
+    // Both written down before either exists: the catalogue's warnings count over the whole of
+    // it, so a model a failed run left behind turns a real figure into noise for good.
+    remember('model', model);
+    remember('model', unpriced);
+    try {
+      await catalogueBoth(page, model, unpriced);
+    } finally {
+      await removeModel(page, model);
+      await removeModel(page, unpriced);
+      forget((entry) => entry.kind === 'model' && [model, unpriced].includes(entry.name));
+    }
+  });
+
+  async function catalogueBoth(page: Page, model: string, unpriced: string): Promise<void> {
     await page.fill('#model-name', model);
     // The name is on Identity and the prices are on Price — three tabs since 2026-08-18, because
     // eighteen fields in one column interleaved what a model *is* with what it *costs*.
@@ -71,7 +90,6 @@ test.describe('Cost budgets', () => {
 
     // A model without a price is catalogued but marked, because its traffic cannot be costed.
     await openModelEditor(page);
-    const unpriced = uniqueSlug('unpriced');
     await page.fill('#model-name', unpriced);
     // Adding a model requires having *looked* first (`FRD-506`): the catalog is what the gateway
     // enforces, and "I did not know it was unreachable" is the one outcome a single button can
@@ -94,13 +112,11 @@ test.describe('Cost budgets', () => {
       page.locator('.callout--warning', { hasText: 'left out of every spend figure' }),
     ).toBeVisible();
 
-    // Removed again, both of them. This suite used to leave every model it catalogued behind, so a
-    // stack tested a few times held five entries nobody had declared — and the console's "N models
-    // have no price on file" counts the whole catalogue, so the residue turns a real figure into
-    // noise. Cleaning up is part of the test, not tidiness.
-    await removeModel(page, model);
-    await removeModel(page, unpriced);
-  });
+    // Removed again, both of them, by the caller's `finally`. This suite used to leave every model
+    // it catalogued behind, so a stack tested a few times held five entries nobody had declared —
+    // and the console's "N models have no price on file" counts the whole catalogue, so the
+    // residue turns a real figure into noise. Cleaning up is part of the test, not tidiness.
+  }
 
   test('a one-sided price is refused before it can distort a figure', async ({ page }) => {
     await login(page, USERS.globalAdmin);

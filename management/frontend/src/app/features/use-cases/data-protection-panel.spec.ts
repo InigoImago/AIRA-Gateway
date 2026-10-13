@@ -1,7 +1,8 @@
 import { TestBed } from '@angular/core/testing';
-import { Observable, of } from 'rxjs';
+import { Observable, of, throwError } from 'rxjs';
 import { UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { ConfirmService } from '../../core/ui/confirm.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { ContentMode, DataProtectionPanel, fieldsFor, modeOf } from './data-protection-panel';
 
@@ -34,11 +35,18 @@ function sentUpdate(calls: string[]): Record<string, unknown> {
 }
 
 function setup(
-  options: { useCase?: UseCase; update?: Observable<UseCase>; canManage?: boolean } = {},
+  options: {
+    useCase?: UseCase;
+    update?: Observable<UseCase>;
+    canManage?: boolean;
+    /** The answer to "this deletes stored content — go ahead?". */
+    confirmAnswer?: boolean;
+  } = {},
 ) {
   TestBed.resetTestingModule();
   const useCase = options.useCase ?? USE_CASE;
   const calls: string[] = [];
+  const asked: string[] = [];
   const saved: UseCase[] = [];
   const service = {
     update: (_s: string, changes: Partial<UseCase>) => {
@@ -48,7 +56,19 @@ function setup(
   };
   TestBed.configureTestingModule({
     imports: [DataProtectionPanel],
-    providers: [{ provide: UseCaseService, useValue: service }, PageFeedback],
+    providers: [
+      { provide: UseCaseService, useValue: service },
+      PageFeedback,
+      {
+        provide: ConfirmService,
+        useValue: {
+          ask: (question: string) => {
+            asked.push(question);
+            return options.confirmAnswer ?? true;
+          },
+        },
+      },
+    ],
   });
   const fixture = TestBed.createComponent(DataProtectionPanel);
   fixture.componentRef.setInput('slug', 'demo-uc');
@@ -61,6 +81,7 @@ function setup(
   return {
     fixture,
     calls,
+    asked,
     saved,
     feedback: TestBed.inject(PageFeedback),
     component: fixture.componentInstance as unknown as Panel,
@@ -270,5 +291,81 @@ describe('DataProtectionPanel — oversight only (`FRD-622` FR-1b)', () => {
     expect(html().querySelector('[data-testid="content-mode-readonly"]')?.textContent).toContain(
       'Global Administrators and IT Security only',
     );
+  });
+});
+
+/**
+ * Shortening the period or switching storage off deletes stored prompts and responses on the next
+ * retention run — the one irreversible thing on this form. It used to be announced only afterwards.
+ */
+describe('DataProtectionPanel — before anything is deleted', () => {
+  it('asks before a shorter period, naming both, and sends nothing on no', () => {
+    const harness = setup({ useCase: { ...USE_CASE, retention_days: 365 }, confirmAnswer: false });
+    harness.component.retentionDays.set(1);
+    harness.component.saveRetention();
+
+    expect(harness.asked.at(-1)).toContain('1 day(s) instead of 365');
+    expect(harness.asked.at(-1)).toContain('cannot be brought back');
+    expect(harness.calls).toEqual([]);
+  });
+
+  it('asks before storage is switched off', () => {
+    const harness = setup({ confirmAnswer: false });
+    harness.component.mode.set('not-stored');
+    harness.component.saveRetention();
+
+    expect(harness.asked.at(-1)).toContain('Stop storing prompts and responses');
+    expect(harness.calls).toEqual([]);
+  });
+
+  it('saves once the answer is yes', () => {
+    const harness = setup({ useCase: { ...USE_CASE, retention_days: 365 } });
+    harness.component.retentionDays.set(30);
+    harness.component.saveRetention();
+
+    expect(sentUpdate(harness.calls)['retention_days']).toBe(30);
+  });
+
+  it('asks nothing when nothing is deleted: a longer period, or a change of who may read', () => {
+    const longer = setup();
+    longer.component.retentionDays.set(30);
+    longer.component.saveRetention();
+    expect(longer.asked).toEqual([]);
+
+    const readers = setup();
+    readers.component.mode.set('oversight');
+    readers.component.saveRetention();
+    expect(readers.asked).toEqual([]);
+    expect(readers.calls.length).toBe(1);
+  });
+
+  it('asks nothing when storage was already off', () => {
+    const harness = setup({ useCase: { ...USE_CASE, store_payloads: false } });
+    harness.component.mode.set('members');
+    harness.component.retentionDays.set(3);
+    harness.component.saveRetention();
+
+    expect(harness.asked).toEqual([]);
+  });
+});
+
+describe('DataProtectionPanel — a refused save', () => {
+  it("says why in the server's words, keeps the change, and frees the button", () => {
+    const harness = setup({
+      update: throwError(() => ({
+        status: 400,
+        error: {
+          error: { message: 'retention_days: Ensure this value is less than or equal to 3650.' },
+        },
+      })),
+    });
+    harness.component.retentionDays.set(30);
+    harness.component.saveRetention();
+    harness.fixture.detectChanges();
+
+    expect(harness.feedback.error()).toContain('less than or equal to 3650');
+    expect(harness.component.retentionDays()).toBe(30);
+    expect(harness.saved).toEqual([]);
+    expect(harness.component.canSaveRetention()).toBe(true);
   });
 });

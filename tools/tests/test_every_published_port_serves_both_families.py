@@ -24,6 +24,7 @@ Two lessons this file exists to keep, and neither is about IPv6:
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import compose_files
@@ -93,3 +94,76 @@ def test_the_example_env_explains_both() -> None:
         "`.env.example` names the IPv4 bind host and not the IPv6 one, so somebody following it "
         "gets a stack that is reachable over one family and reset over the other"
     )
+
+
+# ---- and binds where the convention says ---------------------------------------------------------
+#
+# "Every published port binds to loopback" is the convention `docker-compose.yml` opens with, and
+# the tests above only looked at lines that already began with a bind variable. An entry written as
+# Compose's plain `"5000:5000"` binds every interface on both families and was invisible to all of
+# them — the open Postgres or dev-mode Vault the convention exists to prevent.
+
+#: How each family's entry must begin: the variable, defaulting to loopback.
+BOUND = ("${AIRA_BIND_HOST:-127.0.0.1}:", "[${AIRA_BIND_HOST6:-::1}]:")
+BOUND_HOSTS = ("${AIRA_BIND_HOST:-127.0.0.1}", "${AIRA_BIND_HOST6:-::1}")
+
+
+def _unbound(document: dict) -> list[str]:
+    """Every `ports` entry of every service that does not bind through one of the two variables."""
+    found: list[str] = []
+    for name, service in (document.get("services") or {}).items():
+        for entry in (service or {}).get("ports") or []:
+            if isinstance(entry, dict):
+                bound = str(entry.get("host_ip", "")) in BOUND_HOSTS
+            else:
+                bound = str(entry).startswith(BOUND)
+            if not bound:
+                found.append(f"{name}: {entry!r}")
+    return found
+
+
+def _tracked_compose_files() -> list[Path]:
+    """Every Compose file in the repository, overlays included — not only the ones a stack runs."""
+    listed = subprocess.run(
+        ["git", "ls-files", "deploy/compose/*.yml"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    return [ROOT / name for name in listed]
+
+
+def test_every_published_port_binds_through_the_bind_variables() -> None:
+    files = _tracked_compose_files()
+    assert len(files) >= len(compose_files.ALL), files
+
+    unbound = [
+        f"{path.relative_to(ROOT)}  {entry}"
+        for path in files
+        for entry in _unbound(compose_files.load(path))
+    ]
+
+    assert not unbound, (
+        "These publish a port without `AIRA_BIND_HOST` / `AIRA_BIND_HOST6`, so they bind every "
+        "interface whatever the operator chose:\n  " + "\n  ".join(unbound)
+    )
+
+
+def test_an_entry_that_binds_everywhere_is_caught() -> None:
+    """The guard broken on purpose: the short form, an explicit wildcard, and the long form."""
+    document = {
+        "services": {
+            "probe": {
+                "ports": [
+                    "5000:5000",
+                    "[::]:5001:5001",
+                    {"target": 5002, "published": 5002},
+                    "${AIRA_BIND_HOST:-127.0.0.1}:5003:5003",
+                    {"target": 5004, "published": 5004, "host_ip": "${AIRA_BIND_HOST6:-::1}"},
+                ]
+            }
+        }
+    }
+
+    assert len(_unbound(document)) == 3, _unbound(document)

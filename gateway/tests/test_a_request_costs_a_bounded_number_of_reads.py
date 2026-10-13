@@ -7,9 +7,9 @@ model's provider, `check_declaration`, the reservation's `estimate`, `provenance
 candidate inside `requirements_for`. Three more read the same `use_cases` row.
 
 Each of those is an `async with sessionmaker()` — a connection checked out of the pool for a row
-that had already been read on the same request. The comment in `ratelimit/service.py` names "six or
-seven database round trips" as the known cost; the real figure was more than twice that, and the
-duplication is the part no amount of tuning elsewhere removes.
+that had already been read on the same request. The assumed cost was six or seven database round
+trips; the real figure was more than twice that, and the duplication is the part no amount of
+tuning elsewhere removes.
 
 The fix is a memo with a **request's** lifetime (`ModelCatalog.per_request`,
 `serving.use_case_record`) — not the application's, deliberately: the catalog is a runtime

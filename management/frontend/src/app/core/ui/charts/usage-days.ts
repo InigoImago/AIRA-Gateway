@@ -1,4 +1,5 @@
 import { Component, computed, input, signal } from '@angular/core';
+import { Granularity } from '../../api/types/reporting';
 import { displayCount } from '../money';
 import { Day } from './usage-series';
 
@@ -28,9 +29,17 @@ const SHOWN = 7;
 @Component({
   selector: 'app-usage-days',
   templateUrl: './usage-days.html',
+  // The same distance a pager keeps from the table above it.
+  styles: `
+    .usage-days__more {
+      margin-top: 0.75rem;
+    }
+  `,
 })
 export class UsageDays {
   readonly days = input.required<Day[]>();
+  /** What one row is. The list holds whatever buckets the series has, and "Today" has hours. */
+  readonly granularity = input<Granularity>('day');
   /** The unit after a money heading — `Spend (EUR)`. Never a symbol of this component's choosing. */
   readonly unit = input('');
   /** What one band is: "model", "outcome". Names the second column. */
@@ -41,6 +50,13 @@ export class UsageDays {
   /** The second column's heading: the noun, capitalised, without pulling in a pipe for one word. */
   protected readonly nounLabel = computed(
     () => this.noun().charAt(0).toUpperCase() + this.noun().slice(1),
+  );
+
+  /** A row's name in a sentence — "day", "hour" — and as a column heading. */
+  protected readonly bucket = computed(() => (this.granularity() === 'hour' ? 'hour' : 'day'));
+  protected readonly bucketLabel = computed(() => (this.granularity() === 'hour' ? 'Hour' : 'Day'));
+  protected readonly caption = computed(
+    () => `Each ${this.bucket()}, what was used in it and what it cost`,
   );
 
   /** Whether every day is listed, or only the most recent few. */

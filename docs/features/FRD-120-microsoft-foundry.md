@@ -59,7 +59,10 @@ Foundry brings three things the first two did not:
 - **FR-1 OpenAI dialect.** Chat completions and embeddings against Foundry's inference endpoints,
   with the API version pinned in configuration rather than in code.
 - **FR-2 Entra ID / managed identity**, through `FRD-115`'s shared `TokenSource` (`ADR-0011`
-  rule 1). An API key remains possible for development.
+  rule 1). An API key remains possible for development. *Built in the transport, not reachable
+  from configuration:* `FoundryTransport` takes a token source (a token it cannot obtain is a
+  `503`, as on Vertex), and no setting builds one yet — the API key is the only credential a
+  deployment can configure today.
 - **FR-3 Caller-facing names, catalog addressing.** The caller says `gpt-5`; the catalog resolves
   transport, resource, deployment and the **underlying model for pricing** (`ADR-0011` rule 2).
   A pipeline configuration never contains a deployment name.
@@ -134,6 +137,13 @@ Three unrelated mechanisms behind one capability flag is exactly what `ADR-0011`
 what is expressible (no open-ended objects, all properties required), so a schema that cannot be
 expressed strictly is either sent non-strict or refused — **declared per model**, never chosen
 silently, because the difference is whether the guarantee holds.
+
+*As built:* the schema is translated to strict mode's shape on every platform — every object
+closed, every property required, which keeps the answer valid against the caller's schema. A
+constraint strict mode lacks (`minLength`/`maxLength`, `min`/`maxProperties`, an open object) is
+**refused by name** where the platform validates strict schemas (`Routes.validates_strict_schemas`:
+Azure), so the candidate is skipped; a self-hosted server constrains decoding by the schema as sent
+and keeps serving it. Per platform rather than per model, until a catalogue field says otherwise.
 
 ### 5.5 What this does to `FRD-106`
 

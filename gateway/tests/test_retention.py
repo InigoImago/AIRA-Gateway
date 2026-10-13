@@ -142,8 +142,11 @@ async def test_a_custom_default_applies_to_unclaimed_traffic(sessionmaker) -> No
     assert (await service.prune(NOW)).payloads_cleared == 1
 
 
-async def test_a_use_case_the_gateway_has_never_heard_of_still_gets_pruned(sessionmaker) -> None:
-    """A use case removed from Management must not turn into an indefinite payload store."""
+async def test_record_retention_removes_a_row_whatever_its_use_case(sessionmaker) -> None:
+    """The second clock, on a row whose use case the read-model does not name: record retention
+    is installation-wide, so a purged use case's rows go when their time is up like any other.
+    Its *payloads* follow the default period, which the test below pins.
+    """
     await _log(sessionmaker, use_case="vanished", age_days=400)
     service = RetentionService(sessionmaker, log_retention_days=365)
 
@@ -240,12 +243,12 @@ async def test_a_use_case_event_without_a_period_defaults_to_a_week(sessionmaker
 async def test_payloads_of_a_deleted_use_case_are_removed_too(sessionmaker) -> None:
     """The hole the sweep had, and the sentence that hid it.
 
-    `_delete_usecase` in the consumer keeps `request_logs` on purpose — the audit trail and the
-    spend history outlive the use case — and states *"their payloads still expire on the retention
-    clock."* They did not. The clock is built from the `use_cases` read-model: a period per slug it
-    knows, plus one pass for rows with no use case at all. A row whose slug is **neither** — which
-    is precisely what deleting a use case produces — matched no pass and was never cleared, for
-    ever, on an installation that has not switched the optional record retention on.
+    The consumer keeps `request_logs` when a use case is purged (`_purge_usecase`) — the audit
+    trail and the spend history outlive the use case — and their payloads must still expire. The
+    clock is built from the `use_cases` read-model: a period per slug it knows, plus one pass for
+    rows with no use case at all. A row whose slug is **neither** — which is precisely what
+    removing a use case's row produces — matched no pass and was never cleared, for ever, on an
+    installation that has not switched the optional record retention on.
 
     Measured on the running stack before this was written: **1509 rows** carrying stored prompts
     for use cases that no longer exist. Deleting a use case is exactly the moment its prompts

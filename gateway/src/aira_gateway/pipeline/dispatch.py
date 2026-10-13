@@ -12,9 +12,14 @@ than the caller sent, with a 200. So a candidate that fails a condition is **ski
 reason, and when none qualifies the request fails with those reasons (`NoCapableModel`) rather than
 as an upstream outage.
 
-**A candidate that was tried and failed is reported too** (`ADR-0032`). Until 2026-10-11 only the
-excluded ones were: the row said a fallback had answered and never why the model before it had not,
-which is the question somebody reading an audit trail actually has.
+**A candidate that was tried and failed is reported too** (`ADR-0032`): the row says why the model
+before the one that answered did not, which is the question somebody reading an audit trail
+actually has.
+
+**A candidate whose wire format cannot carry the request is skipped like any other** — a level word
+to Anthropic, a document to an OpenAI-compatible server, a thinking budget that does not fit the
+output cap. The adapter finds out while mapping (`DialectUnsupported`), one step later than a
+condition would, and a fallback on another dialect may serve the request as written.
 
 Conditions arrive as an async predicate, so dispatch never learns what a region or a media type is.
 """
@@ -29,7 +34,13 @@ from aira_common.logging import get_logger
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalResponse
 from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.telemetry import model_call_span
-from aira_gateway.upstreams.base import AmbiguousModel, ProviderRegistry, Upstream, UpstreamError
+from aira_gateway.upstreams.base import (
+    AmbiguousModel,
+    DialectUnsupported,
+    ProviderRegistry,
+    Upstream,
+    UpstreamError,
+)
 
 _log = get_logger("aira_gateway.pipeline")
 
@@ -111,6 +122,12 @@ class Streaming:
     chunks: AsyncIterator[CanonicalChunk]
     skipped: list[Skipped] = field(default_factory=list)
     failed: list[Attempted] = field(default_factory=list)
+    #: The adapter that answered and the request exactly as it was sent to it — what its vendor is
+    #: asked to count when the caller leaves before the vendor reports usage (`FRD-128` FR-6).
+    provider: Upstream | None = None
+    sent: CanonicalRequest | None = None
+    #: Where the first chunk came from: known here even when the caller leaves before reading it.
+    region: str = ""
 
 
 def _why(error: UpstreamError) -> str:
@@ -168,6 +185,7 @@ async def dispatch_with_fallback(
     skipped: list[Skipped] = []
     failed: list[Attempted] = []
     last_error: UpstreamError | None = None
+    unsayable: list[DialectUnsupported] = []
 
     async for index, model, provider, addressed in _candidates(
         registry, request, fallback_models, permits, routing_of, skipped
@@ -183,6 +201,9 @@ async def dispatch_with_fallback(
             # A candidate that cannot be addressed — no region catalogued, or one outside
             # `AIRA_ALLOWED_REGIONS` — is a configuration fault, not a 500: skip it and move on.
             skipped.append(Skipped(model, str(exc)))
+        except DialectUnsupported as exc:
+            unsayable.append(exc)
+            skipped.append(Skipped(model, str(exc)))
         else:
             return Dispatched(response, index, skipped, failed)
 
@@ -190,7 +211,7 @@ async def dispatch_with_fallback(
     # Everything else is a chain that had nothing to offer.
     if last_error is not None:
         raise last_error
-    raise NoCapableModel(skipped)
+    raise _nothing_could_serve(skipped, unsayable)
 
 
 async def stream_with_fallback(
@@ -217,6 +238,7 @@ async def stream_with_fallback(
     skipped: list[Skipped] = []
     failed: list[Attempted] = []
     last_error: UpstreamError | None = None
+    unsayable: list[DialectUnsupported] = []
 
     async for index, model, provider, addressed in _candidates(
         registry, request, fallback_models, permits, routing_of, skipped
@@ -231,7 +253,7 @@ async def stream_with_fallback(
                 chunks = provider.stream_generate(addressed)
                 first = await anext(chunks)
         except StopAsyncIteration:
-            return Streaming(model, index, _nothing(), skipped, failed)
+            return Streaming(model, index, _nothing(), skipped, failed, provider, addressed)
         except UpstreamError as exc:
             last_error = exc
             failed.append(Attempted(model, _why(exc)))
@@ -239,12 +261,39 @@ async def stream_with_fallback(
         except (AmbiguousModel, RegionNotAllowed) as exc:
             skipped.append(Skipped(model, str(exc)))
             await _closed(chunks, model)
+        except DialectUnsupported as exc:
+            unsayable.append(exc)
+            skipped.append(Skipped(model, str(exc)))
+            await _closed(chunks, model)
         else:
-            return Streaming(model, index, _rejoined(first, chunks, model), skipped, failed)
+            return Streaming(
+                model,
+                index,
+                _rejoined(first, chunks, model),
+                skipped,
+                failed,
+                provider,
+                addressed,
+                first.served_region or "",
+            )
 
     if last_error is not None:
         raise last_error
-    raise NoCapableModel(skipped)
+    raise _nothing_could_serve(skipped, unsayable)
+
+
+def _nothing_could_serve(
+    skipped: list[Skipped], unsayable: list[DialectUnsupported]
+) -> NoCapableModel | DialectUnsupported:
+    """Why a chain with no answer and no outage had nothing to offer.
+
+    Where **every** candidate was skipped because its wire format cannot carry the request, the
+    dialect's own refusal is the answer: the request as written cannot be sent, which is a request
+    to change — not a model to go looking for, which is what `NoCapableModel` tells a caller.
+    """
+    if unsayable and len(unsayable) == len(skipped):
+        return unsayable[-1]
+    return NoCapableModel(skipped)
 
 
 async def _rejoined(

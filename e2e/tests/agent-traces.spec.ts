@@ -1,6 +1,7 @@
 import { GATEWAY_URL } from '../stack';
-import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, login, logout, releaseAllModels, uniqueSlug } from './support';
+import { Page, expect, test } from '@playwright/test';
+import { forget, remember } from '../created';
+import { USERS, api, createUseCase, login, logout, releaseAllModels, uniqueSlug } from './support';
 
 /**
  * What an incident actually does, in a real browser (`FRD-131` FR-7, `FRD-502`).
@@ -284,9 +285,14 @@ test.describe('The list holds still and fits', () => {
 
     const search = page.getByTestId('use-case-search');
     await search.click();
+    // **The answer, waited for**: what would take the focus away is the answer arriving and
+    // re-rendering the field, so the assertion means something only once the search is answered.
+    const answered = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/v1/use-cases/') && response.url().includes('q=de'),
+    );
     await search.type('de', { delay: 120 });
-    // Past the debounce, so the query has fired and the answer has come back.
-    await page.waitForTimeout(1500);
+    await answered;
 
     await expect(search).toBeFocused();
     await expect(search).toHaveValue('de');
@@ -311,10 +317,22 @@ test.describe('Authoring a rule that applies everywhere', () => {
     await page.getByTestId('new-global-rule').click();
 
     const name = `e2e global ${Date.now()}`;
+    // Written down before it exists, and removed in `finally`: a rule is a **policy**, not a row
+    // — every tick evaluates every rule, so one a failed run left behind produces findings for
+    // every caller that crosses it, forever. Fifty-six of one installation's sixty-one global
+    // rules turned out to be residue from runs of this suite.
+    remember('rule', name);
     await page.locator('[data-testid="new-global-rule-name"]').fill(name);
     await page.locator('[data-testid="new-global-rule-threshold"]').fill('55');
     await page.locator('[data-testid="new-global-rule-save"]').click();
+    try {
+      await findItThenDeleteItInTheConsole(page, name);
+    } finally {
+      await removeRuleByName(page, name);
+    }
+  });
 
+  async function findItThenDeleteItInTheConsole(page: Page, name: string): Promise<void> {
     await expect(page.locator('[role="status"]')).toContainText('every use case', {
       timeout: 15_000,
     });
@@ -324,9 +342,7 @@ test.describe('Authoring a rule that applies everywhere', () => {
     await expect(row).toBeVisible({ timeout: 20_000 });
     await expect(row).toContainText('everywhere');
 
-    // Removed again. A rule is a **policy**, not a row: every tick evaluates every rule, so one
-    // left behind produces findings for every caller that crosses it, forever. Fifty-six of one
-    // installation's sixty-one global rules turned out to be residue from runs of this suite.
+    // Removed through the console, which is the half of this test about deleting one.
     await row.locator('[data-testid^="rule-toggle-"]').click();
     // Deleting a rule asks first (`FRD-206`: destructive actions confirm), and Playwright
     // auto-*dismisses* dialogs — so without this the click does nothing and the rule survives,
@@ -334,7 +350,19 @@ test.describe('Authoring a rule that applies everywhere', () => {
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('[data-testid^="rule-delete-"]').first().click();
     await expect(page.locator(`tr:has-text("${name}")`)).toHaveCount(0, { timeout: 15_000 });
-  });
+  }
+
+  /** Whatever the console's removal did, the rule is gone afterwards — by name, through the API. */
+  async function removeRuleByName(page: Page, name: string): Promise<void> {
+    const listed = await api<
+      { id: number; name: string }[] | { results: { id: number; name: string }[] }
+    >(page, 'GET', '/api/v1/anomaly-rules/');
+    const rows = Array.isArray(listed.body) ? listed.body : listed.body.results;
+    for (const rule of rows.filter((rule) => rule.name === name)) {
+      await api(page, 'DELETE', `/api/v1/anomaly-rules/${rule.id}/`);
+    }
+    forget((entry) => entry.kind === 'rule' && entry.name === name);
+  }
 
   test('a role that may stop nothing is not offered the button', async ({ page }) => {
     await login(page, USERS.governance);
@@ -512,11 +540,13 @@ test.describe('Pipeline tests', () => {
     await page.goto('/pipeline-tests');
     await page.getByTestId('tab-runs').click();
 
+    // `ucadmin` administers the demo's use cases through its groups, so there **is** something to
+    // run: "nothing to run" is the regression this test is named against, not an outcome it may
+    // accept. Waited for as either state, then asserted to be the picker.
     const nothingToRun = page.getByTestId('no-use-case');
-    if (await nothingToRun.isVisible()) {
-      await expect(nothingToRun).toContainText('groups your token carries');
-      return;
-    }
+    const picker = page.locator('#smoke-use-case');
+    await expect(picker.or(nothingToRun).first()).toBeVisible({ timeout: 20_000 });
+    await expect(nothingToRun).toHaveCount(0);
     // Their own use cases, and only those — the gateway's answer, not Management's visibility.
     await expect(page.locator('#smoke-use-case option')).not.toHaveCount(1);
   });

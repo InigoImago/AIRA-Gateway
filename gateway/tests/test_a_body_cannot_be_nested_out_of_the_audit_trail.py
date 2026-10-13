@@ -68,7 +68,7 @@ TOOL = {
 #: good answer to a deep body and would prove nothing about the bound.
 ADMIN = Principal(
     subject="root",
-    method="apikey",
+    method="api_key",
     roles=("global-admin", "it-security"),
     use_cases=("uc",),
     username="root",
@@ -165,6 +165,48 @@ async def test_a_body_at_the_bound_is_not_refused_for_its_depth(path: str) -> No
 
     assert "nests deeper" not in response.text, (path, response.text)
     assert response.status_code < 500, (path, response.text)
+
+
+def _deep_in_utf16() -> bytes:
+    """An over-deep body in UTF-16, which `json.loads` also reads.
+
+    The depth scan reads UTF-8: an escaped quote is `5C 22` there and `5C 00 22 00` here, so the
+    one `\\"` below flipped its idea of being inside a string and every bracket after it counted
+    for nothing — and the decoder then walked a hundred thousand levels.
+    """
+    text = '{"contents":[{"parts":[{"text":"\\""}]}],"x":' + "[" * 100_000 + "]" * 100_000 + "}"
+    return text.encode("utf-16-le")
+
+
+#: The routes whose refusals are recorded: the two surfaces' model verbs.
+RECORDED = [
+    "/v1beta/models/mock-1:generateContent",
+    "/v1beta/models/mock-1:embedContent",
+    "/kira/api/external/chat",
+    "/kira/api/external/embed",
+    "/kira/api/external/streaming-chat",
+]
+
+
+@pytest.mark.parametrize("path", [route for route, _status, _phrase in ROUTES])
+async def test_a_body_in_another_encoding_cannot_pass_the_bound(path: str) -> None:
+    """A JSON text exchanged between systems is UTF-8 (RFC 8259 §8.1), and the bound is measured
+    on UTF-8. A body in any other encoding is refused as unreadable — a `4xx`, recorded where the
+    surface records refusals — rather than parsed by a decoder the bound never measured for."""
+    app = _app()
+    with _client(app) as client:
+        await _seed(app)
+        before = await _rows(app)
+        response = client.post(
+            path,
+            content=_deep_in_utf16(),
+            headers={"content-type": "application/json", "x-aira-use-case": "uc"},
+        )
+        after = await _rows(app)
+
+    assert 400 <= response.status_code < 500, (path, response.status_code, response.text[:200])
+    if path in RECORDED:
+        assert after == before + 1, path
 
 
 async def test_a_deep_body_is_still_recorded() -> None:

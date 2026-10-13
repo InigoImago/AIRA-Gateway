@@ -35,19 +35,16 @@ from rest_framework.test import APIClient
 from aira_common.access import SubjectKind
 from aira_common.directory import DirectoryEntry, DirectoryUnavailable
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
-GROUP_FOR = {
-    "global-admin": "/aira/global-admins",
-    "it-security": "/aira/it-security",
-    "it-steuerung": "/aira/it-steuerung",
-}
 
 
 def _user(username: str, *roles: str) -> Any:
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"groups": [GROUP_FOR[role] for role in roles]})
+    sync_user_roles(user, role_claims(*roles))
     return get_user_model().objects.get(pk=user.pk)
 
 
@@ -354,6 +351,36 @@ def test_a_global_administrator_who_is_a_member_of_nothing_cannot_own_a_key(
         f"{BASE}uc-a/api-keys/", {"label": "k", "owner": "root"}, format="json"
     )
     assert refused.status_code == 400
+
+
+def test_a_global_administrators_own_key_rests_on_a_membership_that_can_end(
+    usecase: UseCase, boss: Any, captured_events: list[tuple[str, dict]]
+) -> None:
+    """The same rule for the caller as for anybody named: a key's owner holds a grant that can end.
+
+    A Global Administrator may issue a key on any use case, member or not. Without a grant, that
+    key rested on nothing the sweep recognises, and the next unrelated removal revoked it as a side
+    effect. Issuing now records them as a member — visible, travelling to the gateway, and taken
+    away like anybody's — so the key lives exactly as long as that access.
+    """
+    root = _user("root", "global-admin")
+    issued = _client(root).post(f"{BASE}uc-a/api-keys/", {"label": "k"}, format="json")
+    assert issued.status_code == 201, issued.content
+    prefix = issued.json()["prefix"]
+
+    membership = UseCaseMembership.objects.get(use_case=usecase, user=root)
+    assert membership.role == UseCaseMembership.USER
+    assert ("membership.upserted", {"slug": "uc-a", "username": "root", "role": "user"}) in [
+        (kind, payload) for kind, payload in captured_events
+    ]
+
+    _member("ada", usecase)
+    removed = _client(boss).delete(f"{BASE}uc-a/members/ada/")
+    assert prefix not in removed.json()["revoked_keys"], "an unrelated removal leaves it alone"
+    assert ApiKey.objects.get(prefix=prefix).is_active
+
+    ended = _client(boss).delete(f"{BASE}uc-a/members/root/")
+    assert ended.json()["revoked_keys"] == [prefix], "and ending their access ends the key"
 
 
 def test_naming_yourself_is_not_naming_somebody_else(usecase: UseCase) -> None:

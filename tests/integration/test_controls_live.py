@@ -5,25 +5,27 @@ Each of these has hermetic tests that prove the logic. What only shows up here i
 client would actually obey, a retention process that is a different container, and a second API
 surface reaching the same real model as the first.
 
-The fallback fixture is worth stating. Two servers are declared against one endpoint — `gpu-a`
-offering a model that is not pulled, `gpu-b` offering one that is. `gpu-a` therefore answers 404
-for real, over a real socket, and the chain has to move on. It is the closest thing to a second
-machine that one machine can provide, and it exercises the part that matters: two transports, two
-adapters, one decision.
+The fallback cases need a fixture **this repository's stacks do not provide**: two servers
+declared against one endpoint in `AIRA_OPENAI_SERVERS` — `gpu-a` offering a model that is not
+pulled, `gpu-b` offering one that is — so that `gpu-a` answers 404 for real, over a real socket,
+and the chain has to move on across two transports and two adapters. `make up`, `make showcase`
+and CI declare one server (`local`), so those four cases skip there, before acting, and say why;
+an installation that declares the pair runs them. Everything else here asserts.
 """
 
 from __future__ import annotations
 
 import asyncio
 import subprocess
-import uuid
 
 import httpx
 import pytest
+import stack_addresses
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, Fixture
+from . import installation
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, Fixture, read_model_id
 
 pytestmark = pytest.mark.integration
 
@@ -47,10 +49,30 @@ async def _registered(fixture: Fixture) -> set[str]:
 
 
 async def _require(fixture: Fixture, *models: str) -> None:
+    """Skip, **before acting**, when the deployment serves none of ``models`` — the one reason a
+    case here may not run. Anything that goes wrong after this point is a failure."""
     registered = await _registered(fixture)
     missing = [model for model in models if model not in registered]
     if missing:
-        pytest.skip(f"not registered: {missing} — see AIRA_OPENAI_SERVERS")
+        pytest.skip(f"not registered: {missing} — see AIRA_OPENAI_SERVERS and the module docstring")
+
+
+async def _require_numeric_id(engine: AsyncEngine) -> None:
+    """The KIRA surface addresses a model by integer id, so the gateway's catalogue must carry the
+    one the seed wrote. Asked before acting, and a **failure** when the model is served without it:
+    a missing id makes every KIRA call `422 MODEL_NOT_FOUND`, which is the surface broken, not a
+    precondition missing."""
+    async with engine.connect() as connection:
+        found = (
+            await connection.execute(
+                text("SELECT model FROM model_catalog WHERE numeric_id = :id"),
+                {"id": LOCAL_CHAT_MODEL_ID},
+            )
+        ).scalar()
+    assert found == REAL_MODEL, (
+        f"the gateway's catalogue gives id {LOCAL_CHAT_MODEL_ID} to {found!r}, not {REAL_MODEL!r} "
+        "— a KIRA client cannot reach the demo model (tools/seed_local_catalog.py writes it)"
+    )
 
 
 async def _catalogue(engine: AsyncEngine, model: str) -> None:
@@ -63,6 +85,7 @@ async def _catalogue(engine: AsyncEngine, model: str) -> None:
     nobody had ever written down, which the gateway now refuses one step earlier and for a
     different reason.
     """
+    installation.remember("catalog_row", model)
     async with engine.begin() as connection:
         await connection.execute(
             text("DELETE FROM model_catalog WHERE model = :model"), {"model": model}
@@ -133,8 +156,7 @@ async def test_the_audit_names_both_the_model_asked_for_and_the_one_that_answere
             },
             headers=fixture.headers(),
         )
-    if served.status_code != 200:
-        pytest.skip(f"the chain did not serve ({served.status_code}): {served.text[:120]}")
+    assert served.status_code == 200, f"the chain did not serve: {served.text[:300]}"
 
     row = await _wait_for_row(engine, fixture.slug)
     assert row is not None
@@ -193,12 +215,7 @@ async def _rate_limit(engine: AsyncEngine, slug: str, rpm: int, burst: int) -> N
                 "INSERT INTO rate_limits (id, use_case, scope, subject, limit_rpm, burst, enabled)"
                 " VALUES (:id, :slug, 'use_case', '', :rpm, :burst, true)"
             ),
-            {
-                "id": 900_000_000 + int(uuid.uuid4().int % 90_000_000),
-                "slug": slug,
-                "rpm": rpm,
-                "burst": burst,
-            },
+            {"id": read_model_id(), "slug": slug, "rpm": rpm, "burst": burst},
         )
 
 
@@ -206,9 +223,12 @@ async def test_over_the_limit_returns_429_with_a_retry_after_a_client_can_obey(
     engine: AsyncEngine, fixture: Fixture
 ) -> None:
     """A `Retry-After` of `0` invites the immediate retry the limit exists to stop, and a missing
-    one leaves a well-behaved client with nothing but a busy loop."""
+    one leaves a well-behaved client with nothing but a busy loop.
+
+    No wait for the limit to be felt: the gateway caches limits **per use case**, and nothing has
+    asked about this one before the first request below.
+    """
     await _rate_limit(engine, fixture.slug, rpm=60, burst=2)
-    await asyncio.sleep(6)  # the gateway caches limit configuration for a few seconds
 
     statuses = []
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client:
@@ -232,20 +252,20 @@ async def test_a_throttled_request_is_recorded_as_rate_limited(
 ) -> None:
     """`FRD-122`: a refusal that leaves no trace is a control nobody can review."""
     await _rate_limit(engine, fixture.slug, rpm=60, burst=1)
-    await asyncio.sleep(6)
 
+    statuses = []
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client:
         for _ in range(4):
-            await client.post(
+            response = await client.post(
                 "/v1beta/models/mock-1:generateContent",
                 json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
                 headers=fixture.headers(),
             )
+            statuses.append(response.status_code)
+    assert 429 in statuses, f"the limit never bit: {statuses}"
 
-    rows = await _wait_for_rows(engine, fixture.slug, 2)
-    outcomes = {row["outcome"] for row in rows}
-    if "rate_limited" not in outcomes:
-        pytest.skip(f"the limit did not bite in this window: {outcomes}")
+    # Every request's row, not the first two: the refusals are the later ones.
+    rows = await _wait_for_rows(engine, fixture.slug, len(statuses))
     refusal = next(row for row in rows if row["outcome"] == "rate_limited")
     assert refusal["status"] == 429
     assert not refusal["completion_tokens"], "a refused request was recorded as producing output"
@@ -312,7 +332,8 @@ async def test_retention_leaves_a_row_inside_its_window_alone(
         )
     await _wait_for_row(engine, fixture.slug)
 
-    await _run_retention()
+    result = await _run_retention()
+    assert result.returncode == 0, result.stderr
 
     row = await _wait_for_row(engine, fixture.slug)
     assert row is not None
@@ -322,10 +343,13 @@ async def test_retention_leaves_a_row_inside_its_window_alone(
 # == 4. the KIRA surface, against the same real model ============================================
 
 
-async def test_the_predecessors_surface_reaches_the_real_model(fixture: Fixture) -> None:
+async def test_the_predecessors_surface_reaches_the_real_model(
+    engine: AsyncEngine, fixture: Fixture
+) -> None:
     """`FRD-107`: a migrating client changes a base URL and nothing else. Here that claim meets a
     model, an integer id and the same controls as the Gemini surface."""
     await _require(fixture, REAL_MODEL)
+    await _require_numeric_id(engine)
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=300.0) as client:
         response = await client.post(
@@ -338,8 +362,6 @@ async def test_the_predecessors_surface_reaches_the_real_model(fixture: Fixture)
             headers=fixture.headers(),
         )
 
-    if response.status_code == 404 and f"id {LOCAL_CHAT_MODEL_ID}" in response.text:
-        pytest.skip("no numeric id for the local model — run tools/seed_local_catalog.py")
     assert response.status_code == 200, response.text
 
     payload = response.json()
@@ -356,6 +378,7 @@ async def test_both_surfaces_record_the_same_request_the_same_way(
     """The only way to be sure the shared controls were *run* rather than merely present: send one
     request through each and compare what the audit kept."""
     await _require(fixture, REAL_MODEL)
+    await _require_numeric_id(engine)
     body = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}], "generationConfig": {}}
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=300.0) as client:
@@ -373,8 +396,8 @@ async def test_both_surfaces_record_the_same_request_the_same_way(
             },
             headers=fixture.headers(),
         )
-    if gemini.status_code != 200 or kira.status_code != 200:
-        pytest.skip(f"gemini={gemini.status_code} kira={kira.status_code}")
+    assert gemini.status_code == 200, gemini.text[:300]
+    assert kira.status_code == 200, kira.text[:300]
 
     rows = await _wait_for_rows(engine, fixture.slug, 2)
     by_api = {row["api"]: row for row in rows}
@@ -408,6 +431,8 @@ async def test_both_surfaces_record_the_same_request_the_same_way(
 async def test_a_kira_caller_meets_the_same_budget(engine: AsyncEngine, fixture: Fixture) -> None:
     """A compatibility surface that skipped the controls would be a way around every one of them,
     which is why `api/serving.py` exists rather than a second copy."""
+    await _require(fixture, REAL_MODEL)
+    await _require_numeric_id(engine)
     await fixture.budget(limit_requests=1)
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=120.0) as client:
@@ -430,8 +455,8 @@ async def test_a_kira_caller_meets_the_same_budget(engine: AsyncEngine, fixture:
             headers=fixture.headers(),
         )
 
-    if first.status_code not in (200, 429):
-        pytest.skip(f"the surface did not serve ({first.status_code}): {first.text[:120]}")
+    # The allowance is one request: the first is served, so the refusal below is the budget's.
+    assert first.status_code == 200, first.text[:300]
     assert second.status_code == 429, second.text
     # The predecessor's vocabulary, not Google's — that is the whole point of the surface.
     assert second.json()["code"] == "EXTERNAL_KI_API_TOO_MANY_REQUEST"
@@ -446,7 +471,14 @@ async def _run_retention() -> subprocess.CompletedProcess[str]:
     reasons that have nothing to do with the system under test."""
     return await asyncio.to_thread(
         subprocess.run,
-        ["docker", "exec", "aira-gateway", "python", "-m", "aira_gateway.retention"],
+        [
+            "docker",
+            "exec",
+            stack_addresses.container("gateway"),
+            "python",
+            "-m",
+            "aira_gateway.retention",
+        ],
         capture_output=True,
         text=True,
         timeout=120,
@@ -483,11 +515,13 @@ async def _wait_for_rows(
     deadline = asyncio.get_running_loop().time() + wait
     while True:
         rows = await _all_rows(engine, slug)
-        if len(rows) >= count or asyncio.get_running_loop().time() > deadline:
+        if len(rows) >= count:
             return rows
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"expected {count} audit rows for {slug}, saw {len(rows)}")
         await asyncio.sleep(0.3)
 
 
-async def _wait_for_row(engine: AsyncEngine, slug: str, *, wait: float = 25.0) -> dict | None:
+async def _wait_for_row(engine: AsyncEngine, slug: str, *, wait: float = 25.0) -> dict:
     rows = await _wait_for_rows(engine, slug, 1, wait=wait)
-    return rows[-1] if rows else None
+    return rows[-1]

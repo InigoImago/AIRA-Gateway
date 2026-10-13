@@ -119,6 +119,15 @@ class RequestContent(TolerantRequest):
                     f"{type(part['text']).__name__}. A non-string would be converted and the "
                     "model would answer about the conversion."
                 )
+            # And an attachment's fields, for the same reason: `"data": null` became "None", which
+            # is valid base64, and the model was handed three bytes of nothing.
+            for field in ("mime_type", "mimeType", "data"):
+                if has_data and field in part and not isinstance(part[field], str):
+                    raise ValueError(
+                        f"parts[{index}]: '{field}' must be a string, not "
+                        f"{type(part[field]).__name__}. A non-string would be converted, and the "
+                        "model would read the conversion as the attachment."
+                    )
         return self
 
 
@@ -240,7 +249,10 @@ class VersionInfo(BaseModel):
 
 class KiUsageRow(BaseModel):
     user_id: str
-    model_id: ModelId
+    #: A plain `int`, not `ModelId`: that is the bound on what a *caller* may name, and this is what
+    #: the gateway reports — `0` for "every model", since the report does not cross-tabulate
+    #: user and model (`info_routes.ki_usage`).
+    model_id: int
     entry_count: int
     token_input_sum: int
     token_output_sum: int

@@ -11,6 +11,14 @@ spends real tokens. So it takes the rules every spending request takes:
   it will call must be approved for the installation (`FRD-307`);
 - the controls that stop spending — suspension, rate limits, exhausted budget — are taken before any
   step runs, and every call a step makes is audited and billed (`FRD-125b`).
+
+**Trying a pipeline is authoring one** (`FRD-306`). A pipeline's steps send the caller's text to a
+model under an instruction the pipeline carries, and the trace shows what the model said. So an
+unsaved pipeline — the caller's own instructions — and steps run past a block, which production
+never reaches, are for whoever may save a pipeline on the use case: its administrators. A member
+may still test the **saved** pipeline, the one their own requests go through, and is shown what
+each step decided but not the words its model produced: production never shows those either, and
+a redactor coaxed into answering would otherwise answer a prompt the next step refuses.
 """
 
 from __future__ import annotations
@@ -22,6 +30,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from aira_common.access import GrantRole
+from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.refusals import refusal_response as _refusal
 from aira_gateway.api.serving import (
@@ -38,16 +48,22 @@ from aira_gateway.auth.attribution import Attribution, attribute
 from aira_gateway.auth.dependencies import require_principal, use_case_refusal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
-from aira_gateway.pipeline.config import Pipeline
+from aira_gateway.payloads import grant_role_in
+from aira_gateway.pipeline.config import Pipeline, problem_in
 from aira_gateway.pipeline.engine import DryRunResult, PipelineEngine
+from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.requirements import ModelApproved
-from aira_gateway.state import providers_of
+from aira_gateway.state import providers_of, sessionmaker_of
 from aira_gateway.upstreams.base import ProviderRegistry
 
 router = APIRouter(tags=["pipeline"])
 
 #: A dry run is a builder aid, not a generation endpoint: keep the sample small.
 MAX_SAMPLE_CHARS = 8_000
+
+#: What a step's trace detail holds that a model wrote: a classifier's reply and a redactor's
+#: rewrite. Shown to those who may author the pipeline, withheld from everyone else.
+MODEL_WORDS = frozenset({"output", "after"})
 
 #: Whether a step of this kind calls a model of its own, given its configuration. A step whose kind
 #: is absent calls nothing; a new step kind has to answer this here.
@@ -131,14 +147,18 @@ def _model_the_pipeline_is_about(
     about a model nobody chose makes a working pipeline look broken.
     """
     steps = pipeline.get("steps") or []
-    for step in steps:
-        config = step.get("config") or {}
-        for category in config.get("categories") or []:
-            if category.get("model"):
+    for step in steps if isinstance(steps, list) else []:
+        config = (step.get("config") or {}) if isinstance(step, dict) else {}
+        if not isinstance(config, dict):
+            continue
+        categories = config.get("categories") or []
+        for category in categories if isinstance(categories, list) else []:
+            if isinstance(category, dict) and category.get("model"):
                 return str(category["model"])
         if config.get("default_model"):
             return str(config["default_model"])
-    for fallback in pipeline.get("fallback_models") or []:
+    fallbacks = pipeline.get("fallback_models") or []
+    for fallback in fallbacks if isinstance(fallbacks, list) else []:
         return str(fallback)
     if released:
         # A pipeline is about a request that generates; an embedding model never serves one.
@@ -185,7 +205,51 @@ async def _models_refusal(
     return None
 
 
-def _rendered(result: DryRunResult) -> JSONResponse:
+async def _may_author(request: Request, principal: Principal, use_case: str) -> bool:
+    """Whether ``principal`` may try a pipeline of their own on ``use_case``: what saving one takes.
+
+    The use case's administrators, and whoever may administer every use case. Without
+    authentication there is nobody to tell apart, and the unbound break-glass key is an operator's
+    (`ADR-0015`). A key bound to the use case acts for an agent and is never its administrator,
+    whoever minted it.
+    """
+    if principal.method == "demo" or (principal.method == "api_key" and not principal.use_cases):
+        return True
+    if principal.method != "oidc":
+        return False
+    if principal.allows(Permission.USECASE_MANAGE_ALL):
+        return True
+    async with sessionmaker_of(request)() as session:
+        return await grant_role_in(session, principal, use_case) == GrantRole.ADMIN.value
+
+
+async def _authority_refusal(
+    request: Request, payload: DryRunRequest, pipeline: Pipeline, authors: bool
+) -> JSONResponse | None:
+    """Refuse a member what only an author may do: an unsaved pipeline, or steps past a block."""
+    if authors:
+        return None
+    store: PipelineStore = request.app.state.pipeline_store
+    saved = await store.get(payload.use_case) or Pipeline()
+    if pipeline != saved:
+        return _error(
+            403,
+            f"Only an administrator of use case '{payload.use_case}' may try a pipeline that is "
+            "not its saved one: its steps send your text to a model under the instructions it "
+            "carries. Test the saved pipeline, or ask an administrator.",
+            "PERMISSION_DENIED",
+        )
+    if payload.past_blocks:
+        return _error(
+            403,
+            f"Only an administrator of use case '{payload.use_case}' may run steps past a block, "
+            "which production never reaches.",
+            "PERMISSION_DENIED",
+        )
+    return None
+
+
+def _rendered(result: DryRunResult, *, model_words: bool) -> JSONResponse:
     return JSONResponse(
         {
             "blocked": result.blocked,
@@ -196,7 +260,11 @@ def _rendered(result: DryRunResult) -> JSONResponse:
                 {
                     "type": entry.type,
                     "action": entry.action,
-                    "detail": entry.detail,
+                    "detail": (
+                        entry.detail
+                        if model_words
+                        else {k: v for k, v in entry.detail.items() if k not in MODEL_WORDS}
+                    ),
                     "after_block": entry.after_block,
                 }
                 for entry in result.trace
@@ -221,12 +289,21 @@ async def dry_run(
         where = ".".join(str(part) for part in first.get("loc", ()))
         detail = str(first.get("msg", "invalid"))
         return _error(400, f"{where}: {detail}".strip(": "), "INVALID_ARGUMENT")
+    # The pipeline is a body somebody typed: a field the engine cannot use is named, not crashed on.
+    problem = problem_in(payload.pipeline)
+    if problem is not None:
+        return _error(400, problem, "INVALID_ARGUMENT")
+    pipeline = Pipeline.from_dict(payload.pipeline)
 
     # A selector never grants access: naming somebody else's use case would borrow their release
     # (`FRD-206`, `ADR-0015`).
     refusal = use_case_refusal(principal, payload.use_case)
     if refusal is not None:
         return _error(403, refusal, "PERMISSION_DENIED")
+    authors = await _may_author(request, principal, payload.use_case)
+    refused_authority = await _authority_refusal(request, payload, pipeline, authors)
+    if refused_authority is not None:
+        return refused_authority
 
     registry = providers_of(request)
     engine: PipelineEngine = request.app.state.pipeline_engine
@@ -246,16 +323,7 @@ async def dry_run(
 
     # Set here rather than by the middleware, because this endpoint takes its use case from the
     # body; the rows this run writes and the gate below both read it.
-    attribute(
-        request,
-        Attribution(
-            subject=principal.subject,
-            method=principal.method,
-            username=principal.username,
-            use_case=payload.use_case,
-            credential=principal.credential,
-        ),
-    )
+    attribute(request, Attribution.of(principal, payload.use_case))
     # The controls that do not need to know a model — suspension, rate limits, exhausted budget —
     # before anything is spent (`FRD-126`: one bundle, not an order assembled at the call site).
     try:
@@ -266,7 +334,7 @@ async def dry_run(
     trail = AuditTrail(operation="pipeline:dryRun", api="gemini")
     try:
         result = await engine.dry_run(
-            Pipeline.from_dict(payload.pipeline),
+            pipeline,
             canonical,
             model_calls=trail.model_calls,
             declaration_of=await declared_model(request),
@@ -277,4 +345,4 @@ async def dry_run(
         # row — a dry run dispatches nothing — only the calls its steps made.
         await record_pipeline_calls(request, trail)
 
-    return _rendered(result)
+    return _rendered(result, model_words=authors)

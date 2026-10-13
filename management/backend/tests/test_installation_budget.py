@@ -15,27 +15,16 @@ from django.contrib.auth import get_user_model
 from django.db.utils import IntegrityError
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/installation-budgets/"
-ROLE_GROUPS = (
-    "global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung"
-)
-GROUP_FOR = {
-    "global-admin": "/aira/global-admins",
-    "it-security": "/aira/it-security",
-    "it-steuerung": "/aira/it-steuerung",
-}
-
-
-@pytest.fixture(autouse=True)
-def _role_groups(settings):
-    settings.AIRA_ROLE_GROUPS = ROLE_GROUPS
 
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"groups": [GROUP_FOR[role] for role in roles]})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -162,9 +151,10 @@ def test_two_installation_budgets_for_one_period_are_refused() -> None:
 
 
 def test_a_scope_and_an_owner_that_disagree_are_refused() -> None:
-    """`clean()` runs for a form and not for a fixture, a shell or a migration, so the rule is in
-    the database too. A row saying *installation* while naming a use case is a budget matched
-    against traffic nobody meant."""
+    """The serializers refuse the two wrong combinations where a caller sends them, and a fixture,
+    a shell or a migration writes past a serializer, so the rule is in the database too. A row
+    saying *installation* while naming a use case is a budget matched against traffic nobody
+    meant."""
     from aira_management.apps.usecases.models import UseCase
 
     use_case = UseCase.objects.create(slug="uc", name="UC")
@@ -188,3 +178,39 @@ def test_an_id_that_is_not_a_number_is_a_404_rather_than_a_500() -> None:
     client = _client(_user("admin", "global-admin"))
 
     assert client.delete(f"{BASE}not-a-number/").status_code == 404
+
+
+def test_a_budget_without_a_period_is_a_monthly_one() -> None:
+    """The same `KeyError` as on the use-case route: `period` has a model default, so it was absent
+    from the validated data the upsert indexed."""
+    root = _client(_user("root", "global-admin"))
+
+    created = root.post(BASE, {"limit_cost": "10"}, format="json")
+
+    assert created.status_code == 201, created.content
+    assert created.json()["period"] == Budget.MONTH
+
+
+def test_whoever_may_set_it_may_see_what_they_set() -> None:
+    """A role an installation defines with only `budget.installation.write` could set and delete a
+    budget it could never list — the list answered `[]`, which reads as "none set", and a second
+    save silently replaced the first."""
+    from aira_management.apps.roles.models import StoredRole
+    from aira_management.rbac import sync_user_groups
+
+    StoredRole.objects.create(
+        slug="finance",
+        label="Finance",
+        group_path="/finance",
+        permissions=["budget.installation.write"],
+    )
+    user = get_user_model().objects.create(username="fin")
+    sync_user_groups(user, {"groups": ["/finance"]})
+    finance = _client(user)
+
+    assert (
+        finance.post(BASE, {"period": "month", "limit_cost": "20.00"}, format="json").status_code
+        == 201
+    )
+
+    assert [row["period"] for row in finance.get(BASE).json()] == [Budget.MONTH]

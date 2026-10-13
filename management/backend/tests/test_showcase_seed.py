@@ -10,6 +10,9 @@ nobody anything would pass that. It checks the two properties a walkthrough actu
   request made against them.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import pytest
 from aira_management.apps.budgets.models import Budget
 from aira_management.apps.ratelimits.models import RateLimit
@@ -26,13 +29,38 @@ from .conftest import role_claims
 pytestmark = pytest.mark.django_db
 
 
-@pytest.fixture
-def seeded():
-    seed_roles_and_users(fresh=False)
+@contextmanager
+def recording() -> Iterator[list[tuple[str, dict]]]:
+    """Every event emitted inside the block.
+
+    **Unsubscribed afterwards.** The subscriber list is module-global: a spy left on it appends to a
+    dead list for the rest of the session, and a later test that clears the list to get rid of it
+    takes the outbox's own subscriber with it (`test_catalog.captured_events`).
+    """
     recorded: list[tuple[str, dict]] = []
-    events.subscribe(lambda event_type, payload: recorded.append((event_type, payload)))
-    result = seed_showcase(fresh=False)
-    return result, recorded
+    spy = events.subscribe(lambda event_type, payload: recorded.append((event_type, payload)))
+    try:
+        yield recorded
+    finally:
+        events.unsubscribe(spy)
+
+
+@pytest.fixture
+def seeded() -> Iterator[tuple[dict, list[tuple[str, dict]]]]:
+    seed_roles_and_users(fresh=False)
+    with recording() as recorded:
+        result = seed_showcase(fresh=False)
+        yield result, recorded
+
+
+def test_recording_leaves_no_subscriber_behind() -> None:
+    """The guard on the helper every test here records through."""
+    before = list(events._subscribers)
+
+    with recording():
+        assert len(events._subscribers) == len(before) + 1
+
+    assert events._subscribers == before
 
 
 def test_it_creates_the_three_use_cases(seeded) -> None:
@@ -205,12 +233,14 @@ def test_a_fresh_run_clears_the_leftovers_of_every_test_that_came_before(seeded)
     """
     UseCase.objects.create(slug="burst-3i6g5l", name="left over by a test")
 
-    recorded: list[tuple[str, dict]] = []
-    events.subscribe(lambda event_type, payload: recorded.append((event_type, payload)))
-    seed_showcase(fresh=True)
+    with recording() as recorded:
+        seed_showcase(fresh=True)
 
     assert not UseCase.objects.filter(slug="burst-3i6g5l").exists()
-    assert ("usecase.deleted", {"slug": "burst-3i6g5l"}) in recorded
+    # Retired, then purged — the API's own sequence, so the gateway ends access and then drops the
+    # tombstone rather than keeping one a later use case of this name would be born into.
+    announced = [kind for kind, payload in recorded if payload.get("slug") == "burst-3i6g5l"]
+    assert announced == ["usecase.deleted", "usecase.purged"]
     # And the demo's own are back, all of them.
     assert UseCase.objects.count() == len(_use_cases())
 
@@ -224,9 +254,8 @@ def test_a_fresh_run_does_not_revoke_the_keys_it_is_about_to_reissue(seeded) -> 
     the deterministic demo key can never be reissued. Recreating the same slug is a reset, not a
     retirement.
     """
-    recorded: list[tuple[str, dict]] = []
-    events.subscribe(lambda event_type, payload: recorded.append((event_type, payload)))
-    seed_showcase(fresh=True)
+    with recording() as recorded:
+        seed_showcase(fresh=True)
 
     deleted = {payload["slug"] for kind, payload in recorded if kind == "usecase.deleted"}
     created = {payload["slug"] for kind, payload in recorded if kind == "usecase.upserted"}
@@ -344,16 +373,9 @@ def test_a_seeded_model_is_announced_and_not_only_written() -> None:
     repository of two correct halves with no wire between them.
     """
     from aira_management.apps.seed.contributions import local_models
-    from aira_management.apps.usecases import events
 
-    recorded: list[tuple[str, dict]] = []
-    subscriber = events.subscribe(
-        lambda event_type, payload: recorded.append((event_type, payload))
-    )
-    try:
+    with recording() as recorded:
         _seed_local_models_against_a_serving_endpoint(local_models)
-    finally:
-        events.unsubscribe(subscriber)
 
     announced = {
         payload["name"] for event_type, payload in recorded if event_type == "model.upserted"

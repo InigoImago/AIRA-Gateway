@@ -55,8 +55,16 @@ of oversight and which today has a read-only list of use cases and nothing else.
 - **FR-5 Money**: spend crosses the API as an exact decimal string and as integer nano-units,
   the same pair `FRD-403` established — the string is what a human reads, the integer is what a
   bar can divide without a float touching a monetary figure.
-- **FR-6 Failed requests count**: a request that failed still consumed a rate limit, possibly an
-  upstream call, and is part of what happened. Status is reported alongside, not filtered out.
+- **FR-6 Failed requests count**: a request the gateway could not serve — the upstream failed
+  (`upstream_error`) or the gateway did (`internal_error`) — still consumed a rate limit, possibly
+  an upstream call, and is part of what happened. Status is reported alongside, not filtered out. A
+  refusal is a decision rather than a failure and is counted under its outcome (`by_outcome`),
+  never as failed; a caller who hung up (`client_gone`) and a model check (`diagnostic`) are
+  neither, so no request is counted as both refused and failed.
+- **FR-6b Spend booked at a floor**: requests whose usage was established after their caller left
+  — counted at the vendor, or the vendor's running total (`FRD-128` FR-6) — are counted per row
+  (`partial_usage_requests`), and any one of them makes the screen and the exported file say the
+  spend is a lower bound. Like unpriced traffic (FR-4), the rows are summed, never hidden.
 - **FR-7 Bounded work**: the query is bounded by the period and by an index; a report over a year
   of traffic must not read the table sequentially.
 
@@ -110,11 +118,12 @@ called, so they are **one** `app-breakdown-table` rendered three times rather th
 of a five-column table. Three copies is how the model table ends up with a column the member
 table quietly lost. The page owns the period, the load and the single `PageFeedback` banner.
 
-The period is chosen from presets (this month, last month, last 7/30 days, custom). Days are
-formatted in **local** time, not via `toISOString()`: converting to UTC first moves "today" by a
-day for part of the day, and the resulting off-by-one in the reporting period is only ever
-noticed in the evening. The `to` bound is exclusive throughout, and the custom form says which
-day that makes the last one included.
+The period is chosen from presets (this month, last month, last 7/30 days, custom). The days are
+**UTC** days (`core/ui/periods.ts`), and the screen says so: the gateway reads a bare date as a UTC
+day, buckets its series in UTC and resets every budget at UTC boundaries, so a window taken from
+the reader's local calendar was a set of UTC days labelled by a local one — after midnight in
+Berlin, "today" was a day the budget counters had not reached yet. The `to` bound is exclusive
+throughout, and the custom form says which day that makes the last one included.
 
 ## 5. Testing & Acceptance
 

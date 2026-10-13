@@ -27,6 +27,12 @@ pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
 
+#: A realm a production deployment names; without one nobody can sign in, which is its own refusal.
+_IDENTITY_PROVIDER = {
+    "oidc_issuer": "https://keycloak.example.com/realms/aira",
+    "oidc_audience": "aira-management",
+}
+
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
@@ -99,8 +105,10 @@ def test_production_rejects_dev_defaults() -> None:
     problems = unsafe_settings(settings)
     # Every reason at once, never the first one: a configuration review that reports one problem
     # per deploy attempt is four deploys (`ADR-0015`).
-    # secret key, wildcard hosts, debug, no global-admin group, no controller, plaintext Kafka
-    assert len(problems) == 6
+    # secret key, wildcard hosts, debug, no global-admin group, no controller, plaintext Kafka,
+    # no issuer
+    assert len(problems) == 7
+    assert any("AIRA_OIDC_ISSUER is unset" in problem for problem in problems)
     assert any("SECRET_KEY" in problem for problem in problems)
     assert any("ALLOWED_HOSTS" in problem for problem in problems)
     assert any("AIRA_ROLE_GROUPS" in problem for problem in problems)
@@ -118,6 +126,7 @@ def test_production_with_proper_settings_is_accepted() -> None:
         role_groups="global-admin=/aira/global-admins",
         kafka_security_protocol="SASL_SSL",
         privacy_controller="Example GmbH, Example Street 1, 12345 Example, privacy@example.com",
+        **_IDENTITY_PROVIDER,
     )
     assert unsafe_settings(settings) == []
     assert settings.secret_key != DEV_SECRET_KEY
@@ -136,6 +145,7 @@ def test_a_deployment_with_no_global_admin_group_refuses_to_start() -> None:
         role_groups="it-security=/aira/it-security",
         kafka_security_protocol="SASL_SSL",
         privacy_controller="Example GmbH, Example Street 1, 12345 Example",
+        **_IDENTITY_PROVIDER,
     )
 
     problems = unsafe_settings(settings)
@@ -358,9 +368,105 @@ def test_a_deployment_whose_privacy_notice_names_no_controller_refuses_to_start(
         role_groups="global-admin=/aira/global-admins",
         kafka_security_protocol="SASL_SSL",
         privacy_controller="   ",
+        **_IDENTITY_PROVIDER,
     )
 
     problems = unsafe_settings(settings)
 
     assert len(problems) == 1
     assert "AIRA_PRIVACY_CONTROLLER" in problems[0]
+
+
+# ---- what no environment can run on (`misconfigured_settings`) ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("values", "named"),
+    [
+        ({"throttle_user": "600"}, "AIRA_THROTTLE_USER"),
+        ({"throttle_user": "0/minute"}, "AIRA_THROTTLE_USER"),
+        ({"throttle_auth_failures": "60/fortnight"}, "AIRA_THROTTLE_AUTH_FAILURES"),
+        ({"throttle_auth_failures": "sixty/minute"}, "AIRA_THROTTLE_AUTH_FAILURES"),
+        ({"role_groups": "global-admin=/aira/admins;nonsense"}, "AIRA_ROLE_GROUPS"),
+        ({"api_key_default_days": 365, "api_key_max_days": 180}, "AIRA_API_KEY_DEFAULT_DAYS"),
+        ({"api_key_default_days": 0}, "AIRA_API_KEY_DEFAULT_DAYS"),
+        ({"api_key_max_days": 0}, "AIRA_API_KEY_MAX_DAYS"),
+        ({"trusted_proxy_hops": -1}, "AIRA_TRUSTED_PROXY_HOPS"),
+    ],
+)
+def test_a_value_no_environment_can_run_on_refuses_local_too(values: dict, named: str) -> None:
+    """Each of these was read at request time: a throttle rate DRF cannot parse or a malformed
+    role mapping answered every request `500`, and a default key lifetime above the maximum issued
+    keys outliving the maximum the installation states. A typo is not a development default, so
+    `local` is refused like everything else — with the reason, beside the others."""
+    problems = unsafe_settings(ManagementSettings(environment="local", **values))
+
+    assert any(problem.startswith(named) for problem in problems), problems
+    with pytest.raises(ImproperlyConfigured, match=named):
+        enforce_safe_settings(ManagementSettings(environment="local", **values))
+
+
+def test_a_deployment_must_name_its_identity_provider_and_a_real_database() -> None:
+    """Without an issuer no token verifies and nobody signs in; with the test database on, the
+    service runs on an empty in-memory database. Both are fine on a laptop and nowhere else."""
+    problems = unsafe_settings(
+        ManagementSettings(
+            environment="production",
+            secret_key="a-real-secret-from-vault",
+            allowed_hosts="aira.example.com",
+            debug=False,
+            role_groups="global-admin=/aira/global-admins",
+            kafka_security_protocol="SASL_SSL",
+            privacy_controller="Example GmbH, Example Street 1, 12345 Example",
+            test_database=True,
+        )
+    )
+
+    assert sorted(problem.split(" ")[0] for problem in problems) == [
+        "AIRA_OIDC_ISSUER",
+        "AIRA_TEST_DATABASE",
+    ]
+
+
+# ---- HSTS behind the proxy that terminates TLS ----------------------------------------------
+
+
+def test_the_proxys_scheme_is_believed_only_with_a_proxy_in_front() -> None:
+    from aira_management.config.security import proxy_ssl_header
+
+    assert proxy_ssl_header(ManagementSettings(trusted_proxy_hops=1)) == (
+        "HTTP_X_FORWARDED_PROTO",
+        "https",
+    )
+    assert proxy_ssl_header(ManagementSettings(trusted_proxy_hops=0)) is None
+
+
+def test_hsts_is_sent_behind_a_proxy_that_terminates_tls(settings) -> None:
+    """Django sends HSTS only on a request it believes is secure, and behind the proxy every
+    request arrives as plain HTTP — so HSTS was configured outside `local` and never sent. The
+    deployed value of the header setting is the one `config.security` derives."""
+    from aira_management.config.runtime import get_settings
+    from aira_management.config.security import proxy_ssl_header
+
+    settings.SECURE_HSTS_SECONDS = 31_536_000
+    settings.SECURE_PROXY_SSL_HEADER = proxy_ssl_header(get_settings())
+    client = _client(_user("hsts"))
+
+    behind_tls = client.get("/api/v1/me", HTTP_X_FORWARDED_PROTO="https")
+    plain = client.get("/api/v1/me")
+
+    assert behind_tls["Strict-Transport-Security"].startswith("max-age=31536000")
+    assert "Strict-Transport-Security" not in plain
+
+
+def test_the_settings_module_wires_what_config_security_decides() -> None:
+    """The decisions are functions so they can be tested; this holds the settings module to them,
+    so neither can be quietly dropped from the place that applies it."""
+    from aira_management.config.runtime import get_settings
+    from aira_management.config.security import proxy_ssl_header
+    from django.conf import settings as django_settings
+
+    configured = get_settings()
+    assert proxy_ssl_header(configured) == django_settings.SECURE_PROXY_SSL_HEADER
+    assert django_settings.REST_FRAMEWORK["NUM_PROXIES"] == configured.trusted_proxy_hops
+    assert "aira_management.apps.api.middleware.RefuseNulCharacters" in django_settings.MIDDLEWARE

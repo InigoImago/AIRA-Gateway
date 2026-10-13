@@ -112,7 +112,7 @@ def test_the_issuer_is_read_out_of_the_served_runtime_config(config: str, expect
 @pytest.mark.parametrize(
     ("issuer", "origin"),
     [
-        ("http://localhost:8080/realms/aira", "http://localhost:8080"),
+        ("http://localhost:18080/realms/aira", "http://localhost:18080"),
         ("https://sso.example.com/realms/aira", "https://sso.example.com"),
         ("", ""),
         ("not-a-url", ""),
@@ -125,10 +125,10 @@ def test_the_origin_is_what_a_content_policy_would_name(issuer: str, origin: str
 
 
 def test_the_connect_directive_is_picked_out_of_the_whole_policy() -> None:
-    policy = "default-src 'self'; connect-src 'self' http://localhost:8080; img-src 'self' data:"
+    policy = "default-src 'self'; connect-src 'self' http://localhost:18080; img-src 'self' data:"
     assert (
         showcase_doctor._directive(policy, "connect-src")
-        == "connect-src 'self' http://localhost:8080"
+        == "connect-src 'self' http://localhost:18080"
     )
     assert showcase_doctor._directive(policy, "frame-src") == ""
 
@@ -137,13 +137,13 @@ def test_a_policy_that_does_not_name_the_issuer_is_a_mismatch() -> None:
     """The failure with no trace on the server side at all: the browser refuses the token request,
     and Keycloak never sees one. It is the case `AIRA_CSP_CONNECT_SRC` exists for."""
     issuer = "http://sso.example.com:8080/realms/aira"
-    policy = "connect-src 'self' http://localhost:8080"
+    policy = "connect-src 'self' http://localhost:18080"
     assert showcase_doctor._origin(issuer) not in showcase_doctor._directive(policy, "connect-src")
 
 
 def test_a_policy_that_names_it_is_not() -> None:
-    issuer = "http://localhost:8080/realms/aira"
-    policy = "connect-src 'self' http://localhost:8080"
+    issuer = "http://localhost:18080/realms/aira"
+    policy = "connect-src 'self' http://localhost:18080"
     assert showcase_doctor._origin(issuer) in showcase_doctor._directive(policy, "connect-src")
 
 

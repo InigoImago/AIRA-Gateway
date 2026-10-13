@@ -14,8 +14,7 @@ Two endpoints, one question asked from two sides:
 
 from __future__ import annotations
 
-import calendar
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -29,6 +28,7 @@ from aira_gateway.auth.dependencies import (
     require_valid_use_case,
 )
 from aira_gateway.auth.principal import Principal
+from aira_gateway.budgets import keys
 from aira_gateway.budgets.service import BudgetService
 from aira_gateway.reporting.service import ReportingService
 from aira_gateway.state import budgets_of, settings_of
@@ -145,8 +145,7 @@ def _this_month(now: datetime) -> tuple[datetime, datetime]:
     """The current calendar month, half-open and UTC — the window the console's figures use.
 
     Not the budget's period: a budget may count by day, and this block is the record rather than
-    the counter. Said in the docstring above rather than inferred from a date in the payload.
+    the counter. Said in the docstring above rather than inferred from a date in the payload. Where
+    a month begins and ends is `budgets.keys`' to say, once.
     """
-    start = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    days = calendar.monthrange(start.year, start.month)[1]
-    return start, start + timedelta(days=days)
+    return keys.period_starts("month", now), keys.period_ends("month", now)

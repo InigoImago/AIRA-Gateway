@@ -1,14 +1,15 @@
 @if (days().length === 0) {
-  <p class="table__empty" data-testid="days-empty">No day in this period had any traffic.</p>
+  <p class="table__empty" data-testid="days-empty">
+    No {{ bucket() }} in this period had any traffic.
+  </p>
 } @else {
   <div class="table-wrap">
     <table class="table usage-days" data-testid="usage-days">
-      <caption class="sr-only">
-        Each day, what was used on it and what it cost
-      </caption>
+      <caption class="sr-only" [textContent]="caption()"></caption>
       <thead>
         <tr>
-          <th scope="col">Day</th>
+          <!-- UTC: the clock the gateway buckets in, and the one every budget resets on. -->
+          <th scope="col">{{ bucketLabel() }} (UTC)</th>
           <th scope="col">{{ nounLabel() }}</th>
           <th scope="col">Requests</th>
           <!-- **Spend before the token split**, and not for emphasis. On a phone this table scrolls
@@ -77,15 +78,14 @@
   @if (hidden() > 0) {
     <button
       type="button"
-      class="btn btn--sm"
+      class="btn btn--sm usage-days__more"
       (click)="all.set(!all())"
       data-testid="days-more"
-      style="margin-top: 0.6rem"
     >
       {{
         all()
-          ? 'Show the most recent ' + limit + ' days only'
-          : 'Show all ' + days().length + ' days'
+          ? 'Show the most recent ' + limit + ' ' + bucket() + 's only'
+          : 'Show all ' + days().length + ' ' + bucket() + 's'
       }}
     </button>
   }

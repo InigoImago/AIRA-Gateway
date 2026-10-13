@@ -209,7 +209,9 @@ def main() -> int:
     else:
         print("\nSomething is being dropped and no reason is in the recent log — look further")
         print("back with:  make otel-arrivals")
-    return 0
+    # Non-zero, like a queue that is not draining: a loss the output reports and the exit code
+    # hides is invisible to every script and CI step that runs this.
+    return 1
 
 
 if __name__ == "__main__":

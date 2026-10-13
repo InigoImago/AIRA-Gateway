@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -25,7 +26,7 @@ import { PipelineTestPanel } from './pipeline-test-panel';
  */
 @Component({
   selector: 'app-pipeline-editor',
-  imports: [FormsModule, RouterLink, MultiSelect, PipelineTestPanel],
+  imports: [FormsModule, NgTemplateOutlet, RouterLink, MultiSelect, PipelineTestPanel],
   templateUrl: './pipeline-editor.html',
   styleUrl: './pipeline-editor.scss',
 })
@@ -42,6 +43,8 @@ export class PipelineEditor implements OnInit {
   protected readonly saved = signal(false);
   protected readonly saving = signal(false);
   protected readonly loading = signal(true);
+  /** The stored pipeline could not be read, so the page holds nothing a save could be about. */
+  protected readonly loadFailed = signal(false);
   protected readonly dirty = signal(false);
   protected readonly error = signal<string | null>(null);
   protected slug = '';
@@ -59,6 +62,14 @@ export class PipelineEditor implements OnInit {
    * graph is read-only, rather than failing a save with 403 after the work is done.
    */
   protected readonly canManage = signal(false);
+  /**
+   * Save is offered only over a pipeline that was read. Before the GET answers, or after it failed,
+   * `config()` is the empty placeholder, and saving it would replace the stored steps — the
+   * injection and personal-data filters among them — with a pipeline nobody had seen.
+   */
+  protected readonly canSave = computed(
+    () => this.canManage() && !this.loading() && !this.loadFailed(),
+  );
   /** Whether the gateway would accept this reader for a dry run (see `PipelineTestPanel`). */
   protected readonly mayCall = signal(true);
   /**
@@ -69,8 +80,19 @@ export class PipelineEditor implements OnInit {
   protected readonly modelChoices = computed<MultiSelectOption[]>(() =>
     this.released().map((name) => ({ value: name, label: name })),
   );
+  /**
+   * Where the answer about the use case stands. The release and the reader's rights are facts about
+   * the use case: before it answers neither is known, and a failed read says nothing of either —
+   * so "nothing is released" and "you may only read this" are said only once it has answered.
+   */
+  protected readonly useCaseState = signal<'loading' | 'loaded' | 'failed'>('loading');
+  /** Why the use case could not be read, in the backend's words. */
+  protected readonly useCaseError = signal<string | null>(null);
+  protected readonly releaseKnown = computed(() => this.useCaseState() === 'loaded');
   /** Nothing released — every new use case's state; said once, above the builder. */
-  protected readonly nothingReleased = computed(() => this.released().length === 0);
+  protected readonly nothingReleased = computed(
+    () => this.releaseKnown() && this.released().length === 0,
+  );
 
   protected readonly selectedStep = computed(() => {
     const index = this.selected();
@@ -88,11 +110,28 @@ export class PipelineEditor implements OnInit {
         this.canManage.set(useCase.permissions?.can_manage ?? false);
         this.mayCall.set(useCase.permissions?.may_call ?? true);
         this.released.set([...(useCase.allowed_models ?? [])].sort());
+        this.useCaseState.set('loaded');
       },
-      // A use case we cannot read keeps the safe answer, without a second banner about a request
-      // the reader did not make.
-      error: () => this.canManage.set(false),
+      // A use case we cannot read keeps the safe answer, read-only. Said beside the builder rather
+      // than as a second banner, which belongs to the pipeline the reader asked for.
+      error: (response: unknown) => {
+        this.canManage.set(false);
+        this.useCaseError.set(errorMessage(response, 'Could not load the use case.'));
+        this.useCaseState.set('failed');
+      },
     });
+    this.loadPipeline();
+  }
+
+  /** Ask for the stored pipeline again, after a load that failed. */
+  protected reload(): void {
+    this.error.set(null);
+    this.loadFailed.set(false);
+    this.loading.set(true);
+    this.loadPipeline();
+  }
+
+  private loadPipeline(): void {
     this.service.getPipeline(this.slug).subscribe({
       next: (config) => {
         this.config.set(config);
@@ -100,9 +139,25 @@ export class PipelineEditor implements OnInit {
       },
       error: (response: unknown) => {
         this.error.set(errorMessage(response, 'Could not load the pipeline.'));
+        this.loadFailed.set(true);
         this.loading.set(false);
       },
     });
+  }
+
+  /**
+   * A stored model with no released option, offered as itself: a select with no option for its
+   * value renders blank, which reads as "none chosen" while the step still names the model. It is
+   * marked "not released" only once the release is known.
+   */
+  protected strayOption(model: string | null | undefined): { value: string; label: string } | null {
+    if (!model || this.released().includes(model)) return null;
+    return { value: model, label: this.releaseKnown() ? `${model} (not released)` : model };
+  }
+
+  /** A stored model the use case is known not to release, or `null` — said beside its field. */
+  protected unreleased(model: string | null | undefined): string | null {
+    return this.releaseKnown() && this.strayOption(model) ? (model as string) : null;
   }
 
   /** Edit the graph locally; it reaches the gateway only on save, and the header says so. */
@@ -172,10 +227,6 @@ export class PipelineEditor implements OnInit {
     });
   }
 
-  protected setFallback(csv: string): void {
-    this.update((c) => (c.fallback_models = parseList(csv)));
-  }
-
   /** The fallback chain, chosen from the released models (`FRD-308`). **Order is preserved**: a
    *  chain is tried in the order it is written, so the picker appends rather than sorting. */
   protected setFallbackModels(models: string[]): void {
@@ -183,6 +234,7 @@ export class PipelineEditor implements OnInit {
   }
 
   protected save(): void {
+    if (!this.canSave() || this.saving()) return;
     this.saving.set(true);
     this.service.savePipeline(this.slug, this.config()).subscribe({
       next: (config) => {

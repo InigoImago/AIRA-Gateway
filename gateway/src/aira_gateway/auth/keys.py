@@ -17,9 +17,13 @@ from aira_common.apikeys import (
 
 #: Deterministic key seeded in demo mode (`FRD-101` FR-8) — demo only, never for production.
 DEMO_API_KEY = "aira_demo0000_00112233445566778899aabbccddeeff00112233"
+#: Its public half. The plaintext is published in this repository, so the key is a credential only
+#: while the deployment declares itself a demo (`ApiKeyService.verify`).
+DEMO_KEY_PREFIX = "demo0000"
 
 __all__ = [
     "DEMO_API_KEY",
+    "DEMO_KEY_PREFIX",
     "NAMESPACE",
     "generate_api_key",
     "hash_api_key",

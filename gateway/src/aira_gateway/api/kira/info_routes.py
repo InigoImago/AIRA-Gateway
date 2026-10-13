@@ -1,8 +1,8 @@
 """The predecessor's informational endpoints: models, health, build info and usage (`FRD-107`).
 
 None of them dispatches to a model. `/health` and `/version-info` are unauthenticated, as the
-predecessor's are, and carry neither configuration nor catalogue; `/models` and `/ki-usage` are
-authenticated.
+predecessor's are, and carry neither configuration nor catalogue — `/health` names the upstreams
+only to an operator; `/models` and `/ki-usage` are authenticated.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.reporting.service import ReportingService
+from aira_gateway.routes.health import may_see_diagnosis
 
 router = APIRouter(tags=["kira"], prefix=BASE)
 
@@ -100,6 +101,9 @@ async def health(request: Request) -> Response:
     No I/O: upstreams are read from the background probe's cached verdict (`FRD-117` §5.2), so the
     endpoint is neither as slow as the slowest provider nor billed per call. What the contract's
     shape cannot say — that an upstream was not probed, how old a verdict is — goes in the tags.
+
+    **The verdict is public, the upstreams are not** (`ADR-0015` §4): which servers exist, and what
+    their operator called them, is listed only to whoever `/readyz` would show its diagnosis.
     """
     started = time.monotonic()
     checks = [
@@ -124,11 +128,12 @@ async def health(request: Request) -> Response:
 
     # A monitor reads the status code long before the body, so unhealthy is a 503 as well.
     healthy = all(check.status == "Healthy" for check in checks)
+    listed = checks if await may_see_diagnosis(request) else checks[:1]
     return JSONResponse(
         schemas.HealthResponse(
             status="Healthy" if healthy else "Unhealthy",
             total_time_taken=round(time.monotonic() - started, 3),
-            entities=checks,
+            entities=listed,
         ).model_dump(),
         status_code=200 if healthy else 503,
         headers=surface_headers(request),

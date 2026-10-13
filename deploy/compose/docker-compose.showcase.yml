@@ -45,6 +45,11 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
+      # The realm's two placeholders, resolved exactly as for the `keycloak` service. The repair
+      # deletes and re-imports the realm itself and substitutes them on the way, so without these
+      # a repaired realm pins its redirect URIs to `localhost:4200` wherever the console really is.
+      AIRA_CONSOLE_PORT: ${AIRA_CONSOLE_PORT:-${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}}
+      AIRA_CONSOLE_HOST: ${AIRA_CONSOLE_HOST:-localhost}
     volumes:
       - ../../tools/keycloak_demo_realm.py:/tools/keycloak_demo_realm.py:ro
       - ./keycloak/realms:/realm:ro
@@ -115,9 +120,14 @@ services:
         # first version of this service wrote all three unconditionally and took the stack down
         # with `no password supplied`, which is the same mistake as `unpriced is not free`, one
         # layer down: absent and empty are different answers.
+        #
+        # The names are every credential setting of both planes (`tools/credential_settings.py`),
+        # and `tools/tests/test_one_list_of_credentials.py` fails when this list says otherwise.
         set --
-        for name in AIRA_GOOGLE_API_KEY AIRA_POSTGRES_PASSWORD AIRA_SECRET_KEY \
-                    AIRA_VERTEX_CREDENTIALS AIRA_VERTEX_API_KEY AIRA_OPENAI_API_KEY; do
+        for name in AIRA_DIRECTORY_CLIENT_SECRET AIRA_FOUNDRY_API_KEY AIRA_GOOGLE_API_KEY \
+                    AIRA_KAFKA_SASL_PASSWORD AIRA_POSTGRES_PASSWORD AIRA_REDIS_PASSWORD \
+                    AIRA_REDIS_SENTINEL_PASSWORD AIRA_SECRET_KEY AIRA_VERTEX_API_KEY \
+                    AIRA_VERTEX_CREDENTIALS; do
           value=$$(eval echo \$$$$name)
           [ -n "$$value" ] && set -- "$$@" "$$name=$$value"
         done
@@ -138,13 +148,16 @@ services:
       VAULT_MOUNT: ${VAULT_MOUNT:-secret}
       VAULT_PATH: ${VAULT_PATH:-aira}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
+      AIRA_DIRECTORY_CLIENT_SECRET: ${AIRA_DIRECTORY_CLIENT_SECRET:-}
+      AIRA_FOUNDRY_API_KEY: ${AIRA_FOUNDRY_API_KEY:-}
       AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
+      AIRA_KAFKA_SASL_PASSWORD: ${AIRA_KAFKA_SASL_PASSWORD:-}
       AIRA_POSTGRES_PASSWORD: ${AIRA_POSTGRES_PASSWORD:-}
+      AIRA_REDIS_PASSWORD: ${AIRA_REDIS_PASSWORD:-}
+      AIRA_REDIS_SENTINEL_PASSWORD: ${AIRA_REDIS_SENTINEL_PASSWORD:-}
       AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-}
-      AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
       AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
-      AIRA_AZURE_API_KEY: ${AIRA_AZURE_API_KEY:-}
-      AIRA_OPENAI_API_KEY: ${AIRA_OPENAI_API_KEY:-}
+      AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
     depends_on:
       # `service_started`, not `service_healthy`. The migrations wait for *this* service, so
       # making it wait for a **healthy** Vault put the whole stack behind Vault's health check —

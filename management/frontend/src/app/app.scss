@@ -23,7 +23,7 @@
 
   h1 {
     margin: 0;
-    font-size: 1.15rem;
+    font-size: var(--aira-text-xl);
     letter-spacing: -0.01em;
   }
 
@@ -44,7 +44,7 @@
 .aira-subtitle {
   margin: 0.1rem 0 0;
   color: var(--aira-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
 }
 
 .aira-user {
@@ -61,7 +61,7 @@
    * "name-<sub>" — long enough to push the logout button off screen. Truncate instead. */
   &__name {
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: var(--aira-text-base);
     max-width: 22ch;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -100,7 +100,7 @@
     white-space: nowrap;
     padding: 0.7rem 0.85rem;
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: var(--aira-text-base);
     color: var(--aira-text-muted);
     border-bottom: 2px solid transparent;
 
@@ -126,16 +126,11 @@
       outline: 2px solid var(--aira-brand);
       outline-offset: -2px;
     }
-
-    &.is-disabled {
-      color: #9ca3af;
-      cursor: not-allowed;
-    }
   }
 }
 
 .aira-main {
-  max-width: var(--aira-content-max, 960px);
+  max-width: var(--aira-content-max);
   margin: 0 auto;
   padding: 1.75rem;
 
@@ -150,18 +145,17 @@
   padding: 0.1rem 0.45rem;
   border: 1px solid var(--aira-border);
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: var(--aira-text-xs);
   color: var(--aira-text-muted);
   white-space: nowrap;
-  cursor: help;
 }
 
 /* The privacy notice's link (`FRD-625`), on every page and quiet on all of them. */
 .aira-footer {
-  max-width: var(--aira-content-max, 960px);
+  max-width: var(--aira-content-max);
   margin: 0 auto;
   padding: 0 1.75rem 1.75rem;
-  font-size: 0.85rem;
+  font-size: var(--aira-text-md);
 
   a {
     color: var(--aira-text-muted);

@@ -53,8 +53,11 @@ export const authConfig: AuthConfig = {
 
   // Renew ahead of expiry: a token refreshed the instant it dies still loses the requests in flight.
   timeoutFactor: 0.75,
-  // A silent iframe login is the fallback for a realm that returns no refresh token.
-  silentRefreshRedirectUri: window.location.origin + '/silent-refresh.html',
-  useSilentRefresh: true,
+  // Renew with the refresh token the code flow returns — a call to the token endpoint, which
+  // `connect-src` allows and the realm's web origins answer. `true` would renew through a hidden
+  // iframe that loads the issuer instead, which the content policy refuses to frame
+  // (`frame-src 'none'`): every renewal would fail, and the next call after expiry would send the
+  // reader through a full-page login, unsaved work and all.
+  useSilentRefresh: false,
   sessionChecksEnabled: false,
 };

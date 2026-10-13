@@ -1,14 +1,23 @@
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { OAuthService } from 'angular-oauth2-oidc';
+import {
+  OAuthEvent,
+  OAuthInfoEvent,
+  OAuthService,
+  TokenResponse,
+  provideOAuthClient,
+} from 'angular-oauth2-oidc';
+import { Subject } from 'rxjs';
 import { authConfig } from './auth.config';
 import { AuthService } from './auth.service';
 
-type OAuthEvent = { type: string };
+type StubEvent = { type: string };
 
 function setup(overrides: Partial<Record<string, unknown>> = {}) {
   TestBed.resetTestingModule();
   const calls: string[] = [];
-  let emit: (event: OAuthEvent) => void = () => {};
+  let emit: (event: StubEvent) => void = () => {};
   const oauth = {
     configure: () => calls.push('configure'),
     loadDiscoveryDocumentAndTryLogin: () => {
@@ -26,9 +35,9 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
     getAccessToken: () => 'token-abc',
     // The renewal half of the facade, stubbed with the real names: a stand-in that silently lacks
     // the method under test lets a session-expiry defect survive a green suite.
-    setupAutomaticSilentRefresh: () => calls.push('silentRefresh'),
+    setupAutomaticSilentRefresh: () => calls.push('renewal'),
     events: {
-      subscribe: (handler: (event: OAuthEvent) => void) => {
+      subscribe: (handler: (event: StubEvent) => void) => {
         emit = handler;
         return { unsubscribe: () => {} };
       },
@@ -44,8 +53,11 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
   TestBed.configureTestingModule({
     providers: [{ provide: OAuthService, useValue: oauth }, AuthService],
   });
-  return { service: TestBed.inject(AuthService), calls, fire: (event: OAuthEvent) => emit(event) };
+  return { service: TestBed.inject(AuthService), calls, fire: (event: StubEvent) => emit(event) };
 }
+
+/** Whether a login round trip to the identity provider was started. */
+const startedLogin = (calls: string[]) => calls.some((call) => call.startsWith('initCodeFlow'));
 
 // **The login counter lives in `sessionStorage`**, shared by every test in this file (it has to
 // survive a full-page navigation). Without clearing it, the third test to sign in again trips the
@@ -56,42 +68,34 @@ describe('AuthService', () => {
   it('configures the client and picks up an existing session on init', async () => {
     const { service, calls } = setup();
     await service.init();
-    expect(calls).toEqual(['configure', 'discovery', 'silentRefresh']);
-    expect(service.authenticated()).toBe(true);
+    expect(calls).toEqual(['configure', 'discovery', 'renewal']);
     expect(service.isAuthenticated()).toBe(true);
   });
 
   it('reports an unauthenticated session after init', async () => {
     const { service } = setup({ hasValidAccessToken: () => false });
     await service.init();
-    expect(service.authenticated()).toBe(false);
+    expect(service.isAuthenticated()).toBe(false);
   });
 
-  it('arms the silent refresh, so a session does not simply end mid-use', async () => {
+  it('arms the renewal, so a session does not simply end mid-use', async () => {
     // Without it the token expires and every screen reports "invalid credentials", which reads as
     // the backend rejecting the user rather than as a session that ran out.
     const { service, calls } = setup();
     await service.init();
-    expect(calls).toContain('silentRefresh');
+    expect(calls).toContain('renewal');
   });
 
-  it('stays authenticated when a token is renewed', async () => {
-    const { service, fire } = setup({ hasValidAccessToken: () => false });
+  it('leaves the reader where they are when a token is renewed', async () => {
+    // A renewal that worked is the invisible case: no login, no logout, nothing for the page.
+    const { service, calls, fire } = setup();
     await service.init();
-    expect(service.authenticated()).toBe(false);
 
+    fire({ type: 'token_received' });
     fire({ type: 'token_refreshed' });
-    expect(service.authenticated()).toBe(true);
-  });
 
-  it('reflects a failed renewal instead of pretending the session is alive', async () => {
-    let valid = true;
-    const { service, fire } = setup({ hasValidAccessToken: () => valid });
-    await service.init();
-
-    valid = false;
-    fire({ type: 'silent_refresh_error' });
-    expect(service.authenticated()).toBe(false);
+    expect(startedLogin(calls)).toBe(false);
+    expect(calls.filter((call) => call.startsWith('logOut'))).toEqual([]);
   });
 
   it('starts the code flow on login and ends the session on logout', () => {
@@ -104,25 +108,33 @@ describe('AuthService', () => {
     expect(calls[1]).toBe('logOut:false');
   });
 
+  it('comes back to the page the reader was going to, when it is named', () => {
+    // The guard names the route being entered. The address bar still shows the page being left
+    // while a navigation is under way, so reading it would return the reader to the wrong page.
+    const { service, calls } = setup();
+    service.login('/models?tab=prices');
+
+    expect(calls).toEqual(['initCodeFlow:/models?tab=prices']);
+  });
+
   it('sends a dead session to the login rather than leaving it to fail on every screen', () => {
     // Restarting Keycloak takes the session with it; "invalid credentials" on every panel at once
     // would read as the backend rejecting the user rather than as a session that ended.
     const { service, calls } = setup({ hasValidAccessToken: () => false });
-    service.reauthenticate();
+    service.reauthenticate('/api/');
 
     // The dead token is dropped first, without a redirect of its own: otherwise the guard on the
     // way back can still see a stored one and the login round-trips for nothing.
     expect(calls).toEqual(['logOut:true', 'initCodeFlow:/']);
-    expect(service.authenticated()).toBe(false);
   });
 
   it('starts one login however many requests fail at once', () => {
     // A screen makes several calls in parallel. Five 401s starting five logins would leave four
     // stale `state` entries and a race over which one comes back.
     const { service, calls } = setup({ hasValidAccessToken: () => false });
-    service.reauthenticate();
-    service.reauthenticate();
-    service.reauthenticate();
+    service.reauthenticate('/api/');
+    service.reauthenticate('/gw/');
+    service.reauthenticate('/api/');
 
     expect(calls.filter((call) => call.startsWith('initCodeFlow')).length).toBe(1);
   });
@@ -138,18 +150,19 @@ describe('AuthService', () => {
     fire({ type: 'token_refresh_error' });
 
     expect(calls).toContain('initCodeFlow:/');
+    expect(service.isAuthenticated()).toBe(false);
   });
 
   it('does not restart the login when a renewal fails but the token is still good', async () => {
-    // A silent-refresh timeout with a token that has not expired yet is a hiccup, not the end of
-    // the session — throwing the reader out over it would be its own defect.
+    // A refresh that failed with a token that has not expired yet is a hiccup, not the end of the
+    // session — throwing the reader out over it would be its own defect.
     const { service, calls, fire } = setup({ hasValidAccessToken: () => true });
     await service.init();
 
-    fire({ type: 'silent_refresh_timeout' });
+    fire({ type: 'token_refresh_error' });
 
-    expect(calls.filter((call) => call.startsWith('initCodeFlow'))).toEqual([]);
-    expect(service.authenticated()).toBe(true);
+    expect(startedLogin(calls)).toBe(false);
+    expect(service.isAuthenticated()).toBe(true);
   });
 });
 
@@ -188,6 +201,19 @@ describe('AuthService — coming back to where the session ended', () => {
     }
   });
 
+  it('starts anyway when the address carries a `state` that is not ours to decode', async () => {
+    // `state` is whatever the link said, and the library hands it over after decoding it once. A
+    // link like `/?state=%3B%25E0%25A4%25A` leaves a malformed escape, and the console runs this
+    // inside the application initialiser: a decode that throws there leaves a blank page. Nothing
+    // in the link is worth that, so it is ignored like any other unusable destination.
+    const { service } = setup({ state: '%E0%A4%A' });
+
+    await expect(service.init()).resolves.toBeUndefined();
+
+    expect(pathNow()).toBe('/');
+    expect(service.startupError()).toBeNull();
+  });
+
   it('leaves the URL alone when it is already the right one', async () => {
     const { service } = setup({ state: '/' });
     await service.init();
@@ -209,11 +235,50 @@ describe('the scopes the console asks for', () => {
     expect(authConfig.scope).toBe('openid profile email');
   });
 
-  it('still renews ahead of expiry, which is what the scope was reached for', () => {
+  it('still renews ahead of expiry, with the refresh token rather than an iframe', () => {
     // Renewal is still required: without it the session ends at the token's lifetime and every
-    // screen reports "invalid credentials".
+    // screen reports "invalid credentials". The hidden-iframe renewal would have to frame the
+    // identity provider, which this console's content policy refuses — so it is not configured.
     expect(authConfig.timeoutFactor).toBeLessThan(1);
-    expect(authConfig.silentRefreshRedirectUri).toContain('/silent-refresh.html');
+    expect(authConfig.useSilentRefresh).toBe(false);
+  });
+});
+
+describe('AuthService — how a session is renewed', () => {
+  /**
+   * The real library with this console's configuration, rather than a stand-in: what is asserted
+   * is the mechanism a browser uses when a token is about to expire, not that a method of the same
+   * name was called. A stand-in recorded `setupAutomaticSilentRefresh` as called while every
+   * renewal the browser attempted was refused by the content policy.
+   */
+  afterEach(() => vi.useRealTimers());
+
+  it('renews with the refresh token the code flow returned, never through a hidden iframe', () => {
+    vi.useFakeTimers();
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideOAuthClient()],
+    });
+    const oauth = TestBed.inject(OAuthService);
+    oauth.configure(authConfig);
+    const used: string[] = [];
+    vi.spyOn(oauth, 'refreshToken').mockImplementation(() => {
+      used.push('refresh token');
+      return Promise.resolve({} as TokenResponse);
+    });
+    vi.spyOn(oauth, 'silentRefresh').mockImplementation(() => {
+      used.push('iframe');
+      return Promise.resolve(new OAuthInfoEvent('silently_refreshed'));
+    });
+
+    oauth.setupAutomaticSilentRefresh();
+    // What the library's own expiry timer emits at `timeoutFactor` of the token's lifetime.
+    (oauth as unknown as { eventsSubject: Subject<OAuthEvent> }).eventsSubject.next(
+      new OAuthInfoEvent('token_expires', 'access_token'),
+    );
+    vi.advanceTimersByTime(1500);
+
+    expect(used).toEqual(['refresh token']);
   });
 });
 
@@ -246,9 +311,9 @@ describe('AuthService — signing in again when signing in is not the problem', 
 
   it('redirects while there is reason to think a login would help', () => {
     const first = afterRedirect();
-    first.service.reauthenticate();
+    first.service.reauthenticate('/api/');
 
-    expect(first.calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
+    expect(startedLogin(first.calls)).toBe(true);
     expect(first.service.loginLoop()).toBeNull();
   });
 
@@ -256,35 +321,86 @@ describe('AuthService — signing in again when signing in is not the problem', 
     // Three round trips, each a new page and therefore a new service — the in-memory guard is
     // `false` every time.
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      afterRedirect().service.reauthenticate();
+      afterRedirect().service.reauthenticate('/api/');
     }
 
     const fourth = afterRedirect();
-    fourth.service.reauthenticate();
+    fourth.service.reauthenticate('/api/');
 
-    expect(fourth.calls.some((c) => c.startsWith('initCodeFlow'))).toBe(false);
-    expect(fourth.service.loginLoop()).toContain('did not help');
-    expect(fourth.service.authenticated()).toBe(false);
+    expect(startedLogin(fourth.calls)).toBe(false);
+    expect(fourth.service.loginLoop()).toContain('did not help 3 times');
   });
 
-  it('a first-party call that answers ends it', () => {
+  it('is ended by the plane that refused answering', () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      afterRedirect().service.reauthenticate();
+      afterRedirect().service.reauthenticate('/gw/');
     }
 
     // The only evidence worth trusting: everything the console can check about itself was just as
     // true on every pass through the loop.
-    afterRedirect().service.noteFirstPartySuccess();
+    afterRedirect().service.noteFirstPartySuccess('/gw/');
+
+    const next = afterRedirect();
+    next.service.reauthenticate('/gw/');
+    expect(startedLogin(next.calls)).toBe(true);
+    expect(next.service.loginLoop()).toBeNull();
+  });
+
+  it('is not ended by the other plane answering', () => {
+    // The realistic loop with two planes and two token validators: management accepts the token
+    // and the gateway refuses it. The shell's own `/api/v1/me` answers on every pass, and an answer
+    // from the plane that never refused says nothing about the one that does.
+    for (let page = 0; page < 3; page += 1) {
+      const pass = afterRedirect();
+      pass.service.noteFirstPartySuccess('/api/');
+      pass.service.reauthenticate('/gw/');
+      pass.service.noteFirstPartySuccess('/api/');
+    }
+
+    const fourth = afterRedirect();
+    fourth.service.noteFirstPartySuccess('/api/');
+    fourth.service.reauthenticate('/gw/');
+
+    expect(startedLogin(fourth.calls)).toBe(false);
+    expect(fourth.service.loginLoop()).toContain('did not help 3 times');
+  });
+
+  it('is ended by any first-party answer after a renewal that failed', () => {
+    // No plane refused: the refresh token stopped working. A login that is followed by any answer
+    // from either plane is a login that worked.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      afterRedirect().service.reauthenticate();
+    }
+    afterRedirect().service.noteFirstPartySuccess('/api/');
 
     const next = afterRedirect();
     next.service.reauthenticate();
-    expect(next.calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
-    expect(next.service.loginLoop()).toBeNull();
+    expect(startedLogin(next.calls)).toBe(true);
+  });
+
+  it('counts the logins that happened, not the refusals that came after it stopped', () => {
+    // Three panels refusing on the page where the loop stopped are one page, not three more
+    // failed sign-ins — and the message is the reader's only account of what happened.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      afterRedirect().service.reauthenticate('/api/');
+    }
+
+    const stopped = afterRedirect();
+    stopped.service.reauthenticate('/api/');
+    stopped.service.reauthenticate('/gw/');
+    stopped.service.reauthenticate('/api/');
+    expect(stopped.service.loginLoop()).toContain('did not help 3 times');
+
+    // Reloading the stopped page starts no login and claims no extra one either.
+    const reloaded = afterRedirect();
+    reloaded.service.reauthenticate('/api/');
+    expect(startedLogin(reloaded.calls)).toBe(false);
+    expect(reloaded.service.loginLoop()).toContain('did not help 3 times');
   });
 
   it('signing out completely ends the session at the provider, not only here', () => {
     const { service, calls } = afterRedirect();
-    service.reauthenticate();
+    service.reauthenticate('/api/');
     service.signOutCompletely();
 
     // `logOut(true)` is the local-only form `reauthenticate` uses; the escape needs the other one,
@@ -299,7 +415,7 @@ describe('AuthService — signing in again when signing in is not the problem', 
 
   it('counts a window rather than a lifetime', () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      afterRedirect().service.reauthenticate();
+      afterRedirect().service.reauthenticate('/api/');
     }
     // Two minutes later this is a new session ending, not the same one repeating.
     const stale = JSON.parse(window.sessionStorage.getItem('aira.reauth-attempts') ?? '{}');
@@ -309,18 +425,18 @@ describe('AuthService — signing in again when signing in is not the problem', 
     );
 
     const later = afterRedirect();
-    later.service.reauthenticate();
-    expect(later.calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
+    later.service.reauthenticate('/api/');
+    expect(startedLogin(later.calls)).toBe(true);
   });
 
   it('survives storage it cannot read', () => {
     window.sessionStorage.setItem('aira.reauth-attempts', 'not json');
 
     const { service, calls } = afterRedirect();
-    service.reauthenticate();
+    service.reauthenticate('/api/');
 
     // Errs towards letting a login happen: the failure this guard prevents is a storm, not one
     // redirect.
-    expect(calls.some((c) => c.startsWith('initCodeFlow'))).toBe(true);
+    expect(startedLogin(calls)).toBe(true);
   });
 });

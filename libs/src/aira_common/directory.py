@@ -7,6 +7,8 @@ and a path typed from memory that matches nobody silently never applies.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -26,6 +28,10 @@ MIN_LITERAL = 2
 #: Long enough for a slow identity provider, short enough that a directory that is down says so
 #: quickly.
 TIMEOUT_SECONDS = 5.0
+
+#: Path segments an HTTP client resolves before it sends. Keycloak emits no group path containing
+#: one, and a request carrying one would arrive at another admin endpoint with the token.
+DOT_SEGMENTS = frozenset({".", ".."})
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,8 +88,22 @@ class KeycloakDirectory:
         self._realm = realm
         self._client_id = client_id
         self._client_secret = client_secret
-        # Injected in tests, so the class is exercised against a transport rather than a stand-in.
-        self._http = client or httpx.Client(timeout=TIMEOUT_SECONDS)
+        #: Injected in tests, so the class is exercised against a transport rather than a stand-in;
+        #: an injected client belongs to its owner and is never closed here.
+        self._client = client
+
+    @contextmanager
+    def _connection(self) -> Iterator[httpx.Client]:
+        """The client one lookup uses — its own, closed when the lookup is done, unless injected.
+
+        An instance is built per request, so a pool it held would outlive the only work it was
+        created for.
+        """
+        if self._client is not None:
+            yield self._client
+            return
+        with httpx.Client(timeout=TIMEOUT_SECONDS) as client:
+            yield client
 
     def find_user(self, username: str) -> DirectoryEntry | None:
         """The one person with exactly this username, or ``None``.
@@ -94,7 +114,10 @@ class KeycloakDirectory:
         wanted = username.strip()
         if not wanted:
             return None
-        rows = self._get(self._token(), "/users", {"username": wanted, "exact": "true", "max": 2})
+        with self._connection() as http:
+            rows = self._get(
+                http, self._token(http), "/users", {"username": wanted, "exact": "true", "max": 2}
+            )
         for row in rows:
             found = row.get("username")
             if isinstance(found, str) and found == wanted:
@@ -106,19 +129,24 @@ class KeycloakDirectory:
 
         Asked by path rather than by search: a search matches names and substrings, and binding a
         role needs the one group whose full path this is (`FRD-614` FR-4). A path that is not
-        absolute names no group Keycloak can emit, so it is answered without asking.
+        absolute, or that has a `.` or `..` segment, names no group Keycloak can emit, so it is
+        answered without asking.
         """
         wanted = path.strip()
         if not wanted.startswith("/") or wanted == "/":
             return False
-        token = self._token()
-        try:
-            response = self._http.get(
-                f"{self._base}/admin/realms/{self._realm}/group-by-path{quote(wanted, safe='/')}",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        except httpx.HTTPError as exc:
-            raise DirectoryUnavailable("the identity provider could not be reached") from exc
+        if not DOT_SEGMENTS.isdisjoint(wanted.split("/")):
+            return False
+        with self._connection() as http:
+            token = self._token(http)
+            try:
+                response = http.get(
+                    f"{self._base}/admin/realms/{self._realm}/group-by-path"
+                    f"{quote(wanted, safe='/')}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            except httpx.HTTPError as exc:
+                raise DirectoryUnavailable("the identity provider could not be reached") from exc
         if response.status_code == 404:
             return False
         if response.status_code != 200:
@@ -140,12 +168,13 @@ class KeycloakDirectory:
         needle = query.replace("%", "").replace("*", "").strip()
         if len(needle) < MIN_LITERAL:
             return []
-        token = self._token()
-        return [*self._groups(token, needle), *self._users(token, needle)]
+        with self._connection() as http:
+            token = self._token(http)
+            return [*self._groups(http, token, needle), *self._users(http, token, needle)]
 
-    def _token(self) -> str:
+    def _token(self, http: httpx.Client) -> str:
         try:
-            response = self._http.post(
+            response = http.post(
                 f"{self._base}/realms/{self._realm}/protocol/openid-connect/token",
                 data={
                     "grant_type": "client_credentials",
@@ -163,9 +192,11 @@ class KeycloakDirectory:
             raise DirectoryUnavailable("the identity provider returned no token")
         return token
 
-    def _get(self, token: str, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    def _get(
+        self, http: httpx.Client, token: str, path: str, params: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         try:
-            response = self._http.get(
+            response = http.get(
                 f"{self._base}/admin/realms/{self._realm}{path}",
                 params=params,
                 headers={"Authorization": f"Bearer {token}"},
@@ -176,8 +207,9 @@ class KeycloakDirectory:
             raise DirectoryUnavailable("the identity provider could not be reached") from exc
         return body if isinstance(body, list) else []
 
-    def _groups(self, token: str, query: str) -> list[DirectoryEntry]:
+    def _groups(self, http: httpx.Client, token: str, query: str) -> list[DirectoryEntry]:
         rows = self._get(
+            http,
             token,
             "/groups",
             {"search": query, "max": SEARCH_LIMIT, "briefRepresentation": "true"},
@@ -207,8 +239,8 @@ class KeycloakDirectory:
             if isinstance(children, list):
                 self._flatten(children, into, needle)
 
-    def _users(self, token: str, query: str) -> list[DirectoryEntry]:
-        rows = self._get(token, "/users", {"search": query, "max": SEARCH_LIMIT})
+    def _users(self, http: httpx.Client, token: str, query: str) -> list[DirectoryEntry]:
+        rows = self._get(http, token, "/users", {"search": query, "max": SEARCH_LIMIT})
         return [
             _user_entry(row, username)
             for row in rows

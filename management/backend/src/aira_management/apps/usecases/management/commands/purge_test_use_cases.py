@@ -17,10 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
 
-from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase
+from aira_management.apps.usecases.views.lifecycle import purge
 from aira_management.config.runtime import get_settings
 from aira_management.config.security import is_local
 
@@ -71,10 +70,9 @@ class Command(BaseCommand):
                 # name collides with something a person made.
                 live.append(slug)
                 continue
-            with transaction.atomic():
-                usecase.delete()
-                # As the purge endpoint sends: the gateway drops the last row it kept.
-                emit("usecase.purged", {"slug": slug})
+            # The purge endpoint's own sequence: the row, its object permissions, and the event
+            # that lets the gateway drop the last row it kept.
+            purge(usecase)
             purged += 1
 
         self.stdout.write(f"[purge] {purged} purged, {absent} already gone, {len(live)} still live")

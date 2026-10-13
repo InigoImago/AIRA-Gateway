@@ -25,9 +25,6 @@ interface Editor {
   released: () => string[];
   selectedIndex: () => number;
   summarize: (step: { type: string; config: Record<string, unknown> }) => string;
-  setStartModel: (model: string) => void;
-  setFallback: (csv: string) => void;
-  setListField: (index: number, key: string, value: string) => void;
   setStepField: (index: number, key: string, value: unknown) => void;
   addCategory: (index: number) => void;
   removeCategory: (index: number, catIndex: number) => void;
@@ -60,6 +57,10 @@ interface Panel {
 
 interface Options {
   load?: Observable<PipelineConfig>;
+  /** Successive answers to the pipeline GET, for a page that loads it again; then `load`. */
+  loads?: Observable<PipelineConfig>[];
+  /** The use case GET itself, for a test that holds it back. */
+  useCaseLoad?: Observable<unknown>;
   save?: Observable<PipelineConfig>;
   dryRun?: Observable<DryRunResult>;
   confirm?: boolean;
@@ -102,8 +103,12 @@ function setup(given: Partial<PipelineConfig>, options: Options = {}) {
           // builder is reachable by anyone who may see it, and a save they cannot make would
           // come back 403 with the graph already rearranged.
           get: () =>
-            options.useCaseFails
-              ? throwError(() => ({ status: 404 }))
+            options.useCaseLoad ??
+            (options.useCaseFails
+              ? throwError(() => ({
+                  status: 404,
+                  error: { error: { code: 'not_found', message: 'No use case demo-uc.' } },
+                }))
               : of({
                   slug: 'demo-uc',
                   name: 'Demo',
@@ -125,8 +130,8 @@ function setup(given: Partial<PipelineConfig>, options: Options = {}) {
                     'router',
                     'backup-1',
                   ],
-                }),
-          getPipeline: () => options.load ?? of(initial),
+                })),
+          getPipeline: () => options.loads?.shift() ?? options.load ?? of(initial),
           savePipeline: (_slug: string, config: PipelineConfig) => {
             saved = config;
             return options.save ?? of(config);
@@ -290,16 +295,24 @@ describe('PipelineEditor', () => {
 
   // ---- inspector editing -----------------------------------------------------------
 
-  it('edits the fallback chain and a step list from comma-separated input', () => {
-    const { component } = setup({
+  it('edits a step’s custom patterns from its textarea, one per line', async () => {
+    // Driven through the textarea, so the binding is under test as well as the parsing.
+    const harness = setup({
       steps: [{ type: 'injection_filter', config: {} }],
       fallback_models: [],
     });
-    component.setFallback('a-1, b-2 , ');
-    expect(component.config().fallback_models).toEqual(['a-1', 'b-2']);
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    const area = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLTextAreaElement>(
+      '#insp-patterns',
+    )!;
 
-    component.setListField(0, 'patterns', 'exfiltrate\nbypass');
-    expect(component.config().steps[0].config.patterns).toEqual(['exfiltrate', 'bypass']);
+    area.value = 'exfiltrate\n  bypass  \n\n';
+    area.dispatchEvent(new Event('input'));
+    harness.fixture.detectChanges();
+
+    expect(harness.component.config().steps[0].config.patterns).toEqual(['exfiltrate', 'bypass']);
   });
 
   it('adds, edits, and removes routing categories', () => {
@@ -355,6 +368,51 @@ describe('PipelineEditor', () => {
         .preview()
         .map((row) => row.action),
     ).toEqual(['runtime', 'runtime', 'runtime']);
+  });
+
+  it('describes each step decided at request time in its own terms', () => {
+    // The personal-data filter picks no category; a note saying so describes another step.
+    const { panel } = setup({
+      steps: [
+        { type: 'injection_filter', config: { mode: 'llm' } },
+        { type: 'pii_filter', config: { model: 'mock-1' } },
+        { type: 'model_route', config: {} },
+      ],
+      fallback_models: [],
+    });
+    const notes = panel()
+      .preview()
+      .map((row) => row.note);
+
+    expect(notes[0]).toContain('classifier');
+    expect(notes[1]).not.toContain('category');
+    expect(notes[1]).toContain('personal data');
+    expect(notes[2]).toContain('category');
+  });
+
+  it('tries every custom pattern the gateway does, however many built-ins run beside them', () => {
+    // The gateway caps the custom patterns at 64 on their own; a cap over built-ins and custom
+    // patterns together left the last seven unread whenever the built-ins were on.
+    const patterns = Array.from({ length: 64 }, (_, i) => `custom-${i}-marker`);
+    const { panel } = setup({
+      steps: [{ type: 'injection_filter', config: { use_builtins: true, patterns } }],
+      fallback_models: [],
+    });
+    panel().sampleUser.set('this mentions custom-63-marker and nothing else');
+
+    expect(panel().preview()[0].action).toBe('blocked');
+  });
+
+  it('says when the preview read only the start of a long sample', () => {
+    const { panel } = setup({
+      steps: [{ type: 'injection_filter', config: { mode: 'heuristic' } }],
+      fallback_models: [],
+    });
+    panel().sampleUser.set('a'.repeat(4_000));
+    expect(panel().preview()[0].note).not.toContain('first 4,000 characters');
+
+    panel().sampleUser.set('a'.repeat(4_001));
+    expect(panel().preview()[0].note).toContain('first 4,000 characters');
   });
 
   it('stops the preview at the first blocking step', () => {
@@ -486,6 +544,55 @@ describe('PipelineEditor', () => {
     // A step this build has never heard of renders as itself rather than vanishing — the same
     // forward-compatibility the gateway's own parser keeps.
     expect(said[9]).toBe('did_a_thing');
+  });
+
+  it('says a router that matched nothing sent the request to its default model', () => {
+    // The engine reports that case as `rerouted` with no category: "Classified as “null”" names a
+    // category nobody defined.
+    const { panel, fixture, text } = setup(
+      { steps: [], fallback_models: [] },
+      {
+        dryRun: of({
+          blocked: false,
+          block_reason: null,
+          effective_model: 'cheap-1',
+          fallback_models: [],
+          trace: [
+            {
+              type: 'model_route',
+              action: 'rerouted',
+              detail: { category: null, from: 'mock-1', to: 'cheap-1' },
+            },
+          ],
+        }),
+      },
+    );
+    panel().runDryRun();
+    fixture.detectChanges();
+
+    expect(panel().traceCards()[0].summary).toBe(
+      'No category matched — sent to the default model cheap-1.',
+    );
+    expect(text()).not.toContain('null');
+  });
+
+  it('names where a request was dispatched and its fallbacks as one sentence', () => {
+    const { panel, fixture, text } = setup(
+      { steps: [], fallback_models: [] },
+      {
+        dryRun: of({
+          blocked: false,
+          block_reason: null,
+          effective_model: 'mock-1',
+          fallback_models: ['strong-1', 'backup-1'],
+          trace: [],
+        }),
+      },
+    );
+    panel().runDryRun();
+    fixture.detectChanges();
+
+    expect(text().replace(/\s+/g, ' ')).toContain('to mock-1, falling back to strong-1, backup-1');
   });
 
   it('says that a blocking filter stops the request, and names the mode that decided', () => {
@@ -728,6 +835,20 @@ describe('PipelineEditor', () => {
     expect((dryRunPayload() as { past_blocks?: boolean }).past_blocks).toBe(true);
   });
 
+  it('offers keeping going past a block only to somebody who administers the use case', () => {
+    // The gateway refuses steps past a block to anybody else (`403`); an option it will refuse is
+    // an action nobody can carry out.
+    const { panel, fixture, dryRunPayload } = setup(
+      { steps: [], fallback_models: [] },
+      { canManage: false },
+    );
+    expect((fixture.nativeElement as HTMLElement).querySelector('#past-blocks')).toBeNull();
+
+    panel().pastBlocks.set(true);
+    panel().runDryRun();
+    expect((dryRunPayload() as { past_blocks?: boolean }).past_blocks).toBe(false);
+  });
+
   it('marks the steps that only ran because it was told to keep going', () => {
     // An unlabelled outcome for a step production never reaches would claim something that does
     // not happen.
@@ -877,6 +998,19 @@ describe('PipelineEditor', () => {
     panel().runDryRun();
     expect(panel().dryRunError()).toContain('AIRA_OIDC_ENABLED');
     expect(panel().dryRunning()).toBe(false);
+  });
+
+  it('names an expired session as well as a gateway without OIDC for a 401', () => {
+    // With OIDC configured, a 401 is an invalid or expired token — the common case, and one that
+    // advice about configuring OIDC would send somebody the wrong way on.
+    const { panel } = setup(
+      { steps: [], fallback_models: [] },
+      { dryRun: throwError(() => ({ status: 401 })) },
+    );
+    panel().runDryRun();
+
+    expect(panel().dryRunError()).toContain('sign in again');
+    expect(panel().dryRunError()).toContain('AIRA_OIDC_ENABLED');
   });
 
   it('reports an unreachable gateway for a dry-run', () => {
@@ -1166,6 +1300,66 @@ describe('PipelineEditor loading guard', () => {
     const { fixture } = setup({ steps: [], fallback_models: [] });
     expect((fixture.nativeElement as HTMLElement).querySelector('.pipe')).not.toBeNull();
   });
+
+  /** The Save button, if the page offers one. */
+  function saveButton(html: HTMLElement): HTMLButtonElement | undefined {
+    return [...html.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+      button.textContent?.includes('Save pipeline'),
+    );
+  }
+
+  it('offers no Save while the pipeline is still loading, so nothing replaces it unseen', () => {
+    // Before the GET answers, `config()` is the empty placeholder: a save then would replace the
+    // stored steps — the injection and personal-data filters among them — with nothing.
+    const { component, fixture, getSaved } = setup(
+      { steps: [], fallback_models: [] },
+      { load: new Observable<PipelineConfig>(() => undefined) },
+    );
+    const html = fixture.nativeElement as HTMLElement;
+
+    expect(saveButton(html)).toBeUndefined();
+    component.save();
+    expect(getSaved()).toBeNull();
+  });
+
+  it('shows a failed load and a way to load again, and no builder to save over it', () => {
+    // An empty, editable graph under "Could not load the pipeline." is a pipeline nobody has seen,
+    // and saving it would overwrite the real one.
+    const stored = config({
+      steps: [{ type: 'injection_filter', config: { mode: 'heuristic', action: 'block' } }],
+    });
+    const { component, fixture, getSaved } = setup(
+      { steps: [], fallback_models: [] },
+      {
+        loads: [
+          throwError(() => ({
+            status: 503,
+            error: { error: { code: 'unavailable', message: 'Management is restarting.' } },
+          })),
+          of(stored),
+        ],
+      },
+    );
+    const html = fixture.nativeElement as HTMLElement;
+
+    expect(html.querySelector('[role="alert"]')?.textContent).toContain(
+      'Management is restarting.',
+    );
+    expect(html.querySelector('.pipe')).toBeNull();
+    expect(html.querySelectorAll('.pipe__add .btn').length).toBe(0);
+    expect(saveButton(html)).toBeUndefined();
+    component.save();
+    expect(getSaved()).toBeNull();
+
+    html.querySelector<HTMLButtonElement>('[data-testid="pipeline-reload"]')!.click();
+    fixture.detectChanges();
+
+    expect(html.querySelector('[role="alert"]')).toBeNull();
+    expect(html.querySelector('.pipe')).not.toBeNull();
+    expect(html.textContent).toContain('Injection Filter');
+    saveButton(html)!.click();
+    expect(getSaved()).toEqual(stored);
+  });
 });
 
 describe('PipelineEditor — a reader', () => {
@@ -1195,6 +1389,51 @@ describe('PipelineEditor — a reader', () => {
   });
 });
 
+describe('PipelineEditor — a reader’s pickers', () => {
+  it('renders a step’s chain read-only, with no ✕ and no search', async () => {
+    // Inside a disabled fieldset an editable picker is inert but still looks editable; the picker
+    // has its own read-only rendering, which says so.
+    const harness = setup(
+      {
+        steps: [{ type: 'pii_filter', config: { model: 'mock-1', fallback_models: ['backup-1'] } }],
+        fallback_models: [],
+      },
+      { canManage: false },
+    );
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    const html = harness.fixture.nativeElement as HTMLElement;
+
+    expect(html.querySelector('[data-testid="pii-chain-chosen"]')?.textContent).toContain(
+      'backup-1',
+    );
+    expect(html.querySelector('[data-testid="pii-chain-remove-backup-1"]')).toBeNull();
+    expect(html.querySelector<HTMLInputElement>('[data-testid="pii-chain-search"]')?.disabled).toBe(
+      true,
+    );
+  });
+
+  it('switches the built-in patterns off from the inspector', async () => {
+    const harness = setup({
+      steps: [{ type: 'injection_filter', config: { mode: 'heuristic' } }],
+      fallback_models: [],
+    });
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    const box = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="use-builtins"]',
+    )!;
+    expect(box.checked).toBe(true);
+
+    box.click();
+    harness.fixture.detectChanges();
+
+    expect(harness.component.config().steps[0].config.use_builtins).toBe(false);
+  });
+});
+
 describe('PipelineEditor — the permission request itself fails', () => {
   it('keeps the safe answer and does not add a second error banner', () => {
     // No banner about a request the reader did not make; the safe answer to "may I change this" is
@@ -1207,6 +1446,33 @@ describe('PipelineEditor — the permission request itself fails', () => {
 
     expect(html.querySelector<HTMLFieldSetElement>('fieldset.bare')?.disabled).toBe(true);
     expect(component.error()).toBeNull();
+  });
+
+  it('says the release could not be read, rather than that nothing is released', () => {
+    // "No model is released … every request it makes is refused" is a statement about the use
+    // case, and a failed read of it says nothing of the kind.
+    const { fixture } = setup({ steps: [], fallback_models: [] }, { useCaseFails: true });
+    const html = fixture.nativeElement as HTMLElement;
+
+    expect(html.querySelector('[data-testid="pipeline-nothing-released"]')).toBeNull();
+    expect(html.querySelector('[data-testid="pipeline-readonly"]')).toBeNull();
+    const unread = html.querySelector('[data-testid="pipeline-use-case-unread"]');
+    expect(unread?.textContent).toContain('No use case demo-uc.');
+    expect(unread?.textContent).toContain('which models');
+  });
+
+  it('says nothing about the release or the reader’s rights before the use case answers', () => {
+    // The pipeline can answer first; until the use case does, neither statement is known.
+    const { fixture } = setup(
+      { steps: [], fallback_models: [] },
+      { useCaseLoad: new Observable(() => undefined) },
+    );
+    const html = fixture.nativeElement as HTMLElement;
+
+    expect(html.querySelector('.pipe')).not.toBeNull();
+    expect(html.querySelector('[data-testid="pipeline-nothing-released"]')).toBeNull();
+    expect(html.querySelector('[data-testid="pipeline-readonly"]')).toBeNull();
+    expect(html.querySelector('[data-testid="pipeline-use-case-unread"]')).toBeNull();
   });
 });
 
@@ -1246,6 +1512,48 @@ describe('PipelineEditor — only the models the use case may call (`FRD-308`)',
     )!;
     expect(category.tagName).toBe('SELECT');
     expect([...category.options].map((o) => o.value)).toEqual(['', 'allowed-1', 'allowed-2']);
+  });
+
+  it('shows a stored model that is no longer released as itself, and says so', async () => {
+    // A select with no option for its value renders blank, which reads as "none chosen" while the
+    // step still names the model — and the dry run then refuses a name nobody can see.
+    const harness = setup(
+      {
+        steps: [
+          { type: 'injection_filter', config: { mode: 'llm', model: 'revoked-1' } },
+          { type: 'pii_filter', config: { model: 'revoked-2' } },
+          {
+            type: 'model_route',
+            config: {
+              model: 'revoked-3',
+              categories: [{ name: 'c', model: 'revoked-4' }],
+              default_model: 'revoked-5',
+            },
+          },
+        ],
+        fallback_models: [],
+      },
+      { released: ['allowed-1'] },
+    );
+    const shown: [number, string, string][] = [
+      [0, '#insp-filter-model', 'revoked-1'],
+      [1, '[data-testid="pii-model"]', 'revoked-2'],
+      [2, '#insp-route-model', 'revoked-3'],
+      [2, '[aria-label="Category 1 target model"]', 'revoked-4'],
+      [2, '#insp-default-model', 'revoked-5'],
+    ];
+    for (const [step, selector, model] of shown) {
+      harness.component.select(step);
+      harness.fixture.detectChanges();
+      await harness.fixture.whenStable();
+      const select = el(harness).querySelector<HTMLSelectElement>(selector)!;
+
+      expect(select.value, selector).toBe(model);
+      expect(select.selectedOptions[0]?.textContent, selector).toContain('(not released)');
+      expect(el(harness).querySelector('.pipe__inspector')?.textContent, selector).toContain(
+        `${model} is not released to this use case`,
+      );
+    }
   });
 
   it('says once that nothing is released, rather than showing empty dropdowns', () => {
@@ -1406,5 +1714,8 @@ describe('PipelineEditor — a step reaches a chain', () => {
     expect(empty.value).toBe('');
     expect(empty.textContent).not.toContain('first released model');
     expect(empty.textContent).toContain('patterns');
+    // In this mode the patterns are not on screen: an option pointing "below" points at nothing.
+    expect(el(harness).querySelector('#insp-patterns')).toBeNull();
+    expect(empty.textContent).not.toContain('below');
   });
 });

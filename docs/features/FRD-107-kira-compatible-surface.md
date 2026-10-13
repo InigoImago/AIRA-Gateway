@@ -376,7 +376,10 @@ it. Six differences, all on the tolerance axis, none of them in the document. Th
   dialect has, so the mode is reachable at all;
 - a streamed upstream refusal is read before it is judged, so a `400` arrives with the server's
   reason instead of as a `500`;
-- a refused request's body is logged (12 KB cap) beside the audit row it already produced.
+- a refused request's body is described in the log — its fields, and each value's kind and size,
+  never a value — beside the audit row it already produced. Logging the body itself (as it once
+  did, up to 12 KB) put prompts and attachments into the observability stack, past every control
+  on stored content and against the privacy notice's promise that no log line carries any.
 
 Worth stating for the next surface: every one of these was a **rule kept by the wrong mechanism**.
 The rules themselves — no silent drop, a closed schema vocabulary, do not approximate a stated

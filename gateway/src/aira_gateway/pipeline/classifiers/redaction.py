@@ -1,9 +1,10 @@
 """The PII filter's redactor: a trusted model rewrites personal data out of the text (FRD-309).
 
 **The failure this is shaped around is a plausible answer, not an error.** A redactor can answer
-with a summary, a translation, a refusal, a preamble or nothing — and each, applied, changes what
-the caller asked while the request succeeds with a 200. So a rewrite is checked before it is
-trusted, and an unusable one is a failure rather than a redaction.
+with a summary, a translation, a refusal, a preamble, a rewrite cut off at its output cap or
+nothing — and each, applied, changes what the caller asked while the request succeeds with a 200.
+So a rewrite is checked before it is trusted, and an unusable one is a failure rather than a
+redaction.
 """
 
 from __future__ import annotations
@@ -11,15 +12,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aira_gateway.audit import ModelCall
-from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
+from aira_gateway.core.canonical import (
+    CanonicalMessage,
+    CanonicalRequest,
+    FinishReason,
+    Role,
+    Thinking,
+)
 from aira_gateway.pipeline.classifiers.prompts import (
     CLASSIFIER_OUTPUT_TOKENS,
     DEFAULT_REDACTION_INSTRUCTION,
     MAX_REDACTION_OUTPUT_TOKENS,
-    REDACTION_CLOSE,
-    REDACTION_OPEN,
     REDACTION_OUTPUT_HEADROOM,
     THINKING_OFF,
+    DataBoundary,
 )
 from aira_gateway.telemetry import model_call_span
 from aira_gateway.upstreams.base import Upstream, UpstreamError
@@ -37,10 +43,8 @@ class Redaction:
     failure: str | None = None
     #: Whether the model was **reached** — ``False`` only where the call itself failed. This is
     #: what a step's chain moves on for (`FRD-302` FR-8): a model that answered has answered, even
-    #: when the answer is *undetermined*, and a chain that tried the next one would be a filter
-    #: shopping for a verdict. A field rather than an inference from a missing `ModelCall`: the
-    #: heuristic classifier has no call either, and reading that as "not reached" would send it
-    #: down a chain it never asked for.
+    #: when its rewrite cannot be trusted, and a chain that tried the next one would be a filter
+    #: shopping for a result.
     reached: bool = True
 
 
@@ -54,6 +58,12 @@ class LlmRedactor:
     #: refuses correct redactions (`"say ok"` → `"ok"`) and a summary is indistinguishable from a
     #: rewrite anyway. `MIN_KEPT` is not lowered instead: it is right where it applies.
     MIN_LENGTH_FOR_RATIO = 40
+    #: A rewrite longer than this multiple of the original, beyond `GROWTH_ALLOWANCE` characters,
+    #: carries something the caller did not write — a preamble, an explanation, an answer — and
+    #: would be dispatched as their text. A placeholder can be longer than the name it replaces
+    #: (`Al` → `<PERSON>`), which is what the allowance is for.
+    MAX_GROWTH = 1.5
+    GROWTH_ALLOWANCE = 64
 
     def __init__(
         self,
@@ -71,17 +81,17 @@ class LlmRedactor:
         if not text.strip():
             # Nothing to redact, so nothing to pay for.
             return Redaction(text)
+        boundary = DataBoundary.around(text)
         try:
             with model_call_span(self._model, purpose="pipeline"):
                 response = await self._provider.generate(
                     CanonicalRequest(
                         model=self._model,
                         messages=[
-                            CanonicalMessage(role=Role.SYSTEM, text=self._instruction),
                             CanonicalMessage(
-                                role=Role.USER,
-                                text=f"{REDACTION_OPEN}\n{text}\n{REDACTION_CLOSE}",
+                                role=Role.SYSTEM, text=boundary.explained(self._instruction)
                             ),
+                            CanonicalMessage(role=Role.USER, text=boundary.wrap(text)),
                         ],
                         max_output_tokens=_redaction_allowance(text),
                         temperature=0.0,
@@ -96,9 +106,15 @@ class LlmRedactor:
             )
 
         call = ModelCall(step="pii_filter", model=self._model, usage=response.usage)
+        if response.finish_reason is not FinishReason.STOP:
+            # Cut off at its output cap, or stopped by a policy: the end of the caller's prompt is
+            # missing from what would be sent, and nothing about the rest says so.
+            return Redaction(
+                None, call, f"the redactor stopped before finishing ({response.finish_reason})"
+            )
         # Stripped even though the instruction forbids echoing them: models differ, and the markers
         # must not be sent upstream as text the caller never wrote.
-        rewritten = _without_markers(response.text)
+        rewritten = boundary.unwrapped(response.text)
         if not rewritten:
             return Redaction(None, call, "the redactor returned nothing")
         given = text.strip()
@@ -106,24 +122,17 @@ class LlmRedactor:
             # A length this far off is a summary or a refusal; applying it would send the model a
             # different question than the caller asked.
             return Redaction(None, call, "the redactor returned far less text than it was given")
+        if len(rewritten) > len(given) * self.MAX_GROWTH + self.GROWTH_ALLOWANCE:
+            return Redaction(None, call, "the redactor returned far more text than it was given")
         return Redaction(rewritten, call)
-
-
-def _without_markers(reply: str) -> str:
-    """The rewrite, with the delimiters removed wherever the model echoed them."""
-    text = reply.strip()
-    if text.startswith(REDACTION_OPEN):
-        text = text[len(REDACTION_OPEN) :]
-    if text.endswith(REDACTION_CLOSE):
-        text = text[: -len(REDACTION_CLOSE)]
-    return text.strip()
 
 
 def _redaction_allowance(text: str) -> int:
     """Room for a rewrite of roughly this length, plus headroom, up to a ceiling.
 
     Four characters per token is deliberately generous: over-estimating costs a slightly larger
-    allowance, under-estimating silently truncates the prompt.
+    allowance, under-estimating truncates the rewrite — which `rewrite` then refuses rather than
+    dispatches.
     """
     wanted = max(CLASSIFIER_OUTPUT_TOKENS, len(text) // 4 + REDACTION_OUTPUT_HEADROOM)
     return min(wanted, MAX_REDACTION_OUTPUT_TOKENS)

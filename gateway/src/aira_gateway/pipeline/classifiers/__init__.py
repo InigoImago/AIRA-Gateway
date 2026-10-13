@@ -9,10 +9,10 @@ Every LLM classifier returns the `ModelCall` it made together with its answer, s
 what it spent even when it goes on to block (`FRD-125`).
 """
 
+from aira_common.patterns import MAX_PATTERN_LENGTH
 from aira_gateway.pipeline.classifiers.injection import (
     BUILTIN_INJECTION_PATTERNS,
     MAX_CUSTOM_PATTERNS,
-    MAX_PATTERN_LENGTH,
     MAX_SCANNED_CHARS,
     Classification,
     HeuristicInjectionClassifier,
@@ -22,40 +22,38 @@ from aira_gateway.pipeline.classifiers.injection import (
 )
 from aira_gateway.pipeline.classifiers.prompts import (
     CLASSIFIER_OUTPUT_TOKENS,
+    DATA_CLOSE,
+    DATA_OPEN,
     DEFAULT_INJECTION_INSTRUCTION,
     DEFAULT_REDACTION_INSTRUCTION,
     MAX_REDACTION_OUTPUT_TOKENS,
-    REDACTION_CLOSE,
-    REDACTION_OPEN,
     REDACTION_OUTPUT_HEADROOM,
     ROUTER_INSTRUCTION,
     THINKING_CLASSIFIER_OUTPUT_TOKENS,
     THINKING_OFF,
+    DataBoundary,
     classifier_request,
 )
-from aira_gateway.pipeline.classifiers.redaction import (
-    LlmRedactor,
-    Redaction,
-    _redaction_allowance,
-)
+from aira_gateway.pipeline.classifiers.redaction import LlmRedactor, Redaction
 from aira_gateway.pipeline.classifiers.routing import LlmCategoryRouter, Routing
 
 __all__ = [
     "BUILTIN_INJECTION_PATTERNS",
     "CLASSIFIER_OUTPUT_TOKENS",
+    "DATA_CLOSE",
+    "DATA_OPEN",
     "DEFAULT_INJECTION_INSTRUCTION",
     "DEFAULT_REDACTION_INSTRUCTION",
     "MAX_CUSTOM_PATTERNS",
     "MAX_PATTERN_LENGTH",
     "MAX_REDACTION_OUTPUT_TOKENS",
     "MAX_SCANNED_CHARS",
-    "REDACTION_CLOSE",
-    "REDACTION_OPEN",
     "REDACTION_OUTPUT_HEADROOM",
     "ROUTER_INSTRUCTION",
     "THINKING_CLASSIFIER_OUTPUT_TOKENS",
     "THINKING_OFF",
     "Classification",
+    "DataBoundary",
     "HeuristicInjectionClassifier",
     "InjectionClassifier",
     "LlmCategoryRouter",
@@ -64,6 +62,5 @@ __all__ = [
     "Redaction",
     "Routing",
     "Verdict",
-    "_redaction_allowance",
     "classifier_request",
 ]

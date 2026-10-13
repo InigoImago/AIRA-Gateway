@@ -29,7 +29,9 @@ function row(over: Partial<PersonRow> & { key: string }): PersonRow {
     [today]="today()"
     [budgets]="budgets()"
     [usage]="usage()"
-    [unavailable]="unavailable()"
+    [monthUnavailable]="monthUnavailable()"
+    [todayUnavailable]="todayUnavailable()"
+    [currency]="currency()"
     reason="The gateway could not be reached."
   />`,
 })
@@ -37,7 +39,9 @@ class Host {
   readonly month = signal<PersonRow[]>([]);
   readonly today = signal<PersonRow[]>([]);
   readonly budgets = signal<Budget[]>([]);
-  readonly unavailable = signal(false);
+  readonly monthUnavailable = signal(false);
+  readonly todayUnavailable = signal(false);
+  readonly currency = signal('');
   readonly only = signal<string | null>(null);
   readonly whyOnly = signal('');
   readonly usage = signal<Record<number, BudgetUsage>>({});
@@ -184,11 +188,86 @@ describe('PeoplePanel', () => {
     // `FRD-603`: unknown is never rendered as zero. A table of zeroes states that nobody used
     // anything, which is not what a failed request said.
     const harness = setup();
-    harness.host.unavailable.set(true);
+    harness.host.monthUnavailable.set(true);
+    harness.host.todayUnavailable.set(true);
     harness.render();
 
     expect(harness.text()).toContain('did not arrive');
     expect(harness.text()).toContain('The gateway could not be reached.');
+  });
+
+  it('says the window it reads did not arrive, even when the other one did', () => {
+    // This month's report timed out and today's arrived. The panel reads the month (no daily
+    // allowance) and said "you have not called" beside a card calling the month unknown.
+    const harness = setup();
+    harness.host.only.set('erika');
+    harness.host.monthUnavailable.set(true);
+    harness.host.today.set([row({ key: 'erika' })]);
+    harness.render();
+
+    expect(harness.testid('people-unavailable')).not.toBeNull();
+    expect(harness.testid('people-empty')).toBeNull();
+  });
+
+  it('shows the window it reads when only the other one failed', () => {
+    const harness = setup();
+    harness.host.budgets.set([{ scope: 'each_member', period: 'day', limit_cost: '5.00' }]);
+    harness.host.monthUnavailable.set(true);
+    harness.host.today.set([row({ key: 'erika', cost_nanos: 1_000_000_000, cost: '1.00' })]);
+    harness.render();
+
+    expect(harness.testid('people-unavailable')).toBeNull();
+    expect(harness.text()).toContain('erika');
+  });
+
+  it('names the clock its window is on, which is the one the allowance resets on', () => {
+    const harness = setup();
+    harness.host.budgets.set([{ scope: 'each_member', period: 'day', limit_cost: '5.00' }]);
+    harness.render();
+
+    expect(harness.testid('people-window')?.textContent).toContain('today (UTC)');
+  });
+
+  it('groups counts the way the chart above it does', () => {
+    // "10664" directly under a chart that prints "10,664" reads as two different figures.
+    const harness = setup();
+    harness.host.month.set([row({ key: 'erika', requests: 10_664, total_tokens: 1_234_567 })]);
+    harness.render();
+
+    expect(harness.text()).toContain('10,664');
+    expect(harness.text()).toContain('1,234,567');
+  });
+
+  it('works out a remainder on the digits, not through a float', () => {
+    // 0.1 − 0.07 is 0.030000000000000002 as floats; on nano-units it is 0.03 exactly.
+    const harness = setup();
+    harness.host.budgets.set([{ scope: 'each_member', period: 'month', limit_cost: '0.100000' }]);
+    harness.host.month.set([row({ key: 'erika', cost_nanos: 70_000_000, cost: '0.07' })]);
+    harness.render();
+
+    expect(harness.text()).toContain('0.03');
+    expect(harness.text()).toContain('of 0.10');
+  });
+
+  it('rounds a remainder half-up on the digits, as every other amount here', () => {
+    // 2.00 − 0.995 is 1.005: half-up that is 1.01, while `(1.005).toFixed(2)` says 1.00 — the
+    // float behind it is 1.00499….
+    const harness = setup();
+    harness.host.budgets.set([{ scope: 'each_member', period: 'month', limit_cost: '2.000000' }]);
+    harness.host.month.set([row({ key: 'erika', cost_nanos: 995_000_000, cost: '0.99' })]);
+    harness.render();
+
+    expect(harness.text()).toContain('1.01');
+    expect(harness.text()).not.toContain('1.00 of');
+  });
+
+  it('puts the unit it is given on the spend column', () => {
+    const harness = setup();
+    harness.host.currency.set('EUR');
+    harness.host.month.set([row({ key: 'erika' })]);
+    harness.render();
+
+    expect(harness.text()).toContain('Spend (EUR)');
   });
 
   it('tells an empty period apart from a missing one', () => {

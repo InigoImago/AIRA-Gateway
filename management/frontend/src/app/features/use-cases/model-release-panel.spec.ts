@@ -39,18 +39,25 @@ const DRAFT: CatalogModel = { name: 'draft-1', approved: false, is_priced: false
     slug="uc"
     [canManage]="canManage()"
     [released]="released()"
+    [catalog]="catalog()"
+    [catalogFailure]="catalogFailure()"
     (saved)="saved.set($event)"
   />`,
 })
 class Host {
   readonly canManage = signal(true);
   readonly released = signal<string[]>([]);
+  readonly catalog = signal<CatalogModel[] | null>(null);
+  readonly catalogFailure = signal('');
   readonly saved = signal<UseCase | null>(null);
 }
 
 function setup(
   options: {
-    catalog?: Observable<CatalogModel[]>;
+    /** What the page loaded; `null` is "not answered yet". */
+    catalog?: CatalogModel[] | null;
+    /** Why the page could not load it. */
+    catalogFailure?: string;
     released?: string[];
     canManage?: boolean;
     update?: Observable<UseCase>;
@@ -64,7 +71,6 @@ function setup(
       {
         provide: UseCaseService,
         useValue: {
-          models: () => options.catalog ?? of([FLASH, SONNET, DRAFT]),
           update: (_slug: string, body: Partial<UseCase>) => {
             updates.push(body);
             return (
@@ -79,6 +85,10 @@ function setup(
   const fixture = TestBed.createComponent(Host);
   fixture.componentInstance.canManage.set(options.canManage ?? true);
   fixture.componentInstance.released.set(options.released ?? []);
+  fixture.componentInstance.catalog.set(
+    options.catalog === undefined ? [FLASH, SONNET, DRAFT] : options.catalog,
+  );
+  fixture.componentInstance.catalogFailure.set(options.catalogFailure ?? '');
   fixture.detectChanges();
   const panel = fixture.debugElement.children[0].componentInstance as unknown as {
     count: () => number;
@@ -196,15 +206,35 @@ describe('ModelReleasePanel', () => {
   it('says there is nothing to release when nothing is approved at all', () => {
     /** Different from "nothing released": one is this screen's to fix, the other is the model
      *  catalog's — and an empty table would look identical for both. */
-    const { text } = setup({ catalog: of([DRAFT]) });
+    const { text } = setup({ catalog: [DRAFT] });
 
     expect(text()).toContain('has been approved for use yet');
   });
 
-  it('reports a catalog it could not load rather than showing an empty one', () => {
-    const { feedback } = setup({ catalog: throwError(() => ({ status: 503 })) });
+  it('does not call a model withdrawn because the catalogue did not arrive', () => {
+    // Management restarting for a moment read, in red, as "your models were withdrawn and requests
+    // naming them are refused", beside "nothing has been approved yet". Neither was true.
+    const { html, text } = setup({
+      catalog: null,
+      catalogFailure: 'Management is restarting.',
+      released: ['gemini-2.5-flash'],
+    });
 
-    expect(feedback.error()).toContain('Could not load the model catalog');
+    expect(html().querySelector('[data-testid="withdrawn-models"]')).toBeNull();
+    expect(html().querySelector('[data-testid="nothing-approved"]')).toBeNull();
+    expect(html().querySelector('[data-testid="release-unchecked"]')?.textContent).toContain(
+      'gemini-2.5-flash',
+    );
+    // Nothing to pick from, so nothing to change until the catalogue is back.
+    expect(html().querySelector('[data-testid="save-release"]')).toBeNull();
+    expect(text()).not.toContain('Loading the catalog');
+  });
+
+  it('says it is loading until the page has the catalogue', () => {
+    const { text, html } = setup({ catalog: null, released: ['gemini-2.5-flash'] });
+
+    expect(text()).toContain('Loading the catalog');
+    expect(html().querySelector('[data-testid="withdrawn-models"]')).toBeNull();
   });
 
   it('filters the list without changing what is released', () => {

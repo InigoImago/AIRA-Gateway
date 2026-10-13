@@ -10,6 +10,7 @@ and its routes.
     pipeline_run  the use case's pipeline, and the model calls it made
     prepare       the pre-dispatch sequence, in its guaranteed order
     accounting    settle and record the request, however it ended
+    streaming     the same for a streamed answer, however its connection ended
     answers       notices, the structured-output check, response headers
     refusals      which exceptions are refusals, and their statuses and outcomes
 """
@@ -67,15 +68,19 @@ from aira_gateway.api.serving.prepare import (
 from aira_gateway.api.serving.refusals import (
     REFUSALS,
     refusal_outcome,
+    stream_failure_status,
     upstream_error,
     upstream_status,
 )
+from aira_gateway.api.serving.streaming import AccountedStream, StreamAccounting
 
 __all__ = [
     "EMBEDDING_METHODS",
     "REFUSALS",
+    "AccountedStream",
     "Accounting",
     "Prepared",
+    "StreamAccounting",
     "StreamedNotice",
     "_rewritten_body",
     "accounting",
@@ -109,6 +114,7 @@ __all__ = [
     "run_pipeline_over_texts",
     "schema_bounds",
     "served_models",
+    "stream_failure_status",
     "upstream_error",
     "upstream_status",
     "use_case_of",

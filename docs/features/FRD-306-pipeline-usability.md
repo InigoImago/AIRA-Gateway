@@ -32,6 +32,14 @@
   **required** `use_case`, refuses a caller who may not act on it (`use_case_refusal`), and refuses
   any model that use case has not been released. The model it *infers* when a pipeline names none
   comes from the release too.
+- **Trying a pipeline is authoring one.** Membership was still a relay: a member posted a
+  `pii_filter` whose `instruction` was a system prompt of their own and read the model's answer in
+  the trace — past the use case's own filters, with token counts alone on the audit row. An
+  unsaved pipeline, and `past_blocks`, now need what saving a pipeline needs: the use case's
+  administrator grant (or `usecase.manage_all`). A member may dry-run the **saved** pipeline — the
+  one their own requests go through — and the trace shows what each step decided but not what its
+  model wrote (`output`, `after`), which production never shows either. A bound API key is never
+  an administrator. A malformed `pipeline` is a `400` naming the field, never a `500`.
 
 **Builder (frontend)**
 - Inspector redesigned per step with **inline help**, visible built-in patterns + custom patterns,

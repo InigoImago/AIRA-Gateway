@@ -31,6 +31,7 @@ from pathlib import Path
 from unittest import mock
 
 import compose_files
+import credential_settings
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -120,18 +121,9 @@ NOT_A_SETTING = {
 
 #: Settings an installation file deliberately does not carry, each with the reason.
 NOT_IN_A_CONFIG_FILE = {
-    # Secrets. The renderer refuses them by name; they come from Vault (`FRD-116`).
-    "AIRA_SECRET_KEY",
-    "AIRA_POSTGRES_PASSWORD",
-    "AIRA_VERTEX_CREDENTIALS",
-    "AIRA_VERTEX_API_KEY",
-    "AIRA_GOOGLE_API_KEY",
-    "AIRA_FOUNDRY_API_KEY",
-    "AIRA_OPENAI_API_KEY",
-    "AIRA_KAFKA_SASL_PASSWORD",
-    "AIRA_DIRECTORY_CLIENT_SECRET",
-    "AIRA_REDIS_PASSWORD",
-    "AIRA_REDIS_SENTINEL_PASSWORD",
+    # Secrets. The renderer refuses them; they come from Vault (`FRD-116`). Which settings those
+    # are is `credential_settings`' answer, read off the settings classes rather than listed here.
+    *credential_settings.credentials(),
     # Stamped by the build, not chosen by an installation.
     "AIRA_BUILD_NUMBER",
     "AIRA_BUILD_TIME",
@@ -266,17 +258,14 @@ def test_a_rendered_file_reads_back_as_what_was_rendered(example: Path) -> None:
     quoting bug ships.
     """
     sys.path.insert(0, str(ROOT / "tools"))
-    from config_render import as_env_file
+    from config_render import _env_pairs, as_env_file
 
     values = _rendered(example)
-    parsed: dict[str, str] = {}
-    for line in as_env_file(values, example).splitlines():
-        if not line or line.startswith("#"):
-            continue
-        name, _, raw = line.partition("=")
-        parsed[name] = raw[1:-1] if len(raw) > 1 and raw[0] == raw[-1] == '"' else raw
 
-    assert parsed == values
+    # Read with the renderer's own reader, which follows Compose's grammar — a reader that merely
+    # stripped the quotes agreed with any writer. What Compose itself receives is checked in
+    # `test_a_rendered_value_reaches_the_container_unchanged.py`.
+    assert _env_pairs(as_env_file(values, example)) == values
 
 
 #: Read by `aira_common.secrets.VaultConfig.from_env`, before any settings object exists.
@@ -484,8 +473,9 @@ def test_every_example_shows_how_to_point_each_channel_somewhere(example: Path) 
     to it as `''`. Off is the line not being there; visible is the line being there, commented.
     """
     text = example.read_text(encoding="utf-8")
-    if "\notel:" not in text:
-        pytest.skip(f"{example.name} configures no telemetry at all")
+    # A failure, not a skip: an example that dropped its `otel:` section shows neither channel,
+    # which is the case this test exists for — and a skipped guard reports green.
+    assert "\notel:" in text, f"{example.name} has no `otel:` section, so it shows no channel"
 
     missing = [switch for switch in CHANNEL_SWITCHES if switch not in text]
 

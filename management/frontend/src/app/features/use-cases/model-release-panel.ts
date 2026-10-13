@@ -1,4 +1,5 @@
 import { Component, OnInit, computed, inject, input, output, signal } from '@angular/core';
+import { finalize } from 'rxjs';
 import { CatalogModel, UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -17,20 +18,40 @@ import { PageFeedback } from '../../core/ui/page-feedback';
   selector: 'app-model-release-panel',
   imports: [InfoHint, MultiSelect],
   templateUrl: './model-release-panel.html',
+  host: { style: 'display: contents' },
 })
 export class ModelReleasePanel implements OnInit {
   readonly slug = input.required<string>();
   readonly canManage = input(false);
+  /**
+   * Whether the Overview tab is open. The panel stays on the page either way, so a release that is
+   * "Not saved yet" is still not saved — and still there — after a look at another tab.
+   */
+  readonly shown = input(true);
   /** What is released today. Owned by the parent, which loaded the use case. */
   readonly released = input<string[]>([]);
+  /** The catalogue the page loaded — `null` until it answers, and while it could not be read. */
+  readonly catalog = input<CatalogModel[] | null>(null);
+  /** Why the catalogue could not be read, if it could not. The page has already reported it. */
+  readonly catalogFailure = input('');
   /** Raised after a save, so the parent can take the new use case as its own. */
   readonly saved = output<UseCase>();
 
   private readonly service = inject(UseCaseService);
   protected readonly feedback = inject(PageFeedback);
 
-  protected readonly catalog = signal<CatalogModel[]>([]);
-  protected readonly loading = signal(true);
+  protected readonly loading = computed(() => this.catalog() === null && !this.catalogFailure());
+  /**
+   * The catalogue did not arrive. Without it nothing can be said about approval: every released
+   * model would count as withdrawn and the catalogue as empty — two alarming claims about a
+   * catalogue nobody read.
+   */
+  protected readonly catalogMissing = computed(
+    () => this.catalog() === null && !!this.catalogFailure(),
+  );
+
+  /** This panel's save is in flight — its own, so another form's save does not relabel it. */
+  protected readonly saving = signal(false);
 
   /** The working set, so nothing is written until Save. */
   protected readonly chosen = signal<Set<string>>(new Set());
@@ -40,7 +61,7 @@ export class ModelReleasePanel implements OnInit {
    * control that invites a click and answers 400 is `FRD-206`'s complaint.
    */
   protected readonly releasable = computed(() =>
-    this.catalog().filter((model) => model.approved !== false),
+    (this.catalog() ?? []).filter((model) => model.approved !== false),
   );
 
   /**
@@ -86,16 +107,6 @@ export class ModelReleasePanel implements OnInit {
 
   ngOnInit(): void {
     this.chosen.set(new Set(this.released()));
-    this.service.models().subscribe({
-      next: (models) => {
-        this.catalog.set(models);
-        this.loading.set(false);
-      },
-      error: () => {
-        this.loading.set(false);
-        this.feedback.fail(null, 'Could not load the model catalog.');
-      },
-    });
   }
 
   protected setChosen(names: string[]): void {
@@ -108,7 +119,11 @@ export class ModelReleasePanel implements OnInit {
     // cannot leave the control stuck.
     if (!this.canManage() || this.feedback.busy()) return;
     const chosen = [...this.chosen()].sort();
-    this.feedback.run(this.service.update(this.slug(), { allowed_models: chosen }), {
+    this.saving.set(true);
+    const request = this.service
+      .update(this.slug(), { allowed_models: chosen })
+      .pipe(finalize(() => this.saving.set(false)));
+    this.feedback.run(request, {
       failure: 'Could not change which models this use case may call.',
       success: (useCase: UseCase) => {
         this.chosen.set(new Set(useCase.allowed_models ?? chosen));

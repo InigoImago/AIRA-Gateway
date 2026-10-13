@@ -25,7 +25,7 @@ you can answer "what do you need that for?".
 | **Database team** | A PostgreSQL 16+ server, **two** databases (`aira_gateway`, `aira_mgmt`), one user per database, owner rights on its own | The two planes are separately deployable and must not share a schema |
 | **Identity team** | A Keycloak realm, permission to create **5 realm roles**, **2 clients** (console: public + PKCE; services: confidential), and a **`groups` mapper on every client** | Roles are the only source of authorisation; a token without `groups` can match no group grant |
 | **Identity team** | The realm's issuer URL, the JWKS URL, and the audience your tokens carry | The gateway validates every token itself and requires `exp`, `iat`, `sub` and, outside `local`, an audience |
-| **Platform team** | Kafka with permission to **create 8 compacted topics** (or have them created for you) | Configuration travels as events; auto-creation is off, and a missing topic fails silently |
+| **Platform team** | Kafka with permission to **create 9 compacted topics** (or have them created for you) | Configuration travels as events; auto-creation is off, and a missing topic fails silently |
 | **Platform team** | A Redis instance | Shared counters for rate limits and budget reservations across replicas |
 | **Security team** | A Vault (or compatible) with a KV-v2 mount, permission to create a **read-only policy** and an **AppRole** | Every credential lives there; the process fails to start rather than falling back |
 | **Cloud team** | A service account or key for your model platform, and the **regions** you are permitted to use | Residency is enforced at startup, not intended |
@@ -86,15 +86,24 @@ uv run python tools/vault_setup.py --mount secret --path aira
 ```
 
 It creates the KV-v2 path, a **read-only policy on exactly that path**, and an AppRole; it prints
-the role id and writes the secret-id to a file with mode `0600`. It never prints a secret value,
-including the one it generates.
+the role id and writes the secret-id to a file with mode `0600` — by default
+`deploy/compose/secrets/vault-secret-id`, which `.gitignore` excludes. It refuses any
+`--secret-id-file` git would commit (a tracked file, or an unignored one inside a checkout), and it
+never prints a secret value, including the one it generates.
 
-Put the credentials in:
+**The secret-id expires** after 30 days (`--secret-id-ttl`, a Vault duration; `0` means never). The
+services read it once, at start, so a running deployment is unaffected — but a restart after the
+expiry fails closed with *Vault refused the AppRole login*. Run the tool again before then and
+restart the services; the output says when the current one runs out.
+
+Put the credentials in. `--from-env` copies every **credential setting** of both planes that is
+set in your shell — the names under `secrets.in_vault` in the `config/*.example.yaml` files — and
+nothing else:
 
 ```bash
-export AIRA_GOOGLE_API_KEY=...            # or the platform key you use
 export AIRA_POSTGRES_PASSWORD=...
 export AIRA_SECRET_KEY=...                # Django's; generate a long random value
+export AIRA_VERTEX_CREDENTIALS=...        # and/or AIRA_VERTEX_API_KEY, AIRA_GOOGLE_API_KEY, …
 uv run python tools/vault_setup.py --from-env
 ```
 
@@ -251,7 +260,7 @@ from `RELEASE=` on the command line, which is one place rather than two.
 
 ### The topics are not created for you
 
-`make up-integrated` does not create the eight compacted Kafka topics. Against a broker reached over
+`make up-integrated` does not create the nine compacted Kafka topics. Against a broker reached over
 SASL or TLS it cannot: the one-shot that creates them would need a client properties file it has no
 way to assemble, and two services wait for it to finish successfully and would never start at all.
 

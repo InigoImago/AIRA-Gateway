@@ -62,19 +62,57 @@ def test_the_window_is_kept_when_the_round_fails(service: AnomalyService) -> Non
     )
 
 
-def test_traffic_arriving_during_the_failure_is_covered_too(service: AnomalyService) -> None:
+def test_traffic_arriving_during_the_failure_is_covered_too() -> None:
     """A round takes a few hundred milliseconds against a real database and requests do not stop
     for it. The watermark is a *lower* bound, so anything that arrived while the round was failing
     is inside the next round's window by construction — where the set this replaced had to merge
-    the new scopes back explicitly, and would have dropped them if it had assigned instead."""
+    the new scopes back explicitly, and would have dropped them if it had assigned instead.
+
+    Asserted as what the next round **finds**: a burst that arrived while the round was failing,
+    in a use case nothing else touched, is evaluated by the round after it.
+    """
+    from aira_gateway.audit import Outcome
+    from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
+    from aira_gateway.db.models import AnomalyRuleRead, RequestLog
+
+    engine = build_engine("sqlite+aiosqlite:///:memory:")
+    _run(create_all(engine))
+    sessions = build_sessionmaker(engine)
+    service = AnomalyService(sessionmaker=sessions, enabled=True)
     service._since = NOW - timedelta(minutes=5)
 
+    async def _explode(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("the database went away mid-round")
+
+    service._evaluate = _explode  # type: ignore[method-assign]
     with pytest.raises(RuntimeError):
         _run(service.tick(NOW))
+    del service._evaluate  # the database is back
 
-    # The next round reads from the same lower bound, so a request at any point after it — during
-    # the failure included — is still unevaluated rather than skipped.
-    assert service._since < NOW
+    async def a_burst_arrived_meanwhile() -> None:
+        async with sessions() as session:
+            session.add(
+                AnomalyRuleRead(
+                    id=1, use_case="uc", name="refusals", kind="refusal_rate",
+                    window_minutes=15, threshold=50, min_sample=4,
+                )
+            )  # fmt: skip
+            for _ in range(6):
+                session.add(
+                    RequestLog(
+                        subject="ada", auth_method="api_key", use_case="uc", api="gemini",
+                        operation="generateContent", model="mock-1", status=429,
+                        outcome=Outcome.RATE_LIMITED.value, created_at=NOW - timedelta(minutes=1),
+                    )
+                )  # fmt: skip
+            await session.commit()
+
+    _run(a_burst_arrived_meanwhile())
+    found = _run(service.tick(NOW + timedelta(seconds=1)))
+
+    assert [event.rule_name for event in found] == ["refusals"], (
+        "traffic that arrived while a round was failing was never evaluated by any rule"
+    )
 
 
 def test_the_window_is_kept_when_the_failure_is_inside_the_round() -> None:

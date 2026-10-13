@@ -1,7 +1,8 @@
+import { formatDate } from '@angular/common';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
-import { Observable, Subject, map, of, throwError } from 'rxjs';
+import { Observable, Subject, defer, map, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import {
   Capability,
@@ -172,6 +173,7 @@ interface Editor {
   save: () => void;
   providers: () => GatewayProvider[] | null;
   allowedRegions: () => string[];
+  permittedRegions: () => string[];
   providersError: () => string | null;
   providerIsCustom: { set: (v: boolean) => void; (): boolean };
   chooseProvider: (value: string) => void;
@@ -179,7 +181,6 @@ interface Editor {
   useOffered: (model: OfferedModel) => void;
   providerLabel: (provider: GatewayProvider) => string;
   editing: () => string;
-  vendorFilled: () => string[];
   vendorSaid: () => string[];
   displayName: { set: (v: string) => void; (): string };
   platform: { set: (v: string) => void; (): string };
@@ -212,7 +213,8 @@ function setup(
     served?: Observable<unknown[]>;
     save?: Observable<CatalogModel>;
     roles?: string[];
-    /** What `/me` lists. Absent means the permission to maintain the catalog. */
+    /** What `/me` lists. Absent means a Global Administrator's two that matter here: maintaining the
+     *  catalog, and asking the gateway about a model (`operations.diagnose`). */
     permissions?: string[];
     confirm?: boolean;
     /** What `:check` answers (`FRD-506`). */
@@ -223,6 +225,8 @@ function setup(
     providers?: Observable<GatewayProvider[]>;
     /** Where this installation permits processing, as the gateway states it (`ADR-0012` §6). */
     allowedRegions?: string[];
+    /** Regions single models are permitted by name (`AIRA_ALLOWED_MODEL_REGIONS`). */
+    modelRegions?: Record<string, string[]>;
     /** What one provider answers when asked what it offers. */
     offerings?: Observable<OfferedModel[]>;
     /** `AIRA_CURRENCY` as `/me` states it. */
@@ -246,7 +250,7 @@ function setup(
     username: 'admin',
     email: '',
     roles: options.roles ?? ['global-admin'],
-    permissions: options.permissions ?? ['catalog.write'],
+    permissions: options.permissions ?? ['catalog.write', 'operations.diagnose'],
     use_cases: [],
   };
 
@@ -307,6 +311,7 @@ function setup(
               map((providers: GatewayProvider[]) => ({
                 providers,
                 allowedRegions: options.allowedRegions ?? ['eu', 'europe-west1'],
+                modelRegions: options.modelRegions ?? {},
               })),
             ),
           providerOfferings: (name: string) => {
@@ -426,7 +431,9 @@ describe('ModelCatalog', () => {
     // The panel still opens — reading a declaration is not editing one — and carries no actions.
     expect(reader.html().querySelector('[data-testid^="detail-"]')).not.toBeNull();
     expect(reader.html().querySelector('[data-testid^="edit-"]')).toBeNull();
-    expect(reader.text()).not.toContain('Add model');
+    expect(reader.html().querySelector('[data-testid="add-model"]')).toBeNull();
+    // The guard on the guard: the same query finds the entrance where it is offered.
+    expect(admin.html().querySelector('[data-testid="add-model"]')).not.toBeNull();
   });
 
   it('asks the permission, never the role', () => {
@@ -434,7 +441,7 @@ describe('ModelCatalog', () => {
     const roleOnly = setup({ roles: ['global-admin'], permissions: [] });
     roleOnly.openFirst();
     expect(roleOnly.html().querySelector('[data-testid^="edit-"]')).toBeNull();
-    expect(roleOnly.text()).not.toContain('Add model');
+    expect(roleOnly.html().querySelector('[data-testid="add-model"]')).toBeNull();
 
     // …and the permission alone is enough.
     const permissionOnly = setup({ roles: [], permissions: ['catalog.write'] });
@@ -636,24 +643,29 @@ describe('ModelCatalog interactions', () => {
     expect(harness.removed).toEqual(['gemini-2.0-flash']);
   });
 
-  it('edits a model from the panel that shows what it is', () => {
+  it('edits a model from the panel that shows what it is', async () => {
     const harness = setup();
     harness.openFirst();
     (harness.fixture.nativeElement as HTMLElement)
       .querySelector<HTMLButtonElement>('[data-testid="edit-gemini-2.0-flash"]')
       ?.click();
     harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
     expect(harness.editor.name()).toBe('gemini-2.0-flash');
-    expect(
-      (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>('#model-name')
-        ?.value,
-    ).toBeDefined();
+    // The box a person reads, not only the signal behind it.
+    expect(harness.html().querySelector<HTMLInputElement>('#model-name')?.value).toBe(
+      'gemini-2.0-flash',
+    );
   });
 
   it('shows the display name and a dash for a missing provider', () => {
-    const { text } = setup({ models: of([FLASH, UNPRICED]) });
-    expect(text()).toContain('Flash');
-    expect(text()).toContain('—');
+    const harness = setup({ models: of([FLASH, UNPRICED]) });
+    const row = [...harness.html().querySelectorAll('tbody tr')].find((tr) =>
+      tr.textContent?.includes('mystery-1'),
+    )!;
+    expect(harness.text()).toContain('Flash');
+    // The provider cell itself — the row's Output cell carries a dash of its own for "no price".
+    expect(row.querySelectorAll('td')[2].textContent?.trim()).toBe('—');
   });
 });
 
@@ -1027,69 +1039,88 @@ describe('ModelCatalog — finding one among many', () => {
   it('leaves no declared field out of the panel', () => {
     /**
      * The claim `detailOf` makes is **exhaustiveness**: a catalog entry is what the gateway
-     * enforces, so "what does this row actually say" must be answered in full. A field added to
-     * `CatalogModel` and forgotten in the panel is a field the console silently does not show, and
-     * a partial answer to that question is worse than none.
+     * enforces, so "what does this row actually say" must be answered in full.
      *
-     * Asserted by populating every field with a value that could not appear by accident and
-     * requiring each to be on screen.
+     * Derived from the type rather than from a list somebody keeps: the fixture is a
+     * `Required<CatalogModel>` and the table below is keyed by every key of `CatalogModel`, so a
+     * field added to the model fails to **compile** here until somebody decides how the panel
+     * shows it — or writes down why it does not.
      */
-    const harness = setup({
-      models: of([
-        {
-          name: 'everything-1',
-          display_name: 'Display Name Here',
-          provider: 'provider-x',
-          publisher: 'publisher-y',
-          platform: 'platform-z',
-          hosting: 'self_deployed' as const,
-          underlying_model: 'underlying-q',
-          addressing: { deployment: 'dep-42' },
-          capabilities: ['generate' as const, 'tools' as const],
-          is_declared: true,
-          max_output_tokens: 4096,
-          default_max_output_tokens: 512,
-          thinking: { modes: ['disabled'] },
-          embedding: { supports_batch: true },
-          // An **object**, keyed by media type, with an optional per-type estimate — the server
-          // refuses a list.
-          attachments: { media_types: { 'application/pdf': { tokens: 258 } } },
-          is_priced: true,
-          input_price_per_million: '1.2345',
-          output_price_per_million: '6.7890',
-          numeric_id: 9001,
-          deprecated: true,
-          updated_at: '2026-08-09T10:00:00Z',
-        },
-      ]),
-    });
+    const EVERYTHING: Required<CatalogModel> = {
+      name: 'everything-1',
+      display_name: 'Display Name Here',
+      approved: true,
+      provider: 'provider-x',
+      input_price_per_million: '1.2345',
+      cached_input_price_per_million: '0.1111',
+      cache_write_price_per_million: '2.2222',
+      output_price_per_million: '6.7890',
+      is_priced: true,
+      updated_at: '2026-08-09T10:00:00Z',
+      capabilities: ['generate', 'tools'],
+      publisher: 'publisher-y',
+      platform: 'platform-z',
+      addressing: { regions: ['europe-west4', 'europe-west1'], deployment: 'dep-42' },
+      underlying_model: 'underlying-q',
+      context_window: 1048576,
+      max_output_tokens: 4096,
+      default_max_output_tokens: 512,
+      thinking: { modes: ['disabled'] },
+      embedding: { supports_batch: true },
+      // An **object**, keyed by media type, with an optional per-type estimate — the server
+      // refuses a list.
+      attachments: { media_types: { 'application/pdf': { tokens: 258 } } },
+      hosting: 'self_deployed',
+      deprecated: true,
+      numeric_id: 9001,
+      is_declared: true,
+    };
+    const SHOWN_AS: Record<keyof CatalogModel, { testid: string; shows: string } | null> = {
+      name: null, // the row's own title, above the panel
+      display_name: { testid: 'display_name', shows: 'Display Name Here' },
+      approved: { testid: 'approved', shows: 'yes' },
+      provider: { testid: 'provider', shows: 'provider-x' },
+      input_price_per_million: { testid: 'input_price', shows: '1.2345' },
+      cached_input_price_per_million: { testid: 'cached_input_price', shows: '0.1111' },
+      cache_write_price_per_million: { testid: 'cache_write_price', shows: '2.2222' },
+      output_price_per_million: { testid: 'output_price', shows: '6.7890' },
+      is_priced: null, // said by the two prices, which read "no price" without one
+      updated_at: {
+        testid: 'updated_at',
+        shows: formatDate('2026-08-09T10:00:00Z', 'yyyy-MM-dd HH:mm', 'en-US'),
+      },
+      capabilities: { testid: 'capabilities', shows: 'generate, tools' },
+      publisher: { testid: 'publisher', shows: 'publisher-y' },
+      platform: { testid: 'platform', shows: 'platform-z' },
+      addressing: { testid: 'regions', shows: 'europe-west4, europe-west1' },
+      underlying_model: null, // read by nothing (`test_every_model_control_is_reachable.py`)
+      context_window: { testid: 'context_window', shows: '1048576' },
+      max_output_tokens: { testid: 'max_output_tokens', shows: '4096' },
+      default_max_output_tokens: { testid: 'default_max_output_tokens', shows: '512' },
+      thinking: { testid: 'thinking', shows: 'disabled' },
+      embedding: { testid: 'embedding', shows: 'supports_batch' },
+      attachments: { testid: 'attachments', shows: 'application/pdf' },
+      hosting: { testid: 'hosting', shows: 'self_deployed' },
+      deprecated: { testid: 'deprecated', shows: 'yes' },
+      numeric_id: { testid: 'numeric_id', shows: '9001' },
+      is_declared: null, // said by the capabilities, which read "undeclared" without it
+    };
+    const harness = setup({ models: of([EVERYTHING]) });
     harness.openFirst();
-    const shown = harness.text();
 
-    for (const value of [
-      'Display Name Here',
-      'provider-x',
-      'publisher-y',
-      'platform-z',
-      'self_deployed',
-      'tools',
-      '4096',
-      '512',
-      'disabled',
-      'supports_batch',
-      'application/pdf',
-      '1.2345',
-      '6.7890',
-      '9001',
-    ]) {
-      expect(shown, `the panel does not show ${value}`).toContain(value);
+    for (const [field, expected] of Object.entries(SHOWN_AS)) {
+      if (!expected) continue;
+      const cell = harness.html().querySelector(`[data-testid="detail-${expected.testid}"]`);
+      expect(cell?.textContent, `the panel does not show ${field}`).toContain(expected.shows);
     }
+    // A timestamp as a person reads it, like every other table here — not the wire format.
+    expect(harness.text()).not.toContain('2026-08-09T10:00:00Z');
 
-    // **And two it must not show**: `underlying_model` and the raw `addressing` block. Printed
-    // among Provider, Platform and Hosting they read as configuration; a field that steers a
-    // request gets a control instead (`test_every_model_control_is_reachable.py`).
-    expect(shown).not.toContain('underlying-q');
-    expect(shown).not.toContain('dep-42');
+    // **And two it must not show**: `underlying_model` and the addressing keys besides the
+    // regions. Printed among Provider, Platform and Hosting they read as configuration; a field
+    // that steers a request gets a control instead (`test_every_model_control_is_reachable.py`).
+    expect(harness.text()).not.toContain('underlying-q');
+    expect(harness.text()).not.toContain('dep-42');
   });
 
   it('says "—" for a field nobody filled in, and never "null"', () => {
@@ -1186,15 +1217,19 @@ describe('ModelCatalog — discovery when things are missing', () => {
     /** A self-hosted server may name no region, and the mock names nothing at all. Blank stays
      *  blank: an adapter that declared nothing has not made a claim, and rendering an empty string
      *  as a value would turn silence into an assertion. */
-    const { component, editor, discovery, text, fixture } = setup({
-      served: of([{ name: 'mock-1', airaDeclared: false }]),
-    });
+    const harness = setup({ served: of([{ name: 'mock-1', airaDeclared: false }]) });
+    const { component, editor, discovery, text, fixture } = harness;
 
     discovery.discover();
     fixture.detectChanges();
 
     expect(discovery.notCatalogued().map((m) => m.name)).toEqual(['mock-1']);
-    expect(text()).toContain('—');
+    expect(text()).toContain('mock-1');
+    const cells = [...harness.html().querySelectorAll('tbody tr')]
+      .find((tr) => tr.textContent?.includes('mock-1'))!
+      .querySelectorAll('td');
+    expect(cells[1].textContent?.trim()).toBe('— / —');
+    expect(cells[2].textContent?.trim()).toBe('—');
 
     component.importServed(discovery.notCatalogued()[0]);
     expect(editor.name()).toBe('mock-1');
@@ -1380,7 +1415,7 @@ describe('ModelCatalog — one entrance, and what it stops asking', () => {
     // that follows begins with a newline, so a reader gets "vertex , speaking". Asserting
     // `toContain('vertex')` would pass through that happily.
     expect(summary!.textContent!.replace(/\s+/g, ' ').trim()).toBe(
-      'Lives on Google Vertex AI (vertex), speaking the google dialect, on the vertex platform. Change',
+      'Lives on Google Vertex AI (vertex), published by google, on the vertex platform. Change',
     );
     // The four boxes are gone — that is the whole point — while the two questions the provider
     // cannot answer stay in plain sight.
@@ -1508,6 +1543,27 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
 
     expect(editor.provider()).toBe('vertex');
     expect(html().querySelector('#model-name')).not.toBeNull();
+  });
+
+  it('says whether naming the model there is enough, as the gateway reports it', () => {
+    /** The gateway states per provider whether a catalogue entry reaches a model (`FRD-507`). The
+     *  window said a configuration entry was needed on every unlistable platform — on Vertex,
+     *  where cataloguing has been enough since stage B, it sent whoever added a model to edit an
+     *  environment file that needed no line. */
+    const way = (cataloguedIsEnough: boolean) => {
+      const { component, fixture, html } = setup({
+        providers: of([STUDIO, { ...VERTEX, cataloguedIsEnough }]),
+      });
+      html().querySelector<HTMLButtonElement>('[data-testid="add-model"]')!.click();
+      fixture.detectChanges();
+      component.browseProvider.set('vertex');
+      fixture.detectChanges();
+      return html().querySelector('[data-testid="provider-not-askable-way-in"]')!.textContent ?? '';
+    };
+
+    expect(way(true)).toContain('cataloguing the model is enough');
+    expect(way(true)).not.toContain('AIRA_FOUNDRY_DEPLOYMENTS');
+    expect(way(false)).toContain('must also be named in the gateway');
   });
 
   it('asks straight away when there is only one provider to ask', () => {
@@ -2371,11 +2427,13 @@ describe('ModelCatalog — a region this installation does not permit', () => {
   it('permits one that is on the list', () => {
     const { editor } = setup({ allowedRegions: ['eu', 'europe-west1'] });
     editor.add();
+    editor.name.set('m');
     editor.regions.set(['europe-west1']);
 
     expect(editor.regionAllowed('europe-west1')).toBe(true);
     expect(editor.forbiddenRegions()).toEqual([]);
-    expect(editor.formError()).not.toContain('permits');
+    // Named, so the region rule is the one being asked rather than "a model id is required".
+    expect(editor.formError()).toBeNull();
   });
 
   it('has no opinion about an empty region', () => {
@@ -2383,12 +2441,13 @@ describe('ModelCatalog — a region this installation does not permit', () => {
      *  OpenAI-compatible server — where a region would be a claim about routing nothing acts on. */
     const { editor } = setup({ allowedRegions: ['eu'] });
     editor.add();
+    editor.name.set('m');
     editor.regionDraft.set('   ');
     editor.addRegion();
 
     expect(editor.regions()).toEqual([]);
     expect(editor.forbiddenRegions()).toEqual([]);
-    expect(editor.formError()).not.toContain('permits');
+    expect(editor.formError()).toBeNull();
   });
 
   it('has no opinion when the gateway did not say', () => {
@@ -2434,6 +2493,67 @@ describe('ModelCatalog — a region this installation does not permit', () => {
     const note = html().querySelector('[data-testid="region-not-permitted"]');
     expect(note).not.toBeNull();
     expect(note!.textContent).toContain('eu');
+  });
+
+  it('permits a region the gateway allows this model by name — and no other model', () => {
+    /** `global` names no region, and the open models on Agent Platform answer nowhere else: an
+     *  installation permits it **for them** (`AIRA_ALLOWED_MODEL_REGIONS`), not for every model.
+     *  The editor follows the gateway's decision both ways — refusing it for the named model would
+     *  block the very entry the decision was made for, and accepting it for another would be a
+     *  second, wider policy. */
+    const { editor } = setup({
+      allowedRegions: ['eu', 'europe-west1'],
+      modelRegions: { 'glm-4.7-maas': ['global'] },
+    });
+    editor.add();
+    editor.name.set('glm-4.7-maas');
+    editor.regions.set(['global']);
+
+    expect(editor.regionAllowed('global')).toBe(true);
+    expect(editor.forbiddenRegions()).toEqual([]);
+    expect(editor.formError()).toBeNull();
+
+    editor.name.set('gemini-3.5-flash');
+
+    expect(editor.regionAllowed('global')).toBe(false);
+    expect(editor.forbiddenRegions()).toEqual(['global']);
+    expect(editor.formError()).toContain("Region 'global' is not permitted by this installation");
+    // Both places the policy can be widened, since this one is a decision about one model.
+    expect(editor.formError()).toContain('AIRA_ALLOWED_MODEL_REGIONS');
+    expect(editor.canSave()).toBe(false);
+  });
+
+  it('offers a model the regions it is permitted by name, and names them as allowed', () => {
+    const { editor, fixture, html } = setup({
+      allowedRegions: ['eu'],
+      modelRegions: { 'deepseek-v3.2-maas': ['global'] },
+    });
+    editor.add();
+    editor.name.set('deepseek-v3.2-maas');
+    fixture.detectChanges();
+
+    const offered = () =>
+      [...html().querySelectorAll('#allowed-regions option')].map(
+        (option) => (option as HTMLOptionElement).value,
+      );
+    expect(offered()).toEqual(['eu', 'global']);
+    expect(editor.permittedRegions()).toEqual(['eu', 'global']);
+
+    editor.name.set('another-model');
+    fixture.detectChanges();
+    expect(offered()).toEqual(['eu']);
+  });
+
+  it('still has no opinion when the gateway did not say, whatever it permits by name', () => {
+    /** A permission by name widens a list; it does not stand in for one. Without the list the
+     *  console has nothing to measure against, exactly as before. */
+    const { editor } = setup({ allowedRegions: [], modelRegions: { m: ['global'] } });
+    editor.add();
+    editor.name.set('m');
+    editor.regions.set(['somewhere-else']);
+
+    expect(editor.regionAllowed('somewhere-else')).toBeNull();
+    expect(editor.forbiddenRegions()).toEqual([]);
   });
 });
 
@@ -2565,5 +2685,644 @@ describe('ModelCatalog — a model in several regions', () => {
 
     expect(editor.regions()).toEqual(['europe-west1']);
     expect(editor.regionVerdict('eu')).toBeNull();
+  });
+});
+
+/** Type into a control the way a person does — `ngModel` inside a `<form>` registers on a
+ *  microtask, so the caller awaits one before typing. */
+function typeInto(harness: ReturnType<typeof setup>, selector: string, value: string): void {
+  const input = harness.html().querySelector<HTMLInputElement>(selector)!;
+  input.value = value;
+  input.dispatchEvent(new Event('input'));
+  harness.fixture.detectChanges();
+}
+
+function submit(harness: ReturnType<typeof setup>): HTMLButtonElement {
+  return harness.html().querySelector<HTMLButtonElement>('button[type="submit"]')!;
+}
+
+describe('ModelCatalog — adding never replaces a model the catalog already has', () => {
+  /** A save is an upsert by name on the server, so an "add" carrying a catalogued name is a full
+   *  blank declaration applied over the stored one: approval, price, capabilities and KIRA id
+   *  gone, under a banner saying it was saved. Every entrance but the vendor listing reached that. */
+  const STORED: CatalogModel = { ...FLASH, approved: true, numeric_id: 9001 };
+
+  it('refuses a catalogued name typed into the empty form, and offers the stored declaration', async () => {
+    const harness = setup({ providers: of([]), models: of([STORED, UNPRICED]) });
+    harness.click('[data-testid="add-model"]');
+    harness.click('[data-testid="add-by-name"]');
+    await Promise.resolve();
+    typeInto(harness, '#model-name', 'gemini-2.0-flash');
+    harness.lookFirst();
+
+    expect(harness.editor.formError()).toContain("'gemini-2.0-flash' is already in the catalog");
+    expect(submit(harness).disabled).toBe(true);
+    submit(harness).click();
+    harness.editor.save();
+    expect(harness.saved).toEqual([]);
+
+    // The way forward is the declaration on file, with its price and its release.
+    harness.click('[data-testid="open-stored"]');
+    expect(harness.editor.editing()).toBe('gemini-2.0-flash');
+    expect(harness.editor.inputPrice()).toBe('0.075');
+    expect(harness.editor.approved()).toBe(true);
+  });
+
+  it('opens the stored declaration for a served model the catalog took in meanwhile', () => {
+    /** The served list is the gateway's answer, and its `airaDeclared` lags behind the event bus:
+     *  after one save it still offers the model it just catalogued. */
+    let catalog: CatalogModel[] = [FLASH];
+    const harness = setup({
+      models: defer(() => of(catalog)),
+      served: of([
+        {
+          name: 'new-x',
+          airaDeclared: false,
+          airaProvider: 'generative-language',
+          airaPublisher: 'google',
+        },
+      ]),
+    });
+    harness.discovery.discover();
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="import-new-x"]');
+    harness.editor.inputPrice.set('1.00');
+    harness.editor.outputPrice.set('2.00');
+    harness.editor.approved.set(true);
+    harness.lookFirst();
+    catalog = [
+      FLASH,
+      {
+        name: 'new-x',
+        input_price_per_million: '1.00',
+        output_price_per_million: '2.00',
+        is_priced: true,
+        approved: true,
+      },
+    ];
+    harness.editor.save();
+    harness.fixture.detectChanges();
+
+    expect(harness.saved).toHaveLength(1);
+    // No longer offered as missing — the catalog behind the window says otherwise.
+    expect(harness.html().querySelector('[data-testid="import-new-x"]')).toBeNull();
+
+    // And a stale row, if one is used, corrects the stored model instead of blanking it.
+    harness.component.importServed({ name: 'new-x', airaDeclared: false });
+    expect(harness.editor.editing()).toBe('new-x');
+    expect(harness.editor.inputPrice()).toBe('1.00');
+    expect(harness.editor.approved()).toBe(true);
+  });
+});
+
+describe('ModelCatalog — a level word as the default', () => {
+  it('sends a level chosen as the default as that word', async () => {
+    /** The gateway sends whatever word is declared as the default (`thinking._default_for`), and a
+     *  level is as likely a default as a mode. Pinned here so the console's half of that contract
+     *  cannot drift while Management's validator catches up. */
+    const harness = setup();
+    harness.editor.add();
+    harness.editor.name.set('qwen3:4b');
+    harness.editor.toggleCapability('thinking', true);
+    harness.editor.levelDraft.set('high');
+    harness.editor.addLevel();
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    await Promise.resolve();
+
+    const select = harness.html().querySelector<HTMLSelectElement>('#think-default')!;
+    select.value = 'high';
+    select.dispatchEvent(new Event('change'));
+    harness.fixture.detectChanges();
+    harness.lookFirst();
+    harness.editor.save();
+
+    expect(harness.saved[0].thinking?.default).toEqual({ mode: 'high' });
+    expect(harness.saved[0].thinking?.levels).toEqual(['high']);
+  });
+});
+
+describe('ModelCatalog — what goes wrong in the window is said in the window', () => {
+  it('shows a refused save inside the window the reader is looking at', () => {
+    const harness = setup({
+      save: throwError(() => ({
+        status: 400,
+        error: {
+          error: {
+            message: 'Request failed.',
+            details: { numeric_id: ["KIRA id 9001 already belongs to 'gemini-2.0-flash'."] },
+          },
+        },
+      })),
+    });
+    harness.editor.add();
+    harness.editor.name.set('m-1');
+    harness.lookFirst();
+    submit(harness).click();
+    harness.fixture.detectChanges();
+
+    const alert = harness.html().querySelector('[role="dialog"] [role="alert"]');
+    expect(alert?.textContent).toContain("KIRA id 9001 already belongs to 'gemini-2.0-flash'");
+    // One report, where the reader is — not a second copy behind the backdrop.
+    expect(harness.html().querySelectorAll('[role="alert"]').length).toBe(1);
+  });
+
+  it('shows a refused level word inside the window, and lets it go with the window', () => {
+    const harness = setup();
+    harness.editor.add();
+    harness.editor.toggleCapability('thinking', true);
+    harness.editor.editorTab.set('capabilities');
+    harness.editor.levelDraft.set('auto');
+    harness.editor.addLevel();
+    harness.fixture.detectChanges();
+
+    const alert = harness.html().querySelector('[role="dialog"] [role="alert"]');
+    expect(alert?.textContent).toContain('thinking mode');
+
+    [...harness.html().querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Cancel')!
+      .click();
+    harness.fixture.detectChanges();
+    expect(harness.html().querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('starts a window without the last window’s report', () => {
+    const harness = setup({ save: throwError(() => ({ status: 503 })) });
+    harness.editor.add();
+    harness.editor.name.set('m-1');
+    harness.lookFirst();
+    harness.editor.save();
+    expect(harness.feedback.error()).toBeTruthy();
+
+    harness.component.edit(FLASH);
+    harness.fixture.detectChanges();
+    expect(harness.html().querySelector('[role="dialog"] [role="alert"]')).toBeNull();
+  });
+});
+
+describe('ModelCatalog — the way in while the gateway cannot be asked', () => {
+  it('still lets a model be declared by name, with the provider typed', () => {
+    /** The catalog is Management's: an unreachable gateway degrades to a typed provider rather
+     *  than locking an administrator out (`FRD-507` FR-6) — and that needs a way into the editor. */
+    const harness = setup({ providers: throwError(() => ({ status: 502 })) });
+    harness.click('[data-testid="add-model"]');
+    expect(harness.testid('browse-providers-error')).not.toBeNull();
+
+    harness.click('[data-testid="add-by-name"]');
+
+    expect(harness.component.showBrowse()).toBe(false);
+    expect(harness.editor.showAdd()).toBe(true);
+    expect(harness.testid('provider-typed')).not.toBeNull();
+  });
+
+  it('asks the gateway again rather than remembering a failure for good', () => {
+    let attempts = 0;
+    const harness = setup({
+      providers: defer(() =>
+        ++attempts === 1 ? throwError(() => ({ status: 502 })) : of([STUDIO, VERTEX]),
+      ),
+    });
+    harness.click('[data-testid="add-model"]');
+    expect(harness.testid('browse-providers-error')).not.toBeNull();
+
+    harness.click('[data-testid="browse-providers-retry"]');
+
+    expect(attempts).toBe(2);
+    expect(harness.testid('browse-providers-error')).toBeNull();
+    expect(harness.component.askable().map((p) => p.name)).toEqual(['generative-language']);
+  });
+});
+
+describe('ModelCatalog — an answer lands only on the subject it was asked about', () => {
+  it('never lists one provider’s models under another', () => {
+    const studio = new Subject<OfferedModel[]>();
+    let calls = 0;
+    const harness = setup({
+      providers: of([STUDIO, { ...STUDIO, name: 'ollama', label: 'ollama' }]),
+      offerings: defer(() =>
+        ++calls === 1 ? studio : of([{ ...OFFERED_EMBED, name: 'llama-local' }]),
+      ),
+    });
+    harness.component.openBrowse();
+    harness.component.chooseBrowseProvider('generative-language');
+    harness.component.chooseBrowseProvider('ollama');
+
+    studio.next([{ ...OFFERED_FLASH, name: 'gemini-only-on-studio' }]);
+    studio.complete();
+
+    expect(harness.component.offerings()?.map((m) => m.name)).toEqual(['llama-local']);
+  });
+
+  it('does not put one row’s reachability verdict under another', () => {
+    const pending = new Subject<ModelCheck>();
+    const harness = setup({
+      check: pending,
+      models: of([FLASH, { ...FLASH, name: 'zz-other', display_name: '' }]),
+    });
+    harness.click('[data-testid="open-model-gemini-2.0-flash"]');
+    harness.click('[data-testid="check-gemini-2.0-flash"]');
+    harness.click('[data-testid="open-model-zz-other"]');
+
+    pending.next({ ...CHECK, detail: 'gemini-2.0-flash answered' });
+    pending.complete();
+    harness.fixture.detectChanges();
+
+    expect(harness.component.check()).toBeNull();
+    expect(harness.testid('check-detail')).toBeNull();
+    const button = harness.testid('check-zz-other') as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toContain('Check reachability');
+  });
+
+  it('forgets a check still in flight when the window closes', () => {
+    const pending = new Subject<ModelCheck>();
+    const harness = setup({ check: pending });
+    harness.component.edit(FLASH);
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="editor-check"]');
+    [...harness.html().querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Cancel')!
+      .click();
+    harness.fixture.detectChanges();
+
+    harness.component.edit({ ...FLASH, name: 'zz-other' });
+    harness.fixture.detectChanges();
+    const button = harness.testid('editor-check') as HTMLButtonElement;
+    expect(button.textContent).toContain('Check reachability');
+    expect(button.disabled).toBe(false);
+
+    pending.next(CHECK);
+    pending.complete();
+    harness.fixture.detectChanges();
+    expect(harness.editor.check()).toBeNull();
+    expect(harness.editor.checkedName()).toBeNull();
+    expect(harness.testid('editor-verdict')).toBeNull();
+  });
+
+  it('forgets a question to the model still in flight when the window closes', () => {
+    const pending = new Subject<ThinkingLevelCheck>();
+    const harness = setup({ levelChecks: [pending] });
+    const thinker: CatalogModel = {
+      ...FLASH,
+      capabilities: ['thinking'],
+      thinking: { modes: [], levels: ['low'] },
+    };
+    harness.component.edit(thinker);
+    harness.editor.checkLevels();
+    [...harness.html().querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Cancel')
+      ?.click();
+    harness.fixture.detectChanges();
+    harness.component.edit({ ...thinker, name: 'zz-other' });
+
+    pending.next({
+      model: 'gemini-2.0-flash',
+      modes: [],
+      results: [
+        { region: '', level: 'low', accepted: false, detail: 'refused by gemini-2.0-flash' },
+      ],
+    });
+    pending.complete();
+
+    expect(harness.editor.levelVerdict('low')).toBeNull();
+  });
+
+  it('forgets a verdict when the provider it was asked about changes', () => {
+    const harness = setup();
+    harness.editor.add();
+    harness.editor.name.set('m-1');
+    harness.editor.chooseProvider('vertex');
+    harness.lookFirst();
+    expect(harness.editor.mustCheck()).toBe(false);
+
+    harness.editor.chooseProvider('generative-language');
+
+    expect(harness.editor.check()).toBeNull();
+    expect(harness.editor.mustCheck()).toBe(true);
+  });
+});
+
+describe('ModelCatalog — removing a model says what it costs', () => {
+  it('names the refusals and the lost releases before removing', () => {
+    /** A model the catalog does not hold is refused (`FRD-307`), and deleting the row deletes every
+     *  use case's release of it — which adding it back does not restore. */
+    const harness = setup();
+    const ask = vi.spyOn(TestBed.inject(ConfirmService), 'ask');
+    harness.openFirst();
+    harness.click('[data-testid="remove-gemini-2.0-flash"]');
+
+    const question = ask.mock.calls[0][0];
+    expect(question).toContain('refused');
+    expect(question).toContain('release');
+    expect(question).not.toContain('no longer be priced');
+  });
+});
+
+describe('ModelCatalog — the KIRA id of a catalogued model', () => {
+  it('will not quietly take a model off the KIRA surface by clearing its id', async () => {
+    /** The server assigns an id only on create; an edit sending `null` stores `null`, and the model
+     *  stops answering on the KIRA surface while looking fully configured. */
+    const harness = setup();
+    harness.component.edit({ ...FLASH, numeric_id: 9001 });
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="change-provenance"]');
+    await Promise.resolve();
+    harness.type('model-kira-id', '');
+
+    expect(harness.editor.kiraId()).toBeNull();
+    expect(harness.editor.formError()).toContain('KIRA');
+    expect(submit(harness).disabled).toBe(true);
+    harness.editor.save();
+    expect(harness.saved).toEqual([]);
+  });
+
+  it('still leaves the id of a new model to the server', () => {
+    const harness = setup();
+    harness.editor.add();
+    harness.editor.name.set('fresh-1');
+    harness.lookFirst();
+    expect(harness.editor.formError()).toBeNull();
+  });
+});
+
+describe('ModelCatalog — asking the gateway about a model needs operations.diagnose', () => {
+  it('offers the reachability check only to a reader who may diagnose', () => {
+    const reader = setup({ permissions: ['usecase.read_all', 'report.read_all'] });
+    reader.openFirst();
+    expect(reader.html().querySelector('[data-testid^="check-gemini"]')).toBeNull();
+
+    const diagnoser = setup({ permissions: ['operations.diagnose'] });
+    diagnoser.openFirst();
+    expect(diagnoser.html().querySelector('[data-testid^="check-gemini"]')).not.toBeNull();
+  });
+
+  it('does not demand a check from somebody who cannot run one, and says why', () => {
+    const harness = setup({ permissions: ['catalog.write'] });
+    harness.editor.add();
+    harness.editor.name.set('m-1');
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('editor-check')).toBeNull();
+    expect(harness.editor.mustCheck()).toBe(false);
+    expect(submit(harness).disabled).toBe(false);
+    expect(harness.text()).toContain('operations.diagnose');
+
+    harness.editor.toggleCapability('thinking', true);
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    expect(harness.testid('check-levels')).toBeNull();
+  });
+});
+
+describe('ModelCatalog — where a model lives, copied the same way by every entrance', () => {
+  it('copies the region an adapter names, through the served list, the provider and the listing', () => {
+    const harness = setup({
+      providers: of([{ ...STUDIO, region: 'europe-west1' }, VERTEX]),
+      served: of([
+        {
+          name: 'served-1',
+          airaDeclared: false,
+          airaProvider: 'vertex',
+          airaPublisher: 'google',
+          airaRegion: 'europe-west1',
+        },
+      ]),
+    });
+    const { component, editor, discovery } = harness;
+
+    discovery.discover();
+    component.importServed(discovery.notCatalogued()[0]);
+    expect(editor.regions()).toEqual(['europe-west1']);
+    expect(editor.platform()).toBe('vertex');
+
+    component.openBrowse();
+    component.chooseBrowseProvider('vertex');
+    component.addManually();
+    expect(editor.provider()).toBe('vertex');
+    expect(editor.platform()).toBe('vertex');
+    expect(editor.regions()).toEqual(['europe-west1']);
+
+    component.openBrowse();
+    component.chooseBrowseProvider('generative-language');
+    component.catalogueOffered(OFFERED_FLASH);
+    expect(editor.platform()).toBe('generative-language');
+    expect(editor.regions()).toEqual(['europe-west1']);
+  });
+});
+
+describe('ModelCatalog — asking a model about its modes alone', () => {
+  it('asks about the ticked modes even when no level word is declared', () => {
+    /** `gemini-2.5-flash` has modes and no levels — the example the levels hint itself names. */
+    const harness = setup();
+    harness.editor.add();
+    harness.editor.name.set('gemini-2.5-flash');
+    harness.editor.toggleCapability('thinking', true);
+    harness.editor.toggleThinkingMode('auto', true);
+    harness.editor.toggleThinkingMode('limited', true);
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+
+    const button = harness.testid('check-levels') as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    button.click();
+
+    expect(harness.askedLevels[0].modes).toEqual(['auto', 'limited']);
+  });
+});
+
+describe('ModelCatalog — a later success clears an earlier failure', () => {
+  it('for a row’s reachability check', () => {
+    let calls = 0;
+    const harness = setup({
+      check: defer(() => (++calls === 1 ? throwError(() => ({ status: 502 })) : of(CHECK))),
+    });
+    harness.openFirst();
+    harness.click('[data-testid="check-gemini-2.0-flash"]');
+    expect(harness.html().querySelector('[role="alert"]')).not.toBeNull();
+
+    harness.click('[data-testid="check-gemini-2.0-flash"]');
+    expect(harness.html().querySelector('[role="alert"]')).toBeNull();
+    expect(harness.testid('check-verdict')?.textContent).toContain('Reachable');
+  });
+
+  it('for the editor’s check and its question to the model', () => {
+    let calls = 0;
+    const harness = setup({
+      check: defer(() => (++calls === 1 ? throwError(() => ({ status: 502 })) : of(CHECK))),
+      levelChecks: [throwError(() => ({ status: 502 }))],
+    });
+    harness.editor.add();
+    harness.editor.name.set('m-1');
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="editor-check"]');
+    expect(harness.html().querySelector('[role="alert"]')).not.toBeNull();
+    harness.click('[data-testid="editor-check"]');
+    expect(harness.html().querySelector('[role="alert"]')).toBeNull();
+
+    harness.editor.thinkingLevels.set(['low']);
+    harness.editor.checkLevels();
+    harness.fixture.detectChanges();
+    expect(harness.html().querySelector('[role="alert"]')).not.toBeNull();
+    harness.editor.checkLevels();
+    harness.fixture.detectChanges();
+    expect(harness.html().querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('for asking the gateway what it serves', () => {
+    let calls = 0;
+    const harness = setup({
+      served: defer(() =>
+        ++calls === 1
+          ? throwError(() => ({ status: 503 }))
+          : of([{ name: 'flash', airaDeclared: true }]),
+      ),
+    });
+    harness.click('[data-testid="discover-models"]');
+    expect(harness.html().querySelector('[role="alert"]')).not.toBeNull();
+    harness.click('[data-testid="discover-models"]');
+    expect(harness.html().querySelector('[role="alert"]')).toBeNull();
+  });
+});
+
+describe('ModelCatalog — a gateway that serves nothing', () => {
+  it('says the gateway serves no models, rather than that the catalog has them all', () => {
+    const harness = setup({ served: of([]) });
+    harness.click('[data-testid="discover-models"]');
+
+    expect(harness.text()).toContain('serves no models');
+    expect(harness.text()).not.toContain('Every model the gateway serves is in the catalog');
+  });
+});
+
+describe('ModelCatalog — the browse window is a window', () => {
+  it('closes on Escape and takes the keyboard when it opens', () => {
+    const harness = setup();
+    harness.click('[data-testid="add-model"]');
+    const window = harness.html().querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(window.contains(document.activeElement)).toBe(true);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    harness.fixture.detectChanges();
+
+    expect(harness.component.showBrowse()).toBe(false);
+    expect(harness.html().querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+describe('ModelCatalog — a value the catalog cannot store is refused by name', () => {
+  it('names the price field and the limit it breaks', () => {
+    const harness = setup();
+    harness.editor.add();
+    harness.editor.name.set('m-1');
+    harness.editor.outputPrice.set('1');
+
+    harness.editor.inputPrice.set('0.1234567');
+    expect(harness.editor.formError()).toContain('Input price');
+    expect(harness.editor.formError()).toContain('6 decimal');
+
+    harness.editor.inputPrice.set('1234567');
+    expect(harness.editor.formError()).toContain('Input price');
+    expect(harness.editor.formError()).toContain('6 digits');
+
+    harness.editor.inputPrice.set('999999.999999');
+    expect(harness.editor.formError()).toBeNull();
+  });
+
+  it('refuses a width it cannot read instead of dropping it', () => {
+    const harness = setup();
+    harness.editor.add();
+    harness.editor.name.set('embed-1');
+    harness.editor.toggleCapability('embed', true);
+    harness.editor.dimensions.set('768, 1O24');
+
+    expect(harness.editor.formError()).toContain("'1O24'");
+    expect(harness.editor.canSave()).toBe(false);
+  });
+
+  it('refuses what the server would refuse about caps and thinking budgets', () => {
+    const harness = setup();
+    const { editor } = harness;
+    editor.add();
+    editor.name.set('m-1');
+
+    editor.contextWindow.set(4096);
+    editor.maxOutput.set(8192);
+    expect(editor.formError()).toContain('context window');
+    editor.contextWindow.set(null);
+
+    editor.toggleCapability('thinking', true);
+    editor.thinkingMin.set(4096);
+    editor.thinkingMax.set(1024);
+    expect(editor.formError()).toContain('smallest thinking budget');
+
+    editor.thinkingMin.set(null);
+    editor.thinkingMax.set(8192);
+    expect(editor.formError()).toContain('below the output cap');
+
+    editor.thinkingMax.set(null);
+    editor.toggleThinkingMode('limited', true);
+    expect(editor.formError()).toContain('largest thinking budget');
+  });
+});
+
+describe('ModelCatalog — an edit keeps what the form does not show', () => {
+  it('keeps addressing keys besides the regions', () => {
+    /** The editor offers the regions; anything else in the block — a deployment, an endpoint id —
+     *  was written by the API or a seed and must survive a save from the console. */
+    const harness = setup();
+    harness.component.edit({
+      ...FLASH,
+      addressing: { regions: ['europe-west1'], deployment: 'prod-1' },
+    });
+    harness.editor.save();
+
+    expect(harness.saved[0].addressing).toEqual({
+      regions: ['europe-west1'],
+      deployment: 'prod-1',
+    });
+
+    harness.component.edit({ ...FLASH, addressing: { region: 'europe-west3', deployment: 'p' } });
+    harness.editor.regions.set([]);
+    harness.editor.save();
+    expect(harness.saved[1].addressing).toEqual({ deployment: 'p' });
+  });
+});
+
+describe('ModelCatalog — the editor is the shared window, laid out as before', () => {
+  it('keeps the tab strip, the form and the buttons where the steady layout selects them', () => {
+    /** `modal--steady` pins the strip and the standing band and scrolls only the form, by rules on
+     *  the window body's **direct** children (`.modal--steady .modal__body > form`), and the footer
+     *  places a hint on its own line by `.modal__foot > .field__hint`. A wrapper element between
+     *  them would leave every rule matching nothing — which no unit test would otherwise see. */
+    const harness = setup();
+    harness.editor.add();
+    harness.fixture.detectChanges();
+    const q = (selector: string) => harness.html().querySelector(selector);
+
+    expect(q('[data-testid="model-editor"]')?.classList.contains('modal--steady')).toBe(true);
+    expect(q('.modal--steady > .modal__body > .tabs')).not.toBeNull();
+    expect(q('.modal--steady > .modal__body > form#model-editor-form')).not.toBeNull();
+    expect(q('.modal--steady > .modal__body > .editor-standing')).not.toBeNull();
+    expect(q('.modal--steady > .modal__foot > .field__hint')).not.toBeNull();
+    expect(q('.modal--steady > .modal__foot > button[type="submit"]')).not.toBeNull();
+    expect(q('#model-editor-title')?.textContent).toContain('Add a model');
+  });
+
+  it('closes on Escape and on the backdrop, discarding what was typed', () => {
+    const harness = setup();
+    harness.component.edit(FLASH);
+    harness.fixture.detectChanges();
+    harness.editor.name.set('typo');
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    harness.fixture.detectChanges();
+    expect(harness.editor.showAdd()).toBe(false);
+    expect(harness.editor.name()).toBe('');
+
+    harness.component.edit(FLASH);
+    harness.fixture.detectChanges();
+    harness.click('.modal-backdrop');
+    expect(harness.editor.showAdd()).toBe(false);
+    expect(harness.saved).toEqual([]);
   });
 });

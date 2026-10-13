@@ -3,7 +3,7 @@
 
   <div class="spread">
     <div>
-      <h2 style="margin: 0">Pipeline</h2>
+      <h2 class="page-title">Pipeline</h2>
       <code>{{ slug }}</code>
     </div>
     <div class="row">
@@ -12,7 +12,7 @@
       } @else if (dirty()) {
         <span class="badge badge--warning" role="status">Unsaved changes</span>
       }
-      @if (canManage()) {
+      @if (canSave()) {
         <button type="button" class="btn btn--primary" [disabled]="saving()" (click)="save()">
           {{ saving() ? 'Saving…' : 'Save pipeline' }}
         </button>
@@ -29,11 +29,25 @@
       <span class="spinner" aria-hidden="true"></span>
       Loading pipeline…
     </p>
+  } @else if (loadFailed()) {
+    <!-- No builder over a pipeline that could not be read: an empty graph here is not the stored
+         one, and saving it would replace the stored one with nothing. -->
+    <div class="row">
+      <button type="button" class="btn" data-testid="pipeline-reload" (click)="reload()">
+        Load the pipeline again
+      </button>
+    </div>
   } @else {
-    @if (!canManage()) {
+    @if (useCaseState() === 'loaded' && !canManage()) {
       <p class="callout" data-testid="pipeline-readonly">
         You can read this pipeline and try it out below. Changing it is done by the administrators
         of this use case.
+      </p>
+    } @else if (useCaseState() === 'failed') {
+      <p class="callout callout--warning" data-testid="pipeline-use-case-unread">
+        {{ useCaseError() }} Without it, which models this use case may use and whether you may
+        change its pipeline are not known, so the builder stays read-only and offers no model to
+        choose.
       </p>
     }
     @if (nothingReleased()) {
@@ -78,7 +92,7 @@
                 "
               >
                 <div class="node__body">
-                  <span class="node__index" aria-hidden="true">{{ $index + 1 }}</span>
+                  <span class="step-number" aria-hidden="true">{{ $index + 1 }}</span>
                   <div class="node__text">
                     <div class="node__title">{{ label(step.type) }}</div>
                     <div class="node__meta muted">{{ summarize(step) }}</div>
@@ -164,6 +178,7 @@
           [config]="config()"
           [released]="released()"
           [mayCall]="mayCall()"
+          [mayAuthor]="canManage()"
         />
       </div>
 
@@ -233,11 +248,17 @@
                     [ngModel]="step.config.model || ''"
                     (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
                   >
-                    <option value="">— none: use the patterns below —</option>
+                    <option value="">— none: the heuristic patterns decide —</option>
+                    @if (strayOption(step.config.model); as stored) {
+                      <option [value]="stored.value">{{ stored.label }}</option>
+                    }
                     @for (model of released(); track model) {
                       <option [value]="model">{{ model }}</option>
                     }
                   </select>
+                  @if (unreleased(step.config.model); as stored) {
+                    <ng-container *ngTemplateOutlet="notReleased; context: { $implicit: stored }" />
+                  }
                   <!-- A classifier call is a real model call, charged to this use case and
                        audited under `pipeline:injection_filter` (`FRD-125b`), so it may only name
                        a released model. -->
@@ -251,6 +272,7 @@
                     emptyHint="No model is released to this use case yet."
                     [options]="modelChoices()"
                     [selected]="step.config.fallback_models || []"
+                    [disabled]="!canManage()"
                     (changed)="setStepField(selectedIndex(), 'fallback_models', $event)"
                   />
                   <span class="field__hint"
@@ -271,17 +293,15 @@
                   ></textarea>
                 </div>
               } @else {
-                <div class="field">
-                  <label class="row" style="gap: 0.4rem">
-                    <input
-                      type="checkbox"
-                      style="width: auto"
-                      [ngModel]="step.config.use_builtins !== false"
-                      (ngModelChange)="setStepField(selectedIndex(), 'use_builtins', $event)"
-                    />
-                    Use built-in patterns
-                  </label>
-                </div>
+                <label class="checkline">
+                  <input
+                    type="checkbox"
+                    data-testid="use-builtins"
+                    [ngModel]="step.config.use_builtins !== false"
+                    (ngModelChange)="setStepField(selectedIndex(), 'use_builtins', $event)"
+                  />
+                  Use built-in patterns
+                </label>
                 <details>
                   <summary class="muted">Built-in patterns ({{ builtinLabels.length }})</summary>
                   <ul class="pattern-list">
@@ -313,10 +333,16 @@
                   data-testid="pii-model"
                 >
                   <option value="">— none: the step blocks —</option>
+                  @if (strayOption(step.config.model); as stored) {
+                    <option [value]="stored.value">{{ stored.label }}</option>
+                  }
                   @for (model of released(); track model) {
                     <option [value]="model">{{ model }}</option>
                   }
                 </select>
+                @if (unreleased(step.config.model); as stored) {
+                  <ng-container *ngTemplateOutlet="notReleased; context: { $implicit: stored }" />
+                }
                 <span class="field__hint">
                   Only models released to this use case. It sees the prompt in full — including the
                   personal data it is being asked to remove — so it is the one model here that has
@@ -332,6 +358,7 @@
                   emptyHint="No model is released to this use case yet."
                   [options]="modelChoices()"
                   [selected]="step.config.fallback_models || []"
+                  [disabled]="!canManage()"
                   (changed)="setStepField(selectedIndex(), 'fallback_models', $event)"
                 />
                 <span class="field__hint"
@@ -400,10 +427,16 @@
                   (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
                 >
                   <option value="">— none: everything takes the default —</option>
+                  @if (strayOption(step.config.model); as stored) {
+                    <option [value]="stored.value">{{ stored.label }}</option>
+                  }
                   @for (model of released(); track model) {
                     <option [value]="model">{{ model }}</option>
                   }
                 </select>
+                @if (unreleased(step.config.model); as stored) {
+                  <ng-container *ngTemplateOutlet="notReleased; context: { $implicit: stored }" />
+                }
               </div>
               <div class="field">
                 <label id="insp-route-chain">If that model cannot be reached</label>
@@ -414,6 +447,7 @@
                   emptyHint="No model is released to this use case yet."
                   [options]="modelChoices()"
                   [selected]="step.config.fallback_models || []"
+                  [disabled]="!canManage()"
                   (changed)="setStepField(selectedIndex(), 'fallback_models', $event)"
                 />
                 <span class="field__hint"
@@ -460,6 +494,9 @@
                       [attr.aria-label]="'Category ' + ($index + 1) + ' target model'"
                     >
                       <option value="">→ choose a model</option>
+                      @if (strayOption(cat.model); as stored) {
+                        <option [value]="stored.value">{{ stored.label }}</option>
+                      }
                       @for (model of released(); track model) {
                         <option [value]="model">{{ model }}</option>
                       }
@@ -481,6 +518,9 @@
                     placeholder="when to pick this (helps the classifier)"
                     [attr.aria-label]="'Category ' + ($index + 1) + ' description'"
                   />
+                  @if (unreleased(cat.model); as stored) {
+                    <ng-container *ngTemplateOutlet="notReleased; context: { $implicit: stored }" />
+                  }
                 </div>
               }
               <button type="button" class="btn btn--sm" (click)="addCategory(selectedIndex())">
@@ -495,10 +535,16 @@
                   (ngModelChange)="setStepField(selectedIndex(), 'default_model', $event)"
                 >
                   <option value="">— the model the caller named —</option>
+                  @if (strayOption(step.config.default_model); as stored) {
+                    <option [value]="stored.value">{{ stored.label }}</option>
+                  }
                   @for (model of released(); track model) {
                     <option [value]="model">{{ model }}</option>
                   }
                 </select>
+                @if (unreleased(step.config.default_model); as stored) {
+                  <ng-container *ngTemplateOutlet="notReleased; context: { $implicit: stored }" />
+                }
               </div>
             }
           } @else if (selected() === 'fallback') {
@@ -512,6 +558,7 @@
                 emptyHint="No model is released to this use case yet."
                 [options]="modelChoices()"
                 [selected]="config().fallback_models"
+                [disabled]="!canManage()"
                 (changed)="setFallbackModels($event)"
               />
             </div>
@@ -529,3 +576,12 @@
     </div>
   }
 </div>
+
+<!-- Beside every field that names a model the use case no longer releases: the same sentence in
+     each place, written once. -->
+<ng-template #notReleased let-model>
+  <span class="field__hint field__hint--error" data-testid="model-not-released">
+    <code>{{ model }}</code> is not released to this use case, so the gateway will not call it here.
+    Choose a released model, or release this one on the use case.
+  </span>
+</ng-template>

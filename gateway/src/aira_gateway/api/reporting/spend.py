@@ -126,11 +126,17 @@ async def reporting(
     # two splits keyed on a human carry the caller's own row only. Resolved here, beside the
     # scope, because this is the one place that decides what a report is about.
     limited = await _people_limited_to(request, principal, scope)
+    if limited is not None and person and person not in {limited, principal.subject}:
+        # `person` narrows the **whole** report to one person, so naming somebody whose split this
+        # reader may not see would hand over that split by another route: the totals, every
+        # breakdown and the series of a report narrowed to a colleague are the colleague's. Outside
+        # the reader's reach, it answers what any filter outside it answers — an empty report.
+        scope, in_scope = (), False
 
     # **A narrowing, and nothing more.** It adds a predicate to the window the caller's scope has
-    # already bounded, so it can only ever subtract rows — and it reaches nothing `by_person` does
-    # not already carry to the same caller (`FRD-606`). The scope above is what decides visibility,
-    # here as everywhere else on this surface.
+    # already bounded, so it can only ever subtract rows — and, with the check above, it reaches
+    # nothing `by_person` does not already carry to the same caller (`FRD-606`). The scope is what
+    # decides visibility, here as everywhere else on this surface.
     report = await service.report(
         scope,
         window_start,

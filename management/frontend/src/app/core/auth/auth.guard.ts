@@ -2,8 +2,12 @@ import { inject } from '@angular/core';
 import { CanActivateFn } from '@angular/router';
 import { AuthService } from './auth.service';
 
-/** Allow the route when authenticated; otherwise start the OIDC login. */
-export const authGuard: CanActivateFn = () => {
+/**
+ * Allow the route when authenticated; otherwise start the OIDC login, coming back to the route
+ * being entered — `state.url`, because the address bar still shows the page being left until the
+ * navigation completes.
+ */
+export const authGuard: CanActivateFn = (_route, state) => {
   const auth = inject(AuthService);
   if (auth.isAuthenticated()) {
     return true;
@@ -13,6 +17,6 @@ export const authGuard: CanActivateFn = () => {
   if (auth.startupError()) {
     return false;
   }
-  auth.login();
+  auth.login(state.url);
   return false;
 };

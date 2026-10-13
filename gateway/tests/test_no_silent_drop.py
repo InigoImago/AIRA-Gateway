@@ -352,7 +352,11 @@ def test_every_adapter_declares_its_sampling_support() -> None:
     from aira_gateway.upstreams.gemini import GeminiUpstream
     from aira_gateway.upstreams.mock import MockProvider
     from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
-    from aira_gateway.upstreams.vertex.adapters import VertexAnthropicAdapter, VertexGeminiAdapter
+    from aira_gateway.upstreams.vertex.adapters import (
+        VertexAnthropicAdapter,
+        VertexGeminiAdapter,
+        VertexOpenModelAdapter,
+    )
 
     adapters = [
         MockProvider,
@@ -360,6 +364,7 @@ def test_every_adapter_declares_its_sampling_support() -> None:
         OpenAIAdapter,
         VertexGeminiAdapter,
         VertexAnthropicAdapter,
+        VertexOpenModelAdapter,
     ]
     for adapter in adapters:
         declared = getattr(adapter, "sampling_controls", None)
@@ -419,6 +424,85 @@ def test_the_kira_surface_names_an_unknown_field_rather_than_dropping_it() -> No
     assert "topSecretTuning" not in response.text, response.text
     assert response.json()["code"] == "MODEL_NOT_FOUND"
     assert response.headers.get("X-AIRA-Unmodelled-Fields") == "topSecretTuning"
+
+
+#: Field names a caller chose that no header can carry: not Latin-1, a line break, and a size a
+#: reverse proxy's header buffer refuses.
+_UNSAYABLE = {"€uro": 1, "a\r\nx-injected: 1": 2, "x" * 5000: 3}
+
+
+async def _served_kira_app():  # noqa: ANN202
+    from aira_gateway.db.models import ModelRead
+
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    return app, ModelRead(model="mock-1", numeric_id=1004, capabilities=["generate"])
+
+
+async def test_a_field_name_no_header_can_carry_is_counted_rather_than_echoed() -> None:
+    """The names are the caller's, and they reach a response header after the model has been
+    called and billed. One a header cannot carry turned that served answer into a 500 (or, with a
+    line break, into a connection closed with no answer at all) while its audit row said 200."""
+    from sqlalchemy import select
+
+    from aira_gateway.db.models import RequestLog
+
+    app, model = await _served_kira_app()
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(model)
+            await session.commit()
+        response = client.post(
+            "/kira/api/external/chat",
+            json={"request": {"parts": [{"text": "hi"}]}, "model_id": 1004, **_UNSAYABLE},
+        )
+        async with app.state.db_sessionmaker() as session:
+            row = (await session.execute(select(RequestLog))).scalars().one()
+
+    assert response.status_code == 200, response.text
+    named = response.headers["X-AIRA-Unmodelled-Fields"]
+    named.encode("latin-1")
+    assert "\r" not in named and "\n" not in named
+    assert named == "+3 more"
+    assert row.status == 200
+
+
+async def test_a_refusal_with_such_a_field_is_still_a_refusal_and_still_recorded() -> None:
+    """The refusal path renders the same header, before it writes the refusal's row."""
+    from sqlalchemy import select
+
+    from aira_gateway.db.models import RequestLog
+
+    app, model = await _served_kira_app()
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(model)
+            await session.commit()
+        response = client.post(
+            "/kira/api/external/chat",
+            json={"request": {"parts": []}, "model_id": 1004, "€uro": 1, "topSecretTuning": 2},
+        )
+        async with app.state.db_sessionmaker() as session:
+            rows = (await session.execute(select(RequestLog))).scalars().all()
+
+    assert response.status_code == 400, response.text
+    assert response.headers["X-AIRA-Unmodelled-Fields"] == "topSecretTuning, +1 more"
+    assert [row.status for row in rows] == [400]
+
+
+def test_the_header_names_a_bounded_number_of_fields_and_counts_the_rest() -> None:
+    from aira_gateway.api.kira.headers import (
+        MAX_NAMED_CHARACTERS,
+        MAX_NAMED_FIELDS,
+        unmodelled_header,
+    )
+
+    names = [f"field{index}" for index in range(MAX_NAMED_FIELDS + 5)]
+    assert unmodelled_header(names) == ", ".join([*names[:MAX_NAMED_FIELDS], "+5 more"])
+
+    long_names = [f"{index:02d}{'a' * 62}" for index in range(15)]
+    value = unmodelled_header(long_names)
+    assert len(value) <= MAX_NAMED_CHARACTERS + len(", +15 more")
+    assert value.endswith(" more")
 
 
 # == through the route, which is the only place the wiring is real ================================
@@ -511,7 +595,11 @@ def _adapters() -> list[type]:
     from aira_gateway.upstreams.gemini import GeminiUpstream
     from aira_gateway.upstreams.mock import MockProvider
     from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
-    from aira_gateway.upstreams.vertex.adapters import VertexAnthropicAdapter, VertexGeminiAdapter
+    from aira_gateway.upstreams.vertex.adapters import (
+        VertexAnthropicAdapter,
+        VertexGeminiAdapter,
+        VertexOpenModelAdapter,
+    )
 
     return [
         MockProvider,
@@ -519,6 +607,7 @@ def _adapters() -> list[type]:
         OpenAIAdapter,
         VertexGeminiAdapter,
         VertexAnthropicAdapter,
+        VertexOpenModelAdapter,
     ]
 
 
@@ -570,7 +659,11 @@ def test_the_thinking_declarations_differ_which_is_the_reason_they_are_declared(
     and the differences are exactly where a silently dropped mode lived."""
     from aira_common.models import ThinkingMode
     from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
-    from aira_gateway.upstreams.vertex.adapters import VertexAnthropicAdapter, VertexGeminiAdapter
+    from aira_gateway.upstreams.vertex.adapters import (
+        VertexAnthropicAdapter,
+        VertexGeminiAdapter,
+        VertexOpenModelAdapter,
+    )
 
     # No token budget in this dialect, so a caller's explicit count cannot be honoured exactly —
     # and no way to say "you decide" either, since `reasoning_effort` is always a level.
@@ -586,6 +679,14 @@ def test_the_thinking_declarations_differ_which_is_the_reason_they_are_declared(
     assert OpenAIAdapter.expresses_thinking_levels is True
     assert VertexGeminiAdapter.expresses_thinking_levels is True
     assert VertexAnthropicAdapter.expresses_thinking_levels is False
+
+    # The same OpenAI body on another platform says something else again: Agent Platform's open
+    # models take a template switch, so `auto` exists there and neither a budget nor a level does.
+    # The shape belongs to the adapter, not to the body format (`FRD-115` FR-2a).
+    assert VertexOpenModelAdapter.thinking_modes == frozenset(
+        {ThinkingMode.DISABLED, ThinkingMode.AUTO}
+    )
+    assert VertexOpenModelAdapter.expresses_thinking_levels is False
 
 
 def test_a_mode_a_dialect_cannot_express_is_refused_and_never_omitted() -> None:

@@ -271,7 +271,7 @@ def _settings(**overrides: Any) -> Any:
 def test_the_adapter_is_built_from_an_api_key_alone() -> None:
     """The whole point of FR-3a: an installation with no service account reaches models.
 
-    **Both dialects, and this used to be one.** They were built only for the models named in
+    **Every dialect, and this used to be one.** They were built only for the models named in
     configuration, so a deployment that had configured a Gemini model and no Anthropic one had no
     Anthropic adapter — and a Vertex model catalogued through the console had nothing to claim it.
     An adapter with an empty configured list is what lets the catalogue be the only list, and it is
@@ -281,8 +281,13 @@ def test_the_adapter_is_built_from_an_api_key_alone() -> None:
 
     upstreams = build_vertex_upstreams(_settings(vertex_api_key="AQ.only-a-key"))
 
-    assert len(upstreams) == 2
-    assert {getattr(up, "serves_publisher", "") for up in upstreams} == {"google", "anthropic"}
+    assert len(upstreams) == 4
+    assert {getattr(up, "serves_publisher", "") for up in upstreams} == {
+        "google",
+        "anthropic",
+        "zai-org",
+        "deepseek-ai",
+    }
     assert {getattr(up, "serves_provider", "") for up in upstreams} == {"vertex"}
 
 
@@ -297,11 +302,25 @@ def test_a_service_account_is_preferred_where_both_are_configured() -> None:
     """Stated in the code and asserted here, because the failure is silent: a deployment that
     rotated to a service account and left the old key in the environment would keep using the key,
     and the audit trail at Google would go on naming the credential somebody thought was retired.
+
+    The account's key is a real one: the builder signs with it once at startup, so a placeholder
+    would be refused before the preference this asserts is reached.
     """
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
     from aira_gateway.upstreams.vertex import build_vertex_upstreams
 
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    account = json.dumps({**json.loads(SERVICE_ACCOUNT), "private_key": key.decode("ascii")})
     upstreams = build_vertex_upstreams(
-        _settings(vertex_api_key="AQ.stale-key", vertex_credentials=SERVICE_ACCOUNT)
+        _settings(vertex_api_key="AQ.stale-key", vertex_credentials=account)
     )
 
     transport = upstreams[0]._transport  # type: ignore[attr-defined]

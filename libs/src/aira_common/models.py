@@ -86,9 +86,12 @@ def parse_capabilities(values: object) -> frozenset[Capability]:
 
     Unknown values are dropped rather than raising: on the gateway's consumer path, a newer
     Management's capability must not stop an older gateway from applying the rest of the event.
-    Dropping is the fail-closed direction — the gateway could not enforce it anyway.
+    Dropping is the fail-closed direction — the gateway could not enforce it anyway. A value that
+    is not a string is unknown too, whatever its shape.
     """
     if not isinstance(values, list | tuple | set | frozenset):
         return frozenset()
     known = {member.value for member in Capability}
-    return frozenset(Capability(value) for value in values if value in known)
+    return frozenset(
+        Capability(value) for value in values if isinstance(value, str) and value in known
+    )

@@ -185,6 +185,64 @@ test("a provider the developer named themselves still carries the key", async ()
   assert.deepEqual(found, { base: "http://gw", key: "aira_x", source: "configuration" });
 });
 
+test("a key and an address are never taken from two different providers", async () => {
+  // An OpenAI key and an LM Studio address, neither of them the gateway: put together, the key
+  // would be sent to the box on the LAN with every turn.
+  const calls = stubFetch({ body: answer() });
+  const client = fakeClient({
+    config: {
+      provider: {
+        openai: { options: { apiKey: "sk-openai-SECRET" } },
+        "lm-studio": { options: { baseURL: "http://192.168.1.50:1234/v1" } },
+      },
+    },
+  });
+
+  assert.deepEqual(await credential(client), { base: "", key: "", source: "nowhere" });
+  await server({ client });
+  await settled();
+
+  assert.equal(calls.length, 0, "a credential was sent to a host it was not issued for");
+});
+
+test("the key from the environment is not sent to another vendor's address", async () => {
+  // The only provider configured is somebody else's API, complete with its own address. The AIRA
+  // key from the environment must not go there; the missing gateway address is reported instead.
+  process.env.AIRA_API_KEY = KEY;
+  const calls = stubFetch({ body: answer() });
+  const client = fakeClient({
+    config: {
+      provider: {
+        openai: { options: { apiKey: "sk-openai", baseURL: "https://api.openai.com/v1" } },
+      },
+    },
+  });
+
+  await server({ client });
+  await settled();
+
+  assert.equal(calls.length, 0, "the AIRA key went to another vendor's API");
+  assert.match(client.toasts[0].message, /AIRA_BASE_URL/);
+});
+
+test("two complete providers and none called aira name no gateway", async () => {
+  const found = await credential({
+    config: {
+      get: async () => ({
+        data: {
+          provider: {
+            first: { options: { apiKey: "k1", baseURL: "http://one/v1beta" } },
+            second: { options: { apiKey: "k2", baseURL: "http://two/v1beta" } },
+          },
+        },
+      }),
+    },
+  });
+
+  assert.equal(found.source, "nowhere");
+  assert.equal(found.key, "");
+});
+
 test("the version segment is taken off rather than doubled", async () => {
   for (const given of ["http://gw/v1beta", "http://gw/v1beta/", "http://gw/"]) {
     const found = await credential({

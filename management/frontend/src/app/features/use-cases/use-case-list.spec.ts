@@ -17,6 +17,7 @@ interface List {
   loading: () => boolean;
   creating: () => boolean;
   error: () => string | null;
+  createError: () => string | null;
   isEmpty: () => boolean;
   slugError: () => string | null;
   canCreate: () => boolean;
@@ -211,8 +212,10 @@ describe('UseCaseList', () => {
     expect(created).toEqual([]);
   });
 
-  it('keeps the entered values and explains a rejected creation', () => {
-    const { component } = setup({
+  it('keeps the entered values and explains a rejected creation inside the window', () => {
+    // The reason went to the page banner behind the backdrop, and the button just flickered back
+    // to "Create and configure".
+    const { component, fixture, testid } = setup({
       create: throwError(() => ({
         status: 400,
         error: { error: { message: 'Request failed.', details: { slug: ['Already exists.'] } } },
@@ -221,9 +224,37 @@ describe('UseCaseList', () => {
     component.slug.set('demo-uc');
     component.name.set('Demo');
     component.create();
-    expect(component.error()).toBe('Request failed. slug: Already exists.');
+    fixture.detectChanges();
+
+    const said = testid('uc-create-error');
+    expect(said?.textContent).toContain('Request failed. slug: Already exists.');
+    expect(said?.closest('[data-testid="uc-create"]')).not.toBeNull();
     expect(component.slug()).toBe('demo-uc');
     expect(component.creating()).toBe(false);
+    // The page's own banner is for the list; a refused creation is the window's outcome.
+    expect(component.error()).toBeNull();
+  });
+
+  it('forgets a refusal when the window is opened again', () => {
+    const { component, fixture, testid } = setup({
+      create: throwError(() => ({ status: 400, error: { error: { message: 'No.' } } })),
+    });
+    component.slug.set('demo-uc');
+    component.name.set('Demo');
+    component.create();
+    component.closeCreate();
+    component.openCreate();
+    fixture.detectChanges();
+
+    expect(testid('uc-create-error')).toBeNull();
+  });
+
+  it('closes on Escape, as every window does', () => {
+    const { component, fixture } = setup();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+
+    expect(component.showCreate()).toBe(false);
   });
 
   it('blocks a second submission while the first is in flight', () => {
@@ -297,6 +328,13 @@ describe('slugify', () => {
     expect(slugify('Größe & Maß')).toBe('groesse-mass');
     expect(slugify('***')).toBe('');
     expect(slugify('x'.repeat(200)).length).toBe(60);
+  });
+
+  it('never ends in a hyphen, even where the length cut lands on a separator', () => {
+    // The id is permanent; "aaa…a-" would be too.
+    const slug = slugify('a'.repeat(59) + ' b');
+    expect(slug).toBe('a'.repeat(59));
+    expect(slug.endsWith('-')).toBe(false);
   });
 });
 

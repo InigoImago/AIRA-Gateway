@@ -1,16 +1,18 @@
 @if (open()) {
-  <div class="modal-backdrop" (click)="closeIfOpen()"></div>
+  <div #backdrop class="modal-backdrop" (click)="closeIfOpen()"></div>
   <div
     #dialog
     class="modal"
+    [class]="panelClass()"
     role="dialog"
     aria-modal="true"
     [attr.aria-labelledby]="testid() + '-title'"
     [attr.data-testid]="testid()"
     tabindex="-1"
+    (keydown)="keepFocus($event)"
   >
     <div class="modal__head">
-      <h3 [id]="testid() + '-title'" style="margin: 0">{{ title() }}</h3>
+      <h3 class="modal__title" [id]="testid() + '-title'">{{ title() }}</h3>
       @if (dismissible()) {
         <button
           type="button"
@@ -26,10 +28,30 @@
 
     <div class="modal__body">
       <ng-content select="[modal-body]" />
+      @if (!withFoot() && error()) {
+        <p
+          class="field__hint field__hint--error"
+          role="alert"
+          [attr.data-testid]="testid() + '-error'"
+        >
+          {{ error() }}
+        </p>
+      }
     </div>
 
     @if (withFoot()) {
       <div class="modal__foot">
+        <!-- Above the buttons (`.modal__foot > .field__hint` takes its own line): it explains why
+             the action did not happen, and an explanation under the control is found second. -->
+        @if (error()) {
+          <p
+            class="field__hint field__hint--error"
+            role="alert"
+            [attr.data-testid]="testid() + '-error'"
+          >
+            {{ error() }}
+          </p>
+        }
         <ng-content select="[modal-foot]" />
       </div>
     }

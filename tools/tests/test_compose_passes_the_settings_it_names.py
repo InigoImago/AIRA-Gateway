@@ -27,6 +27,7 @@ import re
 from pathlib import Path
 
 import compose_files
+import credential_settings
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = [
@@ -55,8 +56,6 @@ COMPOSE_ONLY = {
     "AIRA_VERSION",
     "AIRA_IMAGE_REGISTRY",
     "AIRA_PULL_POLICY",
-    "AIRA_AZURE_API_KEY",
-    "AIRA_OPENAI_API_KEY",
     # Read by the compose file's **own shell**, in the `while true; do … sleep ${…}` commands that
     # drive the relay and the retention sweep. Not settings, and not meant to be.
     "AIRA_RELAY_INTERVAL",
@@ -187,8 +186,9 @@ MUST_REACH_A_CONTAINER = {
 #:
 #: `LESSONS.md` §1: **recognise a shape, do not remember a list of names.** A hand-written list
 #: covers the credentials somebody thought of, and the next credential is by definition the one
-#: nobody did — this one arrived on the plane the list did not cover.
-CREDENTIAL_SUFFIXES = ("_API_KEY", "_PASSWORD", "_SECRET", "_CREDENTIALS", "_TOKEN")
+#: nobody did — this one arrived on the plane the list did not cover. The shape is
+#: `credential_settings`', the one Vault, the renderer and the examples are held to as well.
+CREDENTIAL_SUFFIXES = credential_settings.SUFFIXES
 
 #: A credential that deliberately reaches no container, with the reason. Empty is the honest state
 #: today; an entry here is a claim somebody has to defend.

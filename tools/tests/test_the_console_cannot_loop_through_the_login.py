@@ -84,7 +84,7 @@ def test_there_is_a_limit_and_a_window(service: str) -> None:
 def test_the_limit_is_consulted_before_the_redirect(service: str) -> None:
     """The order is the whole property. Counting after `initCodeFlow` would count nothing: the
     navigation has already happened, and the page that would read the counter is gone."""
-    body = _code_of(service, "reauthenticate(): void {")
+    body = _code_of(service, "reauthenticate(refusedBy: string | null = null): void {")
 
     assert body.index("LOOP_LIMIT") < body.index("initCodeFlow"), (
         "the attempt count must be checked before the redirect, or the redirect always wins"

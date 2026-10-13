@@ -11,7 +11,9 @@ Roughly a hundred cases, and each one asserts three things rather than one:
    how an integration takes a week instead of an afternoon.
 3. **A message that names the problem.** This is the half most suites skip. "Validation failed"
    is technically a correct answer and practically useless; a message that names the *field* is
-   the difference between a two-minute fix and a support conversation.
+   the difference between a two-minute fix and a support conversation. So every refusal below
+   states the fragment its message must carry — which is also what tells two refusals with one
+   status apart: a schema the parser refused and a model the catalogue refused are both a 400.
 
 The cases are grouped by what a caller is doing wrong, because that is how someone reading a
 failure will look for them.
@@ -25,6 +27,8 @@ from typing import Any
 
 import httpx
 import pytest
+
+from aira_gateway.api.kira import errors as kira_errors
 
 from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, LOCAL_EMBED_MODEL_ID, Fixture
 
@@ -76,21 +80,25 @@ def _check(response: httpx.Response, *, expect: tuple[int, ...], names: str = ""
 # == 1. the body itself ==========================================================================
 
 
+NOT_JSON = "not valid json"
+NOT_AN_OBJECT = "one json object"
+
+
 @pytest.mark.parametrize(
-    ("raw", "label"),
+    ("raw", "names"),
     [
-        (b"", "empty"),
-        (b"not json at all", "prose"),
-        (b"{", "truncated object"),
-        (b"[]", "an array"),
-        (b'"a string"', "a bare string"),
-        (b"null", "null"),
-        (b"123", "a number"),
-        (b"{'single': 'quotes'}", "python-style quotes"),
+        pytest.param(b"", NOT_JSON, id="empty"),
+        pytest.param(b"not json at all", NOT_JSON, id="prose"),
+        pytest.param(b"{", NOT_JSON, id="truncated object"),
+        pytest.param(b"[]", NOT_AN_OBJECT, id="an array"),
+        pytest.param(b'"a string"', NOT_AN_OBJECT, id="a bare string"),
+        pytest.param(b"null", NOT_AN_OBJECT, id="null"),
+        pytest.param(b"123", NOT_AN_OBJECT, id="a number"),
+        pytest.param(b"{'single': 'quotes'}", NOT_JSON, id="python-style quotes"),
     ],
 )
 async def test_a_body_that_is_not_a_request_object_is_refused(
-    fixture: Fixture, raw: bytes, label: str
+    fixture: Fixture, raw: bytes, names: str
 ) -> None:
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client:
         response = await client.post(
@@ -98,7 +106,7 @@ async def test_a_body_that_is_not_a_request_object_is_refused(
             content=raw,
             headers={**fixture.headers(), "content-type": "application/json"},
         )
-    _check(response, expect=(400, 422))
+    _check(response, expect=(400,), names=names)
 
 
 async def test_a_body_far_over_the_ceiling_is_refused_before_it_is_parsed(
@@ -108,7 +116,7 @@ async def test_a_body_far_over_the_ceiling_is_refused_before_it_is_parsed(
     protection does not depend on the parser being fast."""
     payload = {"contents": [{"role": "user", "parts": [{"text": "x" * 20_000_000}]}]}
     response = await _post(fixture, GENERATE, payload)
-    _check(response, expect=(400, 413, 422))
+    _check(response, expect=(413,), names="too large")
 
 
 async def test_a_content_type_the_route_does_not_speak_is_refused(fixture: Fixture) -> None:
@@ -118,50 +126,87 @@ async def test_a_content_type_the_route_does_not_speak_is_refused(fixture: Fixtu
             content=b"contents=hello",
             headers={**fixture.headers(), "content-type": "application/x-www-form-urlencoded"},
         )
-    _check(response, expect=(400, 415, 422))
+    _check(response, expect=(400,), names=NOT_JSON)
 
 
 # == 2. the request's shape ======================================================================
 
 
 @pytest.mark.parametrize(
-    ("body", "label"),
+    ("body", "names"),
     [
-        ({}, "no contents at all"),
-        ({"contents": []}, "an empty contents list"),
-        ({"contents": "hello"}, "contents as a string"),
-        ({"contents": [{}]}, "a content with no parts"),
-        ({"contents": [{"role": "user"}]}, "a role with no parts"),
-        ({"contents": [{"role": "user", "parts": []}]}, "an empty parts list"),
-        ({"contents": [{"role": "user", "parts": [{}]}]}, "a part that is neither"),
-        ({"contents": [{"role": "user", "parts": "text"}]}, "parts as a string"),
-        ({"contents": [{"role": "user", "parts": [{"text": None}]}]}, "a null text"),
-        ({"contents": [{"role": "user", "parts": [{"text": 42}]}]}, "a numeric text"),
-        ({"contents": [{"role": "user", "parts": [{"text": ["a"]}]}]}, "a list as text"),
-        ({"contents": [{"role": "user", "parts": [{"text": "hi", "inlineData": {}}]}]}, "both"),
+        pytest.param({}, "contents", id="no contents at all"),
+        pytest.param({"contents": []}, "contents", id="an empty contents list"),
+        pytest.param({"contents": "hello"}, "contents", id="contents as a string"),
+        pytest.param({"contents": [{}]}, "contents.0.parts", id="a content with no parts"),
+        pytest.param({"contents": [{"role": "user"}]}, "contents.0.parts", id="a role, no parts"),
+        pytest.param(
+            {"contents": [{"role": "user", "parts": []}]}, "no text", id="an empty parts list"
+        ),
+        pytest.param(
+            {"contents": [{"role": "user", "parts": [{}]}]},
+            "contents.0.parts.0",
+            id="a part that is neither",
+        ),
+        pytest.param(
+            {"contents": [{"role": "user", "parts": "text"}]},
+            "contents.0.parts",
+            id="parts as a string",
+        ),
+        pytest.param(
+            {"contents": [{"role": "user", "parts": [{"text": None}]}]},
+            "contents.0.parts.0",
+            id="a null text",
+        ),
+        pytest.param(
+            {"contents": [{"role": "user", "parts": [{"text": 42}]}]},
+            "parts.0.text",
+            id="a numeric text",
+        ),
+        pytest.param(
+            {"contents": [{"role": "user", "parts": [{"text": ["a"]}]}]},
+            "parts.0.text",
+            id="a list as text",
+        ),
+        pytest.param(
+            {"contents": [{"role": "user", "parts": [{"text": "hi", "inlineData": {}}]}]},
+            "inlinedata",
+            id="both",
+        ),
     ],
 )
 async def test_a_malformed_request_names_what_is_wrong(
-    fixture: Fixture, body: dict, label: str
+    fixture: Fixture, body: dict, names: str
 ) -> None:
     """Every one of these is a 400 whose message points at a field. A validation error that says
     only "invalid" leaves the caller diffing their JSON against documentation."""
     response = await _post(fixture, GENERATE, body)
-    _check(response, expect=(400, 422))
+    _check(response, expect=(400,), names=names)
 
 
-@pytest.mark.parametrize("role", ["", "assistant", "system", "USER", "robot", None])
-async def test_an_unexpected_role_does_not_break_the_request(
-    fixture: Fixture, role: str | None
+@pytest.mark.parametrize(
+    ("role", "expect"),
+    [
+        ("", (400,)),
+        ("assistant", (400,)),
+        ("system", (200,)),
+        ("USER", (400,)),
+        ("robot", (400,)),
+        (None, (200,)),
+    ],
+)
+async def test_an_unexpected_role_is_refused_by_name(
+    fixture: Fixture, role: str | None, expect: tuple[int, ...]
 ) -> None:
-    """Roles a caller might reasonably send. Google's own vocabulary is `user`/`model`, and
-    anything else is read as `user` rather than refused — the alternative is a compatibility
-    surface that rejects requests every other SDK considers valid."""
+    """Roles a caller might send. A turn is `user` or `model`, plus the two older spellings Google
+    clients still send (`system`, `function`); a missing role is the caller's turn. Anything else is
+    **refused by name** rather than read as `user`: an `assistant` turn taken for the user's own
+    words changes the conversation, and nothing in the answer would show it."""
     content: dict[str, Any] = {"parts": [{"text": "hi"}]}
     if role is not None:
         content["role"] = role
     response = await _post(fixture, GENERATE, {"contents": [content]})
-    _check(response, expect=(200, 400))
+    _check(response, expect=expect, names="role")
 
 
 @pytest.mark.parametrize(
@@ -200,7 +245,7 @@ async def test_a_very_deep_nesting_in_the_body_is_refused_not_recursed(fixture: 
     for _ in range(2000):
         nested = {"parts": [nested]}
     response = await _post(fixture, GENERATE, {"contents": [nested]})
-    _check(response, expect=(400, 413, 422))
+    _check(response, expect=(400,), names="nests deeper")
 
 
 # == 3. the model and the verb ===================================================================
@@ -220,7 +265,6 @@ async def test_a_very_deep_nesting_in_the_body_is_refused_not_recursed(fixture: 
         ("%2e%2e%2f%2e%2e%2fetc%2fpasswd:generateContent", (400, 404)),
         ("mock-1%00:generateContent", (400, 404)),
         ("a" * 500 + ":generateContent", (400, 404)),
-        ("qwen3:0.6b:generateContent", (200, 400, 404, 502)),
     ],
 )
 async def test_the_resource_is_parsed_or_refused_but_never_guessed(
@@ -232,6 +276,23 @@ async def test_the_resource_is_parsed_or_refused_but_never_guessed(
         fixture, f"/v1beta/models/{resource}", {"contents": [{"parts": [{"text": "hi"}]}]}
     )
     _check(response, expect=expect)
+
+
+async def test_a_model_name_with_a_colon_is_split_at_the_last_one(fixture: Fixture) -> None:
+    """`qwen3:0.6b:generateContent` is the model `qwen3:0.6b` and the verb `generateContent`. Split
+    at the first colon it is the model `qwen3` asked for a verb called `0.6b:generateContent` — a
+    400 or a 404 — which is how a real defect got in. Served, because this stack serves it."""
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+        listed = await client.get("/v1beta/models", headers=fixture.headers())
+    served = {model["name"].removeprefix("models/") for model in listed.json()["models"]}
+    if "qwen3:0.6b" not in served:
+        pytest.skip("this stack serves no qwen3:0.6b to address")
+    response = await _post(
+        fixture,
+        "/v1beta/models/qwen3:0.6b:generateContent",
+        {"contents": [{"parts": [{"text": "hi"}]}], "generationConfig": {"maxOutputTokens": 8}},
+    )
+    _check(response, expect=(200,))
 
 
 async def test_an_unknown_model_says_which_one(fixture: Fixture) -> None:
@@ -289,8 +350,8 @@ async def test_every_shape_of_bad_credential_is_a_401_and_nothing_else(
 
 
 async def test_a_valid_key_in_the_query_string_works_like_the_header(fixture: Fixture) -> None:
-    """Google's own alternative. It must work, and `ADR-0007` requires the value to be redacted
-    from spans — which is why it is worth having a case rather than assuming."""
+    """Google's own alternative, and it must work. (`ADR-0007` also requires the value to be
+    redacted from spans; that is the tracing suite's to assert, not a status code's.)"""
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=90.0) as client:
         response = await client.post(
             f"{GENERATE}?key={fixture.key}",
@@ -300,14 +361,16 @@ async def test_a_valid_key_in_the_query_string_works_like_the_header(fixture: Fi
 
 
 async def test_two_different_credentials_do_not_silently_pick_one(fixture: Fixture) -> None:
-    """Whatever the precedence is, it must not be *the invalid one wins by accident*."""
+    """The precedence is documented — a bearer token first (`auth/credentials.py`) — so a valid key
+    beside a broken bearer is refused, deterministically, rather than served by whichever was read
+    first."""
     response = await _post(
         fixture,
         GENERATE,
         {"contents": [{"parts": [{"text": "hi"}]}]},
         headers={"authorization": "Bearer garbage"},
     )
-    _check(response, expect=(200, 401))
+    _check(response, expect=(401,))
 
 
 # == 5. the use-case selector ====================================================================
@@ -340,8 +403,14 @@ async def test_a_selector_that_is_not_this_keys_use_case_is_refused(
         {"contents": [{"parts": [{"text": "hi"}]}]},
         headers={"X-AIRA-Use-Case": selector},
     )
-    # An empty header is no header at all, so the key's own use case applies.
-    _check(response, expect=(200,) if selector == "" else (400, 403))
+    # An empty header is no header at all, so the key's own use case applies. A well-formed slug
+    # that is not the key's is refused naming the key's binding; anything else is not a slug.
+    if selector == "":
+        _check(response, expect=(200,))
+    elif selector in ("no-such-use-case", "null"):
+        _check(response, expect=(403,), names="bound to use case")
+    else:
+        _check(response, expect=(400,), names="use case identifier")
 
 
 # == 6. generation options =======================================================================
@@ -353,12 +422,13 @@ async def test_a_selector_that_is_not_this_keys_use_case_is_refused(
         ({"maxOutputTokens": 0}, (400,)),
         ({"maxOutputTokens": -1}, (400,)),
         ({"maxOutputTokens": -999999}, (400,)),
-        ({"maxOutputTokens": 10**12}, (200, 400)),
-        ({"maxOutputTokens": "64"}, (200, 400)),
+        ({"maxOutputTokens": 10**12}, (400,)),
+        # A numeric string is a number in JSON clients that quote everything; it is read as one.
+        ({"maxOutputTokens": "64"}, (200,)),
         ({"maxOutputTokens": 1.5}, (400,)),
         ({"maxOutputTokens": None}, (200,)),
-        ({"temperature": -5}, (200, 400)),
-        ({"temperature": 99}, (200, 400)),
+        ({"temperature": -5}, (400,)),
+        ({"temperature": 99}, (400,)),
         ({"temperature": "hot"}, (400,)),
         # `FRD-124` **reversed** this. It read `(200,)` — a field nobody modelled was ignored, per
         # `FRD-100` FR-7, on the argument that real Gemini clients send extra keys. Measured, that
@@ -370,41 +440,46 @@ async def test_a_selector_that_is_not_this_keys_use_case_is_refused(
         ({}, (200,)),
     ],
 )
-async def test_generation_options_are_bounded_or_ignored_but_never_crash(
+async def test_generation_options_are_bounded_or_refused_but_never_crash(
     fixture: Fixture, config: dict, expect: tuple[int, ...]
 ) -> None:
-    """Unknown fields are ignored on purpose (`FRD-100` FR-7): a real client sends keys we have
-    not implemented yet, and refusing them would break every SDK upgrade. Known fields with
-    impossible values are refused."""
+    """Known fields with impossible values are refused, naming the field; so are unknown fields,
+    since `FRD-124` (a dropped field is a silently changed request). The refusal names the field
+    it is about — the one that was sent."""
     response = await _post(
         fixture, GENERATE, {"contents": [{"parts": [{"text": "hi"}]}], "generationConfig": config}
     )
-    _check(response, expect=expect)
+    _check(response, expect=expect, names=next(iter(config), "").lower())
+
+
+#: How a refusal of a thinking setting the model does not offer begins.
+NO_SUCH_MODE = "invalid_thinking_mode"
 
 
 @pytest.mark.parametrize(
-    ("thinking", "expect"),
+    ("thinking", "expect", "names"),
     [
-        ({"mode": "ludicrous"}, (400,)),
-        ({"mode": ""}, (400,)),
-        ({"mode": None}, (200, 400)),
-        ({"mode": "LIMITED"}, (200, 400)),
-        ({"mode": "limited"}, (400,)),
-        ({"mode": "limited", "tokens": -5}, (400,)),
-        ({"mode": "auto", "tokens": 500}, (400,)),
-        ({"thinkingBudget": 0}, (200, 400)),
-        ({"thinkingBudget": -1}, (200, 400)),
-        ({"thinkingBudget": -99}, (200, 400)),
-        ({"thinkingBudget": "many"}, (400,)),
-        ({"thinkingBudget": 100, "mode": "auto"}, (400,)),
-        ({}, (200,)),
+        ({"mode": "ludicrous"}, (400,), "ludicrous"),
+        ({"mode": ""}, (400,), NO_SUCH_MODE),
+        ({"mode": None}, (200,), ""),
+        ({"mode": "LIMITED"}, (400,), "'limited'"),
+        ({"mode": "limited"}, (400,), "'limited'"),
+        ({"mode": "limited", "tokens": -5}, (400,), NO_SUCH_MODE),
+        ({"mode": "auto", "tokens": 500}, (400,), "'auto'"),
+        ({"thinkingBudget": 0}, (200,), ""),
+        ({"thinkingBudget": -1}, (400,), "'auto'"),
+        ({"thinkingBudget": -99}, (400,), NO_SUCH_MODE),
+        ({"thinkingBudget": "many"}, (400,), "thinkingbudget"),
+        ({"thinkingBudget": 100, "mode": "auto"}, (400,), "either"),
+        ({}, (200,), ""),
     ],
 )
 async def test_thinking_settings_are_validated_against_the_model(
-    fixture: Fixture, thinking: dict, expect: tuple[int, ...]
+    fixture: Fixture, thinking: dict, expect: tuple[int, ...], names: str
 ) -> None:
     """`mock-1` declares no thinking at all, so anything but "off" is refused — and the refusal
-    has to say so rather than reporting a vendor error about a parameter the caller never saw."""
+    has to say so, naming the mode, rather than reporting a vendor error about a parameter the
+    caller never saw. A budget of `-1` is Google's spelling of `auto`, and is refused as that."""
     response = await _post(
         fixture,
         GENERATE,
@@ -413,35 +488,49 @@ async def test_thinking_settings_are_validated_against_the_model(
             "generationConfig": {"thinkingConfig": thinking},
         },
     )
-    _check(response, expect=expect)
+    _check(response, expect=expect, names=names)
+
+
+#: How the catalogue refuses a schema the model cannot honour — the reason that is *not* the
+#: caller's schema.
+CANNOT_HONOUR = "cannot return a document matching the schema"
 
 
 @pytest.mark.parametrize(
-    ("schema", "expect"),
+    ("schema", "names"),
     [
-        ("a string", (400,)),
-        ([], (400,)),
-        (123, (400,)),
-        ({}, (400,)),
-        ({"type": "OBJECT"}, (400,)),
-        ({"type": "NOTATYPE"}, (400,)),
-        ({"type": "OBJECT", "unknownKeyword": 1}, (400,)),
-        ({"type": "OBJECT", "properties": {"a": {"type": "MYSTERY"}}}, (400,)),
-        ({"type": "ARRAY"}, (400,)),
+        pytest.param("a string", "responseschema", id="a string"),
+        pytest.param([], "responseschema", id="a list"),
+        pytest.param(123, "responseschema", id="a number"),
+        pytest.param({}, "type: field required", id="no type"),
+        pytest.param({"type": "NOTATYPE"}, "type: input should be", id="an unknown type"),
+        pytest.param(
+            {"type": "OBJECT", "unknownKeyword": 1}, "unknownkeyword", id="an unknown keyword"
+        ),
+        pytest.param(
+            {"type": "OBJECT", "properties": {"a": {"type": "MYSTERY"}}},
+            "properties.a.type",
+            id="an unknown nested type",
+        ),
+        # Valid schemas: refused, but by the catalogue — `mock-1` declares no structured output.
+        pytest.param({"type": "OBJECT"}, CANNOT_HONOUR, id="a valid object"),
+        pytest.param({"type": "ARRAY"}, CANNOT_HONOUR, id="a valid array"),
     ],
 )
 async def test_a_schema_is_parsed_at_our_boundary_not_forwarded_blindly(
-    fixture: Fixture, schema: Any, expect: tuple[int, ...]
+    fixture: Fixture, schema: Any, names: str
 ) -> None:
     """`mock-1` does not declare `structured_output`, so every one of these is refused — but the
-    *reason* must be the caller's schema where the schema is the problem, so that fixing the
-    catalog and fixing the request are distinguishable."""
+    *reason* must be the caller's schema where the schema is the problem, and the catalogue's only
+    where the schema is fine, so that fixing the catalog and fixing the request are
+    distinguishable. Without the parse at this boundary every case below would get the
+    catalogue's answer, and the field names would be missing from it."""
     response = await _post(
         fixture,
         GENERATE,
         {"contents": [{"parts": [{"text": "hi"}]}], "generationConfig": {"responseSchema": schema}},
     )
-    _check(response, expect=expect)
+    _check(response, expect=(400,), names=names)
 
 
 async def test_a_schema_nested_past_the_bound_names_the_bound(fixture: Fixture) -> None:
@@ -460,27 +549,60 @@ async def test_a_schema_nested_past_the_bound_names_the_bound(fixture: Fixture) 
 
 
 @pytest.mark.parametrize(
-    ("inline", "label"),
+    ("inline", "expect", "names"),
     [
-        ({"mimeType": "application/pdf", "data": "not base64!!"}, "invalid base64"),
-        ({"mimeType": "application/pdf", "data": ""}, "empty data"),
-        ({"mimeType": "application/pdf", "data": _b64(b"this is not a pdf")}, "wrong signature"),
-        ({"mimeType": "application/x-msdownload", "data": _b64(PDF)}, "media type off the list"),
-        ({"mimeType": "", "data": _b64(PDF)}, "no media type"),
-        ({"mimeType": "application/pdf"}, "no data at all"),
-        ({"data": _b64(PDF)}, "data with no type"),
-        ({"mimeType": "image/png", "data": _b64(PDF)}, "png that is a pdf"),
-        ({"mimeType": "application/pdf", "data": _b64(b"%PDF-" + b"x" * 50_000_000)}, "oversized"),
+        pytest.param(
+            {"mimeType": "application/pdf", "data": "not base64!!"},
+            (400,),
+            "base64",
+            id="invalid base64",
+        ),
+        pytest.param(
+            {"mimeType": "application/pdf", "data": ""}, (400,), "is empty", id="empty data"
+        ),
+        pytest.param(
+            {"mimeType": "application/pdf", "data": _b64(b"this is not a pdf")},
+            (400,),
+            "does not look like 'application/pdf'",
+            id="wrong signature",
+        ),
+        pytest.param(
+            {"mimeType": "application/x-msdownload", "data": _b64(PDF)},
+            (400,),
+            "not an accepted media type",
+            id="media type off the list",
+        ),
+        pytest.param(
+            {"mimeType": "", "data": _b64(PDF)},
+            (400,),
+            "not an accepted media type",
+            id="no media type",
+        ),
+        pytest.param({"mimeType": "application/pdf"}, (400,), "inlinedata.data", id="no data"),
+        pytest.param({"data": _b64(PDF)}, (400,), "inlinedata.mimetype", id="data with no type"),
+        pytest.param(
+            {"mimeType": "image/png", "data": _b64(PDF)},
+            (400,),
+            "does not look like 'image/png'",
+            id="png that is a pdf",
+        ),
+        pytest.param(
+            {"mimeType": "application/pdf", "data": _b64(b"%PDF-" + b"x" * 50_000_000)},
+            (413,),
+            "too large",
+            id="oversized",
+        ),
     ],
 )
 async def test_an_attachment_that_is_not_what_it_claims_is_refused(
-    fixture: Fixture, inline: dict, label: str
+    fixture: Fixture, inline: dict, expect: tuple[int, ...], names: str
 ) -> None:
     """The gateway does not parse documents — it decodes, counts and compares a few bytes
-    (`FRD-110`). Every one of these must be a clean refusal, because this is the one place a
-    caller hands us arbitrary binary."""
+    (`FRD-110`). Every one of these must be a clean refusal that says **which** check failed: the
+    model behind `mock-1` reads no documents either, so a refusal that did not name the bytes would
+    be the catalogue's, and the check named here would not have run."""
     response = await _post(fixture, GENERATE, {"contents": [{"parts": [{"inlineData": inline}]}]})
-    _check(response, expect=(400, 413, 422))
+    _check(response, expect=expect, names=names)
 
 
 async def test_a_model_that_cannot_read_an_attachment_refuses_by_name(fixture: Fixture) -> None:
@@ -564,59 +686,95 @@ async def test_batch_embedding_bounds_hold(
 # == 9. the KIRA surface's own vocabulary ========================================================
 
 
+VALIDATION = kira_errors.VALIDATION_ERROR
+
+
 @pytest.mark.parametrize(
-    ("body", "expect"),
+    ("body", "code"),
     [
-        ({}, (422,)),
-        ({"request": {"parts": [{"text": "hi"}]}}, (422,)),
-        ({"model_id": 9999999}, (422,)),
+        pytest.param({}, VALIDATION, id="nothing"),
+        pytest.param({"request": {"parts": [{"text": "hi"}]}}, VALIDATION, id="no model id"),
+        pytest.param({"model_id": 9999999}, VALIDATION, id="no request"),
         # `422`, the contract's own status for a model that is not there — it was `404` here and
         # written down as a deliberate deviation until the predecessor's suite was run against this
         # surface (2026-08-13).
-        ({"request": {"parts": [{"text": "hi"}]}, "model_id": 9999999}, (422,)),
-        ({"request": {"parts": [{"text": "hi"}]}, "model_id": "nine"}, (422,)),
-        ({"request": {"parts": [{"text": "hi"}]}, "model_id": -1}, (404, 422)),
-        ({"request": {"parts": []}, "model_id": LOCAL_CHAT_MODEL_ID}, (400, 404)),
-        ({"request": {"parts": [{}]}, "model_id": LOCAL_CHAT_MODEL_ID}, (422,)),
-        ({"request": "hi", "model_id": LOCAL_CHAT_MODEL_ID}, (422,)),
-        (
-            {
-                "request": {"parts": [{"text": "hi"}]},
-                "model_id": LOCAL_CHAT_MODEL_ID,
-                "maxTokens": 0,
-            },
-            (422,),
+        pytest.param(
+            {"request": {"parts": [{"text": "hi"}]}, "model_id": 9999999},
+            kira_errors.MODEL_NOT_FOUND,
+            id="an id no model has",
         ),
-        (
-            {
-                "request": {"parts": [{"text": "hi"}]},
-                "model_id": LOCAL_CHAT_MODEL_ID,
-                "maxTokens": -5,
-            },
-            (422,),
+        pytest.param(
+            {"request": {"parts": [{"text": "hi"}]}, "model_id": "nine"}, VALIDATION, id="a word"
         ),
-        (
+        pytest.param(
+            {"request": {"parts": [{"text": "hi"}]}, "model_id": -1}, VALIDATION, id="negative"
+        ),
+        pytest.param(
+            {"request": {"parts": [{}]}, "model_id": LOCAL_CHAT_MODEL_ID},
+            VALIDATION,
+            id="a part that is neither",
+        ),
+        pytest.param(
+            {"request": "hi", "model_id": LOCAL_CHAT_MODEL_ID}, VALIDATION, id="request a string"
+        ),
+        pytest.param(
             {
                 "request": {"parts": [{"text": "hi"}]},
                 "model_id": LOCAL_CHAT_MODEL_ID,
                 "temperature": "warm",
             },
-            (422,),
+            VALIDATION,
+            id="a temperature in words",
         ),
     ],
 )
 async def test_the_kira_surface_refuses_in_the_predecessors_shape(
-    fixture: Fixture, body: dict, expect: tuple[int, ...]
+    fixture: Fixture, body: dict, code: str
 ) -> None:
     """A compatibility surface whose *errors* have a different shape is not one: a migrating
     client switches on the code, so every refusal carries `code` and `message` at the top level
-    rather than Google's nested envelope."""
+    rather than Google's nested envelope — and the code is the one **this** mistake earns. Both
+    are `422`, so a validation refusal and an unknown model are told apart by the code alone."""
     response = await _post(fixture, f"{KIRA}/chat", body)
     assert response.status_code != 500, response.text[:300]
-    assert response.status_code in expect, f"got {response.status_code}: {response.text[:200]}"
+    assert response.status_code == 422, f"got {response.status_code}: {response.text[:200]}"
     payload = response.json()
     assert "code" in payload and "message" in payload, f"not the predecessor's envelope: {payload}"
     assert "error" not in payload, "Google's envelope leaked into the compatibility surface"
+    assert payload["code"] == code, payload
+
+
+@pytest.mark.parametrize(
+    ("extra", "code"),
+    [
+        pytest.param({"maxTokens": 0}, kira_errors.INVALID_MAX_TOKENS, id="no tokens"),
+        pytest.param({"maxTokens": -5}, kira_errors.INVALID_MAX_TOKENS, id="negative tokens"),
+    ],
+)
+async def test_the_kira_surface_checks_what_the_catalogue_says_about_the_model(
+    fixture: Fixture, engine, extra: dict, code: str
+) -> None:
+    """The refusals that come **after** the model is found — so the model has to be found first.
+    Asked of the gateway's catalogue before acting: with the demo model's id missing there, every
+    case would be answered `MODEL_NOT_FOUND`, a `422` like the one under test, and pass about
+    nothing."""
+    from sqlalchemy import text
+
+    async with engine.connect() as connection:
+        found = (
+            await connection.execute(
+                text("SELECT model FROM model_catalog WHERE numeric_id = :id"),
+                {"id": LOCAL_CHAT_MODEL_ID},
+            )
+        ).scalar()
+    assert found is not None, (
+        f"no model in the gateway's catalogue carries id {LOCAL_CHAT_MODEL_ID}, so a KIRA client "
+        "cannot reach the demo model (tools/seed_local_catalog.py writes it)"
+    )
+    body = {"request": {"parts": [{"text": "hi"}]}, "model_id": LOCAL_CHAT_MODEL_ID, **extra}
+    response = await _post(fixture, f"{KIRA}/chat", body)
+    assert response.status_code == 422, response.text[:300]
+    assert response.json()["code"] == code, response.text[:300]
 
 
 @pytest.mark.parametrize(
@@ -703,7 +861,8 @@ async def test_a_stream_that_the_client_abandons_does_not_take_the_gateway_with_
     fixture: Fixture,
 ) -> None:
     """The integration layer found a real defect here once: a real socket drop cancels the
-    response task, and a bare await in the streaming `finally` lost the settle and the audit row."""
+    response task, and a bare await in the streaming `finally` lost the settle and the audit row.
+    So the row is asserted as well as the gateway's health: served, or left by its caller."""
     url = f"/v1beta/models/{MODEL}:streamGenerateContent?alt=sse"
     async with (
         httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client,
@@ -720,6 +879,9 @@ async def test_a_stream_that_the_client_abandons_does_not_take_the_gateway_with_
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         assert (await client.get("/readyz")).status_code == 200
+    (row,) = await fixture.wait_for_rows(1)
+    assert row["operation"] == "streamGenerateContent"
+    assert (row["outcome"], row["status"]) in {("served", 200), ("client_gone", 499)}, row
 
 
 @pytest.mark.parametrize("query", ["", "?alt=sse", "?alt=json", "?alt=nonsense", "?alt="])
@@ -753,10 +915,17 @@ async def test_a_burst_of_malformed_requests_leaves_the_gateway_healthy(
         {"contents": [{"parts": [{"text": None}]}]},
         {"generationConfig": {"maxOutputTokens": -1}},
     ]
-    await asyncio.gather(
+    answers = await asyncio.gather(
         *[_post(fixture, GENERATE, bodies[i % len(bodies)]) for i in range(50)],
         return_exceptions=True,
     )
+    # Each answered, and none of them as our error: a parser that fails only under concurrency
+    # shows here as a 500 or a dropped connection, and nowhere else.
+    failures = [answer for answer in answers if isinstance(answer, BaseException)]
+    assert not failures, f"{len(failures)} of 50 got no answer: {failures[:3]}"
+    for answer in answers:
+        assert isinstance(answer, httpx.Response)
+        _check(answer, expect=(400,))
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         ready = await client.get("/readyz")

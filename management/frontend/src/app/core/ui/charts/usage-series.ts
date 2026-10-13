@@ -83,6 +83,8 @@ export interface Column {
   height: number;
   /** Biggest band first, so the stack reads the same way the legend does. */
   bands: Band[];
+  /** Spend is drawn and every request in this bucket was unpriced: its figure is unknown. */
+  costUnknown: boolean;
 }
 
 /** Everything a usage chart needs, with the arithmetic already done. */
@@ -100,8 +102,14 @@ export interface ChartModel {
   peakDisplay: string;
   /** Whether a tail of small bands was folded into `(other)` by the gateway. */
   folded: boolean;
-  /** Nothing happened in this period. Distinct from "the series did not arrive". */
+  /**
+   * Nothing happened in this period — no request at all. Distinct from "the series did not
+   * arrive", and decided by the requests rather than by the measure on screen: a period whose every
+   * request was unpriced has no spend to draw and is still not a period in which nothing was used.
+   */
   empty: boolean;
+  /** Spend is drawn and no request in the period could be priced: the total is unknown, not 0. */
+  costUnknown: boolean;
   /** Requests whose cost is unknown. */
   unpriced: number;
   /**
@@ -220,9 +228,12 @@ function labelFor(bucket: string, granularity: UsageSeries['granularity']): stri
   return bucket.slice(8, 10);
 }
 
-/** The unambiguous form of a bucket: what the tooltip and the table say. */
+/**
+ * The unambiguous form of a bucket: what the tooltip and the table say. An hour names its clock —
+ * the gateway buckets in UTC, and "14:00" read as local time is off by the reader's offset.
+ */
 function titleFor(bucket: string, granularity: UsageSeries['granularity']): string {
-  return granularity === 'hour' ? `${bucket.slice(0, 10)} ${bucket.slice(11, 13)}:00` : bucket;
+  return granularity === 'hour' ? `${bucket.slice(0, 10)} ${bucket.slice(11, 13)}:00 UTC` : bucket;
 }
 
 /**
@@ -253,7 +264,9 @@ export function buildChart(series: UsageSeries, metric: Metric): ChartModel {
   }
 
   const total = [...perKey.values()].reduce((sum, entry) => sum + entry.value, 0);
+  const requests = [...perKey.values()].reduce((sum, entry) => sum + entry.requests, 0);
   const unpriced = [...perKey.values()].reduce((sum, entry) => sum + entry.unpriced, 0);
+  const costUnknown = unpricedThrough(metric, requests, unpriced);
   const unmetered = series.points.reduce((sum, point) => sum + (point.unmetered_requests ?? 0), 0);
 
   // Ranked by **this measure**, so switching to requests re-orders the blocks to what they now say.
@@ -284,13 +297,19 @@ export function buildChart(series: UsageSeries, metric: Metric): ChartModel {
   const columns = series.buckets.map((bucket, index) => {
     const points = perBucket.get(bucket) ?? [];
     const bucketTotal = totals[index];
+    const bucketUnknown = unpricedThrough(
+      metric,
+      points.reduce((sum, point) => sum + point.requests, 0),
+      points.reduce((sum, point) => sum + point.unpriced_requests, 0),
+    );
     return {
       bucket,
       label: labelFor(bucket, series.granularity),
       title: titleFor(bucket, series.granularity),
       total: bucketTotal,
-      display: formatMetric(bucketTotal, metric),
+      display: bucketUnknown ? UNKNOWN : formatMetric(bucketTotal, metric),
       height: peak ? (bucketTotal / peak) * 100 : 0,
+      costUnknown: bucketUnknown,
       bands: points
         .map((point) => {
           const slot = order.get(point.key) ?? series.keys.length;
@@ -320,11 +339,12 @@ export function buildChart(series: UsageSeries, metric: Metric): ChartModel {
     columns,
     bands,
     total,
-    display: formatMetric(total, metric),
+    display: costUnknown ? UNKNOWN : formatMetric(total, metric),
     peak,
     peakDisplay: formatMetric(peak, metric),
     folded: series.folded,
-    empty: total === 0,
+    empty: requests === 0 && total === 0,
+    costUnknown,
     unpriced,
     unmetered,
   };

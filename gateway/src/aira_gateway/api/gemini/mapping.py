@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
+from typing import Any
 
 from aira_common.models import ThinkingMode
 from aira_gateway.api.gemini import schemas
 from aira_gateway.attachments import (
     AttachmentRejected,
     Limits,
-    check_bounds,
     check_media_type,
     check_signature,
     decode,
@@ -23,6 +24,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
     DataPart,
+    FinishReason,
     Role,
     SpeakerVoice,
     Speech,
@@ -50,6 +52,18 @@ _ROLE_FROM_GEMINI = {
 #: is the model's own choice. Read as `limited` they would ask for zero or minus one tokens.
 _BUDGET_MODES = {0: ThinkingMode.DISABLED, -1: ThinkingMode.AUTO}
 
+#: How an answer ended, in Google's own `FinishReason` — the words a Gemini client switches on. A
+#: function call ends a Gemini answer with `STOP`, and a policy that stopped one with `SAFETY`;
+#: `TOOL_USE` or `REFUSAL` on the wire would be values no Gemini client knows.
+_GOOGLE_FINISH = {
+    FinishReason.STOP: "STOP",
+    FinishReason.MAX_TOKENS: "MAX_TOKENS",
+    FinishReason.TOOL_USE: "STOP",
+    FinishReason.REFUSAL: "SAFETY",
+    FinishReason.SCHEMA_UNSATISFIED: "OTHER",
+    FinishReason.OTHER: "OTHER",
+}
+
 
 # == request ======================================================================================
 
@@ -64,6 +78,13 @@ def _canonical_parts(content: schemas.Content, limits: Limits, offset: int) -> l
     parts: list[CanonicalPart] = []
     for offset_index, part in enumerate(content.parts):
         index = offset + offset_index
+        if part.text is not None and part.thought:
+            # The model's earlier reasoning, returned where a use case enabled it (`FRD-135`) and
+            # replayed by the google-genai chat helper with the rest of the answer. Google does not
+            # read it back as conversation; forwarded as text, the next model would be told it had
+            # *said* its private reasoning. Left out, as Google leaves it — not refused, which would
+            # fail every second turn of a chat with reasoning on.
+            continue
         if part.text is not None:
             parts.append(TextPart(text=part.text))
             continue
@@ -76,6 +97,8 @@ def _canonical_parts(content: schemas.Content, limits: Limits, offset: int) -> l
                     id=call.id or f"{call.name}-{index}",
                     name=call.name,
                     arguments=call.args,
+                    # Carried back unread: a thinking model refuses its own call replayed without.
+                    signature=part.thoughtSignature,
                 )
             )
             continue
@@ -119,9 +142,6 @@ def gemini_to_canonical(
         parts = _canonical_parts(content, limits, counted)
         counted += len(parts)
         messages.append(CanonicalMessage(role=role, parts=parts))
-
-    # Across the whole request: one document split over five messages is still one large request.
-    check_bounds([part.size for message in messages for part in message.attachments], limits)
 
     config = request.generationConfig
     return CanonicalRequest(
@@ -252,12 +272,7 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
         parts.append(schemas.Part(text=response.text))
     if response.audio is not None:
         parts.append(_audio_part(response.audio))
-    parts.extend(
-        schemas.Part(
-            functionCall=schemas.FunctionCall(name=call.name, args=call.arguments, id=call.id)
-        )
-        for call in response.tool_calls
-    )
+    parts.extend(_call_part(call) for call in response.tool_calls)
     if not parts:
         parts.append(schemas.Part(text=""))
 
@@ -265,7 +280,7 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
         candidates=[
             schemas.Candidate(
                 content=schemas.Content(role="model", parts=parts),
-                finishReason=response.finish_reason.upper(),
+                finishReason=_google_finish(response.finish_reason),
                 index=0,
             )
         ],
@@ -279,6 +294,34 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
         ),
         modelVersion=response.model,
     )
+
+
+def _google_finish(reason: FinishReason) -> str:
+    """The canonical finish reason as Google names it (`_GOOGLE_FINISH`)."""
+    return _GOOGLE_FINISH.get(FinishReason(reason), "OTHER")
+
+
+def _call_part(call: ToolCallPart) -> schemas.Part:
+    """A function call as Google returns it, with the model's signature beside it where it gave
+    one — the caller has to send it back on this part for the conversation to continue."""
+    return schemas.Part(
+        functionCall=schemas.FunctionCall(name=call.name, args=call.arguments, id=call.id),
+        thoughtSignature=call.signature,
+    )
+
+
+def without_signatures(payload: dict[str, Any]) -> dict[str, Any]:
+    """A response payload as it is **stored**: every part's `thoughtSignature` left out.
+
+    A signature is model state the caller needs to continue, not part of what was said, and it is
+    not kept with the answer (`ToolCallPart.signature`). The caller still receives it.
+    """
+    stored = copy.deepcopy(payload)
+    for candidate in stored.get("candidates") or []:
+        for part in (candidate.get("content") or {}).get("parts") or []:
+            if isinstance(part, dict):
+                part.pop("thoughtSignature", None)
+    return stored
 
 
 def _audio_part(audio: DataPart) -> schemas.Part:
@@ -308,17 +351,12 @@ def chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConten
         parts.append(schemas.Part(text=chunk.text_delta))
     if chunk.audio_delta is not None:
         parts.append(_audio_part(chunk.audio_delta))
-    parts.extend(
-        schemas.Part(
-            functionCall=schemas.FunctionCall(name=call.name, args=call.arguments, id=call.id)
-        )
-        for call in chunk.tool_calls
-    )
+    parts.extend(_call_part(call) for call in chunk.tool_calls)
     return schemas.GenerateContentResponse(
         candidates=[
             schemas.Candidate(
                 content=schemas.Content(role="model", parts=parts),
-                finishReason=(chunk.finish_reason.upper() if chunk.finish_reason else None),
+                finishReason=(_google_finish(chunk.finish_reason) if chunk.finish_reason else None),
                 index=0,
             )
         ],

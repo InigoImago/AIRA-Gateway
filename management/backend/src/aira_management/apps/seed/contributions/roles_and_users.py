@@ -1,7 +1,8 @@
 """Phase 0 seed contribution: the role groups and the five demo users.
 
 Deterministic and idempotent: users are keyed by a fixed username, groups by role name,
-so re-running produces the same state. ``fresh`` removes existing demo users first.
+so re-running produces the same state. ``fresh`` removes existing demo users first — except a
+person named in the question catalogue's evidence, who is kept and made claimable again.
 """
 
 from __future__ import annotations
@@ -10,9 +11,14 @@ from typing import Any
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.db import transaction
 
 from aira_management.apps.api.models import OidcIdentity, PendingIdentity
+from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.seed.registry import SeedResult, register
+from aira_management.apps.smoketests.models import TestResult, TestRun
+from aira_management.apps.usecases import events
+from aira_management.apps.usecases.models import UseCaseMembership
 from aira_management.roles import Role
 
 DEMO_DOMAIN = "demo.aira"
@@ -39,8 +45,7 @@ def seed_roles_and_users(fresh: bool) -> SeedResult:
     """Create role Groups and one demo user per role. Idempotent."""
     user_model = get_user_model()
 
-    if fresh:
-        user_model.objects.filter(email__endswith=f"@{DEMO_DOMAIN}").delete()
+    kept = _remove_demo_people() if fresh else 0
 
     groups: dict[Role, Group] = {}
     groups_created = 0
@@ -88,8 +93,57 @@ def seed_roles_and_users(fresh: bool) -> SeedResult:
         "groups_retired": groups_retired,
         "users": len(DEMO_USERS),
         "users_created": users_created,
+        "users_kept": kept,
         "invited": invited,
     }
+
+
+def _remove_demo_people() -> int:
+    """``--fresh``: delete the demo-domain accounts, announcing the access each one takes with it.
+
+    A deletion cascades a person's keys and memberships here, and the gateway hears of neither
+    unless it is told — a removed key would go on authenticating. Every key is announced revoked
+    **except a demo key the showcase reissues** under the same prefix later in this run:
+    revocation is terminal at the gateway, and the reissued key would answer 401 for ever.
+
+    **A person named in the catalogue's evidence is kept** — who requested a run (`PROTECT`, so
+    deleting them would abort the reset) or rated an answer (a verdict naming nobody is weaker
+    evidence). Their sign-in binding is released, which is what the deletion was for: the demo
+    person can claim the account again, from whatever subject the realm now gives them.
+
+    Returns how many were kept, which the summary says.
+    """
+    # Imported here: the showcase is a later contribution, and this asks it a question only a
+    # reset needs.
+    from aira_management.apps.seed.contributions.showcase import reissued_prefixes
+    from aira_management.apps.usecases.views.grants import _revoke_key
+
+    reissued = reissued_prefixes()
+    kept = 0
+    for person in get_user_model().objects.filter(email__endswith=f"@{DEMO_DOMAIN}"):
+        if (
+            TestRun.objects.filter(requested_by=person).exists()
+            or TestResult.objects.filter(rated_by=person).exists()
+        ):
+            OidcIdentity.objects.filter(user=person).delete()
+            kept += 1
+            continue
+        username = person.get_username()
+        with transaction.atomic():
+            for key in ApiKey.objects.filter(owner=person, is_active=True).select_related(
+                "use_case"
+            ):
+                if key.prefix not in reissued:
+                    _revoke_key(key, key.use_case.slug)
+            for membership in UseCaseMembership.objects.filter(user=person).select_related(
+                "use_case"
+            ):
+                events.emit(
+                    "membership.removed",
+                    {"slug": membership.use_case.slug, "username": username},
+                )
+            person.delete()
+    return kept
 
 
 def _invite(user: Any) -> bool:

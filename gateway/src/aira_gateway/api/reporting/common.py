@@ -43,14 +43,24 @@ def scope_label(scope: Scope) -> str:
 
 
 def _parse(value: str, field: str) -> datetime:
-    """An ISO-8601 timestamp, or a 400. A naive one is read as UTC, the zone every figure is in."""
+    """An ISO-8601 timestamp **in UTC**, or a 400. A naive one is read as UTC.
+
+    Converted, not merely labelled: every figure is in UTC (`ADR-0028`) and the series' buckets are
+    UTC text from the database, so a window kept in the caller's offset draws an axis its own rows
+    fall off — and SQLite, which drops an offset from a comparison, evaluates another window.
+    """
     try:
         parsed = datetime.fromisoformat(value)
+        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     except ValueError as exc:
         raise GeminiHTTPError(
             400, f"'{field}' is not an ISO-8601 timestamp.", "INVALID_ARGUMENT"
         ) from exc
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    except OverflowError as exc:
+        # The first instant of year one in an eastern offset is before the first one UTC has.
+        raise GeminiHTTPError(
+            400, f"'{field}' is outside the range of time this API can express.", "INVALID_ARGUMENT"
+        ) from exc
 
 
 def _month_window(now: datetime) -> tuple[datetime, datetime]:

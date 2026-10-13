@@ -11,20 +11,20 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_common.anomalies import RATIO_KINDS, RuleKind, RuleTarget
 from aira_common.logging import get_logger
-from aira_gateway.audit import Outcome
+from aira_gateway.audit import NOT_TRAFFIC, Outcome
 from aira_gateway.db.models import AnomalyRuleRead, RequestLog
+from aira_gateway.db.models.owned import REQUEST_PERSON
 
 _log = get_logger("aira_gateway.anomalies")
 
-#: Who a `subject` rule is about: the username where recorded (`FRD-606`), else the subject —
-#: :func:`aira_gateway.scopes.person` asked of a stored row, so one person's key and browser
-#: traffic count together. `nullif` because SQL reads `""` as a value and `person` as absence.
-_PERSON = func.coalesce(func.nullif(RequestLog.username, ""), RequestLog.subject)
+#: Who a `subject` rule is about (`FRD-606`): the row's person, as the report groups it, so one
+#: person's key and browser traffic count together.
+_PERSON = REQUEST_PERSON
 
 #: The column each target groups by. A rule's target is what its action lands on, so it is also
 #: what the measurement is *per* — a rate averaged over a use case hides the caller producing it.
@@ -33,6 +33,11 @@ _GROUP_BY = {
     RuleTarget.CREDENTIAL: RequestLog.credential,
     RuleTarget.USE_CASE: RequestLog.use_case,
 }
+
+#: Where a `new_source_ip` finding's description starts naming the addresses it found. An address
+#: is an incident field (`FRD-502` FR-12), so every reader without `incident.investigate` is shown
+#: the description cut here (:func:`without_addresses`); the stored description is the evidence.
+NEW_ADDRESSES_FROM = "not seen before: "
 
 #: Which outcomes each rate kind counts, from the closed `Outcome` vocabulary (`FRD-122`) rather
 #: than a second list. ``None`` means anything not `served`, `client_gone` included: one hang-up is
@@ -70,13 +75,17 @@ def _column(rule: AnomalyRuleRead) -> Any:
 
 
 def _scoped(stmt: Any, rule: AnomalyRuleRead, group: Any) -> Any:
-    """Narrow a query to the rule's reach and to rows that have a target.
+    """Narrow a query to the rule's reach, to rows that have a target, and to traffic.
 
-    A global rule (``use_case`` NULL) is not narrowed to a use case.
+    A global rule (``use_case`` NULL) is not narrowed to a use case. A row that is no caller's
+    traffic (`audit.NOT_TRAFFIC`, an administrator's model check) is measured by no rule: a
+    check that succeeded is not a refusal, and is not the caller's request either. A NULL outcome
+    is a row from before outcomes were recorded, when only served requests were.
     """
     if rule.use_case is not None:
         stmt = stmt.where(RequestLog.use_case == rule.use_case)
-    return stmt.where(group.is_not(None))
+    traffic = or_(RequestLog.outcome.is_(None), RequestLog.outcome.notin_(sorted(NOT_TRAFFIC)))
+    return stmt.where(group.is_not(None), traffic)
 
 
 def _window(rule: AnomalyRuleRead, now: datetime) -> tuple[datetime, datetime]:
@@ -181,9 +190,11 @@ async def _share(
         # A rate over too few rows says nothing: one refusal out of one request is 100 %.
         if total < max(rule.min_sample, 1):
             continue
-        share = round((matched or 0) * 100 / total)
-        if share < rule.threshold:
+        # Compared exactly, in integers; rounded only for display. A rounded share puts 37.5 % at
+        # a threshold of 38 — and a `block` rule acts on the comparison.
+        if (matched or 0) * 100 < rule.threshold * total:
             continue
+        share = round((matched or 0) * 100 / total)
         findings.append(
             Finding(
                 target_value=str(value),
@@ -229,9 +240,10 @@ async def _evaluate_ratio(
         # every use case's first hour an incident.
         if was <= 0:
             continue
-        share = round(amount * 100 / was)
-        if share < rule.threshold:
+        # Exactly, as for a rate (see `_share`).
+        if amount * 100 < rule.threshold * was:
             continue
+        share = round(amount * 100 / was)
         unit = "spend" if kind is RuleKind.SPEND_SPIKE else "requests"
         findings.append(
             Finding(
@@ -283,7 +295,18 @@ async def _evaluate_new_source(
                 target_value=value,
                 observed=len(fresh),
                 sample=len(addresses),
-                detail=f"used from {len(fresh)} address(es) not seen before: {', '.join(fresh)}",
+                detail=f"used from {len(fresh)} address(es) {NEW_ADDRESSES_FROM}{', '.join(fresh)}",
             )
         )
     return findings
+
+
+def without_addresses(detail: str) -> str:
+    """``detail`` as a reader who may not see source addresses reads it.
+
+    Only a `new_source_ip` description names addresses, after :data:`NEW_ADDRESSES_FROM`; the
+    count before it stays, because it is what says that something happened. Any other description
+    is returned as it is.
+    """
+    head, found, _ = detail.partition(NEW_ADDRESSES_FROM)
+    return head + NEW_ADDRESSES_FROM.rstrip(": ") if found else detail

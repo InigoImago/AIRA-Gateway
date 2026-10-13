@@ -174,8 +174,48 @@ def test_what_the_notice_states_is_part_of_its_version(change: dict[str, Any]) -
 
 
 def test_the_version_does_not_depend_on_the_language_being_read() -> None:
-    assert notice.version(_installation()).startswith(f"{EDITION}.")
-    assert notice.version(_installation()) == notice.version(_installation())
+    """A reader who acknowledged the German notice has acknowledged the notice: switching to
+    English asks nothing new. Asked through the API in both languages — `version()` takes no
+    language, so comparing it with itself would pass whatever the API did with the one asked for."""
+    client = _client(_user("anna"))
+
+    german = client.get(f"{NOTICE}?language=de").json()
+    english = client.get(f"{NOTICE}?language=en").json()
+
+    assert german["language"] == "de" and english["language"] == "en", "two different readings"
+    assert german["version"] == english["version"]
+    assert german["version"].startswith(f"{EDITION}.")
+
+
+def test_what_no_reader_is_shown_does_not_move_the_edition(monkeypatch) -> None:
+    """The digest is over what the notice says. A reason added to a `NOT_PERSONAL_*` table — or a
+    comment, or a reformatted line — changes nothing a reader sees, and asking every user to read
+    the notice again for it would teach them that a new edition means nothing."""
+    from aira_management.apps.privacy import activities
+
+    before = source_digest()
+    monkeypatch.setitem(
+        activities.NOT_PERSONAL_TABLES,
+        (activities.Plane.MANAGEMENT, "zz_probe_table"),
+        "a table nobody reads",
+    )
+
+    assert source_digest() == before
+
+
+def test_a_column_an_activity_stores_moves_the_edition(monkeypatch) -> None:
+    """The comparison: a stored column is processing, and processing is the notice's business."""
+    from aira_management.apps.privacy import activities, edition
+
+    before = source_digest()
+    first = activities.ACTIVITIES[0]
+    grown = dataclasses.replace(
+        first,
+        stores=(*first.stores, activities.Stored(activities.Plane.MANAGEMENT, "zz", ("zz",))),
+    )
+    monkeypatch.setattr(edition, "ACTIVITIES", (grown, *activities.ACTIVITIES[1:]))
+
+    assert source_digest() != before
 
 
 # == the API =======================================================================================
@@ -402,3 +442,17 @@ def test_a_misspelled_mode_refuses_the_process() -> None:
 def test_a_default_language_without_a_text_refuses_the_process() -> None:
     with pytest.raises(ValueError, match="AIRA_PRIVACY_DEFAULT_LANGUAGE"):
         ManagementSettings(privacy_default_language="fr")
+
+
+def test_the_notice_states_how_long_the_event_channel_keeps_what_it_sent() -> None:
+    """Published outbox rows carry names and were kept for ever while the notice said "as long as
+    the account exists". The relay now deletes them after `KEPT_AFTER_DAYS`, and the notice states
+    that very number — read from the relay's constant, not restated."""
+    from aira_management.apps.outbox.models import KEPT_AFTER_DAYS
+
+    rendered = notice.render("en", _installation())
+    activities = next(s for s in rendered["sections"] if s["key"] == "activities")["activities"]
+    account = next(a for a in activities if a["key"] == "account")
+    retention = next(f["text"] for f in account["fields"] if f["key"] == "retention")
+
+    assert f"{KEPT_AFTER_DAYS} days after it was sent" in retention

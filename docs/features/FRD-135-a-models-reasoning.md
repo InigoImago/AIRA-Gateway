@@ -83,6 +83,11 @@ and an installation watching its own agents has no way to see why a model did wh
   answer, `thoughtsTokenCount` the thinking, `totalTokenCount` both. The surface once sent
   `completion_tokens` — thinking included — as `candidatesTokenCount` beside `thoughtsTokenCount`,
   so a client adding the two counted the reasoning twice. FR-1's invariant is unchanged inside.
+- **FR-9 Returned reasoning is not replayed as speech.** The google-genai chat helper sends the
+  whole earlier answer back in the next turn's history, its `thought: true` parts included. Google
+  does not read those as conversation, and forwarded as plain text they would tell the model it had
+  *said* its private reasoning — so a request's thought parts are left out of what is sent on,
+  as Google leaves them, rather than refused, which would fail every second turn of such a chat.
 
 ## 5. Design & Architecture
 
@@ -129,7 +134,7 @@ The three dialects differ in one way that decides the shape of the fix:
 | --- | --- | --- |
 | Gemini | `parts[].thought: true` | **no** — it is only sent when the request asks |
 | Anthropic | `content[].type == "thinking"` | no — only with a thinking budget set |
-| OpenAI | `message.reasoning` | **yes** — a reasoning model thinks with no parameter at all |
+| OpenAI | `message.reasoning`, or `message.reasoning_content` | **yes** — a reasoning model thinks with no parameter at all |
 
 So the Gemini mapper can read it unconditionally and the other two cannot: an unconditional read on
 the OpenAI dialect returns a chain of thought to every use case that never asked, into a response
@@ -138,6 +143,10 @@ this gateway also persists (§8). Both mappers therefore take the switch as an a
 adapters pass `request.include_reasoning` — one wire each, and the mutation harness guards both,
 because a dropped argument is invisible: the answer is simply always withheld, which looks exactly
 like the feature being off.
+
+The OpenAI dialect has **two spellings** of the field. `reasoning_content` is DeepSeek's, and what
+Agent Platform's open models send (`FRD-115` FR-2a); read as `reasoning` alone, a use case that had
+asked got nothing from them, under a 200. The mapper reads either, behind the same switch.
 
 **Streams return no reasoning on any dialect** and that is unchanged: `CanonicalChunk` has no
 channel for it, so there is nothing dialect-specific to state.

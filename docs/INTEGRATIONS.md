@@ -245,6 +245,27 @@ on paper and absent in practice, which this project refuses to ship. If your rea
 username editing, grant access by **group** only and expect one person's allowances to follow the
 name rather than the human.
 
+#### Leaving a group does not end an API key
+
+> **When somebody leaves, revoke their API keys — or let them expire.**
+
+Removing a person from a group in your directory ends their **token's** access on their next
+request. It ends nothing for an **API key** they own through that group: a key is revoked when the
+access it rests on ends *in AIRA* — a member removed, a group grant revoked (`FRD-613`) — and
+Management knows a person's groups only from that person's own tokens, which somebody who has left
+no longer presents. Their key serves until it expires: `AIRA_API_KEY_DEFAULT_DAYS` unless a longer
+lifetime up to `AIRA_API_KEY_MAX_DAYS` was asked for. A shorter default narrows the window for
+whoever forgets.
+
+#### A username handed to somebody new
+
+A direct membership travels to the gateway as a **username**, matched there against
+`preferred_username`. If somebody signs in under a name an account here already holds, their
+account is created as `<name>-<first eight characters of their subject>`, and the console refuses
+a direct grant by either name — the gateway would read it as the other person — and says to grant
+through a group instead. Remove a departed person's direct memberships before their username is
+given to somebody else.
+
 #### To stop a person, name them by their username
 
 > **A suspension targeting a `subject` must carry the name, not the directory id.**
@@ -370,11 +391,11 @@ AIRA_KAFKA_SSL_CAFILE=/etc/ssl/private-ca.pem   # only for a private CA
 ```
 
 **What you provide**: one broker principal per service (relay and consumer), each with `Write` on
-the eight topics for the relay and `Read` for the consumer — nothing wider. ACLs are what make the
+the nine topics for the relay and `Read` for the consumer — nothing wider. ACLs are what make the
 identity worth having; an authenticated principal that may publish to any topic is the same hole
 with a login.
 
-> done eight compacted topics, created explicitly · one relay · one consumer · **a broker identity
+> done nine compacted topics, created explicitly · one relay · one consumer · **a broker identity
 > per service and ACLs scoped to these topics** · bootstrap servers reachable from both planes
 
 ---
@@ -426,7 +447,7 @@ counters seed from Postgres on a miss and expire in five minutes so drift cannot
 At least one. Each is registered **only when configured**, and each is audited under its own
 provider, publisher and region.
 
-### Google Agent Platform (formerly Vertex AI) — Gemini and Anthropic, EU-regional
+### Google Agent Platform (formerly Vertex AI) — Gemini, Anthropic and managed open models
 
 > **The product was renamed.** Vertex AI is now
 > [Gemini Enterprise Agent Platform](https://cloud.google.com/products/gemini-enterprise-agent-platform);
@@ -442,11 +463,17 @@ provider, publisher and region.
 | **Either** a service account with `roles/aiplatform.user` **or** an API key | Two credentials, one adapter — see below |
 | The credential, from the environment **or Vault** | `AIRA_VERTEX_CREDENTIALS` (JSON) or `AIRA_VERTEX_API_KEY` |
 | The **regions** you are permitted to use | Listed in `AIRA_ALLOWED_REGIONS`; a model outside them refuses to start, and since `FRD-611` the console refuses one **as it is typed**, naming what is allowed. `global` is not in the shipped default: it names no region and guarantees none, so an installation that wants it says so out loud |
-| **Model Garden access** for the publishers you want | Anthropic models need to be enabled in your project |
+| **Model Garden access** for the publishers you want | Anthropic models need to be enabled in your project; an open model the project cannot use answers the model check with `404` |
+| For an **open model** (GLM, DeepSeek): a permission by name | They are served only at `global`, which names no region. `AIRA_ALLOWED_MODEL_REGIONS=global=glm-4.7-maas` permits it for that model and no other (`ADR-0034`) |
 
-One transport, two dialects. Anthropic on Vertex uses `:rawPredict` with the Messages API:
+One transport, three dialects. Anthropic on Vertex uses `:rawPredict` with the Messages API:
 `max_tokens` is always sent, thinking blocks are **dropped and never persisted**, cache tokens count
-as input, and there are no embeddings.
+as input, and there are no embeddings. The managed open models speak the **OpenAI** dialect at one
+endpoint, `endpoints/openapi/chat/completions`, with the model named in the body as
+`publisher/model` — catalogue one under provider `vertex`, its publisher (`zai-org`,
+`deepseek-ai`) and region `global`. Thinking is a switch there (on or off, no budget), their
+reasoning is returned only to a use case that asked for it, and there are no embeddings
+(`FRD-115` FR-2a).
 
 #### Which credential — and why it is not a free choice
 
@@ -469,7 +496,9 @@ choice, and silently preferring a key left in the environment would be a downgra
 > The same API key was measured to answer on the *locational* host
 > (`europe-west1-aiplatform.googleapis.com`, both path forms), so this adapter keeps its regional
 > hosts and its per-model region check, and an API key gets the same residency a service account
-> does. If you point anything else at the global endpoint, that guarantee is gone.
+> does. If you point anything else at the global endpoint, that guarantee is gone. The one
+> exception is deliberate and per model: an open model permitted `global` by name is sent there,
+> because Google serves it nowhere else — and its audit row says `global`.
 
 #### B — the service account, step by step
 
@@ -542,7 +571,7 @@ environment happens to hold.
 | You provide | Why |
 |---|---|
 | An **Azure OpenAI resource** endpoint | `AIRA_FOUNDRY_ENDPOINT` |
-| An **API key** or Entra credentials | The Entra token is minted per request, not captured once |
+| An **API key** | `AIRA_FOUNDRY_API_KEY`. Entra ID is not configurable yet: the transport takes a token source (`FRD-120` FR-2), and no setting reaches it |
 | One **deployment per model**, with its region | `AIRA_FOUNDRY_DEPLOYMENTS` as `model=deployment@region` |
 
 An Azure **deployment name is not a model name**. Attributing a response to the deployment would not
@@ -1210,7 +1239,10 @@ a 16 KiB boundary. A file under `deploy/compose/payload/` comes out whole.
 was three spans plus its database reads — measured at 23 % of everything in a window that also held
 three real requests. They are excluded from tracing (`OTEL_PYTHON_EXCLUDED_URLS`, set before
 anything is instrumented), so a trace backend, an OTLP quota and a debug payload all stop being
-mostly probes. An installation that sets that variable itself keeps its own list.
+mostly probes. Only the exact paths `/healthz` and `/readyz` are excluded: the instrumentations
+match the whole URL, whose host is the caller's own `Host` header, so a host or a use case whose
+name merely contains the word stays traced. An installation that sets that variable itself keeps
+its own list — and should anchor it the same way.
 
 **A file the collector cannot write is reported as delivered.** It runs as uid 10001 and your
 checkout does not, so `deploy/compose/payload/` has to be writable by it — `make env` sets that,
@@ -1364,7 +1396,7 @@ graph TB
     subgraph day1["Day 1 — it runs"]
         a1["Postgres: 2 databases"]
         a2["Keycloak: realm, roles, groups, client"]
-        a3["Kafka: 8 compacted topics"]
+        a3["Kafka: 9 compacted topics"]
         a4["1 model platform"]
         a5["Deploy: gateway, consumer, management, relay, frontend"]
     end

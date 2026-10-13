@@ -2,7 +2,8 @@
 
 Everything here is about Google *the platform* and nothing about a vendor's API shape; the dialects
 own the bodies. Authentication in the adapters would be written twice, and body mapping here would
-be rewritten for every new vendor (`ADR-0011`).
+be rewritten for every new vendor (`ADR-0011`). How an answer is judged — status, reason, a body
+that is not JSON — is every platform's rule and lives in `upstreams.exchange`.
 
 **Residency is enforced, not intended**: `url()` checks every region, on every call, against the
 one allow-list in :mod:`aira_gateway.residency` that every transport shares (`ADR-0012` §6).
@@ -10,14 +11,34 @@ one allow-list in :mod:`aira_gateway.residency` that every transport shares (`AD
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 
+from aira_common.logging import get_logger
 from aira_common.tokens import TokenSource, TokenUnavailable
 from aira_gateway.residency import DEFAULT_ALLOWED_REGIONS, check_region
-from aira_gateway.upstreams.base import UpstreamError, upstream_reason
+from aira_gateway.upstreams.base import UpstreamError
+from aira_gateway.upstreams.exchange import (
+    json_object,
+    opened_stream,
+    refused,
+    unreachable,
+)
+
+#: How this transport names itself in an error: "Vertex upstream returned 429."
+NAME = "Vertex upstream"
+
+#: What a caller is told when this deployment's own credential fails. The cause — an expired key, a
+#: clock off by minutes — is the operator's to fix and goes to the log; an API caller can do
+#: nothing with it, and it describes this installation's credentials to whoever sent a request.
+CREDENTIALS_UNAVAILABLE = (
+    "Vertex credentials are unavailable, so the request could not be sent. The gateway's log has "
+    "the cause for its operator."
+)
 
 #: The endpoints that are **not** `{region}-aiplatform.googleapis.com`. The regional pattern for
 #: `global` resolves and answers `404`, which reads as "the model does not exist there" — and some
@@ -26,6 +47,12 @@ _MULTI_REGION_HOSTS = {
     "eu": "aiplatform.eu.rep.googleapis.com",
     "global": "aiplatform.googleapis.com",
 }
+
+#: Where Agent Platform serves its managed open models (`FRD-115` FR-2a): one OpenAI-compatible path
+#: for every publisher, the model named in the body rather than in the path.
+OPEN_MODELS_PATH = "endpoints/openapi/chat/completions"
+
+_log = get_logger("aira_gateway.upstreams")
 
 
 def host_for(region: str) -> str:
@@ -43,6 +70,7 @@ class VertexTransport:
         api_key: str = "",
         client: httpx.AsyncClient,
         allowed_regions: tuple[str, ...] = DEFAULT_ALLOWED_REGIONS,
+        model_regions: Mapping[str, frozenset[str]] | None = None,
     ) -> None:
         if tokens is None and not api_key:
             # Refused here: a transport with no credential fails every call the same way and looks
@@ -56,9 +84,11 @@ class VertexTransport:
         self._api_key = api_key
         self._client = client
         self._allowed = allowed_regions
+        #: Regions single models are permitted by name (`AIRA_ALLOWED_MODEL_REGIONS`).
+        self._model_regions = dict(model_regions or {})
 
     def url(self, *, region: str, publisher: str, model: str, method: str) -> str:
-        check_region(region, self._allowed)
+        self._check(region, model)
         # **Percent-encoded as one segment**, so `/`, `..` or `%2f` in a model name cannot change
         # the path. `@` stays literal for Anthropic's `@version` suffix; RFC 3986 allows it.
         segment = quote(model, safe="@")
@@ -67,18 +97,34 @@ class VertexTransport:
             f"/locations/{region}/publishers/{publisher}/models/{segment}:{method}"
         )
 
+    def open_models_url(self, *, region: str, model: str) -> str:
+        """The open-model endpoint in ``region``. Residency is checked for ``model`` exactly as
+        `url` checks it: the model is named in the body, but it is still the model that goes."""
+        self._check(region, model)
+        return (
+            f"https://{host_for(region)}/v1/projects/{self._project}"
+            f"/locations/{region}/{OPEN_MODELS_PATH}"
+        )
+
+    def _check(self, region: str, model: str) -> None:
+        check_region(region, self._allowed, model=model, for_models=self._model_regions)
+
     async def post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         headers = await self._headers()
         try:
             response = await self._client.post(url, json=body, headers=headers)
         except httpx.HTTPError as exc:
-            raise UpstreamError(f"Vertex transport error: {type(exc).__name__}.") from exc
-        _raise_for_status(response)
-        result: dict[str, Any] = response.json()
-        return result
+            raise unreachable(exc, NAME) from exc
+        if response.status_code != httpx.codes.OK:
+            raise refused(response, NAME)
+        return json_object(response, NAME)
 
-    def stream(self, url: str, body: dict[str, Any]) -> _StreamContext:
-        return _StreamContext(self, url, body)
+    @asynccontextmanager
+    async def stream(self, url: str, body: dict[str, Any]) -> AsyncIterator[httpx.Response]:
+        """A streamed POST, its credential resolved and its status judged on entry."""
+        headers = await self._headers()
+        async with opened_stream(self._client, url, NAME, json=body, headers=headers) as response:
+            yield response
 
     async def aclose(self) -> None:
         """Close the connection pool. Called once, from the application lifespan."""
@@ -97,49 +143,6 @@ class VertexTransport:
         try:
             token = await self._tokens.token()
         except TokenUnavailable as exc:
-            raise UpstreamError(f"Vertex credentials unavailable: {exc}", 503) from exc
+            _log.error("vertex_credentials_unavailable", error=str(exc))
+            raise UpstreamError(CREDENTIALS_UNAVAILABLE, 503) from exc
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-
-class _StreamContext:
-    """A streamed POST that resolves its credential and judges the status on entry."""
-
-    def __init__(self, transport: VertexTransport, url: str, body: dict[str, Any]) -> None:
-        self._transport = transport
-        self._url = url
-        self._body = body
-        self._cm: Any = None
-
-    async def __aenter__(self) -> httpx.Response:
-        headers = await self._transport._headers()
-        self._cm = self._transport._client.stream(
-            "POST", self._url, json=self._body, headers=headers
-        )
-        try:
-            response: httpx.Response = await self._cm.__aenter__()
-        except httpx.HTTPError as exc:
-            self._cm = None
-            raise UpstreamError(f"Vertex transport error: {type(exc).__name__}.") from exc
-        try:
-            _raise_for_status(response)
-        except UpstreamError:
-            # Close what was opened: Python does not call `__aexit__` when `__aenter__` raises, and
-            # under regional failover a refused stream is an ordinary step, not a rare end.
-            await self._cm.__aexit__(None, None, None)
-            self._cm = None
-            raise
-        return response
-
-    async def __aexit__(self, *exc_info: Any) -> None:
-        if self._cm is not None:
-            await self._cm.__aexit__(*exc_info)
-
-
-def _raise_for_status(response: httpx.Response) -> None:
-    if response.status_code != httpx.codes.OK:
-        # The status is kept so 429/503/504 pass through for every vendor. The provider's reason
-        # is carried for a 400 only, and never the body: a Vertex error can quote the request.
-        detail = upstream_reason(response) if response.status_code == 400 else ""
-        raise UpstreamError(
-            f"Vertex upstream returned {response.status_code}.{detail}", response.status_code
-        )

@@ -138,11 +138,20 @@ async def test_an_installation_with_no_such_budget_behaves_as_before(sessionmake
 async def test_enforcement_off_still_reserves_nothing(sessionmaker) -> None:
     """The master switch keeps its meaning. Worth pinning because the line this feature changed is
     the same line that reads it, and a rewrite that dropped `self._enforce` would turn a switch
-    somebody deliberately set into no switch at all."""
+    somebody deliberately set into no switch at all.
+
+    Nothing is reserved and nobody refused — over a limit of one request, the second is admitted —
+    while the installation's own budget still **counts** what was spent: the figures stay true."""
     await _budget(sessionmaker, limit_requests=1)
     service = BudgetService(sessionmaker, enforce=False)
 
-    assert not (await service.guard(None, "x", estimated=Amounts(requests=1), now=NOW)).budgets
+    for _ in range(2):
+        reservation = await service.guard(None, "x", estimated=Amounts(requests=1), now=NOW)
+        assert not reservation.atomic and reservation.reserved == Amounts()
+        await service.settle(reservation, 10, now=NOW)
+
+    (row,) = await service.usage("", NOW)
+    assert row["used_requests"] == 2
 
 
 # == the two scopes keep separate books ===========================================================

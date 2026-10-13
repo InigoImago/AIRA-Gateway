@@ -48,22 +48,12 @@ ALLOWED = {
     "aira-nav__item",
     "aira-user__name",
     "panel",
-    # A wrapper inside `.modal`, which carries the box; the head/body/foot inside carry the padding.
-    "modal__panel",
-    "modal__panel--wide",
     # Named for the reader of the template. The behaviour is already an element selector:
-    # `input, select, textarea` styles the control, and `.table td` breaks and wraps.
-    "input",
+    # `.table td` breaks and wraps.
     "break-anywhere",
     "wrap",
     "code-block",
-    "inline-number",
-    "field__label",
-    # `.field` is full-width in a window by rule now; the name records that this one wanted it
-    # before that was true.
-    "field--own-row",
     # A named part of a component's own composition, laid out by the `card stack` beside it.
-    "pipe__test",
     "pager__count",
 }
 

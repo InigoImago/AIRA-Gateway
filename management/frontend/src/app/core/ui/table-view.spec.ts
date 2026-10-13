@@ -66,6 +66,19 @@ describe('TableView', () => {
     expect(v.filtered()).toBe(false);
   });
 
+  it('steps back from the page it shows when the list shrank under it', () => {
+    // Page 4 of a live list that shrank to three shows page 3. Previous then has to go to 2 — not
+    // to 3, the page already on screen, which reads as a button that does nothing.
+    const { source, view: v } = view(rows(100));
+    v.go(4);
+    source.set(rows(60));
+    expect(v.current()).toBe(3);
+
+    v.previous();
+
+    expect(v.current()).toBe(2);
+  });
+
   it('returns to page one when the search changes', () => {
     // A filter applied on page 4 that leaves you on page 4 shows an empty table, and the reader
     // concludes there are no matches when there are five.

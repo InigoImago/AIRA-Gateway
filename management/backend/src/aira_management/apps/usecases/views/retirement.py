@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.db import transaction
 from django.http import Http404
 from django.utils import timezone
 from rest_framework import status
@@ -20,10 +19,10 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from aira_common.permissions import Permission
-from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import PURGE_AFTER_DAYS, UseCase
 from aira_management.apps.usecases.serializers import RetiredUseCaseSerializer
 from aira_management.apps.usecases.views.base import UseCaseViewBase
+from aira_management.apps.usecases.views.lifecycle import purge, retire
 from aira_management.rbac import may
 
 
@@ -34,18 +33,14 @@ class RetirementMixin(UseCaseViewBase):
         The gateway reacts as to a deletion — keys, memberships, grants, budgets, limits, rules and
         pipeline go and traffic stops — but the row stays: the gateway's audit rows name the use
         case only by slug, and this row is the context that makes them evidence.
+
+        The event carries the use case **as it stood** (`lifecycle.retire`).
         """
         if not self._may_admin(instance):
             raise PermissionDenied("You are not an admin of this use case.")
-        if instance.deleted_at is not None:
-            # Already retired: no second event, which would re-run the gateway's cascade and
-            # overwrite who retired it.
-            return
-        with transaction.atomic():
-            instance.deleted_at = timezone.now()
-            instance.deleted_by = str(getattr(self.request.user, "username", "") or "")
-            instance.save(update_fields=["deleted_at", "deleted_by", "updated_at"])
-            emit("usecase.deleted", {"slug": instance.slug})
+        # A request that lost the race to another retirement changes nothing and announces
+        # nothing; it still answers `204`, because the use case is retired either way.
+        retire(instance, by=str(getattr(self.request.user, "username", "") or ""))
 
     @action(detail=False, methods=["get"], url_path="retired")
     def retired(self, request: Request) -> Response:
@@ -58,7 +53,7 @@ class RetirementMixin(UseCaseViewBase):
             raise PermissionDenied(
                 "Retired use cases need the permission to see them (usecase.read_retired)."
             )
-        rows = UseCase.objects.filter(deleted_at__isnull=False).order_by("-deleted_at", "slug")
+        rows = UseCase.objects.retired().order_by("-deleted_at", "slug")
         return Response(RetiredUseCaseSerializer(rows, many=True).data)
 
     @action(detail=True, methods=["delete"], url_path="purge")
@@ -88,18 +83,15 @@ class RetirementMixin(UseCaseViewBase):
             remaining = timedelta(days=PURGE_AFTER_DAYS) - waited
             raise ValidationError(
                 {
-                    "detail": [
+                    "detail": (
                         f"This use case was retired {waited.days} day(s) ago and may be purged "
                         f"after {PURGE_AFTER_DAYS}. Try again in "
                         f"{max(1, -(-remaining.total_seconds() // 86400)):.0f} day(s)."
-                    ]
+                    )
                 }
             )
 
-        with transaction.atomic():
-            purged = usecase.slug
-            usecase.delete()
-            # A second event, not a repeat of `usecase.deleted`: that one ended access and kept the
-            # tombstone; this one lets the gateway drop the last row it kept for the use case.
-            emit("usecase.purged", {"slug": purged})
+        # A second event, not a repeat of `usecase.deleted`: that one ended access and kept the
+        # tombstone; this one lets the gateway drop the last row it kept for the use case.
+        purge(usecase)
         return Response(status=status.HTTP_204_NO_CONTENT)

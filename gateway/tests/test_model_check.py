@@ -482,6 +482,128 @@ async def test_a_thinking_word_is_asked_in_every_region() -> None:
     assert "thinking_level is not supported" in body["results"][0]["detail"]
 
 
+class _CountsProbes:
+    """Counts what one press asks: a probe and a one-token generation per region, as billed."""
+
+    expresses_thinking_levels = True
+
+    def __init__(self) -> None:
+        self.pings: list[str] = []
+        self.generations: list[str] = []
+
+    async def ping(self, model: str = "", addressing: dict[str, Any] | None = None) -> str:
+        self.pings.append(((addressing or {}).get("regions") or [""])[0])
+        return "answered"
+
+    async def generate(self, request: Any) -> Any:
+        self.generations.append((request.addressing.get("regions") or [""])[0])
+        return object()
+
+
+@pytest.mark.anyio
+async def test_a_region_named_twice_is_asked_once() -> None:
+    """**One press multiplied regions by words with no ceiling on the regions**, each a billed
+    generation and an audit row: fifty copies of one region asked about thirty words made 600
+    generations. A region asked twice is the same question, asked and paid for twice."""
+    counting = _CountsProbes()
+    app = _client(GLOBAL_ADMIN, counting)
+    with TestClient(app) as client:
+        await _declare(app, "gemini-2.5-pro")
+        check = client.get(
+            "/v1beta/models/gemini-2.5-pro:check",
+            params={"provider": "vertex", "region": "europe-west1, europe-west1,europe-west4"},
+        )
+        thinking = client.post(
+            "/v1beta/models/gemini-2.5-pro:checkThinking",
+            params={"provider": "vertex", "region": "europe-west1,europe-west1"},
+            json={"levels": ["low"]},
+        )
+
+    assert check.status_code == 200 and thinking.status_code == 200
+    assert counting.pings == ["europe-west1", "europe-west4"]
+    assert counting.generations == ["europe-west1"]
+
+
+@pytest.mark.anyio
+async def test_more_regions_than_one_press_may_ask_are_refused_by_name() -> None:
+    """Refused, not cut short: a check that silently asked the first sixteen would report on a set
+    nobody chose."""
+    from aira_gateway.api.incidents.diagnostics import MAX_REGIONS_PER_CHECK
+
+    counting = _CountsProbes()
+    app = _client(GLOBAL_ADMIN, counting)
+    regions = ",".join(f"region-{n}" for n in range(MAX_REGIONS_PER_CHECK + 1))
+    with TestClient(app) as client:
+        await _declare(app, "gemini-2.5-pro")
+        response = client.post(
+            "/v1beta/models/gemini-2.5-pro:checkThinking",
+            params={"provider": "vertex", "region": regions},
+            json={"levels": ["low"]},
+        )
+
+    assert response.status_code == 400
+    assert str(MAX_REGIONS_PER_CHECK) in response.json()["error"]["message"]
+    assert counting.generations == [], "nothing was spent on a press that was refused"
+
+
+@pytest.mark.anyio
+async def test_a_model_the_endpoint_does_not_list_is_not_reachable_and_says_why() -> None:
+    """The listing an adapter fetched to answer *reachable* names what the credential can call; a
+    catalogue entry naming something else — a typo — read green. The verdict says what is wrong,
+    in the gateway's own words."""
+    from aira_gateway.upstreams.base import ModelNotListed
+
+    class _Lists:
+        async def ping(self, model: str = "", addressing: dict[str, Any] | None = None) -> str:
+            raise ModelNotListed(f"The endpoint answered, and does not list '{model}'.")
+
+    app = _client(GLOBAL_ADMIN, _Lists())
+    with TestClient(app) as client:
+        await _declare(app, "gemini-2.0-flsh")
+        body = client.get("/v1beta/models/gemini-2.0-flsh:check").json()
+
+    assert body["reachable"] is False
+    assert "does not list 'gemini-2.0-flsh'" in body["detail"]
+
+
+@pytest.mark.anyio
+async def test_a_word_accepted_where_the_model_is_pinned_says_where() -> None:
+    """A model `AIRA_VERTEX_MODELS` pins to one region is reached there whatever region is asked
+    about, so the verdict — and the audit row — name the region that answered, not one nobody
+    contacted."""
+    from aira_gateway.audit import Outcome
+    from aira_gateway.db.models import RequestLog
+
+    class _Pinned:
+        expresses_thinking_levels = True
+
+        async def generate(self, request: Any) -> Any:
+            from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
+
+            return CanonicalResponse(
+                model=request.model,
+                text="",
+                usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+                served_region="europe-west4",
+            )
+
+    app = _client(GLOBAL_ADMIN, _Pinned())
+    with TestClient(app) as client:
+        await _declare(app, "gemini-2.5-pro")
+        body = client.post(
+            "/v1beta/models/gemini-2.5-pro:checkThinking",
+            params={"provider": "vertex", "region": "europe-west1"},
+            json={"levels": ["low"]},
+        ).json()
+        async with app.state.db_sessionmaker() as session:
+            rows = (await session.execute(RequestLog.__table__.select())).fetchall()
+
+    assert body["results"][0]["accepted"] is True
+    assert "europe-west4" in body["results"][0]["detail"]
+    assert "europe-west1 was not contacted" in body["results"][0]["detail"]
+    assert [row.region for row in rows if row.outcome == Outcome.DIAGNOSTIC] == ["europe-west4"]
+
+
 # ---- a check that spends money leaves a row (`FRD-610`) ----------------------------------------
 
 
@@ -685,3 +807,22 @@ async def test_no_body_at_all_still_means_an_empty_one() -> None:
         empty = client.post("/v1beta/models/gemini-2.0-flash:checkThinking", json={})
 
     assert (absent.status_code, absent.json()) == (empty.status_code, empty.json())
+
+
+@pytest.mark.anyio
+async def test_a_check_records_which_realm_minted_the_token_of_who_pressed_it() -> None:
+    """`FRD-118`: every audit row says which Keycloak realm the caller came from. The check built
+    its attribution field by field and left `issuer` out, so its rows said nothing about it."""
+    from dataclasses import replace
+
+    from aira_gateway.db.models import RequestLog
+
+    realm = "https://kc-b.test/realms/aira"
+    app = _client(replace(GLOBAL_ADMIN, issuer=realm, username="root"), _Reachable())
+    with TestClient(app) as client:
+        await _declare(app)
+        client.get("/v1beta/models/gemini-2.0-flash:check")
+        async with app.state.db_sessionmaker() as session:
+            rows = (await session.execute(RequestLog.__table__.select())).fetchall()
+
+    assert [(row.issuer, row.username) for row in rows] == [(realm, "root")]

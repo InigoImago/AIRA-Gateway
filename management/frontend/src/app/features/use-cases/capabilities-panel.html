@@ -105,7 +105,7 @@
         }
         <div class="row">
           <button type="submit" class="btn btn--primary" [disabled]="!canSaveCapabilities()">
-            {{ feedback.busy() ? 'Saving…' : 'Save capabilities' }}
+            {{ saving() ? 'Saving…' : 'Save capabilities' }}
           </button>
         </div>
       </form>

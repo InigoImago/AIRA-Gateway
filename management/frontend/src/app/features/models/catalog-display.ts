@@ -1,5 +1,9 @@
+import { formatDate } from '@angular/common';
 import { perMillion } from '../../core/api/me.service';
-import { CatalogModel, GatewayProvider, ModelCheck } from '../../core/api/models';
+import { CatalogModel, GatewayProvider, ModelCheck, readRegions } from '../../core/api/models';
+
+/** How a moment is written in this console's tables — the `date` pipe's pattern, in code. */
+const WHEN = 'yyyy-MM-dd HH:mm';
 
 /** One labelled fact in a model's detail panel. */
 export interface DetailField {
@@ -33,9 +37,10 @@ export function providerLabel(provider: GatewayProvider): string {
  *
  * Built here rather than in the template so the list is **exhaustive by construction**: the catalog
  * is what the gateway enforces, and a partial answer to "what does this row say" is worse than
- * none. `underlying_model` and the raw `addressing` block are deliberately absent — printed beside
- * Provider and Platform they read as configuration, and neither is a field the editor offers
- * (`test_every_model_control_is_reachable.py`).
+ * none. The spec holds it to every key of `CatalogModel`. Deliberately absent: `underlying_model`,
+ * which nothing reads (`test_every_model_control_is_reachable.py`), and any `addressing` key besides
+ * the regions — printed beside Provider and Platform they read as configuration, and no control
+ * offers them. The regions are shown: they are where the model is addressed and its residency claim.
  */
 export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
   const dash = (value: unknown): string =>
@@ -48,6 +53,11 @@ export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
     { key: 'publisher', label: 'Dialect (publisher)', value: dash(model.publisher) },
     { key: 'platform', label: 'Platform', value: dash(model.platform) },
     { key: 'hosting', label: 'Hosting', value: dash(model.hosting) },
+    {
+      key: 'regions',
+      label: 'Regions (in order)',
+      value: readRegions(model.addressing).join(', ') || '—',
+    },
     {
       key: 'capabilities',
       label: 'Capabilities',
@@ -73,6 +83,16 @@ export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
       label: `Output ${perMillion(currency)}`,
       value: model.is_priced ? dash(model.output_price_per_million) : 'no price',
     },
+    {
+      key: 'cached_input_price',
+      label: `Cached input ${perMillion(currency)}`,
+      value: dash(model.cached_input_price_per_million),
+    },
+    {
+      key: 'cache_write_price',
+      label: `Cache write ${perMillion(currency)}`,
+      value: dash(model.cache_write_price_per_million),
+    },
     { key: 'numeric_id', label: 'KIRA id', value: dash(model.numeric_id) },
     {
       key: 'approved',
@@ -80,6 +100,10 @@ export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
       value: model.approved ? 'yes' : 'no — a use case cannot call it',
     },
     { key: 'deprecated', label: 'Deprecated', value: model.deprecated ? 'yes' : 'no' },
-    { key: 'updated_at', label: 'Last changed', value: dash(model.updated_at) },
+    {
+      key: 'updated_at',
+      label: 'Last changed',
+      value: model.updated_at ? formatDate(model.updated_at, WHEN, 'en-US') : '—',
+    },
   ];
 }

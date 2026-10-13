@@ -50,8 +50,35 @@ def test_a_role_that_administers_nothing_may_not_search_the_directory() -> None:
     assert _client(_user("nobody")).get(f"{URL}?q=ada").status_code == 403
 
 
-def test_a_use_case_admin_may() -> None:
+def test_a_global_administrator_may() -> None:
+    """`directory.search`, held through the role."""
     assert _client(_user("a", "global-admin")).get(f"{URL}?q=ada").status_code == 200
+
+
+def test_the_administrator_of_one_use_case_may() -> None:
+    """No role at all — an object grant on one use case, which is what the people who add members
+    hold. The branch `MaySearchDirectory` exists for, and a Global Administrator never reaches."""
+    from aira_management.apps.usecases.models import UseCaseMembership
+    from aira_management.apps.usecases.views import _grant
+
+    admin = _user("uc-admin")
+    _grant(admin, UseCase.objects.create(slug="uc-a", name="A"), UseCaseMembership.ADMIN)
+
+    assert _client(admin).get(f"{URL}?q=ada").status_code == 200
+
+
+def test_administering_only_a_retired_use_case_opens_no_directory() -> None:
+    """Retiring a use case ends every access it granted (`FRD-607`), the picker its
+    administration opened included."""
+    from aira_management.apps.usecases.models import UseCaseMembership
+    from aira_management.apps.usecases.views import _grant
+    from django.utils import timezone
+
+    admin = _user("uc-admin")
+    retired = UseCase.objects.create(slug="uc-a", name="A", deleted_at=timezone.now())
+    _grant(admin, retired, UseCaseMembership.ADMIN)
+
+    assert _client(admin).get(f"{URL}?q=ada").status_code == 403
 
 
 # ---- what an empty query does ---------------------------------------------------------------

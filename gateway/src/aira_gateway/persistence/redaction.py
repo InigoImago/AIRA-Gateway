@@ -24,6 +24,13 @@ from aira_common.patterns import catastrophic_reason
 PLACEHOLDER = "[REDACTED]"
 
 #: Credential shapes, each one something that is never legitimate business content.
+#:
+#: **Each must cost time linear in the text.** They run in the audit writer, on the event loop
+#: every request shares, over a body of up to 8 MiB the caller chose — so a pattern that rescans the
+#: rest of the text from every place it could start is a way to stop the instance. Where a shape
+#: can start inside a long run of its own characters it is anchored to the start of the run, and a
+#: body it consumes is matched possessively (``++``, ``*+``), which never gives characters back.
+#: `test_redacting_hostile_text_takes_linear_time` holds every pattern here to that.
 BUILTIN_PATTERNS: tuple[str, ...] = (
     # An AIRA key. Ours, and it grants use-case access.
     r"aira_[A-Za-z0-9]{4,16}_[A-Za-z0-9]{16,}",
@@ -31,12 +38,21 @@ BUILTIN_PATTERNS: tuple[str, ...] = (
     r"AIza[0-9A-Za-z\-_]{20,}",
     # OpenAI-style secret key, including the project-scoped form.
     r"sk-[A-Za-z0-9\-_]{16,}",
-    # An Authorization header value a caller has pasted into a prompt.
-    r"(?i)authorization\s*:\s*\S+",
-    # A JWT: three base64url segments. Nothing else in a prompt looks like this.
-    r"eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+",
-    # A PEM private key block, body and all.
-    r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+    # An Authorization header a caller has pasted into a prompt, **with its value**: the scheme
+    # word alone (`Bearer`, `Basic`) is not the secret, the rest of the value is. As a header line,
+    # a key in code (`"Authorization": "…"`) or an assignment, and up to the end of the line or the
+    # quote that closes it — so the address after a quoted `curl -H '…'` survives.
+    r"(?i)authorization[\"']?[ \t]*+[:=][ \t]*+[\"']?[^\r\n\"']++",
+    # A JWT: three base64url segments. Nothing else in a prompt looks like this. It starts where a
+    # run of base64url characters starts (or after an escape such as a literal `\n`), because
+    # `eyJ` repeated in one run would otherwise start a scan to its end from every occurrence.
+    r"(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))eyJ[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++",
+    # A PEM private key block, body and all — and a pasted one cut off before its END line, whose
+    # body is the key material. The body is base64, which has no `-`; the legacy encrypted form's
+    # two header lines, which do, are named. One class consumed possessively, never "anything up
+    # to END", which would scan the rest of the text from every BEGIN that has none.
+    r"-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----\s*+(?:Proc-Type:[^\r\n]*+\s*+DEK-Info:[^\r\n]*+)?"
+    r"[^-]*+(?:-----END [A-Z ]{0,32}PRIVATE KEY-----)?",
 )
 
 

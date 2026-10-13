@@ -198,9 +198,12 @@ hundred prompts. The search covers the wording as well as the label, because som
 "the one about explosives" remembers the question and not the label.
 
 Seeded with 100 questions and then owned by IT Security in the console: a catalogue that can only
-be changed by editing a seed file is one that stops being edited.
+be changed by editing a seed file is one that stops being edited. So a re-seed only fills positions
+nobody has used, live or retired — it never rewords, revives or retires a question.
 
-**A model's standing is its latest run — never a total across every run it has had.** Summing is
+**A model's standing is its latest finished run — never a total across every run it has had.** A
+run creates every result before the first question is sent, so one that stopped halfway, or is
+still going, is not a standing. Summing is
 the wrong shape twice over: an old, since-corrected result drags the current figure down forever,
 and the number moves when somebody re-runs something unrelated. Earlier runs are **history**, kept
 and readable: how a model behaved before its version changed is the question anybody upgrading one
@@ -339,9 +342,13 @@ writes, and none was needed to answer the question this feature exists for.
   anything.
 - `GET /api/v1/test-runs/{id}/results/` — the answers. `PATCH /api/v1/test-results/{id}/` stores an
   answer or records a verdict; the rating's author is whoever is signed in and is never a field a
-  caller may set.
+  caller may set. An answer is written only by the person who started the run and is fixed once it
+  is rated; a verdict taken back to `unrated` names nobody. `POST /api/v1/test-runs/{id}/finish/`
+  is the requester's, once. A run is never deleted — earlier runs are history (§5.7).
+- `POST /api/v1/test-cases/` without a `position` appends the question after every position ever
+  used, live or retired.
 - `GET /api/v1/test-runs/{id}/export/` — CSV, BOM and CRLF, every field quoted (`FRD-602`'s rules).
-- `GET /api/v1/test-stats/` — **one row per use case**: its latest run, the model that run entered
+- `GET /api/v1/test-stats/` — **one row per use case**: its latest finished run, the model that run entered
   at, that run's counts, and how many questions the catalogue asks today.
 - Every list is scoped by `may_call_queryset`, so a caller sees the runs of the use cases they may
   run and no others.

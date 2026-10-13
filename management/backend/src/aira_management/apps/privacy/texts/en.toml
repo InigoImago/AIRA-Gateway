@@ -101,7 +101,7 @@ paragraphs = [
 ]
 items = [
   "Providers of the AI models a use case has released (for example Google Cloud Vertex AI, Google AI Studio, Microsoft Azure AI Foundry, or a server operated by the controller), as processors under Art. 28 GDPR. They receive the content of the request, not your name or identifier.",
-  "The installation admits models only in released regions; unless configured otherwise, those are regions in the EU. Where a provider or a company of its group outside the EU and EEA can access data, the controller bases the transfer on an adequacy decision (Art. 45 GDPR) or on appropriate safeguards such as standard contractual clauses (Art. 46 GDPR).",
+  "The installation admits models only in released regions; unless configured otherwise, those are regions in the EU. It can additionally release a single model by name for a region outside that list — for example Google's “global” endpoint, at which the provider decides where in the world a request is processed, and at which some open models offered by Google Cloud Vertex AI (such as GLM and DeepSeek) are exclusively available. The request record names the region each request went to. Where a provider or a company of its group outside the EU and EEA can access data, the controller bases the transfer on an adequacy decision (Art. 45 GDPR) or on appropriate safeguards such as standard contractual clauses (Art. 46 GDPR).",
   "Operators of the infrastructure AIRA runs on and — where connected — of the observability and SIEM systems, each as a processor or as an internal function of the controller.",
   "Authorities and courts, where there is a legal obligation.",
 ]
@@ -147,15 +147,15 @@ title = "Sign-in and user account"
 data = "Identifier from the identity service (Keycloak), username, email address, groups and the roles they confer, when the account was created, memberships and permissions in use cases, and an invitation where there was one. Memberships and key owners are passed to the gateway over an internal event channel."
 purpose = "To sign you in, to give you exactly the rights your roles and use cases provide, and to manage the members of a use case. Authorised people can search the directory by name and email to add members; every search is logged."
 legal_basis = "Art. 6(1)(b) GDPR (performance of the employment or user relationship); Art. 6(1)(f) GDPR (legitimate interest in secure, traceable granting of rights); where a works agreement exists, additionally Art. 88 GDPR in conjunction with Section 26(4) BDSG."
-retention = "For as long as the account exists. AIRA does not delete accounts by itself; the controller deletes them once the entitlement ends. Roles are derived afresh from your current groups on every request."
+retention = "For as long as the account exists. AIRA does not delete accounts by itself; the controller deletes them once the entitlement ends. Roles are derived afresh from your current groups on every request. What is passed to the gateway over the internal event channel is kept there for {outbox_retention} after it was sent, then deleted."
 recipients = "Authorised administrators of the installation and of your use cases; members of a use case see its member list."
 
 [activities.administration]
 title = "Traceability of administrative changes"
-data = "Who created, changed or deleted a role (with its state before and after), who retired a use case, granted a group access, invited a person or issued a key for somebody else, each with the time; technical identifiers for tracing internal events."
+data = "Who created, changed or deleted a role (with its state before and after), who retired a use case, granted a group access, invited a person or issued a key for somebody else, each with the time; technical identifiers for tracing internal events, and when and why an event could not be passed on."
 purpose = "Evidence of who granted or changed which permission (accountability, Art. 5(2) and Art. 32 GDPR)."
 legal_basis = "Art. 6(1)(c) GDPR in conjunction with Art. 5(2) and Art. 32 GDPR; Art. 6(1)(f) GDPR."
-retention = "Without automatic deletion, so that the history of permissions stays complete."
+retention = "Without automatic deletion, so that the history of permissions stays complete. The identifiers of internal events are deleted with the event, {outbox_retention} after it was sent."
 recipients = "People who may read the roles or the use case concerned."
 
 [activities.api_keys]
@@ -168,7 +168,7 @@ recipients = "The owner, the use case's administrators, and roles that may manag
 
 [activities.request_record]
 title = "Record of every request"
-data = "For every request to a model, including refused ones: the identifier and username of the person making it or of the key's owner, sign-in method, use case, source IP address, the access used (key prefix or application), time, the model requested and the model actually used, provider and region, outcome and status code, the decisions of the checking steps, names of tools called, number of tokens, size, response time, cost and a trace identifier."
+data = "For every request to a model, including refused ones: the identifier and username of the person making it or of the key's owner, sign-in method, use case, source IP address, the access used (key prefix or application), time, the model requested and the model actually used, provider and region, outcome and status code, the decisions of the checking steps, names of tools called, number of tokens and how it was established (reported by the provider, or counted after the request was cancelled), size, response time, cost and a trace identifier."
 purpose = "Operation and troubleshooting, cost allocation and budget control, evidence of data residency per request, detection and investigation of security incidents."
 legal_basis = "Art. 6(1)(f) GDPR (operation, security and cost control); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "Request records in this installation: {log_retention}."
@@ -176,7 +176,7 @@ recipients = "By role and use case (see “Who has access within the organisatio
 
 [activities.content]
 title = "Request and response content"
-data = "The text of the request and of the response, including the model's reasoning where the use case asks for it. Attached files are not stored. Credentials such as keys and tokens are removed before storage; other personal details in your text remain."
+data = "The text of the request and of the response, including the model's reasoning where the use case asks for it. Attached files and embedding vectors are not stored, only their size and a fingerprint. Credentials such as keys and tokens are removed before storage; other personal details in your text remain."
 purpose = "Investigating security incidents and errors, and traceability within the use case. {content_storage}"
 legal_basis = "Art. 6(1)(f) GDPR (information security and troubleshooting); Art. 6(1)(b) GDPR where the use case serves the performance of your duties."
 retention = "For as long as the use case specifies (1 to 3650 days), and for requests without a use case {default_retention}. The content is then deleted; the request record remains for the period that applies to it."
@@ -184,7 +184,7 @@ recipients = "Authorised people only: roles that may read content in every use c
 
 [activities.content_reads]
 title = "Record of reads of content"
-data = "Who read which stored content and when, with username, their roles at that moment and the ground (security incident, administration or membership of the use case)."
+data = "Who read which stored content and when, with username, sign-in method and the access used (key prefix or application), their roles at that moment and the ground (security incident, administration or membership of the use case)."
 purpose = "Control over access to content, so that content cannot be viewed unnoticed."
 legal_basis = "Art. 6(1)(c) GDPR in conjunction with Art. 5(2) and Art. 32 GDPR; Art. 6(1)(f) GDPR."
 retention = "Without automatic deletion: the content expires, the fact that it was read does not."
@@ -204,11 +204,11 @@ data = "Findings of rules concerning a person, a key or a use case, with the mea
 purpose = "To detect and contain misuse, compromised access and cost outliers."
 legal_basis = "Art. 6(1)(f) GDPR (information security); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "Without automatic deletion; blocks are kept as history after they are lifted."
-recipients = "Roles that may see the security findings of every use case, and members of the use case concerned. A finding's description may contain IP addresses. Members see a block only where it applies to the whole use case or to themselves."
+recipients = "Roles that may see the security findings of every use case, and members of the use case concerned. The IP addresses in a finding's description, and in the reason of a block a rule set, are shown only to people who may investigate incidents. Members see a block only where it applies to the whole use case or to themselves."
 
 [activities.model_providers]
 title = "Transfer to model providers"
-data = "The content of your request including attachments, cleaned of personal details automatically where the use case does so. AIRA sends no name, no user identifier and no IP address with it. A use case's checking steps, such as detecting injected instructions, also send the text to a released model."
+data = "The content of your request including attachments, cleaned of personal details automatically where the use case does so. AIRA sends no name, no user identifier and no IP address with it. A use case's checking steps, such as detecting injected instructions, also send the text to a released model. If a streamed answer is cancelled before the provider has said how much it used, the request and the part of the answer already received are sent to the same provider and region once more, so that the provider counts them; it answers with a number only. The installation can switch this off."
 purpose = "To have the request answered that you use AIRA for."
 legal_basis = "Art. 6(1)(b) GDPR; Art. 28 GDPR for the providers as processors."
 retention = "AIRA itself stores nothing for this beyond the request record. How long a provider keeps data is governed by the controller's contract with it; a provider-side cache of inputs is active only if the use case switches it on."

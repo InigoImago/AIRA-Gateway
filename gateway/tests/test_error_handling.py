@@ -1,3 +1,4 @@
+import pytest
 from fastapi import Query
 from fastapi.testclient import TestClient
 
@@ -214,5 +215,34 @@ def test_a_rejected_parameter_on_a_kira_path_uses_the_kira_envelope() -> None:
 
     body = resp.json()
     assert resp.status_code == 400
-    assert body["code"] == "INVALID_REQUEST"
+    # The contract's own code for a value it will not take: `INVALID_REQUEST` is not a KIRA code,
+    # and a client switching on `code` has no branch for it.
+    assert body["code"] == "VALIDATION_ERROR"
     assert "count" in body["message"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "code"),
+    [
+        ("GET", "/kira/api/external/chat", ("code", "METHOD_NOT_ALLOWED")),
+        ("PUT", "/v1beta/models/mock-1:generateContent", ("status", "INVALID_ARGUMENT")),
+        ("POST", "/healthz", ("code", "method_not_allowed")),
+    ],
+    ids=["kira", "gemini", "aira"],
+)
+def test_a_wrong_method_is_named_as_one_and_says_which_are_allowed(
+    method: str, path: str, code: tuple[str, str]
+) -> None:
+    """Every framework refusal on the KIRA surface was `NOT_FOUND`, a 405 included, and `Allow`
+    (RFC 9110 §15.5.6) — the one thing a caller needs to correct the request — was dropped."""
+    app = create_app(GatewaySettings(auth_required=False))
+    with TestClient(app) as client:
+        response = client.request(method, path)
+
+    assert response.status_code == 405, response.text
+    assert response.headers.get("allow")
+    body = response.json()
+    envelope = body.get("error", body)
+    field, expected = code
+    assert envelope[field] == expected
+    assert "details" not in envelope, "an absent detail is absent, not null"

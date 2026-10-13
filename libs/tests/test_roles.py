@@ -1,20 +1,19 @@
-"""The shared role definition (ADR-0009).
+"""The shared role definition (ADR-0009, ADR-0017).
 
-Both services read this one list. The tests are about what "governance" means and about the
-robustness of reading it from a token claim, because a wrong answer here is an authorization
-answer.
+Both services read this one list. The tests are about which group confers which role and about the
+robustness of reading that from a token claim, because a wrong answer here is an authorization
+answer. What a role may *do* is `aira_common.permissions`, and is tested there.
 """
 
 from __future__ import annotations
 
 import pytest
 
+import aira_common.roles as roles_module
 from aira_common.roles import (
     ALL_ROLES,
-    GOVERNANCE_ROLES,
     Role,
     RoleMappingError,
-    is_governance,
     parse_role_groups,
     roles_from_groups,
 )
@@ -34,54 +33,16 @@ def test_the_three_roles_are_the_ones_the_realm_defines() -> None:
     }
 
 
-def test_oversight_is_global_admin_and_it_steuerung_only() -> None:
-    """IT Security is deliberately not here. Its console (FRD-502) has its own scoping with
-    payload redaction; granting it the reporting view would hand it use-case figures it has not
-    been given a reason to see."""
-    assert frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG}) == GOVERNANCE_ROLES
+def test_no_question_is_answered_by_a_role_name() -> None:
+    """`ADR-0025`: every check asks one permission, never a role. A predicate over role names is a
+    rule the module only appears to have — and it hard-wires an answer an installation can change:
+    IT Steuerung's permissions are data, so "IT Steuerung may see every use case" is not a fact a
+    function can state."""
+    predicates = [name for name in vars(roles_module) if name.startswith(("may_", "has_", "is_"))]
+    sets = [name for name in vars(roles_module) if name.endswith("_ROLES") and name[0] != "_"]
 
-
-def test_a_governance_role_among_others_still_counts() -> None:
-    assert is_governance(["use-case-user", "it-steuerung"]) is True
-
-
-def test_use_case_roles_are_not_oversight() -> None:
-    """A use-case admin administers their own use cases. Confusing the two would give every
-    use-case admin a view of every other use case's spend."""
-    assert is_governance(["use-case-admin", "use-case-user"]) is False
-    assert is_governance([]) is False
-
-
-def test_an_unknown_role_is_not_oversight() -> None:
-    """A realm that grows a role this code has never heard of must not accidentally be treated
-    as governance."""
-    assert is_governance(["brand-new-role"]) is False
-
-
-def test_stopping_traffic_is_a_narrower_permission_than_seeing_it() -> None:
-    """Found by a live round asking both planes the same question and getting different answers.
-
-    The gateway guarded its kill switch with `has_oversight` — a *visibility* predicate — so
-    `it-steuerung` could stop traffic there while Management refused it a global rule. PRD §154
-    gives that role every figure and **no write anywhere**.
-    """
-    from aira_common.roles import has_oversight, may_act_on_incidents
-
-    assert has_oversight(["it-steuerung"])
-    assert not may_act_on_incidents(["it-steuerung"]), "a role that may only look can stop traffic"
-
-    for role in ("it-security", "global-admin"):
-        assert may_act_on_incidents([role]), role
-
-    for role in ("use-case-admin", "use-case-user"):
-        assert not may_act_on_incidents([role]), role
-
-
-def test_the_incident_set_is_a_subset_of_the_oversight_set() -> None:
-    """Anybody who may stop traffic may also see it. The reverse is what was wrong."""
-    from aira_common.roles import INCIDENT_ROLES, OVERSIGHT_ROLES
-
-    assert INCIDENT_ROLES < OVERSIGHT_ROLES
+    assert predicates == []
+    assert sorted(sets) == ["ALL_ROLES", "CONFIGURABLE_ROLES"]
 
 
 # ---- where a role comes from (ADR-0017) ---------------------------------------------------
@@ -168,3 +129,11 @@ def test_an_empty_mapping_is_empty_rather_than_an_error() -> None:
     decision the service makes, and it belongs where the service starts, not in a parser."""
     assert parse_role_groups("") == {}
     assert parse_role_groups("  ;  ") == {}
+
+
+def test_a_group_that_is_not_a_path_confers_nothing_rather_than_raising() -> None:
+    """A realm mapper that emits objects is a misconfiguration that must cost a role, not a 500."""
+    mapping = {Role.GLOBAL_ADMIN: ("/aira/global-admins",)}
+    groups = [{"path": "/aira/global-admins"}, ["/aira/global-admins"]]
+    assert roles_from_groups(groups, mapping) == ()  # type: ignore[arg-type]
+    assert roles_from_groups([*groups, "/aira/global-admins"], mapping) == ("global-admin",)  # type: ignore[list-item]

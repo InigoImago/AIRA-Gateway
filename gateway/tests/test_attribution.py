@@ -233,3 +233,47 @@ def test_an_unknown_role_is_simply_not_governance() -> None:
         )
         is False
     )
+
+
+def test_an_attribution_is_built_in_one_place() -> None:
+    """Four sites copied a principal into an `Attribution` field by field, and two of them left the
+    realm out (`FRD-118`). One constructor, `Attribution.of`, so a field added to the identity
+    reaches every audit row at once — and no other module builds one by hand."""
+    import ast
+    import pathlib
+
+    import aira_gateway
+
+    root = pathlib.Path(aira_gateway.__file__).parent
+    built_by_hand = [
+        f"{path.relative_to(root).as_posix()}:{node.lineno}"
+        for path in sorted(root.rglob("*.py"))
+        if path.relative_to(root).as_posix() != "auth/attribution.py"
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Attribution"
+    ]
+    assert built_by_hand == [], "use Attribution.of(principal, use_case)"
+
+
+def test_of_copies_every_part_of_the_identity() -> None:
+    from aira_gateway.auth.attribution import Attribution
+    from aira_gateway.auth.principal import Principal
+
+    principal = Principal(
+        subject="9f1c",
+        method="oidc",
+        username="ada",
+        credential="console",
+        issuer="https://kc-b.test/realms/aira",
+    )
+
+    assert Attribution.of(principal, "uc-a") == Attribution(
+        subject="9f1c",
+        method="oidc",
+        use_case="uc-a",
+        credential="console",
+        username="ada",
+        issuer="https://kc-b.test/realms/aira",
+    )

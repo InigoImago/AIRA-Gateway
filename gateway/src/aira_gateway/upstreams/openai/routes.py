@@ -38,6 +38,20 @@ class Routes(Protocol):
         """
         ...
 
+    def output_cap_field(self) -> str:
+        """The body field that carries the output cap on this platform (`FRD-120`).
+
+        `max_tokens` is what every compatible server takes; Azure's reasoning deployments refuse it
+        and take only `max_completion_tokens`, which its pinned API version accepts for every model.
+        """
+        ...
+
+    def validates_strict_schemas(self) -> bool:
+        """Whether this platform checks a `strict` schema against strict mode's rules and refuses
+        what they exclude (`FRD-120` FR-6). A self-hosted server constrains decoding by the schema
+        as sent and enforces no such rules, so a constraint strict mode lacks is honoured there."""
+        ...
+
 
 class StandardRoutes:
     """The plain form: one path, the model in the body. Ollama, direct OpenAI, a NIM endpoint."""
@@ -60,3 +74,9 @@ class StandardRoutes:
     def names_models(self) -> bool:
         # `{"data": [{"id": "qwen3:0.6b"}]}` — the id is exactly what a caller puts in a request.
         return True
+
+    def output_cap_field(self) -> str:
+        return "max_tokens"
+
+    def validates_strict_schemas(self) -> bool:
+        return False

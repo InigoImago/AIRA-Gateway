@@ -47,7 +47,7 @@ class _Redactor:
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         self.asked.append(request.messages[-1].text)
         if self._fails:
-            raise UpstreamError(503, "the redactor is down")
+            raise UpstreamError("the redactor is down", 503)
         return CanonicalResponse(
             model="trusted",
             text=self._answer or "",
@@ -148,8 +148,8 @@ def test_the_allowance_grows_with_the_prompt_and_stops_somewhere() -> None:
     from aira_gateway.pipeline.classifiers import (
         MAX_REDACTION_OUTPUT_TOKENS,
         REDACTION_OUTPUT_HEADROOM,
-        _redaction_allowance,
     )
+    from aira_gateway.pipeline.classifiers.redaction import _redaction_allowance
 
     assert _redaction_allowance("") == REDACTION_OUTPUT_HEADROOM, "headroom, so a short text fits"
     assert _redaction_allowance("x" * 40_000) > REDACTION_OUTPUT_HEADROOM, "and it grows"
@@ -176,7 +176,9 @@ async def test_a_failure_still_reports_what_deciding_cost() -> None:
     outcome = await _engine(_Redactor(answer="")).run(_pipeline(on_failure="allow"), _request())
 
     assert [call.step for call in outcome.model_calls] == ["pii_filter"]
-    assert outcome.model_calls[0].usage.completion_tokens == 0 or True
+    # Exactly what the redactor billed for its empty answer — the double's 20 in and 10 out.
+    usage = outcome.model_calls[0].usage
+    assert (usage.prompt_tokens, usage.completion_tokens) == (20, 10)
 
 
 async def test_an_empty_prompt_costs_nothing() -> None:
@@ -335,7 +337,7 @@ async def test_a_router_can_say_which_model_the_classification_chose() -> None:
 
 async def test_a_template_with_a_stray_brace_is_printed_rather_than_raised() -> None:
     """The operator wrote a sentence, not a format string, and has no way to know the difference."""
-    from aira_gateway.pipeline.engine import _filled
+    from aira_gateway.pipeline.engine.steps import _filled
 
     assert _filled("Kosten { ca. 5 } für {model}", model="m-1") == "Kosten { ca. 5 } für m-1"
     # An unknown placeholder stays visible, so a typo reads as one instead of vanishing.

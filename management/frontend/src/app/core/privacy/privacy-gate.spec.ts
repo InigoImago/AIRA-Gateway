@@ -167,6 +167,28 @@ describe('PrivacyGate', () => {
     expect(h.q('[data-testid="privacy-load-error"]')).toBeNull();
   });
 
+  it('drops the failure of a language switch once the switch has worked', () => {
+    // A retried switch that worked left "Nicht geladen." beside the acknowledge button of a notice
+    // now shown in English — a failure that was over, reported as current, in the wrong language.
+    const h = setup();
+    h.http.expectOne(NOTICE).flush(privacyNotice());
+    h.render();
+
+    h.q<HTMLButtonElement>('[data-testid="privacy-language-en"]')!.click();
+    h.http.expectOne(() => true).flush(null, { status: 503, statusText: 'x' });
+    h.render();
+    expect(h.q('[data-testid="privacy-acknowledge-error"]')).not.toBeNull();
+
+    h.q<HTMLButtonElement>('[data-testid="privacy-language-en"]')!.click();
+    h.http
+      .expectOne((r) => r.url === NOTICE && r.params.get('language') === 'en')
+      .flush(privacyNotice({ due: 'first', language: 'en' }));
+    h.render();
+
+    expect(h.q('[data-testid="privacy-notice-body"]')!.getAttribute('lang')).toBe('en');
+    expect(h.q('[data-testid="privacy-acknowledge-error"]')).toBeNull();
+  });
+
   it('renders the server’s text as text, never as markup', () => {
     const h = setup();
     h.http.expectOne(NOTICE).flush(privacyNotice());

@@ -139,6 +139,28 @@ def test_over_the_rate_limit_returns_429_with_retry_after() -> None:
     assert response.headers["Retry-After"] == "7"
 
 
+async def test_the_compatibility_surface_says_when_to_come_back_too() -> None:
+    """The same control on the other surface answered `429` with no `Retry-After`, so a
+    predecessor client retried in a tight loop against the limit protecting it."""
+    from aira_gateway.db.models import ModelRead
+
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.rate_limits = _AlwaysLimited()
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="mock-1", numeric_id=1, capabilities=["generate"]))
+            await session.commit()
+        gemini = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+        kira = client.post(
+            "/kira/api/external/chat",
+            json={"request": {"parts": [{"text": "hi"}]}, "model_id": 1},
+        )
+
+    assert (gemini.status_code, kira.status_code) == (429, 429), kira.text
+    assert kira.json()["code"] == "EXTERNAL_KI_API_TOO_MANY_REQUEST"
+    assert kira.headers["Retry-After"] == gemini.headers["Retry-After"] == "7"
+
+
 def test_the_limit_is_checked_before_the_upstream_is_called() -> None:
     """A limit whose cost is paid anyway protects nothing."""
     app = create_app(GatewaySettings(auth_required=False))
@@ -461,8 +483,17 @@ def _metered_app() -> tuple[object, _RefusingLimiter]:
 
 _CASES = [
     ("/v1beta/models/mock-1:generateContent", _BODY),
+    ("/v1beta/models/mock-1:streamGenerateContent", _BODY),
     ("/v1beta/models/mock-1:embedContent", {"content": {"parts": [{"text": "hi"}]}}),
+    (
+        "/v1beta/models/mock-1:batchEmbedContents",
+        {"requests": [{"model": "models/mock-1", "content": {"parts": [{"text": "hi"}]}}]},
+    ),
     ("/kira/api/external/chat", {"request": {"parts": [{"text": "hi"}]}, "model_id": 1}),
+    (
+        "/kira/api/external/streaming-chat",
+        {"request": {"parts": [{"text": "hi"}]}, "model_id": 1},
+    ),
     ("/kira/api/external/embed", {"text": "hi", "model_id": 1}),
 ]
 
@@ -515,3 +546,48 @@ async def test_reaching_a_reservation_without_the_early_gate_is_a_loud_failure()
 
         with pytest.raises(RuntimeError, match="guard_before_work"):
             await enforce_pre_dispatch(request, model="mock-1", max_output_tokens=None)
+
+
+# == a batch no wait can admit is not a rate limit (`G4-18`) =======================================
+
+
+class _TooHeavy:
+    """The real refusal for a batch larger than the allowance, as `RateLimitService` raises it."""
+
+    async def check(self, use_case, subject, units=1, *, extra=(), username=None):  # noqa: ANN001, ANN201
+        from aira_gateway.ratelimit.errors import TooHeavyForTheLimit
+
+        raise TooHeavyForTheLimit(f"A request weighing {units} cannot fit the 1-request allowance.")
+
+
+async def test_a_batch_that_can_never_fit_is_refused_without_a_retry_after() -> None:
+    """Answered `429` with `Retry-After: 1`, an SDK that honours both retried it indefinitely —
+    and no wait would ever admit it. A `400` the caller has to change their request for, on both
+    surfaces."""
+    from aira_gateway.db.models import ModelRead
+
+    for path, body in [
+        (
+            "/v1beta/models/mock-1:batchEmbedContents",
+            {
+                "requests": [
+                    {"model": "models/mock-1", "content": {"parts": [{"text": text}]}}
+                    for text in ("a", "b", "c")
+                ]
+            },
+        ),
+        ("/kira/api/external/embed", {"text": "hi", "model_id": 1}),
+    ]:
+        app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+        app.state.rate_limits = _TooHeavy()
+        with TestClient(app) as client:
+            async with app.state.db_sessionmaker() as session:
+                session.add(
+                    ModelRead(model="mock-1", numeric_id=1, capabilities=["generate", "embed"])
+                )
+                await session.commit()
+            response = client.post(path, json=body)
+
+        assert response.status_code == 400, (path, response.text)
+        assert "retry-after" not in response.headers, path
+        assert "cannot fit" in response.text

@@ -25,10 +25,14 @@
         }
       </div>
     </header>
-    <div class="panel">
+    <div class="card">
       <app-privacy-notice-body [notice]="current" />
     </div>
   } @else if (feedback.busy()) {
-    <p class="muted" data-testid="privacy-loading">…</p>
+    <!-- In English: before the first answer there is no notice to take the language from. -->
+    <p class="loading" data-testid="privacy-loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the privacy notice…
+    </p>
   }
 </div>

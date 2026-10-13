@@ -18,22 +18,26 @@ it does:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import httpx
 import pytest
 from structlog.testing import capture_logs
 
+from aira_common import config
+from aira_common.config import BaseAiraSettings, VaultSource
 from aira_common.secrets import (
     DEV_TOKEN_ENV,
     SECRET_ID_ENV,
     SECRET_ID_FILE_ENV,
+    SecretAmbiguous,
     SecretMissing,
     VaultClient,
     VaultConfig,
     VaultUnavailable,
     load_secrets,
-    resolve,
+    secrets_state,
+    setting_key,
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -320,33 +324,146 @@ def test_an_empty_mount_falls_back_to_the_default_rather_than_an_empty_path() ->
     assert (config.mount, config.path) == ("secret", "aira")
 
 
-# == precedence (FR-3) ===========================================================================
+@pytest.mark.parametrize("written", ["10s", "ten", "nan", "inf", "-1", "0"])
+def test_a_timeout_that_is_not_seconds_is_refused_by_name(written: str) -> None:
+    """`10s` stopped the process with `could not convert string to float`, which names no
+    variable; `nan` and `-1` were accepted and handed to the HTTP client as a bound."""
+    with pytest.raises(ValueError, match="VAULT_TIMEOUT"):
+        VaultConfig.from_env({"VAULT_ADDR": ADDRESS, "VAULT_TIMEOUT": written})
 
 
-def test_vault_wins_over_the_environment() -> None:
-    merged = resolve({"GOOGLE_API_KEY": "from-vault"}, env={"AIRA_GOOGLE_API_KEY": "from-env"})
-    assert merged["AIRA_GOOGLE_API_KEY"] == "from-vault"
+def test_a_timeout_in_seconds_is_read() -> None:
+    assert VaultConfig.from_env({"VAULT_ADDR": ADDRESS, "VAULT_TIMEOUT": " 2.5 "}).timeout == 2.5
 
 
-def test_the_environment_fills_what_vault_does_not_have() -> None:
-    merged = resolve({"GOOGLE_API_KEY": "from-vault"}, env={"AIRA_POSTGRES_HOST": "db.internal"})
-    assert merged["AIRA_POSTGRES_HOST"] == "db.internal"
+def test_readyz_reports_a_development_token_only_when_it_authenticated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A role id wins over a token in the login, so a token left in the environment beside one is
+    not what authenticated — and `/readyz` saying it was sends somebody hunting a root token in a
+    deployment that uses an AppRole."""
+    monkeypatch.setenv(DEV_TOKEN_ENV, "root")
+
+    assert secrets_state(_config(role_id="role-1"))["dev_token"] is False
+    assert secrets_state(_config(role_id=""))["dev_token"] is True
 
 
-@pytest.mark.parametrize("written", ["google_api_key", "GOOGLE_API_KEY", "AIRA_GOOGLE_API_KEY"])
-def test_a_key_is_found_however_a_human_spelled_it(written: str) -> None:
+# == precedence and spelling (FR-3), through the settings source both planes read ================
+#
+# Asked of `VaultSource` — the code every settings object is built through — and not of a helper
+# beside it: a rule that only a function nobody calls obeys is a rule the product does not have.
+
+
+class _Settings(BaseAiraSettings):
+    """One field, so the source is exercised without a whole service."""
+
+    google_api_key: str = "from-default"
+
+
+def _settings() -> _Settings:
+    # `_env_file=None`: a developer's `.env` is not part of the question.
+    return _Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+@pytest.fixture
+def vault_holds(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[dict[str, str]], None]]:
+    """Make Vault hold exactly what a test says, for the real settings source: only the read itself
+    is replaced. The source's cache is a class attribute, so it is cleared on both sides."""
+
+    def hold(stored: dict[str, str]) -> None:
+        monkeypatch.setattr(config, "load_secrets", lambda: dict(stored))
+        VaultSource.reset()
+
+    monkeypatch.delenv("AIRA_GOOGLE_API_KEY", raising=False)
+    yield hold
+    VaultSource.reset()
+
+
+def test_vault_wins_over_the_environment(
+    vault_holds: Callable[[dict[str, str]], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault_holds({"GOOGLE_API_KEY": "from-vault"})
+    monkeypatch.setenv("AIRA_GOOGLE_API_KEY", "from-env")
+
+    assert _settings().google_api_key == "from-vault"
+
+
+def test_the_environment_fills_what_vault_does_not_have(
+    vault_holds: Callable[[dict[str, str]], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault_holds({"POSTGRES_PASSWORD": "from-vault"})
+    monkeypatch.setenv("AIRA_GOOGLE_API_KEY", "from-env")
+
+    assert _settings().google_api_key == "from-env"
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "google_api_key",
+        "GOOGLE_API_KEY",
+        "AIRA_GOOGLE_API_KEY",
+        "aira_google_api_key",
+        " GOOGLE_API_KEY ",
+    ],
+)
+def test_a_key_is_found_however_a_human_spelled_it(
+    vault_holds: Callable[[dict[str, str]], None], written: str
+) -> None:
     """A person writing keys into Vault uses whichever form they read in the documentation, and a
     secret that is *present but spelled differently* is indistinguishable from one that is
-    missing — which is the most expensive kind of absent."""
-    merged = resolve({written: "value"}, env={})
-    assert merged["AIRA_GOOGLE_API_KEY"] == "value"
+    missing — which is the most expensive kind of absent. Asked of the settings, not of the
+    loader: `/readyz` lists the key as loaded either way, so only the setting can say it was
+    used."""
+    vault_holds({written: "value"})
+
+    assert _settings().google_api_key == "value"
 
 
-def test_a_key_in_neither_is_absent_rather_than_empty() -> None:
+def test_a_key_in_neither_is_absent_rather_than_empty(
+    vault_holds: Callable[[dict[str, str]], None],
+) -> None:
     """An empty credential authenticates as nobody and reads as a permissions problem. Absent is
     the honest state, and it is what lets a settings default apply."""
-    merged = resolve({}, env={})
-    assert "AIRA_GOOGLE_API_KEY" not in merged
+    vault_holds({})
+
+    assert _settings().google_api_key == "from-default"
+
+
+def test_two_spellings_of_one_setting_with_different_values_refuse_to_start(
+    vault_holds: Callable[[dict[str, str]], None],
+) -> None:
+    """Once every spelling names the setting, two of them can disagree. Which one the process runs
+    on is then the order of a JSON object — so it does not start, and says which keys, never which
+    values."""
+    vault_holds({"google_api_key": "value-one-7f3", "AIRA_GOOGLE_API_KEY": "value-two-9c1"})
+
+    with pytest.raises(SecretAmbiguous) as caught:
+        _settings()
+
+    message = str(caught.value)
+    assert "google_api_key" in message and "AIRA_GOOGLE_API_KEY" in message
+    assert "value-one-7f3" not in message and "value-two-9c1" not in message
+
+
+def test_two_spellings_holding_the_same_value_are_one_setting(
+    vault_holds: Callable[[dict[str, str]], None],
+) -> None:
+    vault_holds({"GOOGLE_API_KEY": "same", "AIRA_GOOGLE_API_KEY": "same"})
+
+    assert _settings().google_api_key == "same"
+
+
+def test_one_rule_names_the_setting_a_key_belongs_to() -> None:
+    """The rule itself, for the readers that are not a settings class."""
+    for written in (
+        "google_api_key",
+        "GOOGLE_API_KEY",
+        "AIRA_GOOGLE_API_KEY",
+        " aira_Google_Api_Key",
+    ):
+        assert setting_key(written) == "AIRA_GOOGLE_API_KEY", written
+    assert setting_key("x", prefix="") == "X"
 
 
 # == values never surface (FR-6) =================================================================

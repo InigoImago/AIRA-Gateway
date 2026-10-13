@@ -221,9 +221,10 @@ in someone else's code, days later. `StructuredOutputSupported` runs per hop ins
 FR-6 is real rather than defensive: `check_structured_result` refuses an answer that did not finish
 normally, and the mock truncates a document at the output cap so that path is exercised at all.
 
-Not built: the audit **digest**. `ResponseSchema.digest()` exists and is tested; wiring it onto the
-row needs a migration, and it was left out rather than half-done. Stated here so it is a task and
-not an assumption.
+Not built: the audit **digest**. `ResponseSchema.digest()` exists and is tested, and it is what the
+span's `aira.response_schema.digest` carries — one fingerprint, so a span and a row will name a
+schema alike; wiring it onto the row needs a migration, and it was left out rather than half-done.
+Stated here so it is a task and not an assumption.
 
 **Verified against a real model (2026-08-06).** A schema request through the OpenAI dialect came
 back `{ "colour": "red" }` with a normal finish reason — so the capability is *declared* for that

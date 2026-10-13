@@ -6,13 +6,14 @@ The module's own docstring already drew the line and the code asked a different 
 > fallbacks are currently in force — a map of the deployment and its weak spot. A probe needs the
 > status code; **an operator presents the credential they already have.**
 
-`_may_see_detail` asked `principal is not None`. So a use-case-scoped API key — the weakest
-credential this system issues, held by whichever team asked for one — was handed the topology, the
-current degradation state and the names of every secret loaded (`secrets_state()`).
+The check (`may_see_diagnosis`) asked `principal is not None`. So a use-case-scoped API key — the
+weakest credential this system issues, held by whichever team asked for one — was handed the
+topology, the current degradation state and the names of every secret loaded (`secrets_state()`).
 
-"An operator" has a definition here already, and it is two things: an **incident role**, and the
-**unbound break-glass key** `ADR-0015` describes as the credential minted for the moment the
-control plane is unavailable — which is exactly when somebody needs to read this.
+"An operator" has a definition here already, and it is two things: a holder of the permission to
+diagnose (`operations.diagnose`, `FRD-614`), and the **unbound break-glass key** `ADR-0015`
+describes as the credential minted for the moment the control plane is unavailable — which is
+exactly when somebody needs to read this.
 """
 
 from __future__ import annotations
@@ -101,8 +102,8 @@ async def test_the_break_glass_key_is_an_operators() -> None:
         (("global-admin",), True),
         (("it-security",), True),
         # PRD §154 gives IT Steuerung every *figure* and no write anywhere. A deployment's topology
-        # is not a figure, which is why this asks `may_act_on_incidents` and not `is_oversight` —
-        # the same split `api/incidents.py` makes for the kill switch.
+        # is not a figure, which is why this asks `operations.diagnose` and not a reporting
+        # permission — the split the `api/incidents` package makes for its model checks.
         (("it-steuerung",), False),
         ((), False),
     ],
@@ -140,3 +141,42 @@ def test_the_probe_still_answers_when_a_credential_is_broken() -> None:
 
     assert response.status_code in (200, 503)
     assert set(response.json()) == set(VERDICT)
+
+
+class _NamedServer:
+    """An upstream an operator named after the machine it runs on, and that is down."""
+
+    is_test_double = True
+    probe_name = "gpu-frankfurt-a100"
+
+    def models(self) -> list[object]:
+        return []
+
+    async def ping(self) -> str:
+        raise ConnectionError("the endpoint is not there")
+
+
+async def test_the_kira_health_endpoint_names_the_upstreams_to_an_operator_only() -> None:
+    """`ADR-0015` §4 serves the body naming every upstream to an authenticated caller only, and
+    `/readyz` does — while the KIRA surface's own health endpoint listed every adapter by its probe
+    name, an operator's server names included, to anybody. The verdict stays public."""
+    from aira_common.counters import DegradationLog
+    from aira_gateway.diagnostics import UpstreamProbe
+    from aira_gateway.upstreams.base import ProviderRegistry
+
+    app = _app()
+    probe = UpstreamProbe(ProviderRegistry([_NamedServer()]), DegradationLog())  # type: ignore[list-item]
+    app.state.upstream_probe = probe
+    with TestClient(app) as client:
+        await probe.probe_once()
+        operator = await _key(app, subject="operator", use_case=None)
+        anonymous = client.get("/kira/api/external/health")
+        shown = client.get(
+            "/kira/api/external/health", headers={"Authorization": f"Bearer {operator}"}
+        )
+
+    assert anonymous.status_code == shown.status_code == 503
+    assert anonymous.json()["status"] == "Unhealthy"
+    assert [entity["service"] for entity in anonymous.json()["entities"]] == ["Gateway"]
+    assert "gpu-frankfurt-a100" not in anonymous.text
+    assert "gpu-frankfurt-a100" in [entity["service"] for entity in shown.json()["entities"]]

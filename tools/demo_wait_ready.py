@@ -35,7 +35,9 @@ import httpx
 
 # Imported, never restated. A third copy of the salt is a third place for it to drift, and the
 # failure it produces (401) looks exactly like the one this script exists to wait out.
-from demo_traffic import CALLERS, CHAT, EMBED, GATEWAY, key_for
+import stack_addresses
+from demo_keys import key_for
+from demo_traffic import CALLERS, CHAT, EMBED, GATEWAY
 
 #: Generous, because on a first run this transitively waits for a model download over a network
 #: nobody here controls. Being slow costs a minute; being short costs the demo.
@@ -129,7 +131,8 @@ def main() -> int:
             f"the gateway did not accept the demo API key within {TIMEOUT_SECONDS:.0f}s.\n"
             "The key is created by 'management-seed' and reaches the gateway over Kafka, and the\n"
             "seed waits for the model pull — so on a first run this is usually the download.\n"
-            "Check:  docker logs aira-ollama-pull   then   docker logs aira-management-seed",
+            f"Check:  docker logs {stack_addresses.container('ollama-pull')}   then   "
+            f"docker logs {stack_addresses.container('management-seed')}",
             file=sys.stderr,
         )
     else:
@@ -138,8 +141,8 @@ def main() -> int:
             f"the demo key works, but {absent} is not declared in the model catalog yet.\n"
             "The catalog is seeded and announced over Kafka; a model that is catalogued but not\n"
             "pulled fails every request made against it.\n"
-            "Check:  docker logs aira-gateway-consumer\n"
-            "        docker exec aira-ollama ollama list",
+            f"Check:  docker logs {stack_addresses.container('gateway-consumer')}\n"
+            f"        docker exec {stack_addresses.container('ollama')} ollama list",
             file=sys.stderr,
         )
     return 1

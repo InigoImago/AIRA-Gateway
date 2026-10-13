@@ -29,9 +29,10 @@ def entry_models(use_case: UseCase) -> list[str]:
 
     A property of the *run*, not a field on the pipeline (owner's decision): two runs of one use
     case may enter at different models, which is the comparison someone evaluating a model wants.
-    Sorted, because it feeds a picker.
+    Sorted, because it feeds a picker. Read through `.all()`, so a list that prefetched the
+    releases asks nothing more per use case.
     """
-    return sorted(use_case.allowed_models.values_list("name", flat=True))
+    return sorted(model.name for model in use_case.allowed_models.all())
 
 
 def runnable(use_case: UseCase) -> tuple[list[str], str]:

@@ -15,11 +15,14 @@ import { UseCaseService } from '../../core/api/use-case.service';
 export class GatewayProviders {
   private readonly service = inject(UseCaseService);
 
-  /** The upstreams, or `null` until asked. */
+  /** The upstreams, or `null` until the gateway has answered — a failed answer leaves it unknown,
+   *  so the next look asks again instead of showing an empty list until the page is reloaded. */
   readonly list = signal<GatewayProvider[] | null>(null);
   /** Where processing is permitted. Empty means *the gateway did not say*, never *nothing is
    *  allowed* — the console then has no opinion and the gateway refuses at request time. */
   readonly allowedRegions = signal<string[]>([]);
+  /** Regions single models are permitted by name, beyond the list — model name → regions. */
+  readonly modelRegions = signal<Record<string, string[]>>({});
   readonly loading = signal(false);
   /**
    * Why the list could not be fetched. Not fatal: declaring a model before its credential exists
@@ -31,7 +34,7 @@ export class GatewayProviders {
   readonly settled = new Subject<GatewayProvider[] | null>();
 
   /** Ask once. `then` runs when the list is known — at once if it already is; a call made while
-   *  the question is in flight adds nothing. */
+   *  the question is in flight adds nothing, and one made after a failure asks again. */
   load(then?: () => void): void {
     if (this.list() !== null) {
       then?.();
@@ -39,17 +42,18 @@ export class GatewayProviders {
     }
     if (this.loading()) return;
     this.loading.set(true);
+    this.error.set(null);
     this.service.providers().subscribe({
-      next: ({ providers, allowedRegions }) => {
+      next: ({ providers, allowedRegions, modelRegions }) => {
         this.loading.set(false);
         this.list.set(providers);
         this.allowedRegions.set(allowedRegions);
+        this.modelRegions.set(modelRegions);
         then?.();
         this.settled.next(providers);
       },
       error: (response: unknown) => {
         this.loading.set(false);
-        this.list.set([]);
         this.settled.next(null);
         this.error.set(errorMessage(response, 'Could not ask the gateway which providers it has.'));
       },

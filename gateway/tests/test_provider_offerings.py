@@ -371,16 +371,18 @@ async def test_an_output_limit_is_a_number_or_it_is_nothing() -> None:
     assert real.max_output_tokens == 65536
 
 
-async def test_the_credential_never_reaches_the_path() -> None:
-    """It goes in the query, as it does for every other call this adapter makes."""
-    seen: list[str] = []
+async def test_the_credential_never_reaches_the_url() -> None:
+    """It goes in the `x-goog-api-key` header, as it does for every other call this adapter makes:
+    a URL is what proxies and access logs keep."""
+    seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(str(request.url))
+        seen.append(request)
         return httpx.Response(200, json={"models": []})
 
     await _google(handler).available_models()
-    assert "key=secret-key" in seen[0]
+    assert seen[0].headers["x-goog-api-key"] == "secret-key"
+    assert "secret-key" not in str(seen[0].url)
 
 
 async def test_the_listing_is_also_the_cheap_reachability_question() -> None:
@@ -415,10 +417,15 @@ def test_an_adapter_reached_only_through_the_catalog_is_still_registered() -> No
 # == where this installation permits processing (`ADR-0012` §6) ==================================
 
 
-def _regions(settings: str | None = None) -> Any:
-    """The providers answer, from a gateway configured with `settings` as its allow-list."""
+def _regions(settings: str | None = None, *, by_name: str = "") -> Any:
+    """The providers answer, from a gateway configured with `settings` as its allow-list and
+    `by_name` as the regions single models are permitted."""
     app = create_app(
-        GatewaySettings(auth_required=False, **({"allowed_regions": settings} if settings else {}))
+        GatewaySettings(
+            auth_required=False,
+            allowed_model_regions=by_name,
+            **({"allowed_regions": settings} if settings else {}),
+        )
     )
     app.dependency_overrides[require_principal] = lambda: GLOBAL_ADMIN
     app.state.providers = ProviderRegistry([_Offering()])
@@ -452,6 +459,18 @@ def test_an_unset_allow_list_publishes_the_eu_defaults_rather_than_nothing() -> 
     from aira_gateway.residency import DEFAULT_ALLOWED_REGIONS
 
     assert _regions()["allowedRegions"] == sorted(DEFAULT_ALLOWED_REGIONS)
+
+
+def test_the_regions_a_model_is_permitted_by_name_are_published_beside_the_list() -> None:
+    """`global` permitted for GLM alone (`FRD-611`): a console that knew only the list would refuse,
+    in the editor, the one model the installation decided to permit there — and would have to hold
+    a copy of the decision to do better."""
+    body = _regions(by_name="global=glm-4.7-maas,deepseek-v3.2-maas")
+
+    assert body["modelRegions"] == {"deepseek-v3.2-maas": ["global"], "glm-4.7-maas": ["global"]}
+    # Beside the list, which does not grow by it.
+    assert "global" not in body["allowedRegions"]
+    assert _regions()["modelRegions"] == {}
 
 
 def test_global_is_published_only_where_it_is_configured() -> None:

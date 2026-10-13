@@ -77,7 +77,7 @@
           <!-- Named rather than "Save": the page has two forms, and two identical buttons are
                ambiguous to a screen reader and to e2e. -->
           <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
-            {{ feedback.busy() ? 'Saving…' : 'Save storage settings' }}
+            {{ saving() ? 'Saving…' : 'Save storage settings' }}
           </button>
           @if (retentionError(); as message) {
             <span class="field__hint field__hint--error">{{ message }}</span>

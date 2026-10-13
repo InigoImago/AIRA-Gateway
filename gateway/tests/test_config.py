@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from aira_gateway.config import GatewaySettings
 
 
@@ -62,3 +65,83 @@ def test_payload_retention_defaults_to_a_week() -> None:
     """The other half of FRD-404: payloads do not keep forever, and the promised period is a
     week. An installation that upgrades without configuring anything gets this."""
     assert GatewaySettings().default_retention_days == 7
+
+
+# ---- the broker list and the database URL are read the way a client reads them --------------
+
+
+def test_an_ipv6_broker_is_dialled_without_its_brackets() -> None:
+    """`[host]:port` is how Kafka spells an IPv6 broker; the brackets are not part of the host."""
+    assert GatewaySettings(kafka_bootstrap_servers="[::1]:9092").kafka_host_port == ("::1", 9092)
+    assert GatewaySettings(kafka_bootstrap_servers="[2001:db8::1]").kafka_host_port == (
+        "2001:db8::1",
+        9092,
+    )
+
+
+def test_no_broker_is_no_broker_to_check() -> None:
+    """A single-node install with Kafka switched off is one `security.py` accepts."""
+    assert GatewaySettings(kafka_bootstrap_servers="").kafka_host_port is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["kafka:9092x", "kafka:", "kafka:0", "kafka:70000", ":9092", "2001:db8::1:9092", "[::1:9092"],
+)
+def test_a_broker_list_nothing_could_dial_refuses_to_start(value: str) -> None:
+    """At startup, by name: read per probe, `kafka:9092x` was a 500 on every readiness check."""
+    with pytest.raises(ValidationError, match="AIRA_KAFKA_BOOTSTRAP_SERVERS"):
+        GatewaySettings(kafka_bootstrap_servers=value)
+
+
+@pytest.mark.parametrize(
+    ("user", "password", "host"),
+    [
+        ("aira", "p@ss", "db.internal"),
+        ("aira", "a/b:c", "db"),
+        ("aira", "pa%40ss", "db"),
+        ("u@x", "p w#y?z", "db"),
+        ("aira", "secret", "::1"),
+    ],
+    ids=["at-sign", "slash-and-colon", "percent", "user-and-space", "ipv6-host"],
+)
+def test_the_database_url_carries_the_credentials_exactly(
+    user: str, password: str, host: str
+) -> None:
+    """Interpolated, `p@ss` named a host `ss@db.internal` and `pa%40ss` arrived as `pa@ss` — a DNS
+    error and a refused password for a correct secret. Read back the way SQLAlchemy reads it."""
+    from sqlalchemy import make_url
+
+    settings = GatewaySettings(postgres_user=user, postgres_password=password, postgres_host=host)
+    url = make_url(settings.database_url(use_sqlite=False))
+
+    assert (url.username, url.password, url.host) == (user, password, host)
+    assert (url.port, url.database) == (settings.postgres_port, settings.postgres_db)
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("max_request_bytes", -1),
+        ("max_request_bytes", 0),
+        ("log_queue_size", -1),
+        ("anomaly_interval_seconds", 0),
+        ("anomaly_interval_seconds", float("nan")),
+        ("max_embedding_batch", 0),
+        ("max_response_schema_bytes", 0),
+        ("vertex_timeout_seconds", 0),
+    ],
+)
+def test_a_size_or_interval_that_could_never_work_refuses_to_start(
+    setting: str, value: float
+) -> None:
+    """`AIRA_MAX_REQUEST_BYTES=-1`, a common way to write "unlimited", made every request a 413 —
+    the liveness probe included, so the container restarted in a loop."""
+    with pytest.raises(ValidationError, match=setting):
+        GatewaySettings(**{setting: value})
+
+
+def test_zero_keeps_the_meaning_it_is_documented_with() -> None:
+    """`0` writes every audit row on the request path, and switches the auth bound off."""
+    settings = GatewaySettings(log_queue_size=0, max_auth_failures_per_minute=0)
+    assert (settings.log_queue_size, settings.max_auth_failures_per_minute) == (0, 0)

@@ -1,7 +1,9 @@
 import { MeService } from '../../core/api/me.service';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
-import { Observable, of, throwError } from 'rxjs';
+import { provideRouter } from '@angular/router';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import {
   Budget,
   Granularity,
@@ -14,7 +16,7 @@ import { SeriesRequest } from '../../core/api/clients/reporting';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InstallationBudgetCard } from './installation-budget-card';
 import { ReportingPage } from './reporting-page';
-import { isoDay, windowFor } from '../../core/ui/periods';
+import { isoDay, utcDay, windowFor } from '../../core/ui/periods';
 
 function row(over: Partial<ReportRow> = {}): ReportRow {
   return {
@@ -32,6 +34,12 @@ function row(over: Partial<ReportRow> = {}): ReportRow {
     max_latency_ms: 90,
     ...over,
   };
+}
+
+/** The last day a `[from, to)` window includes, as the screen and the file name state it. */
+function lastDayOf(to: string): string {
+  const [year, month, day] = to.split('-').map(Number);
+  return isoDay(new Date(year, month - 1, day - 1));
 }
 
 function report(over: Partial<Report> = {}): Report {
@@ -62,14 +70,21 @@ interface Page {
   download: () => void;
 }
 
-function setup(response: Observable<Report> = of(report()), csv?: Observable<Blob>) {
+/** A report per call, for a test about which of several answers ends up on screen. */
+type Answer = Observable<Report> | ((from: string, to: string) => Observable<Report>);
+
+function setup(
+  response: Answer = of(report()),
+  csv?: Observable<Blob>,
+  budgets: () => Observable<Budget[]> = () => of([] as Budget[]),
+) {
   TestBed.resetTestingModule();
   const calls: Array<{ from: string; to: string }> = [];
   const exports: Array<{ from: string; to: string; breakdown: string }> = [];
   const service = {
     report: (from: string, to: string) => {
       calls.push({ from, to });
-      return response;
+      return typeof response === 'function' ? response(from, to) : response;
     },
     reportCsv: (from: string, to: string, breakdown: string) => {
       exports.push({ from, to, breakdown });
@@ -77,11 +92,21 @@ function setup(response: Observable<Report> = of(report()), csv?: Observable<Blo
     },
     // The installation-budget card is a child and loads on its own; answered so it cannot throw
     // and take the page down with it.
-    installationBudgets: () => of([] as Budget[]),
+    installationBudgets: budgets,
+  };
+  // A reader who may read every figure and set none: the card shows a configured limit and offers
+  // no form, without the double reaching for a network.
+  const me = {
+    currency: signal(''),
+    get: () => of({ subject: 's', username: 'u', roles: [], permissions: ['report.read_all'] }),
   };
   TestBed.configureTestingModule({
     imports: [ReportingPage],
-    providers: [{ provide: UseCaseService, useValue: service }],
+    providers: [
+      provideRouter([]),
+      { provide: UseCaseService, useValue: service },
+      { provide: MeService, useValue: me },
+    ],
   });
   const fixture = TestBed.createComponent(ReportingPage);
   fixture.detectChanges();
@@ -97,13 +122,27 @@ function setup(response: Observable<Report> = of(report()), csv?: Observable<Blo
   };
 }
 
+const MONTHLY_CAP: Budget = {
+  id: 7,
+  scope: 'installation',
+  subject: '',
+  period: 'month',
+  limit_cost: '20.000000',
+  limit_tokens: null,
+  limit_requests: null,
+  enabled: true,
+};
+
 describe('ReportingPage', () => {
   it('labels spend in the installation’s currency', () => {
-    const harness = setup();
+    // With a cap on the page: the budget card is the one place on it that prints an amount it was
+    // not handed a label for, so a page with no budget could not show a stray symbol at all.
+    const harness = setup(of(report()), undefined, () => of([MONTHLY_CAP]));
     TestBed.inject(MeService).currency.set('CHF');
     harness.fixture.detectChanges();
 
     expect(harness.text()).toContain('Spend (CHF)');
+    expect(harness.testid('installation-budget')?.textContent).toContain('20.00 CHF');
     expect(harness.text()).not.toContain('$');
   });
 
@@ -111,8 +150,11 @@ describe('ReportingPage', () => {
     const { calls, text } = setup();
 
     expect(calls.length).toBe(1);
-    const today = new Date();
-    expect(calls[0].from).toBe(isoDay(new Date(today.getFullYear(), today.getMonth(), 1)));
+    // The gateway's month, not the reader's: its counters and buckets run on UTC.
+    const now = new Date();
+    expect(calls[0].from).toBe(
+      utcDay(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))),
+    );
     expect(text()).toContain('Reporting');
   });
 
@@ -173,6 +215,60 @@ describe('ReportingPage', () => {
     expect(testid('total-refused')?.textContent?.trim()).toBe('0');
   });
 
+  it('counts a refusal and a failure each once, and a model check as neither', () => {
+    // The server's `failed_requests` is every status of 400 or more, refusals included, so a
+    // headline built from it counted a rate-limited request as failed *and* refused. Each figure
+    // is built from the outcomes that mean it; a model check an administrator ran is served
+    // traffic of nobody's and neither of the two.
+    const { testid } = setup(
+      of(
+        report({
+          totals: row({ key: 'total', requests: 19, failed_requests: 6 }),
+          by_outcome: [
+            row({ key: 'served', requests: 10 }),
+            row({ key: 'diagnostic', requests: 3 }),
+            row({ key: 'upstream_error', requests: 2 }),
+            row({ key: 'rate_limited', requests: 4 }),
+          ],
+        }),
+      ),
+    );
+
+    expect(testid('total-refused')?.textContent?.trim()).toBe('4');
+    expect(testid('total-failed')?.textContent?.trim()).toBe('2');
+  });
+
+  it('counts every refusal the gateway makes, and no outcome it does not know', () => {
+    // An allow-list: an outcome added to the gateway later is in neither figure until somebody
+    // decides which one it belongs to, rather than silently in "refused".
+    const refusals = [
+      'rate_limited',
+      'budget_exceeded',
+      'suspended',
+      'blocked_by_pipeline',
+      'model_not_found',
+      'invalid_request',
+      'request_too_large',
+      'no_capable_model',
+    ];
+    const { testid } = setup(
+      of(
+        report({
+          by_outcome: [
+            ...refusals.map((key) => row({ key, requests: 1 })),
+            row({ key: 'client_gone', requests: 5 }),
+            row({ key: 'internal_error', requests: 1 }),
+            row({ key: 'upstream_error', requests: 2 }),
+            row({ key: 'something_new', requests: 7 }),
+          ],
+        }),
+      ),
+    );
+
+    expect(testid('total-refused')?.textContent?.trim()).toBe('8');
+    expect(testid('total-failed')?.textContent?.trim()).toBe('3');
+  });
+
   it('shows the outcome breakdown, and says plainly that it is not exported', () => {
     // The CSV renderer takes three breakdowns (`FRD-602`), so the button is replaced by the
     // reason rather than answering 400 (`FRD-206`).
@@ -205,6 +301,89 @@ describe('ReportingPage', () => {
     // The wording is the point of the caveat, not merely that a box appeared.
     expect(caveat?.textContent).toContain('unknown, not zero');
     expect(caveat?.textContent).toContain('3 request(s)');
+  });
+
+  it('says the spend is a lower bound when requests were booked at a floor, and only then', () => {
+    // A stream whose caller left before the provider reported usage is booked at what could be
+    // established (`FRD-128` FR-6); every such request makes the spend a floor.
+    expect(setup().testid('partial-usage-caveat')).toBeNull();
+
+    const withFloor = setup(
+      of(report({ totals: row({ key: 'total', partial_usage_requests: 4 }) })),
+    );
+    const caveat = withFloor.testid('partial-usage-caveat');
+    expect(caveat?.textContent).toContain('4 request(s)');
+    expect(caveat?.textContent).toContain('a lower bound');
+  });
+
+  it('does not send somebody to add a price for an upstream that reported no usage', () => {
+    // `FRD-626` FR-18: two unknowns with two remedies. A local embedding model that reports no
+    // tokens already has its price on file, and a price cannot fix a count that was never made.
+    const harness = setup(
+      of(
+        report({
+          totals: row({
+            key: 'total',
+            requests: 9,
+            cost: '0.00',
+            cost_nanos: 0,
+            unpriced_requests: 9,
+            unmetered_requests: 9,
+          }),
+          by_outcome: [row({ key: 'served', requests: 9 })],
+        }),
+      ),
+    );
+    const caveat = harness.testid('unpriced-caveat');
+
+    expect(caveat?.textContent).toContain('no token usage');
+    expect(caveat?.textContent).not.toContain('no price on file');
+    expect(caveat?.querySelector('a')).toBeNull();
+  });
+
+  it('names each cause with its own count, and links the one a price fixes', () => {
+    const harness = setup(
+      of(
+        report({
+          totals: row({ key: 'total', unpriced_requests: 5, unmetered_requests: 2 }),
+        }),
+      ),
+    );
+    const caveat = harness.testid('unpriced-caveat');
+
+    expect(caveat?.textContent).toContain('5 request(s)');
+    expect(caveat?.textContent).toMatch(/2 of them reported\s+no token usage/);
+    expect(caveat?.textContent).toMatch(/3 of them ran on a model with\s+no price on file/);
+    expect(caveat?.querySelector('a')?.getAttribute('href')).toBe('/models');
+  });
+
+  it('says the spend is unknown, not 0.00, when nothing that ran could be priced', () => {
+    // The breakdown rows already do (FR-18); the headline printed the server's `0.00` above them.
+    // A refusal ran nothing and has no cost to be unknown, so it does not keep the figure a figure.
+    const allUnpriced = setup(
+      of(
+        report({
+          totals: row({
+            key: 'total',
+            requests: 12,
+            cost: '0.00',
+            cost_nanos: 0,
+            unpriced_requests: 9,
+          }),
+          by_outcome: [
+            row({ key: 'served', requests: 9 }),
+            row({ key: 'rate_limited', requests: 3 }),
+          ],
+        }),
+      ),
+    );
+    expect(allUnpriced.testid('total-cost')?.textContent?.trim()).toBe('—');
+
+    // Some of it priced: the figure stands, as a lower bound the caveat explains.
+    const partly = setup(
+      of(report({ totals: row({ key: 'total', cost: '3.75', unpriced_requests: 2 }) })),
+    );
+    expect(partly.testid('total-cost')?.textContent?.trim()).toBe('3.75');
   });
 
   it('reports a failed load instead of rendering zeroes', () => {
@@ -272,6 +451,70 @@ describe('ReportingPage', () => {
     expect(asked.to).toBe(page.component.to());
   });
 
+  it('shows the period asked for last, whichever answer arrives last', () => {
+    // A month is a slower query than a week. Switching from one to the other quickly must not
+    // leave the first period's figures on screen under the second period's name.
+    const pending = new Map<string, Subject<Report>>();
+    const page = setup((from) => {
+      const answer = new Subject<Report>();
+      pending.set(from, answer);
+      return answer;
+    });
+    const thisMonth = page.component.from();
+
+    page.component.applyPreset('last-month');
+    const lastMonth = page.component.from();
+    pending.get(lastMonth)!.next(report({ totals: row({ key: 'total', cost: '111.00' }) }));
+    pending.get(thisMonth)!.next(report({ totals: row({ key: 'total', cost: '999.00' }) }));
+    page.fixture.detectChanges();
+
+    expect(page.component.preset()).toBe('last-month');
+    expect(page.testid('total-cost')?.textContent).toContain('111.00');
+    expect(page.text()).not.toContain('999.00');
+  });
+
+  it('says which period the figures on screen are for', () => {
+    // The window the report was asked for, ending on the last day it includes — so a custom date
+    // typed and not yet shown cannot be mistaken for the period of the figures beside it.
+    const page = setup();
+    const shown = windowFor('this-month', new Date());
+    page.component.applyPreset('custom');
+    page.component.from.set('2025-01-01');
+    page.component.to.set('2025-02-01');
+    page.fixture.detectChanges();
+
+    const period = page.testid('report-period')?.textContent ?? '';
+    expect(period).toContain(shown.from);
+    expect(period).toContain(lastDayOf(shown.to));
+    // Days on the gateway's clock, which is not the reader's: said, not assumed.
+    expect(period).toContain('(UTC)');
+    expect(period).not.toContain('2025-01-01');
+  });
+
+  it('does not leave the budget card blank under a banner the next period cleared', () => {
+    // The page clears its one banner for a new period. A load failure the card reported there was
+    // the only thing saying why the card is empty, so the card is asked again rather than left
+    // blank under a banner that no longer mentions it.
+    let asked = 0;
+    const page = setup(of(report()), undefined, () =>
+      ++asked === 1
+        ? (throwError(() => ({
+            status: 502,
+            error: { error: { message: 'budget store down' } },
+          })) as Observable<Budget[]>)
+        : of([MONTHLY_CAP]),
+    );
+    expect(page.element.querySelector('[role="alert"]')?.textContent).toContain(
+      'budget store down',
+    );
+
+    page.component.applyPreset('last-month');
+    page.fixture.detectChanges();
+
+    expect(page.element.querySelector('[role="alert"]')).toBeNull();
+    expect(page.testid('installation-budget')?.textContent).toContain('20.00');
+  });
+
   describe('the CSV export (FRD-602)', () => {
     /** The download needs the bearer token, so it is a fetch plus an object URL, not a link. */
     function captureDownload() {
@@ -308,15 +551,35 @@ describe('ReportingPage', () => {
     it('downloads the period on screen, for the table the user chose', () => {
       const capture = captureDownload();
       try {
-        const { component, exports } = setup();
+        const { component, exports, calls } = setup();
         component.exportBreakdown.set('model');
         component.download();
 
         expect(exports.length).toBe(1);
         expect(exports[0].breakdown).toBe('model');
-        // The same window as the screen.
-        expect(exports[0].from).toBe(component.from());
-        expect(exports[0].to).toBe(component.to());
+        // The window the figures on screen were asked for.
+        expect(exports[0].from).toBe(calls[0].from);
+        expect(exports[0].to).toBe(calls[0].to);
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it('downloads the period whose figures are on screen, not dates typed since', () => {
+      // "A download is exactly this table": dates typed into Custom… and not yet shown are not the
+      // table's period, and a file for them would be a file nobody has looked at.
+      const capture = captureDownload();
+      try {
+        const page = setup();
+        const shown = page.calls[0];
+        page.component.applyPreset('custom');
+        page.component.from.set('2025-01-01');
+        page.component.to.set('2025-02-01');
+        page.fixture.detectChanges();
+
+        page.component.download();
+
+        expect(page.exports).toEqual([{ ...shown, breakdown: 'use_case' }]);
       } finally {
         capture.restore();
       }
@@ -325,12 +588,15 @@ describe('ReportingPage', () => {
     it('names the file so it says what it contains and sorts', () => {
       const capture = captureDownload();
       try {
-        const { component } = setup();
+        const { component, calls } = setup();
         component.download();
 
         expect(capture.clicks.length).toBe(1);
-        expect(capture.clicks[0].download).toContain('aira-usage_use_case_');
-        expect(capture.clicks[0].download.endsWith('.csv')).toBe(true);
+        // The last day included, as the screen says it — not the exclusive bound, which named a
+        // file for October after the first of November.
+        expect(capture.clicks[0].download).toBe(
+          `aira-usage_use_case_${calls[0].from}_${lastDayOf(calls[0].to)}.csv`,
+        );
       } finally {
         capture.restore();
       }
@@ -386,7 +652,9 @@ describe('ReportingPage', () => {
 });
 
 describe('windowFor', () => {
-  const today = new Date(2026, 7, 6); // 6 August 2026, local
+  // Noon UTC on 6 August 2026: the windows are the gateway's UTC days, so the moment is fixed in
+  // UTC rather than built from the test machine's local calendar.
+  const today = new Date(Date.UTC(2026, 7, 6, 12));
 
   it('covers the whole current month, exclusive at the end', () => {
     expect(windowFor('this-month', today)).toEqual({ from: '2026-08-01', to: '2026-09-01' });
@@ -404,7 +672,7 @@ describe('windowFor', () => {
   });
 
   it('crosses a year boundary without landing in the wrong year', () => {
-    expect(windowFor('last-month', new Date(2027, 0, 15))).toEqual({
+    expect(windowFor('last-month', new Date(Date.UTC(2027, 0, 15, 12)))).toEqual({
       from: '2026-12-01',
       to: '2027-01-01',
     });

@@ -60,6 +60,7 @@ async def _log(
     operation: str = "generateContent",
     username: str | None = None,
     auth: str = "api_key",
+    usage_basis: str | None = None,
 ) -> None:
     async with sessionmaker() as session:
         session.add(
@@ -78,6 +79,7 @@ async def _log(
                 cost_nanos=cost,
                 latency_ms=latency,
                 outcome=outcome,
+                usage_basis=usage_basis,
                 created_at=when,
             )
         )
@@ -178,17 +180,62 @@ async def test_unpriced_traffic_is_counted_apart_and_not_summed_as_free(sessionm
     assert totals["requests"] == 3  # the traffic is not hidden, only its cost is unknown
 
 
-async def test_failed_requests_are_reported_rather_than_filtered_out(sessionmaker) -> None:
-    """A refused request still consumed a rate limit and possibly an upstream call. Dropping it
-    would make a period of outages look quiet."""
-    await _log(sessionmaker, status=200)
-    await _log(sessionmaker, status=429, cost=None)
-    await _log(sessionmaker, status=502, cost=None)
+async def test_a_request_booked_at_a_floor_is_counted_so_the_screen_can_say_so(
+    sessionmaker,
+) -> None:
+    """Counted after its caller left, or reported short of the end: either way its spend is a
+    floor, the report counts it, and a screen says the spend is a lower bound (`FRD-128` FR-6)."""
+    await _log(sessionmaker)
+    await _log(sessionmaker)
+    await _log(sessionmaker, outcome="client_gone", status=499, usage_basis="counted")
+    await _log(sessionmaker, outcome="client_gone", status=499, usage_basis="partial")
+    await _log(sessionmaker, outcome="client_gone", status=499)
 
     totals = (await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER))["totals"]
 
-    assert totals["requests"] == 3
-    assert totals["failed_requests"] == 2
+    assert totals["partial_usage_requests"] == 2
+    assert totals["requests"] == 5
+
+
+async def test_failed_requests_are_reported_rather_than_filtered_out(sessionmaker) -> None:
+    """A request the gateway could not serve still consumed a rate limit and possibly an upstream
+    call. Dropping it would make a period of outages look quiet — and a refusal is reported too, in
+    the total and under its own outcome, as the decision it was rather than as a failure."""
+    await _log(sessionmaker, status=200, outcome="served")
+    await _log(sessionmaker, status=429, cost=None, outcome="rate_limited")
+    await _log(sessionmaker, status=502, cost=None, outcome="upstream_error")
+
+    report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
+
+    assert report["totals"]["requests"] == 3
+    assert report["totals"]["failed_requests"] == 1
+    assert {row["key"] for row in report["by_outcome"]} == {
+        "served",
+        "rate_limited",
+        "upstream_error",
+    }
+
+
+async def test_failed_and_refused_never_count_the_same_request(sessionmaker) -> None:
+    """**Failed is a failure to serve; a refusal is a decision.** Counted by status, every refusal
+    (429, 400, 413, a pipeline block) was a failure as well, so a reader adding the two headline
+    figures counted it twice; and a model check that answered, or a caller who hung up, is
+    neither."""
+    for outcome, status, times in (
+        ("served", 200, 10),
+        ("diagnostic", 200, 3),
+        ("upstream_error", 502, 2),
+        ("rate_limited", 429, 4),
+        ("internal_error", 500, 1),
+        ("client_gone", 499, 1),
+    ):
+        for _ in range(times):
+            await _log(sessionmaker, status=status, outcome=outcome)
+
+    totals = (await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER))["totals"]
+
+    assert totals["requests"] == 21
+    assert totals["failed_requests"] == 3
 
 
 async def test_latency_is_reported_as_an_average_and_a_maximum(sessionmaker) -> None:
@@ -620,3 +667,18 @@ async def test_a_row_with_no_name_stands_alone(sessionmaker) -> None:
     report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
 
     assert {row["key"] for row in report["by_person"]} == {"kc-uuid-9"}
+
+
+async def test_a_blank_name_is_no_name_here_as_in_the_detector(sessionmaker) -> None:
+    """**One reading of whose request a row is.** The detector and `scopes.person` read an empty
+    name as absent; the report read it as a name, so such a row became a person called nothing —
+    its own `(none)` row, matched by no `person=` and by no people-limited reader. Grouped under
+    its subject, as everywhere else."""
+    await _log(sessionmaker, subject="alice", username="")
+    await _log(sessionmaker, subject="alice", username=None)
+
+    report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
+    mine = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER, person="alice")
+
+    assert [(row["key"], row["requests"]) for row in report["by_person"]] == [("alice", 2)]
+    assert mine["totals"]["requests"] == 2

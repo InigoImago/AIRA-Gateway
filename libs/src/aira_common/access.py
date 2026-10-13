@@ -84,9 +84,10 @@ def resolve(
     """Which use cases a caller reaches, and as what.
 
     ``grants`` are ``(group_path, use_case, role)`` rows; ``direct`` are ``(use_case, role)`` rows
-    naming the caller personally. The answer is the **union**, with the strongest role winning.
+    naming the caller personally. The answer is the **union**, with the strongest role winning. A
+    path that is not a string matches no grant, whatever its shape.
     """
-    held = set(group_paths)
+    held = {path for path in group_paths if isinstance(path, str)}
     roles: dict[str, list[str]] = {}
 
     for slug in usecases_from_group_paths(held):

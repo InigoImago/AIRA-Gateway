@@ -75,7 +75,9 @@ class TextsOutcome:
 @dataclass
 class TraceEntry:
     type: str
-    action: str  # passed | flagged | blocked | allowed | rejected | rerouted | unchanged
+    #: What `StepEvaluation.action` said: passed · flagged · blocked · allowed · rerouted ·
+    #: unchanged · not_asked · redacted.
+    action: str
     detail: dict[str, Any]
     #: This step ran only because the caller asked the dry run to continue past a block. Production
     #: would already have refused, so the screen must label the entry as a simulation.

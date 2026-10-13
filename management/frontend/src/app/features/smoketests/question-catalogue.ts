@@ -4,7 +4,19 @@ import { TestCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
+import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
+
+/**
+ * Where a new question goes: after the last one still asked.
+ *
+ * Positions are unique among the questions still asked, and retiring one leaves a gap. The count
+ * plus one lands on a position still in use as soon as a gap sits below the highest one, and every
+ * retry would send the same number.
+ */
+export function nextPosition(cases: readonly TestCase[]): number {
+  return Math.max(0, ...cases.map((item) => item.position)) + 1;
+}
 
 /**
  * The question catalogue: the standing set of questions every run asks (`FRD-504`).
@@ -16,13 +28,16 @@ import { PageFeedback } from '../../core/ui/page-feedback';
  */
 @Component({
   selector: 'app-question-catalogue',
-  imports: [FormsModule, InfoHint],
+  imports: [FormsModule, InfoHint, Modal],
   templateUrl: './question-catalogue.html',
   host: { style: 'display: contents' },
 })
 export class QuestionCatalogue {
   /** The catalogue the page loaded; the page owns it because its tab count reads from it. */
   readonly cases = input<TestCase[]>([]);
+  /** Whether the catalogue is still being loaded, so an empty list is not stated as an empty
+   *  catalogue before anybody knows. */
+  readonly loading = input(false);
   readonly mayAuthor = input(false);
   /** Whether the catalogue tab is the open one. */
   readonly shown = input(false);
@@ -31,7 +46,7 @@ export class QuestionCatalogue {
 
   private readonly service = inject(UseCaseService);
   private readonly confirmService = inject(ConfirmService);
-  private readonly feedback = inject(PageFeedback);
+  protected readonly feedback = inject(PageFeedback);
 
   protected readonly search = signal('');
   /**
@@ -55,8 +70,15 @@ export class QuestionCatalogue {
   protected readonly caseTopic = signal('');
   protected readonly casePrompt = signal('');
   protected readonly caseExpectation = signal('');
+  /**
+   * Whether a save has been tried since the window opened. The page's banner is behind the
+   * backdrop, so a refusal is repeated in the window — and only one that happened here, or an
+   * older page error would read as a statement about this question.
+   */
+  protected readonly tried = signal(false);
 
   protected startCase(item?: TestCase): void {
+    this.tried.set(false);
     this.editing.set(item ? { ...item } : {});
     this.caseTopic.set(item?.topic ?? '');
     this.casePrompt.set(item?.prompt ?? '');
@@ -67,9 +89,10 @@ export class QuestionCatalogue {
     this.editing.set(null);
   }
 
+  /** Save the question, once: a second press while the first is on its way would add it twice. */
   protected saveCase(): void {
     const draft = this.editing();
-    if (!draft) return;
+    if (!draft || this.feedback.busy()) return;
 
     const body = {
       topic: this.caseTopic().trim(),
@@ -77,19 +100,20 @@ export class QuestionCatalogue {
       expectation: this.caseExpectation().trim(),
       // A new question is appended: a position chosen on every question is a field people get
       // wrong, and a catalogue is added to far more often than it is reordered.
-      position: draft.id ? (draft.position ?? 0) : this.cases().length + 1,
+      position: draft.id ? (draft.position ?? 0) : nextPosition(this.cases()),
     };
     const request = draft.id
       ? this.service.updateCase(draft.id, body)
       : this.service.createCase(body);
 
-    request.subscribe({
-      next: () => {
+    this.tried.set(true);
+    this.feedback.run(request, {
+      failure: 'Could not save this question.',
+      success: () => {
         this.editing.set(null);
         this.feedback.succeed(draft.id ? 'Question saved.' : 'Question added to the catalogue.');
         this.changed.emit();
       },
-      error: (response: unknown) => this.feedback.fail(response, 'Could not save this question.'),
     });
   }
 

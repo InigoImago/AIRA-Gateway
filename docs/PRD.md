@@ -46,7 +46,7 @@ gap, not an aspiration.
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 1 | Einheitliche Bereitstellung von Modellen | **weitgehend** — Gemini **und** Anthropic über Vertex in der EU (`FRD-115`/`119` done), OpenAI-Dialekt/selbst gehostet (`FRD-123` done), Microsoft Foundry **gebaut, aber nur hermetisch** — es gab nie ein Azure-Abonnement, gegen das es gelaufen wäre | `FRD-100` done, `FRD-120` done (unbelegt gegen echtes Azure) |
+| 1 | Einheitliche Bereitstellung von Modellen | **weitgehend** — Gemini **und** Anthropic über Vertex in der EU (`FRD-115`/`119` done), die offenen Modelle der Agent Platform (GLM, DeepSeek) über denselben Zugang — nur an `global` angeboten und deshalb je Modell namentlich freigegeben (`FRD-115` FR-2a, `ADR-0034`), OpenAI-Dialekt/selbst gehostet (`FRD-123` done), Microsoft Foundry **gebaut, aber nur hermetisch** — es gab nie ein Azure-Abonnement, gegen das es gelaufen wäre | `FRD-100` done, `FRD-120` done (unbelegt gegen echtes Azure) |
 | 2 | Rollenzuweisung | **fertig** — seit `ADR-0017` (2026-08-09) ist **Gruppenmitgliedschaft die einzige Quelle einer Rolle**: die drei Organisationsrollen kommen aus konfigurierten Keycloak-Gruppen, eine direkt zugewiesene Realm-Rolle bewirkt nichts, und `use-case-admin`/`use-case-user` existieren nicht mehr als Rollen (Grant je Use Case) | `FRD-201`, `ADR-0009`, `ADR-0017`, `FRD-605` |
 | 3 | Kompatibilität mit der KIRA-API | **fertig (2026-08-06)** — vollständiger Vertrag: Text, Dokumente, Thinking, strukturierte Ausgabe, Batch-Embedding. Was ein *Modell* nicht kann, wird weiterhin abgewiesen, nie ignoriert | `FRD-107` done `FRD-111`–`113` done |
 | 4 | Auditierbarkeit | **fertig (2026-08-06)** — alle fünf Lücken geschlossen | `FRD-122` done |
@@ -73,7 +73,7 @@ product's central claim being true and being asserted.
 | # | Feature | Stand | Where |
 |--:|---|---|---|
 | 18 | **Verarbeitung von Dokumenten** (PDF, Bilder u. a. im Request) — KIRAs Kernfall | **fertig (2026-08-06)** — geordnete Teile, 15 Medientypen, Signaturprüfung, Grenzen; ein Modell, das den Typ nicht lesen kann, **lehnt ab** statt zu halluzinieren | `FRD-110` done |
-| 19 | **Erweiterbarkeit als messbare Eigenschaft** — eine neue Modellfamilie ist ein Katalogeintrag plus höchstens ein Dialekt | **dreimal belegt** — Vertex/Gemini, Vertex/Anthropic, OpenAI-Dialekt; Foundry hat den Dialekt **unverändert** wiederverwendet und der Diff verließ `upstreams/` nicht. Die Assertion ist ein Test, kein Vorsatz | `ADR-0011`, `FRD-115` §10, `FRD-120` |
+| 19 | **Erweiterbarkeit als messbare Eigenschaft** — eine neue Modellfamilie ist ein Katalogeintrag plus höchstens ein Dialekt | **viermal belegt** — Vertex/Gemini, Vertex/Anthropic, OpenAI-Dialekt; Foundry hat den Dialekt **unverändert** wiederverwendet und der Diff verließ `upstreams/` nicht, und die offenen Modelle auf Vertex haben ihn auf einem zweiten Transport wiederverwendet. Die Assertion ist ein Test, kein Vorsatz | `ADR-0011`, `FRD-115` §10, `FRD-120` |
 | 20 | **Secrets aus Vault** — Richtlinie und Implementierung stehen seit Phase 0 auseinander | **fertig (2026-08-06)** — AppRole + KV-v2 als pydantic-Settings-Quelle über der Umgebung, **fail closed**; gegen eine echte AppRole im Stack verifiziert | `FRD-116` done |
 | 21 | **Betriebsdiagnostik** — Build-Identität, Upstream-Health, Trace-Header, CORS, OpenAPI 3.0 | **fertig bis auf FR-7 (2026-08-06)** — Erreichbarkeit wird im Hintergrund geprüft und von `/readyz` *gelesen*, veraltet zählt als degradiert, `x-trace-id` als reines ASGI ganz außen; **das zweite OpenAPI-3.0-Dokument ist bewusst nicht gebaut** | `FRD-117` done (FR-7 offen) |
 | 22 | **Maskierung sensibler Inhalte** in gespeicherten Payloads | **Credentials fertig (2026-08-08)** — API-Keys, Bearer-Token, JWTs, `Authorization:`, PEM-Blöcke, plus Deployment-Muster (additiv). **PII bewusst nicht**: Namen und Kundennummern sind der Grund, *warum* gespeichert wird — dafür ist der Schalter je Use Case (`FRD-404`) die Kontrolle | `FRD-406` done (PII bewusst offen) |
@@ -334,7 +334,7 @@ Core entities (details in FRDs):
 | **PostgreSQL** | System of record | Config + logs + usage; separate schemas/DBs per component |
 | **Kafka** | Event bus | Config distribution + usage/audit/anomaly events between components |
 | **HashiCorp Vault** | Secrets | Upstream credentials, signing keys, DB creds |
-| **Gemini Enterprise Agent Platform** | Upstream | Gemini + Anthropic models |
+| **Gemini Enterprise Agent Platform** | Upstream | Gemini + Anthropic models, and managed open models (GLM, DeepSeek) |
 | **Microsoft Foundry** | Upstream | OpenAI + Microsoft models |
 | **Mock provider** | Demo | Built-in, no external calls |
 | **OpenTelemetry Collector** | Telemetry ingestion | OTLP receiver; both components export traces/metrics/logs here |

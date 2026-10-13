@@ -136,3 +136,58 @@ def test_readyz_reports_no_fallbacks_when_everything_is_working(client, monkeypa
 
     assert body["degraded"] is False
     assert body["fallbacks"] == {}
+
+
+async def test_a_gateway_without_kafka_is_ready_on_postgres_alone() -> None:
+    """`security.py` accepts a single-node install with Kafka switched off; readiness then probed
+    `localhost:9092` for ever, and an orchestrator never routed to the instance."""
+    import socket
+
+    from fastapi.testclient import TestClient
+
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(8)
+        host, port = listener.getsockname()
+        app = create_app(
+            GatewaySettings(postgres_host=host, postgres_port=port, kafka_bootstrap_servers="")
+        )
+        with TestClient(app) as client:
+            response = client.get("/readyz")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["checks"]["kafka"] == {
+        "ok": True,
+        "detail": "not configured",
+        "required": False,
+    }
+
+
+async def test_an_ipv6_broker_is_reached() -> None:
+    import socket
+
+    from fastapi.testclient import TestClient
+
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+
+    with socket.socket(socket.AF_INET6) as broker, socket.socket() as database:
+        broker.bind(("::1", 0))
+        broker.listen(8)
+        database.bind(("127.0.0.1", 0))
+        database.listen(8)
+        db_host, db_port = database.getsockname()
+        app = create_app(
+            GatewaySettings(
+                postgres_host=db_host,
+                postgres_port=db_port,
+                kafka_bootstrap_servers=f"[::1]:{broker.getsockname()[1]}",
+            )
+        )
+        with TestClient(app) as client:
+            response = client.get("/readyz")
+
+    assert response.json()["checks"]["kafka"]["ok"] is True, response.text

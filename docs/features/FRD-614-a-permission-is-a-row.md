@@ -149,7 +149,9 @@ Two things stay outside the catalogue on purpose:
   checkbox that does nothing, so:
   - `usecase.manage_all` makes every use case visible as well as administrable;
   - `payload.read_any` opens the content of any request by its id, without the request list,
-    which stays with `trace.read_all`.
+    which stays with `trace.read_all`;
+  - `budget.installation.write` lists the installation budget it sets — an empty list read as
+    "none set", and the next save silently replaced the budget the role could not see.
 
   The converse never holds: seeing never implies acting (`ADR-0007`).
 - **FR-10 — Labels in one place.** Role labels and permission labels come from the server, so the

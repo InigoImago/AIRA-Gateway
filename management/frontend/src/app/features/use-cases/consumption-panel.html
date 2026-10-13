@@ -1,10 +1,10 @@
 <!-- Not a progress bar: consumption here has no denominator, and inventing one would mislead. -->
 <div class="card" data-testid="consumption">
   <div class="spread">
-    <h3 class="section-title" style="margin: 0">Consumption</h3>
+    <h3 class="section-title">Consumption</h3>
     <a class="btn btn--sm" routerLink="/reporting">Full reporting</a>
   </div>
-  <p class="muted" style="margin: 0.25rem 0 0">
+  <p class="muted lead">
     What this use case has used, whether or not a limit is set. Taken from the request log — the
     same record the reporting screen and the audit trail are built from.
   </p>
@@ -40,7 +40,7 @@
 
     <div class="stack" style="margin-top: 1rem">
       <div>
-        <p class="muted" style="margin: 0 0 0.35rem; font-size: 0.82rem">This month</p>
+        <p class="muted text-sm window-label">This month ({{ clock }})</p>
         <dl class="stat-row">
           @for (stat of monthStats(); track stat.key) {
             <div class="stat">
@@ -60,7 +60,7 @@
         </dl>
       </div>
       <div>
-        <p class="muted" style="margin: 0 0 0.35rem; font-size: 0.82rem">Today</p>
+        <p class="muted text-sm window-label">Today ({{ clock }})</p>
         <dl class="stat-row">
           @for (stat of todayStats(); track stat.key) {
             <div class="stat">

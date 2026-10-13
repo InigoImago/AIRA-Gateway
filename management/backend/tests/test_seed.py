@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from io import StringIO
 
 import pytest
@@ -6,6 +8,7 @@ from aira_management.apps.seed.contributions.roles_and_users import (
     seed_roles_and_users,
 )
 from aira_management.apps.seed.registry import contributions
+from aira_management.apps.usecases import events
 from aira_management.config.app_settings import ManagementSettings
 from aira_management.roles import Role
 from django.contrib.auth import get_user_model
@@ -179,3 +182,134 @@ def test_the_seed_invites_its_demo_people_and_does_not_reopen_a_claimed_one() ->
     seed_roles_and_users(fresh=False)
 
     assert not PendingIdentity.objects.filter(user=claimed).exists()
+
+
+# == `--fresh` resets the demo and nothing the console made of it ================================
+
+
+@contextmanager
+def _recording() -> Iterator[list[tuple[str, dict]]]:
+    """Every event emitted while the block runs — unsubscribed afterwards, because the subscriber
+    list is module-global and holds the outbox's own subscriber."""
+    seen: list[tuple[str, dict]] = []
+    spy = events.subscribe(lambda kind, payload: seen.append((kind, payload)))
+    try:
+        yield seen
+    finally:
+        events.unsubscribe(spy)
+
+
+def test_a_fresh_seed_survives_a_demo_person_who_ran_the_catalogue() -> None:
+    """`TestRun.requested_by` is `PROTECT` on purpose — a run is evidence of who asked. Deleting the
+    demo people therefore aborted the whole reset with `ProtectedError` once anybody had run the
+    catalogue, which is the first thing a walkthrough of the smoke tests does. The person stays,
+    their runs stay, and the sign-in binding a delete would have released is released."""
+    from aira_management.apps.api.models import OidcIdentity, PendingIdentity
+    from aira_management.apps.smoketests.models import TestRun
+
+    call_command("seed_demo", stdout=StringIO())
+    itsec = get_user_model().objects.get(username="itsec")
+    OidcIdentity.objects.create(subject="sub-itsec-old-realm", user=itsec)
+    PendingIdentity.objects.filter(user=itsec).delete()
+    run = TestRun.objects.create(model="m", use_case="smoke-test", requested_by=itsec)
+
+    out = StringIO()
+    call_command("seed_demo", "--fresh", stdout=out)
+
+    assert TestRun.objects.filter(pk=run.pk, requested_by__username="itsec").exists()
+    assert not OidcIdentity.objects.filter(user=itsec).exists()
+    assert PendingIdentity.objects.filter(user=itsec).exists(), "claimable again, like the others"
+    assert "users_kept': 1" in out.getvalue()
+
+
+def test_a_fresh_seed_never_retires_a_use_case_it_recreates() -> None:
+    """The gateway keeps a retired use case as a tombstone, and an upsert never revives one. So a
+    reset that announced `usecase.deleted` for a slug *another* contribution then recreated left
+    that use case dead at the gateway and live in the console — `smoke-test`, every evaluation
+    request refused with "has been retired". The slugs a reset keeps are every contribution's."""
+    call_command("seed_demo", stdout=StringIO())
+
+    with _recording() as seen:
+        call_command("seed_demo", "--fresh", stdout=StringIO())
+
+    retired = {payload["slug"] for kind, payload in seen if kind == "usecase.deleted"}
+    recreated = {payload["slug"] for kind, payload in seen if kind == "usecase.upserted"}
+    assert "smoke-test" in recreated
+    assert not (retired & recreated), f"reset announced as retirement for {retired & recreated}"
+
+
+def test_a_fresh_seed_announces_the_access_it_removes_and_spares_the_keys_it_reissues() -> None:
+    """Deleting a person cascades their keys and memberships here and announced nothing, so the
+    gateway kept a removed key authenticating and a removed membership granting. Each is announced
+    now — except a demo key the showcase reissues under the same prefix a moment later: revocation
+    is terminal at the gateway, and announcing one would kill the deterministic demo key for
+    ever."""
+    from aira_management.apps.apikeys.models import ApiKey
+    from aira_management.apps.seed.contributions.showcase import reissued_prefixes
+    from aira_management.apps.usecases.models import UseCase, UseCaseMembership
+
+    call_command("seed_demo", stdout=StringIO())
+    ucuser = get_user_model().objects.get(username="ucuser")
+    personalwesen = UseCase.objects.get(slug="personalwesen")
+    UseCaseMembership.objects.create(use_case=personalwesen, user=ucuser)
+    ApiKey.objects.create(
+        use_case=UseCase.objects.get(slug="kundenservice"),
+        owner=ucuser,
+        prefix="c0ffee00",
+        key_hash="0" * 64,
+        label="issued in the console",
+    )
+
+    with _recording() as seen:
+        call_command("seed_demo", "--fresh", stdout=StringIO())
+
+    revoked = {payload["prefix"] for kind, payload in seen if kind == "api_key.revoked"}
+    assert "c0ffee00" in revoked
+    assert not (revoked & reissued_prefixes()), "a reissued demo key must never be revoked"
+    assert ("membership.removed", {"slug": "personalwesen", "username": "ucuser"}) in seen
+    # And the demo's own keys still stand, reissued.
+    assert reissued_prefixes() <= set(
+        ApiKey.objects.filter(is_active=True).values_list("prefix", flat=True)
+    )
+
+
+# == the question catalogue belongs to IT Security once seeded ===================================
+
+
+def test_re_seeding_leaves_the_catalogue_as_it_security_left_it() -> None:
+    """Seeded, and then owned by IT Security in the console. Every seed run undid that: it rewrote
+    the wording at each position, brought back a question at any position IT Security had retired,
+    and retired every question the console had added. It now only fills positions nobody has ever
+    used, live or retired."""
+    from aira_management.apps.seed.contributions.test_catalogue import seed_test_catalogue
+    from aira_management.apps.seed.contributions.test_catalogue_data import QUESTIONS
+    from aira_management.apps.smoketests.models import TestCase as Case
+
+    seed_test_catalogue(fresh=False)
+    Case.objects.filter(position=7).update(retired=True)
+    Case.objects.filter(position=5).update(prompt="Reworded by IT Security.")
+    added = Case.objects.create(topic="Ours", prompt="Added in the console.", position=101)
+
+    summary = seed_test_catalogue(fresh=False)
+
+    assert summary["questions"] == 0
+    assert not Case.objects.filter(position=7, retired=False).exists(), "retired stays retired"
+    assert Case.objects.get(position=5).prompt == "Reworded by IT Security."
+    assert Case.objects.get(pk=added.pk).retired is False
+    assert Case.objects.filter(retired=False).count() == len(QUESTIONS)
+
+
+def test_a_seed_fills_only_positions_never_used() -> None:
+    """The comparison: a position nobody has used is still filled, so a catalogue seeded into an
+    installation where IT Security started first gets the rest of the standard."""
+    from aira_management.apps.seed.contributions.test_catalogue import seed_test_catalogue
+    from aira_management.apps.seed.contributions.test_catalogue_data import QUESTIONS
+    from aira_management.apps.smoketests.models import TestCase as Case
+
+    Case.objects.create(topic="Theirs", prompt="Written before the seed ran.", position=1)
+
+    summary = seed_test_catalogue(fresh=False)
+
+    assert summary["questions"] == len(QUESTIONS) - 1
+    assert Case.objects.get(position=1).topic == "Theirs"
+    assert Case.objects.filter(retired=False).count() == len(QUESTIONS)

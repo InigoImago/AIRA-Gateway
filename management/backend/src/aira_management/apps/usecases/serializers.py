@@ -9,11 +9,12 @@ from django.contrib.auth.models import Group
 from django.db.models import Count
 from rest_framework import serializers
 
+from aira_management.apps.api.authentication import USERNAME_MAX_LENGTH
 from aira_management.apps.catalog.models import Model as CatalogModel
 from aira_management.apps.usecases.access import (
     is_member,
     may_admin,
-    may_call_queryset,
+    may_call,
     may_manage,
 )
 from aira_management.apps.usecases.models import (
@@ -83,7 +84,7 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             # What the gateway will accept from this person's token — a third question, not a
             # stricter `is_member` (see `access.may_call_queryset`). The screen that spends tokens
             # needs the answer of the system that spends them.
-            "may_call": may_call_queryset(user, UseCase.objects.filter(pk=obj.pk)).exists(),
+            "may_call": may_call(user, obj),
         }
 
     def validate_allowed_models(self, models: list[CatalogModel]) -> list[CatalogModel]:
@@ -158,14 +159,20 @@ class UseCaseGroupGrantSerializer(serializers.ModelSerializer[UseCaseGroupGrant]
 class GrantGroupSerializer(serializers.Serializer[Any]):
     #: A Keycloak group path, validated for **shape**, not existence: the identity provider may
     #: create the group tomorrow. At least one character after the slash, because a token never
-    #: carries a bare `/` and a grant on it would be inert; `\Z` rather than `$`, which also
-    #: matches before a trailing newline.
-    group_path = serializers.RegexField(r"^/[^\s/][^\s]{0,253}\Z", max_length=255)
+    #: carries a bare `/` and a grant on it would be inert. Spaces inside it, because the path is
+    #: whatever the realm uses (`UseCaseGroupGrant`) and a department is called what it is called —
+    #: but no other whitespace and none at either end, which a copied path picks up and a token
+    #: never carries. `\Z` rather than `$`, which also matches before a trailing newline. As long
+    #: as the grant's column: a path longer than the mirror group's name is mirrored under its
+    #: digest (`rbac.django_group_name`).
+    group_path = serializers.RegexField(r"^/[^\s/](?:(?: |\S){0,252}\S)?\Z", max_length=255)
     role = serializers.ChoiceField(choices=_GRANT_ROLES, default=UseCaseMembership.USER)
 
 
 class AddMemberSerializer(serializers.Serializer[Any]):
-    username = serializers.CharField()
+    #: Bounded to the username column: an invited account is created under this very name, and a
+    #: longer one is a `DataError` that only PostgreSQL raises.
+    username = serializers.CharField(max_length=USERNAME_MAX_LENGTH)
     role = serializers.ChoiceField(choices=_GRANT_ROLES, default=UseCaseMembership.USER)
 
 

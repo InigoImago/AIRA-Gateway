@@ -15,8 +15,10 @@ export function slugify(name: string): string {
     .replace(/ß/g, 'ss')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '');
+  // Trimmed again after the cut: the cut can land on a separator, and a slug is permanent.
   return folded
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
+    .slice(0, 60)
+    .replace(/-+$/, '');
 }

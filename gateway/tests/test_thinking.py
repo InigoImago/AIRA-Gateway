@@ -24,6 +24,7 @@ from aira_gateway.thinking import (
     THINKING_TOKEN_COUNT_TOO_LOW,
     UNEXPECTED_THINKING_TOKEN_COUNT,
     ThinkingRejected,
+    check_budget_fits,
     permitted_by,
     reserved_tokens,
     resolve,
@@ -81,6 +82,46 @@ def test_each_bound_is_refused_at_its_own_boundary(tokens: int, code: str) -> No
 def test_the_boundaries_themselves_are_accepted(tokens: int) -> None:
     model = _model(modes=["limited"], min_tokens=128, max_tokens=24_576)
     assert resolve(Thinking(mode=ThinkingMode.LIMITED, tokens=tokens), model).tokens == tokens
+
+
+@pytest.mark.parametrize("tokens", [0, -5, -1_000_000])
+def test_a_budget_below_one_token_is_refused_whatever_the_model_declares(tokens: int) -> None:
+    """A model that declares `limited` and no minimum bounded nothing from below, so a negative
+    budget was accepted, forwarded, and **reserved**: `-1 000 000` moved the use case's shared
+    counter down by a million tokens for as long as the request ran, and every request beside it
+    passed its check. Google's own sentinels (`0` off, `-1` automatic) are modes by the time this
+    runs, so a number below one here is nothing a caller can mean."""
+    with pytest.raises(ThinkingRejected) as caught:
+        resolve(Thinking(mode=ThinkingMode.LIMITED, tokens=tokens), _model(modes=["limited"]))
+    assert caught.value.code == THINKING_TOKEN_COUNT_TOO_LOW
+    assert str(tokens) in caught.value.message
+
+
+@pytest.mark.parametrize(("budget", "cap"), [(2048, 1000), (1000, 1000)])
+def test_a_budget_that_fills_the_output_allowance_is_refused(budget: int, cap: int) -> None:
+    """The budget is drawn from the output allowance, so one that fills it leaves the answer
+    nothing — and Anthropic refuses `budget_tokens >= max_tokens` outright, which the adapter
+    reported as a `500`. Refused before dispatch, by name, against the cap that will be sent."""
+    with pytest.raises(ThinkingRejected) as caught:
+        check_budget_fits(Thinking(mode=ThinkingMode.LIMITED, tokens=budget), cap)
+    assert caught.value.code == THINKING_TOKEN_COUNT_TOO_HIGH
+    assert str(cap) in caught.value.message
+
+
+@pytest.mark.parametrize(
+    ("setting", "cap"),
+    [
+        (Thinking(mode=ThinkingMode.LIMITED, tokens=999), 1000),
+        (Thinking(mode=ThinkingMode.LIMITED, tokens=50_000), None),
+        (Thinking(mode="high"), 10),
+        (None, 10),
+    ],
+)
+def test_a_budget_that_leaves_room_or_names_no_number_fits(
+    setting: Thinking | None, cap: int | None
+) -> None:
+    """No cap known before dispatch is the adapter's to decide, and a level carries no number."""
+    check_budget_fits(setting, cap)
 
 
 def test_a_token_count_on_a_mode_that_takes_none_is_refused() -> None:

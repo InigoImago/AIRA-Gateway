@@ -110,3 +110,35 @@ def test_rotating_a_forwarded_header_does_not_buy_a_fresh_bucket() -> None:
         ]
 
     assert 429 in statuses, "a prober rotating the header was never bounded"
+
+
+#: A deployment rather than a laptop: locally `/readyz` shows everything and resolves nothing.
+_DEPLOYED: dict[str, object] = {
+    "environment": "production",
+    "postgres_password": "a-real-secret",
+    "kafka_security_protocol": "SASL_SSL",
+}
+
+
+def test_readiness_counts_a_refused_credential_like_every_other_route() -> None:
+    """`/readyz` is public and resolves whatever credential it is shown, to decide whether to show
+    the diagnosis — so it was a way to try credentials that no bound ever met. It still answers:
+    a probe gets its verdict whether or not the address is over the bound."""
+    with _client(max_auth_failures_per_minute=3, **_DEPLOYED) as client:
+        probes = [client.get("/readyz", headers={"x-goog-api-key": "aira_x_y"}) for _ in range(4)]
+        guarded = client.post(PATH, json=BODY, headers={"x-goog-api-key": "aira_x_y"})
+
+    assert {probe.status_code for probe in probes} <= {200, 503}
+    assert all(set(probe.json()) == {"status", "degraded"} for probe in probes)
+    assert guarded.status_code == 429
+
+
+def test_a_probe_that_presents_nothing_is_never_counted() -> None:
+    """A Kubernetes probe carries no credential; counting it would throttle the cluster's own
+    address out of the gateway."""
+    with _client(max_auth_failures_per_minute=1, **_DEPLOYED) as client:
+        for _ in range(5):
+            client.get("/readyz")
+        first = client.post(PATH, json=BODY, headers={"x-goog-api-key": "aira_x_y"})
+
+    assert first.status_code == 401

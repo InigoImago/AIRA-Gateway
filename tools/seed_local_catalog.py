@@ -9,18 +9,29 @@ price is what makes `FRD-403` demonstrable end to end — the cost column, spend
 reporting screen — and the distinction between a demonstration figure and a spend figure has to
 survive a screenshot, so it lives in the data.
 
+**It never moves a numeric id another model holds unless told to** (`--move-id`). The id is what a
+KIRA client sends, so taking it from a model leaves every caller of that model refused; and on a
+stack whose Management publishes the catalog, the authority does not give it back — the read-model
+then says one thing about the id and Management and its events another, until somebody edits that
+very model in the console.
+
     uv run python tools/seed_local_catalog.py
+    AIRA_SEED_LOCAL_CHAT_MODEL=qwen3:4b uv run python tools/seed_local_catalog.py --move-id
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import os
+import sys
+from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import insert, text
 
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine
+from aira_gateway.db.models import ModelRead
 
 #: The two KIRA-style integer ids this script owns. They name a **role** — "the local chat model",
 #: "the local embedding model" — not a particular model, so re-running for a different model
@@ -41,7 +52,6 @@ EMBED_NUMERIC_ID = 9002
 
 CHAT_MODEL = os.environ.get("AIRA_SEED_LOCAL_CHAT_MODEL", "qwen3:0.6b")
 EMBED_MODEL = os.environ.get("AIRA_SEED_LOCAL_EMBED_MODEL", "all-minilm")
-REGION = os.environ.get("AIRA_OLLAMA_REGION", "on-premises")
 
 #: Nano-units per million tokens. Chosen to look like a small cloud model, so the arithmetic in a
 #: report is recognisable, and so a budget set in the UI actually bites inside a demonstration.
@@ -195,66 +205,92 @@ DECLARATIONS = [
 ]
 
 
-async def main() -> None:
+class IdTaken(Exception):
+    """An id this seed would declare is held by another model, and moving it was not asked for."""
+
+
+def _measured(declaration: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `declaration` with the measured capabilities applied; the module's stays as is."""
+    row = dict(declaration)
+    # Measured, never inherited and never taken from a vendor's own flag: `ollama show` lists
+    # `tools` for `qwen2.5-coder:7b`, which answers in prose.
+    if str(row["model"]) in TOOLS_BY_MODEL:
+        row["capabilities"] = [*row["capabilities"], "tools"]
+    if "thinking" in row:
+        # Measured or absent — never inherited from a sibling model.
+        measured = THINKING_BY_MODEL.get(str(row["model"]))
+        if measured is None:
+            row.pop("thinking")
+            row["capabilities"] = [c for c in row["capabilities"] if c != "thinking"]
+            print(f"note: {row['model']} has no measured thinking modes — declaring none")
+        else:
+            row["thinking"] = measured
+    return row
+
+
+async def declare(
+    connection: Any, declarations: list[dict[str, Any]], *, move_id: bool = False
+) -> None:
+    """Write `declarations` into the read-model; refuse to take an id from another model.
+
+    Every holder is checked before anything is written, so a refusal leaves the catalog as it was.
+    """
+    rows = [_measured(declaration) for declaration in declarations]
+    for row in rows:
+        held = await connection.execute(
+            text("SELECT model FROM model_catalog WHERE numeric_id = :id AND model <> :model"),
+            {"id": row["numeric_id"], "model": row["model"]},
+        )
+        holders = sorted(str(name) for (name,) in held.all())
+        if holders and not move_id:
+            raise IdTaken(
+                f"numeric id {row['numeric_id']} belongs to {', '.join(holders)} in this "
+                f"read-model. Declaring {row['model']} under it would take it away, and every "
+                "KIRA caller of that model would be refused; Management, if this stack runs one, "
+                "would not give it back. Change it in the console, or pass --move-id to move it."
+            )
+        if holders:
+            print(f"moving numeric id {row['numeric_id']} from {', '.join(holders)}")
+    for row in rows:
+        await connection.execute(
+            text("DELETE FROM model_catalog WHERE model = :model"), {"model": row["model"]}
+        )
+        # The id names a *role*, so a second run for a different chat model moves it — never
+        # leaving two rows claiming one id, which leaves the resolver unable to answer and every
+        # KIRA request naming that id refused. The read-model has no unique constraint
+        # (Management does, and this script writes past it).
+        await connection.execute(
+            text(
+                "UPDATE model_catalog SET numeric_id = NULL"
+                " WHERE numeric_id = :id AND model <> :model"
+            ),
+            {"id": row["numeric_id"], "model": row["model"]},
+        )
+        # Through the read-model's own table, so a column the declaration does not name gets the
+        # value the gateway gives it — on any database, not only where a server default exists.
+        await connection.execute(insert(ModelRead.__table__).values(**row))
+        print(f"declared {row['model']}")
+
+
+async def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--move-id",
+        action="store_true",
+        help="take a numeric id from the model that holds it, instead of refusing",
+    )
+    arguments = parser.parse_args(argv)
     engine = build_engine(GatewaySettings().database_url(use_sqlite=False))
     try:
         async with engine.begin() as connection:
-            for row in DECLARATIONS:
-                # Measured, never inherited and never taken from a vendor's own flag: `ollama show`
-                # lists `tools` for `qwen2.5-coder:7b`, which answers in prose.
-                if str(row["model"]) in TOOLS_BY_MODEL:
-                    row["capabilities"] = [*row["capabilities"], "tools"]  # type: ignore[misc]
-                if "thinking" in row:
-                    # Measured or absent — never inherited from a sibling model.
-                    measured = THINKING_BY_MODEL.get(str(row["model"]))
-                    if measured is None:
-                        row.pop("thinking")
-                        row["capabilities"] = [
-                            c
-                            for c in row["capabilities"]
-                            if c != "thinking"  # type: ignore[union-attr]
-                        ]
-                        print(
-                            f"note: {row['model']} has no measured thinking modes — declaring none"
-                        )
-                    else:
-                        row["thinking"] = measured
-                await connection.execute(
-                    text("DELETE FROM model_catalog WHERE model = :model"), {"model": row["model"]}
-                )
-                # …and release the id from whatever held it before. The id names a *role*, so a
-                # second run for a different chat model has to move it — leaving both rows was the
-                # 2026-08-08 defect: two entries claiming 9001, the resolver unable to answer, and
-                # every KIRA request naming that id refused. Silent, because the seed printed
-                # success and the read-model has no unique constraint (Management does, but this
-                # script writes past it).
-                await connection.execute(
-                    text(
-                        "UPDATE model_catalog SET numeric_id = NULL"
-                        " WHERE numeric_id = :id AND model <> :model"
-                    ),
-                    {"id": row["numeric_id"], "model": row["model"]},
-                )
-                columns = ", ".join(row)
-                placeholders = ", ".join(f":{name}" for name in row)
-                await connection.execute(
-                    text(f"INSERT INTO model_catalog ({columns}) VALUES ({placeholders})"),
-                    _bind(row),
-                )
-                print(f"declared {row['model']}")
+            await declare(connection, DECLARATIONS, move_id=arguments.move_id)
+    except IdTaken as refusal:
+        print(f"error: {refusal}", file=sys.stderr)
+        return 2
     finally:
         await engine.dispose()
-
-
-def _bind(row: dict[str, object]) -> dict[str, object]:
-    """JSON columns need a string on the raw-connection path this script uses."""
-    import json
-
-    return {
-        key: json.dumps(value) if isinstance(value, dict | list) else value
-        for key, value in row.items()
-    }
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

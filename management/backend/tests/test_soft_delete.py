@@ -22,39 +22,36 @@ promise that was made — not on whatever the installation default happens to be
 from datetime import timedelta
 
 import pytest
+from aira_management.apps.anomalies.models import AnomalyRule
 from aira_management.apps.usecases import events
+from aira_management.apps.usecases.access import may_admin, may_manage
 from aira_management.apps.usecases.models import (
     PURGE_AFTER_DAYS,
     UseCase,
     UseCaseMembership,
 )
 from aira_management.apps.usecases.views import _grant
+from aira_management.apps.usecases.views.lifecycle import retire
+from aira_management.apps.usecases.views.payloads import _snapshot
 from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
+from guardian.models import GroupObjectPermission, UserObjectPermission
 from rest_framework.test import APIClient
+
+from aira_common.anomalies import RuleKind
+
+from .conftest import role_claims
 
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
-ROLE_GROUPS = (
-    "global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung"
-)
-GROUP_FOR = {
-    "global-admin": "/aira/global-admins",
-    "it-security": "/aira/it-security",
-    "it-steuerung": "/aira/it-steuerung",
-}
-
-
-@pytest.fixture(autouse=True)
-def _role_groups(settings):
-    settings.AIRA_ROLE_GROUPS = ROLE_GROUPS
 
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"groups": [GROUP_FOR[role] for role in roles]})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -121,7 +118,14 @@ def test_the_administrator_of_a_use_case_can_retire_it_and_cannot_erase_it(captu
     assert retired.deleted_at is not None
     assert retired.deleted_by == "uc-admin"
     # The same event as before, so access ends exactly as it always did.
-    assert ("usecase.deleted", {"slug": "uc"}) in captured_events
+    (event,) = [payload for kind, payload in captured_events if kind == "usecase.deleted"]
+    assert event["slug"] == "uc"
+
+    # And the use case itself, as it stood. The topic is compacted on the slug, which this event
+    # shares with `usecase.upserted`, so on a rebuilt read-model it is the only record left of
+    # the use case: the gateway writes the tombstone from it, retention promise included.
+    assert event == _snapshot(retired)
+    assert event["retention_days"] == retired.retention_days
 
     # And the second act is not theirs.
     assert _client(admin).delete(f"{BASE}uc/purge/").status_code == 403
@@ -161,7 +165,11 @@ def test_a_global_administrator_purges_only_after_the_waiting_period(captured_ev
     _retire(usecase, days_ago=PURGE_AFTER_DAYS - 1)
     too_soon = _client(root).delete(f"{BASE}uc/purge/")
     assert too_soon.status_code == 400
-    assert "may be purged" in str(too_soon.json())
+    # The sentence itself, not a repr of the list it travelled in.
+    assert too_soon.json()["error"]["message"] == (
+        f"This use case was retired {PURGE_AFTER_DAYS - 1} day(s) ago and may be purged after "
+        f"{PURGE_AFTER_DAYS}. Try again in 1 day(s)."
+    )
     assert UseCase.objects.filter(slug="uc").exists()
 
     _retire(usecase, days_ago=PURGE_AFTER_DAYS)
@@ -282,7 +290,8 @@ def test_a_retired_use_case_is_gone_from_every_way_of_reaching_one() -> None:
     root = _client(_user("root", "global-admin"))
 
     assert [row["slug"] for row in root.get(BASE).json()["results"]] == []
-    assert [row["slug"] for row in root.get(f"{BASE}?search=uc").json()["results"]] == []
+    # `?q=`, the parameter the list reads — a search that never ran would pass this vacuously.
+    assert [row["slug"] for row in root.get(f"{BASE}?q=uc").json()["results"]] == []
     assert [row["slug"] for row in root.get(f"{BASE}?may_call=true").json()["results"]] == []
     assert root.get(f"{BASE}uc/").status_code == 404
     # And every nested route, which all resolve through the same queryset.
@@ -305,3 +314,82 @@ def test_purging_is_refused_for_a_use_case_retired_a_moment_ago() -> None:
 
     _retire(usecase, days_ago=PURGE_AFTER_DAYS)
     assert root.delete(f"{BASE}uc/purge/").status_code == 204
+
+
+def test_a_retired_use_case_is_gone_from_the_installation_wide_rule_list_too() -> None:
+    """`/api/v1/anomaly-rules/` reaches every visible use case's rules without the use-case
+    viewset, so it has to ask the same live filter. Its administrator — the party `FRD-607` is
+    about — could otherwise still read, change and delete a retired use case's rules, and each
+    change would announce a rule for a slug the gateway has retired."""
+    usecase, admin = _made()
+    client = _client(admin)
+    created = client.post(
+        f"{BASE}uc/anomaly-rules/",
+        {
+            "name": "refusals",
+            "kind": RuleKind.REFUSAL_RATE.value,
+            "window_minutes": 15,
+            "threshold": 40,
+            "min_sample": 20,
+        },
+        format="json",
+    )
+    assert created.status_code == 201, created.content
+    rule_id = created.json()["id"]
+    assert client.delete(f"{BASE}uc/").status_code == 204
+
+    assert client.get("/api/v1/anomaly-rules/").json() == []
+    patched = client.patch(f"/api/v1/anomaly-rules/{rule_id}/", {"threshold": 10}, format="json")
+    assert patched.status_code == 404
+    assert client.delete(f"/api/v1/anomaly-rules/{rule_id}/").status_code == 404
+    assert AnomalyRule.objects.get(pk=rule_id).threshold == 40, "the evidence is left as it was"
+
+
+def test_no_predicate_answers_yes_about_a_retired_use_case() -> None:
+    """Its guardian rows stay behind as evidence, so the predicates ask the tombstone too — for a
+    route that reaches a use case without the viewset's live filter. Nobody, not even a Global
+    Administrator, administers or manages what has been retired."""
+    usecase, admin = _made()
+    root = _user("root", "global-admin")
+    assert may_admin(admin, usecase) and may_manage(admin, usecase), "the comparison"
+
+    _retire(usecase)
+
+    assert not may_admin(admin, usecase) and not may_manage(admin, usecase)
+    assert not may_admin(root, usecase) and not may_manage(root, usecase)
+
+
+def test_retiring_through_two_stale_copies_keeps_the_first_author_and_announces_once(
+    captured_events,
+) -> None:
+    """A double click, or two people at once: both requests loaded the live row before either
+    saved. The database decides who was first — a read-then-save would let the second overwrite
+    who retired it and send `usecase.deleted` twice."""
+    usecase, _admin = _made()
+    first = UseCase.objects.get(pk=usecase.pk)
+    second = UseCase.objects.get(pk=usecase.pk)
+    captured_events.clear()
+
+    assert retire(first, by="first") is True
+    assert retire(second, by="second") is False
+
+    assert UseCase.objects.get(pk=usecase.pk).deleted_by == "first"
+    assert [kind for kind, _payload in captured_events].count("usecase.deleted") == 1
+
+
+def test_a_purge_removes_the_object_permissions_that_named_the_use_case() -> None:
+    """Guardian's rows point at an object by content type and key, not by a foreign key, so
+    deleting the use case would leave them: who had access to something that no longer exists —
+    the personal data a purge promises to remove — and a grant a re-used key would inherit."""
+    usecase, _admin = _made()
+    member = _user("member")
+    _grant(member, usecase, UseCaseMembership.USER)
+    _retire(usecase, days_ago=PURGE_AFTER_DAYS)
+    content_type = ContentType.objects.get_for_model(UseCase)
+    pk = str(usecase.pk)
+    assert UserObjectPermission.objects.filter(content_type=content_type, object_pk=pk).exists()
+
+    assert _client(_user("root", "global-admin")).delete(f"{BASE}uc/purge/").status_code == 204
+
+    for model in (UserObjectPermission, GroupObjectPermission):
+        assert not model.objects.filter(content_type=content_type, object_pk=pk).exists()

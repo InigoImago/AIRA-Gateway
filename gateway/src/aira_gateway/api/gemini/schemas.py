@@ -134,6 +134,9 @@ class Part(BaseModel):
     #: Google's marker for a reasoning part (`FRD-135`), set on the way **out** where a use case has
     #: enabled reasoning — without it the thoughts are indistinguishable from the answer.
     thought: bool | None = None
+    #: The opaque signature a thinking model puts beside a function call, and refuses that call
+    #: replayed without (`ToolCallPart.signature`). Returned with the call, accepted back on it.
+    thoughtSignature: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -157,6 +160,13 @@ class Part(BaseModel):
             raise ValueError(
                 "a part must carry exactly one of 'text', 'inlineData', 'functionCall' or "
                 f"'functionResponse' (got {len(present)}: {present or 'none'})"
+            )
+        if self.thoughtSignature is not None and self.functionCall is None:
+            # Carried where a model validates it — on the call it continues — and refused anywhere
+            # else rather than dropped (`FRD-124`).
+            raise ValueError(
+                "'thoughtSignature' is carried on a 'functionCall' part only, where the model that "
+                "issued it checks it"
             )
         return self
 

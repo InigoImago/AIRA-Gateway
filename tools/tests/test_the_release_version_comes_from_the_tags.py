@@ -37,6 +37,12 @@ def test_a_release_tag_is_three_numbers_behind_a_v() -> None:
         "release-1.2.3",
         "v1.2.3+build7",
         "",
+        # Not the spelling `render` writes for the triple: a scratch tag in one of these decided
+        # the next version, and `--check` passed a tag CI then called older than its own number.
+        "v01.2.3",
+        "v1.02.3",
+        "v1.2.03",
+        "v\u0661.\u0662.\u0663",  # Arabic-Indic digits, which `\\d` also matches
     ],
 )
 def test_what_is_not_a_release_tag_is_not_one(tag: str) -> None:

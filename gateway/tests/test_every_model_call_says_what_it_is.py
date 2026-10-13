@@ -1,11 +1,11 @@
 """No upstream model call without a mark saying which model, and why (`FRD-619`).
 
 **The rule.** Every place this gateway asks a provider for something — `generate`,
-`stream_generate`, `embed` — must be inside `telemetry.model_call_span` (or, for a stream,
-`telemetry.model_call_chunks`). What that buys is on the *client span* the instrumentation
-produces: the caller's identity and the model's name, on the record the delivery channel forwards
-as a model access. Without it that record is a method, a status and a URL, which on an
-OpenAI-compatible upstream does not even name the model — the model travels in the body.
+`stream_generate`, `embed` — must be inside `telemetry.model_call_span`; a stream's is entered
+around its first chunk, where its request is made. What that buys is on the *client span* the
+instrumentation produces: the caller's identity and the model's name, on the record the delivery
+channel forwards as a model access. Without it that record is a method, a status and a URL, which
+on an OpenAI-compatible upstream does not even name the model — the model travels in the body.
 
 **Why it is a test and not a convention.** There are eight such call sites, spread across the two
 forms of the dispatch chain, two embedding surfaces, three pipeline classifiers and the incident
@@ -86,10 +86,10 @@ def test_there_are_call_sites_to_check() -> None:
     [pytest.param(*site, id=f"{site[0].name}:{site[1]}") for site in _call_sites()],
 )
 def test_the_call_is_inside_a_mark(path: Path, line: int, context: str) -> None:
-    assert "model_call_span" in context or "model_call_chunks" in context, (
+    assert "model_call_span" in context, (
         f"{path.relative_to(SOURCE.parent.parent)}:{line} calls a model without a mark, so the "
         "record the delivery channel forwards for it will name no model and no caller "
-        "(FRD-619) — wrap it in `model_call_span`, or `model_call_chunks` for a stream"
+        "(FRD-619) — wrap it in `model_call_span`, around the first chunk for a stream"
     )
 
 

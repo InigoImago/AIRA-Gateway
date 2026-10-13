@@ -7,6 +7,7 @@ from typing import Any
 from django.db.models import Max
 from rest_framework import serializers
 
+from aira_common.model_names import name_problem
 from aira_management.apps.catalog.models import Model
 from aira_management.apps.catalog.validation import validate_declaration
 
@@ -21,6 +22,17 @@ DECLARATION_FIELDS = (
     "max_output_tokens",
     "default_max_output_tokens",
 )
+
+#: `addressing` stays open to a platform's own keys (`ADR-0011`: a deployment, an endpoint id), so
+#: it is **bounded rather than closed** — the regions as a list of names, every other value short.
+#: It travels to the gateway on every save, and nothing else stops it growing past what the bus
+#: carries.
+MAX_ADDRESSING_KEYS = 8
+MAX_ADDRESSING_KEY_LENGTH = 64
+MAX_ADDRESSING_TEXT = 256
+MAX_REGIONS = 16
+#: A region is a cloud location name such as `europe-west4`.
+MAX_REGION_LENGTH = 64
 
 
 class ModelSerializer(serializers.ModelSerializer[Model]):
@@ -83,7 +95,64 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
                 "every audit row already name. Catalogue the new name as its own model and "
                 "un-approve this one — `display_name` is the field for what people should read."
             )
+        # The gateway's own lookup rule (`aira_common.model_names`): a name it could never look up
+        # is a model approved here and never served there.
+        problem = name_problem(name)
+        if problem is not None:
+            raise serializers.ValidationError(problem)
         return name
+
+    def validate_addressing(self, value: Any) -> Any:
+        """How the platform reaches the model (`FRD-609`), in the shape the gateway reads.
+
+        `regions` is a list tried in order; any other key is a platform's own and must be text, or
+        a short list of text.
+        """
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                "addressing must be an object, such as {'regions': ['europe-west4']}."
+            )
+        if len(value) > MAX_ADDRESSING_KEYS:
+            raise serializers.ValidationError(
+                f"addressing holds at most {MAX_ADDRESSING_KEYS} keys."
+            )
+        regions = value.get("regions")
+        if regions is not None:
+            if not isinstance(regions, list) or not all(
+                isinstance(region, str) and region.strip() for region in regions
+            ):
+                raise serializers.ValidationError(
+                    "addressing.regions must be a list of region names, in the order they are "
+                    "tried."
+                )
+            if len(regions) > MAX_REGIONS:
+                raise serializers.ValidationError(
+                    f"addressing.regions lists at most {MAX_REGIONS} regions."
+                )
+            if any(len(region) > MAX_REGION_LENGTH for region in regions):
+                raise serializers.ValidationError(
+                    f"addressing.regions holds names of at most {MAX_REGION_LENGTH} characters."
+                )
+        for key, item in value.items():
+            if len(key) > MAX_ADDRESSING_KEY_LENGTH:
+                raise serializers.ValidationError(
+                    f"addressing names keys of at most {MAX_ADDRESSING_KEY_LENGTH} characters."
+                )
+            if key == "regions":
+                continue
+            texts = item if isinstance(item, list) else [item]
+            if not all(isinstance(text, str) for text in texts) or len(texts) > MAX_REGIONS:
+                raise serializers.ValidationError(
+                    f"addressing.{key} must be text or a list of text "
+                    f"(at most {MAX_REGIONS} entries)."
+                )
+            if any(len(text) > MAX_ADDRESSING_TEXT for text in texts):
+                raise serializers.ValidationError(
+                    f"addressing.{key} holds text of at most {MAX_ADDRESSING_TEXT} characters."
+                )
+        return value
 
     def validate_numeric_id(self, value: int | None) -> int | None:
         """The integer a KIRA client addresses this model by (`FRD-107`), refused when taken.

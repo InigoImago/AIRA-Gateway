@@ -24,7 +24,7 @@ from aira_common.oidc import JwtVerifier, build_jwks_client
 from aira_management.apps.api.attempts import FailedAuthentications
 from aira_management.apps.api.models import OidcIdentity, PendingIdentity
 from aira_management.config.runtime import get_settings
-from aira_management.rbac import sync_user_groups, sync_user_roles
+from aira_management.rbac import storable, sync_user_groups, sync_user_roles
 
 _BEARER = "bearer "
 
@@ -34,6 +34,8 @@ _BEARER = "bearer "
 USERNAME_MAX_LENGTH = 150
 #: Django's own `EmailField` width, bounded for the same reason.
 EMAIL_MAX_LENGTH = 254
+#: `OidcIdentity.subject`'s width. A subject that does not fit cannot be bound to an account.
+SUBJECT_MAX_LENGTH = 255
 
 
 @lru_cache(maxsize=1)
@@ -81,7 +83,13 @@ class KeycloakJWTAuthentication(BaseAuthentication):
         if not subject:
             bound.record_failure(request)
             raise AuthenticationFailed("Token has no subject.")
-        user = self._provision_user(str(subject), claims)
+        subject = str(subject)
+        if len(subject) > SUBJECT_MAX_LENGTH or not storable(subject):
+            # The identity is keyed on it, so one no column can hold binds nobody: refused as a
+            # token, rather than reaching the database as a `500`.
+            bound.record_failure(request)
+            raise AuthenticationFailed("Token has a subject no account can be bound to.")
+        user = self._provision_user(subject, claims)
         # Keycloak decides both roles and group membership, re-read on every request, so leaving a
         # group takes effect on the next token (`FRD-209`).
         sync_user_roles(user, claims)
@@ -170,8 +178,45 @@ def safe_username(claimed: object, subject: str) -> str:
 
 
 def safe_email(claimed: object) -> str:
-    """The address to store, bounded to the column. Never a reason to refuse a sign-in."""
-    return claimed.strip()[:EMAIL_MAX_LENGTH] if isinstance(claimed, str) else ""
+    """The address to store, bounded to the column, or none when no column could hold it (a NUL).
+    Never a reason to refuse a sign-in."""
+    text = claimed.strip()[:EMAIL_MAX_LENGTH] if isinstance(claimed, str) else ""
+    return text if storable(text) else ""
+
+
+def namesakes_of(username: str) -> list[Any]:
+    """Accounts provisioned for somebody who signed in as ``username`` while this plane already
+    had an account of that name — suffixed by `_suffixed`, so the sign-in name alone no longer
+    tells the two apart."""
+    rows = (
+        OidcIdentity.objects.select_related("user")
+        .filter(user__username__startswith=username[: USERNAME_MAX_LENGTH - len(_SUFFIX_PROBE)])
+        .exclude(user__username=username)
+    )
+    return [row.user for row in rows if row.user.get_username() == _suffixed(username, row.subject)]
+
+
+def signs_in_as(user: Any) -> str | None:
+    """The sign-in name a suffixed account's owner presents, or ``None`` when it is its own name.
+
+    `_suffixed` is the only writer of a suffix, and it writes the bound subject's first characters;
+    an account whose name ends in exactly those is one provisioning had to rename.
+    """
+    identity = OidcIdentity.objects.filter(user=user).first()
+    if identity is None:
+        return None
+    tail = _suffix(identity.subject)
+    name = user.get_username()
+    return name[: -len(tail)] if name.endswith(tail) and len(name) > len(tail) else None
+
+
+def _suffix(subject: str) -> str:
+    """What `_suffixed` appends for ``subject``."""
+    return f"-{subject[:8]}"
+
+
+#: The longest suffix `_suffix` writes, so a prefix search over suffixed names stays a prefix.
+_SUFFIX_PROBE = _suffix("x" * 8)
 
 
 def _suffixed(preferred: str, subject: str) -> str:
@@ -179,5 +224,5 @@ def _suffixed(preferred: str, subject: str) -> str:
 
     Truncated so the result still fits the column, since ``preferred`` may already be at the limit.
     """
-    tail = f"-{subject[:8]}"
+    tail = _suffix(subject)
     return f"{preferred[: USERNAME_MAX_LENGTH - len(tail)]}{tail}"

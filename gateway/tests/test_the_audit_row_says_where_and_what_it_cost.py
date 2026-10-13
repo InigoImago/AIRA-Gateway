@@ -8,12 +8,15 @@ publishers, named no provider at all; and an embedding was never priced.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import (
+    CanonicalChunk,
     CanonicalEmbeddingRequest,
     CanonicalRequest,
     CanonicalResponse,
@@ -54,6 +57,13 @@ class _Side:
     async def embed(self, request: CanonicalEmbeddingRequest) -> EmbeddingVectors:
         return EmbeddingVectors(
             [[0.5, 0.5] for _ in request.texts], served_region="europe-west3", input_tokens=5
+        )
+
+    async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
+        # Opened in the second region the catalogue lists, said on the first chunk only.
+        yield CanonicalChunk(text_delta="o", served_region="europe-west4")
+        yield CanonicalChunk(
+            text_delta="k", usage=CanonicalUsage(prompt_tokens=2, completion_tokens=1)
         )
 
 
@@ -118,6 +128,37 @@ async def test_each_row_names_the_publisher_and_the_region_that_answered() -> No
     # Reached through the catalogue, on a platform with a second publisher.
     assert where("cat-1", "generateContent") == ("regional", "google", "europe-west4")
     assert where("cat-1", "embedContent") == ("regional", "google", "europe-west3")
+
+
+async def test_a_streamed_row_names_the_region_that_opened_the_stream() -> None:
+    """`:streamGenerateContent` is the verb every chat client uses, and a stream reports its region
+    on its first chunk only. Without reading it there, the row claimed the configuration's first
+    region — the one that had refused the request — on both surfaces."""
+    app = _app()
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                ModelRead(
+                    model="cat-1",
+                    numeric_id=41,
+                    provider="regional",
+                    publisher="google",
+                    capabilities=["generate"],
+                    addressing={"regions": ["europe-west1", "europe-west4"]},
+                    approved=True,
+                )
+            )
+            await session.commit()
+        gemini = client.post("/v1beta/models/cat-1:streamGenerateContent?alt=sse", json=_PROMPT)
+        kira = client.post(
+            "/kira/api/external/streaming-chat",
+            json={"request": {"parts": [{"text": "hi"}]}, "model_id": 41},
+        )
+        assert gemini.status_code == kira.status_code == 200, (gemini.text, kira.text)
+        rows = await _rows(app)
+
+    assert rows[("cat-1", "streamGenerateContent")].region == "europe-west4"
+    assert rows[("cat-1", "streaming-chat")].region == "europe-west4"
 
 
 async def test_an_embedding_is_priced_by_the_tokens_its_adapter_reported() -> None:

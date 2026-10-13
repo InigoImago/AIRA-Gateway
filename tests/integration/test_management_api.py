@@ -22,7 +22,8 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from .conftest import MANAGEMENT_URL
+from . import installation
+from .conftest import MANAGEMENT_DB, MANAGEMENT_URL
 
 pytestmark = pytest.mark.integration
 
@@ -73,6 +74,7 @@ async def test_oversight_sees_a_use_case_it_did_not_create(
     """The whole point of the governance role, over the real API: the use case is created by
     somebody else, and the overseer — who is deliberately not a member — still sees it."""
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", slug)
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=15.0) as client:
         created = await client.post(
             "/api/v1/use-cases/",
@@ -124,22 +126,25 @@ def _row_for(slug: str) -> tuple[list[str], dict[str, object]]:
 
 
 async def test_a_caller_does_not_see_a_use_case_it_has_nothing_to_do_with(
-    member_token: str,
+    member_token: str, admin_token: str
 ) -> None:
     """The other half. Without it the test above would pass just as well against an API that
     shows everything to everyone.
 
     The use case is inserted straight into Management's database so that *nobody* is a member of
     it — created through the API it would belong to its creator, which is the case already
-    covered.
+    covered. Removed the same way it arrived, since nothing else ever learned of it.
+
+    **With a positive control**: a Global Administrator reads the same row. Without one, the
+    member's `404` could equally mean a row nobody can read — an insert that missed a column the
+    API needs — and the test would pass on a use case that is broken rather than private.
     """
     from sqlalchemy import text
 
     from aira_gateway.db.base import build_engine
 
-    from .conftest import MANAGEMENT_DB
-
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", slug)
     management = build_engine(MANAGEMENT_DB)
     try:
         async with management.begin() as connection:
@@ -158,12 +163,20 @@ async def test_a_caller_does_not_see_a_use_case_it_has_nothing_to_do_with(
                 ),
                 values,
             )
+
+        async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=15.0) as client:
+            seen_by_admin = await client.get(
+                f"/api/v1/use-cases/{slug}/", headers=_auth(admin_token)
+            )
+            response = await client.get(f"/api/v1/use-cases/{slug}/", headers=_auth(member_token))
     finally:
+        async with management.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM usecases_usecase WHERE slug = :slug"), {"slug": slug}
+            )
         await management.dispose()
 
-    async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=15.0) as client:
-        response = await client.get(f"/api/v1/use-cases/{slug}/", headers=_auth(member_token))
-
+    assert seen_by_admin.status_code == 200, f"the inserted row is unreadable: {seen_by_admin.text}"
     assert response.status_code == 404, "a non-member could read a use case nobody granted them"
 
 
@@ -178,6 +191,10 @@ async def test_oversight_may_look_but_not_administer(
     use-case admin cosmetic. Read everything, change nothing.
     """
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", slug)
+    # The one oversight must not be able to make — registered all the same, so a regression that
+    # lets it through leaves nothing behind for the next run to trip over.
+    installation.remember("use_case", f"{slug}-2")
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=15.0) as client:
         owned_by_member = await client.post(
             "/api/v1/use-cases/",
@@ -229,6 +246,7 @@ async def test_a_use_case_created_here_reaches_the_gateway(admin_token: str, eng
     from sqlalchemy import text
 
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", slug)
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=15.0) as client:
         assert (
             await client.post(

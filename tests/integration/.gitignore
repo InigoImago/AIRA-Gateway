@@ -1,0 +1,3 @@
+# What the session register writes (`installation.py`): the creations a run has not removed yet.
+# A killed run leaves it for the next session to adopt; it is never source.
+.artifacts/

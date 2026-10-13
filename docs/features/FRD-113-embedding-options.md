@@ -124,7 +124,10 @@ something to bake into the model catalog for everyone else.
 
 No gateway migration. `FRD-114` carries `task_types`, `supports_batch`, `dimensions` per model.
 The audit row records the batch length and the task type; the texts follow the existing
-`store_payloads` rules.
+`store_payloads` rules. The **vectors are described, never stored**: the row's response keeps how
+many there were, how wide, and a SHA-256 over their values (`embedding.describe_vectors`) — the
+non-goal above, applied to the audit trail, where a batch of 256 vectors at 3 072 dimensions would
+otherwise be 15 MB in one row.
 
 ## 7. API / Interface Contract
 
@@ -188,7 +191,9 @@ settlement count n requests likewise. Its test is written to fail against the on
 
 The two bounds and the configured limits interact, so a batch larger than a bucket's *capacity* is
 refused with a message naming which of the two said no — rather than a `Retry-After` that would
-still be wrong an hour later (§11's risk, closed).
+still be wrong an hour later (§11's risk, closed). The refusal is a **`400 FAILED_PRECONDITION`**
+with no `Retry-After`, not a `429`: no wait admits such a batch, and an SDK that honours a `429`
+retries it for ever.
 
 One correction to this FRD's plan, found by a test: **the predecessor's default task type is a
 surface's, not the validator's.** Filling it in unconditionally refuses every embedding against a

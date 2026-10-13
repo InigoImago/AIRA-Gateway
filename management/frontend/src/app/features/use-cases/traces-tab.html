@@ -1,7 +1,7 @@
 <div class="card" role="tabpanel">
   <div class="spread">
     <!-- The standalone screen is already titled "Requests"; the heading says which ones. -->
-    <h3 class="section-title" style="margin: 0">
+    <h3 class="section-title">
       {{ slug() ? 'Requests' : 'Across all use cases' }}
     </h3>
     <div class="row live">
@@ -17,12 +17,12 @@
       <!-- Fixed width, busy shown as a dot: a stamp that changes width shifts the row every tick. -->
       <span class="muted live__stamp" data-testid="traces-stamp">
         <span class="live__dot" [class.is-busy]="live.refreshing()" aria-hidden="true"></span>
-        updated {{ ago() }}
+        updated {{ live.ago() }}
       </span>
     </div>
   </div>
 
-  <p class="muted" style="margin: 0.25rem 0 0">
+  <p class="muted lead">
     @if (slug()) {
       Every request this use case made, newest first — who, which model, how it ended, what it cost.
     } @else {
@@ -38,7 +38,7 @@
     wraps, and where it wraps matters (`FRD-207`): the checkboxes and the outcome selector are one
     group, the two lookup fields a second. A new control goes in the second group.
   -->
-  <div class="filter-row" style="margin-top: 0.75rem">
+  <div class="filter-row">
     <label class="checkline">
       <input
         type="checkbox"
@@ -182,24 +182,27 @@
         </thead>
         <tbody>
           @for (row of traces(); track row.id) {
+            <!-- The row opens its details; only the button reads the content, because that read is
+                 recorded under the reader's name and a click meant to copy a cell must not make one. -->
             <tr
               class="row-openable"
-              [class.is-open]="openPayload() === row.id"
+              [class.is-open]="openRow() === row.id"
               [class.is-flagged]="row.flagged"
               [class.is-focused]="focus() === row.id"
-              (click)="togglePayload(row)"
+              (click)="toggleRow(row)"
             >
               <td class="table__open">
                 <button
                   type="button"
                   class="btn btn--sm btn--ghost"
-                  [attr.aria-expanded]="openPayload() === row.id"
+                  [attr.aria-expanded]="openRow() === row.id"
                   [attr.aria-label]="
-                    (openPayload() === row.id ? 'Hide' : 'Show') + ' the prompt and response'
+                    openRow() === row.id ? 'Hide the details' : 'Show the prompt and response'
                   "
                   [attr.data-testid]="'open-payload-' + row.id"
+                  (click)="toggleContent(row, $event)"
                 >
-                  {{ openPayload() === row.id ? '▾' : '▸' }}
+                  {{ openRow() === row.id ? '▾' : '▸' }}
                 </button>
               </td>
               <!-- Day first: `9/8/26` is ambiguous, and this console is read in Europe. -->
@@ -213,7 +216,7 @@
                 {{ row.operation }}
                 <!-- The caller, and the use case when the table spans several: context for the
                      row, not a column to scan by. -->
-                <div class="muted" style="font-size: 0.78rem">
+                <div class="muted text-sm">
                   {{ row.subject }}
                   <!-- For an API key the name is whoever the key was issued to — who answers for
                        it, not who wrote the request. Words rather than a tooltip, which a touch
@@ -242,7 +245,7 @@
                 }
               </td>
             </tr>
-            @if (openPayload() === row.id) {
+            @if (openRow() === row.id) {
               <tr class="row-detail">
                 <td [attr.colspan]="20">
                   <!-- The details the columns leave out, for the one request that was opened. -->
@@ -252,7 +255,7 @@
                       <dd>
                         <code>{{ row.model }}</code>
                         @if (row.requested_model && row.requested_model !== row.model) {
-                          <div class="muted" style="font-size: 0.78rem">
+                          <div class="muted text-sm">
                             asked for {{ row.requested_model }}
                             @if (row.model_selection) {
                               · {{ row.model_selection }}
@@ -267,7 +270,8 @@
                         @if (row.prompt_tokens === null && row.completion_tokens === null) {
                           —
                         } @else {
-                          {{ row.prompt_tokens ?? 0 }} in / {{ row.completion_tokens ?? 0 }} out
+                          {{ tokens(row.prompt_tokens) }} in /
+                          {{ tokens(row.completion_tokens) }} out
                         }
                       </dd>
                     </div>
@@ -335,7 +339,7 @@
                     @if (content.available) {
                       <!-- The server has already recorded this read; that record is the condition
                            on which ADR-0009 was reopened. -->
-                      <p class="muted" style="font-size: 0.78rem" data-testid="payload-recorded">
+                      <p class="muted text-sm" data-testid="payload-recorded">
                         Opening this was recorded, with your name and the time.
                       </p>
                       <div class="payload-grid">
@@ -357,6 +361,22 @@
                            reached — three different facts. -->
                       <p class="empty" data-testid="payload-unavailable">{{ content.message }}</p>
                     }
+                  } @else {
+                    <!-- Asked for by its own control: the read is recorded, so it is never a side
+                         effect of looking at the row's metadata. -->
+                    <div class="row">
+                      <button
+                        type="button"
+                        class="btn btn--sm"
+                        (click)="readPayload(row)"
+                        [attr.data-testid]="'read-payload-' + row.id"
+                      >
+                        Show the prompt and response
+                      </button>
+                      <span class="muted text-sm">
+                        Opening them is recorded, with your name and the time.
+                      </span>
+                    </div>
                   }
                 </td>
               </tr>
@@ -377,7 +397,7 @@
         >
           {{ loadingMore() ? 'Loading…' : 'Load older' }}
         </button>
-        <span class="muted" style="font-size: 0.78rem">
+        <span class="muted text-sm">
           Loading older requests pauses the live refresh, so what you are reading stays put.
         </span>
       </div>

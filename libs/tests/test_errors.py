@@ -1,45 +1,17 @@
-import pytest
+"""The AIRA error envelope (`aira_common.errors`), as the gateway's handlers serialise it."""
 
-from aira_common.errors import (
-    AiraError,
-    ForbiddenError,
-    NotFoundError,
-    UnauthorizedError,
-)
+from aira_common.errors import ErrorDetail, ErrorResponse
 
 
-def test_base_defaults() -> None:
-    err = AiraError("boom")
-    assert err.status_code == 500
-    assert err.code == "internal_error"
-    assert err.message == "boom"
-    assert err.details is None
+def test_the_envelope_carries_a_code_and_a_message() -> None:
+    envelope = ErrorResponse(error=ErrorDetail(code="not_found", message="No such route."))
+
+    assert envelope.model_dump(exclude_none=True) == {
+        "error": {"code": "not_found", "message": "No such route."}
+    }
 
 
-def test_overrides() -> None:
-    err = AiraError("nope", code="custom", status_code=418, details={"k": "v"})
-    assert err.code == "custom"
-    assert err.status_code == 418
-    assert err.details == {"k": "v"}
+def test_details_travel_when_there_are_some() -> None:
+    envelope = ErrorResponse(error=ErrorDetail(code="x", message="m", details={"field": "name"}))
 
-
-def test_to_response_shape() -> None:
-    resp = AiraError("bad", code="x", details={"a": 1}).to_response()
-    assert resp.error.code == "x"
-    assert resp.error.message == "bad"
-    assert resp.error.details == {"a": 1}
-
-
-@pytest.mark.parametrize(
-    ("exc", "status", "code"),
-    [
-        (NotFoundError, 404, "not_found"),
-        (UnauthorizedError, 401, "unauthorized"),
-        (ForbiddenError, 403, "forbidden"),
-    ],
-)
-def test_subclasses(exc: type[AiraError], status: int, code: str) -> None:
-    err = exc("msg")
-    assert err.status_code == status
-    assert err.code == code
-    assert isinstance(err, AiraError)
+    assert envelope.model_dump(exclude_none=True)["error"]["details"] == {"field": "name"}

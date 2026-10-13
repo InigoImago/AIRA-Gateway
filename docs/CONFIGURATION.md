@@ -32,7 +32,7 @@ environment ([§7](#7-secrets-from-vault)).
 | `AIRA_ENVIRONMENT`                                             | `local`                                                    | `local` \| `demo` \| anything else. Not cosmetic: outside `local`, dev secrets and `DEBUG` **refuse to boot** ([§8](#8-what-refuses-to-boot)), and `seed_demo` refuses to run.    |
 | `AIRA_LOG_LEVEL`                                               | `INFO`                                                     |                                                                                                                                                                                   |
 | `AIRA_LOG_JSON`                                                | `true`                                                     | Structured logs. `false` gives human-readable lines for a terminal.                                                                                                               |
-| `AIRA_DEMO_MODE`                                               | `false`                                                    | Enables the demo API key and lets `seed_demo` run. **Never in production.**                                                                                                       |
+| `AIRA_DEMO_MODE`                                               | `false`                                                    | Enables the demo API key and lets `seed_demo` run. **Never in production.** The key is a credential only while this is on, and a deployment started without it revokes one a demo run left in its database.                                                                                                       |
 | `AIRA_CURRENCY`                                                | `EUR`                                                      | One installation, one currency. Appears in every spend figure and in the CSV column header — a number without a unit in a file that gets forwarded is a number nobody can act on. |
 | `AIRA_OTEL_ENABLED`                                            | `false`                                                    | OTLP export of traces, metrics and logs.                                                                                                                                          |
 | `AIRA_OTEL_ENDPOINT`                                           | `http://localhost:4318`                                    | Collector endpoint (HTTP/protobuf).                                                                                                                                               |
@@ -41,7 +41,7 @@ environment ([§7](#7-secrets-from-vault)).
 | `AIRA_DEBUG_INTEGRATIONS`                                      | _(empty)_                                                  | One log line per call to another system, while you are wiring one up. See [§1a](#1a-watching-a-call-to-another-system) — empty is off, and off is what a working installation runs. |
 | `AIRA_DEBUG_OTEL_PAYLOAD`                                      | `0`                                                        | Print this many items of each OTLP batch as OTLP/JSON on stdout. 0 is off. Expensive and loud; see [`INTEGRATIONS.md` §6](INTEGRATIONS.md#6-observability).                       |
 | `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / _(differs)_ / `aira` / `aira-local` | **Two different databases** — see the note below.                                                                                                                                 |
-| `AIRA_KAFKA_BOOTSTRAP_SERVERS`                                 | `localhost:29092`                                          |                                                                                                                                                                                   |
+| `AIRA_KAFKA_BOOTSTRAP_SERVERS`                                 | `localhost:29092`                                          | Comma-separated `host:port` brokers; an IPv6 broker as `[address]:port`. Empty means no broker, and readiness reports Kafka as not configured. An entry nothing could dial refuses to start. |
 | `AIRA_KAFKA_STAGE`                                             | _(empty)_                                                  | The stage in every topic name and in the gateway's consumer group, on a cluster several stages share: `t` gives `aira.t.usecases` and `aira-gateway.t`. **Both planes need the same one.** Empty keeps `aira.usecases`. One to sixteen lower-case letters or digits; anything else refuses to start. |
 
 ### 1a. Watching a call to another system
@@ -141,7 +141,7 @@ audit row. That is why the check is a startup refusal rather than a warning.
 
 | Variable                   | Default | What it does                                                                                                                                                                                                                                                                                                        |
 | -------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AIRA_TRUSTED_PROXY_HOPS`  | `1`     | How many reverse proxies **append** to `X-Forwarded-For` in front of the gateway. The address is read that many entries **from the right**, never from the left: a proxy appends, so the left end is whatever the caller sent. Reading the left end let a caller choose the address in the audit trail — and rotate it to defeat the failed-authentication bound. Raise by one per additional proxy. A chain shorter than this is a request that did not come through them, and its header is ignored in favour of the socket peer. Only consulted when `AIRA_TRUST_FORWARDED_FOR` is on. |
+| `AIRA_TRUSTED_PROXY_HOPS`  | `1`     | How many reverse proxies **append** to `X-Forwarded-For` in front of the gateway. The address is read that many entries **from the right**, never from the left: a proxy appends, so the left end is whatever the caller sent. Reading the left end let a caller choose the address in the audit trail — and rotate it to defeat the failed-authentication bound. Raise by one per additional proxy. A chain shorter than this is a request that did not come through them, and its header is ignored in favour of the socket peer. Only consulted when `AIRA_TRUST_FORWARDED_FOR` is on. **Management reads it too**, always: its failed-authentication bound counts against that entry (DRF's `NUM_PROXIES`), and with it at 1 or more Management believes a proxy's `X-Forwarded-Proto` (for HSTS). `1` is the console's nginx, which Management always sits behind; `0` when Management is reached directly. |
 | `AIRA_ROLE_GROUPS`         | —       | Which Keycloak group confers which AIRA role (`ADR-0017`), as `role=/path[,/path];role=/path`. **Group membership is the only source of a role** — a realm role on the same token is not read. Empty grants no oversight to anybody, which is the safe direction for a data plane; Management is the plane that refuses to boot without a global-admin group, because it is the one an installation is repaired from. |
 
 ### Storage and retention
@@ -161,6 +161,7 @@ Management reads the first three as well: the privacy notice states them (`FRD-6
 | ------------------------------------ | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AIRA_ENFORCE_BUDGETS`               | `true`                     | `false` reserves nothing and refuses nobody. Both budget screens say so, and so does a caller's own `/v1beta/me/budget` (`FRD-610` §3.3): every budget keeps its figures, its bars and its warnings while stopping nothing. Spend is still counted and still reported, so the figures are true. |
 | `AIRA_ENFORCE_PRICED_MODELS` | `true`                 | A model with no price on file cannot be counted against a **cost** budget, so it would spend without bound (`FRD-610` §3.2). On, it is refused where a cost limit binds the request — a dispatch condition, so a chain tries the next candidate and a priced fallback still serves. `false` keeps such traffic flowing while prices are filled in, knowing the limit is not a limit. Token and request limits are unaffected. |
+| `AIRA_COUNT_CANCELLED_STREAMS` | `true` | A stream whose caller left before the vendor said what it used is otherwise booked as nothing. On, the gateway asks the vendor's own token count — free — for the request and for the answer received, books that, and marks the row `counted`: a floor, since what the vendor produced after the caller left is in no count, and reports say so (`FRD-128` FR-6). Vertex's Gemini models only; elsewhere the usage stays unknown. `false` sends nothing a second time — the request and the received answer go to the same vendor and region again, which the privacy notice states. |
 | `AIRA_ENFORCE_RATE_LIMITS`           | `true`                     | `false` takes no token from any bucket. Same shape as the line above: the limits stay configured and visible, and nothing is refused for exceeding one.                                    |
 | `AIRA_ENFORCE_SUSPENSIONS`           | `true`                     | `false` records findings and refuses nobody — the setting to use while learning what your rules do.                                                                                      |
 | `AIRA_DETECT_ANOMALIES`              | `true`                     | `false` stops evaluation entirely; rules stay authored. "Switched off" and "deleted" are different states.                                                                               |
@@ -190,6 +191,7 @@ Management reads the first three as well: the privacy notice states them (`FRD-6
 | Variable                      | Default                                 | What it does                                                                                                                                                                                                                                                                                                                                                             |
 | ----------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `AIRA_ALLOWED_REGIONS`        | _(EU regions of every supported cloud)_ | **One policy for every cloud** — Google's `europe-west1` and Azure's `westeurope` in one list. A model configured outside them **refuses to start**: residency is enforced, not intended. Google AI Studio (`AIRA_GOOGLE_API_KEY`) is the region `global`, because that endpoint names none and guarantees none — using it means adding `global` to this list, out loud. |
+| `AIRA_ALLOWED_MODEL_REGIONS`  | —                                       | A region permitted for **named models alone**, beyond the list: `region=model,model;region=model`, e.g. `global=glm-4.7-maas,deepseek-v3.2-maas`. For a model served only where the list does not reach — Agent Platform's open models answer at `global` and nowhere else (`FRD-115` FR-2a) — without permitting that region for every model (`FRD-611`). A whole endpoint (an OpenAI server, Foundry, AI Studio) is never opened by a model's name. A malformed entry stops the gateway starting. |
 | `AIRA_CORS_ORIGINS`           | —                                       | Comma-separated allow-list.                                                                                                                                                                                                                                                                                                                                              |
 | `AIRA_CORS_ALLOW_CREDENTIALS` | `false`                                 | `*` **plus** credentials is refused at startup rather than silently ignored.                                                                                                                                                                                                                                                                                             |
 
@@ -211,14 +213,14 @@ placeholder, no half-working adapter. An ambiguous routing table (two adapters c
 **refuses to boot**: with three platforms, last-registration-wins is a silent choice of region and
 credential.
 
-### Google Vertex AI — Gemini _and_ Anthropic, EU-regional
+### Google Vertex AI — Gemini, Anthropic and managed open models
 
 | Variable                         | Default | What it does                                                                      |
 | -------------------------------- | ------- | --------------------------------------------------------------------------------- |
 | `AIRA_VERTEX_PROJECT`            | —       | GCP project id.                                                                   |
 | `AIRA_VERTEX_CREDENTIALS`        | —       | Service-account JSON, or a path to it.                                            |
 | `AIRA_VERTEX_API_KEY`               | —           | The **other** credential the same adapter takes (`FRD-115` FR-3a): an Agent Platform API key, sent as `x-goog-api-key`. For accounts that never create a service account — Google issues these, and AIRA's only API-key path used to be AI Studio, on a host that refuses them with `API_KEY_SERVICE_BLOCKED`. **Same regional hosts, same residency check**: this does not use Google's global express endpoint, which processes data anywhere. Set both and the service account wins. From the environment or Vault. |
-| `AIRA_VERTEX_MODELS`             | —       | `name=publisher/model@region`, comma-separated.                                   |
+| `AIRA_VERTEX_MODELS`             | —       | `region/publisher/model`, comma-separated — e.g. `europe-west1/google/gemini-2.5-flash`. The publisher decides the wire: `google` (Gemini), `anthropic` (Claude), and Agent Platform's managed open models `zai-org` (GLM) and `deepseek-ai` (DeepSeek), which speak the OpenAI dialect at one endpoint (`FRD-115` FR-2a). Any other publisher stops the start. Optional: a model catalogued under `vertex` and its publisher, with a region, is served without being named here (`FRD-507`). The open models answer only at `global`, so each needs `AIRA_ALLOWED_MODEL_REGIONS`. |
 | `AIRA_VERTEX_TIMEOUT_SECONDS`    | `120`   |                                                                                   |
 | `AIRA_VERTEX_DEFAULT_MAX_TOKENS` | `4096`  | Anthropic requires `max_tokens`; this is what is sent when the caller names none. |
 
@@ -227,7 +229,7 @@ credential.
 | Variable                       | Default      | What it does                                                                                                                                         |
 | ------------------------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AIRA_FOUNDRY_ENDPOINT`        | —            | `https://<resource>.openai.azure.com`                                                                                                                |
-| `AIRA_FOUNDRY_API_KEY`         | —            | Or Entra; the token is minted per request rather than captured once.                                                                                 |
+| `AIRA_FOUNDRY_API_KEY`         | —            | The resource's key, sent as `api-key`. The only credential configurable today: Entra ID has a transport and no setting yet (`FRD-120` FR-2).        |
 | `AIRA_FOUNDRY_DEPLOYMENTS`     | —            | `model=deployment@region`. An Azure **deployment** is not a model: pricing attaches to the underlying model, or spend figures go quietly incomplete. |
 | `AIRA_FOUNDRY_API_VERSION`     | `2024-10-21` |                                                                                                                                                      |
 | `AIRA_FOUNDRY_TIMEOUT_SECONDS` | `120`        |                                                                                                                                                      |
@@ -250,6 +252,13 @@ credential.
 | `AIRA_GOOGLE_API_KEY`  | —                                                  | **Google AI Studio** (`generativelanguage.googleapis.com`). Registers the provider when set. The key is never logged, and `?key=` is redacted from spans. Its region is `global` and it is checked like every other adapter's, so under the EU default the gateway **refuses to start** until `global` is named in `AIRA_ALLOWED_REGIONS` — this endpoint gives no regional guarantee, which is the whole difference from Vertex. |
 | `AIRA_GEMINI_MODELS`   | `gemini-2.0-flash,gemini-1.5-flash`                |                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `AIRA_GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta` |                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
+The AI Studio key travels in the `x-goog-api-key` header, never in a URL. That endpoint allows an
+answer 120 s and has no setting of its own.
+
+> **Every upstream timeout in this section is the allowance for an answer.** Connecting is bounded
+> apart, at 10 s: a model may think for minutes before its first byte, while a host that accepts no
+> connection is down — and the regional failover and the fallback chain move on in seconds.
 
 ---
 
@@ -538,10 +547,12 @@ are readable from `/proc`, inherited by every subprocess, and dumped by any libr
 | `VAULT_MOUNT`            | `secret` | KV-v2 mount.                                                                    |
 | `VAULT_PATH`             | `aira`   | Path within the mount.                                                          |
 | `VAULT_NAMESPACE`        | —        | Vault Enterprise namespace.                                                     |
-| `VAULT_TIMEOUT`          | `10`     | Seconds. An empty value falls back to the default rather than raising.          |
+| `VAULT_TIMEOUT`          | `10`     | Seconds. An empty value falls back to the default rather than raising; anything but a positive number refuses to start, naming this variable. |
 
-Keys **inside** Vault use the settings' own names, with or without the `AIRA_` prefix — those are
-the values being fetched, and they are unrelated to the connection variables above.
+Keys **inside** Vault use the settings' own names, with or without the `AIRA_` prefix and in either
+case (`google_api_key` is `AIRA_GOOGLE_API_KEY`) — those are the values being fetched, and they are
+unrelated to the connection variables above. Two spellings of one setting with different values
+refuse to start.
 **Rotation is a restart** — recorded as a decision rather than an omission. "Vault is down" and
 "nobody wrote that key" are different exceptions and are reported differently.
 
@@ -589,7 +600,9 @@ rather than a gap to close quietly.
 **In every environment, `local` included** — these are not hardening but *correctness*, and a
 local process that started anyway would be doing something different from the one it stands in for:
 
-- a configured model sits in a region outside `AIRA_ALLOWED_REGIONS`
+- a configured model sits in a region outside `AIRA_ALLOWED_REGIONS`, and is not permitted it by
+  name in `AIRA_ALLOWED_MODEL_REGIONS`
+- a configured Vertex model names a publisher no adapter speaks
 - two upstream adapters claim the same model name
 - Vault is configured and cannot be reached
 

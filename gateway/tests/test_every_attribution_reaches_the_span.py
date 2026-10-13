@@ -41,9 +41,13 @@ from aira_gateway.db.models import ModelRead
 MODEL = "mock-1"
 NUMERIC_ID = 4711
 
-#: What an attribution owes its span. The audit row carries more; these four are the ones a
-#: **trace** is filtered by, and the four `auth/attribution.attribute` sets.
-ATTRIBUTED = ("aira.subject", "aira.auth_method")
+#: What an attribution owes its span: what a **trace** is filtered by, set by
+#: `auth/attribution.attribute` — `aira.credential` too, where the credential has one (the demo
+#: principal these requests run as has none). `aira.use_case` is what the dashboard selects on.
+ATTRIBUTED = ("aira.subject", "aira.auth_method", "aira.use_case")
+
+#: The use case every request below names, so `aira.use_case` has something to carry.
+USE_CASE = "uc-span"
 
 
 @pytest_asyncio.fixture
@@ -71,11 +75,13 @@ async def _attributes(
 ) -> dict[str, Any]:
     exporter.clear()
     with provider.get_tracer("test").start_as_current_span("POST"):
-        response = await client.post(path, json=body)
+        response = await client.post(path, json=body, headers={"X-AIRA-Use-Case": USE_CASE})
     assert response.status_code == 200, response.text
     spans = exporter.get_finished_spans()
     assert spans, "the test's own span was never closed"
-    return dict(spans[0].attributes or {})
+    attributes = dict(spans[0].attributes or {})
+    assert attributes.get("aira.use_case") == USE_CASE, sorted(attributes)
+    return attributes
 
 
 # ═══ the behaviour ═══════════════════════════════════════════════════════════════════════════════
@@ -172,9 +178,9 @@ async def test_the_caller_reaches_the_model_call_as_well(
     and cannot.
 
     Asked from inside the provider, which is where the httpx hook reads the mark, and driven
-    through a real request so that what is under test is the **wiring** — that `set_attribution`,
-    the one place that knows who is calling, hands the identity on. Asserting it by calling
-    `attribute_model_calls_to` directly would pass with that line deleted.
+    through a real request so that what is under test is the **wiring** — that
+    `auth.attribution.attribute`, the one place that knows who is calling, hands the identity on.
+    Asserting it by calling `attribute_model_calls_to` directly would pass with that line deleted.
     """
     client, _exporter, _provider = served
     seen: list[dict[str, Any]] = []
@@ -190,6 +196,7 @@ async def test_the_caller_reaches_the_model_call_as_well(
         response = await client.post(
             f"/v1beta/models/{MODEL}:generateContent",
             json={"contents": [{"role": "user", "parts": [{"text": "hallo"}]}]},
+            headers={"X-AIRA-Use-Case": USE_CASE},
         )
     finally:
         upstream.generate = original  # type: ignore[method-assign]
@@ -199,6 +206,6 @@ async def test_the_caller_reaches_the_model_call_as_well(
     assert seen[0].get("aira.model") == MODEL
     assert seen[0].get("aira.model_call.purpose") == "serve"
     assert all(name in seen[0] for name in ATTRIBUTED), (
-        f"the model call was made anonymously: {sorted(seen[0])} — `set_attribution` is the one "
-        "place that knows who is calling, and it has to hand that on (FRD-619)"
+        f"the model call was made anonymously: {sorted(seen[0])} — `attribute` is the one place "
+        "that knows who is calling, and it has to hand that on (FRD-619)"
     )

@@ -181,7 +181,10 @@ async def test_a_selector_that_is_not_a_slug_is_refused_before_it_reaches_anythi
         )
 
     _never_500(response, f"selector {selector!r}")
-    assert response.status_code in (400, 403), f"{selector!r}: {response.status_code}"
+    # 400 and nothing else: not a slug is the caller's mistake, refused before any lookup. A 403
+    # would mean it was looked up — reached the read-model, the binding check — on the way.
+    assert response.status_code == 400, f"{selector!r}: {response.status_code} {response.text}"
+    assert "use case identifier" in response.text.lower(), response.text
 
 
 async def test_a_blank_selector_is_no_selector_rather_than_a_bad_one(
@@ -225,10 +228,16 @@ async def test_the_header_wins_over_the_path(governed: Governed, second_governed
 # ═══ 3. conversations ══════════════════════════════════════════════════════════════════════════
 
 
+def _prompt_tokens(response: httpx.Response) -> int:
+    """What the double counted: one token per word of **every** message it was handed
+    (`upstreams/mock.py`), so a turn or a part dropped on the way is a smaller number."""
+    return int(response.json()["usageMetadata"]["promptTokenCount"])
+
+
 @pytest.mark.parametrize("turns", [1, 3, 7])
 async def test_a_multi_turn_conversation_is_carried(governed: Governed, turns: int) -> None:
-    """A chat client sends the whole history every time. What is asserted is that it is *served* —
-    not what the model made of it."""
+    """A chat client sends the whole history every time. What is asserted is that all of it
+    *arrived* — counted by the double, two words a turn — not what a model made of it."""
     contents = []
     for index in range(turns):
         contents.append({"role": "user", "parts": [{"text": f"turn {index}"}]})
@@ -240,13 +249,21 @@ async def test_a_multi_turn_conversation_is_carried(governed: Governed, turns: i
     )
 
     assert response.status_code == 200, response.text[:300]
+    assert _prompt_tokens(response) == 2 * len(contents), "part of the history was not carried"
+
+
+def _input_tokens(response: httpx.Response) -> int:
+    """What the model's tokenizer counted of the prompt, as the KIRA surface reports it."""
+    return int(response.json()["usage_data"]["token_input"])
 
 
 async def test_the_kira_surface_carries_its_own_conversation_shape(governed: Governed) -> None:
     """The predecessor spells a history differently — `{content, role}` rather than Google's
     `{role, parts}` — and a compatibility surface that took Google's shape would refuse the very
-    clients it exists for."""
-    response = await governed.kira(
+    clients it exists for. Carried, not merely accepted: the same question with its history in
+    front of it is a longer prompt to the model's own tokenizer."""
+    alone = await governed.kira("/chat", _kira_body())
+    with_history = await governed.kira(
         "/chat",
         _kira_body(
             conversation_history=[
@@ -256,10 +273,14 @@ async def test_the_kira_surface_carries_its_own_conversation_shape(governed: Gov
         ),
     )
 
-    assert response.status_code == 200, response.text[:300]
+    assert alone.status_code == 200, alone.text[:300]
+    assert with_history.status_code == 200, with_history.text[:300]
+    assert _input_tokens(with_history) > _input_tokens(alone), "the history was not carried"
 
 
 async def test_a_system_instruction_is_carried_on_both_surfaces(governed: Governed) -> None:
+    """Carried, on each surface: the double counts the instruction's four words beside the one of
+    the question, and the KIRA surface's model counts a longer prompt than without it."""
     gemini = await governed.generate(
         {
             "systemInstruction": {"parts": [{"text": "Answer in one word."}]},
@@ -268,12 +289,16 @@ async def test_a_system_instruction_is_carried_on_both_surfaces(governed: Govern
         },
         model=MOCK_MODEL,
     )
+    kira_alone = await governed.kira("/chat", _kira_body())
     kira = await governed.kira(
         "/chat", _kira_body(system_instruction={"parts": [{"text": "Answer in one word."}]})
     )
 
     assert gemini.status_code == 200, gemini.text[:200]
+    assert _prompt_tokens(gemini) == 5, "the system instruction did not reach the model"
+    assert kira_alone.status_code == 200, kira_alone.text[:200]
     assert kira.status_code == 200, kira.text[:200]
+    assert _input_tokens(kira) > _input_tokens(kira_alone), "the instruction was not carried"
 
 
 async def test_several_text_parts_in_one_turn_are_carried(governed: Governed) -> None:
@@ -288,6 +313,8 @@ async def test_several_text_parts_in_one_turn_are_carried(governed: Governed) ->
     )
 
     assert response.status_code == 200, response.text[:300]
+    # "Say " and "OK." are one message of two words; without the second part it is one.
+    assert _prompt_tokens(response) == 2, "the second part was dropped"
 
 
 # ═══ 4. input a real client eventually sends by accident ═══════════════════════════════════════

@@ -21,6 +21,7 @@ from aira_common.logging import configure_logging
 from aira_gateway.config import GatewaySettings
 from aira_gateway.consumer.worker import GROUP_ID, consume_forever
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
+from aira_gateway.db.models import UseCaseRead
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +44,7 @@ def calls(capsys: Any) -> list[dict]:
 
 
 class Message:
-    def __init__(self, offset: int, event_type: bytes | None = b"use_case.upserted") -> None:
+    def __init__(self, offset: int, event_type: bytes | None = b"usecase.upserted") -> None:
         self.topic = "aira.usecases"
         self.partition = 0
         self.offset = offset
@@ -108,14 +109,21 @@ async def test_the_consumer_says_it_connected_and_to_which_group(
 
 async def test_an_arriving_event_is_reported_with_its_offset(capsys: Any, sessions: Any) -> None:
     """The only line that says *an event arrived at all*. `apply_one_message` speaks up when it
-    cannot apply one; nothing spoke when it could."""
+    cannot apply one; nothing spoke when it could.
+
+    With an event type the gateway applies, and the row it wrote asserted: an unknown type is
+    "applied" too — as a decision that there was nothing to do — so `applied` alone would pass for a
+    message that changed nothing.
+    """
     seen = await consume_forever(FakeConsumer([Message(17)]), sessions)
     assert seen == 1
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "consumer.receive"]
     assert (line["topic"], line["partition"], line["offset"]) == ("aira.usecases", 0, 17)
     assert line["applied"] is True
-    assert line["event_type"] == "use_case.upserted"
+    assert line["event_type"] == "usecase.upserted"
+    async with sessions() as session:
+        assert await session.get(UseCaseRead, "kundenservice") is not None
 
 
 async def test_an_event_that_could_not_be_applied_is_reported_as_not_applied(

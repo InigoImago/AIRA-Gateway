@@ -252,5 +252,10 @@ def postgres_connections(container: str, database: str, user: str = "aira") -> d
 
 
 def now_stamp() -> str:
-    """A `docker logs --since` argument for "from this moment"."""
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    """A `docker logs --since` argument for "from this moment", **with its zone**.
+
+    `docker logs` reads a zoneless timestamp as the client's local time, so a UTC clock written
+    without `Z` moves the window by the host's offset: east of UTC it reaches back into earlier
+    steps and counts their warnings again, west of UTC it starts in the future and finds none.
+    """
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

@@ -7,6 +7,9 @@ const LABEL_THRESHOLD = 12;
 /** Below this share, a block would be a hairline; it is widened so it stays clickable and visible. */
 const MIN_WIDTH = 0.8;
 
+/** The smallest share one decimal can write without rounding it to zero. */
+const SMALLEST_SHOWN = 0.05;
+
 /**
  * The whole period as one row of blocks, one per band, width proportional to its share (`FRD-626`).
  *
@@ -62,8 +65,12 @@ export class CompositionBar {
     return inkOn(band.color);
   }
 
-  /** The share as a reader reads it. One decimal below 10 %, because 0 % is not a reading. */
+  /**
+   * The share as a reader reads it. One decimal below 10 %, because 0 % is not a reading — and
+   * below what one decimal can show, "<0.1%", or a band that is there rounds to "0.0%".
+   */
   protected percent(band: Band): string {
-    return band.share >= 10 ? `${Math.round(band.share)}%` : `${band.share.toFixed(1)}%`;
+    if (band.share >= 10) return `${Math.round(band.share)}%`;
+    return band.share > 0 && band.share < SMALLEST_SHOWN ? '<0.1%' : `${band.share.toFixed(1)}%`;
   }
 }

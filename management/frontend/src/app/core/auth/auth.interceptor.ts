@@ -12,7 +12,8 @@ import { AuthService } from './auth.service';
  * token, and the 401 that comes back would log a valid session out.
  */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
-  if (!AIRA_PREFIXES.some((prefix) => req.url.startsWith(prefix))) {
+  const plane = AIRA_PREFIXES.find((prefix) => req.url.startsWith(prefix));
+  if (!plane) {
     return next(req);
   }
 
@@ -23,10 +24,12 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   }
 
   return next(req).pipe(
-    // A first-party call that answered ends any login loop (`AuthService.reauthenticate`).
+    // A call that answered ends a login loop that this plane's refusal started
+    // (`AuthService.reauthenticate`) — the plane is named, because the other one answering says
+    // nothing about this one.
     tap((event) => {
       if (event instanceof HttpResponse) {
-        auth.noteFirstPartySuccess();
+        auth.noteFirstPartySuccess(plane);
       }
     }),
     catchError((error: unknown) => {
@@ -34,7 +37,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
       // read as the backend rejecting the user. Not 403: that is a real answer about a real
       // permission, from somebody signed in perfectly well.
       if (error instanceof HttpErrorResponse && error.status === 401) {
-        auth.reauthenticate();
+        auth.reauthenticate(plane);
       }
       return throwError(() => error);
     }),

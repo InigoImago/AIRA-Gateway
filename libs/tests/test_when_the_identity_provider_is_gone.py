@@ -83,8 +83,8 @@ def test_the_outage_is_one_line_on_the_integration_channel_too(capsys: Any) -> N
 
 
 def test_a_key_set_that_holds_no_matching_key_is_still_a_rejected_token(capsys: Any) -> None:
-    """Not an outage: the key set was read and holds nothing for this token's `kid`. The
-    multi-issuer probe in `OidcValidator.validate` depends on this staying a rejection."""
+    """Not an outage: the key set was read and holds nothing for this token's `kid` — which is
+    what a forged `kid` is, so it must not warn of an identity provider that is working."""
     error = jwt.PyJWKClientError('Unable to find a signing key that matches: "abc"')
     assert _verifier(Resolver(error)).verify("a.token.here") is None
 
@@ -137,3 +137,202 @@ def test_a_real_pyjwkclient_refuses_a_malformed_token_without_raising() -> None:
         build_jwks_client("http://127.0.0.1:9/certs", timeout=0.5),
     )
     assert verifier.verify("not.a.token") is None
+
+
+# == a real client against a key set that answers badly ==========================================
+
+
+class _KeySetServer:
+    """A JWKS endpoint on loopback that answers as it is told and counts what it was asked.
+
+    A real `PyJWKClient` against a real socket: the failures below are what `urllib` raises out of a
+    read, and a stand-in that raised them by hand would only test that it can raise them.
+    """
+
+    def __init__(self) -> None:
+        import http.server
+        import threading
+
+        self.mode = "jwks"
+        self.keys: list[dict[str, Any]] = []
+        self.fetches = 0
+        server = self
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - the stdlib's spelling
+                server.fetches += 1
+                if server.mode == "html":
+                    body = b"<html><body>Please sign in</body></html>"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif server.mode == "truncated":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", "1000")
+                    self.end_headers()
+                    self.wfile.write(b'{"keys": [')
+                    self.close_connection = True
+                else:
+                    body = json.dumps({"keys": server.keys}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.uri = f"http://127.0.0.1:{self._httpd.server_address[1]}/certs"
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+@pytest.fixture
+def key_set() -> Iterator[_KeySetServer]:
+    server = _KeySetServer()
+    yield server
+    server.close()
+
+
+def _signing_pair(kid: str) -> tuple[Any, dict[str, Any]]:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private.public_key()))
+    return private, {**public, "kid": kid, "use": "sig", "alg": "RS256"}
+
+
+def _signed(private: Any, kid: str) -> str:
+    import time as _time
+
+    now = int(_time.time())
+    claims = {"iss": "https://keycloak.internal/realms/aira", "sub": "u-1", "iat": now}
+    return jwt.encode(
+        {**claims, "exp": now + 300, "aud": "aira-gateway"},
+        private,
+        algorithm="RS256",
+        headers={"kid": kid},
+    )
+
+
+@pytest.mark.parametrize("mode", ["html", "truncated"])
+def test_a_key_set_that_cannot_be_read_is_the_provider_not_the_token(
+    key_set: _KeySetServer, mode: str, capsys: Any
+) -> None:
+    """`PyJWKClient` converts a refused connection and nothing else. A sign-in page answered with
+    200, or a body cut off mid-read, left `verify` as `JSONDecodeError` or `IncompleteRead` — a
+    500 for every bearer request, and none of them logged as what it was."""
+    key_set.mode = mode
+    private, _public = _signing_pair("k1")
+    verifier = JwtVerifier(
+        "https://keycloak.internal/realms/aira",
+        "aira-gateway",
+        build_jwks_client(key_set.uri, timeout=2.0),
+    )
+
+    assert verifier.verify(_signed(private, "k1")) is None
+
+    emitted = lines(capsys)
+    assert [line for line in emitted if line["event"] == "oidc_jwks_unavailable"]
+    assert not [line for line in emitted if line["event"] == "oidc_token_rejected"]
+
+
+def test_a_token_nested_past_what_the_parser_follows_is_a_rejected_token(capsys: Any) -> None:
+    """The caller's own header, as deeply nested JSON: `json` raises `RecursionError`, which is not
+    a `ValueError`, so PyJWT does not wrap it. A worker thread's stack is what decides how deep is
+    too deep — a small one, as here, reaches it with a token of a few kilobytes."""
+    import base64
+    import threading
+
+    header = base64.urlsafe_b64encode(b"[" * 5000).rstrip(b"=").decode()
+    token = f"{header}.e30.c2ln"
+    verifier = JwtVerifier(
+        "https://keycloak.internal/realms/aira",
+        "aira-gateway",
+        build_jwks_client("http://127.0.0.1:9/certs", timeout=0.5),
+    )
+    outcome: list[object] = []
+
+    def _verify() -> None:
+        try:
+            outcome.append(verifier.verify(token))
+        except BaseException as exc:  # noqa: BLE001 - what escapes is the finding
+            outcome.append(exc)
+
+    previous = threading.stack_size(256 * 1024)
+    try:
+        worker = threading.Thread(target=_verify)
+        worker.start()
+        worker.join()
+    finally:
+        threading.stack_size(previous)
+
+    assert outcome == [None]
+    assert [line for line in lines(capsys) if line["event"] == "oidc_token_rejected"]
+
+
+def test_an_oversized_token_is_refused_before_anything_parses_it() -> None:
+    from aira_common.oidc import MAX_TOKEN_LENGTH
+
+    asked: list[str] = []
+
+    class _Counting(Resolver):
+        def get_signing_key_from_jwt(self, token: str) -> Any:
+            asked.append(token)
+            return super().get_signing_key_from_jwt(token)
+
+    oversized = "e" * (MAX_TOKEN_LENGTH + 1)
+    assert _verifier(_Counting()).verify(oversized) is None
+    assert asked == []
+
+
+# == an unknown key id costs a fetch at most once per interval ===================================
+
+
+def test_unknown_key_ids_refetch_the_key_set_at_most_once_per_interval(
+    key_set: _KeySetServer,
+) -> None:
+    """PyJWT refetches the whole set for every `kid` it does not hold — right for a rotation, and
+    one request to Keycloak per forged token otherwise, made synchronously on a worker thread."""
+    private, public = _signing_pair("k1")
+    key_set.keys = [public]
+    verifier = JwtVerifier(
+        "https://keycloak.internal/realms/aira",
+        "aira-gateway",
+        build_jwks_client(key_set.uri, timeout=2.0),
+    )
+    assert verifier.verify(_signed(private, "k1")) is not None
+    before = key_set.fetches
+
+    for index in range(50):
+        assert verifier.verify(_signed(private, f"forged-{index}")) is None
+
+    assert key_set.fetches - before <= 1
+
+
+def test_a_rotated_key_verifies_once_the_interval_has_passed(key_set: _KeySetServer) -> None:
+    from aira_common.oidc import JWKS_REFRESH_INTERVAL_SECONDS, BoundedRefreshJwkClient
+
+    now = [1000.0]
+    old, old_public = _signing_pair("k1")
+    key_set.keys = [old_public]
+    client = BoundedRefreshJwkClient(key_set.uri, timeout=2.0, clock=lambda: now[0])
+    verifier = JwtVerifier("https://keycloak.internal/realms/aira", "aira-gateway", client)
+    assert verifier.verify(_signed(old, "k1")) is not None
+    assert verifier.verify(_signed(old, "forged")) is None  # spends this interval's refetch
+
+    new, new_public = _signing_pair("k2")
+    key_set.keys = [old_public, new_public]
+    assert verifier.verify(_signed(new, "k2")) is None, "refetched inside the interval"
+
+    now[0] += JWKS_REFRESH_INTERVAL_SECONDS + 1
+    assert verifier.verify(_signed(new, "k2")) is not None

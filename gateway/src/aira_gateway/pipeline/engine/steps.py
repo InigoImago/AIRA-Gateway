@@ -16,9 +16,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, assert_never
 
 from aira_common.models import ThinkingMode
+from aira_common.pipelines import FailurePolicy, FilterAction, InjectionMode, ScanScope
 from aira_gateway.audit import ModelCall
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalRequest, Role, TextPart, Thinking
@@ -62,17 +63,29 @@ class Reachable(Protocol):
 #: What a filter does when its classifier reached no verdict (`FRD-125`). Blocking is the default:
 #: a filter configured to block that serves an unchecked request is an absent control that still
 #: looks active. An operator who prefers availability says so, and the choice is on the audit row.
-UNDETERMINED_BLOCKS = "block"
-UNDETERMINED_ALLOWS = "allow"
+UNDETERMINED_BLOCKS = str(FailurePolicy.BLOCK)
+UNDETERMINED_ALLOWS = str(FailurePolicy.ALLOW)
 
 #: How much of a model's reply the dry run shows. The interesting part of a classifier's answer is
 #: at the front, and the ellipsis says the rest exists.
 _SHOWN = 600
 
+#: Why a step that names a classifier asked none: no model it names resolves to anything this
+#: gateway can reach — a retired model, a typo, a missing catalogue entry.
+_NO_CLASSIFIER = "no model this step names can be reached from this gateway"
+
+#: Why a verdict covers less than the whole text (`classifiers.MAX_SCANNED_CHARS`).
+_PARTIAL_SCAN = "the text is longer than the scanned bound; its first and last part were read"
+
 
 def _blocks(verdict: Verdict, config: dict[str, Any]) -> bool:
-    """Whether this verdict stops the request, given how the step is configured."""
-    if config.get("action", "block") != "block":
+    """Whether this verdict stops the request, given how the step is configured.
+
+    **Only the word `flag` lets a finding through.** Anything else — `block`, nothing at all, or a
+    word this build does not know — blocks: a typo in a security control must fail closed, and the
+    two-word vocabulary is `aira_common.pipelines.FilterAction`.
+    """
+    if config.get("action") == FilterAction.FLAG:
         return False
     if verdict is Verdict.INJECTION:
         return True
@@ -139,16 +152,17 @@ def _system_and_user(request: CanonicalRequest) -> str:
     return "\n".join(m.text for m in request.messages if m.role in (Role.SYSTEM, Role.USER))
 
 
-def _scanned_text(request: CanonicalRequest, scope: str) -> str:
+def _scanned_text(request: CanonicalRequest, scope: Any) -> str:
     """What the injection filter reads.
 
     `user` (the default) is **the last user message**, not the conversation: an injection planted in
     an earlier turn is not scanned again — a stated blind spot, documented in
-    `docs/REQUEST-LIFECYCLE.md`. `system_user` reads every system and user message.
+    `docs/REQUEST-LIFECYCLE.md`. `system_user` reads every system and user message, and so does a
+    scope this build does not know: a misspelt scope must not quietly narrow what is read.
     """
-    if scope == "system_user":
-        return _system_and_user(request)
-    return request.last_user_text()
+    if scope == ScanScope.USER:
+        return request.last_user_text()
+    return _system_and_user(request)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,8 +196,9 @@ class StepEvaluator:
             return await self._evaluate_model_route(step.config, request, declaration_of)
         if step.type is StepType.PII_FILTER:
             return await self._evaluate_pii_filter(step.config, request, declaration_of)
-        # Unreachable while `StepType` is exhaustive: unknown steps are dropped at parse time.
-        return StepEvaluation(type=str(step.type), action="unchanged")
+        # Unknown steps are dropped at parse time; a new `StepType` without a branch here is a type
+        # error, and at run time a refusal to guess rather than a step reported as having passed.
+        assert_never(step.type)
 
     # -- the steps ------------------------------------------------------------------------
 
@@ -193,20 +208,30 @@ class StepEvaluator:
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None,
     ) -> StepEvaluation:
-        classification = await self._classify(config, request, declaration_of)
+        classification, fell_back = await self._classify(config, request, declaration_of)
         verdict = classification.verdict
         said = _said(
             classification.reply, classification.call.model if classification.call else None
         )
-        action = config.get("action", "block")
+        action = str(config.get("action", FilterAction.BLOCK))
         blocking = _blocks(verdict, config)
+        # Said wherever the verdict is shown: a heuristic verdict standing in for an `llm` step
+        # reads exactly like the model's own, and only the operator can fix the model name.
+        why = f"{verdict} (by the heuristic)" if fell_back else str(verdict)
+        notes = [
+            *([f"decided by the heuristic: {_NO_CLASSIFIER}"] if fell_back else []),
+            *([_PARTIAL_SCAN] if classification.unscanned else []),
+        ]
         return StepEvaluation(
             type="injection_filter",
             action="blocked" if blocking else ("passed" if verdict is Verdict.CLEAN else "flagged"),
             detail={
-                "mode": config.get("mode", "heuristic"),
+                "mode": config.get("mode", InjectionMode.HEURISTIC),
                 "action": action,
                 "verdict": str(verdict),
+                **({"decided_by": "heuristic"} if fell_back else {}),
+                **({"unscanned": classification.unscanned} if classification.unscanned else {}),
+                **({"why": "; ".join(notes)} if notes else {}),
                 **said,
             },
             # On **every** outcome: "ran and passed" and "no filter configured" must differ on the
@@ -215,7 +240,7 @@ class StepEvaluator:
                 "step": "injection_filter",
                 "flagged": verdict is not Verdict.CLEAN,
                 "action": "blocked" if blocking else action,
-                "why": str(verdict),
+                "why": why,
             },
             call=classification.call,
             block_reason=_rejection(verdict) if blocking else None,
@@ -233,16 +258,25 @@ class StepEvaluator:
         if call is None and config.get("categories"):
             # A router that could not be asked **says so** — otherwise it is indistinguishable from
             # one that ran and matched nothing. The default model still applies, on both paths.
+            # And which of the two: no model to ask is a configuration to fix, a model that did not
+            # answer is an outage to wait out.
             fallback = config.get("default_model")
             retarget = bool(fallback) and fallback != request.model
+            reason = "classifier_failed" if routed.classifier else "no_classifier"
+            why = (
+                "the classifier could not be reached or refused the request"
+                if routed.classifier
+                else _NO_CLASSIFIER
+            )
+            decision = {"step": "model_route", "action": "not_asked", "why": reason}
             return StepEvaluation(
                 type="model_route",
                 action="not_asked",
                 detail={
-                    "why": "the classifier could not be reached or refused the request",
+                    "why": why,
                     **({"to": fallback} if retarget else {"model": request.model}),
                 },
-                decision={"step": "model_route", "action": "not_asked", "why": "classifier_failed"},
+                decision=decision,
                 request=request.model_copy(update={"model": fallback}) if retarget else None,
             )
         # The caller is told about the classification in the operator's words (`FRD-309`) — only
@@ -368,15 +402,16 @@ class StepEvaluator:
         config: dict[str, Any],
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None = None,
-    ) -> Classification:
-        """The verdict, from the first of this step's models that could be reached.
+    ) -> tuple[Classification, bool]:
+        """The verdict, from the first of this step's models that could be reached — and whether
+        the heuristic gave it in place of an `llm` step's model.
 
         An `llm` step whose models none resolve falls back to the **heuristic** — a downgrade of
         the method, not of the verdict, so a mistyped model name cannot take a use case's traffic
-        down. One that resolves and cannot be reached leaves its verdict *undetermined*, which the
-        step decides on (`FRD-125`).
+        down, and the decision says the heuristic answered. One that resolves and cannot be reached
+        leaves its verdict *undetermined*, which the step decides on (`FRD-125`).
         """
-        text = _scanned_text(request, config.get("scope", "user"))
+        text = _scanned_text(request, config.get("scope", ScanScope.USER))
         if config.get("mode") == "llm":
 
             async def ask(model: str, provider: Any) -> Classification:
@@ -389,14 +424,20 @@ class StepEvaluator:
 
             answered = await self._asked(await self._models_for(config, declaration_of), ask)
             if answered is not None:
-                return answered[1]
-        return await self._heuristic(config).classify_text(text)
+                return answered[1], False
+            return await self._heuristic(config).classify_text(text), True
+        return await self._heuristic(config).classify_text(text), False
 
     def _heuristic(self, config: dict[str, Any]) -> InjectionClassifier:
         """The pattern classifier: the `heuristic` mode, and where an `llm` step with no reachable
-        model lands. Never a model call, so it cannot fail the way a chain can."""
-        extras = tuple(config.get("patterns", []))
-        return HeuristicInjectionClassifier(extras, use_builtins=config.get("use_builtins", True))
+        model lands. Never a model call, so it cannot fail the way a chain can. Only a real `false`
+        turns the built-in phrasings off."""
+        extras = tuple(
+            pattern for pattern in config.get("patterns") or () if isinstance(pattern, str)
+        )
+        return HeuristicInjectionClassifier(
+            extras, use_builtins=config.get("use_builtins", True) is not False
+        )
 
     async def _route(
         self,
@@ -406,7 +447,9 @@ class StepEvaluator:
     ) -> _Routed:
         """The category, the model to use, what asking cost (billed even when nothing matched,
         `FRD-125`), and what the model said (for the dry run's screen)."""
-        categories: list[dict[str, str]] = config.get("categories", [])
+        categories: list[dict[str, str]] = [
+            category for category in config.get("categories") or () if isinstance(category, dict)
+        ]
         default_model = config.get("default_model")
         if not categories:
             return _Routed(None, default_model)

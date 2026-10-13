@@ -156,14 +156,28 @@ def _tagged(model: str) -> str:
 
 def _local_endpoint() -> str | None:
     """The first URL in whichever of the two configuration forms is set (`FRD-123`)."""
-    single = os.environ.get("AIRA_OLLAMA_URL")
+    single = os.environ.get("AIRA_OLLAMA_URL", "").strip()
     if single:
         return single
-    servers = os.environ.get("AIRA_OPENAI_SERVERS", "")
-    for server in servers.split(";"):
-        parts = server.split("=", 1)
-        if len(parts) == 2 and parts[1]:
-            return parts[1].split("|")[0]
+    return first_server_url(os.environ.get("AIRA_OPENAI_SERVERS", ""))
+
+
+def first_server_url(spec: str) -> str | None:
+    """The URL of the first server ``AIRA_OPENAI_SERVERS`` declares, read as the gateway reads it
+    (`upstreams.openai.parse_servers`): entries split on `;`, blanks skipped, each field trimmed.
+
+    Restated rather than imported — the gateway is not installed beside this plane — and held
+    equal to the gateway's parser by `tools/tests/test_both_planes_read_one_server_list.py`. A URL
+    kept with the spaces the gateway trims is one `urlopen` refuses, and the seed then declares
+    nothing for an endpoint that answers.
+    """
+    for entry in (part.strip() for part in spec.split(";")):
+        name, separator, rest = entry.partition("=")
+        if not entry or not separator or not name.strip():
+            continue
+        url = rest.split("|")[0].strip()
+        if url:
+            return url
     return None
 
 

@@ -61,9 +61,16 @@ allowance can see*:
 | --- | --- | --- |
 | a use case's traffic | ✓ | ✓ |
 | pipeline calls (classifier, router, redactor) | ✓ the use case | ✓ |
-| **diagnostics** | ✓ the installation (§3.1) | ✓ |
+| **diagnostics** | ✓ recorded as `diagnostic` rows | ✗ **not capped** — see below |
 | **unbound traffic** — break-glass keys, demo | ✓ the installation (§3.1) | ✓ |
 | **an unpriced model, under a cost budget** | ✓ | ✗ **blind** |
+
+**Diagnostics are recorded and not capped.** *Ask the model* (`:checkThinking`) makes real
+generations — one output token per accepted word per region, at most `MAX_LEVELS_PER_CHECK` words
+per press — and neither takes the early gate nor books against the installation budget: every call
+is a `diagnostic` row with its real price, made by a holder of `operations.diagnose`.
+*Check reachability* is `:countTokens` and spends nothing. Booking the first against the
+installation budget, and refusing it there, is the open half of this row.
 
 ### 3.1 An installation budget — **built**
 
@@ -74,10 +81,11 @@ periods, with one difference — no use case behind it.)*
 Budgets were anchored to a use case: `use_case` (a shared pot) and `each_member` (one counter per
 head). There was no third, so anything belonging to *the installation* had nowhere to be counted.
 
-There is now a third: `installation`. Everything with **no use case** books against it —
-diagnostics, break-glass keys, demo traffic. It is the residual bucket, and its existence is what
-turns *unowned* into *owned by the installation*. Small by nature and therefore easy to set: an
-installation that spends more than a few euro a month on diagnostics is telling you something.
+There is now a third: `installation`. Every request with **no use case** books against it —
+break-glass keys, demo traffic. It is the residual bucket, and its existence is what turns
+*unowned* into *owned by the installation*. Small by nature and therefore easy to set. Diagnostics
+have no use case either and are recorded beside it, but are not yet booked into it (the table
+above).
 
 The rule it enforces is the one worth stating: **a request that fits no bucket does not run.**
 Before this, such a request ran and was counted nowhere.

@@ -76,10 +76,6 @@ EMBEDDING_EVERY = 3
 #: reported rather than silent, but still a hole in the chart for no reason.
 _CLOCK_MARGIN = timedelta(seconds=5)
 
-POSTGRES = os.environ.get(
-    "AIRA_DEMO_RESET_DSN", "postgresql+psycopg://aira:aira-local@localhost:5432/aira_gateway"
-)
-
 
 def _plan(days: int, per_day: int) -> list[tuple[int, int]]:
     """How many requests each day back from today carries: ``(days_ago, requests)``.
@@ -133,7 +129,7 @@ async def _move(rows: list[tuple[str, datetime]]) -> int:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    engine = create_async_engine(POSTGRES)
+    engine = create_async_engine(demo_reset_usage.postgres_url())
     try:
         async with engine.begin() as connection:
             for row_id, when in rows:
@@ -156,7 +152,7 @@ async def _created_since(marker: datetime) -> list[str]:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    engine = create_async_engine(POSTGRES)
+    engine = create_async_engine(demo_reset_usage.postgres_url())
     try:
         async with engine.connect() as connection:
             result = await connection.execute(

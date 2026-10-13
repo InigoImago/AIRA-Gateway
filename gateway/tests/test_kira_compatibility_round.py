@@ -183,8 +183,33 @@ def test_malformed_json_is_a_422_validation_error(kira_client: TestClient) -> No
     assert response.json()["code"] == "VALIDATION_ERROR"
 
 
-def test_a_body_that_is_not_an_object_answers_the_same() -> None:
-    """The other half of `_json`, which had the same code and must move with it."""
+@pytest.mark.parametrize("body", [b"[1, 2]", b'"hallo"', b"42", b"null"])
+def test_a_body_that_is_not_an_object_answers_the_same(
+    kira_client: TestClient, body: bytes
+) -> None:
+    """The other half of `_json`, which had the same code and must move with it: valid JSON that
+    is not an object is the predecessor's `422 VALIDATION_ERROR` too, on every route that reads a
+    body — and is recorded, which a body that reached the trail as a list or a string was not:
+    the row stores an object."""
+    from sqlalchemy import select
+
     from aira_gateway.api.kira import errors
+    from aira_gateway.db.models import RequestLog
 
     assert not hasattr(errors, "INVALID_JSON_BODY")
+    routes = ("chat", "streaming-chat", "embed")
+    for route in routes:
+        response = kira_client.post(
+            f"{KIRA}/{route}", content=body, headers={"content-type": "application/json"}
+        )
+
+        assert response.status_code == 422, (route, response.text)
+        assert response.json()["code"] == "VALIDATION_ERROR", route
+
+    async def _rows() -> list[tuple[str, int, str | None]]:
+        async with kira_client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
+            found = (await session.execute(select(RequestLog))).scalars()
+            return [(row.operation, row.status, row.outcome) for row in found]
+
+    rows = kira_client.portal.call(_rows)  # type: ignore[attr-defined]
+    assert sorted(rows) == sorted((route, 422, "invalid_request") for route in routes)

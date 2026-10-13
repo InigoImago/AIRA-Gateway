@@ -261,9 +261,17 @@ each step with the command that says whether it worked. What follows here is the
 
 **Read `deploy/compose/docker-compose.apps.yml`, and only that.** The stack is three files:
 infrastructure, the applications, and the showcase. The middle one is the product — nothing in it
-exists for the demo, and `make up-apps` starts exactly it. The development Keycloak realm, the
-`-dev` Vault and the seeded accounts are all in `docker-compose.showcase.yml`, which you do not
-use.
+exists for the demo — and with `docker-compose.external.yml` beside it, it is what
+`make up-integrated` starts against infrastructure you provide.
+
+**The infrastructure file is a development one, and `make up-apps` starts it.** Its Keycloak
+imports the development realm on every start — six accounts with published passwords, `admin`
+among the global administrators, and confidential clients whose secrets are in this repository —
+and its Vault runs in `-dev` mode with the root token `root`. `make up-apps` is therefore the
+product on development infrastructure, not a deployment: keep it on loopback
+(`AIRA_BIND_HOST`), and never publish it where anybody else can reach it. The showcase file adds
+the provisioning around it — the realm repair, the Vault seeding and the demo data — which you do
+not use either.
 
 The applications are stateless containers. Point them at your Postgres, your Kafka, your Keycloak
 and your model platforms; nothing else is required.
@@ -272,7 +280,7 @@ and your model platforms; nothing else is required.
 graph TB
     subgraph yours["Your infrastructure"]
         pg[("PostgreSQL<br/><i>2 databases</i>")]
-        kafka[["Kafka<br/><i>8 compacted topics</i>"]]
+        kafka[["Kafka<br/><i>9 compacted topics</i>"]]
         kc["Keycloak / OIDC"]
         redis[("Redis<br/><i>optional but recommended</i>")]
         vault["Vault<br/><i>optional</i>"]

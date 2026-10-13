@@ -322,3 +322,120 @@ def test_a_parent_that_does_not_match_is_not_offered() -> None:
     ).search("kundendienst")
 
     assert [entry.id for entry in entries] == ["/abteilungen/kundendienst"]
+
+
+# ---- one person, exactly (`FRD-209` FR-4) --------------------------------------------------------
+
+
+def _users_answering(rows: list[dict], sent: dict[str, str] | None = None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == TOKEN_PATH:
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if request.url.path == USERS_PATH:
+            if sent is not None:
+                sent.update(request.url.params)
+            return httpx.Response(200, json=rows)
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_finding_a_person_asks_for_that_name_exactly_and_takes_only_that_row() -> None:
+    """This decides which account a typed name is bound to. Keycloak's `username` filter is a
+    substring match unless `exact=true`, and even then the row is compared again here — a grant
+    attached to `adam` for somebody who typed `ada` is a grant to the wrong person."""
+    sent: dict[str, str] = {}
+    rows = [{"username": "adam"}, {"username": "Ada"}, {"username": "ada", "firstName": "Ada"}]
+
+    found = _directory(_users_answering(rows, sent)).find_user(" ada ")
+
+    assert found is not None
+    assert (found.kind, found.id, found.label) == (SubjectKind.USER, "ada", "Ada")
+    assert sent["username"] == "ada"
+    assert sent["exact"] == "true"
+
+
+def test_a_neighbouring_name_is_nobody() -> None:
+    rows = [{"username": "adam"}, {"username": "Ada"}, {"username": "ada.lovelace"}]
+    assert _directory(_users_answering(rows)).find_user("ada") is None
+
+
+def test_a_blank_name_is_nobody_and_is_not_asked() -> None:
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        return httpx.Response(200, json=[{"username": ""}])
+
+    assert _directory(handler).find_user("   ") is None
+    assert asked == []
+
+
+# ---- what a group path may name ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path", ["/a/../b", "/../../master/clients", "/./finance", "/finance/..", "/finance/."]
+)
+def test_a_path_with_a_dot_segment_names_no_group_and_is_not_asked(path: str) -> None:
+    """An HTTP client resolves `.` and `..` before it sends, so `/../../master/clients` would carry
+    the service account's token to `/admin/realms/master/clients` — an endpoint this lookup was
+    never meant to reach. Keycloak emits no path with such a segment, so none can be a group.
+
+    Every request is recorded, not only the ones aimed at `group-by-path`: the request this
+    prevents is precisely one that arrives somewhere else."""
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        return _by_path(200, {"path": path})(request)
+
+    assert _directory(handler).group_exists(path) is False
+    assert sent == []
+
+
+def test_a_dot_inside_a_name_is_still_a_name() -> None:
+    asked: list[str] = []
+    directory = _directory(_by_path(200, {"path": "/finance/v1.2..x"}, asked))
+
+    assert directory.group_exists("/finance/v1.2..x") is True
+    assert asked == ["/admin/realms/aira/group-by-path/finance/v1.2..x"]
+
+
+# ---- connections ---------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def opened(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Client]:
+    """Every client the directory opens for itself, answering from a stand-in Keycloak."""
+    clients: list[httpx.Client] = []
+    real = httpx.Client
+
+    def recording(**kwargs: object) -> httpx.Client:
+        client = real(
+            transport=httpx.MockTransport(_ok(groups=[{"name": "kunden", "path": "/kunden"}]))
+        )
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("aira_common.directory.httpx.Client", recording)
+    return clients
+
+
+def test_a_client_it_opens_is_closed_when_the_lookup_is_done(opened: list[httpx.Client]) -> None:
+    """Management builds a directory per request. A pool the instance kept open would outlive the
+    only work it was created for, on every search and every grant to a new name."""
+    directory = KeycloakDirectory("https://keycloak.example", "aira", "aira-directory", "s3cret")
+
+    assert [entry.id for entry in directory.search("kunden")] == ["/kunden"]
+    assert directory.find_user("nobody") is None
+
+    assert len(opened) == 2
+    assert all(client.is_closed for client in opened)
+
+
+def test_an_injected_client_is_left_open_for_its_owner() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(_ok()))
+    KeycloakDirectory("https://kc", "aira", "id", "secret", client=client).search("kunden")
+
+    assert not client.is_closed

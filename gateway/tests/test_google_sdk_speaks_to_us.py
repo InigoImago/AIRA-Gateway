@@ -19,27 +19,59 @@ needs Google's endpoint is a test that runs nowhere.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
 
+import httpx
 import pytest
 import uvicorn
+from fastapi import FastAPI
 from google import genai
 from google.genai import types
+from sqlalchemy import select
 
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
-from aira_gateway.db.models import ModelRead
+from aira_gateway.core.canonical import CanonicalChunk, CanonicalUsage
+from aira_gateway.db.models import ModelRead, RequestLog
+from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, UpstreamModel
 
 MODEL = "mock-1"
 
 
-@pytest.fixture(scope="module")
-def base_url() -> Iterator[str]:
-    """A real socket. The SDK builds its own HTTP client, so there is no transport to inject —
-    and pretending otherwise would test a stand-in for the thing whose independence is the point.
-    """
-    app = create_app(
+@contextmanager
+def _served(app: FastAPI, *models: ModelRead) -> Iterator[str]:
+    """``app`` on a real socket, with ``models`` catalogued. The SDK builds its own HTTP client, so
+    there is no transport to inject — and pretending otherwise would test a stand-in for the thing
+    whose independence is the point."""
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    while not server.started:  # noqa: ASYNC110 — a thread, not a coroutine
+        threading.Event().wait(0.02)
+    port = server.servers[0].sockets[0].getsockname()[1]
+
+    async def _seed() -> None:
+        async with app.state.db_sessionmaker() as session:
+            session.add_all(models)
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+def _app() -> FastAPI:
+    return create_app(
         GatewaySettings(
             auth_required=False,
             require_use_case=False,
@@ -49,38 +81,15 @@ def base_url() -> Iterator[str]:
             log_queue_size=0,
         )
     )
-    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    while not server.started:  # noqa: ASYNC110 — a thread, not a coroutine
-        threading.Event().wait(0.02)
-    port = server.servers[0].sockets[0].getsockname()[1]
 
-    import anyio
 
-    async def _seed() -> None:
-        async with app.state.db_sessionmaker() as session:
-            session.add(
-                ModelRead(
-                    model=MODEL,
-                    numeric_id=9001,
-                    capabilities=["generate", "embed"],
-                    approved=True,
-                )
-            )
-            await session.commit()
-
-    anyio.from_thread.start_blocking_portal  # noqa: B018 — see below
-    import asyncio
-
-    asyncio.run(_seed())
-
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10)
+@pytest.fixture(scope="module")
+def base_url() -> Iterator[str]:
+    catalogued = ModelRead(
+        model=MODEL, numeric_id=9001, capabilities=["generate", "embed"], approved=True
+    )
+    with _served(_app(), catalogued) as url:
+        yield url
 
 
 @pytest.fixture
@@ -214,3 +223,134 @@ def test_include_thoughts_false_is_what_we_already_do(client: genai.Client) -> N
     )
 
     assert response.text
+
+
+# == a stream that breaks off ======================================================================
+
+
+class _BreaksOff:
+    """A model whose connection resets after half an answer."""
+
+    is_test_double = True
+
+    def models(self) -> list[UpstreamModel]:
+        return [
+            UpstreamModel(
+                "breaks-1", "1", ("generateContent", "streamGenerateContent"), provider="test"
+            )
+        ]
+
+    async def generate(self, request):  # noqa: ANN001, ANN201
+        raise NotImplementedError
+
+    async def stream_generate(self, request):  # noqa: ANN001, ANN201
+        yield CanonicalChunk(
+            text_delta="Die erste Hälfte ",
+            usage=CanonicalUsage(prompt_tokens=3, completion_tokens=2),
+        )
+        yield CanonicalChunk(
+            text_delta="der Antwort", usage=CanonicalUsage(prompt_tokens=3, completion_tokens=4)
+        )
+        raise UpstreamError("upstream connection reset", status_code=503)
+
+    async def embed(self, request):  # noqa: ANN001, ANN201
+        return [[0.0]]
+
+
+@pytest.fixture(scope="module")
+def breaking_url() -> Iterator[str]:
+    app = _app()
+    app.state.providers = ProviderRegistry([_BreaksOff()])
+    catalogued = ModelRead(model="breaks-1", capabilities=["generate"], approved=True)
+    with _served(app, catalogued) as url:
+        yield url
+
+
+def test_a_stream_that_breaks_off_is_an_error_in_the_sdk(breaking_url: str) -> None:
+    """The status went out as `200` with the first chunk, so the failure can only travel inside the
+    stream — as Google's error element, which the SDK checks every chunk for and raises. A stream
+    that merely stopped iterates to its end without complaint, and the application shows half an
+    answer as the answer."""
+    client = genai.Client(
+        api_key="not-checked-here",
+        http_options=types.HttpOptions(base_url=breaking_url, api_version="v1beta"),
+    )
+    received: list[str] = []
+    with pytest.raises(genai.errors.APIError) as raised:
+        for chunk in client.models.generate_content_stream(model="breaks-1", contents="hallo"):
+            received.append(chunk.text or "")
+
+    assert raised.value.code == 503
+    assert "".join(received) == "Die erste Hälfte der Antwort"
+
+
+def test_the_json_array_ends_in_the_error_element(breaking_url: str) -> None:
+    """Gemini REST without `alt=sse` streams one JSON array. Closed with `]` after the last chunk,
+    it parses as a complete answer; the failure is its last element instead."""
+    response = httpx.post(
+        f"{breaking_url}/v1beta/models/breaks-1:streamGenerateContent",
+        json={"contents": [{"role": "user", "parts": [{"text": "hallo"}]}]},
+        timeout=10,
+    )
+
+    elements = json.loads(response.text)
+    assert [
+        element["candidates"][0]["content"]["parts"][0]["text"] for element in elements[:-1]
+    ] == [
+        "Die erste Hälfte ",
+        "der Antwort",
+    ]
+    assert elements[-1] == {
+        "error": {"code": 503, "message": "upstream connection reset", "status": "UNAVAILABLE"}
+    }
+
+
+# == an attachment, as the SDK encodes it ==========================================================
+
+#: A PNG whose bytes fall on the two letters the base64 alphabets disagree about, so the SDK's
+#: URL-safe encoding carries `-` and `_`.
+PNG = b"\x89PNG\r\n\x1a\n" + b"\xfb\xff\xfe\xff" * 32
+
+
+@pytest.fixture(scope="module")
+def reading() -> Iterator[tuple[FastAPI, str]]:
+    app = _app()
+    catalogued = ModelRead(
+        model=MODEL,
+        numeric_id=9001,
+        capabilities=["generate", "attachments"],
+        attachments={"media_types": {"image/png": {"tokens": 258}}},
+        approved=True,
+    )
+    with _served(app, catalogued) as url:
+        yield app, url
+
+
+def test_the_sdk_attaches_an_image(reading: tuple[FastAPI, str]) -> None:
+    """`Part.from_bytes` is how Google's documentation attaches a file, and the SDK serialises it
+    in the URL-safe base64 alphabet — which Google's API reads and this surface refused as "not
+    valid base64" for any file whose bytes map onto `-` or `_`. The witness file never sent bytes,
+    so it never saw it. The stored description has to measure the real file too."""
+    app, url = reading
+    client = genai.Client(
+        api_key="not-checked-here",
+        http_options=types.HttpOptions(base_url=url, api_version="v1beta"),
+    )
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=[types.Part.from_bytes(data=PNG, mime_type="image/png"), "Was zeigt das Bild?"],
+    )
+
+    assert response.text
+
+    async def _stored() -> list[object]:
+        async with app.state.db_sessionmaker() as session:
+            return [
+                row.request_payload for row in (await session.execute(select(RequestLog))).scalars()
+            ]
+
+    (stored,) = asyncio.run(_stored())
+    described = json.dumps(stored)
+    assert f'"bytes": {len(PNG)}' in described
+    assert hashlib.sha256(PNG).hexdigest() in described

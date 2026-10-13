@@ -195,6 +195,32 @@ async def test_a_malformed_key_is_refused_rather_than_raising(
         assert await ApiKeyService(session).verify(presented) is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "presented",
+    ["aira_ab\x00cd_secret", f"aira_{'a' * 33}_secret", "aira_äbcd_secret", "aira_AB CD_secret"],
+    ids=["nul", "longer-than-the-column", "not-ascii", "not-a-key-character"],
+)
+async def test_a_prefix_no_key_could_have_never_reaches_the_database(presented: str) -> None:
+    """SQLite accepts the NUL that Postgres refuses with a `DataError`, so a test that only asked
+    for `None` would pass here and answer 500 in production. This asks that nothing reached the
+    database at all, which holds on both."""
+    from sqlalchemy import event
+
+    engine = build_engine("sqlite+aiosqlite:///:memory:")
+    await create_all(engine)
+    statements: list[str] = []
+    event.listen(
+        engine.sync_engine, "before_cursor_execute", lambda *args: statements.append(args[2])
+    )
+    try:
+        async with build_sessionmaker(engine)() as session:
+            assert await ApiKeyService(session).verify(presented) is None
+    finally:
+        await engine.dispose()
+    assert statements == []
+
+
 def test_a_bearer_token_is_not_mistaken_for_a_key() -> None:
     assert not is_aira_key("eyJhbGciOiJSUzI1NiJ9.e30.sig")
     assert is_aira_key(DEMO_API_KEY)

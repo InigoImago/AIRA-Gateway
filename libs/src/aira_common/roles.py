@@ -6,11 +6,10 @@ stores a role decision: both read the `groups` claim and resolve it through `AIR
 directly grants nothing — the guarantee `ADR-0017` was written to obtain. (This docstring once said
 the opposite; `docs/ROLES.md` records the correction.)
 
-Shared rather than defined in Management because the gateway asks the same questions (is this
-caller governance, may it act on incidents), and two independent answers drift. What each plane
-*does* with a role stays in that plane — Management maps roles to Django groups and object
-permissions, the gateway compares the resolved set — so the data plane never depends on
-``django-guardian``.
+Shared rather than defined in Management because both planes resolve the same claim, and two
+independent answers drift. **What a role may do is not here.** Every check asks one permission
+(`aira_common.permissions`, `ADR-0025`), never a role: a predicate over role names would hard-wire
+an answer an installation can change, since IT Steuerung's permissions are data.
 """
 
 from __future__ import annotations
@@ -34,25 +33,6 @@ class Role(StrEnum):
 
 ALL_ROLES: tuple[Role, ...] = tuple(Role)
 
-#: Roles that oversee the whole installation rather than one use case. Read-only by design: a
-#: governance role sees every use case and acts inside none, which is why it is not a membership
-#: (`ADR-0007`).
-GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG})
-
-#: Roles that may **see** every use case — wider than the roles that see every figure. IT Security's
-#: view is restricted on content and spend (PRD §154), not on which use cases exist and how they are
-#: configured, which is the security-relevant metadata it oversees.
-OVERSIGHT_ROLES: frozenset[Role] = GOVERNANCE_ROLES | frozenset({Role.IT_SECURITY})
-
-#: Roles that may **act** across use cases in an incident: stop a caller, lift a suspension, author
-#: a rule that applies everywhere. Not `OVERSIGHT_ROLES`: IT Steuerung sees every figure and writes
-#: nothing anywhere (PRD §154), and "may see every use case" is not "may stop every use case".
-INCIDENT_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_SECURITY})
-
-#: Roles that may write the model catalog — declare, price and release a model (`FRD-307`). Here
-#: rather than in Management because the gateway asks the same question.
-CATALOG_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN})
-
 #: The roles a group may confer — today every role. Kept apart from `ALL_ROLES` because "what roles
 #: exist" and "what a group may confer" are different questions that happen to coincide.
 CONFIGURABLE_ROLES: frozenset[Role] = frozenset(ALL_ROLES)
@@ -60,30 +40,6 @@ CONFIGURABLE_ROLES: frozenset[Role] = frozenset(ALL_ROLES)
 #: Role names abolished by `ADR-0017`, answered with their own message because older `.env` files
 #: still carry them.
 _RETIRED_ROLES = frozenset({"use-case-admin", "use-case-user"})
-
-
-def may_catalogue(roles: Iterable[str]) -> bool:
-    """True if any of ``roles`` may declare a model and release it for use."""
-    return any(role in CATALOG_ROLES for role in roles)
-
-
-def may_act_on_incidents(roles: Iterable[str]) -> bool:
-    """True if any of ``roles`` may stop traffic or write a rule that applies everywhere."""
-    return any(role in INCIDENT_ROLES for role in roles)
-
-
-def has_oversight(roles: Iterable[str]) -> bool:
-    """True if any of ``roles`` may see every use case (not necessarily every figure)."""
-    return any(role in OVERSIGHT_ROLES for role in roles)
-
-
-def is_governance(roles: Iterable[str]) -> bool:
-    """True if any of ``roles`` oversees the whole installation.
-
-    Takes plain strings, as a token claim does: an unknown role name is simply not governance, so a
-    realm that grows a role the code has never heard of does not break authentication.
-    """
-    return any(role in GOVERNANCE_ROLES for role in roles)
 
 
 class RoleMappingError(ValueError):
@@ -140,9 +96,10 @@ def roles_from_groups(
 
     Exact path match, never a prefix: `/aira/global-admins-readonly` must not confer what
     `/aira/global-admins` does. A hierarchy that should confer a role does so through Keycloak's
-    group inheritance, which puts the parent path in the token.
+    group inheritance, which puts the parent path in the token. A group that is not a string
+    confers nothing, rather than raising on whoever carries it.
     """
-    held = set(groups)
+    held = {group for group in groups if isinstance(group, str)}
     return tuple(
         str(role)
         for role in ALL_ROLES

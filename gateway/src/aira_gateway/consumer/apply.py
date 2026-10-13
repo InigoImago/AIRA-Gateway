@@ -160,8 +160,13 @@ def _payload_visibility(payload: dict[str, Any]) -> str:
     return PayloadVisibility.EVERY_MEMBER.value
 
 
-async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
-    fields = {
+def _usecase_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """A use case's configuration as an event states it, with each absent field read as below.
+
+    One reading for both events that carry it: `usecase.upserted`, and `usecase.deleted`, which
+    carries the use case as it stood when it was retired (see `_retire_usecase`).
+    """
+    return {
         "name": payload.get("name", ""),
         "description": payload.get("description", ""),
         "processing_notes": payload.get("processing_notes", ""),
@@ -182,7 +187,22 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
         # Absent keeps `None`, read as unrestricted; an empty list releases nothing (`FRD-308`).
         "allowed_models": _released_models(payload),
     }
-    await _upsert(session, UseCaseRead, fields, slug=payload["slug"])
+
+
+async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
+    await _upsert(session, UseCaseRead, _usecase_fields(payload), slug=payload["slug"])
+
+
+async def _is_retired(session: AsyncSession, slug: str | None) -> bool:
+    """Whether ``slug`` names a retired use case: a tombstone, which is positive knowledge.
+
+    Absence is not retirement — a use case and its children arrive on different topics with no
+    ordering, so a child may legitimately arrive before its use case.
+    """
+    if not slug:
+        return False
+    record = await session.get(UseCaseRead, slug)
+    return record is not None and record.deleted_at is not None
 
 
 async def _retire_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
@@ -200,6 +220,13 @@ async def _retire_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
 
     The check belongs here and not at authentication: keys and use cases arrive on different
     topics with no ordering, so a new key may legitimately arrive before its use case.
+
+    **A rebuild is a retirement too** (`FRD-204` FR-6). The topic is compacted on the slug, which
+    this event shares with `usecase.upserted`, so for a retired use case it is the only one kept: a
+    read-model rebuilt from the topic meets it with no row to stamp. The tombstone is then written
+    from the event, which carries the use case as it stood — its retention promise included. The
+    children compaction keeps (keys, memberships, grants, budgets: nothing ever deleted them) are
+    refused by `_is_retired` when they arrive after it, and swept here when they arrive before.
     """
     slug = payload["slug"]
     await session.execute(update(ApiKey).where(ApiKey.use_case == slug).values(is_active=False))
@@ -222,6 +249,12 @@ async def _retire_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
     await session.execute(
         update(UseCaseRead).where(UseCaseRead.slug == slug).values(deleted_at=datetime.now(UTC))
     )
+    if await session.get(UseCaseRead, slug) is None:
+        # No row to stamp: a rebuild (see above). An event from a Management that sent the slug
+        # alone leaves a tombstone that knows nothing else — and still grants nothing.
+        session.add(
+            UseCaseRead(slug=slug, deleted_at=datetime.now(UTC), **_usecase_fields(payload))
+        )
 
 
 async def _purge_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
@@ -238,6 +271,9 @@ async def _purge_usecase(session: AsyncSession, payload: dict[str, Any]) -> None
 
 
 async def _upsert_member(session: AsyncSession, payload: dict[str, Any]) -> None:
+    if await _is_retired(session, payload["slug"]):
+        # Retirement removed it, and a replay of the compacted topic must not restore it.
+        return
     result = await session.execute(
         select(UseCaseMemberRead).where(
             UseCaseMemberRead.use_case_slug == payload["slug"],
@@ -264,6 +300,8 @@ async def _remove_member(session: AsyncSession, payload: dict[str, Any]) -> None
 
 
 async def _upsert_group_grant(session: AsyncSession, payload: dict[str, Any]) -> None:
+    if await _is_retired(session, payload["slug"]):
+        return
     result = await session.execute(
         select(UseCaseGroupRead).where(
             UseCaseGroupRead.use_case_slug == payload["slug"],
@@ -293,11 +331,13 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
     """Upsert a Management-issued API key, keyed by prefix (`FRD-205`).
 
     A ``created`` event can be redelivered *after* the matching ``revoked``, so revocation is
-    terminal: metadata is refreshed, but a deactivated key is never reactivated (`ADR-0007`).
+    terminal: metadata is refreshed, but a deactivated key is never reactivated (`ADR-0007`). A key
+    of a retired use case is written deactivated, as its retirement left it.
     """
     result = await session.execute(select(ApiKey).where(ApiKey.prefix == payload["prefix"]))
     record = result.scalar_one_or_none()
     if record is None:
+        active = not await _is_retired(session, payload.get("use_case"))
         session.add(
             ApiKey(
                 prefix=payload["prefix"],
@@ -306,7 +346,7 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
                 issued_by=payload.get("issued_by") or None,
                 use_case=payload.get("use_case"),
                 label=payload.get("label"),
-                is_active=True,
+                is_active=active,
                 expires_at=_moment(payload.get("expires_at")),
             )
         )
@@ -339,6 +379,8 @@ async def _revoke_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
 
 async def _upsert_pipeline(session: AsyncSession, payload: dict[str, Any]) -> None:
     """Upsert a use case's pipeline configuration, keyed by use case (`FRD-300`)."""
+    if await _is_retired(session, payload["use_case"]):
+        return
     fields = {
         "steps": payload.get("steps", []),
         "fallback_models": payload.get("fallback_models", []),
@@ -353,6 +395,8 @@ async def _delete_pipeline(session: AsyncSession, payload: dict[str, Any]) -> No
 
 async def _upsert_budget(session: AsyncSession, payload: dict[str, Any]) -> None:
     """Upsert a budget definition, keyed by id (`FRD-400`)."""
+    if await _is_retired(session, payload["use_case"]):
+        return
     fields = {
         "use_case": payload["use_case"],
         "scope": payload["scope"],
@@ -372,6 +416,8 @@ async def _delete_budget(session: AsyncSession, payload: dict[str, Any]) -> None
 
 async def _upsert_rate_limit(session: AsyncSession, payload: dict[str, Any]) -> None:
     """Upsert a request-rate limit, keyed by id (`FRD-405`)."""
+    if await _is_retired(session, payload["use_case"]):
+        return
     fields = {
         "use_case": payload["use_case"],
         "scope": payload["scope"],
@@ -405,6 +451,8 @@ async def _upsert_anomaly_rule(session: AsyncSession, payload: dict[str, Any]) -
         "enabled": bool(payload.get("enabled", True)),
     }
     if "use_case" not in payload:
+        return
+    if await _is_retired(session, payload["use_case"]):
         return
     await _upsert(session, AnomalyRuleRead, fields, id=payload["id"])
 

@@ -39,6 +39,7 @@ function setup(over: Partial<UsageSeries> = {}, unit = ' (EUR)') {
   TestBed.configureTestingModule({ imports: [UsageDays] });
   const fixture = TestBed.createComponent(UsageDays);
   fixture.componentRef.setInput('days', buildDays(series(over)));
+  fixture.componentRef.setInput('granularity', series(over).granularity);
   fixture.componentRef.setInput('unit', unit);
   fixture.detectChanges();
   const element = fixture.nativeElement as HTMLElement;
@@ -80,7 +81,7 @@ describe('UsageDays', () => {
     // On a phone this table scrolls inside its wrapper, so the fifth column is the one a reader has
     // to drag for. "What did it cost" is the question; the token split is the one that can wait.
     expect(setup().headings()).toEqual([
-      'Day',
+      'Day (UTC)',
       'Model',
       'Requests',
       'Spend (EUR)',
@@ -155,11 +156,14 @@ describe('UsageDays', () => {
   });
 
   it('says where a day’s spend is a lower bound', () => {
+    // Five requests, three of them unpriced: the two that could be priced are the figure, and the
+    // three are what it leaves out.
     const { groups } = setup({
-      points: [point({ cost_nanos: 0, unpriced_requests: 3 })],
+      points: [point({ requests: 5, cost_nanos: 1_000_000_000, unpriced_requests: 3 })],
     });
 
-    expect(groups()[0].textContent).toContain('3 unpriced');
+    expect(groups()[0].querySelector('tr')?.textContent).toContain('1.00');
+    expect(groups()[0].textContent).toContain('+ 3 unpriced');
   });
 
   it('marks the requests on a row that failed', () => {
@@ -191,5 +195,28 @@ describe('UsageDays', () => {
 
   it('offers nothing to expand when every day is already listed', () => {
     expect(setup().more()).toBeNull();
+  });
+
+  it('lists hours as hours, on the UTC clock the gateway counts them in', () => {
+    // The same list holds whatever buckets the series has; "Today" asks for hours. A "Day" column
+    // of hours and a "Show all 12 days" button over twelve hours say something false twice.
+    const hours = Array.from(
+      { length: 12 },
+      (_, hour) => `2026-09-01T${String(hour).padStart(2, '0')}`,
+    );
+    const harness = setup({
+      granularity: 'hour',
+      buckets: hours,
+      points: hours.map((bucket) => point({ bucket })),
+    });
+
+    expect(harness.headings()[0]).toBe('Hour (UTC)');
+    expect(harness.groups()[0].querySelector('th')?.textContent?.trim()).toBe(
+      '2026-09-01 11:00 UTC',
+    );
+    expect(harness.more()?.textContent).toContain('Show all 12 hours');
+
+    const quiet = setup({ granularity: 'hour', buckets: hours, points: [] });
+    expect(quiet.text()).toContain('No hour in this period had any traffic');
   });
 });

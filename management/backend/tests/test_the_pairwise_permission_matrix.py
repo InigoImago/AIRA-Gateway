@@ -84,7 +84,7 @@ def _call(method: str, path: str, allowed: set[int], refused: set[int], body: An
 
 
 def _lists_the_installation_budget(client: APIClient, ctx: dict[str, Any]) -> bool:  # noqa: ARG001
-    """Answered to everybody, empty for whoever may not read every figure."""
+    """Answered to everybody, empty for whoever may neither read every figure nor set this one."""
     response = client.get("/api/v1/installation-budgets/")
     assert response.status_code == 200, response.content
     return bool(response.json())
@@ -121,7 +121,13 @@ PROBES: tuple[Probe, ...] = (
         "set the installation budget",
         _call("post", "/api/v1/installation-budgets/", {400}, {403}, {}),
     ),
-    Probe(P.REPORT_READ_ALL, "read the installation budget", _lists_the_installation_budget),
+    Probe(
+        P.REPORT_READ_ALL,
+        "read the installation budget",
+        _lists_the_installation_budget,
+        # Whoever may set it sees what they set (FR-11).
+        frozenset({P.BUDGET_INSTALLATION_WRITE}),
+    ),
     Probe(
         P.ANOMALY_RULE_GLOBAL_WRITE,
         "change a global anomaly rule",

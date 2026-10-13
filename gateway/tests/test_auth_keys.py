@@ -28,3 +28,15 @@ def test_is_aira_key() -> None:
 def test_demo_key_is_valid_shape() -> None:
     assert keys.is_aira_key(keys.DEMO_API_KEY)
     assert keys.parse_prefix(keys.DEMO_API_KEY) == "demo0000"
+
+
+def test_a_prefix_is_only_what_a_key_is_made_of() -> None:
+    """The prefix is the caller's own bytes until it is looked up, and Postgres refuses a NUL in a
+    text parameter with an error rather than an empty answer — a 500 for one unauthenticated
+    request. Lowercase letters and digits, as long as the column, is every prefix ever issued."""
+    full, prefix, _hash = keys.generate_api_key()
+    assert keys.parse_prefix(full) == prefix
+    assert keys.parse_prefix(keys.DEMO_API_KEY) == keys.DEMO_KEY_PREFIX
+    for refused in ("ab\x00cd", "äbcd", "AB CD", "ab%00cd", "a" * 33, "ABCD1234"):
+        assert keys.parse_prefix(f"aira_{refused}_secret") is None, repr(refused)
+    assert keys.parse_prefix(f"aira_{'a' * 32}_secret") == "a" * 32

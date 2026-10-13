@@ -25,22 +25,67 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from typing import Any
+
+import stack_addresses
 
 #: The demo's own use cases. Named rather than "everything", so running this against a stack that
-#: also carries real traffic cannot quietly forgive somebody else's budget.
+#: also carries real traffic cannot quietly forgive somebody else's budget — and matched **exactly**
+#: in both stores: `kundenservice` is not `kundenservice-eu`, nor a person called
+#: `entwicklung.lead`.
 DEMO_SLUGS = ("kundenservice", "entwicklung", "personalwesen", "coding-assistant")
 
-POSTGRES = os.environ.get(
-    "AIRA_DEMO_RESET_DSN", "postgresql+psycopg://aira:aira-local@localhost:5432/aira_gateway"
-)
-REDIS_URL = os.environ.get("AIRA_DEMO_RESET_REDIS", "redis://localhost:6379/0")
+#: Override the two stores for a stack this machine does not publish.
+DSN_VARIABLE = "AIRA_DEMO_RESET_DSN"
+REDIS_VARIABLE = "AIRA_DEMO_RESET_REDIS"
+
+#: The characters Redis' `SCAN MATCH` treats as a pattern rather than as themselves.
+_GLOB = str.maketrans({character: f"\\{character}" for character in "\\*?[]"})
+
+
+def postgres_url() -> str:
+    """The gateway's database on the Postgres **this** stack publishes.
+
+    Resolved as Compose resolves it — published port, account, database name — because a second
+    stack beside the first (`AIRA_STACK=b`, its ports moved) is exactly where a written-down
+    `localhost:5432` resets the wrong demo and moves the wrong rows' clocks.
+    """
+    return os.environ.get(DSN_VARIABLE) or stack_addresses.postgres_url(
+        stack_addresses.setting("AIRA_POSTGRES_DB")
+    )
+
+
+def redis_url() -> str:
+    """The Redis this stack publishes, for the same reason as :func:`postgres_url`."""
+    return os.environ.get(REDIS_VARIABLE) or stack_addresses.redis_url()
+
+
+def redis_patterns(slug: str) -> list[str]:
+    """Every Redis key `slug`'s consumption can live under, as `SCAN MATCH` patterns.
+
+    Built with the gateway's own key builders, so this follows the key format instead of restating
+    it: the budget reservations (`budget:uc:<slug>:<period>` and
+    `budget:member:<slug>:<person>:<period>`) and the rate-limit buckets (`rl:{<slug>}:uc` and
+    `rl:{<slug>}:member:<person>`). The use case sits between separators in every one of them, and
+    a key that merely *contains* the slug is somebody else's.
+    """
+    from aira_gateway.budgets.ledger import _key as ledger_key
+    from aira_gateway.scopes import Scope
+
+    whole, member = Scope(slug), Scope(slug, "")
+    return [
+        ledger_key(whole.usage_key.translate(_GLOB), "*"),
+        ledger_key(member.usage_key.translate(_GLOB) + "*", "*"),
+        whole.bucket_key.translate(_GLOB),
+        member.bucket_key.translate(_GLOB) + "*",
+    ]
 
 
 async def _clear_postgres() -> int:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    engine = create_async_engine(POSTGRES)
+    engine = create_async_engine(postgres_url())
     try:
         async with engine.begin() as connection:
             # `scope_key` is `uc:<slug>` for a whole use case and `member:<slug>:<subject>`
@@ -56,18 +101,21 @@ async def _clear_postgres() -> int:
         await engine.dispose()
 
 
-async def _clear_redis() -> int:
-    import redis.asyncio as aioredis
+async def _clear_redis(client: Any = None) -> int:
+    """Delete the demo's reservations and rate-limit buckets; how many keys went.
 
-    client = aioredis.from_url(REDIS_URL)
+    Both families: a bucket left full would refuse the first burst of the run this is preparing.
+    """
+    if client is None:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(redis_url())
     try:
         removed = 0
         for slug in DEMO_SLUGS:
-            # Both families: the budget reservations and the rate-limit buckets. A bucket left
-            # full would refuse the first burst of the run this is preparing.
-            async for key in client.scan_iter(match=f"*{slug}*"):
-                await client.delete(key)
-                removed += 1
+            for pattern in redis_patterns(slug):
+                async for key in client.scan_iter(match=pattern):
+                    removed += await client.delete(key)
         return removed
     finally:
         await client.aclose()

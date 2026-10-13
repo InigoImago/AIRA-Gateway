@@ -37,6 +37,15 @@ server {
         try_files $uri =404;
     }
 
+    # Except the one script that is not: `10-runtime-config.envsh` rewrites `runtime-config.js` at
+    # every container start, under the same name, from AIRA_OIDC_ISSUER and AIRA_OIDC_CLIENT_ID.
+    # Cached like the bundle, a moved issuer would stay in every browser for a year. An exact match
+    # takes precedence over the regular expression above, whatever the order.
+    location = /runtime-config.js {
+        add_header Cache-Control "no-store" always;
+        try_files $uri =404;
+    }
+
     # index.html must never be cached: it names the current hashed bundles.
     #
     # And it is the one response a browser *executes*, so it is the one that needs the headers

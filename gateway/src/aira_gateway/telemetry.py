@@ -20,7 +20,7 @@ Database spans carry the statement with its placeholders and never the bound val
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -49,8 +49,14 @@ class OutgoingCallsTraced:
     database: bool
 
 
-def redact_client_span_url(span: Any, _info: Any = None) -> None:
-    """Keep a credential-bearing query parameter out of an **outgoing** call's span."""
+def redact_span_urls(span: Any, _info: Any = None) -> None:
+    """Keep a credential-bearing query parameter out of **every** string attribute of ``span``.
+
+    One scrub for both directions: an outgoing call's span (`prepare_client_span`) and the inbound
+    request's (`app.redact_span_query`). Every attribute, because which names carry a URL is the
+    instrumentation's choice — the server span records the whole URL as `http.url`, beside the two
+    names the inbound hook rewrites from the scope.
+    """
     if span is None or not span.is_recording():
         return
     for key, value in list((getattr(span, "attributes", None) or {}).items()):
@@ -80,18 +86,13 @@ def describe_model_call(span: Any, _info: Any = None) -> None:
 
 def prepare_client_span(span: Any, info: Any = None) -> None:
     """Both halves of what this gateway does to an outgoing span: redact, then identify."""
-    redact_client_span_url(span, info)
+    redact_span_urls(span, info)
     describe_model_call(span, info)
 
 
 async def prepare_client_span_async(span: Any, info: Any = None) -> None:
     """The same hook, as a coroutine — see the module docstring for why both are needed."""
     prepare_client_span(span, info)
-
-
-async def redact_client_span_url_async(span: Any, info: Any = None) -> None:
-    """The redaction alone, as a coroutine: the narrower guarantee a test asks for by itself."""
-    redact_client_span_url(span, info)
 
 
 @contextmanager
@@ -106,20 +107,6 @@ def model_call_span(model: str, *, purpose: str) -> Iterator[None]:
         raise ValueError(f"unknown model call purpose: {purpose!r}")
     with model_call({"aira.model": model, "aira.model_call.purpose": purpose}):
         yield
-
-
-async def model_call_chunks[Chunk](
-    model: str, chunks: AsyncIterator[Chunk], *, purpose: str = "serve"
-) -> AsyncIterator[Chunk]:
-    """The same mark around a **stream**, in force for the iteration.
-
-    A streaming upstream issues its HTTP request on the first ``__anext__``, not when the iterator
-    is built. An async generator shares its consumer's context, so the value set here is what the
-    surface's loop sees, reset when the stream is exhausted or closed.
-    """
-    with model_call_span(model, purpose=purpose):
-        async for chunk in chunks:
-            yield chunk
 
 
 def instrument_outgoing_calls(engine: AsyncEngine | None = None) -> OutgoingCallsTraced:

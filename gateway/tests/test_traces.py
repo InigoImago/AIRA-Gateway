@@ -473,3 +473,33 @@ def test_reading_any_content_includes_reaching_the_request() -> None:
         listed = client.get("/v1beta/traces", params={"use_case": "uc-far"}).json()
     assert opened.status_code == 200, opened.text
     assert listed["traces"] == []
+
+
+def test_belonging_to_a_restricted_use_case_hides_nothing_outside_it() -> None:
+    """A reader who sees every request (IT Steuerung) and is also a plain member of one use case
+    on `own` is restricted *inside that use case*. The condition was `use_case NOT IN (…) OR own`,
+    and SQL reads `NULL NOT IN (…)` as unknown — so every row with no use case (a refused oversized
+    body, a break-glass key, a model check) disappeared from the list the moment that reader
+    joined anything."""
+    from aira_gateway.db.models import UseCaseRead
+
+    reader = Principal(subject="gov", method="oidc", roles=("it-steuerung",), use_cases=("uc-own",))
+
+    async def own_use_case(sessions) -> None:  # noqa: ANN001
+        async with sessions() as session:
+            session.add(UseCaseRead(slug="uc-own", name="own", payload_visibility="own"))
+            await session.commit()
+
+    with _client(reader) as client:
+        with anyio.from_thread.start_blocking_portal() as portal:
+            portal.call(own_use_case, client.app.state.db_sessionmaker)
+        _fill(
+            client,
+            _row(1, use_case=None, subject="unattributed"),
+            _row(2, use_case="uc-other", subject="other"),
+            _row(3, use_case="uc-own", subject="colleague"),
+            _row(4, use_case="uc-own", subject="gov"),
+        )
+        listed = {row["subject"] for row in client.get("/v1beta/traces").json()["traces"]}
+
+    assert listed == {"unattributed", "other", "gov"}, listed

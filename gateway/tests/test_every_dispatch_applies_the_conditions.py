@@ -107,8 +107,9 @@ UNCONDITIONED: dict[str, str] = {
         "precisely whether the provider accepts a word, which is the one thing the conditions "
         "cannot answer — a level is free text because no list here survives the vendors' next "
         "release. Gated to the two roles that may investigate an installation, bounded to "
-        "`MAX_LEVELS_PER_CHECK` words, and capped at one output token per word: a word the model "
-        "refuses is free, because the refusal comes before any generation."
+        "`MAX_LEVELS_PER_CHECK` words in at most `MAX_REGIONS_PER_CHECK` distinct regions, and "
+        "capped at one output token per word and region: a word the model refuses is free, "
+        "because the refusal comes before any generation."
     ),
 }
 

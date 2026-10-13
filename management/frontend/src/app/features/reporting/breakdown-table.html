@@ -1,17 +1,17 @@
 <div class="card">
-  <h3 class="section-title" style="margin: 0 0 0.5rem">By {{ label().toLowerCase() }}</h3>
+  <h3 class="section-title">By {{ label().toLowerCase() }}</h3>
 
   @if (rows().length === 0) {
-    <p class="table__empty">{{ emptyText() }}</p>
+    <p class="empty">{{ emptyText() }}</p>
   } @else {
     <div class="table-tools">
       <label class="search">
-        <span>Find a {{ label().toLowerCase() }}</span>
+        <span>Find {{ item() }}</span>
         <input
           type="search"
           [value]="view.query()"
           (input)="view.search($any($event.target).value)"
-          [attr.placeholder]="'part of a ' + label().toLowerCase() + ' name'"
+          [attr.placeholder]="'part of ' + item() + ' name'"
           data-testid="breakdown-search"
           autocomplete="off"
         />
@@ -19,9 +19,9 @@
     </div>
 
     @if (view.matches().length === 0) {
-      <p class="table__empty" data-testid="breakdown-no-match">
+      <p class="empty" data-testid="breakdown-no-match">
         Nothing here matches “{{ view.query() }}”. There {{ rows().length === 1 ? 'is' : 'are' }}
-        {{ rows().length }} row(s) in this period.
+        {{ count(rows().length) }} row(s) in this period.
       </p>
     } @else {
       <div class="table-wrap">
@@ -84,8 +84,10 @@
                       class="muted"
                       [title]="
                         'None of the ' +
-                        row.requests +
-                        ' request(s) in this row could be priced, so the spend is unknown rather than zero.'
+                        count(row.requests) +
+                        ' request(s) in this row could be priced, so the spend is unknown rather than zero: ' +
+                        causesOf(row) +
+                        '.'
                       "
                       >nothing priced</span
                     >
@@ -94,10 +96,12 @@
                     <span
                       class="muted"
                       [title]="
-                        row.unpriced_requests +
-                        ' request(s) ran on a model with no price on file. Their cost is unknown, not zero.'
+                        count(row.unpriced_requests) +
+                        ' request(s) have no cost — unknown, not zero, so the figure is a lower bound: ' +
+                        causesOf(row) +
+                        '.'
                       "
-                      >+ {{ row.unpriced_requests }} unpriced</span
+                      >+ {{ count(row.unpriced_requests) }} unpriced</span
                     >
                   }
                   <div class="progress" aria-hidden="true">
@@ -105,12 +109,12 @@
                   </div>
                 </td>
                 <td>
-                  {{ row.requests }}
+                  {{ count(row.requests) }}
                   @if (row.failed_requests > 0) {
-                    <span class="muted">({{ row.failed_requests }} failed)</span>
+                    <span class="muted">({{ count(row.failed_requests) }} failed)</span>
                   }
                 </td>
-                <td>{{ row.prompt_tokens }} / {{ row.completion_tokens }}</td>
+                <td>{{ count(row.prompt_tokens) }} / {{ count(row.completion_tokens) }}</td>
                 <td>
                   @if (row.avg_latency_ms === null) {
                     <span class="muted">—</span>

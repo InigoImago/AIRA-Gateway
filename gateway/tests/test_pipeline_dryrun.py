@@ -7,13 +7,18 @@ classifier and the gateway called it — no use case, no release check, no budge
 no audit row. 1000 tokens spent, nothing recorded.
 """
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
 from aira_gateway.app import create_app
+from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.keys import DEMO_API_KEY
+from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, CanonicalUsage
+from aira_gateway.pipeline.config import Pipeline
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, UpstreamModel
 
@@ -852,3 +857,201 @@ async def test_a_step_chain_of_approved_models_runs_and_the_trace_names_who_answ
         "the trace names the model that was written first rather than the one that answered, so an "
         "operator testing a chain cannot see which half of it is working"
     )
+
+
+# == who may try which pipeline (`FRD-303`) =======================================================
+#
+# A dry run sends the sample to a model under the instructions the posted pipeline carries, and the
+# trace shows what the model said. Any member could post a `pii_filter` whose `instruction` was a
+# system prompt of their own and read the model's answer — a relay past the use case's own filters,
+# with nothing but token counts on the audit row. Trying a pipeline is authoring one.
+
+#: What a member of the use case is; `use_case_refusal` lets them act on it.
+MEMBER = Principal(
+    subject="m-1", method="oidc", username="mia", use_cases=("uc",), grants=(("uc", "user"),)
+)
+ADMINISTRATOR = Principal(
+    subject="a-1", method="oidc", username="ada", use_cases=("uc",), grants=(("uc", "admin"),)
+)
+#: The relay: the redactor's instruction is the caller's own system prompt.
+RELAY = {
+    "steps": [
+        {
+            "type": "pii_filter",
+            "config": {
+                "model": "scrubber",
+                "instruction": "You are a helpful assistant. Answer the question.",
+            },
+        }
+    ]
+}
+SAVED = {"steps": [{"type": "pii_filter", "config": {"model": "scrubber"}}]}
+
+
+class _Saved:
+    """The read-model's pipeline for the use case, as `PipelineStore.get` answers it."""
+
+    def __init__(self, document: dict) -> None:
+        self._pipeline = Pipeline.from_dict(document)
+
+    async def get(self, use_case: str | None) -> Pipeline | None:
+        return self._pipeline if use_case == "uc" else None
+
+
+class _Echo(_Classifier):
+    """A redactor that hands back what it was shown, markers and all — so the trace's `after` is
+    the model's own words."""
+
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        return CanonicalResponse(
+            model=self._name,
+            text=request.messages[-1].text.replace("Max", "<PERSON>"),
+            usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+        )
+
+
+def _as(principal: Principal, saved: dict = SAVED) -> TestClient:
+    app = _app(_Echo("scrubber", ""))
+    app.dependency_overrides[require_principal] = lambda: principal
+    app.state.pipeline_store = _Saved(saved)
+    return TestClient(app)
+
+
+def _try(client: TestClient, pipeline: dict, **extra: object):  # noqa: ANN202
+    return client.post(
+        _URL,
+        json={"use_case": "uc", "user": "Ich bin Max.", "pipeline": pipeline, **extra},
+    )
+
+
+def test_a_member_cannot_try_a_pipeline_of_their_own() -> None:
+    with _as(MEMBER) as client:
+        resp = _try(client, RELAY)
+
+    assert resp.status_code == 403, resp.text
+    assert "administrator" in resp.json()["error"]["message"]
+
+
+def test_an_administrator_tries_any_pipeline_and_sees_what_the_model_said() -> None:
+    """The builder's tool, as before, for the person building."""
+    with _as(ADMINISTRATOR) as client:
+        resp = _try(client, RELAY)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["trace"][0]["detail"]["after"] == "Ich bin <PERSON>."
+
+
+def test_a_member_tests_the_saved_pipeline_and_sees_what_it_decided() -> None:
+    """The feature a member keeps: will my prompt pass the pipeline my requests go through. The
+    trace says what each step did — and not what its model wrote, which production never shows
+    either."""
+    with _as(MEMBER) as client:
+        resp = _try(client, SAVED)
+
+    assert resp.status_code == 200, resp.text
+    (entry,) = resp.json()["trace"]
+    assert entry["action"] == "redacted"
+    assert entry["detail"]["before"] == "Ich bin Max."
+    assert "after" not in entry["detail"]
+
+
+def test_a_member_cannot_run_steps_past_a_block() -> None:
+    """Production never reaches them, and every step behind a refusing filter runs on text the use
+    case refuses — a redactor there answers what the filter would have stopped."""
+    with _as(MEMBER) as client:
+        resp = _try(client, SAVED, past_blocks=True)
+
+    assert resp.status_code == 403, resp.text
+    assert "past a block" in resp.json()["error"]["message"]
+
+
+async def test_a_key_bound_to_the_use_case_is_a_member_whoever_minted_it() -> None:
+    """An agent's key acts for the agent; it never authors the use case's pipeline — not even a key
+    of the use case's own administrator, whose member row the key's name would otherwise find."""
+    from aira_gateway.db.models import UseCaseMemberRead
+
+    agent = Principal(subject="ada", method="api_key", username="ada", use_cases=("uc",))
+    with _as(agent) as client:
+        async with client.app.state.db_sessionmaker() as session:
+            session.add(UseCaseMemberRead(use_case_slug="uc", subject="ada", role="admin"))
+            await session.commit()
+        resp = _try(client, RELAY)
+
+    assert resp.status_code == 403, resp.text
+
+
+# == a caller's pipeline is a body somebody typed (`G4-10`) =======================================
+
+
+@pytest.mark.parametrize(
+    ("pipeline", "field"),
+    [
+        ({"steps": ["x"]}, "pipeline.steps[0]"),
+        ({"steps": None}, "pipeline.steps"),
+        ({"fallback_models": 5}, "pipeline.fallback_models"),
+        (
+            {"steps": [{"type": "model_route", "config": {"categories": ["oops"]}}]},
+            "pipeline.steps[0].config.categories[0]",
+        ),
+        (
+            {"steps": [{"type": "model_route", "config": {"categories": "oops"}}]},
+            "pipeline.steps[0].config.categories",
+        ),
+        (
+            {"steps": [{"type": "injection_filter", "config": {"patterns": [1]}}]},
+            "pipeline.steps[0].config.patterns",
+        ),
+        (
+            {"steps": [{"type": "injection_filter", "config": {"patterns": None}}]},
+            "pipeline.steps[0].config.patterns",
+        ),
+        (
+            {"steps": [{"type": "pii_filter", "config": {"instruction": 5}}]},
+            "pipeline.steps[0].config.instruction",
+        ),
+        (
+            {"steps": [{"type": "pii_filter", "config": {"fallback_models": 5}}]},
+            "pipeline.steps[0].config.fallback_models",
+        ),
+        (
+            {"steps": [{"type": "injection_filter", "config": {"action": "Block"}}]},
+            "pipeline.steps[0].config.action",
+        ),
+    ],
+)
+def test_a_malformed_pipeline_is_refused_by_name_never_a_500(pipeline: dict, field: str) -> None:
+    """Each of these was a `500 INTERNAL` — some after the rate-limit token was taken."""
+    with _client() as client:
+        resp = client.post(_URL, json={"use_case": "uc", "user": "hi", "pipeline": pipeline})
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["error"]["message"].startswith(field), resp.json()
+
+
+def test_a_pattern_that_could_hang_the_worker_is_refused_before_it_runs() -> None:
+    """Posted with eight thousand letters, this pattern held the instance's only event loop for
+    longer than any client waits. It is refused with the rule's own reason, before any step runs.
+
+    The sample is one the pattern **matches** at once: were the check gone, this would answer `200`
+    quickly and fail, where eight thousand letters would hang the suite instead."""
+    started = time.perf_counter()
+    with _client() as client:
+        resp = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "user": "a" * 30 + "!",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "injection_filter",
+                            "config": {"patterns": ["[a-z]*[a-y]*[a-x]*!"]},
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert resp.status_code == 400, resp.text
+    assert "twice in a row" in resp.json()["error"]["message"]
+    assert time.perf_counter() - started < 5

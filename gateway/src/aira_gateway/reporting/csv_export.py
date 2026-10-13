@@ -109,5 +109,16 @@ def render(report: dict[str, Any], breakdown: str, currency: str) -> str:
                 f"the remaining {unpriced - unmetered} ran on a model with no price on file."
             ]
         )
+    partial = sum(int(row.get("partial_usage_requests") or 0) for row in rows)
+    if partial:
+        # The floor caveat, kept in the forwarded document too (`FRD-128` FR-6).
+        writer.writerow([])
+        writer.writerow(
+            [
+                f"# {partial} request(s) were left by their caller before the provider reported "
+                "what they used; they are booked at what could be established — the request and "
+                "the answer received — so the cost column is a lower bound."
+            ]
+        )
 
     return BOM + buffer.getvalue()

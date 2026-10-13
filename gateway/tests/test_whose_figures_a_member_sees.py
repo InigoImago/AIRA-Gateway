@@ -178,6 +178,49 @@ def test_a_reader_still_sees_their_own_figures_in_the_narrowest_mode() -> None:
     assert mine["cost_nanos"] == 1_000
 
 
+#: Every reader whose splits are narrowed, with somebody else whose figures they may not see.
+NARROWED = [
+    pytest.param(reader, visibility, other, id=f"{reader}-{visibility}")
+    for (reader, visibility), seen in EXPECTED.items()
+    if seen is not None
+    for other in sorted({"alice", "boss"} - seen)
+]
+
+
+@pytest.mark.parametrize(("reader", "visibility", "other"), NARROWED)
+def test_naming_a_colleague_reaches_none_of_their_figures(
+    reader: str, visibility: str, other: str
+) -> None:
+    """``person=`` narrows the **whole** report to one person — totals, every breakdown, the series.
+    For a reader who may not see that person's split, it would be the split by another route: the
+    totals of a report narrowed to a colleague *are* that colleague's requests, cost and latency.
+    So it answers what any filter outside the caller's reach answers, an empty report saying so.
+    """
+    with _client(READERS[reader]) as client:
+        _fill(client, visibility)
+        body = client.get(f"/v1beta/reporting{WINDOW}&person={other}&series=day").json()
+
+    assert body["in_scope"] is False
+    assert body["totals"]["requests"] == 0, "a colleague's totals reached a narrowed reader"
+    assert body["totals"]["cost_nanos"] == 0
+    assert body["by_model"] == []
+    assert body["series"]["points"] == []
+
+
+@pytest.mark.parametrize(("reader", "visibility", "other"), NARROWED)
+def test_naming_oneself_is_still_ones_own_figures(reader: str, visibility: str, other: str) -> None:
+    """The paired case, and the reason ``person=`` exists: a member's own card on the use-case
+    page (`FRD-626` FR-15) — by their name, or by the subject a token carries."""
+    principal = READERS[reader]
+    with _client(principal) as client:
+        _fill(client, visibility)
+        mine = client.get(f"/v1beta/reporting{WINDOW}&person={principal.subject}").json()
+
+    assert mine["in_scope"] is True
+    assert mine["totals"]["requests"] == 1
+    assert other not in {row["key"] for row in mine["by_person"]}
+
+
 def test_the_spreadsheet_carries_what_the_screen_carries() -> None:
     """The export is a renderer over the report that already exists (`FRD-602` §5.3), so it
     inherits this — asserted rather than assumed, because an export is exactly where a narrowing

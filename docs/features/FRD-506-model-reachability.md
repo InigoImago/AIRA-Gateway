@@ -53,7 +53,7 @@ first version was reported as absent)*.
 
 The button was inside `@if (name())`, so opening the editor on an empty declaration showed nothing
 at all and the check read as missing. A control that appears only once you have done something else is a control nobody
-finds. It is always present now, disabled until there is a name.
+finds. It is present now for everyone who may ask (FR-4), disabled until there is a name.
 
 And Save is unavailable until a check has been **answered** for the name in the form. The
 distinction that makes this safe:
@@ -66,6 +66,12 @@ distinction that makes this safe:
 A check that **errors** counts as looked-at: a diagnostic that cannot answer must not become a gate,
 since the gateway may be down and the catalog is Management's. **Editing is exempt** — correcting a
 price on a model that already exists is not the moment to demand a network round trip.
+
+**So is an author who may not ask.** The check is bounded by `operations.diagnose` (FR-4), and a
+role may hold `catalog.write` without it. The console offers the check — in the editor, in the
+declaration panel and as "Ask the model" — only to whoever the gateway would answer; for anybody
+else the requirement is dropped and the reason is said beside Save. A gate that can only be passed
+by a request answering 403 would lock a catalogue-only role out of adding any model.
 
 This does not contradict `FRD-114`'s "deprecation warns, revocation blocks". The verdict still only
 warns. What is required is the *asking*.

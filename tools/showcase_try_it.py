@@ -16,7 +16,6 @@ Read-only. It sends one `GET` to the catalog and changes nothing.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sys
@@ -24,21 +23,11 @@ import urllib.error
 import urllib.request
 
 import stack_addresses
+from demo_keys import key_for
 
 GATEWAY = os.environ.get("AIRA_GATEWAY_URL") or stack_addresses.url("gateway")
 CONSOLE = os.environ.get("AIRA_CONSOLE_URL") or stack_addresses.url("console")
 SLUG = "kundenservice"
-
-#: Must match `apps/seed/contributions/showcase.py`, as `tools/demo_traffic.py` does. Duplicated
-#: across a process boundary rather than imported, because this runs outside Django — and a
-#: mismatch is loud (401), not silent, which is the only reason that is acceptable.
-DEMO_KEY_SALT = "aira-showcase-demo-not-a-secret"
-
-
-def key_for(slug: str) -> str:
-    digest = hashlib.sha256(f"{DEMO_KEY_SALT}:{slug}".encode()).hexdigest()
-    return f"aira_{digest[:8]}_{digest[8:56]}"
-
 
 #: The demo's own chat model — the one the seed declares, releases to the demo use cases, and
 #: drives its traffic through. Read from the same variable the seed reads, so a demo started with

@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
-import { Observable, of } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import { ApiKey, CatalogModel, IssuedApiKey } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -33,9 +33,14 @@ interface Options {
   isMember?: boolean;
   canManage?: boolean;
   models?: unknown[];
+  /** What the use case may call. Defaults to every model in `models`. */
+  released?: string[];
   issueApiKey?: Observable<unknown>;
   confirm?: boolean;
 }
+
+/** Let the clipboard's promise settle, as the browser would before anything is painted. */
+const settle = () => new Promise((resolve) => setTimeout(resolve));
 
 /** The catalogue the page would pass: one model that declares tool calling. */
 const MODELS = [{ name: 'qwen2.5:3b', capabilities: ['generate', 'tools'] }];
@@ -52,8 +57,11 @@ function setup(options: Options = {}) {
       owner?: string | null,
     ) => {
       // The owner is appended only when one was named, so a key issued for somebody else is
-      // visibly different and the other assertions keep their meaning.
-      calls.push(`issueApiKey:${label}:${expiresInDays ?? 'never'}${owner ? `:for:${owner}` : ''}`);
+      // visibly different and the other assertions keep their meaning. An absent lifetime is the
+      // server's default, which is what `default` says.
+      calls.push(
+        `issueApiKey:${label}:${expiresInDays ?? 'default'}${owner ? `:for:${owner}` : ''}`,
+      );
       return (
         options.issueApiKey ??
         of({ api_key: 'aira_ab_cd', prefix: 'ab', label, use_case: 'demo-uc' })
@@ -77,7 +85,9 @@ function setup(options: Options = {}) {
   fixture.componentRef.setInput('keys', options.keys ?? []);
   fixture.componentRef.setInput('isMember', options.isMember ?? true);
   fixture.componentRef.setInput('canManage', options.canManage ?? true);
-  fixture.componentRef.setInput('models', (options.models ?? MODELS) as CatalogModel[]);
+  const models = (options.models ?? MODELS) as CatalogModel[];
+  fixture.componentRef.setInput('models', models);
+  fixture.componentRef.setInput('released', options.released ?? models.map((m) => m.name));
   fixture.componentRef.setInput('defaultKeyDays', 30);
   fixture.componentRef.setInput('maxKeyDays', 180);
   fixture.componentInstance.changed.subscribe(() => (changed += 1));
@@ -123,7 +133,18 @@ describe('ApiKeysPanel — issuing', () => {
     const { component, calls } = setup();
     component.keyLabel.set('laptop');
     component.issueKey();
-    expect(calls).toContain('issueApiKey:laptop:never');
+    expect(calls).toContain('issueApiKey:laptop:default');
+  });
+
+  it('sends a lifetime the server will refuse, rather than quietly issuing the default', () => {
+    // `0`, a negative number and a fraction were all turned into "omit the field": the key came
+    // back valid for the default lifetime and nothing said so. The server refuses each by name.
+    for (const typed of ['0', '-30', '0.5']) {
+      const { component, calls } = setup();
+      component.keyExpiresInDays.set(typed);
+      component.issueKey();
+      expect(calls).toContain(`issueApiKey::${Number(typed)}`);
+    }
   });
 
   it('passes the lifetime the reader typed', () => {
@@ -180,10 +201,11 @@ describe('ApiKeysPanel — the revealed key', () => {
     expect(component.copyFailed()).toBe(false);
   });
 
-  it('tells the user to copy manually when the clipboard is unavailable', () => {
+  it('tells the user to copy manually when the clipboard is unavailable', async () => {
     const { component } = setup();
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
     component.copyKey('aira_ab_cd');
+    await settle();
     expect(component.copyFailed()).toBe(true);
     expect(component.copied()).toBe(false);
   });
@@ -242,16 +264,17 @@ describe('ApiKeysPanel rendering', () => {
     expect(harness.html().querySelector('.secret')?.textContent).toContain('aira_ab_cd');
   });
 
-  it('explains a blocked clipboard next to the key', () => {
+  it('explains a blocked clipboard next to the key', async () => {
     const harness = setup();
     harness.component.issueKey();
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
     harness.component.copyKey('aira_ab_cd');
+    await settle();
     harness.fixture.detectChanges();
     expect(harness.text()).toContain('copy it manually');
   });
 
-  it('revokes a key from its row button and copies the revealed one', () => {
+  it('revokes a key from its row button and copies the revealed one', async () => {
     const harness = setup({ keys: [{ prefix: 'ab12', label: '', owner: 'a', is_active: true }] });
     click(harness.fixture, '[aria-label="Revoke key ab12"]');
     expect(harness.calls).toContain('revokeApiKey:ab12');
@@ -260,6 +283,7 @@ describe('ApiKeysPanel rendering', () => {
     harness.fixture.detectChanges();
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
     click(harness.fixture, '.callout--warning .btn--primary');
+    await settle();
     expect(harness.component.copyFailed()).toBe(true);
 
     click(harness.fixture, '.callout--warning .btn--ghost');
@@ -305,6 +329,42 @@ describe('ApiKeysPanel — accountability for a key', () => {
     // True of a shared credential as well: it claims responsibility for the key, never that its
     // owner wrote the request.
     expect(notice?.textContent).toContain('anything you hand it to');
+  });
+
+  it("names the owner instead when the key is issued on somebody else's behalf", async () => {
+    // `FRD-604` FR-5: issued for a technical account, the key is the account's to answer for, and
+    // "recorded under your name" would be a false statement about accountability.
+    const harness = setup();
+    click(harness.fixture, '[data-testid="issue-key"]');
+    // The form registers its fields a tick later; typing before that types into nothing.
+    await harness.fixture.whenStable();
+    const owner = harness.html().querySelector<HTMLInputElement>('#key-owner')!;
+    owner.value = 'svc-chatbot';
+    owner.dispatchEvent(new Event('input'));
+    harness.fixture.detectChanges();
+
+    const notice = harness.html().querySelector('[data-testid="key-responsibility"]');
+    expect(notice?.textContent).toContain('svc-chatbot');
+    expect(notice?.textContent).not.toContain('your name');
+  });
+
+  it('says whose it is beside the plaintext of a key issued for somebody else', () => {
+    const harness = setup({
+      issueApiKey: of({
+        api_key: 'aira_ab12_secret',
+        prefix: 'ab12',
+        label: '',
+        use_case: 'demo-uc',
+        owner: 'svc-chatbot',
+        issued_by: 'vadim',
+      }),
+    });
+    harness.component.issueKey();
+    harness.fixture.detectChanges();
+
+    const notice = harness.html().querySelector('[data-testid="key-issued-responsibility"]');
+    expect(notice?.textContent).toContain('svc-chatbot');
+    expect(notice?.textContent).not.toContain('recorded as yours');
   });
 
   it('repeats it beside the plaintext, which is the last moment anybody reads it', () => {
@@ -387,6 +447,32 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
     expect(config.model).toContain('aira/');
   });
 
+  it('names only what this use case may call, so the first request is not refused', () => {
+    // The catalogue's first tool model was the default even when it was not released here, and
+    // the gateway refuses an unreleased model by name (`FRD-308`).
+    const harness = setup({
+      models: [
+        { name: 'claude-sonnet-4-5', capabilities: ['tools'] },
+        { name: 'gemini-2.5-flash', capabilities: ['tools'] },
+        { name: 'unapproved', approved: false, capabilities: ['tools'] },
+      ],
+      released: ['gemini-2.5-flash', 'unapproved'],
+    });
+    harness.component.issueKey();
+    const config = JSON.parse(harness.component.openCodeConfig(harness.component.issued()!));
+
+    expect(Object.keys(config.provider.aira.models)).toEqual(['gemini-2.5-flash']);
+    expect(config.model).toBe('aira/gemini-2.5-flash');
+  });
+
+  it('defaults to a released model before a name nobody released', () => {
+    const harness = setup({ models: [{ name: 'prose-only', capabilities: ['generate'] }] });
+    harness.component.issueKey();
+    const config = JSON.parse(harness.component.openCodeConfig(harness.component.issued()!));
+
+    expect(config.model).toBe('aira/prose-only');
+  });
+
   it('does not offer a model whose catalog entry declares no capabilities', () => {
     // `FRD-114`: undeclared means unsupported.
     const config = configFor([
@@ -397,13 +483,14 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
     expect(Object.keys(config.provider.aira.models)).toEqual(['qwen2.5:3b']);
   });
 
-  it('says so when the clipboard will not take the configuration', () => {
+  it('says so when the clipboard will not take the configuration', async () => {
     // The file is still downloadable, so the button reports why rather than appearing to work.
     const { component } = setup();
     component.issueKey();
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
 
     component.copyOpenCodeConfig(component.issued()!);
+    await settle();
 
     expect(component.copyFailed()).toBe(true);
     expect(component.configCopied()).toBe(false);
@@ -418,8 +505,7 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
     });
 
     component.copyOpenCodeConfig(component.issued()!);
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
 
     expect(component.copyFailed()).toBe(true);
   });
@@ -439,7 +525,7 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
     });
 
     component.copyOpenCodeConfig(component.issued()!);
-    await Promise.resolve();
+    await settle();
 
     expect(component.configCopied()).toBe(true);
     expect(written).toContain('aira_ab_cd');
@@ -502,5 +588,88 @@ describe('ApiKeysPanel — the budget plugin', () => {
     const hint = html().querySelector('[data-testid="budget-plugin-hint"]');
     expect(hint?.textContent).toContain('.opencode/plugin/');
     expect(hint?.textContent).toContain('no credential');
+  });
+});
+
+describe('ApiKeysPanel — keys that ran out, refusals, and the secret', () => {
+  it('shows a lapsed key as expired, not as active, and offers no revoke for it', () => {
+    // `is_active` stays true after `expires_at` passes: the list showed "active · 2026-09-01" on a
+    // credential that works nowhere, and an auditor reads that as a live key.
+    const harness = setup({
+      keys: [
+        {
+          prefix: 'old1',
+          label: '',
+          owner: 'a',
+          is_active: true,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+        {
+          prefix: 'new1',
+          label: '',
+          owner: 'a',
+          is_active: true,
+          expires_at: '2099-01-01T00:00:00Z',
+        },
+      ],
+    });
+
+    const rows = [...harness.html().querySelectorAll('tbody tr')];
+    expect(rows[0].querySelector('[data-testid="key-expired"]')?.textContent).toContain('expired');
+    expect(rows[0].textContent).not.toContain('active');
+    expect(rows[1].textContent).toContain('active');
+    expect(harness.html().querySelector('[aria-label="Revoke key old1"]')).toBeNull();
+    expect(harness.html().querySelector('[aria-label="Revoke key new1"]')).not.toBeNull();
+  });
+
+  it('says why an issue was refused inside the window, where the reader is looking', () => {
+    // The reason went only to the page banner, behind the backdrop: the button flickered back to
+    // "Issue" and nothing visible changed.
+    const harness = setup({
+      issueApiKey: throwError(() => ({
+        status: 400,
+        error: { error: { message: 'svc-nobody has no access to this use case.' } },
+      })),
+    });
+    click(harness.fixture, '[data-testid="issue-key"]');
+    harness.component.issueKey();
+    harness.fixture.detectChanges();
+
+    const said = harness.html().querySelector('[data-testid="key-editor-error"]');
+    expect(said?.textContent).toContain('svc-nobody has no access');
+    expect(said?.closest('[data-testid="key-editor"]')).not.toBeNull();
+  });
+
+  it('starts the window without an earlier failure that is not its own', () => {
+    const harness = setup();
+    harness.component.feedback.fail({ status: 500 }, 'Could not load the members.');
+    click(harness.fixture, '[data-testid="issue-key"]');
+
+    expect(harness.html().querySelector('[data-testid="key-editor-error"]')).toBeNull();
+  });
+
+  it('announces the instruction, not the secret', () => {
+    // An assertive live region around the plaintext has a screen reader read the key aloud, in a
+    // shared office or on a recorded call.
+    const harness = setup();
+    harness.component.issueKey();
+    harness.fixture.detectChanges();
+
+    const secret = harness.html().querySelector('.secret')!;
+    expect(secret.closest('[role="alert"]')).toBeNull();
+    expect(harness.html().querySelector('[role="alert"]')?.textContent).toContain(
+      'shown only once',
+    );
+  });
+});
+
+describe('ApiKeysPanel — an issue in flight', () => {
+  it('issues one key however often Issue is pressed before the answer', () => {
+    // Two presses on a slow server would mint two credentials, of which the reader sees one.
+    const harness = setup({ issueApiKey: new Subject<IssuedApiKey>() });
+    harness.component.issueKey();
+    harness.component.issueKey();
+
+    expect(harness.calls.filter((call) => call.startsWith('issueApiKey')).length).toBe(1);
   });
 });

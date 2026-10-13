@@ -40,6 +40,15 @@ FEATURE = "upstream reachability"
 _log = get_logger("aira_gateway.diagnostics")
 
 
+def describe_failure(exc: BaseException) -> str:
+    """What a failed remote question says about itself wherever its answer is shown: the exception's
+    type, never its message — an HTTP client's error text carries the URL it called, and Google AI
+    Studio's carries the installation's key in it (`?key=`). The model check reports through this
+    too, so the two cannot decide it differently.
+    """
+    return type(exc).__name__
+
+
 @dataclass(frozen=True, slots=True)
 class Verdict:
     """What the last probe found for one provider, and when."""
@@ -136,7 +145,7 @@ class UpstreamProbe:
             return Verdict(
                 name,
                 False,
-                f"{type(exc).__name__}: {exc}"[:120],
+                describe_failure(exc),
                 self._now(),
                 took_seconds=round(self._now() - start, 3),
             )

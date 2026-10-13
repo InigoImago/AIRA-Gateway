@@ -5,9 +5,11 @@ the same reason: Management is the authority and publishes over Kafka, that path
 and what a measurement needs is the rows in place. Nothing here is a claim about how an
 installation is configured.
 
-Every row this writes carries the `lt-` prefix, and `--clean` removes exactly those — including the
-request logs, because a load run's rows left in the audit trail are a lie about what the
-installation did.
+Every use case this writes carries the `lt-` prefix, and `--clean` removes exactly the ones it
+seeds — including their request logs, because a load run's rows left in the audit trail are a lie
+about what the installation did. Exactly those and nothing that merely looks like them: a real use
+case called `lt-…` is somebody's audit trail, and a counter keyed `uc:default-assistant` contains
+`lt-` without being the load test's.
 
     uv run python -m tools.loadtest.seed            # create or refresh
     uv run python -m tools.loadtest.seed --clean    # remove everything it made
@@ -22,14 +24,15 @@ import json
 import uuid
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from tools.loadtest.models import CHAT_MODELS, EMBEDDING_MODELS, PROVIDER
 
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine
+from aira_gateway.scopes import Scope
 
-#: Everything this module writes begins with it, so the cleanup is a prefix match and not a list
-#: somebody has to keep current.
+#: Every use case this module writes begins with it, so a load run's rows are recognisable at a
+#: glance. The cleanup does not match on it — see `clean`.
 PREFIX = "lt-"
 
 #: The heaviest single request a load run sends: one embedding batch. A rate limit whose burst is
@@ -327,29 +330,45 @@ async def create(connection: Any) -> None:
         print(f"seeded {workload.slug}: {workload.people} keys, budget and rate limit enabled")
 
 
+def _counters(slugs: list[str]) -> tuple[str, dict[str, Any]]:
+    """The `budget_usage` rows of `slugs`, as a condition and its parameters.
+
+    The table is keyed by a **scope key**, not by a use case: `uc:<slug>` for a use case's own
+    bucket and `member:<slug>:<person>` for a person's (`FRD-400`). Both are built by the gateway's
+    own `Scope`, and matched whole or by their exact `member:<slug>:` start — `substr` rather than
+    `LIKE`, whose `_` is a wildcard and which a slug may contain.
+    """
+    parameters: dict[str, Any] = {"keys": [Scope(slug).usage_key for slug in slugs]}
+    clauses = ["scope_key IN :keys"]
+    for index, slug in enumerate(slugs):
+        start = Scope(slug, "").usage_key
+        parameters[f"member{index}"] = start
+        clauses.append(f"substr(scope_key, 1, {len(start)}) = :member{index}")
+    return " OR ".join(clauses), parameters
+
+
 async def clean(connection: Any) -> None:
-    like = f"{PREFIX}%"
+    """Remove what `create` made, and only that: the use cases in `WORKLOADS`, by exact slug."""
+    slugs = sorted(BY_SLUG)
+    counters, counter_parameters = _counters(slugs)
+    by_slug = {"slugs": slugs}
     for statement, params in (
-        ("DELETE FROM request_logs WHERE use_case LIKE :like", {"like": like}),
-        # `budget_usage` is keyed by a **scope key**, not by a use case: `uc:<slug>` for a use
-        # case's own bucket and `member:<slug>:<subject>` for a person's (`FRD-400`). Matching the
-        # column name that every other table here uses fails with `UndefinedColumn`, which is the
-        # cheap version of this mistake — the expensive one is a pattern that matches nothing and
-        # leaves a run's spend counted against a bucket forever.
-        ("DELETE FROM budget_usage WHERE scope_key LIKE :key", {"key": f"%{PREFIX}%"}),
-        ("DELETE FROM budgets WHERE use_case LIKE :like", {"like": like}),
-        ("DELETE FROM rate_limits WHERE use_case LIKE :like", {"like": like}),
-        ("DELETE FROM use_case_members WHERE use_case_slug LIKE :like", {"like": like}),
-        ("DELETE FROM api_keys WHERE use_case LIKE :like", {"like": like}),
-        ("DELETE FROM pipeline_configs WHERE use_case LIKE :like", {"like": like}),
-        ("DELETE FROM access_suspensions WHERE use_case LIKE :like", {"like": like}),
-        ("DELETE FROM use_cases WHERE slug LIKE :like", {"like": like}),
+        ("DELETE FROM request_logs WHERE use_case IN :slugs", by_slug),
+        (f"DELETE FROM budget_usage WHERE {counters}", counter_parameters),
+        ("DELETE FROM budgets WHERE use_case IN :slugs", by_slug),
+        ("DELETE FROM rate_limits WHERE use_case IN :slugs", by_slug),
+        ("DELETE FROM use_case_members WHERE use_case_slug IN :slugs", by_slug),
+        ("DELETE FROM api_keys WHERE use_case IN :slugs", by_slug),
+        ("DELETE FROM pipeline_configs WHERE use_case IN :slugs", by_slug),
+        ("DELETE FROM access_suspensions WHERE use_case IN :slugs", by_slug),
+        ("DELETE FROM use_cases WHERE slug IN :slugs", by_slug),
         (
             "DELETE FROM model_catalog WHERE provider = :provider",
             {"provider": PROVIDER},
         ),
     ):
-        result = await connection.execute(text(statement), params)
+        lists = [bindparam(name, expanding=True) for name in ("slugs", "keys") if name in params]
+        result = await connection.execute(text(statement).bindparams(*lists), params)
         print(f"{statement.split(' FROM ')[1].split(' ')[0]:<20} removed {result.rowcount}")
 
 

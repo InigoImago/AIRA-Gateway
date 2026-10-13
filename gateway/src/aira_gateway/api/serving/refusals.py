@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
+from aira_gateway.api.serving.controls import UseCaseRetired
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import Outcome
 from aira_gateway.budgets.errors import BudgetExceeded
@@ -54,11 +55,14 @@ UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
 #: or 403 concerns *our* credentials, stays a generic 502, and keeps its detail in the log.
 UPSTREAM_REFUSED = (400, "FAILED_PRECONDITION")
 
-#: A `GeminiHTTPError`'s status, as an audit outcome. Anything unmapped is an invalid request.
+#: A `GeminiHTTPError`'s status, as an audit outcome, for the refusals with no type of their own.
+#: Anything unmapped is an invalid request.
 _REFUSAL_OUTCOMES: dict[int, Outcome] = {
     404: Outcome.MODEL_NOT_FOUND,
     400: Outcome.INVALID_REQUEST,
-    403: Outcome.BLOCKED_BY_PIPELINE,
+    # The model stopped before the document was complete (`answers.check_structured_result`): the
+    # request broke while it was being served, which is not the caller's mistake.
+    502: Outcome.UPSTREAM_ERROR,
 }
 
 
@@ -81,10 +85,29 @@ def upstream_error(exc: UpstreamError) -> JSONResponse:
     return _error(code, exc.message, status)
 
 
+def stream_failure_status(exc: Exception) -> int:
+    """The status recorded for a stream that broke off after its own status had gone out.
+
+    Nobody is sent it — the caller already has a `200` — so it is decided here, alike on every
+    surface: the upstream's status where the upstream failed (as `upstream_error` renders it), a
+    refusal's own where it carries one, and `502` for anything else that stopped the stream.
+    """
+    if isinstance(exc, UpstreamError):
+        return upstream_status(exc.status_code)[0]
+    if isinstance(exc, GeminiHTTPError):
+        return exc.code
+    return 502
+
+
 def refusal_outcome(exc: Exception) -> Outcome:
     # Before `RateLimited`: "stopped on purpose" and "going too fast" are different answers.
     if isinstance(exc, Suspended):
         return Outcome.SUSPENDED
+    if isinstance(exc, UseCaseRetired):
+        # Not a pipeline block: the pipeline never ran, and `blocked_by_pipeline` feeds the
+        # blocked-prompt anomaly rule. The closed vocabulary has no word for retirement, and the
+        # request names a use case that no longer serves — the caller's to correct.
+        return Outcome.INVALID_REQUEST
     if isinstance(exc, AttachmentRejected | ThinkingRejected | SchemaRejected | EmbeddingRejected):
         return Outcome.INVALID_REQUEST
     if isinstance(exc, NoCapableModel | AmbiguousModel | RegionNotAllowed):

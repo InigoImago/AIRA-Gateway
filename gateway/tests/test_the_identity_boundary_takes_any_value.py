@@ -19,7 +19,6 @@ from aira_common.access import GrantRole, resolve, strongest, usecases_from_grou
 from aira_common.roles import (
     Role,
     RoleMappingError,
-    is_governance,
     parse_role_groups,
     roles_from_groups,
 )
@@ -179,9 +178,12 @@ class _Verifier:
 
 
 def _principal(claims: dict[str, object] | None, **kwargs: object):
+    import jwt
+
     validator = OidcValidator("iss", "aud", jwks=None, **kwargs)  # type: ignore[arg-type]
     validator._verifiers = (("iss", _Verifier(claims)),)  # type: ignore[attr-defined]
-    return validator.validate("t")
+    # Naming the configured issuer, which is all routing reads; the stand-in verifies the rest.
+    return validator.validate(jwt.encode({"iss": "iss"}, None, algorithm="none"))
 
 
 def test_a_token_with_no_subject_authenticates_nobody() -> None:
@@ -212,17 +214,31 @@ def test_a_numeric_subject_is_carried_as_a_string() -> None:
         (None, None),
         (12345, None),
         (["ada"], None),
-        ("a" * 300, "a" * 150),
+        ("a" * 150, "a" * 150),
+        ("a" * 300, "s"),
     ],
-    ids=["name", "blank", "empty", "absent", "number", "list", "too-long"],
+    ids=["name", "blank", "empty", "absent", "number", "list", "longest", "too-long"],
 )
 def test_the_name_a_token_carries(claimed: object, expected: str | None) -> None:
     """Bounded and typed at the door. The name reaches a stored column, a budget key and a
     membership comparison — three places where a 300-character value is a `DataError` on Postgres
-    and silently fine on SQLite."""
+    and silently fine on SQLite. Longer than the column, it is not cut to fit: the subject stands in
+    for it, which is what Management names that person's account (`safe_username`)."""
     principal = _principal({"sub": "s", "preferred_username": claimed})
     assert principal is not None
     assert principal.username == expected
+
+
+def test_two_names_alike_for_the_length_of_the_column_stay_two_people() -> None:
+    """The name is matched against grants, allowances and suspensions. Cut to the column, every
+    name sharing its first 150 characters became one person — self-registered, a namesake
+    inherited the direct grants of whoever's name it extended."""
+    member = "m" * 150
+    namesake = _principal({"sub": "newcomer", "preferred_username": member + "x"})
+
+    assert namesake is not None
+    assert namesake.username != member
+    assert namesake.person == "newcomer"
 
 
 @pytest.mark.parametrize(
@@ -359,7 +375,7 @@ def test_a_realm_role_claim_confers_nothing() -> None:
     principal = _principal({"sub": "s", "realm_access": {"roles": ["global-admin"]}})
     assert principal is not None
     assert principal.roles == ()
-    assert not is_governance(principal.roles)
+    assert principal.permissions == frozenset()
 
 
 # ═══ 5. what a grant resolves to ════════════════════════════════════════════════════════════════

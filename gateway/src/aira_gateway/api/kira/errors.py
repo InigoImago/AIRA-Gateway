@@ -61,12 +61,18 @@ class KiraError(Exception):
 
 
 def kira_error_response(
-    status: int, code: str, message: str, details: list[Any] | None = None
+    status: int,
+    code: str,
+    message: str,
+    details: list[Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    """The envelope. ``headers`` carries what a client needs to act on the refusal — `Retry-After`
+    on a rate limit, without which its only option is the immediate retry the limit stops."""
     body: dict[str, Any] = {"code": code, "message": message}
     if details:
         body["details"] = details
-    return JSONResponse(status_code=status, content=body)
+    return JSONResponse(status_code=status, content=body, headers=headers)
 
 
 def code_for_status(status: int) -> str:

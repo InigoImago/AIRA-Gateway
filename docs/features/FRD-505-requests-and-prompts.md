@@ -103,7 +103,8 @@ reads (`GET /v1beta/content-reads`).
 **FR-7 — Three absences are three answers.** "This use case does not store payloads", "they were
 stored and have expired" and "this request never reached a model" are different facts about the
 installation, and two of them are somebody's to change. One message for all three teaches the reader
-to distrust the screen.
+to distrust the screen. A model call the gateway made itself — a pipeline step's, a model check —
+keeps no text by design and says so (`never_kept`) rather than claiming retention removed it.
 
 ## 4. What the walkthroughs found
 

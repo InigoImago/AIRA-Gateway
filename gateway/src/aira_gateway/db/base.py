@@ -1,7 +1,8 @@
 """SQLAlchemy async engine and session plumbing for the gateway (`FRD-101`).
 
-The schema is owned by the Alembic migrations. :func:`create_all` is for SQLite — the tests, demo
-mode and the CLI — which has no migration history to disagree with.
+The schema is owned by the Alembic migrations. :func:`create_all` is for an in-memory SQLite
+database — the hermetic tests, and the application or CLI started on one — which has no migration
+history to disagree with. It refuses any other database.
 """
 
 from __future__ import annotations
@@ -44,20 +45,30 @@ def new_id() -> str:
 #: before the first statement on every connection in the pool, including one the pool re-opens.
 _UTC_SESSION = {"options": "-c timezone=UTC"}
 
+#: What every engine is built with, whatever it connects to: its errors name the statement and not
+#: the values bound into it. SQLAlchemy writes those values into the text of a database error, and
+#: the places that log one log that text — a failed audit row would carry a subject, an address and
+#: the start of a prompt and its answer into a log that has no retention clock and no role gate
+#: (`FRD-406`), and a failed configuration event the values the consumer logs by name only.
+_ENGINE_OPTIONS: dict[str, Any] = {"hide_parameters": True}
+
 
 def build_engine(url: str) -> AsyncEngine:
     """Create an async engine; in-memory SQLite shares one connection across sessions."""
     if url.startswith("sqlite"):
         engine = create_async_engine(
-            url, poolclass=StaticPool, connect_args={"check_same_thread": False}
+            url,
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+            **_ENGINE_OPTIONS,
         )
     elif url.startswith("postgresql"):
-        engine = create_async_engine(url, connect_args=_UTC_SESSION)
+        engine = create_async_engine(url, connect_args=_UTC_SESSION, **_ENGINE_OPTIONS)
     else:
         # A store this project does not configure. It gets no option it may not understand: libpq's
         # `options` is a Postgres keyword, and a connection refused for an unknown argument would be
         # a worse answer than an unpinned session.
-        engine = create_async_engine(url)
+        engine = create_async_engine(url, **_ENGINE_OPTIONS)
     watch_connections(engine)
     return engine
 
@@ -100,6 +111,16 @@ def build_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 async def create_all(engine: AsyncEngine) -> None:
-    """Create every table from the models, bypassing the migrations."""
+    """Create every table from the models, bypassing the migrations — on SQLite only.
+
+    Alembic owns the schema of any real database: `create_all` from an image older or newer than
+    its migrations resurrects a table a migration dropped, or creates one the next migration then
+    fails on (`FRD-114`). Refused here rather than left to each caller to remember.
+    """
+    if engine.dialect.name != "sqlite":
+        raise ValueError(
+            f"create_all builds the schema on SQLite only; the {engine.dialect.name} database's "
+            "schema belongs to the migrations (alembic upgrade head)."
+        )
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)

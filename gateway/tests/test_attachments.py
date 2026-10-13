@@ -12,6 +12,7 @@ An error is recoverable. A confident wrong answer is not.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +23,7 @@ from sqlalchemy import select
 
 from aira_gateway.app import create_app
 from aira_gateway.attachments import (
+    MAX_PARTS,
     AttachmentRejected,
     Limits,
     check_bounds,
@@ -257,6 +259,36 @@ async def test_invalid_base64_is_refused_rather_than_truncated() -> None:
     assert "base64" in response.json()["error"]["message"]
 
 
+#: A PNG whose bytes fall on the two letters the base64 alphabets disagree about.
+URL_SAFE_PNG = b"\x89PNG\r\n\x1a\n" + b"\xfb\xff\xfe\xff" * 8
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        base64.b64encode(URL_SAFE_PNG).decode(),
+        base64.urlsafe_b64encode(URL_SAFE_PNG).decode(),
+        base64.urlsafe_b64encode(URL_SAFE_PNG).decode().rstrip("="),
+        base64.b64encode(URL_SAFE_PNG).decode().rstrip("="),
+    ],
+    ids=["standard", "url-safe", "url-safe-unpadded", "standard-unpadded"],
+)
+def test_either_alphabet_decodes_padded_or_not(encoded: str) -> None:
+    """Google's API reads bytes in the standard or the URL-safe alphabet, with or without padding
+    (proto3 JSON), and the google-genai SDK sends URL-safe — so a decoder that knew one alphabet
+    refused practically every image an SDK user attached. Stray characters stay refused."""
+    assert "-" in base64.urlsafe_b64encode(URL_SAFE_PNG).decode(), "the case proves nothing"
+
+    assert decode(encoded, index=0) == URL_SAFE_PNG
+    assert strip_attachments({"parts": [{"mime_type": "image/png", "data": encoded}]})["parts"][0][
+        "data"
+    ] == {
+        "kind": "data",
+        "bytes": len(URL_SAFE_PNG),
+        "sha256": hashlib.sha256(URL_SAFE_PNG).hexdigest(),
+    }
+
+
 async def test_a_media_type_outside_the_allow_list_is_refused() -> None:
     app = _app()
     with TestClient(app) as client:
@@ -282,6 +314,37 @@ async def test_a_mislabelled_upload_is_refused() -> None:
 
     assert response.status_code == 400
     assert "does not look like" in response.json()["error"]["message"]
+
+
+#: A WAV file: a RIFF container, like WebP, of a different kind.
+WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 16
+WEBP = b"RIFF\x24\x00\x00\x00WEBPVP8 " + b"\x00" * 16
+HEIC = b"\x00\x00\x00\x18ftypheic" + b"\x00" * 16
+
+
+@pytest.mark.parametrize(
+    ("media_type", "data", "accepted"),
+    [
+        ("image/webp", WEBP, True),
+        ("image/webp", WAV, False),
+        ("image/heic", HEIC, True),
+        ("image/heif", HEIC, True),
+        ("image/heic", b"\x00\x00\x00" + b"anything at all", False),
+    ],
+    ids=["webp", "wav-as-webp", "heic", "heif", "three-nul-bytes-as-heic"],
+)
+def test_a_container_format_is_recognised_by_its_kind_not_its_wrapper(
+    media_type: str, data: bytes, accepted: bool
+) -> None:
+    """`RIFF` is a container, and WAV and AVI are RIFF too; three NUL bytes begin any file whose
+    first box is short. Sniffed on those alone, a WAV labelled `image/webp` reached a vision model
+    and failed there, as the provider's error. WebP names itself at byte 8, and an ISO media file
+    (HEIC, HEIF) carries `ftyp` at byte 4."""
+    if accepted:
+        check_signature(media_type, data, index=0)
+    else:
+        with pytest.raises(AttachmentRejected, match="does not look like"):
+            check_signature(media_type, data, index=0)
 
 
 def test_the_signature_check_stays_out_of_the_way_for_text_formats() -> None:
@@ -330,6 +393,32 @@ def test_each_bound_is_enforced_at_its_boundary() -> None:
         check_bounds([100, 51], limits)
     with pytest.raises(AttachmentRejected, match="at most 2"):
         check_bounds([1, 1, 1], limits)
+
+
+@pytest.mark.parametrize("surface", ["gemini", "kira"])
+async def test_each_surface_refuses_more_attachments_than_a_request_may_carry(surface: str) -> None:
+    """The count and size bounds were applied in the Gemini parser only: the same request on the
+    compatibility surface was served — hundreds of attachments, each decoded, hashed, forwarded
+    and reserved for. Asked once, for both, of a model that would otherwise read every one."""
+    too_many = MAX_PARTS + 1
+    if surface == "gemini":
+        url = "/v1beta/models/mock-1:generateContent"
+        part = {"inlineData": {"mimeType": "application/pdf", "data": _b64(PDF)}}
+        body: dict[str, Any] = {"contents": [{"role": "user", "parts": [part] * too_many}]}
+    else:
+        url = "/kira/api/external/chat"
+        part = {"mime_type": "application/pdf", "data": _b64(PDF)}
+        body = {"request": {"parts": [part] * too_many}, "model_id": 4711}
+    app = _app()
+    with TestClient(app) as client:
+        await _declare(app, "mock-1", numeric_id=4711, **_READS_PDF)
+        response = client.post(url, json=body)
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    assert response.status_code == 400, response.text
+    assert f"at most {MAX_PARTS} attachments" in response.text
+    assert [row.outcome for row in rows] == ["invalid_request"]
 
 
 def test_bounds_are_counted_across_the_request_not_per_message() -> None:

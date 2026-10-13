@@ -8,6 +8,7 @@ reader redacts a shorter list than another.
 from __future__ import annotations
 
 import logging
+from urllib.parse import unquote_plus
 
 #: What a credential is replaced with.
 REDACTED = "REDACTED"
@@ -27,14 +28,16 @@ def redact_query_string(query: str) -> str:
     """Return ``query`` with the values of credential-bearing parameters replaced.
 
     Order and unknown parameters are preserved, so the result stays useful for debugging
-    (e.g. ``alt=sse&key=REDACTED``).
+    (e.g. ``alt=sse&key=REDACTED``). A name is compared **decoded**, as the server reads it: the
+    frameworks percent-decode a parameter's name, so `?%6Bey=` authenticates exactly as `?key=`
+    does and is a credential in the same place. It is written back as it arrived.
     """
     if not query:
         return query
     parts: list[str] = []
     for pair in query.split("&"):
         name, separator, _value = pair.partition("=")
-        if separator and name.lower() in SENSITIVE_QUERY_PARAMS:
+        if separator and unquote_plus(name).lower() in SENSITIVE_QUERY_PARAMS:
             parts.append(f"{name}={REDACTED}")
         else:
             parts.append(pair)
@@ -45,8 +48,8 @@ def redact_url_query(value: str) -> str:
     """Return ``value`` — a URL or a request line — with credential-bearing parameters replaced.
 
     The one definition for the access log, the inbound server span
-    (`gateway/app.redact_span_query`) and the outbound client span
-    (`gateway/telemetry.redact_client_span_url`, `FRD-117` FR-5).
+    (`gateway/app.redact_span_query`) and every span attribute in either direction
+    (`gateway/telemetry.redact_span_urls`, `FRD-117` FR-5).
     """
     if "?" not in value:
         return value

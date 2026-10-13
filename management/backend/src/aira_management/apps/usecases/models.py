@@ -21,6 +21,12 @@ DEFAULT_RETENTION_DAYS = 7
 #: Prompts are unaffected — they follow the use case's own `retention_days` either way.
 PURGE_AFTER_DAYS = 30
 
+#: The longest description or processing note a use case may carry. Generous for prose, and
+#: finite because both travel in every `usecase.upserted` event: the event channel carries about a
+#: megabyte, and JSON escapes one character into as many as twelve bytes, so two notes at this
+#: bound still leave the event well inside it (`apps.outbox.subscriber`).
+MAX_PROSE_LENGTH = 20_000
+
 #: `\Z`, not `$`, which also matches before a trailing newline. The slug is a primary key on the
 #: other plane — emitted over Kafka, a group-path suffix, printed into every audit row (`FRD-613`).
 slug_validator = RegexValidator(
@@ -29,11 +35,26 @@ slug_validator = RegexValidator(
 )
 
 
+class UseCaseQuerySet(models.QuerySet["UseCase"]):
+    def live(self) -> UseCaseQuerySet:
+        """Every use case that has not been retired — the one place that filter is written.
+
+        A soft delete some queries honour and others do not shows a retired use case on exactly the
+        screens nobody audited, so every route that reaches use cases or what hangs off them asks
+        this, never `deleted_at` itself (`FRD-607`). Purged rows are gone and need no filter.
+        """
+        return self.filter(deleted_at__isnull=True)
+
+    def retired(self) -> UseCaseQuerySet:
+        """The tombstones: retired, and not yet purged."""
+        return self.filter(deleted_at__isnull=False)
+
+
 class UseCase(models.Model):
     slug = models.CharField(max_length=64, unique=True, validators=[slug_validator])
     name = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
-    processing_notes = models.TextField(blank=True)
+    description = models.TextField(blank=True, max_length=MAX_PROSE_LENGTH)
+    processing_notes = models.TextField(blank=True, max_length=MAX_PROSE_LENGTH)
     store_payloads = models.BooleanField(
         default=True,
         help_text="Store prompts and responses at all. Off means nothing is written.",
@@ -141,6 +162,8 @@ class UseCase(models.Model):
     deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)
     #: Who retired it. A string, not a foreign key: the record has to outlive the account.
     deleted_by = models.CharField(max_length=150, blank=True)
+
+    objects = UseCaseQuerySet.as_manager()
 
     class Meta:
         ordering = ["slug"]

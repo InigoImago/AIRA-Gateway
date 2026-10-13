@@ -21,8 +21,10 @@ Five rules, each one a thing that actually happened or would:
 2. There is a **subject** line.
 3. The subject is not a **restatement of the version**. `Release v0.1.0` is what the old mechanism
    wrote by itself, and it is indistinguishable from having written nothing.
-4. There is a **body** after a blank line. A subject alone is a headline; the body is where the
-   reader finds out what changed and whether it affects them.
+4. There is a **body** under the subject — everything after its first line. A subject alone is a
+   headline; the body is where the reader finds out what changed and whether it affects them. The
+   blank line between them is the convention the template and the refusal ask for, not a rule
+   this checks: the title and the notes are split at the first line either way.
 5. No **placeholder** from `docs/RELEASE-TEMPLATE.txt` survives. The template is what
    `make release-tag` opens an editor on, and its sections are the ones a reader needs — so a
    release that still carries the prompts has the right shape and nothing in it, and rules 2 to 4

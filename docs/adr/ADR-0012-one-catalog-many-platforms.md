@@ -194,6 +194,11 @@ of this deployment showed two requests already processed there before it was rem
 stated rather than hidden: a model reachable only at `global` is not usable under an EU
 requirement, and `gemini-3.5-flash` is one of them today.
 
+**Unless it is permitted by name** (added 2026-10-13, `ADR-0034`). Agent Platform's open models
+answer only at `global`; an installation that decides to use one permits that region for that model
+in `AIRA_ALLOWED_MODEL_REGIONS`, and the list goes on refusing `global` for every other model —
+`gemini-3.5-flash` included.
+
 ## Consequences
 
 - Positive: a use-case administrator reasons in one vocabulary. "This chain can handle documents;

@@ -21,6 +21,18 @@ TOO_DEEP = f"<unrepresentable: nested deeper than {MAX_STORED_DEPTH} levels>"
 NOT_AN_OBJECT_KEY = "payload"
 
 
+def printable(value: str) -> str:
+    """``value`` without control characters.
+
+    Postgres refuses a NUL in any text column, so one in a caller's value costs the row it is in;
+    SQLite stores it, which is why the hermetic suite cannot see that. The rest of the C0 range
+    goes with it: no identifier or one-line text a person reads is better for a control character.
+    """
+    return "".join(
+        character for character in value if ord(character) >= 0x20 and ord(character) != 0x7F
+    )
+
+
 def within_depth(value: Any, limit: int = MAX_STORED_DEPTH) -> Any:
     """``value`` with anything below ``limit`` levels replaced by :data:`TOO_DEEP`.
 

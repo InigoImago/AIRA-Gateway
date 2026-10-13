@@ -16,7 +16,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from aira_common.secrets import load_secrets
+from aira_common.secrets import by_setting, load_secrets
 
 
 class VaultSource(PydanticBaseSettingsSource):
@@ -25,9 +25,17 @@ class VaultSource(PydanticBaseSettingsSource):
     A settings *source* rather than an injection into ``os.environ``: environment values are
     readable from `/proc`, inherited by every subprocess and dumped by crash handlers. Loaded once
     and cached, because Vault is a start-up dependency and never a request-path one (FR-5).
+
+    A key reaches the setting it names however it is spelled — case and the prefix aside — by
+    `aira_common.secrets.setting_key`, the one rule for that.
     """
 
     _cache: dict[str, str] | None = None
+
+    def __init__(self, settings_cls: type[BaseSettings]) -> None:
+        super().__init__(settings_cls)
+        self._prefix = str(self.config.get("env_prefix") or "").upper()
+        self._named: dict[str, str] | None = None
 
     @classmethod
     def reset(cls) -> None:
@@ -40,13 +48,15 @@ class VaultSource(PydanticBaseSettingsSource):
             VaultSource._cache = load_secrets()
         return VaultSource._cache
 
+    def _by_setting(self) -> dict[str, str]:
+        """The loaded keys under the names a setting is looked up by — normalised once."""
+        if self._named is None:
+            self._named = by_setting(self._secrets(), self._prefix)
+        return self._named
+
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
-        prefix = self.config.get("env_prefix", "")
-        secrets = self._secrets()
-        for candidate in (f"{prefix}{field_name}".upper(), field_name.upper()):
-            if candidate in secrets:
-                return secrets[candidate], field_name, False
-        return None, field_name, False
+        # Spelled as the environment variable would be, which is what `setting_key` maps to.
+        return self._by_setting().get(f"{self._prefix}{field_name}".upper()), field_name, False
 
     def __call__(self) -> dict[str, Any]:
         values: dict[str, Any] = {}

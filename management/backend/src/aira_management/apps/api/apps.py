@@ -6,6 +6,7 @@ from django.apps import AppConfig
 
 from aira_management.config.observability import instrument_django, watch_database_connections
 from aira_management.config.runtime import get_settings
+from aira_management.memo import watch_access_writes
 
 
 class ApiConfig(AppConfig):
@@ -25,3 +26,5 @@ class ApiConfig(AppConfig):
         # Unconditional: the integration-debug channel decides per line, so the wiring itself is
         # never conditional on a setting (`FRD-617`).
         watch_database_connections()
+        # A request's remembered answers about its caller go stale with any write to access.
+        watch_access_writes()

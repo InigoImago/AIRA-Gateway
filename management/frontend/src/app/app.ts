@@ -7,13 +7,6 @@ import { AuthService } from './core/auth/auth.service';
 import { PrivacyGate } from './core/privacy/privacy-gate';
 import { Permission, can } from './core/auth/roles';
 
-/** Role slug → what the role may do, for the chip's tooltip. */
-const ROLE_EXPLANATIONS: Record<string, string> = {
-  'global-admin': 'Sees every use case and is the only role that may price a model.',
-  'it-steuerung': 'Sees every use case and the whole spend report, and may change none of it.',
-  'it-security': 'Sees every use case for security oversight — its configuration, not its content.',
-};
-
 @Component({
   selector: 'app-root',
   // `RouterLinkActive` must be imported: an attribute that matches no directive is silently inert,
@@ -84,14 +77,14 @@ export class App implements OnInit {
    * One chip per role the caller holds, an installation's own roles included: the slug for
    * machines, the server's name for people (`FRD-614` FR-10). Which role is asking is the first half
    * of "why can I not do this".
+   *
+   * A name and nothing more. What a role may do is the server's to say, and `/me` lists the
+   * caller's permissions rather than one set per role, so a description written here would be a
+   * second definition that goes stale whenever a role is edited.
    */
-  protected roleChips(): { slug: string; label: string; explains: string }[] {
+  protected roleChips(): { slug: string; label: string }[] {
     const me = this.me();
-    return (me?.roles ?? []).map((slug) => ({
-      slug,
-      label: me?.role_labels?.[slug] ?? slug,
-      explains: ROLE_EXPLANATIONS[slug] ?? '',
-    }));
+    return (me?.roles ?? []).map((slug) => ({ slug, label: me?.role_labels?.[slug] ?? slug }));
   }
 
   protected logout(): void {

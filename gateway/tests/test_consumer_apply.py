@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -18,6 +19,7 @@ from aira_gateway.db.models import (
     PipelineConfigRead,
     RateLimitRead,
     RequestLog,
+    UseCaseGroupRead,
     UseCaseMemberRead,
     UseCaseRead,
 )
@@ -98,15 +100,21 @@ async def test_retiring_a_use_case_removes_the_members_and_keeps_the_row(make_se
     rows = await _all(make_session, UseCaseRead)
     assert [row.slug for row in rows] == ["uc"]
     assert rows[0].deleted_at is not None
+    # The row that was there, stamped — not one written again from an event that names the slug
+    # alone, which would have forgotten everything the use case said about itself.
+    assert rows[0].name == "N"
 
 
 async def test_only_a_purge_drops_the_row(make_session) -> None:
     """The second, deliberate decision — and the only thing that removes the record.
 
     Management emits `usecase.purged` for a **Global Administrator** and only for a use case that
-    has been retired for `PURGE_AFTER_DAYS`. Idempotent in both directions on purpose: Kafka
-    delivery is at-least-once, so a redelivered retirement after a purge must not resurrect a row,
-    and a redelivered purge must not fail.
+    has been retired for `PURGE_AFTER_DAYS`. Redelivery must converge: Kafka delivery is
+    at-least-once, and what it redelivers is a **suffix of the partition, in order** — the
+    retirement and the purge share the slug's key, so a replay brings the retirement back only
+    ahead of its purge. A retirement arriving for a slug with no row is what a rebuild of the
+    read-model looks like, and it must leave a tombstone
+    (`test_a_retirement_replayed_into_an_empty_read_model_is_still_a_retirement`).
     """
     async with make_session() as session:
         await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
@@ -117,10 +125,133 @@ async def test_only_a_purge_drops_the_row(make_session) -> None:
     assert await _all(make_session, UseCaseRead) == []
 
     async with make_session() as session:
-        # Redelivery, both ways round. Neither may raise, and neither may bring the row back.
-        await apply_event(session, "usecase.purged", {"slug": "uc"})
+        # Redelivery of the suffix, and of the purge alone. Neither may raise, and neither may
+        # bring the row back.
         await apply_event(session, "usecase.deleted", {"slug": "uc"})
+        await apply_event(session, "usecase.purged", {"slug": "uc"})
+        await apply_event(session, "usecase.purged", {"slug": "uc"})
     assert await _all(make_session, UseCaseRead) == []
+
+
+# ---- a read-model rebuilt from the compacted topics (`FRD-204` FR-6, `FRD-607`) ---------------
+#
+# Upsert and retirement share the slug's key, so compaction keeps only the retirement of a retired
+# use case — and the key, membership and grant events of its children, which Management never
+# deletes. A rebuild applies exactly that, in any order across topics.
+
+#: What Management's `usecase.deleted` carries: the use case as it stood when it was retired.
+RETIRED_SNAPSHOT = {
+    "slug": "uc",
+    "name": "Kundenservice",
+    "description": "answers customers",
+    "processing_notes": "",
+    "store_payloads": True,
+    "payload_visibility": "own",
+    "tools_enabled": False,
+    "include_reasoning": True,
+    "prompt_caching_enabled": False,
+    "prompt_cache_ttl": "5m",
+    "retention_days": 90,
+    "allowed_models": ["mock-1"],
+}
+
+
+async def test_a_retirement_replayed_into_an_empty_read_model_is_still_a_retirement(
+    make_session,
+) -> None:
+    """The tombstone is written from the event when there is no row to stamp, and it keeps the
+    promise the use case made: its own retention period, not the installation default."""
+    async with make_session() as session:
+        await apply_event(session, "usecase.deleted", RETIRED_SNAPSHOT)
+
+    (row,) = await _all(make_session, UseCaseRead)
+    assert row.slug == "uc"
+    assert row.deleted_at is not None, "a rebuilt read-model serves a retired use case again"
+    assert row.retention_days == 90
+    assert row.name == "Kundenservice"
+    assert row.payload_visibility == "own"
+
+
+async def test_a_retirement_from_an_older_management_still_leaves_a_tombstone(make_session) -> None:
+    """A retirement published before the event carried the use case names the slug alone, and a
+    compacted topic keeps such events for ever. Its tombstone knows nothing else — and still
+    grants nothing."""
+    async with make_session() as session:
+        await apply_event(session, "usecase.deleted", {"slug": "uc"})
+
+    (row,) = await _all(make_session, UseCaseRead)
+    assert row.deleted_at is not None
+
+
+def _children(prefix: str, key_hash: str) -> list[tuple[str, dict]]:
+    """What compaction keeps for a retired use case's children: nothing ever deleted them."""
+    return [
+        (
+            "api_key.created",
+            {"prefix": prefix, "key_hash": key_hash, "subject": "alice", "use_case": "uc"},
+        ),
+        ("membership.upserted", {"slug": "uc", "username": "alice", "role": "admin"}),
+        ("use_case_group.granted", {"slug": "uc", "group": "/team", "role": "user"}),
+        (
+            "budget.upserted",
+            {
+                "id": 1,
+                "use_case": "uc",
+                "scope": "use_case",
+                "period": "month",
+                "limit_requests": 5,
+            },
+        ),
+        ("ratelimit.upserted", {"id": 1, "use_case": "uc", "scope": "use_case", "limit_rpm": 60}),
+        ("anomaly_rule.upserted", _rule_event(3, use_case="uc")),
+        ("pipeline.upserted", {"use_case": "uc", "steps": []}),
+    ]
+
+
+@pytest.mark.parametrize("retirement_first", [True, False], ids=["retired-first", "children-first"])
+async def test_a_replay_does_not_bring_back_what_the_retirement_ended(
+    make_session, retirement_first: bool
+) -> None:
+    """Both orders converge, because the topics are not ordered against each other: children
+    arriving after the tombstone are not applied, and children arriving before it are swept by
+    the retirement — so the key is refused and nobody is a member, either way round."""
+    full, prefix, key_hash = keys.generate_api_key()
+    children = _children(prefix, key_hash)
+    retirement = [("usecase.deleted", RETIRED_SNAPSHOT)]
+    async with make_session() as session:
+        for event_type, payload in (
+            retirement + children if retirement_first else children + retirement
+        ):
+            await apply_event(session, event_type, payload)
+
+    async with make_session() as session:
+        assert await ApiKeyService(session).verify(full) is None, "the retired use case's key works"
+    assert [key.is_active for key in await _all(make_session, ApiKey)] == [False]
+    assert await _all(make_session, UseCaseMemberRead) == []
+    assert await _all(make_session, UseCaseGroupRead) == []
+    assert await _all(make_session, BudgetRead) == []
+    assert await _all(make_session, RateLimitRead) == []
+    assert await _all(make_session, AnomalyRuleRead) == []
+    assert await _all(make_session, PipelineConfigRead) == []
+
+
+async def test_a_live_use_case_still_takes_its_children(make_session) -> None:
+    """The paired case: the same events for a use case that is **not** retired are all applied,
+    so the guard above is about retirement and nothing else."""
+    full, prefix, key_hash = keys.generate_api_key()
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+        for event_type, payload in _children(prefix, key_hash):
+            await apply_event(session, event_type, payload)
+
+    async with make_session() as session:
+        assert await ApiKeyService(session).verify(full) is not None
+    assert len(await _all(make_session, UseCaseMemberRead)) == 1
+    assert len(await _all(make_session, UseCaseGroupRead)) == 1
+    assert len(await _all(make_session, BudgetRead)) == 1
+    assert len(await _all(make_session, RateLimitRead)) == 1
+    assert len(await _all(make_session, AnomalyRuleRead)) == 1
+    assert len(await _all(make_session, PipelineConfigRead)) == 1
 
 
 async def test_deleting_a_use_case_revokes_the_keys_bound_to_it(make_session) -> None:

@@ -84,6 +84,11 @@ WEIRD: list[str] = [
     "1.5",
     "true",
     "9999999999999999999999",
+    # A NUL, which no PostgreSQL text can hold: past the boundary it is a `DataError`, and SQLite —
+    # what this suite runs on — stores it, so only `apps.api.middleware` stands between it and a
+    # `500` in production. Swept here so a route that bypassed that boundary would show it.
+    "%00",
+    "a%00b",
 ]
 
 #: Query parameters these views read. Derived by grepping `query_params` would be prettier and
@@ -144,6 +149,33 @@ BAD_BODIES: list[Any] = [
     {"scope": "each_member", "period": "month", "limit_tokens": "abc"},
     {"steps": [{"type": "injection_filter", "config": {"patterns": ["("]}}]},
     {"steps": [{"type": "model_route", "config": {"categories": [{"name": "c++"}]}}]},
+    # Values longer than their column where no serializer bound used to stand in front of it —
+    # PostgreSQL alone enforces a column's length, as a `DataError`.
+    {"label": "x" * 300},
+    {"username": "u" * 200},
+    {"group_path": "/" + "g" * 300},
+    {"description": "€" * 20_001},
+    # And a NUL inside a document, a key or a value — the same `DataError`, through a JSON column.
+    {"steps": [{"type": "injection_filter", "config": {"instruction": "a\u0000b"}}]},
+    {"name": "a\u0000b"},
+    {"a\u0000b": 1},
+    # A list element that is itself a list or an object, tested for membership in a set.
+    {"capabilities": [{"a": 1}]},
+    {"thinking": {"modes": [[1]]}},
+    {"thinking": {"modes": ["auto"], "default": {"mode": ["x"]}}},
+    {"steps": [{"type": ["x"]}]},
+    {"steps": [{"type": "injection_filter", "config": {"action": ["block"]}}]},
+    # A key nothing reads, and an addressing block of the wrong shape.
+    {"steps": [{"type": "model_route", "config": {"notes": "x" * 300}}]},
+    {"addressing": {"regions": "eu", "pad": "x" * 300}},
+    # A budget without its period, on the wrong route, or at a limit that admits nothing.
+    {"scope": "use_case", "limit_cost": "10"},
+    {"scope": "installation", "period": "day", "limit_cost": "10"},
+    {"limit_cost": "10"},
+    {"limit_tokens": 0},
+    {"throttle_rpm": 2_000_000_000},
+    # A model name a response header would carry.
+    {"name": "m\nX-Injected: 1"},
 ]
 
 #: Not JSON at all, plus the one that is JSON and still killed the parser.
@@ -556,3 +588,133 @@ def test_only_json_is_parsed() -> None:
     )
 
     assert response.status_code == 415, response.content
+
+
+@pytest.mark.parametrize("charset", ["bz2", "zlib", "base64", "rot13", "uu", "hex", "latin-1"])
+def test_a_body_is_decoded_only_as_a_json_text(charset: str) -> None:
+    """The charset is the caller's, and only the encodings a JSON text is written in are read.
+
+    Django keeps any name `codecs.lookup` accepts, and that includes byte-to-byte transforms. Read
+    as `bz2`, a few hundred bytes expanded to a hundred megabytes before any bound applied; read as
+    `rot13` or `zlib`, garbage raised errors nothing caught and answered `500`. A transform is
+    refused before anything is decoded, by name.
+    """
+    import bz2
+
+    fixture = Fixture()
+    body = bz2.compress(b'{"slug": "' + b"a" * 1_000_000 + b'"}')
+
+    response = fixture.client.post(
+        "/api/v1/use-cases/", body, content_type=f"application/json; charset={charset}"
+    )
+
+    assert response.status_code == 415, response.content
+    assert response.json()["error"]["code"] == "unsupported_media_type"
+    assert charset in response.json()["error"]["message"]
+
+
+def test_a_unicode_encoded_body_is_still_read() -> None:
+    """The comparison: refusing transforms does not refuse UTF-16, which JSON allows."""
+    fixture = Fixture()
+    body = json.dumps({"slug": "utf16-uc", "name": "Über sechzehn"}).encode("utf-16")
+
+    response = fixture.client.post(
+        "/api/v1/use-cases/", body, content_type="application/json; charset=utf-16"
+    )
+
+    assert response.status_code == 201, response.content
+    assert response.json()["name"] == "Über sechzehn"
+
+
+def test_a_body_larger_than_the_plane_holds_is_refused_unread(settings: Any) -> None:
+    """DRF reads the request stream itself, past Django's `DATA_UPLOAD_MAX_MEMORY_SIZE`; the parser
+    applies that ceiling, so a body is bounded when no proxy stands in front of this plane."""
+    settings.DATA_UPLOAD_MAX_MEMORY_SIZE = 1024
+    fixture = Fixture()
+    body = json.dumps({"slug": "big-uc", "name": "x" * 2048}).encode()
+
+    response = fixture.client.post("/api/v1/use-cases/", body, content_type="application/json")
+
+    assert response.status_code == 413, response.content
+    assert response.json()["error"]["code"] == "payload_too_large"
+
+
+@pytest.mark.parametrize("codec", ["utf-16-le", "utf-16", "utf-32"])
+def test_a_body_in_another_unicode_encoding_is_measured_as_text(codec: str) -> None:
+    """The depth is measured on the text, not on the bytes it arrived as.
+
+    In UTF-16 the character `Ģ` is the bytes `22 01`, and a byte scan that knows only UTF-8 read
+    the `22` as a closing quote: everything after it counted as string text, so a body of any depth
+    passed the bound and the decoder raised `RecursionError` — a `500` again.
+    """
+    fixture = Fixture()
+    deep = '{"slug": "Ģ", "a": ' + "[" * 100_000 + "]" * 100_000 + "}"
+
+    response = fixture.client.post(
+        "/api/v1/use-cases/", deep.encode(codec), content_type=f"application/json; charset={codec}"
+    )
+
+    assert response.status_code == 400, response.content
+    assert b"nests deeper than" in response.content
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"/api/v1/use-cases/{SLUG}%00x/",
+        "/api/v1/use-cases/?q=%00",
+        f"/api/v1/use-cases/{SLUG}/members/a%00b/",
+        f"/api/v1/use-cases/{SLUG}/groups/revoke/?group_path=/a%00b",
+        "/api/v1/directory/?q=a%00b",
+        "/api/v1/roles/changes/?role=%00",
+        "/api/v1/use-cases/?a%00b=1",
+    ],
+)
+def test_a_nul_in_the_address_is_refused_by_name_before_any_view_reads_it(path: str) -> None:
+    """On PostgreSQL each of these was a `500` — `DataError: … cannot contain NUL (0x00) bytes`.
+    SQLite stores a NUL, so the sweep above can only say *no 500 here*; this says the refusal is
+    the boundary's, in the envelope, whichever route and method it was aimed at."""
+    fixture = Fixture()
+    for method in ("get", "delete"):
+        response = getattr(fixture.client, method)(path)
+
+        assert response.status_code == 400, (method, response.content)
+        body = response.json()["error"]
+        assert body["code"] == "invalid_argument"
+        assert "NUL" in body["message"]
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"slug": "nul-uc", "name": "a\u0000b"},
+        {"slug": "nul-uc", "name": "n", "nested": [{"deep": ["x\u0000"]}]},
+        {"slug": "nul-uc", "name": "n", "a\u0000b": 1},
+    ],
+)
+def test_a_nul_anywhere_in_a_body_is_refused_by_name(document: dict[str, Any]) -> None:
+    """A JSON column takes any document, so a `\\u0000` in a pipeline instruction, a declaration
+    or a key reached PostgreSQL's `jsonb` as `unsupported Unicode escape sequence`. Refused where
+    the body is parsed, for every endpoint at once."""
+    fixture = Fixture()
+    raw = json.dumps(document).encode()
+
+    response = fixture.client.post("/api/v1/use-cases/", raw, content_type="application/json")
+
+    assert response.status_code == 400, response.content
+    assert "NUL" in response.json()["error"]["message"]
+    assert not UseCase.objects.filter(slug="nul-uc").exists()
+
+
+def test_two_questions_added_without_a_position_are_both_answered() -> None:
+    """The sweep posts each body once per route, and this failure needed two: both questions
+    landed at position 0, and the second answered `500` from the unique index."""
+    fixture = Fixture()
+    statuses = [
+        fixture.client.post(
+            "/api/v1/test-cases/", {"topic": "t", "prompt": "p"}, format="json"
+        ).status_code
+        for _ in range(2)
+    ]
+
+    assert all(status < 500 for status in statuses), statuses

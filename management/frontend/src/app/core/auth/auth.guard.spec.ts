@@ -46,6 +46,31 @@ describe('authGuard', () => {
     expect(loginCalled).toBe(true);
   });
 
+  it('comes back to the route being entered, not to the page being left', () => {
+    // The router updates the address bar only once a navigation succeeds, so while this guard
+    // runs `window.location` is still the page the reader is leaving. Clicking a link after the
+    // session ran out must land on that link after signing in.
+    const targets: (string | undefined)[] = [];
+    TestBed.configureTestingModule({
+      providers: [
+        {
+          provide: AuthService,
+          useValue: {
+            isAuthenticated: () => false,
+            startupError: signal<string | null>(null),
+            login: (target?: string) => targets.push(target),
+          },
+        },
+      ],
+    });
+    const entering = { url: '/models?tab=prices' } as RouterStateSnapshot;
+
+    const result = TestBed.runInInjectionContext(() => authGuard(route, entering));
+
+    expect(result).toBe(false);
+    expect(targets).toEqual(['/models?tab=prices']);
+  });
+
   it('does not start a login it knows cannot work', () => {
     // With the issuer unreachable, `initCodeFlow` navigates the whole page to a host that does
     // not answer — and the reader loses the one thing the console *can* still tell them, which is

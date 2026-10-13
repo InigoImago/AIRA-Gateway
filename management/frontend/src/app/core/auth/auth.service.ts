@@ -18,11 +18,20 @@ const LOOP_KEY = 'aira.reauth-attempts';
 const LOOP_LIMIT = 3;
 const LOOP_WINDOW_MS = 2 * 60 * 1000;
 
+/**
+ * The logins started in the current window, and which first-party prefix refused the session
+ * before the last of them — `null` when none did and a renewal failed instead.
+ */
+interface ReauthAttempts {
+  count: number;
+  first: number;
+  refusedBy: string | null;
+}
+
 /** Facade over angular-oauth2-oidc so components and guards depend on a small surface. */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly oauth = inject(OAuthService);
-  readonly authenticated = signal(false);
   /**
    * Set when the identity provider could not be reached at startup.
    *
@@ -59,38 +68,37 @@ export class AuthService {
       console.error('AIRA: the identity provider could not be reached at startup', error);
       return;
     }
-    this.authenticated.set(this.oauth.hasValidAccessToken());
     this.restoreLocation();
 
-    // Renew before expiry: a session that simply ends reads as the backend rejecting the user.
+    // Renew before expiry: a session that simply ends reads as the backend rejecting the user. The
+    // method is the library's name for automatic renewal; with `useSilentRefresh: false` it renews
+    // with the refresh token (`auth.config.ts`).
     this.oauth.setupAutomaticSilentRefresh();
 
     // When renewal genuinely fails, send the reader to the login once, instead of leaving a console
-    // that answers 401 to everything.
+    // that answers 401 to everything. A token that is still good keeps the reader where they are:
+    // one failed refresh is a hiccup, and the next attempt may succeed.
     this.oauth.events.subscribe((event) => {
-      if (event.type === 'token_received' || event.type === 'token_refreshed') {
-        this.authenticated.set(true);
-      }
-      if (
-        event.type === 'silent_refresh_timeout' ||
-        event.type === 'silent_refresh_error' ||
-        event.type === 'token_refresh_error'
-      ) {
-        this.authenticated.set(this.oauth.hasValidAccessToken());
-        // Nothing left to renew: do not wait for the next request to 401 on screen.
-        if (!this.oauth.hasValidAccessToken()) {
-          this.reauthenticate();
-        }
+      if (event.type === 'token_refresh_error' && !this.oauth.hasValidAccessToken()) {
+        this.reauthenticate();
       }
     });
   }
 
-  login(): void {
-    this.oauth.initCodeFlow(this.currentPath());
+  /**
+   * Start the login, coming back to `target` afterwards — the route being entered, which the guard
+   * knows — or to the current page. The address bar is the page being *left* while a navigation is
+   * under way, so it is only the fallback.
+   */
+  login(target?: string): void {
+    this.oauth.initCodeFlow(target ?? this.currentPath());
   }
 
   /**
    * The session is over — send the reader to the login rather than to an error message.
+   *
+   * `refusedBy` is the first-party prefix whose call answered 401, or `null` when no plane refused
+   * and a renewal failed instead.
    *
    * Guarded against two loops:
    *
@@ -100,15 +108,17 @@ export class AuthService {
    *   for a reason a fresh token does not change, Keycloak's SSO session answers at once and the
    *   console would redirect as fast as the browser navigates, until the account is locked. So the
    *   attempts are counted in `sessionStorage`, and past {@link LOOP_LIMIT} within
-   *   {@link LOOP_WINDOW_MS} this stops and says so. The first first-party success clears the count.
+   *   {@link LOOP_WINDOW_MS} this stops and says so. Only an answer from the plane that refused
+   *   clears the count ({@link noteFirstPartySuccess}).
    */
-  reauthenticate(): void {
+  reauthenticate(refusedBy: string | null = null): void {
     if (this.reauthenticating) return;
 
-    const attempts = this.recordReauthAttempt();
+    const now = Date.now();
+    const previous = this.attemptsWithinWindow(now);
+    const attempts = (previous?.count ?? 0) + 1;
     if (attempts > LOOP_LIMIT) {
       // Neither another redirect nor a silent stop: the reader is told why it stopped.
-      this.authenticated.set(false);
       this.loginLoop.set(
         `signing in again did not help ${attempts - 1} times in a row. The identity provider is ` +
           'accepting you and this installation is refusing the token it issues, so another login ' +
@@ -117,17 +127,28 @@ export class AuthService {
       return;
     }
 
+    // Counted only when a login starts. A refusal after the loop stopped — another panel's, or a
+    // reload of the stopped page — is the same refusal again, and counting it would make the
+    // message claim sign-ins that never happened.
+    this.writeReauthAttempts({ count: attempts, first: previous?.first ?? now, refusedBy });
     this.reauthenticating = true;
-    this.authenticated.set(false);
     // Drop the dead token first, or the guard on the way back still sees a stored one.
     this.oauth.logOut(true);
     this.oauth.initCodeFlow(this.currentPath());
   }
 
-  /** A first-party call answered — the one honest evidence that a login loop is over. Anything
-   *  the console can check about itself was just as true on every pass through it. */
-  noteFirstPartySuccess(): void {
-    this.clearReauthAttempts();
+  /**
+   * A first-party call under `answeredBy` answered — the one honest evidence that a login loop is
+   * over, and only from the plane that refused. The two planes validate tokens separately, so the
+   * one that accepts the token answers on every pass while the other keeps refusing it; anything
+   * the console can check about itself was just as true on every pass through the loop. After a
+   * failed renewal no plane refused, and any answer shows the new login worked.
+   */
+  noteFirstPartySuccess(answeredBy: string): void {
+    const recorded = this.readReauthAttempts();
+    if (recorded && (recorded.refusedBy === null || recorded.refusedBy === answeredBy)) {
+      this.clearReauthAttempts();
+    }
   }
 
   /**
@@ -145,34 +166,36 @@ export class AuthService {
     this.oauth.logOut({ client_id: authConfig.clientId ?? '' });
   }
 
-  /** How many logins have been started in the current window, this one included. */
-  private recordReauthAttempt(): number {
-    const now = Date.now();
-    const previous = this.readReauthAttempts();
-    const within = previous !== null && now - previous.first < LOOP_WINDOW_MS;
-    const record = within
-      ? { count: previous.count + 1, first: previous.first }
-      : { count: 1, first: now };
+  /** The attempts recorded inside the current window, or `null` when there are none. */
+  private attemptsWithinWindow(now: number): ReauthAttempts | null {
+    const recorded = this.readReauthAttempts();
+    return recorded !== null && now - recorded.first < LOOP_WINDOW_MS ? recorded : null;
+  }
+
+  private writeReauthAttempts(record: ReauthAttempts): void {
     try {
       window.sessionStorage?.setItem(LOOP_KEY, JSON.stringify(record));
     } catch {
       // Storage can be unavailable (a private window, a policy); the in-memory guard still holds.
     }
-    return record.count;
   }
 
-  private readReauthAttempts(): { count: number; first: number } | null {
+  private readReauthAttempts(): ReauthAttempts | null {
     try {
       const raw = window.sessionStorage?.getItem(LOOP_KEY);
       if (!raw) return null;
       const parsed: unknown = JSON.parse(raw);
-      if (
-        typeof parsed === 'object' &&
-        parsed !== null &&
-        typeof (parsed as { count?: unknown }).count === 'number' &&
-        typeof (parsed as { first?: unknown }).first === 'number'
-      ) {
-        return parsed as { count: number; first: number };
+      if (typeof parsed === 'object' && parsed !== null) {
+        const { count, first, refusedBy } = parsed as Partial<
+          Record<keyof ReauthAttempts, unknown>
+        >;
+        if (
+          typeof count === 'number' &&
+          typeof first === 'number' &&
+          (refusedBy === null || typeof refusedBy === 'string')
+        ) {
+          return { count, first, refusedBy };
+        }
       }
     } catch {
       // Unreadable or not ours: treated as no attempts, erring towards letting a login happen —
@@ -194,18 +217,20 @@ export class AuthService {
    *
    * `replaceState` rather than a router navigation: this runs in an app initialiser, before the
    * router exists. Only a same-origin path is honoured — `state` survives a trip through the
-   * browser, so treating it as a destination would be an open redirect.
+   * browser, so treating it as a destination would be an open redirect. And a `state` that does not
+   * decode is ignored like any other unusable destination: it comes from whatever link was opened,
+   * and a decode that throws here rejects the initialiser and leaves a blank page.
    */
   private restoreLocation(): void {
     const stored = this.oauth.state;
     if (!stored || typeof window === 'undefined') return;
-    const path = decodeURIComponent(stored);
     // Resolved by the browser's own parser rather than pattern-matched: `/\evil.example` is not
     // `//…` and still resolves to another origin. Whatever `replaceState` would resolve is what is
     // compared, so a spelling nobody listed is refused by construction.
-    if (!path.startsWith('/')) return;
     let resolved: URL;
     try {
+      const path = decodeURIComponent(stored);
+      if (!path.startsWith('/')) return;
       resolved = new URL(path, window.location.origin);
     } catch {
       return;

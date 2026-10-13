@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, computed, inject, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
@@ -14,6 +14,7 @@ import {
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { saveBlob } from '../../core/ui/save-blob';
 import { QuestionCatalogue } from './question-catalogue';
 import { RatingWindow } from './rating-window';
 import { csvFileName, describeFailure } from './run-results';
@@ -42,6 +43,7 @@ import { csvFileName, describeFailure } from './run-results';
 export class SmokeTests implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly feedback = inject(PageFeedback);
   private readonly ratingWindow = viewChild.required(RatingWindow);
 
@@ -54,6 +56,9 @@ export class SmokeTests implements OnInit {
   protected readonly runs = signal<TestRun[]>([]);
   protected readonly stats = signal<TestModelStats[]>([]);
   protected readonly loading = signal(true);
+  /** Whether the run history and the figures have answered: unknown is never rendered as "none". */
+  protected readonly runsKnown = signal(false);
+  protected readonly statsKnown = signal(false);
   /**
    * The server refused the screen itself — an answer, not a failure.
    *
@@ -96,6 +101,8 @@ export class SmokeTests implements OnInit {
   protected readonly running = signal(false);
   /** How far a run has got, so a hundred questions do not look frozen. */
   protected readonly progress = signal('');
+  /** The run whose export is being prepared, so a second press does not download it twice. */
+  protected readonly exporting = signal<number | null>(null);
 
   ngOnInit(): void {
     this.meService.get().subscribe({ next: (me) => this.me.set(me), error: () => undefined });
@@ -111,11 +118,7 @@ export class SmokeTests implements OnInit {
       },
       error: (response: unknown) => {
         this.loading.set(false);
-        if ((response as { status?: number })?.status === 403) {
-          this.withheld.set(true);
-          return;
-        }
-        this.feedback.fail(response, 'Could not load the question catalogue.');
+        this.refusedOr(response, 'Could not load the question catalogue.');
       },
     });
     this.service.testAttribution().subscribe({
@@ -129,7 +132,7 @@ export class SmokeTests implements OnInit {
       error: (response: unknown) => {
         // A failed answer is still an answer; the panel must not stay "working it out" forever.
         this.attributionKnown.set(true);
-        this.feedback.fail(response, 'Could not work out where the catalogue could be run.');
+        this.refusedOr(response, 'Could not work out where the catalogue could be run.');
       },
     });
     this.refreshRuns();
@@ -143,14 +146,40 @@ export class SmokeTests implements OnInit {
    */
   protected refreshRuns(): void {
     this.service.testRuns().subscribe({
-      next: (rows) => this.runs.set(rows),
-      error: (response: unknown) => this.feedback.fail(response, 'Could not load the runs.'),
+      next: (rows) => {
+        this.runs.set(rows);
+        this.runsKnown.set(true);
+      },
+      error: (response: unknown) => {
+        this.runsKnown.set(true);
+        this.refusedOr(response, 'Could not load the runs.');
+      },
     });
     this.service.testStats().subscribe({
-      next: (rows) => this.stats.set(rows),
-      error: (response: unknown) =>
-        this.feedback.fail(response, 'Could not load the figures per model.'),
+      next: (rows) => {
+        this.stats.set(rows);
+        this.statsKnown.set(true);
+      },
+      error: (response: unknown) => {
+        this.statsKnown.set(true);
+        this.refusedOr(response, 'Could not load the figures per model.');
+      },
     });
+  }
+
+  /**
+   * A refusal of the screen itself is an answer, anything else a failure.
+   *
+   * The catalogue, the attribution, the runs and the figures are guarded by one and the same
+   * permission on the server, so a 403 from any of them is the screen being withheld — and must
+   * not also be reported as a broken page in a red banner above the sentence that explains it.
+   */
+  private refusedOr(response: unknown, failure: string): void {
+    if ((response as { status?: number })?.status === 403) {
+      this.withheld.set(true);
+      return;
+    }
+    this.feedback.fail(response, failure);
   }
 
   protected reloadCatalogue(): void {
@@ -174,6 +203,12 @@ export class SmokeTests implements OnInit {
    *
    * Sequential on purpose: firing a hundred at once would trip the use case's own rate limit and
    * fill the run with 429s that say nothing about the pipeline.
+   *
+   * Every question goes where the **run** says it entered, as the server recorded it — not where
+   * the pickers point now: a run takes minutes, and its answers are stored on that run.
+   *
+   * Leaving the page stops it before the next question. A run is spent on a use case's budget, and
+   * leaving is how somebody abandons one; it is then left unfinished, because it did not finish.
    */
   protected async run(): Promise<void> {
     if (!this.useCase() || !this.mayRun() || this.running()) return;
@@ -185,11 +220,14 @@ export class SmokeTests implements OnInit {
       const results = await firstValueFrom(this.service.runResults(run.id));
 
       for (const [index, result] of results.entries()) {
+        if (this.destroyRef.destroyed) return;
         this.progress.set(`${index + 1} of ${results.length}`);
-        await this.ask(result);
+        await this.ask(run, result);
       }
 
       await firstValueFrom(this.service.finishRun(run.id));
+      // Every question was asked, so the run is finished; there is only no page left to say so on.
+      if (this.destroyRef.destroyed) return;
       this.progress.set('');
       this.refreshRuns();
       this.open(run);
@@ -211,11 +249,11 @@ export class SmokeTests implements OnInit {
    * A failed request is stored as `error`, apart from `response`, so the statistics keep an
    * outage apart from a bad answer.
    */
-  private async ask(result: TestResult): Promise<void> {
+  private async ask(run: TestRun, result: TestResult): Promise<void> {
     const started = Date.now();
     try {
       const answer = await firstValueFrom(
-        this.service.askModel(this.startModel(), result.prompt, this.useCase()),
+        this.service.askModel(run.model, result.prompt, run.use_case),
       );
       await firstValueFrom(
         this.service.updateResult(result.id, {
@@ -247,19 +285,21 @@ export class SmokeTests implements OnInit {
 
   /**
    * Download the CSV through the API client: a plain link carries no bearer token and would get a
-   * 401 (the same reason `FRD-602`'s download is a blob).
+   * 401 (the same reason `FRD-602`'s download is a blob). One export at a time, so a double press
+   * does not save the file twice.
    */
   protected download(run: TestRun): void {
+    if (this.exporting() !== null) return;
+    this.exporting.set(run.id);
     this.service.testRunCsv(run.id).subscribe({
       next: (blob) => {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = csvFileName(run);
-        link.click();
-        URL.revokeObjectURL(url);
+        saveBlob(blob, csvFileName(run));
+        this.exporting.set(null);
       },
-      error: (response: unknown) => this.feedback.fail(response, 'Could not export this run.'),
+      error: (response: unknown) => {
+        this.feedback.fail(response, 'Could not export this run.');
+        this.exporting.set(null);
+      },
     });
   }
 }

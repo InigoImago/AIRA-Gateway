@@ -34,18 +34,27 @@ from aira_management.apps.seed.contributions.showcase_data import (
     _rate_limits,
     _use_cases,
 )
-from aira_management.apps.seed.registry import SeedResult, register
+from aira_management.apps.seed.registry import SeedResult, register, seeded_use_cases
 from aira_management.apps.usecases import events
-from aira_management.apps.usecases.models import UseCase, UseCaseMembership
+from aira_management.apps.usecases.models import UseCase
 from aira_management.apps.usecases.views import (
     _budget_payload,
-    _grant,
     _rate_limit_payload,
     _revoke,
     _snapshot,
 )
+from aira_management.apps.usecases.views.grants import _admit
+from aira_management.apps.usecases.views.lifecycle import purge, retire
+from aira_management.apps.usecases.views.payloads import _api_key_payload, _pipeline_payload
 
-__all__ = ["CHAT_MODEL", "DEMO_KEY_SALT", "MEMBERSHIPS", "RELEASES", "seed_showcase"]
+__all__ = [
+    "CHAT_MODEL",
+    "DEMO_KEY_SALT",
+    "MEMBERSHIPS",
+    "RELEASES",
+    "reissued_prefixes",
+    "seed_showcase",
+]
 
 #: Deterministic API keys are derived from this salt and the slug. **A demo secret on purpose**:
 #: anybody reading the repository can compute it, which makes it unmistakable for a real credential
@@ -55,7 +64,17 @@ __all__ = ["CHAT_MODEL", "DEMO_KEY_SALT", "MEMBERSHIPS", "RELEASES", "seed_showc
 DEMO_KEY_SALT = "aira-showcase-demo-not-a-secret"
 
 
-@register(name="showcase", order=50)
+def _declared_slugs() -> list[str]:
+    return [declaration["slug"] for declaration in _use_cases()]
+
+
+def _key_holders(slug: str) -> list[tuple[str, str]]:
+    """Who gets a demo key on ``slug``, first member first — the global administrator where the
+    declaration names nobody."""
+    return MEMBERSHIPS.get(slug, [("admin", "")])
+
+
+@register(name="showcase", order=50, use_cases=_declared_slugs)
 def seed_showcase(fresh: bool) -> SeedResult:
     """Use cases, memberships, budgets, limits, rules, pipelines and one API key each."""
     users = {user.get_username(): user for user in get_user_model().objects.all()}
@@ -85,9 +104,7 @@ def seed_showcase(fresh: bool) -> SeedResult:
         # The first member keeps the **owner-agnostic** derivation, because printed examples,
         # `showcase_agent.py` and `showcase_try_it.py` all re-derive that one by slug alone
         # (`FRD-130` FR-4); the others are derived with their own name.
-        for index, (member_name, _role) in enumerate(
-            MEMBERSHIPS.get(usecase.slug, [("admin", "")])
-        ):
+        for index, (member_name, _role) in enumerate(_key_holders(usecase.slug)):
             owner = users.get(member_name)
             if owner is None:
                 continue
@@ -104,19 +121,24 @@ def seed_showcase(fresh: bool) -> SeedResult:
 
 
 def _delete_other_use_cases() -> None:
-    """``--fresh``: delete **every** use case the showcase does not declare, and announce it.
+    """``--fresh``: delete **every** use case no seed contribution declares, and announce it.
 
     A demo database accumulates the fixtures of every test run pointed at it. Safe because
-    `seed_demo` only runs in local or demo mode (`ADR-0007`). The showcase's own slugs are kept:
-    deleting one revokes its API keys, revocation is terminal in the gateway's read model, and the
-    recreated use case's demo key would answer 401 for ever. Recreating a slug is a reset.
+    `seed_demo` only runs in local or demo mode (`ADR-0007`). **Every contribution's** slugs are
+    kept (`registry.seeded_use_cases`), not only this one's: deleting one revokes its API keys,
+    revocation is terminal in the gateway's read model, a retired use case stays a tombstone no
+    upsert revives, and the contribution that recreates it would leave it dead at the gateway.
+    Recreating a slug is a reset.
+
+    A deletion here removes the row, so it is a retirement **and** a purge, through the very
+    helpers the API and the purge command use: the gateway ends access and then drops the
+    tombstone, the object permissions naming the use case go with it, and a later use case of the
+    same name is not born retired.
     """
-    demo_slugs = {declaration["slug"] for declaration in _use_cases()}
-    for stale in UseCase.objects.exclude(slug__in=demo_slugs):
-        slug = stale.slug
+    for stale in UseCase.objects.exclude(slug__in=seeded_use_cases()):
         with transaction.atomic():
-            stale.delete()
-            events.emit("usecase.deleted", {"slug": slug})
+            retire(stale, by="seed_demo --fresh")
+            purge(stale)
 
 
 def _seed_use_case(declaration: dict[str, Any], created: dict[str, int]) -> UseCase:
@@ -157,14 +179,8 @@ def _reconcile_memberships(
         if user is None:
             continue
         with transaction.atomic():
-            UseCaseMembership.objects.update_or_create(
-                use_case=usecase, user=user, defaults={"role": role}
-            )
-            _grant(user, usecase, role)
-            events.emit(
-                "membership.upserted",
-                {"slug": usecase.slug, "username": username, "role": role},
-            )
+            # The view's own sequence: the row, exactly this role's permissions, the event.
+            _admit(usecase, user, role)
             created["memberships"] += 1
 
 
@@ -224,8 +240,10 @@ def _seed_pipelines(created: dict[str, int]) -> None:
         if target is None:
             continue
         with transaction.atomic():
-            PipelineConfig.objects.update_or_create(use_case=target, defaults=config)
-            events.emit("pipeline.upserted", {"use_case": slug, **config})
+            pipeline, _made = PipelineConfig.objects.update_or_create(
+                use_case=target, defaults=config
+            )
+            events.emit("pipeline.upserted", _pipeline_payload(slug, pipeline))
             created["pipelines"] += 1
 
 
@@ -237,17 +255,11 @@ def _ensure_key(usecase: UseCase, owner: Any, created: dict[str, int], *, named:
     printed example and both hand-over scripts re-derive *that* one, and a demo that mints a new
     secret is a demo whose documentation stops working on the second run.
     """
-    # Hex, because the key format says hex: the parts must not contain the separator.
-    material = f"{DEMO_KEY_SALT}:{usecase.slug}"
-    if named:
-        material = f"{material}:{owner.get_username()}"
-    digest = hashlib.sha256(material.encode()).hexdigest()
-    prefix, secret = digest[:8], digest[8:56]
-    plaintext = f"{NAMESPACE}_{prefix}_{secret}"
+    prefix, plaintext = _demo_key(usecase.slug, owner.get_username(), named=named)
     key_hash = hash_api_key(plaintext)
 
     with transaction.atomic():
-        _, was_created = ApiKey.objects.update_or_create(
+        key, was_created = ApiKey.objects.update_or_create(
             prefix=prefix,
             defaults={
                 "use_case": usecase,
@@ -256,16 +268,31 @@ def _ensure_key(usecase: UseCase, owner: Any, created: dict[str, int], *, named:
                 "label": "showcase",
             },
         )
-        events.emit(
-            "api_key.created",
-            {
-                "prefix": prefix,
-                "key_hash": key_hash,
-                "subject": owner.get_username(),
-                "use_case": usecase.slug,
-                "label": "showcase",
-                "status": "active",
-            },
-        )
+        events.emit("api_key.created", _api_key_payload(key))
         created["api_keys"] += int(was_created)
     return plaintext
+
+
+def _demo_key(slug: str, owner: str, *, named: bool) -> tuple[str, str]:
+    """The ``(prefix, plaintext)`` of a demo key — derived, never generated (`DEMO_KEY_SALT`)."""
+    # Hex, because the key format says hex: the parts must not contain the separator.
+    material = f"{DEMO_KEY_SALT}:{slug}"
+    if named:
+        material = f"{material}:{owner}"
+    digest = hashlib.sha256(material.encode()).hexdigest()
+    prefix, secret = digest[:8], digest[8:56]
+    return prefix, f"{NAMESPACE}_{prefix}_{secret}"
+
+
+def reissued_prefixes() -> frozenset[str]:
+    """The prefixes of every demo key this contribution derives, and so reissues on every run.
+
+    Asked by a ``--fresh`` reset before it deletes people: revocation is terminal at the gateway,
+    so announcing one of these revoked would make the demo key answer 401 for ever after the
+    showcase hands it out again under the same prefix.
+    """
+    return frozenset(
+        _demo_key(slug, member, named=index > 0)[0]
+        for slug in _declared_slugs()
+        for index, (member, _role) in enumerate(_key_holders(slug))
+    )

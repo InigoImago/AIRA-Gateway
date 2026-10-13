@@ -203,6 +203,9 @@ class RegisterService:
                 entries=entries,
                 processed_in=await self._overall(session, scope, start, end),
                 catalogue=tuple(sorted(catalogue)) if scope is None else (),
+                # To every reader, unlike the catalogue: it is the evidence for the erasure deadline
+                # each row states — a member's own use case's included — and it names no use case
+                # and no person. Withheld it would read `null`, which here says the sweep never ran.
                 last_erasure=await self._last_erasure(session),
             )
 

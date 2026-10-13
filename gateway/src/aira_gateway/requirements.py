@@ -11,13 +11,14 @@ what comes back without changing the status code, so a candidate that cannot mee
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Protocol
 
 from aira_common.models import Capability
 from aira_gateway.catalog import ModelCatalog
 from aira_gateway.core.canonical import Thinking
 from aira_gateway.core.schema import ResponseSchema
+from aira_gateway.residency import RegionNotAllowed, check_region
 from aira_gateway.thinking import permitted_by
 from aira_gateway.upstreams.base import ProviderRegistry
 
@@ -73,9 +74,16 @@ class RegionAllowed:
     declared region is not refused — the mock and the laptop adapter declare none.
     """
 
-    def __init__(self, registry: ProviderRegistry, allowed: Sequence[str]) -> None:
+    def __init__(
+        self,
+        registry: ProviderRegistry,
+        allowed: Sequence[str],
+        for_models: Mapping[str, frozenset[str]] | None = None,
+    ) -> None:
         self._registry = registry
-        self._allowed = frozenset(allowed)
+        self._allowed = tuple(allowed)
+        #: Regions single models are permitted by name (`AIRA_ALLOWED_MODEL_REGIONS`).
+        self._for_models = for_models or {}
 
     async def refusal(self, model: str) -> str | None:
         if not self._allowed:
@@ -85,7 +93,10 @@ class RegionAllowed:
             return None  # not ours to refuse; the chain reports it as unserved
         if not described.region:
             return None  # no residency posture to violate
-        if described.region not in self._allowed:
+        try:
+            # The policy's own rule, exceptions by name included, rather than a second copy of it.
+            check_region(described.region, self._allowed, model=model, for_models=self._for_models)
+        except RegionNotAllowed:
             return (
                 f"runs in '{described.region}', and this request may only be processed in "
                 f"{sorted(self._allowed)}"

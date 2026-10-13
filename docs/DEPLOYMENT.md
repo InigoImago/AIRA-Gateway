@@ -102,7 +102,7 @@ python3 -c 'import sys,json,base64; t=sys.argv[1].split(".")[1];   print(json.lo
 
 `aud` must name what `AIRA_OIDC_AUDIENCE` says. If it does not, the mapper is missing.
 
-### Step 3 — Kafka: eight compacted topics
+### Step 3 — Kafka: nine compacted topics
 
 Names and settings in [`INTEGRATIONS.md` §3](INTEGRATIONS.md). They must be **compacted**: the
 gateway rebuilds its read-model by replaying them, so a topic that expires its records loses
@@ -222,7 +222,7 @@ only after the relay has run and the consumer has applied it.
 
 ```
 Management API ──▶ outbox table ──▶ relay ──▶ Kafka ──▶ consumer ──▶ gateway read-model
-                                  (periodic)   (5 compacted topics)
+                                  (periodic)   (9 compacted topics)
 ```
 
 The one exception is the SPA, which calls the gateway directly for two read-only views (pipeline
@@ -664,8 +664,9 @@ AIRA_GEMINI_MODELS=gemini-2.0-flash,gemini-1.5-flash      # which models to expo
 AIRA_GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 ```
 
-`AIRA_GEMINI_BASE_URL` is what you point at a proxy or a regional endpoint. The key is sent as a
-query parameter to the upstream and is never logged or exported.
+`AIRA_GEMINI_BASE_URL` is what you point at a proxy or a regional endpoint. The key is sent in the
+`x-goog-api-key` header — never in a URL, where proxies and access logs keep it — and is never
+logged or exported.
 
 ### 3.7 Reverse proxy and TLS
 
@@ -729,7 +730,7 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 
 | Variable                                                       | Default                                                    | Meaning                                                                                                                                                    |
 | -------------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AIRA_ENVIRONMENT`                                             | `local`                                                    | `local` \| `staging` \| `production`. Anything but `local` activates the management safety checks and HSTS.                                                |
+| `AIRA_ENVIRONMENT`                                             | `local`                                                    | `local` \| `staging` \| `production`. Anything but `local` activates the management safety checks and Management's HSTS header — sent only on a request that reached it over HTTPS, directly or through a proxy reporting `X-Forwarded-Proto: https`. The console's nginx terminates no TLS and reports its own scheme, so set HSTS on the TLS terminator in front of it. |
 | `AIRA_LOG_LEVEL`                                               | `INFO`                                                     | `DEBUG`/`INFO`/`WARNING`/`ERROR`                                                                                                                           |
 | `AIRA_LOG_JSON`                                                | `true`                                                     | JSON lines (`true`) or human-readable console output                                                                                                       |
 | `AIRA_DEMO_MODE`                                               | `false`                                                    | Gateway: seeds a deterministic demo API key. Management: allows `seed_demo`. **Never in production.**                                                      |
@@ -998,7 +999,7 @@ Security (all from ADR-0007):
 Operations:
 
 - [ ] Both migration commands run on every deploy
-- [ ] All seven Kafka topics exist and are **compacted** (`make kafka-topics` creates them)
+- [ ] All nine Kafka topics exist and are **compacted** (`make kafka-topics` creates them)
 - [ ] The consumer runs as a long-lived process and is restarted on failure
 - [ ] **The retention pruner is scheduled.** `python -m aira_gateway.retention` does one pass and
       exits. If nothing runs it, **nothing is ever deleted** and the period configured per use
@@ -1006,7 +1007,13 @@ Operations:
       Compose use cron, a systemd timer or a CronJob.
 - [ ] **The relay is scheduled.** `manage.py relay` publishes pending rows once and exits — a cron
       job, systemd timer or Kubernetes CronJob every minute is the intended shape. Without it,
-      nothing a user configures in the UI ever reaches the gateway.
+      nothing a user configures in the UI ever reaches the gateway. Runs never overlap: each takes
+      a PostgreSQL advisory lock and leaves at once when another holds it — so its database
+      connection must be a session, not a transaction-pooled one — and a CronJob may say so too
+      (`concurrencyPolicy: Forbid`). A run that stops at a send it cannot make fails, names the
+      event and leaves it pending; an event the broker will never take (too large) is **parked**
+      with its reason, said on every run, and never sent. Delivered and parked rows are deleted
+      after 30 days.
 - [ ] Prices on file for every model in use — check the unpriced warning on **Models & prices**;
       unpriced traffic is excluded from every spend figure (FRD-403)
 - [ ] `AIRA_STORE_PAYLOADS` reviewed against your data-protection rules — with it on, full prompts

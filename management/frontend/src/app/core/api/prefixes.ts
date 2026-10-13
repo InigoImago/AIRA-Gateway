@@ -15,3 +15,12 @@ export const GW = PREFIXES.gateway;
 
 /** Both prefixes, for anything that has to decide whether a URL is ours — the interceptor. */
 export const AIRA_PREFIXES = [`${API}/`, `${GW}/`];
+
+/**
+ * Where a client outside this browser reaches the gateway through this console: the console's own
+ * proxy, which forwards the whole gateway. One definition, because every example and every file
+ * the console writes for a client has to name the same address.
+ */
+export function gatewayBase(): string {
+  return `${window.location.origin}${GW}`;
+}

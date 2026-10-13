@@ -358,3 +358,48 @@ async def test_the_role_the_resolver_worked_out_reaches_the_principal(sessions) 
     assert resolved.grants == (("uc-a", "admin"),), (
         "the slug reached the principal and the role it was granted with did not"
     )
+
+
+# ---- one reload at a time ---------------------------------------------------------------------
+
+
+async def test_callers_finding_the_cache_expired_together_read_the_tables_once(sessions) -> None:
+    """Every request that found the cache expired reloaded both tables itself — one membership row
+    per person per use case — so each expiry under load cost one full read per concurrent caller."""
+    import asyncio
+
+    await _grant(sessions, "uc-a", "/ai/kundenservice")
+    opened = 0
+
+    def counting_sessionmaker():  # noqa: ANN202
+        nonlocal opened
+        opened += 1
+        return sessions()
+
+    resolver = GroupGrantResolver(counting_sessionmaker)  # type: ignore[arg-type]
+    answers = await asyncio.gather(*(resolver.use_cases(["/ai/kundenservice"]) for _ in range(50)))
+
+    assert answers == [{"uc-a": "user"}] * 50
+    assert opened == 1
+
+
+async def test_a_failed_read_is_not_repeated_by_every_caller_queued_behind_it() -> None:
+    """Dropped and refused, as before — but once: a database that cannot answer is not asked again
+    by each of the callers that were waiting for the first attempt, and is asked again shortly."""
+    import asyncio
+
+    attempts = 0
+
+    def broken():  # noqa: ANN202
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("the database went away")
+
+    resolver = GroupGrantResolver(broken)  # type: ignore[arg-type]
+    answers = await asyncio.gather(*(resolver.use_cases(["/ai/x"], "ada") for _ in range(50)))
+
+    assert answers == [{}] * 50
+    assert attempts == 1
+    resolver._retry_at = time.monotonic() - 0.1
+    await resolver.use_cases(["/ai/x"])
+    assert attempts == 2

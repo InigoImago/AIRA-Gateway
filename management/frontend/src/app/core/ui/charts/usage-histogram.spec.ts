@@ -132,16 +132,49 @@ describe('UsageHistogram', () => {
     expect(new Set(ticks).size).toBe(ticks.length);
   });
 
-  it('drops a tick label that repeats one already shown', () => {
-    // Four ticks over two requests are 2, 2, 1, 1 whatever the precision, because the values really
-    // are equal once rounded. The line stays — it is reference — and the repeat goes.
+  it('writes no count tick twice, and draws no line it cannot label', () => {
+    // Four fractions of a peak of two are 2, 1.5, 1 and 0.5 — two whole numbers. A line at 1.5
+    // labelled "2" or "1" is a scale that lies, so a count axis gets one line per whole number.
     const { element } = setup({ points: [point({ requests: 2 })] }, 'requests');
     const written = Array.from(element.querySelectorAll('.histogram__tick'))
       .map((tick) => (tick.textContent ?? '').trim())
       .filter(Boolean);
 
-    expect(new Set(written).size).toBe(written.length);
-    expect(element.querySelectorAll('.histogram__grid')).toHaveLength(4);
+    expect(written).toEqual(['2', '1']);
+    expect(element.querySelectorAll('.histogram__grid')).toHaveLength(2);
+  });
+
+  it('puts every count tick at the height of the number it carries', () => {
+    // Written at fixed fractions of the peak and rounded, the 75 % line of a peak of three read
+    // "2" while marking 2.25, so a column of two ended below the line that says two — and a peak
+    // of one put "0" a quarter of the way up.
+    for (let peak = 1; peak <= 10; peak += 1) {
+      const { element } = setup({ points: [point({ requests: peak })] }, 'requests');
+      const ticks = Array.from(element.querySelectorAll<HTMLElement>('.histogram__tick'));
+
+      expect(ticks.length).toBeGreaterThan(0);
+      for (const tick of ticks) {
+        const value = Number((tick.textContent ?? '').trim());
+        const height = parseFloat(tick.style.bottom) / 100;
+        expect(Math.abs(value - peak * height), `peak ${peak}`).toBeLessThan(0.001);
+      }
+    }
+  });
+
+  it('keeps the four reference lines on a money axis', () => {
+    // Money is not rounded to a whole unit — its interesting magnitudes are below one — so each
+    // line carries the value it marks, to the axis's precision.
+    const { element } = setup({ points: [point({ cost_nanos: 4_000_000_000 })] });
+    const ticks = Array.from(element.querySelectorAll<HTMLElement>('.histogram__tick')).map(
+      (tick) => [(tick.textContent ?? '').trim(), tick.style.bottom],
+    );
+
+    expect(ticks).toEqual([
+      ['4.00', '100%'],
+      ['3.00', '75%'],
+      ['2.00', '50%'],
+      ['1.00', '25%'],
+    ]);
   });
 
   it('rounds a count tick to a whole unit', () => {

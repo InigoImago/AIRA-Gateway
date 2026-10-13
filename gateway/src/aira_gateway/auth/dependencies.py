@@ -13,6 +13,7 @@ from dataclasses import replace
 from fastapi import Depends, Request
 
 from aira_common.observability import set_span_attributes
+from aira_common.oidc import MAX_TOKEN_LENGTH
 from aira_common.permissions import effective, held_roles
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.attempts import record_failed_authentication
@@ -35,12 +36,17 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.auth.role_definitions import RoleResolver
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.persistence.recorder import client_ip
-from aira_gateway.state import sessionmaker_of
+from aira_gateway.state import sessionmaker_of, settings_of
 
 _DEMO_PRINCIPAL = Principal(subject="demo", method="demo")
 
 #: Methods that cannot reach a model. A GET on these surfaces lists what is configured.
 SPENDS_NOTHING = frozenset({"GET", "HEAD", "OPTIONS"})
+
+#: Every credential type a principal is issued for, each weighed by its own rule in
+#: `use_case_refusal`. A type not named here is admitted to no use case rather than, by having no
+#: rule of its own, to all of them.
+CREDENTIAL_METHODS = frozenset({"oidc", "api_key", "demo"})
 
 
 def _unauthenticated(message: str) -> GeminiHTTPError:
@@ -49,16 +55,21 @@ def _unauthenticated(message: str) -> GeminiHTTPError:
 
 async def resolve_principal(request: Request) -> Principal | None:
     """Resolve the caller to a Principal, or None if the credential is invalid/absent."""
-    if not request.app.state.settings.auth_required:
+    settings = settings_of(request)
+    if not settings.auth_required:
         return _DEMO_PRINCIPAL
 
     token = extract_token(request)
     if token is None:
         return None
+    if len(token) > MAX_TOKEN_LENGTH:
+        # Refused unread, before a worker thread is spent on it: parsing is where a caller's value
+        # becomes work, and nested deeply enough an exception no parser wraps.
+        return None
 
     if is_aira_key(token):
         async with sessionmaker_of(request)() as session:
-            return await ApiKeyService(session).verify(token)
+            return await ApiKeyService(session, demo_mode=settings.demo_mode).verify(token)
 
     # Otherwise treat it as an OIDC bearer (JWT), if OIDC is configured.
     validator: OidcValidator | None = request.app.state.oidc_validator
@@ -140,6 +151,8 @@ def use_case_refusal(principal: Principal, use_case: str) -> str | None:
     - **An unbound API key** — the CLI break-glass key, minted by an operator with database access
       for when the control plane is unavailable. Deliberately unrestricted (`ADR-0015`).
     - **A bound API key** — issued by Management for exactly one use case, and may touch only that.
+    - **Demo mode** — no identity at all, bounded by `AIRA_DEMO_MODE` (`must_name_a_use_case`).
+    - **Anything else** — refused: a credential type is admitted only by a rule written for it.
 
     A refusal is also marked on the request span, because it writes no audit row and the span is
     the only record the delivery channel can carry (`FRD-616`).
@@ -151,6 +164,8 @@ def use_case_refusal(principal: Principal, use_case: str) -> str | None:
         principal.method == "api_key" and principal.use_cases and use_case != principal.use_cases[0]
     ):
         reason = f"API key is bound to use case '{principal.use_cases[0]}'."
+    elif principal.method not in CREDENTIAL_METHODS:
+        reason = f"A '{principal.method}' credential is admitted to no use case."
     if reason:
         mark_refused(
             FORBIDDEN,
@@ -224,12 +239,4 @@ async def require_attribution(
     else:
         authorize_use_case(principal, use_case)
 
-    attribution = Attribution(
-        subject=principal.subject,
-        method=principal.method,
-        username=principal.username,
-        use_case=use_case,
-        credential=principal.credential,
-        issuer=principal.issuer,
-    )
-    return attribute(request, attribution)
+    return attribute(request, Attribution.of(principal, use_case))

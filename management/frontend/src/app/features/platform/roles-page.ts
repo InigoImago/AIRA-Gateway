@@ -36,6 +36,12 @@ export class RolesPage implements OnInit {
   protected readonly me = signal<Me | null>(null);
   protected readonly roles = signal<Role[]>([]);
   protected readonly catalogue = signal<PermissionInfo[]>([]);
+  /**
+   * The catalogue could not be read. A role's permissions are then listed by name: grouping them
+   * needs the catalogue's areas and labels, and an empty grouping would read as a role that may do
+   * nothing.
+   */
+  protected readonly catalogueFailed = signal(false);
   protected readonly loading = signal(true);
   /** The role whose details are open, by slug, so a reload keeps it open. */
   protected readonly selectedSlug = signal<string | null>(null);
@@ -59,8 +65,10 @@ export class RolesPage implements OnInit {
     this.loadRoles();
     this.service.permissionCatalogue().subscribe({
       next: (catalogue) => this.catalogue.set(catalogue),
-      error: (response: unknown) =>
-        this.feedback.fail(response, 'Could not load the permission catalogue.'),
+      error: (response: unknown) => {
+        this.catalogueFailed.set(true);
+        this.feedback.fail(response, 'Could not load the permission catalogue.');
+      },
     });
   }
 
@@ -79,9 +87,14 @@ export class RolesPage implements OnInit {
     this.editor.set('edit');
   }
 
-  /** Closing the window keeps the open role open: the reader is still looking at it. */
+  /**
+   * Closing the window keeps the open role open: the reader is still looking at it. What the window
+   * reported closes with it — a refusal about a form that is gone would otherwise surface on the
+   * page as news.
+   */
   protected close(): void {
     this.editor.set(null);
+    this.feedback.clear();
   }
 
   /** After a save: the role is open, and the list, the names and the log show the change. */

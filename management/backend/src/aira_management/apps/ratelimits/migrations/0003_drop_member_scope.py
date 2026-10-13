@@ -20,7 +20,9 @@ class Migration(migrations.Migration):
     dependencies = [("ratelimits", "0002_alter_ratelimit_scope")]
 
     operations = [
-        migrations.RunPython(drop_member_limits, migrations.RunPython.noop),
+        # No reverse: a rollback cannot restore deleted rows, so `migrate` refuses one by name
+        # (`IrreversibleError`) rather than reporting a rollback that did not happen.
+        migrations.RunPython(drop_member_limits),
         migrations.AlterField(
             model_name="ratelimit",
             name="scope",

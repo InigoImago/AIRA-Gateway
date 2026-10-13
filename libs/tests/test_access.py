@@ -182,3 +182,8 @@ def test_a_grant_row_is_matched_by_the_paths_a_token_carries() -> None:
     """The other half of the same tolerance: `resolve` builds a set from whatever it is given, and
     a non-string in it simply matches no grant."""
     assert resolve([7, "/ai/x"], [("/ai/x", "uc-a", "admin")]) == {"uc-a": "admin"}
+    # A value that is not even hashable — an object or a list where a path belongs — is the same
+    # mistake, and building the set raised on it.
+    assert resolve([{"path": "/ai/x"}, ["/ai/x"], "/ai/x"], [("/ai/x", "uc-a", "admin")]) == {
+        "uc-a": "admin"
+    }

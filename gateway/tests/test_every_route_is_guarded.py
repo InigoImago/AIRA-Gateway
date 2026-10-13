@@ -24,6 +24,7 @@ from typing import Any
 from fastapi.routing import APIRoute
 
 from aira_gateway.app import create_app
+from aira_gateway.auth.dependencies import require_attribution, require_principal
 from aira_gateway.config import GatewaySettings
 
 #: Paths served without a credential, and why each one has to be.
@@ -45,9 +46,9 @@ PUBLIC_PATHS = frozenset(
         # a commit hash identifies the code, which is what somebody correlating a bug report
         # needs. The counter-argument is real — it tells an attacker exactly which release is
         # running — and making it authenticated would further narrow the compatibility contract.
-        # Listed rather than changed, so the exposure is reviewable instead of
-        # accidental; `_may_see_detail` in `routes/health.py` is the pattern to reuse if the answer
-        # ever changes.
+        # Listed rather than changed, so the exposure is reviewable instead of accidental;
+        # `may_see_diagnosis` in `routes/health.py` is the pattern to reuse if the answer ever
+        # changes.
         "/kira/api/external/version-info",
         # FastAPI's own, and only present when docs are enabled.
         "/openapi.json",
@@ -57,25 +58,27 @@ PUBLIC_PATHS = frozenset(
     }
 )
 
-#: Dependencies that establish who the caller is. Any of them makes a route guarded.
-AUTHENTICATING = frozenset({"require_principal", "require_attribution", "require_api_key"})
+#: Dependencies that establish who the caller is. Any of them makes a route guarded. The functions
+#: themselves, not their names: a function called `require_principal` anywhere else would
+#: otherwise count as authentication.
+AUTHENTICATING: frozenset[object] = frozenset({require_principal, require_attribution})
 
 
-def _dependency_names(dependant: Any) -> set[str]:
+def _dependencies(dependant: Any) -> set[object]:
     """Every dependency callable reachable from ``dependant``."""
-    names: set[str] = set()
+    found: set[object] = set()
     stack = list(dependant.dependencies)
     while stack:
         current = stack.pop()
         call = getattr(current, "call", None)
         if call is not None:
-            names.add(getattr(call, "__name__", ""))
+            found.add(call)
         stack.extend(current.dependencies)
-    return names
+    return found
 
 
-def _routes() -> list[tuple[APIRoute, set[str]]]:
-    """Every route with the dependency names that actually apply to it.
+def _routes(app: Any = None) -> list[tuple[APIRoute, set[object]]]:
+    """Every route with the dependencies that actually apply to it.
 
     **A router-level dependency is not on the route.** `include_router(..., dependencies=[...])`
     used to copy them onto each route; this FastAPI keeps the router nested behind an
@@ -85,20 +88,20 @@ def _routes() -> list[tuple[APIRoute, set[str]]]:
     protected routes as holes and then be "fixed" by exempting them. Inheriting the context is the
     difference between this file guarding something and excusing it.
     """
-    app = create_app(GatewaySettings(auth_required=True, test_database=True))
-    found: list[tuple[APIRoute, set[str]]] = []
+    app = app or create_app(GatewaySettings(auth_required=True, test_database=True))
+    found: list[tuple[APIRoute, set[object]]] = []
 
-    def walk(container: Any, inherited: set[str]) -> None:
+    def walk(container: Any, inherited: set[object]) -> None:
         for route in getattr(container, "routes", []):
             if isinstance(route, APIRoute):
-                found.append((route, inherited | _dependency_names(route.dependant)))
+                found.append((route, inherited | _dependencies(route.dependant)))
             elif hasattr(route, "original_router"):
                 context = route.include_context
-                names = {
-                    getattr(dependency.dependency, "__name__", "")
+                applied = {
+                    dependency.dependency
                     for dependency in getattr(context, "dependencies", []) or []
                 }
-                walk(route.original_router, inherited | names)
+                walk(route.original_router, inherited | applied)
             elif hasattr(route, "routes"):
                 walk(route, inherited)
 
@@ -137,3 +140,21 @@ def test_the_public_list_names_only_paths_that_exist() -> None:
     stale = PUBLIC_PATHS - served - frameworks_own
 
     assert not stale, f"PUBLIC_PATHS names paths this app does not serve: {sorted(stale)}"
+
+
+def test_a_function_that_merely_shares_the_name_does_not_authenticate() -> None:
+    """Matched by name, any function called `require_principal` counted as authentication — and the
+    list named a `require_api_key` that exists nowhere, so the matching was never exercised."""
+    from fastapi import Depends
+
+    def require_principal() -> None:  # a namesake, not the dependency
+        return None
+
+    app = create_app(GatewaySettings(auth_required=True, test_database=True))
+
+    @app.get("/decoy")
+    async def _decoy(_: None = Depends(require_principal)) -> None:
+        return None
+
+    unguarded = {route.path for route, guards in _routes(app) if not guards & AUTHENTICATING}
+    assert "/decoy" in unguarded

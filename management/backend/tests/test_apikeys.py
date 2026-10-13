@@ -406,3 +406,63 @@ def test_the_listing_serializer_writes_nothing() -> None:
     writable = [name for name, field in ApiKeySerializer().fields.items() if not field.read_only]
 
     assert writable == [], writable
+
+
+def test_a_taken_prefix_is_drawn_again_rather_than_answered_with_a_500(monkeypatch) -> None:
+    """A prefix is 32 random bits and unique, and keys are never deleted, so a collision gets
+    likelier with every key ever issued. The unique index used to answer it with an
+    `IntegrityError` — a `500` instead of a key, for nothing the caller did."""
+    from aira_management.apps.usecases.views import api_keys
+
+    admin = _user("prefix-admin", "global-admin")
+    _make_uc(admin, "prefix-uc")
+    taken = _client(admin).post(f"{BASE}prefix-uc/api-keys/", {"label": "a"}, format="json")
+    assert taken.status_code == 201
+    taken_prefix = taken.json()["prefix"]
+
+    draws = iter(
+        [
+            (f"aira_{taken_prefix}_{'1' * 48}", taken_prefix, "1" * 64),
+            ("aira_0badc0de_" + "2" * 48, "0badc0de", "2" * 64),
+        ]
+    )
+    monkeypatch.setattr(api_keys, "generate_api_key", lambda: next(draws))
+
+    issued = _client(admin).post(f"{BASE}prefix-uc/api-keys/", {"label": "b"}, format="json")
+
+    assert issued.status_code == 201, issued.content
+    assert issued.json()["prefix"] == "0badc0de"
+    assert ApiKey.objects.filter(prefix=taken_prefix).count() == 1
+
+
+def test_a_prefix_that_never_comes_free_is_said_rather_than_looped(monkeypatch) -> None:
+    """The retry is bounded: a generator that only ever draws taken prefixes ends in a `503`
+    saying what happened, in this API's envelope."""
+    from aira_management.apps.usecases.views import api_keys
+
+    admin = _user("prefix-admin", "global-admin")
+    _make_uc(admin, "prefix-uc")
+    taken = _client(admin).post(f"{BASE}prefix-uc/api-keys/", {"label": "a"}, format="json")
+    prefix = taken.json()["prefix"]
+    monkeypatch.setattr(
+        api_keys, "generate_api_key", lambda: (f"aira_{prefix}_{'1' * 48}", prefix, "1" * 64)
+    )
+
+    refused = _client(admin).post(f"{BASE}prefix-uc/api-keys/", {"label": "b"}, format="json")
+
+    assert refused.status_code == 503
+    assert refused.json()["error"]["code"] == "key_prefix_exhausted"
+
+
+def test_a_label_longer_than_its_column_is_refused_by_name() -> None:
+    """The column is 255 characters and only PostgreSQL enforces it — as a `DataError`, a `500`
+    for a label somebody typed."""
+    admin = _user("label-admin", "global-admin")
+    _make_uc(admin, "label-uc")
+
+    refused = _client(admin).post(f"{BASE}label-uc/api-keys/", {"label": "x" * 256}, format="json")
+    accepted = _client(admin).post(f"{BASE}label-uc/api-keys/", {"label": "x" * 255}, format="json")
+
+    assert refused.status_code == 400
+    assert "label" in refused.json()["error"]["details"]
+    assert accepted.status_code == 201

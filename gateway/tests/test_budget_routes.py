@@ -6,6 +6,7 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from aira_gateway.api.serving.controls import text_tokens
 from aira_gateway.app import create_app
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
@@ -118,7 +119,8 @@ def test_the_reservation_uses_the_caller_s_own_output_bound() -> None:
     with TestClient(app) as client:
         client.post("/v1beta/models/mock-1:generateContent", json=body)
 
-    assert recorder.estimates[0].tokens == 7
+    # The caller's bound, plus the prompt the request sends: "hi" is input it is billed for too.
+    assert recorder.estimates[0].tokens == 7 + text_tokens(["hi"])
 
 
 def test_an_unbounded_request_falls_back_to_the_configured_estimate() -> None:
@@ -129,7 +131,7 @@ def test_an_unbounded_request_falls_back_to_the_configured_estimate() -> None:
     with TestClient(app) as client:
         client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
 
-    assert recorder.estimates[0].tokens == 321
+    assert recorder.estimates[0].tokens == 321 + text_tokens(["hi"])
 
 
 def test_stream_records_usage() -> None:
@@ -226,14 +228,16 @@ def test_usage_endpoint_rejects_invalid_slug() -> None:
     assert resp.status_code == 400
 
 
-# == a rule written about a person by name finds them, whichever credential they used ============
+# == a per-person allowance is that person's, whichever credential they used ====================
 
 
 def _oidc_app(subject: str, username: str | None, sessionmaker) -> tuple[object, object]:
     """A gateway whose caller is an OIDC principal, with the real budget service behind it."""
     from aira_gateway.auth.dependencies import require_principal
 
-    app = create_app(GatewaySettings(auth_required=False, require_use_case=False))
+    # `log_queue_size=0`: the audit writer's queue belongs to the event loop of the client that
+    # started it, and a case that calls one app from more than one client would find it on another.
+    app = create_app(GatewaySettings(auth_required=False, require_use_case=False, log_queue_size=0))
     app.state.budgets = BudgetService(sessionmaker)
     app.dependency_overrides[require_principal] = lambda: Principal(
         subject=subject, method="oidc", username=username, use_cases=("uc",)
@@ -241,7 +245,7 @@ def _oidc_app(subject: str, username: str | None, sessionmaker) -> tuple[object,
     return app, app.state.budgets
 
 
-async def _member_budget(sessionmaker, subject: str) -> None:
+async def _each_member_budget(sessionmaker) -> None:
     from aira_gateway.db.models import BudgetRead
 
     async with sessionmaker() as session:
@@ -249,8 +253,8 @@ async def _member_budget(sessionmaker, subject: str) -> None:
             BudgetRead(
                 id=1,
                 use_case="uc",
-                scope="member",
-                subject=subject,
+                scope="each_member",
+                subject="",
                 period="day",
                 limit_requests=1,
                 enabled=True,
@@ -260,15 +264,129 @@ async def _member_budget(sessionmaker, subject: str) -> None:
 
 
 async def test_that_budget_still_binds_nobody_else(sessionmaker) -> None:
-    """The half that must not have been widened: matching a *name* is not matching anyone."""
-    await _member_budget(sessionmaker, "alice")
-    app, _ = _oidc_app("2fc398cc-717d-5350-a1db-c0d48a2bb4e1", "bob", sessionmaker)
+    """The half that must not have been widened: one person spending their own allowance leaves
+    everybody else's where it was. Asked of `each_member`, the scope that keys a counter on the
+    person — a row naming somebody (`member`) is a scope this build no longer has, and asking it
+    tested only that an unknown scope binds nobody."""
+    await _each_member_budget(sessionmaker)
 
-    with TestClient(app) as client:
-        for _ in range(3):
-            resp = client.post(
+    def call(app) -> int:  # noqa: ANN001
+        with TestClient(app) as client:
+            return client.post(
                 "/v1beta/models/mock-1:generateContent",
                 json=_BODY,
                 headers={"X-AIRA-Use-Case": "uc"},
+            ).status_code
+
+    alice, _ = _oidc_app("6f1c-alice", "alice", sessionmaker)
+    bob, _ = _oidc_app("2fc398cc-717d-5350-a1db-c0d48a2bb4e1", "bob", sessionmaker)
+
+    assert call(alice) == 200
+    assert call(alice) == 429, "alice's own allowance of one is spent"
+    assert call(bob) == 200, "alice's spent allowance refused bob"
+
+
+# == what a reservation sets aside =================================================================
+
+
+def test_the_reservation_counts_the_prompt_it_will_be_billed_for() -> None:
+    """The prompt is input, and input is billed. An agent's context is most of what it costs —
+    the reservation set aside the output cap alone, a few percent of the real figure."""
+    app = create_app(GatewaySettings(auth_required=False, budget_estimate_output_tokens=100))
+    recorder = _RecordingBudgets()
+    app.state.budgets = recorder
+    prompt = "x" * 400_000
+    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    with TestClient(app) as client:
+        client.post("/v1beta/models/mock-1:generateContent", json=body)
+
+    assert recorder.estimates[0].tokens == 100 + text_tokens([prompt])
+    assert recorder.estimates[0].tokens >= 100_000
+
+
+async def test_concurrent_large_prompts_cannot_pass_a_limit_with_room_for_one() -> None:
+    """`FRD-405` §4.2, the guarantee the reservation exists for, with the prompt in it. Twelve
+    agentic requests reserving their output cap each were admitted together against a
+    50 000-token limit and booked 1.2 million; a reservation that counts the context admits one,
+    and the rest see it."""
+    import asyncio
+
+    import fakeredis.aioredis as fakeredis
+    import httpx
+
+    from aira_gateway.budgets.ledger import BudgetLedger
+    from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
+    from aira_gateway.db.models import BudgetRead, ModelRead
+    from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
+
+    class _Runner:
+        def __init__(self) -> None:
+            self.client = fakeredis.FakeRedis(decode_responses=True)
+
+        async def run(self, script, keys, args):  # noqa: ANN001, ANN201
+            return await self.client.register_script(script)(keys=list(keys), args=list(args))
+
+    class _Agent:
+        """Answers only once every request has been either admitted or refused."""
+
+        is_test_double = True
+
+        def __init__(self) -> None:
+            self.admitted = 0
+            self.answer = asyncio.Event()
+
+        def models(self) -> list[UpstreamModel]:
+            return [UpstreamModel("agent-1", "1", ("generateContent",), provider="t")]
+
+        async def generate(self, request):  # noqa: ANN001, ANN201
+            self.admitted += 1
+            await self.answer.wait()
+            return CanonicalResponse(
+                model="agent-1",
+                text="ok",
+                usage=CanonicalUsage(prompt_tokens=100_000, completion_tokens=900),
             )
-            assert resp.status_code == 200, "alice's budget refused bob"
+
+    agent = _Agent()
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.state.providers = ProviderRegistry([agent])
+    app.state.budgets = BudgetService(app.state.db_sessionmaker, ledger=BudgetLedger(_Runner()))
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": "x" * 400_000}]}],
+        "generationConfig": {"maxOutputTokens": 4096},
+    }
+    async with app.router.lifespan_context(app):
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="agent-1", capabilities=["generate"]))
+            session.add(
+                BudgetRead(
+                    id=1,
+                    use_case="uc",
+                    scope="use_case",
+                    subject="",
+                    period="month",
+                    limit_tokens=50_000,
+                    enabled=True,
+                )
+            )
+            await session.commit()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            sent = [
+                asyncio.create_task(
+                    client.post(
+                        "/v1beta/models/agent-1:generateContent",
+                        json=body,
+                        headers={"x-aira-use-case": "uc"},
+                    )
+                )
+                for _ in range(5)
+            ]
+            for _ in range(500):
+                if agent.admitted + sum(task.done() for task in sent) == len(sent):
+                    break
+                await asyncio.sleep(0.01)
+            agent.answer.set()
+            statuses = sorted(response.status_code for response in await asyncio.gather(*sent))
+
+    assert statuses == [200, 429, 429, 429, 429]

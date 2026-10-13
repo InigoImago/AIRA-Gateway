@@ -2,7 +2,7 @@
   <div class="spread">
     <div>
       <h2 class="page-title">Reporting</h2>
-      <p class="muted" style="margin: 0.25rem 0 0">
+      <p class="muted lead">
         What was spent and used over a period. Aggregates only — no prompts or responses are shown.
       </p>
     </div>
@@ -73,13 +73,18 @@
   } @else if (report(); as report) {
     <div class="card">
       <div class="spread">
-        <h3 class="section-title" style="margin: 0">Totals</h3>
-        <span class="muted" data-testid="scope">
-          @if (seesEverything()) {
-            Every use case
-          } @else {
-            Your use cases only
-          }
+        <h3 class="section-title">Totals</h3>
+        <!-- The period of these figures, from the request that produced them: the date fields may
+             hold a custom period typed since and not yet shown. -->
+        <span class="muted">
+          <span data-testid="report-period">{{ shownPeriod() }}</span> ·
+          <span data-testid="scope">
+            @if (seesEverything()) {
+              Every use case
+            } @else {
+              Your use cases only
+            }
+          </span>
         </span>
       </div>
 
@@ -104,11 +109,31 @@
         }
       </dl>
 
+      <!-- Two unknowns with two remedies (`FRD-626` FR-18): a price fixes a model with none on
+           file, and nothing fixes an upstream that reported no usage to price. Prices apply from
+           when they are set, so the link is about the requests that follow. -->
       @if (unpriced() > 0) {
         <p class="callout callout--warning" role="status" data-testid="unpriced-caveat">
-          {{ unpriced() }} request(s) ran on a model with no price on file. Their cost is
-          <strong>unknown, not zero</strong>, so the spend above is a lower bound. Add the price in
-          Models &amp; prices to account for them.
+          {{ count(unpriced()) }} request(s) in this period have no cost —
+          <strong>unknown, not zero</strong>, so the spend above is
+          {{ spendUnknown() ? 'unknown' : 'a lower bound' }}.
+          @if (unmetered() > 0) {
+            {{ count(unmetered()) }} of them reported <strong>no token usage</strong> for anything
+            to be priced from; an upstream that does not meter what it serves cannot be fixed with a
+            price.
+          }
+          @if (unpriced() - unmetered() > 0) {
+            {{ count(unpriced() - unmetered()) }} of them ran on a model with
+            <strong>no price on file</strong>; add one under
+            <a routerLink="/models">Models &amp; prices</a> to price the requests that follow.
+          }
+        </p>
+      }
+      @if (partialUsage() > 0) {
+        <p class="callout" role="status" data-testid="partial-usage-caveat">
+          {{ count(partialUsage()) }} request(s) were left by their caller before the provider said
+          what they used. They are booked at what could be established — the request and the answer
+          received — so the spend above is <strong>a lower bound</strong>.
         </p>
       }
     </div>
@@ -133,31 +158,32 @@
         @if (exportable()) {
           <button
             type="button"
-            class="btn btn--primary"
+            class="btn"
             (click)="download()"
-            [disabled]="exporting() || !canLoad()"
+            [disabled]="exporting() || !shown()"
             data-testid="export-download"
-            style="margin-bottom: 0.05rem"
           >
             {{ exporting() ? 'Preparing…' : 'Download this table (CSV)' }}
           </button>
-        } @else {
-          <!-- Said rather than discovered by a 400: the CSV renderer takes three breakdowns
-               (`FRD-602`, `FRD-206`). -->
-          <span class="muted" data-testid="export-unavailable" style="padding-bottom: 0.6rem">
-            The outcome breakdown is shown here but not exported. Pick use case, model or member to
-            download a file.
-          </span>
         }
       </div>
+      @if (!exportable()) {
+        <!-- Said rather than discovered by a 400: the CSV renderer takes three breakdowns
+             (`FRD-602`, `FRD-206`). Under the row, not in it: it is a sentence, not a control. -->
+        <p class="muted" data-testid="export-unavailable">
+          The outcome breakdown is shown here but not exported. Pick use case, model or member to
+          download a file.
+        </p>
+      }
       <p class="field__hint" style="margin-top: 0.5rem">
-        A download is exactly this table, for the period above and your own scope — never more.
-        UTF-8, comma-separated (RFC 4180); Excel may ask you to confirm the separator.
+        A download is exactly this table, for the period of the figures above and your own scope —
+        never more. UTF-8, comma-separated (RFC 4180); Excel may ask you to confirm the separator.
       </p>
     </div>
 
     <app-breakdown-table
       [label]="breakdownLabel()"
+      [item]="breakdownItem()"
       [rows]="breakdownRows()"
       [noun]="breakdownNoun()"
       [emptyText]="breakdownEmpty()"

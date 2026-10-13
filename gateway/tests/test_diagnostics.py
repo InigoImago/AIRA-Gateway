@@ -353,30 +353,66 @@ def test_healthz_does_no_io_and_says_only_that_the_process_is_up() -> None:
 # == correlation (FR-4) ==========================================================================
 
 
-def test_every_response_carries_a_trace_id_when_a_span_is_active() -> None:
-    settings = GatewaySettings(auth_required=False, otel_enabled=False)
-    app = create_app(settings)
-    with TestClient(app) as client:
-        ok = client.get("/healthz")
-        missing = client.post("/v1beta/models/nope:generateContent", json={})
+async def _under_a_span(app: Any, method: str, path: str, **kwargs: Any) -> tuple[Any, str]:
+    """One request with a span active around it, as the server instrumentation provides one; the
+    span's trace id is the one the response has to carry. In-process, so the span's context is the
+    request's — and with the app's exceptions answered rather than raised, as a server does."""
+    import httpx
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
 
-    # Without an exporter there may be no active span, so the assertion is conditional in the same
-    # way the middleware is: an id that correlates with nothing is worse than none, because
-    # somebody will search for it.
-    for response in (ok, missing):
-        if "x-trace-id" in response.headers:
-            assert response.headers["x-trace-id"].strip()
+    tracer = TracerProvider().get_tracer("test")
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=transport, base_url="http://test") as client,
+    ):
+        with tracer.start_as_current_span("request") as span:
+            response = await client.request(method, path, **kwargs)
+    return response, trace.format_trace_id(span.get_span_context().trace_id)
 
 
-def test_a_failing_request_is_as_correlatable_as_a_successful_one() -> None:
-    """The requests that most need a trace id are the ones that went wrong, which is why the
-    middleware sits **outside** the exception handlers."""
-    app = create_app(GatewaySettings(auth_required=False))
+@pytest.mark.parametrize(
+    ("method", "path", "body", "status"),
+    [
+        ("GET", "/version-info", None, 200),
+        ("POST", "/v1beta/models/mock-1:generateContent", {"contents": []}, 400),
+        ("GET", "/not/a/route", None, 404),
+        ("GET", "/boom", None, 500),
+    ],
+    ids=["served", "refused", "unrouted", "unhandled"],
+)
+async def test_every_response_carries_the_trace_id_of_its_span(
+    method: str, path: str, body: Any, status: int
+) -> None:
+    """The requests that most need a trace id are the ones that went wrong. An unhandled error is
+    answered by Starlette past every middleware, so its handler adds the id itself — without it a
+    500 was the one response with nothing to quote, while its log line carried the id."""
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+
+    @app.get("/boom")
+    async def _boom() -> None:
+        raise RuntimeError("kaboom")
+
+    response, trace_id = await _under_a_span(app, method, path, json=body)
+
+    assert response.status_code == status
+    assert response.headers.get("x-trace-id") == trace_id
+
+
+def test_without_a_span_there_is_no_id_to_quote() -> None:
+    """An id that correlates with nothing is worse than none: somebody will search for it."""
+    app = create_app(GatewaySettings(auth_required=False, otel_enabled=False))
+
+    @app.get("/boom")
+    async def _boom() -> None:
+        raise RuntimeError("kaboom")
+
     with TestClient(app, raise_server_exceptions=False) as client:
-        refused = client.post("/v1beta/models/mock-1:generateContent", json={"contents": []})
+        responses = [client.get("/version-info"), client.get("/boom")]
 
-    assert refused.status_code == 400
-    assert ("x-trace-id" in refused.headers) == ("x-trace-id" in client.get("/healthz").headers)
+    assert [response.status_code for response in responses] == [200, 500]
+    assert all("x-trace-id" not in response.headers for response in responses)
 
 
 # == version (FR-1) ==============================================================================
@@ -439,6 +475,37 @@ def test_a_named_origin_is_allowed_and_others_are_not() -> None:
     assert other.headers.get("access-control-allow-origin") != "https://evil.example"
 
 
+def test_a_refusal_answered_before_any_route_is_readable_cross_origin() -> None:
+    """The body ceiling answered outside the CORS middleware, and Starlette answers an unhandled
+    error outside every middleware: a cross-origin console saw a network error for both, where
+    the status and the message were."""
+    app = create_app(
+        GatewaySettings(
+            auth_required=False, cors_origins="https://spa.example", max_request_bytes=100
+        )
+    )
+
+    @app.get("/boom")
+    async def _boom() -> None:
+        raise RuntimeError("kaboom")
+
+    origin = {"Origin": "https://spa.example"}
+    with TestClient(app, raise_server_exceptions=False) as client:
+        too_large = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            content=b"x",
+            headers={**origin, "content-length": "5000"},
+        )
+        failed = client.get("/boom", headers=origin)
+        stranger = client.get("/boom", headers={"Origin": "https://evil.example"})
+
+    assert too_large.status_code == 413
+    assert too_large.headers.get("access-control-allow-origin") == "https://spa.example"
+    assert failed.status_code == 500
+    assert failed.headers.get("access-control-allow-origin") == "https://spa.example"
+    assert stranger.headers.get("access-control-allow-origin") is None
+
+
 def test_a_wildcard_with_credentials_refuses_to_start() -> None:
     """A compatibility surface is never a reason to relax this. Browsers reject the combination,
     and a server that implements it by *reflecting* the origin disables the protection entirely:
@@ -495,3 +562,25 @@ async def test_an_adapter_that_serves_no_configured_model_is_still_probed() -> N
 
     assert "catalogue-only" in verdicts
     assert verdicts["catalogue-only"].probed is True
+
+
+class _KeyInItsMessage(_Provider):
+    """Fails the way an HTTP client does: with the URL it called, credential and all."""
+
+    probe_name = "studio"
+
+    async def ping(self) -> str:
+        raise RuntimeError(
+            "Client error '403 Forbidden' for url "
+            "'https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSy-the-installations'"
+        )
+
+
+async def test_a_failed_probe_reports_its_type_and_never_its_message() -> None:
+    """The readiness body is read by operators and shipped to wherever they paste it; an error's
+    text can carry the URL it called, and Google AI Studio's carries the key in it. The model check
+    beside this already reports the type only — one rule, `describe_failure`, for both."""
+    verdicts = await _probe(_KeyInItsMessage()).probe_once()
+
+    assert verdicts["studio"].detail == "RuntimeError"
+    assert "AIzaSy" not in verdicts["studio"].detail

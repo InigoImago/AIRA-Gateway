@@ -8,13 +8,14 @@ clean. ``UNDETERMINED`` is never folded into ``CLEAN``; what happens next is the
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from aira_common.logging import get_logger
-from aira_common.patterns import catastrophic_reason
+from aira_common.patterns import MAX_PATTERN_LENGTH, MAX_PATTERNS, catastrophic_reason
 from aira_gateway.audit import ModelCall
 from aira_gateway.core.canonical import Thinking
 from aira_gateway.pipeline.classifiers.prompts import (
@@ -39,9 +40,16 @@ BUILTIN_INJECTION_PATTERNS: tuple[str, ...] = (
 )
 
 #: Bounds on the work one scan can cost (`ADR-0007`). Operator patterns are attacker-adjacent input
-#: for a shared process; all three limits are far above any legitimate configuration.
-MAX_CUSTOM_PATTERNS = 64
-MAX_PATTERN_LENGTH = 256
+#: for a shared process. The count and the length are the pattern rule's own, so Management refuses
+#: exactly what this filter would drop (`aira_common.patterns`).
+MAX_CUSTOM_PATTERNS = MAX_PATTERNS
+
+#: How much of a text one scan reads: its **first and last half** of this when it is longer. Not
+#: the whole text, because one unbounded repeat in a pattern costs a search time in the square of
+#: what it reads — `[a-z]+!` took 2.35 s over 20 000 letters — and every pattern is searched on the
+#: event loop. Both ends rather than the head alone: a head-only window passes anything placed after
+#: enough filler. **What lies between the two halves is not scanned** — a stated reach limit
+#: (`docs/REQUEST-LIFECYCLE.md`), logged and shown in the dry run whenever a text exceeds it.
 MAX_SCANNED_CHARS = 20_000
 
 
@@ -75,6 +83,9 @@ class Classification:
     #: heuristic classifier has no call either, and reading that as "not reached" would send it
     #: down a chain it never asked for.
     reached: bool = True
+    #: How many characters of the text were left unscanned — the middle of a text longer than
+    #: `MAX_SCANNED_CHARS`. Zero when all of it was read.
+    unscanned: int = 0
 
 
 @runtime_checkable
@@ -90,32 +101,65 @@ def _compile(pattern: str) -> re.Pattern[str]:
         return re.compile(re.escape(pattern), re.IGNORECASE)
 
 
+def _scanned(text: str) -> tuple[str, ...]:
+    """The parts of ``text`` a scan reads: all of it, or its first and last halves of the bound.
+
+    Each part is searched on its own: joined, a match could straddle the gap and find text the
+    caller never wrote.
+    """
+    if len(text) <= MAX_SCANNED_CHARS:
+        return (text,)
+    half = MAX_SCANNED_CHARS // 2
+    return text[:half], text[-half:]
+
+
+@functools.lru_cache(maxsize=1024)
+def _dropped(pattern: str, why: str) -> None:
+    """Say once per process that a configured pattern is not used, and why.
+
+    The classifier is built for every request, and a dropped pattern is a filter that shows as
+    configured while matching less than it says — worth one line, not one per request.
+    """
+    _log.warning(
+        "injection_pattern_rejected",
+        pattern=pattern[:MAX_PATTERN_LENGTH],
+        length=len(pattern),
+        reason=why,
+    )
+
+
 class HeuristicInjectionClassifier:
     """Pattern-based detection: built-in phrasings plus any operator-supplied patterns."""
 
     def __init__(self, extra_patterns: tuple[str, ...] = (), *, use_builtins: bool = True) -> None:
         patterns = list(BUILTIN_INJECTION_PATTERNS) if use_builtins else []
-        extras = [p for p in extra_patterns if p and len(p) <= MAX_PATTERN_LENGTH]
         # Asked here too, not only where the pattern was authored (`ADR-0018`): the read-model is
-        # reachable from Kafka, a seed or a direct write, and `re` has no timeout. A catastrophic
-        # pattern is dropped with a log line naming the rule's own reason, like the bounds above —
-        # one pattern fewer is degraded, a use case that cannot serve is down.
+        # reachable from Kafka, a seed or a direct write, and `re` has no timeout. A pattern past a
+        # bound, or one that can backtrack catastrophically, is dropped with a log line naming why
+        # — one pattern fewer is degraded, a use case that cannot serve is down.
         safe: list[str] = []
-        for pattern in extras[:MAX_CUSTOM_PATTERNS]:
-            reason = catastrophic_reason(pattern)
-            if reason is not None:
-                _log.warning("injection_pattern_rejected", pattern=pattern, reason=reason)
-                continue
-            safe.append(pattern)
+        for pattern in (p for p in extra_patterns if p):
+            if len(pattern) > MAX_PATTERN_LENGTH:
+                _dropped(pattern, f"longer than {MAX_PATTERN_LENGTH} characters")
+            elif len(safe) >= MAX_CUSTOM_PATTERNS:
+                _dropped(pattern, f"more than {MAX_CUSTOM_PATTERNS} custom patterns")
+            elif (reason := catastrophic_reason(pattern)) is not None:
+                _dropped(pattern, reason)
+            else:
+                safe.append(pattern)
         patterns += safe
         self._compiled = [_compile(pattern) for pattern in patterns]
 
     async def classify_text(self, text: str) -> Classification:
         """Never ``UNDETERMINED`` and never a model call — which is why it remains the default."""
-        scanned = text[:MAX_SCANNED_CHARS]
-        if any(pattern.search(scanned) for pattern in self._compiled):
-            return Classification(Verdict.INJECTION)
-        return Classification(Verdict.CLEAN)
+        parts = _scanned(text)
+        unscanned = len(text) - sum(len(part) for part in parts)
+        if unscanned:
+            # Not silent: the reach limit is stated, and every text it applies to says so.
+            _log.info("injection_scan_partial", length=len(text), unscanned=unscanned)
+        if any(pattern.search(part) for part in parts for pattern in self._compiled):
+            return Classification(Verdict.INJECTION, unscanned=unscanned)
+        return Classification(Verdict.CLEAN, unscanned=unscanned)
 
     async def verdict(self, text: str) -> Verdict:
         """The verdict alone, for callers that have nothing to bill."""

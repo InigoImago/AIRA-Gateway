@@ -13,23 +13,9 @@ from django.contrib.auth.models import AnonymousUser, Group
 
 from aira_common.permissions import Permission
 
+from .conftest import GROUP_FOR
+
 pytestmark = pytest.mark.django_db
-
-#: What an installation configures (`ADR-0017`). The tests read the same string a deployment sets,
-#: so a case cannot pass against a mapping the parser would refuse.
-ROLE_GROUPS = (
-    "global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung"
-)
-GROUP_FOR = {
-    "global-admin": "/aira/global-admins",
-    "it-security": "/aira/it-security",
-    "it-steuerung": "/aira/it-steuerung",
-}
-
-
-@pytest.fixture(autouse=True)
-def _role_groups(settings):
-    settings.AIRA_ROLE_GROUPS = ROLE_GROUPS
 
 
 def _user_with_roles(*roles: str):
@@ -153,9 +139,9 @@ def test_security_oversight_is_a_restricted_view_not_an_absent_one() -> None:
 
 
 @pytest.mark.django_db
-def test_security_oversight_is_still_not_a_spend_role() -> None:
-    """The other half, and the reason the two sets are separate rather than one widened set: the
-    figures stay with the roles the PRD gives them."""
+def test_security_oversight_reads_every_live_use_case_and_no_retired_one() -> None:
+    """IT Security oversees what runs: every live use case (`usecase.read_all`), and not the
+    tombstones, which are governance's record (`usecase.read_retired`, `FRD-607`)."""
     user = get_user_model().objects.create(username="itsec-spend")
     sync_user_roles(user, {"groups": ["/aira/it-security"]})
 

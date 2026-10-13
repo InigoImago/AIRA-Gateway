@@ -128,8 +128,17 @@ VAULT_NAMESPACE=…                         # Vault Enterprise only
 VAULT_TIMEOUT=10
 ```
 
-Keys read: `database_url`, `google_api_key`, `vertex_credentials`, `django_secret_key`,
-`keycloak_client_secret`, `redis_url` — each optional, each falling back per FR-3.
+Keys **inside** Vault are the settings' own names — the variable the environment would carry the
+value in, such as `AIRA_GOOGLE_API_KEY`. Case and the `AIRA_` prefix do not matter
+(`google_api_key` names the same setting), because a key that is present but spelled differently
+looks exactly like a missing one; `aira_common.secrets.setting_key` is that rule, and it is the one
+`VaultSource` reads. Two spellings of one setting holding different values refuse to start
+(`SecretAmbiguous`). The credentials a deployment keeps there, each optional and each falling back
+per FR-3: `AIRA_SECRET_KEY` (Management's signing key), `AIRA_POSTGRES_PASSWORD`,
+`AIRA_GOOGLE_API_KEY`, `AIRA_VERTEX_CREDENTIALS`, `AIRA_VERTEX_API_KEY`, `AIRA_FOUNDRY_API_KEY`,
+`AIRA_KAFKA_SASL_PASSWORD`, `AIRA_REDIS_PASSWORD`, `AIRA_REDIS_SENTINEL_PASSWORD`,
+`AIRA_DIRECTORY_CLIENT_SECRET`. A key that names no setting is loaded, listed by `/readyz`, and
+read by nothing.
 
 ## 8. Security & Privacy
 

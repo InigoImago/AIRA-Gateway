@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import { AccessChange, DirectoryResults, GroupGrant, Membership } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -319,6 +319,60 @@ describe('AccessPanel — a degraded directory', () => {
     const feedback = harness.fixture.debugElement.injector.get(PageFeedback);
 
     expect(feedback.error()).toContain('Could not search the directory.');
+  });
+
+  it('does not claim nothing matches when the search itself failed', () => {
+    // "Nothing matches “kunden”" under "Could not search the directory" is a statement about a
+    // directory nobody read.
+    const harness = setup({ directory: throwError(() => ({ status: 502 })) });
+    harness.type('kunden');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('access-no-match')).toBeNull();
+  });
+
+  it('stops saying "Searching…" when the query is cut back under two letters', () => {
+    // The search in flight was dropped and nothing reset the flag: "Searching…" for good.
+    const pending = new Subject<never>();
+    const harness = setup({ directory: pending });
+    harness.type('kunden');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('Searching…');
+
+    harness.type('k');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).not.toContain('Searching…');
+  });
+
+  it('asks again when the same letters are typed after a pick', () => {
+    // The pick cleared the results; a distinct-check over the query then swallowed the repeat and
+    // left "nothing matches" under a query that does match.
+    const harness = setup();
+    harness.type('kunden');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="access-results"] .picker__item');
+
+    harness.type('kunden');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+
+    expect(harness.searches).toEqual(['kunden', 'kunden']);
+    expect(harness.testid('access-results')).not.toBeNull();
+  });
+
+  it('labels only its own action as in progress', () => {
+    // The page-wide busy flag relabelled Grant "Granting…" while a group was being revoked.
+    const pending = new Subject<never>();
+    const harness = setup({ revokeGroup: pending });
+    harness.click('[aria-label="Revoke /ai/kundenservice"]');
+
+    expect(harness.testid('access-grant')?.textContent).toContain('Grant');
+    expect(harness.testid('access-grant')?.textContent).not.toContain('Granting');
   });
 });
 

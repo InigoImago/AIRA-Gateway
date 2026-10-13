@@ -6,14 +6,14 @@ and the Gemini streaming path had earned a `finally` + `asyncio.shield` from an 
 that the KIRA one never received. The surface written second did not get the fix the first one
 earned, which is what duplication does and where it leaves it.
 
-The failure window is different here, and the difference is why a copy of the Gemini test would
-have proved nothing. This surface's "stream" delivers **one terminal event carrying the whole
-answer**, so its accounting happens *before* anything is yielded: hanging up after the first chunk
-finds the work already done. What is exposed is the long await in the middle — a caller that goes
-away while the model is still thinking. The task is cancelled, the `hold` gives the reservation
-back, and the request reaches the upstream and then vanishes from the record.
+This surface streams an `update` event per chunk and accounts at the end, through the finisher the
+Gemini stream shares (`api/serving/streaming.py`). What these cases expose is the long await in the
+middle — a caller that goes away while the model is still answering: the task is cancelled, and the
+request that reached the upstream must still be recorded, and billed only for what was reported.
 
-So the test cancels during dispatch, which is the only place the gap is.
+So the tests cancel while a chunk is awaited. How a *server* delivers a disconnect — Starlette's
+level-triggered cancellation, and a cancellation while a frame is being sent — is driven over ASGI
+in `test_cancelled_requests.py`.
 """
 
 from __future__ import annotations

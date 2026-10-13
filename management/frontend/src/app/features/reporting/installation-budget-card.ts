@@ -8,6 +8,7 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { can } from '../../core/auth/roles';
+import { displayCount, storedAmount } from '../../core/ui/money';
 
 /** A spend limit as typed: an amount with up to six decimals, either separator. */
 const AMOUNT = /^\d+([.,]\d{1,6})?$/;
@@ -44,6 +45,8 @@ export class InstallationBudgetCard implements OnInit {
 
   protected readonly budgets = signal<Budget[]>([]);
   protected readonly loaded = signal(false);
+  /** Whether the last load failed — what `retryIfFailed` asks. */
+  private readonly failed = signal(false);
   private readonly me = signal<{ permissions?: string[] } | null>(null);
 
   protected readonly showForm = signal(false);
@@ -84,12 +87,24 @@ export class InstallationBudgetCard implements OnInit {
   protected load(): void {
     this.service.installationBudgets().subscribe({
       next: (rows) => {
+        this.failed.set(false);
         this.budgets.set(rows);
         this.loaded.set(true);
       },
-      error: (response: unknown) =>
-        this.feedback.fail(response, 'Could not load the installation budget.'),
+      error: (response: unknown) => {
+        this.failed.set(true);
+        this.feedback.fail(response, 'Could not load the installation budget.');
+      },
     });
+  }
+
+  /**
+   * Ask again, if the last answer was a failure. The page clears its one banner when it loads
+   * another period, and that banner was the only thing saying why this card is empty — left alone,
+   * the card would sit blank under a banner that no longer mentions it.
+   */
+  retryIfFailed(): void {
+    if (this.failed()) this.load();
   }
 
   protected validationError(): string | null {
@@ -180,9 +195,23 @@ export class InstallationBudgetCard implements OnInit {
   /** What this row limits, in words, so a card never shows a bare number with no unit. */
   protected limitsOf(budget: Budget): string[] {
     const out: string[] = [];
-    if (budget.limit_cost) out.push(`$${budget.limit_cost}`);
-    if (budget.limit_tokens != null) out.push(`${budget.limit_tokens} tokens`);
-    if (budget.limit_requests != null) out.push(`${budget.limit_requests} request(s)`);
+    if (budget.limit_cost) out.push(this.amount(budget.limit_cost));
+    if (budget.limit_tokens != null) out.push(`${displayCount(budget.limit_tokens)} tokens`);
+    if (budget.limit_requests != null)
+      out.push(`${displayCount(budget.limit_requests)} request(s)`);
     return out;
+  }
+
+  /**
+   * A stored spend limit as a person reads it — `20.000000` as `20.00 CHF` — in `AIRA_CURRENCY`,
+   * never in a symbol of the console's own: on a CHF installation a `$` is a figure in the wrong
+   * currency (`MeService.currency`). Shown as it was set (`storedAmount`), so the amount never
+   * passes through a float (`FRD-403`). Until the currency is known it is named as spend rather
+   * than left bare.
+   */
+  private amount(limit: string): string {
+    const shown = storedAmount(limit) ?? limit;
+    const currency = this.currency();
+    return currency ? `${shown} ${currency}` : `spend ${shown}`;
   }
 }

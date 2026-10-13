@@ -8,7 +8,10 @@
   </header>
 
   @if (view.loading() && !view.rows().length) {
-    <p class="muted" data-testid="role-changes-loading">Loading…</p>
+    <p class="loading" data-testid="role-changes-loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the change log…
+    </p>
   } @else if (!view.rows().length) {
     <p class="empty" data-testid="no-role-changes">No role has been created or changed yet.</p>
   } @else {

@@ -137,6 +137,62 @@ def test_a_deployment_name_with_awkward_characters_is_encoded() -> None:
     assert "weird%2Fname%3Fx" in routes.chat("m")
 
 
+async def test_the_output_cap_is_sent_in_the_field_every_azure_deployment_takes() -> None:
+    """**A reasoning deployment refuses `max_tokens`** — "Unsupported parameter: 'max_tokens' is not
+    supported with this model. Use 'max_completion_tokens' instead." — and a cap is on almost every
+    request, the catalogue's default where the caller set none. The pinned API version takes
+    `max_completion_tokens` for every model, so that is the field on this platform."""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=COMPLETION)
+
+    request = _request().model_copy(update={"max_output_tokens": 256})
+    await _adapter(handler).generate(request)
+
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert body["max_completion_tokens"] == 256
+    assert "max_tokens" not in body
+
+
+async def test_a_streamed_request_uses_the_same_field() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=b"data: [DONE]\n\n")
+
+    request = _request().model_copy(update={"max_output_tokens": 256})
+    [chunk async for chunk in _adapter(handler).stream_generate(request)]
+
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert body["max_completion_tokens"] == 256
+    assert "max_tokens" not in body
+
+
+def test_a_schema_strict_mode_cannot_express_skips_an_azure_candidate_by_name() -> None:
+    """Azure validates a `strict` schema and refuses a constraint strict mode lacks, so such a
+    schema skips the candidate by name instead of collecting the platform's 400. A self-hosted
+    server constrains decoding by the schema as sent and refuses nothing, so it keeps serving it."""
+    from aira_gateway.core.schema import parse as parse_schema
+    from aira_gateway.upstreams.openai.transport import OpenAITransport
+
+    schema = parse_schema(
+        {"type": "OBJECT", "properties": {"name": {"type": "STRING", "minLength": 3}}}
+    )
+    plain = parse_schema({"type": "OBJECT", "properties": {"name": {"type": "STRING"}}})
+    local = OpenAIAdapter(OpenAITransport(client=httpx.AsyncClient()), ["m"])
+
+    refusal = _adapter(_ok(COMPLETION)).schema_refusal(schema)
+
+    assert refusal is not None and "min_length" in refusal
+    assert _adapter(_ok(COMPLETION)).schema_refusal(plain) is None
+    assert local.schema_refusal(schema) is None
+
+
 # == the credential ==============================================================================
 
 
@@ -183,6 +239,28 @@ async def test_an_entra_token_is_fetched_per_request_rather_than_captured_once()
     await adapter.generate(_request())
 
     assert seen == ["Bearer entra-1", "Bearer entra-2"]
+
+
+async def test_an_entra_token_that_cannot_be_had_is_an_upstream_failure() -> None:
+    """**A 503, as on Vertex** — the caller did nothing wrong — and the cause stays in the log: it
+    is about this installation's credential. Unconverted, the token source's own exception escaped
+    every surface as a 500 that blamed the gateway."""
+    from aira_common.tokens import TokenUnavailable
+    from aira_gateway.upstreams.base import UpstreamError
+
+    class _Unavailable:
+        async def token(self) -> str:
+            raise TokenUnavailable("Could not obtain an access token: AADSTS7000215 bad secret")
+
+    client = httpx.AsyncClient(base_url=ENDPOINT, transport=httpx.MockTransport(_ok(COMPLETION)))
+    transport = FoundryTransport(client=client, tokens=_Unavailable())  # type: ignore[arg-type]
+    adapter = OpenAIAdapter(transport, ["gpt-4o"], routes=AzureRoutes({"gpt-4o": "d"}, API_VERSION))
+
+    with pytest.raises(UpstreamError) as caught:
+        await adapter.generate(_request())
+
+    assert caught.value.status_code == 503
+    assert "AADSTS" not in caught.value.message
 
 
 # == configuration, which fails at startup or not at all =========================================

@@ -29,6 +29,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
+from aira_gateway.core.schema import parse
 from aira_gateway.db.base import create_all
 from aira_gateway.db.models import ModelRead
 
@@ -191,7 +192,9 @@ async def test_a_structured_request_carries_a_digest_of_its_schema(
     assert response.status_code == 200, response.text
     attributes = recorded.attributes
     assert attributes["aira.response_schema"] is True
-    assert len(str(attributes["aira.response_schema.digest"])) == 16
+    # The schema's own fingerprint (`ResponseSchema.digest`), so the span and anything else that
+    # names a schema name it alike — a second, differently computed one never matches the first.
+    assert attributes["aira.response_schema.digest"] == parse(_SCHEMA).digest()
 
 
 async def test_an_unstructured_request_says_nothing_about_a_schema(

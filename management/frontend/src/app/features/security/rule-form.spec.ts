@@ -69,6 +69,15 @@ async function setup(rule: AnomalyRule = EXISTING) {
       element.querySelector<HTMLFormElement>('form')!.dispatchEvent(new Event('submit'));
       fixture.detectChanges();
     },
+    save: () => element.querySelector<HTMLButtonElement>('[data-testid="f-save"]')!,
+    /** Why Save is unavailable, as the form says it — empty when nothing stands in the way. */
+    problem: () => element.querySelector('[data-testid="f-problem"]')?.textContent?.trim() ?? '',
+    hint: (name: string) =>
+      element
+        .querySelector(`[data-testid="f-${name}"]`)
+        ?.closest('.field')
+        ?.querySelector('.field__hint')
+        ?.textContent?.trim() ?? '',
   };
 }
 
@@ -181,11 +190,20 @@ describe('RuleForm — what it sends', () => {
   });
 
   it('will not submit without a threshold or a window', async () => {
-    const harness = await setup();
-    await harness.set('threshold', '');
-    harness.submit();
+    const withoutThreshold = await setup();
+    await withoutThreshold.set('threshold', '');
+    withoutThreshold.submit();
+    expect(withoutThreshold.host.saved()).toBeNull();
 
-    expect(harness.host.saved()).toBeNull();
+    const withoutWindow = await setup();
+    await withoutWindow.set('window', '');
+    withoutWindow.submit();
+    expect(withoutWindow.host.saved()).toBeNull();
+    expect(withoutWindow.save().disabled).toBe(true);
+    // A day is the longest window "the window before this one" still describes (`MAX_WINDOW_MINUTES`).
+    await withoutWindow.set('window', '1441');
+    expect(withoutWindow.save().disabled).toBe(true);
+    expect(withoutWindow.problem()).toContain('1440');
   });
 
   it('says it is saving, and refuses a second press', async () => {
@@ -205,6 +223,87 @@ describe('RuleForm — what it sends', () => {
     harness.fixture.detectChanges();
 
     expect(harness.host.cancelled()).toBe(true);
+  });
+});
+
+describe('RuleForm — what the server would refuse', () => {
+  it('will not save an automatic action without a duration, and names the range', async () => {
+    /** `block` and `throttle` require `action_minutes`, 1–10080: an automatic action with no expiry
+     *  is an outage with a good reason. "Empty means until somebody lifts it" promised the one
+     *  thing the platform refuses. */
+    const harness = await setup();
+    await harness.set('action', 'block');
+
+    expect(harness.hint('minutes')).toContain('10080');
+    expect(harness.hint('minutes')).not.toContain('until somebody lifts it');
+    expect(harness.save().disabled).toBe(true);
+    expect(harness.problem()).toContain('10080');
+    harness.submit();
+    expect(harness.host.saved()).toBeNull();
+
+    await harness.set('minutes', '10081');
+    expect(harness.save().disabled).toBe(true);
+
+    await harness.set('minutes', '30');
+    expect(harness.save().disabled).toBe(false);
+    expect(harness.problem()).toBe('');
+  });
+
+  it('will not save a throttle without its rate', async () => {
+    const harness = await setup();
+    await harness.set('action', 'throttle');
+    await harness.set('minutes', '30');
+
+    expect(harness.save().disabled).toBe(true);
+    expect(harness.problem()).toContain('rate');
+
+    await harness.set('rpm', '12');
+    expect(harness.save().disabled).toBe(false);
+  });
+
+  it('will not save a size rule without its byte figure', async () => {
+    const harness = await setup({ ...EXISTING, kind: 'payload_size', parameter: null });
+
+    expect(harness.save().disabled).toBe(true);
+    expect(harness.problem()).toContain('bytes');
+
+    await harness.set('parameter', '100000');
+    expect(harness.save().disabled).toBe(false);
+  });
+
+  it('holds a share to 100 percent and a spike above it, as the server does', async () => {
+    const share = await setup({ ...EXISTING, kind: 'refusal_rate' });
+    await share.set('threshold', '150');
+    expect(share.save().disabled).toBe(true);
+    expect(share.problem()).toContain('100 percent');
+
+    // `3` meaning three times is the reading the old hint invited; the server answers 400.
+    const spike = await setup({ ...EXISTING, kind: 'spend_spike', threshold: 300 });
+    await spike.set('threshold', '3');
+    expect(spike.save().disabled).toBe(true);
+    expect(spike.problem()).toContain('above 100 percent');
+  });
+});
+
+describe('RuleForm — saying what a number means', () => {
+  it('says a spike threshold is in percent of the previous window, and reads it back', async () => {
+    /** The stored unit is "percent of the previous window"; the hint said "× the previous window"
+     *  under a field that takes percent, so 300 was explained as three hundred times. */
+    const harness = await setup({ ...EXISTING, kind: 'spend_spike', threshold: 300 });
+
+    expect(harness.hint('threshold')).toBe('% of the previous window — 300 is 3× as much');
+    await harness.set('threshold', '');
+    expect(harness.hint('threshold')).toContain('200 is twice as much');
+  });
+
+  it('labels the threshold as reached, not exceeded', async () => {
+    // The evaluator fires at equality — `share >= threshold`, `request_bytes >= parameter`.
+    const harness = await setup({ ...EXISTING, kind: 'payload_size', parameter: 1000 });
+    const label = (name: string) =>
+      harness.element.querySelector(`label[for="f-${name}"]`)?.textContent?.trim();
+
+    expect(label('threshold')).toBe('At or above');
+    expect(label('parameter')).toBe('At least (bytes)');
   });
 });
 
@@ -246,6 +345,7 @@ describe('RuleForm — a new rule', () => {
     await harness.set('name', 'slow them down');
     await harness.set('action', 'throttle');
     await harness.set('rpm', '12');
+    await harness.set('minutes', '30');
     harness.submit();
 
     expect(harness.host.saved()?.throttle_rpm).toBe(12);
@@ -271,13 +371,33 @@ describe('RuleForm — the fields a kind does not have', () => {
     expect(harness.field('parameter')).toBeNull();
   });
 
-  it('keeps a smallest sample of zero rather than inventing one', async () => {
-    // Zero is a real answer: "judge this on any number of requests". Replacing it with a default
-    // would quietly stop a rule firing on the small samples somebody chose to include.
-    const harness = await setup({ ...EXISTING, min_sample: 0 });
+  it('keeps the smallest sample it was given rather than inventing one', async () => {
+    const harness = await setup({ ...EXISTING, min_sample: 7 });
     harness.submit();
 
-    expect(harness.host.saved()?.min_sample).toBe(0);
+    expect(harness.host.saved()?.min_sample).toBe(7);
+  });
+
+  it('will not judge a rate on fewer than one request, and says why', async () => {
+    /** The server refuses `min_sample < 1` for a rate or a ratio: without a floor, one refused
+     *  request out of one is 100 percent. An older row holding 0 has to be corrected to be saved. */
+    const harness = await setup({ ...EXISTING, min_sample: 0 });
+    expect(harness.save().disabled).toBe(true);
+    expect(harness.problem()).toContain('at least 1');
+    expect(harness.field('sample')?.getAttribute('min')).toBe('1');
+
+    harness.submit();
+    expect(harness.host.saved()).toBeNull();
+  });
+
+  it('asks no smallest sample of a kind that is not a proportion', async () => {
+    // The server stores 0 for `new_source_ip` whatever is sent: twenty sightings of a new address
+    // before saying so would be twenty leaks. A field it overrides is a control that does nothing.
+    const harness = await setup(NEW_RULE);
+    expect(harness.field('sample')).not.toBeNull();
+
+    await harness.set('kind', 'new_source_ip');
+    expect(harness.field('sample')).toBeNull();
   });
 
   it('does not lose a block duration when the action stays a block', async () => {

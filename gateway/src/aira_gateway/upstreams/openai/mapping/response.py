@@ -2,7 +2,8 @@
 
 Reasoning is returned only where the use case asked for it (`FRD-135` FR-3). A reasoning model on
 this dialect **thinks whether or not it was asked** and always sends its thoughts, so the answer is
-read from `content` alone and `REASONING_FIELD` from exactly one place, under the use case's switch.
+read from `content` alone and `REASONING_FIELDS` from exactly one place, under the use case's
+switch.
 """
 
 from __future__ import annotations
@@ -15,18 +16,34 @@ from aira_gateway.core.canonical import (
     CanonicalResponse,
     CanonicalUsage,
     EmbeddingVectors,
+    FinishReason,
     ToolCallPart,
 )
+from aira_gateway.upstreams.base import UpstreamError, stream_failure
 
 _FINISH_REASONS = {
-    "stop": "stop",
-    "length": "max_tokens",
-    "content_filter": "refusal",
-    "tool_calls": "tool_use",
+    "stop": FinishReason.STOP,
+    "length": FinishReason.MAX_TOKENS,
+    "content_filter": FinishReason.REFUSAL,
+    "tool_calls": FinishReason.TOOL_USE,
+    # The deprecated single-call spelling some compatible servers still send.
+    "function_call": FinishReason.TOOL_USE,
 }
 
-#: The field a reasoning model returns its chain of thought in. Read only by `reasoning_of`.
-REASONING_FIELD = "reasoning"
+#: The fields a reasoning model returns its chain of thought in, in the order they are read: the
+#: dialect has two spellings — `reasoning_content` is DeepSeek's, and what Agent Platform's open
+#: models send. Read only by `reasoning_of`.
+REASONING_FIELDS = ("reasoning", "reasoning_content")
+
+#: The fields that make a `usage` block a **report**. Agent Platform puts a `usage` holding only
+#: its traffic type on every chunk of a stream, and read as a report it is zero tokens — the
+#: running total of a stream whose caller left before the last chunk.
+USAGE_COUNT_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def reports_usage(payload: Any) -> bool:
+    """Whether a `usage` block says what was used, rather than only that there is a block."""
+    return isinstance(payload, dict) and any(field in payload for field in USAGE_COUNT_FIELDS)
 
 
 def _usage_of(payload: Any) -> CanonicalUsage:
@@ -52,8 +69,12 @@ def _usage_of(payload: Any) -> CanonicalUsage:
     )
 
 
-def finish_reason(value: Any) -> str:
-    return _FINISH_REASONS.get(str(value), "stop")
+def finish_reason(value: Any) -> FinishReason:
+    """This dialect's word for how a choice ended. Absent is a normal end — several compatible
+    servers send none — and a word this table does not know is `OTHER`, never `STOP`."""
+    if value is None:
+        return FinishReason.STOP
+    return _FINISH_REASONS.get(str(value), FinishReason.OTHER)
 
 
 def reasoning_of(message: dict[str, Any], *, wanted: bool) -> str:
@@ -62,7 +83,8 @@ def reasoning_of(message: dict[str, Any], *, wanted: bool) -> str:
     The provider sends the field regardless, so reading it unconditionally would return reasoning
     into a response the gateway persists, for every use case that never asked (`FRD-135` §8).
     """
-    return str(message.get(REASONING_FIELD) or "") if wanted else ""
+    thoughts = next((message[field] for field in REASONING_FIELDS if message.get(field)), "")
+    return str(thoughts) if wanted else ""
 
 
 def answer_of(message: dict[str, Any]) -> str:
@@ -110,9 +132,14 @@ def openai_to_canonical(
     ``include_reasoning`` carries the use case's switch (`FRD-135` FR-3). The argument defaults to
     **off**, so a call site that forgets it withholds rather than discloses. Reasoning tokens are
     counted either way: a use case pays for thinking whether or not it sees it.
+
+    An answer without a choice is no answer: the upstream's fault, never an empty one that
+    finished normally — which a structured request would take for a document.
     """
     choices = data.get("choices") or []
-    first = choices[0] if choices else {}
+    if not choices:
+        raise UpstreamError("The upstream answered with no choice.", 502)
+    first = choices[0] if isinstance(choices[0], dict) else {}
     message = first.get("message") or {}
     return CanonicalResponse(
         model=model,
@@ -128,10 +155,13 @@ def openai_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk | None:
     """One SSE payload → a canonical chunk, or ``None`` for one that carries nothing.
 
     The final chunk has an empty ``choices`` array and only ``usage``; indexing ``choices[0]``
-    unconditionally would lose the token counts of every streamed request.
+    unconditionally would lose the token counts of every streamed request. An `error` payload is
+    the upstream failing mid-stream and is raised (`stream_failure`).
     """
+    if data.get("error") is not None:
+        raise stream_failure(data["error"])
     choices = data.get("choices") or []
-    usage = _usage_of(data["usage"]) if data.get("usage") else None
+    usage = _usage_of(data["usage"]) if reports_usage(data.get("usage")) else None
 
     if not choices:
         return CanonicalChunk(text_delta="", finish_reason=None, usage=usage) if usage else None
@@ -139,7 +169,7 @@ def openai_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk | None:
     first = choices[0]
     delta = first.get("delta") or {}
     reason = first.get("finish_reason")
-    # `delta.reasoning` is discarded, exactly as `answer_of` ignores the field.
+    # The reasoning fields are discarded, exactly as `answer_of` ignores them.
     return CanonicalChunk(
         text_delta=str(delta.get("content") or ""),
         finish_reason=finish_reason(reason) if reason else None,
@@ -189,6 +219,29 @@ class StreamedToolCalls:
         return tool_calls_of(raw)
 
 
+class StreamAssembler:
+    """One stream's payloads → canonical chunks, with its tool calls assembled across them.
+
+    Stateful, so one per stream — and one per *attempt*, where a stream may be opened in a second
+    place: half a tool call from the first must never be finished by the second.
+    """
+
+    def __init__(self) -> None:
+        self._calls = StreamedToolCalls()
+
+    def feed(self, payload: dict[str, Any]) -> CanonicalChunk | None:
+        choices = payload.get("choices") or []
+        if choices and isinstance(choices[0], dict):
+            self._calls.add((choices[0].get("delta") or {}).get("tool_calls"))
+        chunk = openai_chunk_to_canonical(payload)
+        if chunk is None:
+            return None
+        if chunk.finish_reason is not None and self._calls.pending:
+            # Emitted whole, on the chunk that ends the message — never in pieces.
+            chunk = chunk.model_copy(update={"tool_calls": self._calls.finish()})
+        return chunk
+
+
 def embedding_values(data: dict[str, Any]) -> EmbeddingVectors:
     """Vectors in the order submitted — the contract `FRD-113` FR-1 makes — **and what they cost**.
 
@@ -208,14 +261,3 @@ def embedding_values(data: dict[str, Any]) -> EmbeddingVectors:
         ([float(value) for value in entry.get("embedding") or []] for entry in entries),
         input_tokens=None if reported is None else int(reported),
     )
-
-
-def parse_sse_line(line: str) -> dict[str, Any] | None:
-    """A `data:` line → its payload, or ``None`` for the `[DONE]` sentinel and for keep-alives."""
-    if not line.startswith("data:"):
-        return None
-    payload = line[len("data:") :].strip()
-    if not payload or payload == "[DONE]":
-        return None
-    parsed = json.loads(payload)
-    return parsed if isinstance(parsed, dict) else None

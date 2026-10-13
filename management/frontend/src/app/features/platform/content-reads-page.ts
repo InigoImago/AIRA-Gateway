@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { Subject, debounceTime, map } from 'rxjs';
+import { Subject, debounceTime, map, tap } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import { ContentRead, Me } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -49,9 +49,11 @@ export class ContentReadsPage implements OnInit {
    */
   protected readonly view = new CursorTableView<ContentRead>(
     (cursor) =>
-      this.service
-        .contentReads({ ...this.query(), cursor: cursor ?? undefined })
-        .pipe(map((page) => ({ rows: page.reads, next: page.next_cursor, count: page.count }))),
+      this.service.contentReads({ ...this.query(), cursor: cursor ?? undefined }).pipe(
+        // The banner reports the last load, so one that succeeded takes an earlier failure away.
+        tap(() => this.feedback.clear()),
+        map((page) => ({ rows: page.reads, next: page.next_cursor, count: page.count })),
+      ),
     (response) => this.feedback.fail(response, 'Could not load the content-read log.'),
     PAGE,
     () => this.filtered(),

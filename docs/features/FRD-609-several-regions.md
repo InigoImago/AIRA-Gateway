@@ -54,8 +54,9 @@ systematically wrong with it:
   `provenance_for(provider)` returns the region of the first *configured* model on that adapter —
   right for a configured model, a guess for a catalogued one, and with a chain a confident wrong
   residency claim on every request that used a fallback. `CanonicalResponse.served_region` carries
-  the truth now, through `AuditTrail.served_region`, and `provenance()` prefers it. A wrong claim is
-  worse than a blank one: a blank column is neither a claim nor evidence.
+  the truth now, through `AuditTrail.served_region`, and `provenance()` prefers it — and for a
+  stream, `CanonicalChunk.served_region` on the first chunk names the region that opened it. A wrong
+  claim is worse than a blank one: a blank column is neither a claim nor evidence.
 - **A leaked stream on every refused connection.** `_StreamContext.__aenter__` raised after the
   inner httpx context had been entered, and Python does not call `__aexit__` when `__aenter__`
   raises. One leak per refused stream — invisible until `429`s arrive often enough. Failover turns

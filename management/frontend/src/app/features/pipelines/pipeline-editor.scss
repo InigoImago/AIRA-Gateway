@@ -1,3 +1,5 @@
+@use 'step-number';
+
 :host {
   display: block;
 }
@@ -54,9 +56,10 @@
   color: var(--aira-brand-strong);
 }
 
+/* The end of the pipeline, drawn inverted: the one node that is not a step. */
 .node--dispatch {
-  background: #111827;
-  color: #f9fafb;
+  background: var(--aira-text);
+  color: var(--aira-surface-muted);
 }
 
 .node--step {
@@ -88,25 +91,13 @@
 .node__text {
   min-width: 0;
 }
-.node__index {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  flex: none;
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--aira-brand-strong);
-  background: var(--aira-brand-soft);
-  border-radius: 50%;
-}
 .node__title {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--aira-text-base);
   overflow-wrap: anywhere;
 }
 .node__meta {
-  font-size: 0.78rem;
+  font-size: var(--aira-text-sm);
   overflow-wrap: anywhere;
 }
 .node__controls {
@@ -117,7 +108,7 @@
 
 .node--fallback {
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--aira-text-md);
   border-style: dashed;
   overflow-wrap: anywhere;
 
@@ -179,16 +170,10 @@
   }
 }
 
-.rule {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.5rem;
-}
-
 .pattern-list {
   margin: 0.4rem 0 0.6rem;
   padding-left: 1.1rem;
-  font-size: 0.82rem;
+  font-size: var(--aira-text-sm);
   color: var(--aira-text-muted);
 }
 

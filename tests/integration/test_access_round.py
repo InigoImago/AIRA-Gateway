@@ -22,14 +22,26 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from .conftest import GATEWAY_URL, MANAGEMENT_URL
+from aira_common.directory import SEARCH_LIMIT
+
+from . import installation, keycloak
+from .conftest import (
+    GATEWAY_URL,
+    MANAGEMENT_DB,
+    MANAGEMENT_URL,
+    MEMBER_DEPARTMENT,
+    MEMBER_DEPARTMENT_NAME,
+    TEST_CLIENT_ID,
+    wait_for_row,
+)
 
 pytestmark = pytest.mark.integration
 
-#: A department group in the dev realm, deliberately not named after a use case. The suite's
-#: *member* account is in it and holds **no organisation-wide role** (`ADR-0017`), so anything it
-#: can see, it can see because of a grant.
-DEPARTMENT = "/abteilungen/kundendienst"
+#: A department group, deliberately not named after a use case. The suite's *member* account is
+#: in it and holds **no organisation-wide role** (`ADR-0017`), so anything it can see, it can see
+#: because of a grant. The session's own department, which holds that account and **nobody else**:
+#: the realm's `kundendienst` also holds a demo user, whom every grant here would have reached.
+DEPARTMENT = MEMBER_DEPARTMENT
 UNUSED_GROUP = "/abteilungen/nobody-is-in-this"
 MODEL = "qwen3:0.6b"
 SHORT = {"generationConfig": {"maxOutputTokens": 8}}
@@ -72,10 +84,18 @@ async def _revoke(token: str, slug: str, group: str) -> httpx.Response:
     return await _delete(f"/api/v1/use-cases/{slug}/groups/revoke/", token, group_path=group)
 
 
-async def _visible(token: str) -> set[str]:
-    response = await _get("/api/v1/use-cases/", token, page_size=200)
-    response.raise_for_status()
-    return {row["slug"] for row in response.json()["results"]}
+async def _visible(token: str, *slugs: str) -> set[str]:
+    """Which of ``slugs`` this caller sees — **searched for**, each one.
+
+    Not read off page one of the list: past two hundred visible use cases a slug that sorts late
+    is simply not on it, and every "is not visible" assertion then passes about nothing.
+    """
+    seen: set[str] = set()
+    for slug in slugs:
+        response = await _get("/api/v1/use-cases/", token, q=slug)
+        response.raise_for_status()
+        seen |= {row["slug"] for row in response.json()["results"]} & {slug}
+    return seen
 
 
 async def _grants(token: str, slug: str) -> list[dict]:
@@ -130,22 +150,27 @@ async def _release(token: str, slug: str) -> None:
     assert response.status_code == 200, response.text
 
 
+async def _made(admin_token: str, prefix: str) -> str:
+    """A released use case, registered before it is made and refused loudly if it is not —
+    a creation that failed must not surface three steps later as a `404` about a grant."""
+    name = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", name)
+    created = await _post("/api/v1/use-cases/", admin_token, {"slug": name, "name": name})
+    assert created.status_code == 201, created.text
+    await _release(admin_token, name)
+    return name
+
+
 @pytest.fixture
 async def slug(admin_token: str):
-    name = f"acc-{uuid.uuid4().hex[:8]}"
-    assert (
-        await _post("/api/v1/use-cases/", admin_token, {"slug": name, "name": name})
-    ).status_code == 201
-    await _release(admin_token, name)
+    name = await _made(admin_token, "acc")
     yield name
     await _delete(f"/api/v1/use-cases/{name}/", admin_token)
 
 
 @pytest.fixture
 async def second(admin_token: str):
-    name = f"acc2-{uuid.uuid4().hex[:8]}"
-    await _post("/api/v1/use-cases/", admin_token, {"slug": name, "name": name})
-    await _release(admin_token, name)
+    name = await _made(admin_token, "acc2")
     yield name
     await _delete(f"/api/v1/use-cases/{name}/", admin_token)
 
@@ -155,7 +180,7 @@ async def second(admin_token: str):
 
 async def test_01_a_fresh_use_case_grants_nobody(slug, member_token) -> None:
     """The control every later case is measured against."""
-    assert slug not in await _visible(member_token)
+    assert slug not in await _visible(member_token, slug)
 
 
 async def test_02_a_grant_is_created_and_listed(slug, admin_token) -> None:
@@ -213,7 +238,7 @@ async def test_11_a_granted_group_makes_its_members_see_the_use_case(
     slug, admin_token, member_token
 ) -> None:
     await _grant(admin_token, slug, DEPARTMENT)
-    assert slug in await _visible(member_token)
+    assert slug in await _visible(member_token, slug)
 
 
 async def test_12_no_row_names_the_person_who_gained_access(
@@ -226,7 +251,7 @@ async def test_12_no_row_names_the_person_who_gained_access(
     """
     await _grant(admin_token, slug, DEPARTMENT)
     who = (await _get("/api/v1/me", member_token)).json()["username"]
-    assert slug in await _visible(member_token)
+    assert slug in await _visible(member_token, slug)
 
     members = (await _get(f"/api/v1/use-cases/{slug}/members/", admin_token)).json()
 
@@ -235,7 +260,7 @@ async def test_12_no_row_names_the_person_who_gained_access(
 
 async def test_13_a_group_nobody_holds_grants_nobody(slug, admin_token, member_token) -> None:
     await _grant(admin_token, slug, UNUSED_GROUP)
-    assert slug not in await _visible(member_token)
+    assert slug not in await _visible(member_token, slug)
 
 
 async def test_14_a_user_grant_may_not_change_the_use_case(slug, admin_token, member_token) -> None:
@@ -274,11 +299,14 @@ async def test_16_lowering_a_grant_actually_lowers_it(slug, admin_token, member_
 
 
 async def test_17_an_admin_grant_may_manage_members(slug, admin_token, member_token) -> None:
+    """Somebody the suite owns is added — never a demo user, whom a membership would outlive."""
     await _grant(admin_token, slug, DEPARTMENT, "admin")
     response = await _post(
-        f"/api/v1/use-cases/{slug}/members/", member_token, {"username": "ucuser", "role": "user"}
+        f"/api/v1/use-cases/{slug}/members/",
+        member_token,
+        {"username": f"service-account-{TEST_CLIENT_ID}", "role": "user"},
     )
-    assert response.status_code in (201, 400), response.text
+    assert response.status_code == 201, response.text
 
 
 async def test_18_an_admin_grant_may_grant_another_group(slug, admin_token, member_token) -> None:
@@ -331,16 +359,40 @@ async def test_22_a_group_grant_makes_somebody_a_member_for_key_issuance(
 async def test_23_one_group_reaches_two_use_cases(slug, second, admin_token, member_token) -> None:
     await _grant(admin_token, slug, DEPARTMENT)
     await _grant(admin_token, second, DEPARTMENT)
-    visible = await _visible(member_token)
+    visible = await _visible(member_token, slug, second)
     assert {slug, second} <= visible
+
+
+async def _grant_keys(*slugs: str) -> list[str]:
+    """The compaction keys Management gave the grant events of ``slugs`` — what a rebuild keeps."""
+    from aira_gateway.db.base import build_engine
+
+    management = build_engine(MANAGEMENT_DB)
+    try:
+        async with management.connect() as connection:
+            rows = await connection.execute(
+                text(
+                    "SELECT key FROM outbox_outboxevent WHERE event_type = 'use_case_group.granted'"
+                    " AND payload->>'slug' = ANY(:slugs)"
+                ),
+                {"slugs": list(slugs)},
+            )
+            return [row[0] for row in rows]
+    finally:
+        await management.dispose()
 
 
 async def test_24_two_grants_survive_the_compacted_topic(slug, second, admin_token, engine) -> None:
     """A compacted topic keeps the last message per key. Two grants sharing one key would mean the
     second erased the first, and a gateway rebuilding from the log would silently lose access.
+
+    The live consumer applies both messages as they arrive, before any log cleaning, so the rows
+    below show **delivery**; the keys are what a rebuild depends on, and are asserted as well.
     """
     await _grant(admin_token, slug, DEPARTMENT)
     await _grant(admin_token, second, DEPARTMENT)
+    keys = await _grant_keys(slug, second)
+    assert len(keys) == 2 and len(set(keys)) == 2, f"one compaction key for two grants: {keys}"
 
     for _ in range(25):
         async with engine.connect() as connection:
@@ -365,8 +417,11 @@ async def test_24_two_grants_survive_the_compacted_topic(slug, second, admin_tok
 
 
 async def test_25_two_groups_on_one_use_case_both_arrive(slug, admin_token, engine) -> None:
+    """Two groups on one use case: keyed by the slug alone, a rebuild would keep one of them."""
     await _grant(admin_token, slug, DEPARTMENT)
     await _grant(admin_token, slug, "/abteilungen/entwicklung")
+    keys = await _grant_keys(slug)
+    assert len(keys) == 2 and len(set(keys)) == 2, f"one compaction key for two grants: {keys}"
 
     for _ in range(25):
         async with engine.connect() as connection:
@@ -390,7 +445,15 @@ async def test_25_two_groups_on_one_use_case_both_arrive(slug, admin_token, engi
 # ═══ 4. the gateway ════════════════════════════════════════════════════════════════════════════
 
 
-async def test_26_the_gateway_refuses_a_use_case_nobody_granted(slug, member_token) -> None:
+async def test_26_the_gateway_refuses_a_use_case_nobody_granted(slug, member_token, engine) -> None:
+    """Asked once the gateway **knows** the use case: before that, the refusal under test is the
+    unknown-slug one, and "known but not granted" — the case this is about — is never reached."""
+    await wait_for_row(
+        engine,
+        "SELECT 1 FROM use_cases WHERE slug = :slug AND allowed_models IS NOT NULL",
+        {"slug": slug},
+        timeout=45.0,
+    )
     response = await _generate(member_token, slug)
     assert response.status_code == 403
     assert slug in response.text
@@ -563,7 +626,7 @@ async def test_38_revoking_leaves_a_direct_grant_intact(slug, admin_token, membe
 
     await _revoke(admin_token, slug, DEPARTMENT)
 
-    assert slug in await _visible(member_token)
+    assert slug in await _visible(member_token, slug)
 
 
 async def test_39_revoking_one_group_leaves_another(slug, admin_token, member_token) -> None:
@@ -572,7 +635,7 @@ async def test_39_revoking_one_group_leaves_another(slug, admin_token, member_to
 
     await _revoke(admin_token, slug, "/abteilungen/entwicklung")
 
-    assert slug in await _visible(member_token)
+    assert slug in await _visible(member_token, slug)
 
 
 async def test_40_a_user_grant_may_not_revoke(slug, admin_token, member_token) -> None:
@@ -621,7 +684,7 @@ async def test_42_a_grant_reaching_nobody_reports_zero(slug, admin_token) -> Non
 
 async def test_43_a_grant_reaching_somebody_reports_more(slug, admin_token, member_token) -> None:
     await _grant(admin_token, slug, DEPARTMENT)
-    await _visible(member_token)  # so Management has seen this account sign in
+    await _visible(member_token, slug)  # so Management has seen this account sign in
     assert (await _grants(admin_token, slug))[0]["reaches"] >= 1
 
 
@@ -638,9 +701,14 @@ async def test_45_the_directory_refuses_one_letter(admin_token) -> None:
     assert body["results"] == [] and body["source"] == "none"
 
 
-async def test_46_the_directory_finds_a_granted_group(slug, admin_token) -> None:
-    await _grant(admin_token, slug, DEPARTMENT)
-    body = (await _get("/api/v1/directory/", admin_token, q="kundendienst")).json()
+async def test_46_the_directory_finds_a_department_in_the_realm(
+    admin_token, member_department
+) -> None:
+    """Found because Keycloak has it: with a directory client, the realm answers and the local
+    list of groups granted somewhere is not asked (`test_directory.py` covers that one)."""
+    del member_department
+    body = (await _get("/api/v1/directory/", admin_token, q=MEMBER_DEPARTMENT_NAME)).json()
+    assert body["source"] == "keycloak"
     assert any(row["id"] == DEPARTMENT and row["kind"] == "group" for row in body["results"])
 
 
@@ -659,9 +727,11 @@ async def test_48_the_directory_finds_a_person_in_the_realm(admin_token) -> None
     assert any(row["id"] == "ucuser" and row["kind"] == "user" for row in body["results"])
 
 
-async def test_49_the_directory_returns_no_credential(admin_token, member_token) -> None:
-    await _get("/api/v1/me", member_token)
-    body = (await _get("/api/v1/directory/", admin_token, q="service")).json()
+async def test_49_the_directory_returns_no_credential(admin_token) -> None:
+    """Asked for a **person**, so the row whose shape matters — a user's — is the one checked."""
+    body = (await _get("/api/v1/directory/", admin_token, q="ucuse")).json()
+    users = [row for row in body["results"] if row["kind"] == "user"]
+    assert users, f"no person came back to check: {body}"
     for row in body["results"]:
         assert set(row) == {"kind", "id", "label", "detail"}
 
@@ -698,9 +768,21 @@ async def test_52_a_grant_with_no_body_at_all_is_refused(slug, admin_token) -> N
     assert (await _post(f"/api/v1/use-cases/{slug}/groups/", admin_token, {})).status_code == 400
 
 
-async def test_53_a_path_with_whitespace_is_refused(slug, admin_token) -> None:
-    """A path Keycloak could never report is a grant that can only ever be inert."""
-    assert (await _grant(admin_token, slug, "/ai/kunden dienst")).status_code == 400
+async def test_53_a_path_with_a_tab_is_refused_and_one_with_a_space_is_a_path(
+    slug, admin_token
+) -> None:
+    """Keycloak names a department what it is called, spaces included, and its token carries that
+    path — so an inner space is a grant. A tab is a copy-and-paste accident no token carries, and a
+    grant on it could only ever be inert."""
+    tab = await _grant(admin_token, slug, "/ai/kunden\tdienst")
+    space = await _grant(admin_token, slug, "/ai/kunden dienst")
+
+    assert tab.status_code == 400, tab.text
+    assert "group_path" in tab.text
+    assert space.status_code == 201, space.text
+    assert "/ai/kunden dienst" in {
+        grant["group_path"] for grant in await _grants(admin_token, slug)
+    }
 
 
 async def test_54_a_path_with_a_newline_is_refused(slug, admin_token) -> None:
@@ -715,7 +797,7 @@ async def test_56_listing_grants_of_a_use_case_that_does_not_exist_is_a_404(admi
     assert (await _get("/api/v1/use-cases/no-such-uc/groups/", admin_token)).status_code == 404
 
 
-async def test_57_an_outsider_gets_the_same_404_rather_than_a_403(
+async def test_57_an_oversight_role_is_refused_with_a_403_not_a_404(
     slug, admin_token, security_token
 ) -> None:
     """`it-security` sees every use case for oversight and administers none. Whether it gets 403
@@ -751,7 +833,7 @@ async def test_60_a_grant_survives_a_use_case_rename(slug, admin_token, member_t
             headers=_auth(admin_token),
             json={"name": "a different name"},
         )
-    assert slug in await _visible(member_token)
+    assert slug in await _visible(member_token, slug)
 
 
 async def test_61_two_use_cases_granting_the_same_group_are_independent(
@@ -762,7 +844,7 @@ async def test_61_two_use_cases_granting_the_same_group_are_independent(
 
     await _revoke(admin_token, slug, DEPARTMENT)
 
-    visible = await _visible(member_token)
+    visible = await _visible(member_token, slug, second)
     assert second in visible and slug not in visible
 
 
@@ -819,19 +901,39 @@ async def test_63_a_revocation_reaches_the_gateway_read_model(slug, admin_token,
     assert present == 0
 
 
-async def test_64_an_api_key_is_unaffected_by_group_grants(slug, admin_token, fixture) -> None:
+async def test_64_an_api_key_is_unaffected_by_group_grants(
+    slug, second, admin_token, member_token
+) -> None:
     """An API key is bound to one use case and carries its own attribution (`FRD-205`). A group
-    grant must not widen it — the two mechanisms answer different questions."""
+    grant must not widen it — the two mechanisms answer different questions.
+
+    The key belongs to somebody **in** the granted group, and that person reaches the other use
+    case with their own token first: a key owned by nobody in any group could not show a key
+    widened by its owner's groups, because there would be nothing to widen it to.
+    """
     await _grant(admin_token, slug, DEPARTMENT)
+    await _grant(admin_token, second, DEPARTMENT)
+    issued = await _post(f"/api/v1/use-cases/{slug}/api-keys/", member_token, {"label": "round"})
+    assert issued.status_code == 201, issued.text
+    key = issued.json()["api_key"]
+    assert (await _until_allowed(member_token, second)).status_code == 200
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
-            headers={**fixture.headers(), "X-AIRA-Use-Case": slug},
-            json={"contents": [{"parts": [{"text": "hi"}]}], **SHORT},
-        )
+    async def with_key() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            return await client.post(
+                f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
+                headers={"x-goog-api-key": key, "X-AIRA-Use-Case": second},
+                json={"contents": [{"parts": [{"text": "hi"}]}], **SHORT},
+            )
 
-    assert response.status_code == 403
+    # The key travels to the gateway like the grant did; until then it is unknown (401).
+    for _ in range(30):
+        response = await with_key()
+        if response.status_code != 401:
+            break
+        await asyncio.sleep(1.0)
+
+    assert response.status_code == 403, response.text
 
 
 async def test_65_the_bare_realm_root_is_refused(slug, admin_token) -> None:
@@ -883,14 +985,36 @@ async def test_67_the_grant_list_is_ordered_so_two_reads_agree(slug, admin_token
 
 
 async def test_68_the_directory_is_bounded(admin_token) -> None:
-    body = (await _get("/api/v1/directory/", admin_token, q="service")).json()
-    assert len(body["results"]) <= 50
+    """More groups match than the directory may return, so the bound is what decides the count.
+
+    Made under one parent of their own: Keycloak caps the *top-level* groups it returns, so the
+    matches sit one level down, where only the directory's own limit can stop them.
+    """
+    needle = f"capprobe-{uuid.uuid4().hex[:6]}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        parent = await keycloak.create_group(client, f"itest-{needle}-parent")
+        try:
+            for index in range(SEARCH_LIMIT + 5):
+                keycloak.created_id(
+                    await client.post(
+                        f"{keycloak.base()}/groups/{parent}/children",
+                        headers=await keycloak.admin_headers(client),
+                        json={"name": f"{needle}-{index:02d}"},
+                    )
+                )
+            body = (await _get("/api/v1/directory/", admin_token, q=needle)).json()
+        finally:
+            await keycloak.delete_group(client, parent)
+
+    groups = [row for row in body["results"] if row["kind"] == "group"]
+    assert body["source"] == "keycloak"
+    assert len(groups) == SEARCH_LIMIT, f"{len(groups)} of {SEARCH_LIMIT + 5} matching groups"
 
 
 async def test_69_the_directory_tolerates_a_query_full_of_punctuation(admin_token) -> None:
     response = await _get("/api/v1/directory/", admin_token, q="%%__''\"")
     assert response.status_code == 200
-    assert response.json()["results"] == [] or isinstance(response.json()["results"], list)
+    assert response.json()["results"] == []
 
 
 async def test_70_the_directory_does_not_leak_across_a_wildcard(admin_token) -> None:

@@ -15,11 +15,14 @@ wants "administers a use case" asks the object, never the token.
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Iterable
 from typing import Any
 
 from django.conf import settings
 from django.contrib.auth.models import Group
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
+from django.db.models.functions import Length
 from guardian.shortcuts import get_objects_for_user
 from rest_framework.permissions import BasePermission
 
@@ -31,6 +34,7 @@ from aira_common.permissions import (
     parse_permissions,
 )
 from aira_common.roles import parse_role_groups, roles_from_groups
+from aira_management.memo import remembered
 from aira_management.roles import ALL_ROLES, Role
 
 #: The two object permissions a role gate asks about. Defined here rather than in
@@ -41,6 +45,12 @@ MANAGE_PERM = "usecases.manage_members"
 #: Prefix of the Django groups mirroring a Keycloak group path, so they can never collide with the
 #: role groups — a realm group literally called `it-security` must not hand out the role.
 KEYCLOAK_GROUP_PREFIX = "kc:"
+#: What follows the prefix when a mirror is named by its path's digest (`django_group_name`).
+HASHED_MIRROR_MARK = "#"
+#: `auth_group.name`'s width, read from the column rather than restated.
+GROUP_NAME_MAX_LENGTH = int(Group._meta.get_field("name").max_length or 150)
+#: The longest path a mirror carries verbatim; a longer one is named by its digest.
+VERBATIM_PATH_MAX_LENGTH = GROUP_NAME_MAX_LENGTH - len(KEYCLOAK_GROUP_PREFIX)
 
 
 def role_groups() -> dict[Role, tuple[str, ...]]:
@@ -76,16 +86,81 @@ def role_definitions() -> tuple[RoleDefinition, ...]:
     return builtin_roles(role_groups(), stored_set) + custom
 
 
-def _token_groups(claims: dict[str, Any]) -> list[str]:
+def token_groups(claims: dict[str, Any]) -> list[str]:
     """The `groups` claim, defensively. A malformed claim confers nothing rather than raising:
-    a realm misconfiguration must not stop authentication, it must stop *authority*."""
+    a realm misconfiguration must not stop authentication, it must stop *authority*. Every reader
+    of the claim reads it through here, so no endpoint is the one that still raises."""
     raw = claims.get("groups")
     return [path for path in (raw if isinstance(raw, list) else []) if isinstance(path, str)]
 
 
 def django_group_name(path: str) -> str:
-    """The Django group that carries a Keycloak group's object permissions."""
-    return f"{KEYCLOAK_GROUP_PREFIX}{path}"
+    """The Django group that carries a Keycloak group's object permissions.
+
+    The path itself behind `kc:` while it fits `auth_group.name` and is text a column can hold.
+    Otherwise — a directory nests its groups as deep as it likes, and a sign-in must not fail on
+    one (`FRD-613` FR-7) — the path's SHA-256 behind `kc:#`. A verbatim name never starts with
+    that mark, so the two forms cannot name the same group.
+    """
+    verbatim = f"{KEYCLOAK_GROUP_PREFIX}{path}"
+    if (
+        len(path) <= VERBATIM_PATH_MAX_LENGTH
+        and not path.startswith(HASHED_MIRROR_MARK)
+        and storable(path)
+    ):
+        return verbatim
+    digest = hashlib.sha256(path.encode("utf-8", "surrogatepass")).hexdigest()
+    return f"{KEYCLOAK_GROUP_PREFIX}{HASHED_MIRROR_MARK}{digest}"
+
+
+def storable(text: str) -> bool:
+    """Whether a text column can hold ``text``: PostgreSQL refuses U+0000 and a lone surrogate,
+    and SQLite refuses neither — so a claim is asked here before it is written anywhere."""
+    if "\x00" in text:
+        return False
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def paths_behind(names: Iterable[str]) -> list[str]:
+    """The Keycloak paths behind mirror-group names; any other name is skipped.
+
+    A verbatim mirror is its path. A digest is recognised among the paths a group grant or a
+    stored role names — the only paths whose mirror carries anything — so the one extra query is
+    asked only of somebody who holds such a mirror.
+    """
+    paths: list[str] = []
+    digests: set[str] = set()
+    for name in names:
+        if not name.startswith(KEYCLOAK_GROUP_PREFIX):
+            continue
+        rest = name[len(KEYCLOAK_GROUP_PREFIX) :]
+        if rest.startswith(HASHED_MIRROR_MARK):
+            digests.add(name)
+        else:
+            paths.append(rest)
+    if digests:
+        paths.extend(path for path in _digested_paths() if django_group_name(path) in digests)
+    return paths
+
+
+def _digested_paths() -> set[str]:
+    """Every path a grant or a role names whose mirror is a digest."""
+    from aira_management.apps.roles.models import StoredRole
+    from aira_management.apps.usecases.models import UseCaseGroupGrant
+
+    digested = Q(length__gt=VERBATIM_PATH_MAX_LENGTH) | Q(group_path__startswith=HASHED_MIRROR_MARK)
+    found: set[str] = set()
+    for model in (UseCaseGroupGrant, StoredRole):
+        found.update(
+            model.objects.annotate(length=Length("group_path"))
+            .filter(digested)
+            .values_list("group_path", flat=True)
+        )
+    return found
 
 
 def sync_user_roles(user: Any, claims: dict[str, Any]) -> None:
@@ -95,7 +170,7 @@ def sync_user_roles(user: Any, claims: dict[str, Any]) -> None:
     the next token. Roles are removed as well as added — one only ever granted is one nobody can
     take away.
     """
-    held = roles_from_groups(_token_groups(claims), role_groups())
+    held = roles_from_groups(token_groups(claims), role_groups())
     known = {str(role) for role in ALL_ROLES}
     wanted = {name for name in known if name in held}
     current = set(user.groups.filter(name__in=known).values_list("name", flat=True))
@@ -110,7 +185,7 @@ def sync_user_groups(user: Any, claims: dict[str, Any]) -> None:
     unchanged, with no second permission path (`FRD-209` §1). Removed as well as added, so an
     access list does not survive somebody leaving the department.
     """
-    wanted = {django_group_name(path) for path in _token_groups(claims)}
+    wanted = {django_group_name(path) for path in token_groups(claims)}
     current = set(
         user.groups.filter(name__startswith=KEYCLOAK_GROUP_PREFIX).values_list("name", flat=True)
     )
@@ -137,35 +212,33 @@ def _reconcile(user: Any, *, current: set[str], wanted: set[str]) -> None:
         user.groups.remove(*Group.objects.filter(name__in=drop))
 
 
-def role_slugs(user: Any) -> set[str]:
-    """The AIRA role slugs the user currently holds.
-
-    Keycloak-mirror groups are excluded by their prefix: they carry object permissions, not roles.
-    """
-    return {
-        name
-        for name in user.groups.values_list("name", flat=True)
-        if not name.startswith(KEYCLOAK_GROUP_PREFIX)
-    }
-
-
 def held_roles_of(user: Any) -> tuple[RoleDefinition, ...]:
     """The roles this user holds — every one of them through a Keycloak group.
 
     A built-in role through the Django group `sync_user_roles` keeps equal to the token; a stored
-    role through the mirror of its group `sync_user_groups` keeps. One read of the user's groups
-    answers both.
+    role through the mirror of its group `sync_user_groups` keeps, asked by the mirror's name so a
+    digest-named mirror answers like any other. One read of the user's groups answers both;
+    Keycloak-mirror groups carry object permissions, never a role slug.
     """
     if not getattr(user, "is_authenticated", False):
         return ()
-    names = list(user.groups.values_list("name", flat=True))
-    slugs = {name for name in names if not name.startswith(KEYCLOAK_GROUP_PREFIX)}
-    paths = {name[len(KEYCLOAK_GROUP_PREFIX) :] for name in names if name not in slugs}
-    return tuple(
-        role
-        for role in role_definitions()
-        if (role.slug in slugs if role.builtin else any(p in paths for p in role.group_paths))
-    )
+
+    def held() -> tuple[RoleDefinition, ...]:
+        names = set(user.groups.values_list("name", flat=True))
+        mirrors = {name for name in names if name.startswith(KEYCLOAK_GROUP_PREFIX)}
+        slugs = names - mirrors
+        return tuple(
+            role
+            for role in role_definitions()
+            if (
+                role.slug in slugs
+                if role.builtin
+                else any(django_group_name(path) in mirrors for path in role.group_paths)
+            )
+        )
+
+    # Asked several times a row by a list of use cases; the answer is the request's (`memo`).
+    return remembered(("held_roles", user.pk), held)
 
 
 def permissions_of(user: Any) -> frozenset[Permission]:
@@ -230,8 +303,7 @@ class MaySearchDirectory(BasePermission):
         if not getattr(user, "is_authenticated", False):
             return False
         # A live use case: retiring one ends every access it granted (`FRD-607`).
-        live = UseCase.objects.filter(deleted_at__isnull=True)
-        return get_objects_for_user(user, MANAGE_PERM, klass=live).exists()
+        return get_objects_for_user(user, MANAGE_PERM, klass=UseCase.objects.live()).exists()
 
 
 class MayRunTests(BasePermission):

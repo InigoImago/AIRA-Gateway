@@ -105,7 +105,9 @@ interface Options {
   changes?: Observable<Page<RoleChange>>[];
   check?: (path: string) => Observable<GroupCheck>;
   create?: Observable<Role>;
+  remove?: Observable<void>;
   rolesLoad?: () => Observable<Role[]>;
+  catalogueFails?: boolean;
   confirm?: boolean;
   meFails?: boolean;
 }
@@ -128,7 +130,8 @@ function setup(options: Options = {}) {
       calls.roles++;
       return options.rolesLoad ? options.rolesLoad() : of(state.roles);
     },
-    permissionCatalogue: () => of(CATALOGUE),
+    permissionCatalogue: () =>
+      options.catalogueFails ? refused(503, 'The catalogue is not available.') : of(CATALOGUE),
     roleChanges: (query: Record<string, unknown>) => {
       calls.changes.push(query);
       return changes.shift() ?? of(page([]));
@@ -157,7 +160,7 @@ function setup(options: Options = {}) {
     },
     deleteRole: (slug: string) => {
       calls.deleted.push(slug);
-      return of(undefined);
+      return options.remove ?? of(undefined);
     },
   };
   const me: Me = {
@@ -532,6 +535,41 @@ describe('RolesPage (`FRD-614` FR-9)', () => {
     expect(q('role-editor')).not.toBeNull();
   });
 
+  it('says a refusal inside the window, where the reader is, and only there', async () => {
+    // The page's banner sits under the window's backdrop; a refusal shown there is a report about
+    // nothing, and Save simply turns back into Save.
+    const { q, click, type, html } = setup({
+      create: refused(400, 'Request failed.', { label: ["A role called 'Audit' exists already."] }),
+    });
+    await click('new-role');
+    await type('role-group', '/finance/audit');
+    await type('role-label', 'Audit');
+    await click('check-group');
+    await click('save-role');
+
+    expect(q('role-window')?.querySelector('[role="alert"]')?.textContent).toContain(
+      "A role called 'Audit' exists already.",
+    );
+    expect(html().querySelectorAll('[role="alert"]').length).toBe(1);
+
+    // Closing the window closes what it reported: the refusal was about a form that is gone.
+    await click('cancel-role');
+    expect(html().querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('says a refused deletion inside the window as well', async () => {
+    const { q, click, open } = setup({
+      remove: refused(409, 'The role is still bound to a group in use.'),
+    });
+    await open('controlling');
+    await click('edit-role');
+    await click('delete-role');
+
+    expect(q('role-window')?.querySelector('[role="alert"]')?.textContent).toContain(
+      'The role is still bound to a group in use.',
+    );
+  });
+
   it('marks sensitive permissions and never offers a reserved one', async () => {
     const { q, click } = setup();
     await click('new-role');
@@ -654,6 +692,18 @@ describe('RolesPage (`FRD-614` FR-9)', () => {
     await open('controlling');
 
     expect(q('role-details')?.textContent).toContain('This role may do nothing yet.');
+  });
+
+  it('does not call a role powerless because the catalogue could not be read', async () => {
+    // Without the catalogue the held permissions have no labels to group by; they are still held.
+    const { q, open, html } = setup({ catalogueFails: true });
+    await open('controlling');
+
+    expect(html().querySelector('[role="alert"]')?.textContent).toContain(
+      'The catalogue is not available.',
+    );
+    expect(q('role-details')?.textContent).not.toContain('may do nothing');
+    expect(q('role-permissions')?.textContent).toContain('report.read_all');
   });
 
   it('offers no control and says why when the account cannot be loaded', async () => {

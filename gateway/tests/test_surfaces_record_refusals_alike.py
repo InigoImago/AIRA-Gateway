@@ -27,6 +27,7 @@ compares them where they are least likely to differ.
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Iterator
 from typing import Any
@@ -36,6 +37,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from aira_gateway.app import create_app
+from aira_gateway.attachments import MAX_PARTS
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import ModelRead, RequestLog
 
@@ -201,6 +203,28 @@ def _part(part: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
 _BAD_IMAGE = {"inlineData": {"mimeType": "image/png", "data": "!!!!"}}
 _BAD_TYPE = {"inlineData": {"mimeType": "application/x-evil", "data": "AAAA"}}
 
+#: One part over the attachment count each surface allows (`attachments.MAX_PARTS`), in each
+#: surface's own part shape — a bound that one surface enforced and the other did not.
+_PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8).decode()
+_TOO_MANY = MAX_PARTS + 1
+_TOO_MANY_ATTACHMENTS = (
+    {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"inlineData": {"mimeType": "image/png", "data": _PNG}}] * _TOO_MANY
+                + [{"text": "hi"}],
+            }
+        ]
+    },
+    {
+        "request": {
+            "parts": [{"mime_type": "image/png", "data": _PNG}] * _TOO_MANY + [{"text": "hi"}]
+        },
+        "model_id": 9001,
+    },
+)
+
 #: ``(name, gemini body, kira body)``. Only conditions both surfaces can express: KIRA has no
 #: `tools` field and is deliberately tolerant of unknown ones (`FRD-124`), so those two are
 #: differences by design rather than divergences, and a matrix that included them would be
@@ -231,6 +255,7 @@ CONDITIONS: list[tuple[str, Any, Any]] = [
     ),
     ("an attachment that is not base64", *_part(_BAD_IMAGE)),
     ("a media type nothing accepts", *_part(_BAD_TYPE)),
+    ("more attachments than a request may carry", *_TOO_MANY_ATTACHMENTS),
 ]
 
 

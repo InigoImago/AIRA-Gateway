@@ -5,13 +5,18 @@ approximated when the model does not offer it, because each fails *silently* if 
 wrong task type retrieves measurably worse, an unsupported batch split into single calls bypasses
 the rate limit (§5.3), and the wrong dimensionality does not fit the consumer's index.
 
-Metering lives with the caller (``units`` on the pre-dispatch gate); this module only decides
-whether the request is answerable at all.
+Metering lives with the caller (``units`` on the pre-dispatch gate, the input estimate in the
+reservation); this module only decides whether the request is answerable at all — in two halves,
+because one of them needs no model and is asked before anything is spent (:func:`check_shape`).
 """
 
 from __future__ import annotations
 
+import hashlib
+from array import array
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from aira_common.models import Capability
 from aira_gateway.catalog import ModelDeclaration
@@ -75,8 +80,6 @@ def validate(
     Gemini nothing), applied only where the model declares it: a named type we cannot verify is
     refused, an implicit one is simply not sent.
     """
-    bounds = bounds or EmbeddingBounds()
-
     if not declaration.can(Capability.EMBED):
         # Refused before dispatch: Anthropic models have no embedding endpoint, and a cross-vendor
         # chain can send an embedding to one (`FRD-113` FR-6a).
@@ -85,6 +88,48 @@ def validate(
             f"Model '{declaration.name}' does not support embedding.",
         )
 
+    # Again, on the texts the pipeline hands on: a redaction may have rewritten them.
+    check_shape(request, bounds)
+
+    texts = request.texts
+    if len(texts) > 1 and not declaration.supports_batch:
+        raise EmbeddingRejected(
+            EMBEDDING_AGGREGATION_NOT_SUPPORTED,
+            f"Model '{declaration.name}' does not accept a list of texts. Send them one at a "
+            "time, or use a model whose catalog entry declares batch support.",
+        )
+
+    task_type = _task_type(request.task_type, declaration, default_task_type)
+    dimensions = _dimensions(request.dimensions, declaration)
+    return request.model_copy(update={"task_type": task_type, "dimensions": dimensions})
+
+
+def describe_vectors(vectors: Sequence[Sequence[float]]) -> dict[str, Any]:
+    """What the audit trail keeps of an embedding's answer — never the vectors (`FRD-113`).
+
+    AIRA is not a vector database, and a batch of 256 vectors at 3 072 dimensions is 15 MB of
+    floats in one row, walked by every pass of the writer. Kept: how many, how wide, and a digest
+    of the values — so an identical answer is recognisable without being stored, the way an
+    attachment is (`attachments.describe`).
+    """
+    digest = hashlib.sha256()
+    for vector in vectors:
+        digest.update(array("d", vector).tobytes())
+    return {
+        "count": len(vectors),
+        "dimensions": len(vectors[0]) if vectors else 0,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def check_shape(request: CanonicalEmbeddingRequest, bounds: EmbeddingBounds | None = None) -> None:
+    """The refusals that need no model: empty input, and a batch over this gateway's bounds.
+
+    Asked before the rate limit and the pipeline (`FRD-126`), because a request that can never be
+    served must not spend an allowance: a batch of 300 against a bound of 256 took 300 from its use
+    case's bucket on the way to its refusal, and the next valid batch from anyone was a `429`.
+    """
+    bounds = bounds or EmbeddingBounds()
     texts = request.texts
     if not texts or any(not text.strip() for text in texts):
         # An empty string, an empty list, or a list containing one — accidental no-op billing.
@@ -103,17 +148,6 @@ def validate(
             EMBEDDING_BOUND_EXCEEDED,
             f"The batch totals {total} characters, above the {bounds.max_total_chars} accepted.",
         )
-
-    if len(texts) > 1 and not declaration.supports_batch:
-        raise EmbeddingRejected(
-            EMBEDDING_AGGREGATION_NOT_SUPPORTED,
-            f"Model '{declaration.name}' does not accept a list of texts. Send them one at a "
-            "time, or use a model whose catalog entry declares batch support.",
-        )
-
-    task_type = _task_type(request.task_type, declaration, default_task_type)
-    dimensions = _dimensions(request.dimensions, declaration)
-    return request.model_copy(update={"task_type": task_type, "dimensions": dimensions})
 
 
 def _task_type(
@@ -164,12 +198,3 @@ def _dimensions(requested: int | None, declaration: ModelDeclaration) -> int | N
             f"not {requested}.",
         )
     return requested
-
-
-def estimated_tokens(request: CanonicalEmbeddingRequest) -> int:
-    """What the batch is expected to cost in input tokens.
-
-    Knowable up front — the input is the whole request. Four characters per token errs in the safe
-    direction for short texts, which is what a reservation wants.
-    """
-    return max(1, sum(len(text) for text in request.texts) // 4)

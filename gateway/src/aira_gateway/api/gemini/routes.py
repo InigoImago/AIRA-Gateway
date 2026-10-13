@@ -8,14 +8,13 @@ refusals and :func:`generate` records them in one place, so no branch can forget
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
-from aira_common.logging import get_logger
 from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
@@ -25,13 +24,15 @@ from aira_gateway.api.gemini.mapping import (
     gemini_to_canonical,
     gemini_to_embedding,
     upstream_model_to_gemini,
+    without_signatures,
 )
 from aira_gateway.api.gemini.refusals import refusal_response
 from aira_gateway.api.serving import (
     EMBEDDING_METHODS,
     REFUSALS,
+    AccountedStream,
     Prepared,
-    StreamedNotice,
+    StreamAccounting,
     accounting,
     annotate,
     catalog_of,
@@ -42,20 +43,16 @@ from aira_gateway.api.serving import (
     json_body,
     prepare_for_dispatch,
     record_refusal,
-    refusal_outcome,
     requirements_for,
     resolve_direct_target,
     schema_bounds,
     served_models,
 )
-from aira_gateway.audio import AudioDigest
 from aira_gateway.audit import AuditTrail
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
 from aira_gateway.telemetry import model_call_span
-
-_log = get_logger("aira_gateway")
 
 router = APIRouter(tags=["gemini"])
 
@@ -208,12 +205,16 @@ async def _generate_content(
         answer = annotate(canonical, dispatched.response, prepared, trail)
         trail.served_by(answer.model, dispatched.candidate_index)
         trail.passed_over(dispatched.skipped, dispatched.failed)
-        # Before the outcome is reported, so a refused answer is released rather than booked.
+        # Spent before it is checked: a document the model did not finish is refused, and was
+        # paid for all the same.
+        acct.spent(answer.model, answer.usage)
         check_structured_result(canonical, answer)
         # `exclude_none`: Google omits what did not happen (no `functionCall: null`, no zero
         # `thoughtsTokenCount`), and a compatible surface must not invent those fields.
         payload = canonical_to_gemini(answer).model_dump(exclude_none=True)
-        acct.served(answer.model, answer.usage, payload, [call.name for call in answer.tool_calls])
+        # Stored without the model's signatures: state the caller needs, not what was said.
+        stored = without_signatures(payload)
+        acct.served(answer.model, answer.usage, stored, [call.name for call in answer.tool_calls])
     return JSONResponse(payload, headers=headers)
 
 
@@ -244,7 +245,7 @@ async def _embed(
                 embedding=schemas.ContentEmbedding(values=vectors[0] if vectors else [])
             ).model_dump()
         )
-        acct.embedded(model, payload, units=embed_request.size, vectors=vectors)
+        acct.embedded(model, units=embed_request.size, vectors=vectors)
     return JSONResponse(payload, headers=headers)
 
 
@@ -263,6 +264,10 @@ async def _stream_response(
     order until one has produced a chunk, which is both what applies the dispatch conditions and
     what makes a refusal a status rather than a stream that stops. The model that answered is the
     one recorded and billed — for a fallback that is not the model the caller named.
+
+    A failure after the status went out is sent the way Google sends one: an error element, the
+    last event of the SSE stream or the last element of the array. The google-genai SDK raises it
+    as an `APIError`; a stream that merely stopped would read as a complete answer.
     """
     # Before the chain is opened: the wait for a candidate's first chunk is time this request
     # took, and a `started` taken after it would report every stream as faster than it was.
@@ -274,85 +279,45 @@ async def _stream_response(
         permits=await requirements_for(request, canonical),
         routing_of=await declared_routing(request),
     )
+    stream = StreamAccounting(
+        request,
+        trail,
+        prepared,
+        streamed,
+        api="gemini",
+        operation="streamGenerateContent",
+        started=started,
+    )
     served = streamed.model
-    trail.served_by(served, streamed.candidate_index)
-    trail.passed_over(streamed.skipped, streamed.failed)
 
-    async def generate_chunks() -> AsyncIterator[str]:
-        async with accounting(
-            request,
-            trail,
-            prepared,
-            api="gemini",
-            operation="streamGenerateContent",
-            started=started,
-        ) as acct:
-            parts: list[str] = []
-            streamed_calls: list[str] = []
-            audio = AudioDigest()
-            final_usage = None
+    async def generate_chunks() -> AsyncGenerator[str]:
+        async with stream.accounted():
             separator = ""
-            # What stopped the stream after its headers were sent, if anything did.
-            failure: Exception | None = None
-            # Whether the stream ran to its end. Vertex reports usage on every chunk, so having
-            # usage is not having answered: a caller who left first is `499`, as on KIRA.
-            delivered = False
-            notice = StreamedNotice(
-                prepared.notices, structured=canonical.response_schema is not None
-            )
+            if not sse:
+                yield "["
             try:
-                if not sse:
-                    yield "["
-                try:
-                    # The first chunk is already in hand; its own model call is marked where the
-                    # request was issued, inside the chain.
-                    async for chunk in streamed.chunks:
-                        if chunk.usage is not None:
-                            final_usage = chunk.usage
-                        streamed_calls.extend(call.name for call in chunk.tool_calls)
-                        if chunk.audio_delta is not None:
-                            audio.add(chunk.audio_delta)
-                        # The audit row accumulates exactly what the caller receives.
-                        led = notice.lead(chunk.text_delta)
-                        parts.append(led)
-                        payload = chunk_to_gemini(
-                            chunk.model_copy(update={"text_delta": led}), served
-                        ).model_dump_json(exclude_none=True)
-                        if sse:
-                            yield f"data: {payload}\n\n"
-                        else:
-                            yield f"{separator}{payload}"
-                            separator = ","
-                except REFUSALS as exc:
-                    # Headers are already sent: record what stopped it and end the stream cleanly.
-                    failure = exc
-                    _log.error(
-                        "upstream_stream_error",
-                        error=str(exc),
-                        status=getattr(exc, "status_code", None),
-                        model=served,
+                # The first chunk is already in hand; its own model call is marked where the
+                # request was issued, inside the chain.
+                async for chunk in stream.chunks:
+                    payload = chunk_to_gemini(stream.take(chunk), served).model_dump_json(
+                        exclude_none=True
                     )
-                if not sse:
-                    yield "]"
-                delivered = True
-            finally:
-                outcome_note = notice.outcome()
-                if outcome_note is not None:
-                    trail.decisions.append(outcome_note)
-                # No usage reported means nothing chargeable, so the reservation is released.
-                if final_usage is not None:
-                    # The call names too: a streamed tool call has no text to accumulate.
-                    report = acct.served if delivered else acct.abandoned
-                    stored: dict[str, Any] = {"text": "".join(parts)}
-                    if not audio.empty:
-                        # Described, never kept (`ADR-0026`); the hash covers every chunk.
-                        stored["audio"] = audio.describe()
-                    report(served, final_usage, stored, streamed_calls)
-                if failure is not None:
-                    acct.failed(refusal_response(failure).status_code, refusal_outcome(failure))
+                    if sse:
+                        yield f"data: {payload}\n\n"
+                    else:
+                        yield f"{separator}{payload}"
+                        separator = ","
+            except REFUSALS as exc:
+                stream.broke_off(exc)
+                # The same envelope the refusal boundary renders, as the stream's last element.
+                element = bytes(refusal_response(exc).body).decode()
+                yield f"data: {element}\n\n" if sse else f"{separator}{element}"
+            if not sse:
+                yield "]"
+            stream.delivered()
 
     media_type = "text/event-stream" if sse else "application/json"
-    return StreamingResponse(generate_chunks(), media_type=media_type, headers=headers)
+    return AccountedStream(stream, generate_chunks(), media_type=media_type, headers=headers)
 
 
 # == parsing ======================================================================================

@@ -15,6 +15,11 @@ from django.db import models
 
 from aira_management.apps.usecases.models import UseCase
 
+#: The most requests per minute any rate here may name: far beyond one installation's traffic, so a
+#: larger figure is a typo that would throttle nothing while reading as a decision. Shared with the
+#: anomaly rules' throttle, which is the same unit.
+MAX_REQUESTS_PER_MINUTE = 1_000_000
+
 
 class RateLimit(models.Model):
     USE_CASE = "use_case"
@@ -33,14 +38,14 @@ class RateLimit(models.Model):
     scope = models.CharField(max_length=16, choices=SCOPE_CHOICES)
     subject = models.CharField(max_length=255, blank=True)  # member username; empty for use_case
     limit_rpm = models.PositiveIntegerField(
-        validators=[MinValueValidator(1), MaxValueValidator(1_000_000)],
+        validators=[MinValueValidator(1), MaxValueValidator(MAX_REQUESTS_PER_MINUTE)],
         help_text="Sustained requests per minute",
     )
     # How many may arrive at once. Bursts are ordinary traffic; a limit stops the sustained flood
     # behind them.
     burst = models.PositiveIntegerField(
         default=0,
-        validators=[MaxValueValidator(1_000_000)],
+        validators=[MaxValueValidator(MAX_REQUESTS_PER_MINUTE)],
         help_text="Requests allowed at once; 0 uses the per-minute limit",
     )
     enabled = models.BooleanField(default=True)

@@ -79,10 +79,14 @@ def _tracked() -> list[Path]:
     out = subprocess.run(
         ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.split()
+    # Only what the working tree still holds: a tracked file deleted and not yet committed is a
+    # deletion in progress, and reading it fails the scan with nothing about the rule it checks.
     return [
         ROOT / f
         for f in out
-        if f not in EXEMPT and f.endswith((".md", ".py", ".ts", ".html", ".toml", ".yml", ".yaml"))
+        if f not in EXEMPT
+        and f.endswith((".md", ".py", ".ts", ".html", ".toml", ".yml", ".yaml"))
+        and (ROOT / f).is_file()
     ]
 
 

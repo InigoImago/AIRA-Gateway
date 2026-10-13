@@ -14,17 +14,19 @@ from django.db.models import QuerySet
 from rest_framework import viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
 
 from aira_common.permissions import Permission
 from aira_management.apps.usecases.access import VIEW as _VIEW
-from aira_management.apps.usecases.access import may_call_queryset
+from aira_management.apps.usecases.access import may_call_queryset, prefetch_object_permissions
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseMembership
 from aira_management.apps.usecases.serializers import UseCaseSerializer
 from aira_management.apps.usecases.views.anomaly_rules import AnomalyRulesMixin
 from aira_management.apps.usecases.views.api_keys import ApiKeysMixin
 from aira_management.apps.usecases.views.budgets import BudgetsMixin
-from aira_management.apps.usecases.views.grants import _grant
+from aira_management.apps.usecases.views.grants import _admit
 from aira_management.apps.usecases.views.members import MembersMixin
 from aira_management.apps.usecases.views.payloads import _snapshot
 from aira_management.apps.usecases.views.pipeline import PipelineMixin
@@ -67,13 +69,22 @@ class UseCaseViewSet(
             # Against every live use case, not the visible ones: the gateway's answer does not
             # depend on Management visibility, and nothing is disclosed — these are exactly the use
             # cases this caller may already name in a request.
-            scoped = may_call_queryset(self.request.user, self._live())
+            scoped = may_call_queryset(self.request.user, UseCase.objects.live())
         else:
-            scoped = scope_queryset(self.request.user, _VIEW, self._live())
+            scoped = scope_queryset(self.request.user, _VIEW, UseCase.objects.live())
         # Ordered, because paging an unordered queryset is undefined; searched here, so the rows a
-        # reader is not looking at never have their per-row permissions computed.
-        scoped = scoped.order_by("name", "slug")
+        # reader is not looking at never have their per-row permissions computed. The releases
+        # every row lists are read for the whole page at once.
+        scoped = scoped.order_by("name", "slug").prefetch_related("allowed_models")
         return apply_search(scoped, self.request, "name", "slug")
+
+    def paginate_queryset(self, queryset: Any) -> list[Any] | None:
+        """The page, with the caller's object permissions on all of it read in one go — each row
+        states what this caller may do there (`UseCaseSerializer.permissions`)."""
+        page = super().paginate_queryset(queryset)
+        if page is not None:
+            prefetch_object_permissions(self.request.user, page)
+        return page
 
     def get_permissions(self) -> list[Any]:
         if self.action == "create":
@@ -85,34 +96,20 @@ class UseCaseViewSet(
     def perform_create(self, serializer: Any) -> None:
         with transaction.atomic():
             usecase = serializer.save()
-            user: Any = self.request.user
-            _grant(user, usecase, UseCaseMembership.ADMIN)
-            UseCaseMembership.objects.create(
-                use_case=usecase, user=user, role=UseCaseMembership.ADMIN
-            )
             emit("usecase.upserted", _snapshot(usecase))
             # The creator's membership travels like any other, or the gateway refuses the person
-            # this use case was just given to administer.
-            emit(
-                "membership.upserted",
-                {
-                    "slug": usecase.slug,
-                    "username": user.get_username(),
-                    "role": UseCaseMembership.ADMIN,
-                },
-            )
+            # this use case was just given to administer — after the use case it belongs to.
+            _admit(usecase, self.request.user, UseCaseMembership.ADMIN)
+
+    def update(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Asked who is asking **before** the body is read: somebody who may only read a use case
+        is told so, not told to correct field values they may not set anyway. `partial_update`
+        arrives here too."""
+        if not self._may_admin(self.get_object()):
+            raise PermissionDenied("You are not an admin of this use case.")
+        return super().update(request, *args, **kwargs)
 
     def perform_update(self, serializer: Any) -> None:
-        if not self._may_admin(serializer.instance):
-            raise PermissionDenied("You are not an admin of this use case.")
         with transaction.atomic():
             usecase = serializer.save()
             emit("usecase.upserted", _snapshot(usecase))
-
-    def _live(self) -> QuerySet[UseCase]:
-        """Every use case that has not been retired — the one place that filter is written.
-
-        A soft delete some queries honour and others do not shows a retired use case on exactly the
-        screens nobody audited. Purged rows are gone from the table and need no filter.
-        """
-        return UseCase.objects.filter(deleted_at__isnull=True)

@@ -124,13 +124,14 @@ and **is a widening**: any member of any use case could then name any other and 
 from the one endpoint whose whole job is keeping one team's figures out of another's screen. That
 is mutation `N55`, and it was shown to fail before it was shown to pass.
 
-### 5.3 Two windows, and the timezone rule that was already paid for
+### 5.3 Two windows, on the budgets' clock
 
 The month is the figure somebody reports; the day says whether something is running away now. Both
-are computed as **local** days, from the shared `windowFor` helper that the reporting screen has
-used since `FRD-601`. The helper moved from that screen into `core/ui/periods.ts` rather than being
-restated, because the rule inside it is a bug that only appears in the evening: `toISOString()`
-converts to UTC first, so east of Greenwich "today" becomes yesterday for part of the day.
+are **UTC** windows, from the shared `windowFor` helper in `core/ui/periods.ts` that the reporting
+screen and the register use too, and the panels label them "(UTC)". UTC because the figures sit
+beside budgets and per-person allowances, which reset at midnight UTC and on the first of the UTC
+month: a local "today" asked the gateway for a different day from the one the counter refusing a
+request was on, and the allowance looked untouched while the gateway refused.
 
 ### 5.4 A failed load is not a page failure
 

@@ -62,7 +62,8 @@ describe('ConsumptionPanel', () => {
       today: reportRow({ requests: 3, total_tokens: 400, cost: '0.000120' }),
     });
 
-    expect(panel.at('consumption-month-tokens')?.textContent).toContain('10664');
+    // Grouped, like the chart above it prints the same figure (`10,664`, never `10664`).
+    expect(panel.at('consumption-month-tokens')?.textContent).toContain('10,664');
     expect(panel.at('consumption-month-cost')?.textContent).toContain('0.003675');
     expect(panel.at('consumption-month-requests')?.textContent).toContain('59');
     expect(panel.at('consumption-today-tokens')?.textContent).toContain('400');

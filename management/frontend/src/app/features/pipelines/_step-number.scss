@@ -1,0 +1,15 @@
+// The numbered disc a step carries, on the builder's graph and on the dry run's trace — one rule
+// for both, because the trace is read against the graph and two copies of the rule drift apart.
+// Each component stylesheet `@use`s this, since a component's styles reach only its own template.
+.step-number {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  font-size: var(--aira-text-xs);
+  font-weight: 700;
+  color: var(--aira-brand-strong);
+  background: var(--aira-brand-soft);
+  border-radius: 50%;
+}

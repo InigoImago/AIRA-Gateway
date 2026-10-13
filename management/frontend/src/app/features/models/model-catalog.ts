@@ -1,11 +1,13 @@
 import { Component, OnInit, computed, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Subscription } from 'rxjs';
 import { errorMessage } from '../../core/api/error-message';
 import { CatalogModel, Me, ModelCheck, OfferedModel, ServedModel } from '../../core/api/models';
 import { MeService, perMillion } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { can } from '../../core/auth/roles';
 import { ConfirmService } from '../../core/ui/confirm.service';
+import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
@@ -24,7 +26,7 @@ import { ServedModels } from './served-models';
  */
 @Component({
   selector: 'app-model-catalog',
-  imports: [FormsModule, TablePager, ModelEditor, ServedModels],
+  imports: [FormsModule, Modal, TablePager, ModelEditor, ServedModels],
   templateUrl: './model-catalog.html',
   providers: [PageFeedback, GatewayProviders],
 })
@@ -69,6 +71,10 @@ export class ModelCatalog implements OnInit {
    *  contract, and a release changes what every use case may call. */
   protected readonly canEdit = computed(() => can(this.me(), 'catalog.write'));
 
+  /** Asking the gateway whether a model answers needs `operations.diagnose` — the gateway refuses
+   *  the check without it, so the button is offered only to whoever it would answer. */
+  protected readonly canDiagnose = computed(() => can(this.me(), 'operations.diagnose'));
+
   /** Models in the catalog that would make consumption unaccountable. */
   protected readonly unpriced = computed(() => this.models().filter((m) => !m.is_priced));
 
@@ -76,8 +82,10 @@ export class ModelCatalog implements OnInit {
    *  beyond it (FRD-114 FR-7), so an undeclared model quietly does less than the list suggests. */
   protected readonly undeclared = computed(() => this.models().filter((m) => !m.is_declared));
 
-  /** The names the catalog already holds, so the browse window can mark them. */
-  private readonly catalogued = computed(() => new Set(this.models().map((m) => m.name)));
+  /** The names the catalog already holds — the browse window marks them, and the served list
+   *  stops offering one as missing the moment it is saved, rather than when the gateway's own
+   *  answer catches up. */
+  protected readonly catalogued = computed(() => new Set(this.models().map((m) => m.name)));
 
   // ---- one model, opened --------------------------------------------------------------------
 
@@ -87,6 +95,8 @@ export class ModelCatalog implements OnInit {
    *  left under a different model is worse than none. */
   protected readonly check = signal<ModelCheck | null>(null);
   protected readonly checking = signal(false);
+  /** The check in flight, dropped when another row opens — its answer is about the row it left. */
+  private checkRequest: Subscription | null = null;
   protected readonly checkVerdict = checkVerdict;
   protected readonly detailOf = detailOf;
   protected readonly providerLabel = providerLabel;
@@ -104,6 +114,9 @@ export class ModelCatalog implements OnInit {
   protected readonly offerings = signal<OfferedModel[] | null>(null);
   protected readonly loadingOfferings = signal(false);
   protected readonly offeringsError = signal<string | null>(null);
+  /** The listing in flight, dropped when another provider is chosen or the window closes: a late
+   *  answer would list one provider's models under another's name. */
+  private offeringsRequest: Subscription | null = null;
   protected readonly providers = this.gateway.list;
   protected readonly loadingProviders = this.gateway.loading;
   protected readonly providersError = this.gateway.error;
@@ -155,14 +168,21 @@ export class ModelCatalog implements OnInit {
 
   protected toggleDetail(model: CatalogModel): void {
     this.openModel.set(this.openModel() === model.name ? null : model.name);
+    this.checkRequest?.unsubscribe();
+    this.checkRequest = null;
+    this.checking.set(false);
     this.check.set(null);
   }
 
   /** Is the open model reachable, or only written down (`FRD-506`)? */
   protected runCheck(model: CatalogModel): void {
+    // A new question replaces the last one's outcome: a failed check left above a verdict that has
+    // since arrived would contradict it.
+    this.feedback.clear();
     this.checking.set(true);
     this.check.set(null);
-    this.service.checkModel(model.name).subscribe({
+    this.checkRequest?.unsubscribe();
+    this.checkRequest = this.service.checkModel(model.name).subscribe({
       next: (verdict) => {
         this.check.set(verdict);
         this.checking.set(false);
@@ -178,12 +198,21 @@ export class ModelCatalog implements OnInit {
     this.editor().edit(model);
   }
 
+  /** A served model the catalog took in meanwhile is **corrected**, like one chosen from a vendor's
+   *  listing — an import under its name would replace its declaration with the empty form's. */
   protected importServed(model: ServedModel): void {
+    const existing = this.models().find((m) => m.name === model.name);
+    if (existing) {
+      this.editor().edit(existing);
+      return;
+    }
     this.editor().importServed(model);
   }
 
   protected remove(model: CatalogModel): void {
-    const question = `Remove ${model.name} from the catalog? Requests for it will no longer be priced.`;
+    const question =
+      `Remove ${model.name} from the catalog? Every request for it will be refused, and every use ` +
+      'case loses its release of it — adding the model again does not restore those releases.';
     if (!this.confirmService.ask(question)) return;
     this.feedback.busy.set(true);
     this.service.removeModel(model.name).subscribe({
@@ -206,6 +235,11 @@ export class ModelCatalog implements OnInit {
     this.browseSearch.set('');
     this.offerings.set(null);
     this.offeringsError.set(null);
+    this.askProviders();
+  }
+
+  /** Ask the gateway which providers it has — again after a failure, which is not remembered. */
+  protected askProviders(): void {
     this.gateway.load(() => {
       const askable = this.askable();
       const remembered = this.browseProvider();
@@ -226,6 +260,7 @@ export class ModelCatalog implements OnInit {
   }
 
   protected closeBrowse(): void {
+    this.dropOfferings();
     this.showBrowse.set(false);
     this.browseProvider.set('');
     this.offerings.set(null);
@@ -234,6 +269,7 @@ export class ModelCatalog implements OnInit {
   }
 
   protected chooseBrowseProvider(name: string): void {
+    this.dropOfferings();
     this.browseProvider.set(name);
     this.browseSearch.set('');
     this.offerings.set(null);
@@ -241,9 +277,15 @@ export class ModelCatalog implements OnInit {
     if (name) this.loadOfferings(name);
   }
 
+  private dropOfferings(): void {
+    this.offeringsRequest?.unsubscribe();
+    this.offeringsRequest = null;
+    this.loadingOfferings.set(false);
+  }
+
   private loadOfferings(provider: string): void {
     this.loadingOfferings.set(true);
-    this.service.providerOfferings(provider).subscribe({
+    this.offeringsRequest = this.service.providerOfferings(provider).subscribe({
       next: (models) => {
         this.loadingOfferings.set(false);
         this.offerings.set(models);
@@ -264,7 +306,8 @@ export class ModelCatalog implements OnInit {
     return this.catalogued().has(model.name);
   }
 
-  /** The empty form, from the one place it is the right answer: no upstream is configured. */
+  /** The empty form, from the places it is the right answer: no upstream is configured, or the
+   *  gateway cannot be asked which ones are — the catalog is Management's either way. */
   protected addByName(): void {
     this.showBrowse.set(false);
     this.editor().add();

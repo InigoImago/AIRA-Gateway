@@ -1,5 +1,14 @@
 import { AnomalyEvent, AnomalyRule } from '../../core/api/models';
-import { describeAction, describeEvent, describeRule, unitOf } from './rule-language';
+import {
+  describeAction,
+  describeEvent,
+  describeRule,
+  figureText,
+  needsSample,
+  thresholdHint,
+  thresholdText,
+  unitOf,
+} from './rule-language';
 
 function rule(over: Partial<AnomalyRule> = {}): AnomalyRule {
   return {
@@ -65,18 +74,37 @@ describe('describeRule', () => {
     expect(describeRule(rule({ action: 'alert' }))).toContain('nothing is taken away');
   });
 
-  it('names the duration of a block, and the rate of a throttle', () => {
+  it('names the duration of a block, and the rate and the duration of a throttle', () => {
     // "An enum member is not a specification" (`FRD-503` §7): a throttle without its rate is a
-    // decision nobody can review.
+    // decision nobody can review, and one without its duration says nothing about when it ends.
     expect(describeRule(rule({ action: 'block', action_minutes: 30 }))).toContain(
       'stopped for 30 minutes',
     );
-    expect(describeRule(rule({ action: 'block', action_minutes: null }))).toContain(
-      'until somebody lifts it',
-    );
-    expect(describeRule(rule({ action: 'throttle', throttle_rpm: 12 }))).toContain(
-      '12 requests a minute',
-    );
+    expect(
+      describeRule(rule({ action: 'throttle', throttle_rpm: 12, action_minutes: 45 })),
+    ).toContain('slowed to 12 requests a minute for 45 minutes');
+  });
+
+  it('does not call an automatic action with no duration enforced', () => {
+    /** The gateway records such a rule's findings as `detected_not_enforced` and takes nothing
+     *  away; "until somebody lifts it" described an outage the platform refuses to cause. */
+    for (const action of ['block', 'throttle']) {
+      const sentence = describeRule(rule({ action, throttle_rpm: 12, action_minutes: null }));
+      expect(sentence, action).toContain('nothing is enforced');
+      expect(sentence, action).not.toContain('until somebody lifts it');
+      expect(sentence, action).not.toContain('traffic is');
+    }
+  });
+
+  it('says a threshold is reached, not exceeded, because the evaluator fires at equality', () => {
+    // `share >= threshold` and `len(fresh) >= threshold`: "above 1 address" would mean two.
+    const sentence = describeRule(rule({ kind: 'new_source_ip', threshold: 1, min_sample: 0 }));
+    expect(sentence).toContain('At 1 new address(es) or more');
+    expect(sentence).not.toMatch(/above/i);
+    // And the byte figure is `request_bytes >= parameter`: a body of exactly that size counts.
+    const payload = describeRule(rule({ kind: 'payload_size', parameter: 1000 }));
+    expect(payload).toContain('at least 1000 bytes');
+    expect(payload).not.toContain('larger than');
   });
 
   it('mentions the smallest sample only when there is one', () => {
@@ -132,12 +160,54 @@ describe('describeAction', () => {
 });
 
 describe('unitOf', () => {
-  it('knows a share from a multiple, and says nothing about a kind it has never met', () => {
+  it('names the unit a stored threshold is in, and nothing for a kind it has never met', () => {
     expect(unitOf('refusal_rate')).toBe('% of requests');
-    expect(unitOf('request_spike')).toBe('× the previous window');
+    // Stored in percent of the previous window: a bare `300` beside "× the previous window" read
+    // as three hundred times.
+    expect(unitOf('request_spike')).toBe('% of the previous window');
     // Forward compatible: a kind added to the gateway before this console knows it must show a
     // bare number, never a wrong unit.
     expect(unitOf('something_new')).toBe('');
+  });
+});
+
+describe('thresholdText and figureText', () => {
+  it('read a stored spike threshold as the multiple it means', () => {
+    // `aira_common.anomalies.threshold_unit`: "percent of the previous window" — 300 is 3×.
+    expect(thresholdText('spend_spike', 300)).toBe('3× the previous window');
+    expect(thresholdText('request_spike', 250)).toBe('2.5× the previous window');
+    expect(figureText('spend_spike', 450)).toBe('4.5×');
+    expect(thresholdText('spend_spike', 300)).not.toContain('300');
+  });
+
+  it('keep a share in percent, a count as a count, and an unknown kind bare', () => {
+    expect(thresholdText('refusal_rate', 50)).toBe('50 % of requests');
+    expect(figureText('refusal_rate', 90)).toBe('90 %');
+    expect(thresholdText('new_source_ip', 2)).toBe('2 new address(es)');
+    expect(figureText('new_source_ip', 2)).toBe('2');
+    expect(thresholdText('future_kind', 7)).toBe('7');
+  });
+});
+
+describe('thresholdHint', () => {
+  it('hints a spike field in percent, the unit the server refuses it in, and reads it back', () => {
+    // The refusal says "above 100 percent — 200 means twice as much"; a hint saying "×" invited
+    // a `3` for three times and a 400 in a unit nobody had mentioned.
+    expect(thresholdHint('spend_spike', null)).toBe(
+      '% of the previous window — 200 is twice as much',
+    );
+    expect(thresholdHint('spend_spike', 300)).toBe('% of the previous window — 300 is 3× as much');
+    expect(thresholdHint('refusal_rate', 50)).toContain('at most 100');
+    expect(thresholdHint('new_source_ip', 1)).toBe('new address(es)');
+  });
+});
+
+describe('needsSample', () => {
+  it('asks a smallest sample only of a proportion', () => {
+    // `aira_common.anomalies.needs_sample`: the server stores 0 for an event kind whatever is sent.
+    expect(needsSample('refusal_rate')).toBe(true);
+    expect(needsSample('spend_spike')).toBe(true);
+    expect(needsSample('new_source_ip')).toBe(false);
   });
 });
 
@@ -177,13 +247,12 @@ describe('rule-language — every kind has words', () => {
     expect(describeRule(rule({ target: 'something' }))).toContain('per something');
   });
 
-  it('does not claim a throttle rate or a duration it was not given', () => {
-    expect(describeRule(rule({ action: 'throttle', throttle_rpm: null }))).toContain(
-      'traffic is slowed',
+  it('does not claim a throttle rate it was not given', () => {
+    const sentence = describeRule(
+      rule({ action: 'throttle', throttle_rpm: null, action_minutes: 30 }),
     );
-    expect(describeRule(rule({ action: 'throttle', throttle_rpm: null }))).not.toContain(
-      'a minute',
-    );
+    expect(sentence).toContain('traffic is slowed for 30 minutes');
+    expect(sentence).not.toContain('a minute');
   });
 
   it('says nothing about a payload size that was never set', () => {

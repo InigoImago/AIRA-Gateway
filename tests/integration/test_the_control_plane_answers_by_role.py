@@ -21,12 +21,15 @@ import uuid
 import httpx
 import pytest
 
+from . import installation
 from .conftest import (
     ADMIN_CLIENT_ID,
     ADMIN_CLIENT_SECRET,
     MANAGEMENT_URL,
+    MEMBER_ACCOUNT,
     MEMBER_CLIENT_ID,
     MEMBER_CLIENT_SECRET,
+    MEMBER_DEPARTMENT,
     SECURITY_CLIENT_ID,
     SECURITY_CLIENT_SECRET,
     TEST_CLIENT_ID,
@@ -37,12 +40,15 @@ from .conftest import (
 pytestmark = pytest.mark.integration
 
 #: The Keycloak group the member account is in. A grant to it is how that account reaches a use
-#: case at all — there is no direct membership anywhere in this file, on purpose.
-MEMBER_GROUP = "/abteilungen/kundendienst"
+#: case at all — there is no direct membership anywhere in this file, on purpose. The session's
+#: own department, which holds that account and nobody else: the realm's `kundendienst` also holds
+#: a demo user, who would have been made an administrator by every cell that granted it.
+MEMBER_GROUP = MEMBER_DEPARTMENT
 
 
 @pytest.fixture(scope="module")
-async def tokens() -> dict[str, str]:
+async def tokens(member_department: str) -> dict[str, str]:
+    del member_department  # minted after the member account joined it
     return {
         "global-admin": await _token(ADMIN_CLIENT_ID, ADMIN_CLIENT_SECRET),
         "it-security": await _token(SECURITY_CLIENT_ID, SECURITY_CLIENT_SECRET),
@@ -68,6 +74,7 @@ async def _use_case(client: httpx.AsyncClient, admin: dict[str, str], grant: str
     independent measures the order it was written in.
     """
     slug = f"itest-rbac-{uuid.uuid4().hex[:8]}"
+    installation.remember("use_case", slug)
     made = await client.post("/api/v1/use-cases/", json={"name": slug, "slug": slug}, headers=admin)
     assert made.status_code == 201, made.text
     if grant is not None:
@@ -86,7 +93,8 @@ CALLS: list[tuple[str, str, str, dict | None]] = [
     ("edit", "patch", "", {"description": "x"}),
     ("retire", "delete", "", None),
     ("read members", "get", "members/", None),
-    ("add a member", "post", "members/", {"username": "ucuser", "role": "user"}),
+    # The suite's own member account, never a demo user: whom a cell adds outlives the cell.
+    ("add a member", "post", "members/", {"username": MEMBER_ACCOUNT, "role": "user"}),
     ("read grants", "get", "groups/", None),
     # A group **nobody in this file holds**. The first version granted `/aira/it-security` admin
     # rights and then asserted, two cases later, that IT Security is excluded from the directory —
@@ -239,10 +247,17 @@ async def test_a_use_case_surface_answers_by_position(
 
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=30.0) as client:
         slug = await _use_case(client, admin, grant)
-        kwargs: dict = {"headers": _headers(tokens, who)}
-        if body is not None:
-            kwargs["json"] = body
-        response = await getattr(client, verb)(f"/api/v1/use-cases/{slug}/{suffix}", **kwargs)
+        try:
+            kwargs: dict = {"headers": _headers(tokens, who)}
+            if body is not None:
+                kwargs["json"] = body
+            response = await getattr(client, verb)(f"/api/v1/use-cases/{slug}/{suffix}", **kwargs)
+        finally:
+            # Retired at once, not at the end of the session: an administrator grant on a live
+            # use case is installation-wide state (`IsGlobalAdminOrUseCaseAdministrator` asks
+            # about *any* use case), and the cells after this one must not inherit it. A cell
+            # whose call was itself a retirement gets the 404 it earned.
+            await client.delete(f"/api/v1/use-cases/{slug}/", headers=admin)
 
     assert response.status_code == EXPECTED[position][name], (
         f"{position} · {name}: {response.status_code}, expected "
@@ -371,10 +386,14 @@ async def test_an_installation_surface_answers_by_role(
     del name
     if position not in expected:
         pytest.skip("this position's answer is installation state rather than a role — see above")
+    # Whatever a cell may create is registered first, so an allowed call leaves nothing behind
+    # and a refused one that regresses into a creation is removed as well.
     if body is not None and "slug" in body:
         body = {**body, "slug": f"{body['slug']}-{uuid.uuid4().hex[:6]}"}
+        installation.remember("use_case", body["slug"])
     if body is not None and path.endswith("models/"):
         body = {**body, "name": f"{body['name']}-{uuid.uuid4().hex[:6]}"}
+        installation.remember("model", body["name"])
 
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=30.0) as client:
         kwargs: dict = {"headers": _headers(tokens, POSITIONS[position][0])}

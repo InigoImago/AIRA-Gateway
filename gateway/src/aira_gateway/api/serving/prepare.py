@@ -15,8 +15,6 @@ conditions (`test_every_dispatch_applies_the_conditions.py`).
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -34,12 +32,14 @@ from aira_gateway.api.serving.context import (
 from aira_gateway.api.serving.controls import (
     cache_prefix_wanted,
     cache_ttl_for,
+    check_attachment_bounds,
     check_declaration,
     check_not_empty,
     check_sampling,
     check_tools_permitted,
     enforce_pre_dispatch,
     guard_before_work,
+    prompt_texts,
     refuse_if_retired,
     resolve_reasoning,
 )
@@ -48,8 +48,7 @@ from aira_gateway.audit import AuditTrail
 from aira_gateway.budgets.service import Reservation
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
-from aira_gateway.core.schema import ResponseSchema
-from aira_gateway.embedding import estimated_tokens as embedding_tokens
+from aira_gateway.embedding import check_shape as check_embedding_shape
 from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.pipeline.dispatch import NoCapableModel, Permits, Skipped
 from aira_gateway.requirements import (
@@ -67,9 +66,9 @@ from aira_gateway.requirements import (
     ToolsSupported,
     permits,
 )
-from aira_gateway.residency import parse_allowed
+from aira_gateway.residency import parse_allowed, parse_model_regions
 from aira_gateway.state import budgets_of, pricing_of, providers_of, settings_of
-from aira_gateway.thinking import reserved_tokens
+from aira_gateway.thinking import check_budget_fits, reserved_tokens
 from aira_gateway.thinking import resolve as resolve_thinking
 from aira_gateway.upstreams.base import Upstream
 
@@ -115,9 +114,14 @@ async def prepare_for_dispatch(
         trail.tools_declared = len(canonical.tools)
         # Requests that can never succeed are refused before they spend an allowance.
         check_not_empty(canonical)
+        check_attachment_bounds(canonical)
         check_sampling(canonical)
         await check_tools_permitted(request, canonical)
         canonical = await resolve_reasoning(request, canonical, asked_for=reasoning_asked_for)
+    if embed is not None:
+        # The same rule for an embedding: an empty or oversized batch is refused before the rate
+        # limit takes its weight, or one caller's unservable batch spends the use case's allowance.
+        check_embedding_shape(embed, embedding_bounds(request))
 
     # An embedding batch weighs one request per text (`FRD-113` FR-6).
     units = embed.size if embed is not None else 1
@@ -159,6 +163,9 @@ async def prepare_for_dispatch(
                 "max_output_tokens": declaration.output_cap(canonical.max_output_tokens),
             }
         )
+        # The resolved budget against the cap that will be sent: a budget that fills the
+        # allowance it is drawn from is the caller's `400`, not the provider's refusal.
+        check_budget_fits(canonical.thinking, canonical.max_output_tokens)
     if embed is not None:
         embed = validate_embedding(
             embed, declaration, embedding_bounds(request), default_task_type=default_task_type
@@ -173,13 +180,10 @@ async def prepare_for_dispatch(
         max_output_tokens=requested_output,
         attachments=[part.media_type for part in canonical.attachments] if canonical else None,
         units=units,
-        extra_tokens=(
-            reserved_tokens(canonical.thinking, declaration)
-            if canonical is not None
-            else embedding_tokens(embed)
-            if embed is not None
-            else 0
+        input_texts=(
+            prompt_texts(canonical) if canonical is not None else embed.texts if embed else ()
         ),
+        extra_tokens=reserved_tokens(canonical.thinking, declaration) if canonical else 0,
     )
     # Last, so the span describes what will actually be dispatched, not what the caller sent.
     describe_on_the_span(canonical, embed)
@@ -197,7 +201,11 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     catalog = catalog_of(request)
     settings = settings_of(request)
     checks: list[Requirement] = [
-        RegionAllowed(registry, parse_allowed(settings.allowed_regions)),
+        RegionAllowed(
+            registry,
+            parse_allowed(settings.allowed_regions),
+            parse_model_regions(settings.allowed_model_regions),
+        ),
         ModelApproved(catalog, registry),
         ModelReleasedForUseCase(await released_models(request), use_case_of(request), registry),
     ]
@@ -277,15 +285,6 @@ async def resolve_direct_target(
     return provider
 
 
-def schema_digest(schema: ResponseSchema) -> str:
-    """A stable short name for one schema (`FRD-112` §9): groups identical schemas across requests
-    without making one reconstructable. Key order and unset fields do not change it."""
-    normalised = json.dumps(
-        schema.model_dump(exclude_none=True, by_alias=True), sort_keys=True, default=str
-    )
-    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:16]
-
-
 def describe_on_the_span(
     canonical: CanonicalRequest | None, embed: CanonicalEmbeddingRequest | None
 ) -> None:
@@ -304,7 +303,9 @@ def describe_on_the_span(
             )
         if canonical.response_schema is not None:
             attributes["aira.response_schema"] = True
-            attributes["aira.response_schema.digest"] = schema_digest(canonical.response_schema)
+            # The schema's own fingerprint, so the span and anything else that names a schema
+            # name it alike (`FRD-112` §6).
+            attributes["aira.response_schema.digest"] = canonical.response_schema.digest()
     if embed is not None:
         attributes["aira.embedding.batch_size"] = embed.size
         attributes["aira.embedding.task_type"] = embed.task_type

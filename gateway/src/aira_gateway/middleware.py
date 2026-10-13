@@ -14,12 +14,19 @@ from __future__ import annotations
 
 import re
 
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from aira_common.logging import get_logger
 from aira_common.observability import trace_context_fields
+from aira_gateway.api.gemini.errors import gemini_error_response
+from aira_gateway.api.kira import BASE as KIRA_BASE
+from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
+from aira_gateway.api.kira.headers import surface_refusal
 from aira_gateway.audit import Outcome
 from aira_gateway.auth.attribution import USE_CASE_PATH_KEY
+from aira_gateway.persistence.recorder import client_ip
 from aira_gateway.persistence.writer import PendingLog
 
 #: A leading ``/uc/<slug>`` and the path after it.
@@ -28,10 +35,32 @@ _USE_CASE_PATH = re.compile(r"^/uc/([^/]+)(/.*)$")
 #: `/v1beta/models/<model>:<method>` — the model may contain colons, the method never does.
 _RESOURCE = re.compile(r"/models/(?P<resource>[^/]+)$")
 
-#: Which surface a path belongs to, for refusals that answer **before any route** and must still
-#: speak that surface's error language. Read by `describe_target` (the audit row's `api`) and by the
-#: body ceiling's own response.
-KIRA_PREFIX = "/kira/"
+#: The most `request_logs.request_bytes` holds (`INTEGER`). A declared length is the caller's own
+#: number, and one past this would fail the very audit write it belongs to; a request that large is
+#: measured as large either way.
+_MAX_RECORDED_BYTES = 2**31 - 1
+
+
+def is_kira_path(path: str) -> bool:
+    """Whether ``path`` — with any `/uc/<slug>` prefix already stripped — is on the KIRA surface.
+
+    One definition for every refusal answered before or outside a route: the body ceiling, the
+    audit row it writes (`describe_target`) and the application's exception handlers.
+    """
+    return path.startswith(KIRA_BASE)
+
+
+def too_large_response(request: Request) -> JSONResponse:
+    """The body ceiling's refusal, in the envelope of the surface it was aimed at.
+
+    One response whichever exit refused the body — a declared length here, a body that outgrew it
+    in the exception handler — because a KIRA client switches on `code`, and migrating
+    (`FRD-107`) must be only a change of URL.
+    """
+    message = "Request body too large."
+    if is_kira_path(request.url.path):
+        return surface_refusal(request, 413, kira_code_for_status(413), message)
+    return gemini_error_response(413, message, "INVALID_ARGUMENT")
 
 
 class UseCasePathMiddleware:
@@ -68,7 +97,7 @@ def describe_target(path: str) -> tuple[str, str, str]:
     Best effort, read from the path; where it cannot tell it says ``unknown`` — an audit row naming
     the wrong model is worse than one admitting it does not know.
     """
-    api = "kira" if path.startswith(KIRA_PREFIX) else "gemini"
+    api = "kira" if is_kira_path(path) else "gemini"
     match = _RESOURCE.search(path)
     if not match:
         return api, "unknown", "unknown"
@@ -85,6 +114,9 @@ async def record_oversized(scope: Scope, limit: int) -> None:
 
     - **Deliberately unattributed**: the credential has not been verified here, and recording it
       would let anyone write another identity into the audit trail with one oversized request.
+    - **Where it came from, and how large**: the source address by the same trusted-proxy rule as
+      every other row (`client_ip`), and the size it declared or was counted to, so the
+      `payload_size` rule (`FRD-501`) measures the requests most worth measuring.
     - **Never fails the response**: a full writer queue must not turn a 413 into a 500, and this
       ceiling has to stay cheap under abuse.
     """
@@ -94,14 +126,14 @@ async def record_oversized(scope: Scope, limit: int) -> None:
         return
 
     api, model, operation = describe_target(scope.get("path", ""))
-    client = scope.get("client")
+    measured = (scope.get("state") or {}).get("request_bytes")
     try:
         await writer.submit(
             PendingLog(
                 subject="",
                 auth_method="",
                 use_case=None,
-                source_ip=client[0] if client else None,
+                source_ip=client_ip(Request(scope)),
                 operation=operation,
                 model=model,
                 status=413,
@@ -115,6 +147,9 @@ async def record_oversized(scope: Scope, limit: int) -> None:
                 outcome=str(Outcome.REQUEST_TOO_LARGE),
                 requested_model=model,
                 api=api,
+                request_bytes=(
+                    min(measured, _MAX_RECORDED_BYTES) if isinstance(measured, int) else None
+                ),
             )
         )
     except Exception:  # noqa: BLE001 - an audit failure must not become a 500 (see above)
@@ -126,16 +161,9 @@ class BodySizeLimitMiddleware:
 
     A declared ``Content-Length`` is rejected up front; bodies streamed without one are counted as
     they arrive and abort as soon as the limit is passed, so an unbounded upload is never buffered.
-    Both exits record the refusal through :func:`record_oversized`.
+    Both exits record the refusal through :func:`record_oversized`, and both answer with
+    :func:`too_large_response`.
     """
-
-    #: The refusal in each surface's own envelope, as bytes because this answers in pure ASGI. The
-    #: path decides: a KIRA client switches on `code`, and migrating (`FRD-107`) must be only a
-    #: change of URL.
-    _GEMINI_TOO_LARGE = (
-        b'{"error":{"code":413,"message":"Request body too large.","status":"INVALID_ARGUMENT"}}'
-    )
-    _KIRA_TOO_LARGE = b'{"code":"VALIDATION_ERROR","message":"Request body too large."}'
 
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
         self.app = app
@@ -146,9 +174,12 @@ class BodySizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if self._declared_length(scope) > self.max_bytes:
+        declared = self._declared_length(scope)
+        if declared > self.max_bytes:
+            # What it asked to send is the size an oversized request is measured by (`FRD-501`).
+            scope.setdefault("state", {})["request_bytes"] = declared
             await record_oversized(scope, self.max_bytes)
-            await self._reject(send, str(scope.get("path", "")))
+            await self._reject(scope, send)
             return
 
         received = 0
@@ -180,19 +211,16 @@ class BodySizeLimitMiddleware:
                     return 0
         return 0
 
-    async def _reject(self, send: Send, path: str = "") -> None:
-        body = self._KIRA_TOO_LARGE if path.startswith(KIRA_PREFIX) else self._GEMINI_TOO_LARGE
+    async def _reject(self, scope: Scope, send: Send) -> None:
+        response = too_large_response(Request(scope))
         await send(
             {
                 "type": "http.response.start",
-                "status": 413,
-                "headers": [
-                    (b"content-type", b"application/json"),
-                    (b"content-length", str(len(body)).encode("ascii")),
-                ],
+                "status": response.status_code,
+                "headers": response.raw_headers,
             }
         )
-        await send({"type": "http.response.body", "body": body})
+        await send({"type": "http.response.body", "body": response.body})
 
 
 class SecurityHeadersMiddleware:
@@ -243,9 +271,11 @@ class TraceIdMiddleware:
     """Put the active trace id on every **traced** response, failures included (`FRD-117` FR-4).
 
     Health probes are excluded from tracing (`observability.HEALTH_PATHS`), so they carry no
-    header. Mounted outermost, because the requests that most need correlating are the ones an
-    exception handler answered. Absent when no span is active: an id that correlates with nothing
-    is worse than none, because somebody will search for it.
+    header. Mounted outermost of the user middleware, because the requests that most need
+    correlating are the ones an exception handler answered. Two layers sit outside it — the OTel
+    middleware, and Starlette's `ServerErrorMiddleware`, which answers an unhandled error — so that
+    500 gets its id from `_handle_unexpected` instead. Absent when no span is active: an id that
+    correlates with nothing is worse than none, because somebody will search for it.
     """
 
     HEADER = b"x-trace-id"

@@ -13,9 +13,7 @@
       <!-- One chip per role. `data-role` carries the slug, so the role is assertable without
            depending on the wording. -->
       @for (role of roleChips(); track role.slug) {
-        <span class="aira-user__role" [attr.data-role]="role.slug" [title]="role.explains">{{
-          role.label
-        }}</span>
+        <span class="aira-user__role" [attr.data-role]="role.slug">{{ role.label }}</span>
       }
       <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
       <!-- Platform administration (`FRD-622` FR-5), for whoever may read one of its pages — the

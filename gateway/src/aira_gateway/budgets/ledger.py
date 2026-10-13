@@ -20,6 +20,10 @@ from aira_common.counters import ScriptRunner
 #: estimate behind, and an existing key is never reseeded); expiry makes that drift heal itself
 #: instead of refusing traffic for the rest of the month. The trade: reservations in flight when a
 #: counter expires are forgotten — a rare under-count, over a permanent over-count.
+#:
+#: **Set once, when the counter is built, and never extended.** Refreshed on every reservation, the
+#: expiry would be an idle timeout: a counter seeing a request every few minutes would never be
+#: rebuilt, and its drift would last the period on exactly the busy counters where it matters.
 COUNTER_TTL_SECONDS = 300
 
 #: The limit argument that means "no cap on this dimension".
@@ -27,16 +31,20 @@ NO_LIMIT = -1
 
 # Both scripts work on one hash per (scope, period): tokens / requests / cost. Redis stores and
 # increments 64-bit integers exactly; only the comparison passes through Lua's double, which is
-# exact to 2^53 — about nine million currency units in nano-units.
+# exact to 2^53 nano-units — about nine million currency units. Above that it is off by at most the
+# double's step there: 16 nano-units at Management's largest cost limit (99 999 999.999999).
 _RESERVE = """
 local key = KEYS[1]
 if redis.call('EXISTS', key) == 0 then
   redis.call('HSET', key, 'tokens', ARGV[1], 'requests', ARGV[2], 'cost', ARGV[3])
 end
 
--- The expiry is refreshed before the limit checks: a refused reservation returns early, and a
--- counter it created must still expire and be rebuilt rather than refuse on a stale figure.
-redis.call('EXPIRE', key, ARGV[10])
+-- The expiry is set where the counter has none — when it is built — and never extended, so the
+-- counter is rebuilt from Postgres on a fixed clock however busy it is. Before the limit checks: a
+-- refused reservation returns early, and a counter it created must still expire.
+if redis.call('TTL', key) == -1 then
+  redis.call('EXPIRE', key, ARGV[10])
+end
 
 local current = redis.call('HMGET', key, 'tokens', 'requests', 'cost')
 local tokens = tonumber(current[1]) or 0
@@ -77,7 +85,11 @@ for i = 1, #fields do
     redis.call('HSET', key, fields[i], 0)
   end
 end
-redis.call('EXPIRE', key, ARGV[4])
+-- A correction does not extend the counter's life (see `_RESERVE`); it only gives one to a counter
+-- that has none.
+if redis.call('TTL', key) == -1 then
+  redis.call('EXPIRE', key, ARGV[4])
+end
 return 1
 """
 
@@ -96,11 +108,21 @@ class Amounts:
 
 @dataclass(frozen=True, slots=True)
 class Limits:
-    """The caps to test against; ``None`` means no cap on that dimension."""
+    """The caps to test against; ``None`` means no cap on that dimension.
+
+    A **negative** cap allows nothing, as the Postgres path reads it (`usage >= limit`): the two
+    enforcement paths must not answer one stored figure in opposite ways, and a figure no author
+    could have meant is read as the one that refuses.
+    """
 
     tokens: int | None = None
     requests: int | None = None
     cost_nanos: int | None = None
+
+
+def _cap(limit: int | None) -> int:
+    """A limit as the script's argument: `NO_LIMIT` for none, never below zero for one."""
+    return NO_LIMIT if limit is None else max(0, limit)
 
 
 def _key(scope_key: str, period_key: str) -> str:
@@ -138,9 +160,9 @@ class BudgetLedger:
                 amounts.tokens,
                 amounts.requests,
                 amounts.cost_nanos,
-                NO_LIMIT if limits.tokens is None else limits.tokens,
-                NO_LIMIT if limits.requests is None else limits.requests,
-                NO_LIMIT if limits.cost_nanos is None else limits.cost_nanos,
+                _cap(limits.tokens),
+                _cap(limits.requests),
+                _cap(limits.cost_nanos),
                 COUNTER_TTL_SECONDS,
             ],
         )

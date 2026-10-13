@@ -14,6 +14,11 @@ function haystack(row: Suspension): string {
   return [row.target, row.target_value, row.author, row.reason].join(' ');
 }
 
+/** What a stop reaches — "subject · uc-a", or "· everywhere" for one that is not scoped. */
+export function reachOf(row: Suspension): string {
+  return `${row.target} · ${row.use_case ?? 'everywhere'}`;
+}
+
 /**
  * What is stopped, what was, and the kill switch (`FRD-503`).
  *
@@ -41,8 +46,12 @@ export class SuspensionsPanel {
   readonly canStop = input(false);
   /** The gateway would not list them to this caller (a `403`): say so instead of "nothing". */
   readonly hidden = input(false);
+  /** False when `/me` could not be read, so who may stop traffic is unknown for this reader. */
+  readonly permissionsKnown = input(true);
   /** Slugs for the scope picker — what this caller can see, which is what they can name. */
   readonly useCases = input<string[]>([]);
+  /** Why the picker offers only "everywhere", when the use-case list could not be read. */
+  readonly useCasesError = input<string | null>(null);
   /** Raised after a stop or a restore, so the page reloads the suspensions it owns. */
   readonly changed = output<void>();
 
@@ -72,6 +81,22 @@ export class SuspensionsPanel {
    */
   protected readonly activeView = new TableView<Suspension>(this.active, haystack);
   protected readonly pastView = new TableView<Suspension>(this.past, haystack);
+  protected readonly reachOf = reachOf;
+
+  /**
+   * A whole use case is stopped wherever it is called, so it takes no "Where": the matcher needs
+   * the request's use case to equal the scope **and** the stopped value, and a scope naming
+   * another use case would leave a stop listed as in force that matches no request at all.
+   */
+  protected chooseTarget(target: 'subject' | 'credential' | 'use_case'): void {
+    this.target.set(target);
+    if (target === 'use_case') this.scope.set('');
+  }
+
+  /** When a past decision stopped applying: lifted, or run out. */
+  protected endedAt(row: Suspension): string | null {
+    return row.lifted_at ?? row.expires_at;
+  }
 
   /**
    * One box, both lists: "has this caller ever been stopped?" is answered by what is stopped now
@@ -91,6 +116,11 @@ export class SuspensionsPanel {
   protected stop(): void {
     if (!this.canSubmit()) return;
     const value = this.targetValue().trim();
+    // A throttle holds traffic to a rate rather than stopping it, and the notice says which.
+    const outcome =
+      this.action() === 'throttle'
+        ? `is held to ${this.throttleRpm()} requests a minute`
+        : 'is stopped';
     this.feedback.run(
       this.service.suspend({
         target: this.target(),
@@ -105,7 +135,7 @@ export class SuspensionsPanel {
         failure: 'Could not stop this traffic.',
         success: () => {
           this.feedback.succeed(
-            `${value} is stopped. It takes a few seconds to reach every gateway instance.`,
+            `${value} ${outcome}. It takes a few seconds to reach every gateway instance.`,
           );
           this.targetValue.set('');
           this.reason.set('');

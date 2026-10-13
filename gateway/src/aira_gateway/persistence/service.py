@@ -6,13 +6,19 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aira_gateway.audit import UsageBasis
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.models import RequestLog
+from aira_gateway.persistence.sanitize import printable
 
 #: Widths of the `request_logs` columns whose content the caller chooses (see `_fits`).
 MODEL_COLUMN = 128  # `.model`, `.requested_model`
 OPERATION_COLUMN = 64  # `.operation`
 SUBJECT_COLUMN = 255  # `.subject`, `.username` — a token's `sub` and `preferred_username`
+
+#: The largest count a 32-bit `request_logs` column holds: the token counts, the latency and the
+#: request's size (see `_count`).
+COUNT_CEILING = 2**31 - 1
 
 
 def _fits(value: str | None, width: int = MODEL_COLUMN) -> str | None:
@@ -26,7 +32,20 @@ def _fits(value: str | None, width: int = MODEL_COLUMN) -> str | None:
     """
     if value is None:
         return None
-    return "".join(c for c in value if ord(c) >= 0x20 and ord(c) != 0x7F)[:width]
+    return printable(value)[:width]
+
+
+def _count(value: int | None) -> int | None:
+    """``value`` held to what an integer column of `request_logs` can store.
+
+    The token counts arrive as the upstream adapter reported them, and a misbehaving server can
+    report anything: a figure of 2³¹ or more, or a negative one, fails the INSERT on Postgres and
+    loses the row — the way `_fits` keeps an over-long string from doing the same. SQLite stores
+    either, which is why the hermetic suite cannot see it. ``None`` stays: unknown is not zero.
+    """
+    if value is None:
+        return None
+    return max(0, min(int(value), COUNT_CEILING))
 
 
 class RequestLogService:
@@ -58,6 +77,7 @@ class RequestLogService:
         credential: str | None = None,
         issuer: str | None = None,
         outcome: str | None = None,
+        usage_basis: str | None = None,
         requested_model: str | None = None,
         model_selection: str | None = None,
         pipeline_decisions: list[dict[str, Any]] | None = None,
@@ -69,6 +89,10 @@ class RequestLogService:
         region: str | None = None,
         request_bytes: int | None = None,
     ) -> RequestLog:
+        # A counted usage is two counts and nothing more: the cache split and the thinking were in
+        # a report that never came, so they are unknown here — and zero would claim a cache miss
+        # and a model that did not think (`FRD-128` FR-6).
+        counted = usage_basis == UsageBasis.COUNTED
         entry = RequestLog(
             subject=str(_fits(subject, SUBJECT_COLUMN)),
             username=_fits(username, SUBJECT_COLUMN),
@@ -84,6 +108,7 @@ class RequestLogService:
             model_selection=model_selection,
             status=status,
             outcome=outcome,
+            usage_basis=usage_basis,
             pipeline_decisions=pipeline_decisions,
             flagged=flagged,
             tool_calls=tool_calls,
@@ -92,20 +117,22 @@ class RequestLogService:
             provider=provider,
             publisher=publisher,
             region=region,
-            prompt_tokens=usage.prompt_tokens if usage else None,
+            prompt_tokens=_count(usage.prompt_tokens) if usage else None,
             # Recorded even when zero: on a caching provider, zero is a miss, which is what makes a
             # cache that stopped working visible (`FRD-133` FR-5). NULL means no usage at all.
-            cached_input_tokens=usage.cached_input_tokens if usage else None,
-            cache_write_tokens=usage.cache_write_tokens if usage else None,
-            completion_tokens=usage.completion_tokens if usage else None,
-            reasoning_tokens=usage.reasoning_tokens if usage else None,
-            total_tokens=usage.total_tokens if usage else None,
-            latency_ms=latency_ms,
+            cached_input_tokens=(
+                _count(usage.cached_input_tokens) if usage and not counted else None
+            ),
+            cache_write_tokens=_count(usage.cache_write_tokens) if usage and not counted else None,
+            completion_tokens=_count(usage.completion_tokens) if usage else None,
+            reasoning_tokens=_count(usage.reasoning_tokens) if usage and not counted else None,
+            total_tokens=_count(usage.total_tokens) if usage else None,
+            latency_ms=_count(latency_ms),
             trace_id=trace_id,
             request_payload=request_payload,
             response_payload=response_payload,
             cost_nanos=cost_nanos,
-            request_bytes=request_bytes,
+            request_bytes=_count(request_bytes),
         )
         self._session.add(entry)
         await self._session.commit()

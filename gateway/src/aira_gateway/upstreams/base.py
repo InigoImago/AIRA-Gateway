@@ -6,6 +6,7 @@ backends exist (`ADR-0011`).
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeIs, runtime_checkable
@@ -20,6 +21,42 @@ from aira_gateway.core.canonical import (
 )
 
 _log = get_logger("aira_gateway.upstreams")
+
+#: An error sent **inside** a stream, by the word each vendor gives its kind, onto the HTTP status
+#: the same failure has when it is the answer's own status — so it passes through to the caller
+#: (429/503/504) and reads the same as the non-streamed failure. Anthropic's `overloaded_error` is
+#: its own 529, which means nothing to a caller: it is *unavailable*, and said so.
+_STREAM_FAILURE_STATUS = {
+    "invalid_request_error": 400,
+    "INVALID_ARGUMENT": 400,
+    "FAILED_PRECONDITION": 400,
+    "authentication_error": 401,
+    "UNAUTHENTICATED": 401,
+    "permission_error": 403,
+    "PERMISSION_DENIED": 403,
+    "not_found_error": 404,
+    "NOT_FOUND": 404,
+    "request_too_large": 413,
+    "rate_limit_error": 429,
+    "rate_limit_exceeded": 429,
+    "insufficient_quota": 429,
+    "RESOURCE_EXHAUSTED": 429,
+    "api_error": 500,
+    "server_error": 500,
+    "INTERNAL": 500,
+    "overloaded_error": 503,
+    "UNAVAILABLE": 503,
+    "timeout_error": 504,
+    "DEADLINE_EXCEEDED": 504,
+}
+
+#: A failure nothing in the event classifies: the upstream failed, and the gateway says so as a
+#: gateway does for a bad answer from the server behind it.
+_STREAM_FAILURE_DEFAULT = 502
+
+#: The shape of a vendor's error-kind word, the only part of an in-stream error repeated to a
+#: caller apart from a 400's reason: a short identifier, never free text.
+_ERROR_KIND = re.compile(r"^[A-Za-z0-9_.-]{1,64}\Z")
 
 
 # == errors =======================================================================================
@@ -48,6 +85,15 @@ class DialectUnsupported(Exception):
     """
 
 
+class ModelNotListed(Exception):
+    """A vendor that answered its listing and does not offer the model a probe asked about.
+
+    The probe's verdict for a platform whose listing names what a credential can call (`FRD-506`):
+    a reachable endpoint is no evidence that a catalogue entry names a model on it, and a typo in
+    the catalogue must not read as reachable. The message is the gateway's own, safe to show.
+    """
+
+
 class AmbiguousModel(Exception):
     """A model name that does not resolve to exactly one adapter and place.
 
@@ -65,12 +111,62 @@ def upstream_reason(response: Any) -> str:
     one; a `5xx` is the provider's internal noise. Only `error.message`, capped — the body can quote
     the request, and an upstream is not a trusted source of long strings for our error envelope and
     audit log. An unreadable body (including an unread stream) has no reason.
+
+    The error object may arrive wrapped in a one-element list, as Agent Platform's open-model
+    endpoint sends it; read as an object only, the reason of every such refusal is lost.
     """
     try:
-        message = response.json().get("error", {}).get("message")
+        body = response.json()
+        if isinstance(body, list) and body:
+            body = body[0]
+        message = body.get("error", {}).get("message")
     except Exception:  # noqa: BLE001 — an unreadable or unexpected body simply has no reason
         return ""
     return f" {str(message)[:300]}" if message else ""
+
+
+def stream_failure(error: Any) -> UpstreamError:
+    """An error the provider sent **inside** a stream that began with a 200 (`FRD-129`).
+
+    Every vendor does it — Anthropic's `event: error` (`overloaded_error` is the common one),
+    Google's and the OpenAI dialect's `{"error": {…}}` payload — and every vendor's own SDK raises
+    on it. Read as anything else the stream simply ends: no finish reason, no usage, the configured
+    fallback never tried and the audit row saying the caller left. Raised, it is the upstream
+    failing — before the first chunk the chain moves on, after it the surface records it.
+
+    ``error`` is the payload's `error` value: an object naming a `code`, a `status` or a `type`, or
+    a bare string from some self-hosted servers. As with a refused answer (`upstream_reason`), the
+    vendor's own message is repeated for a 400 only, bounded.
+    """
+    details: dict[str, Any] = error if isinstance(error, dict) else {"message": error}
+    status = _stream_failure_status(details)
+    kind = next(
+        (
+            str(details[key])
+            for key in ("type", "status", "code")
+            if isinstance(details.get(key), str) and _ERROR_KIND.match(str(details[key]))
+        ),
+        "",
+    )
+    message = details.get("message")
+    reason = f" {str(message)[:300]}" if status == 400 and message else ""
+    return UpstreamError(
+        f"The upstream failed mid-stream{f': {kind}' if kind else ''}.{reason}", status
+    )
+
+
+def _stream_failure_status(details: dict[str, Any]) -> int:
+    """The HTTP status an in-stream error stands for: its numeric code where it carries one."""
+    code = details.get("code")
+    if isinstance(code, str) and code.isdigit():
+        code = int(code)
+    if isinstance(code, int) and not isinstance(code, bool) and 400 <= code <= 599:
+        return code
+    for key in ("type", "status", "code"):
+        word = details.get(key)
+        if isinstance(word, str) and word in _STREAM_FAILURE_STATUS:
+            return _STREAM_FAILURE_STATUS[word]
+    return _STREAM_FAILURE_DEFAULT
 
 
 # == what an upstream describes ===================================================================
@@ -146,6 +242,24 @@ def can_enumerate(upstream: object) -> TypeIs[Enumerable]:
     ``TypeIs`` so the second caller need not restate the condition for the type checker.
     """
     return isinstance(upstream, Enumerable) and bool(upstream.enumerates)
+
+
+@runtime_checkable
+class Countable(Protocol):
+    """An adapter whose vendor counts a request's tokens at an endpoint of its own, free of charge.
+
+    Asked after a stream whose caller left before the vendor reported what it used (`FRD-128`
+    FR-6): what the vendor's own tokenizer says the request and the delivered answer held is a
+    fact, where any figure worked out here would be an estimate. ``region`` is where the answer
+    came from, so a second look at the same text goes where the first one went (`FRD-115`).
+    """
+
+    async def count_tokens(self, request: CanonicalRequest, *, region: str = "") -> int: ...
+
+
+def can_count(upstream: object) -> TypeIs[Countable]:
+    """Whether ``upstream``'s vendor can be asked for a count rather than left unknown."""
+    return isinstance(upstream, Countable)
 
 
 @runtime_checkable

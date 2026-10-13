@@ -336,6 +336,16 @@ def test_lifting_something_that_is_not_there_says_so() -> None:
         # A bool is a number to `int()` and a client bug to everybody else. Throttling somebody to
         # one request a minute because their client sent `true` is the wrong way to find out.
         ({"target": "subject", "target_value": "x", "throttle_rpm": True}, "throttle_rpm"),
+        # A use case is stopped by its slug. A display name typed in a hurry is a stop that
+        # matches nothing and is listed as in force.
+        ({"target": "use_case", "target_value": "Kundenservice"}, "target_value"),
+        # Postgres refuses a NUL in any text column: the caller's mistake, not our 500. And a
+        # target with a control character in it names nobody.
+        ({"target": "subject", "target_value": "ada\u0000"}, "target_value"),
+        # A whole use case stopped "only inside" another one can match no request: a stop on
+        # `uc-a` applies to requests naming `uc-a`, and the scope admits only `uc-b`'s. Listed as
+        # in force, stopping nothing.
+        ({"target": "use_case", "target_value": "uc-a", "use_case": "uc-b"}, "use_case"),
     ],
 )
 def test_a_malformed_suspension_is_refused_by_name(body: dict, expected: str) -> None:
@@ -526,3 +536,168 @@ def test_a_member_sees_what_stops_their_use_case_or_them_and_nobody_elses() -> N
         assert "other" not in {row["reason"] for row in in_demo}
 
     app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    ("roles", "use_case", "sees_addresses"),
+    [
+        pytest.param((), "demo-uc", False, id="a-member"),
+        pytest.param(("it-steuerung",), "", False, id="every-figure-and-no-incident"),
+        pytest.param(("it-security",), "", True, id="an-incident-role"),
+    ],
+)
+def test_a_rule_made_stop_names_addresses_only_to_an_incident_role(
+    roles: tuple[str, ...], use_case: str, sees_addresses: bool
+) -> None:
+    """A rule writes its finding's description as the reason for the stop it makes, and a finding
+    about new addresses names them — so the reason carries them to every member the stop concerns.
+    Cut for every reader but an incident role, as on the finding itself (`FRD-502` FR-12)."""
+    from aira_gateway.auth.dependencies import require_principal
+    from aira_gateway.auth.principal import Principal
+
+    app = create_app(GatewaySettings(auth_required=False))
+    stop = _suspension(
+        use_case=None,
+        target="use_case",
+        target_value="demo-uc",
+        author="rule:new addresses",
+        reason="used from 1 address(es) not seen before: 198.51.100.23",
+    )
+    app.dependency_overrides[require_principal] = lambda: Principal(
+        subject="alice", method="oidc", roles=roles, use_cases=("demo-uc",)
+    )
+    with TestClient(app) as client, anyio.from_thread.start_blocking_portal() as portal:
+        portal.call(_add, app.state.db_sessionmaker, stop)
+        listed = client.get(
+            "/v1beta/suspensions", params={"use_case": use_case} if use_case else {}
+        )
+        (row,) = listed.json()["suspensions"]
+
+    assert ("198.51.100.23" in row["reason"]) is sees_addresses
+    assert row["reason"].startswith("used from 1 address(es) not seen before")
+
+
+async def test_a_rule_made_block_applies_as_soon_as_the_tick_returns(tmp_path) -> None:
+    """**A new suspension is not delayed** (`CACHE_TTL_SECONDS`). The cache must be dropped after
+    the decision is committed, not when it is added: a request arriving while later rules are
+    still evaluated reloads the set without the uncommitted block and keeps that for the TTL.
+
+    Isolated as Postgres isolates it, which takes two things on SQLite: a file with a pool of its
+    own, so each session has its own connection (`build_engine` shares one, and the request would
+    see the tick's uncommitted row), and transactions the driver begins explicitly — pysqlite does
+    not begin one for a `SELECT`, so the tick's per-rule savepoint would be the outermost
+    transaction and its release a commit (SQLAlchemy's documented recipe).
+    """
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    import aira_gateway.anomalies.service as service_module
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'tick.db'}")
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _no_implicit_transactions(dbapi_connection, _record) -> None:  # noqa: ANN001
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine.sync_engine, "begin")
+    def _begin_explicitly(connection) -> None:  # noqa: ANN001
+        connection.exec_driver_sql("BEGIN")
+
+    await create_all(engine)
+    sessions = build_sessionmaker(engine)
+    # The real clock, because the block it writes is checked against the real clock.
+    moment = datetime.now(UTC)
+    await _add(sessions, _rule(id=1, name="block storm", action="block", action_minutes=30))
+    await _add(sessions, _rule(id=2, name="second rule", kind="error_rate", action="alert"))
+    for _ in range(6):
+        await _add(sessions, _log(created_at=moment - timedelta(minutes=1)))
+
+    suspensions = SuspensionService(sessions)
+    evaluate = service_module.evaluate_rule
+
+    async def a_request_arrives_meanwhile(session, rule, now=None):  # noqa: ANN001, ANN202
+        if rule.id == 2:
+            await suspensions.active()
+        return await evaluate(session, rule, now)
+
+    service_module.evaluate_rule = a_request_arrives_meanwhile
+    try:
+        await AnomalyService(sessions, suspensions=suspensions).tick(moment)
+    finally:
+        service_module.evaluate_rule = evaluate
+
+    try:
+        with pytest.raises(Suspended):
+            await suspensions.check("demo-uc", "ada", None)
+    finally:
+        await engine.dispose()
+
+
+def test_a_block_in_force_is_listed_however_much_history_is_newer() -> None:
+    """Rule-made suspensions expire and are never lifted, so a noisy rule leaves hundreds of them.
+    The list was the newest `LISTED` rows, so an older block still in force — a person's
+    indefinite one — dropped off it: the console could neither show it nor lift it (lifting takes
+    its id), while it went on refusing traffic. Every stop in force is listed, then the history."""
+    from aira_gateway.api.incidents.suspensions import LISTED
+
+    now = datetime.now(UTC)
+    in_force = _suspension(
+        target_value="team", expires_at=None, reason="held", created_at=now - timedelta(days=21)
+    )
+    history = [
+        _suspension(
+            target_value=f"noisy-{n}",
+            author="rule:noisy",
+            expires_at=now - timedelta(days=1),
+            created_at=now - timedelta(days=1, minutes=n),
+        )
+        for n in range(LISTED)
+    ]
+    with _api() as client, anyio.from_thread.start_blocking_portal() as portal:
+        for row in (in_force, *history):
+            portal.call(_add, client.app.state.db_sessionmaker, row)
+        listed = client.get("/v1beta/suspensions").json()["suspensions"]
+
+    assert listed[0]["target_value"] == "team", "the block in force is not listed first"
+    assert len(listed) == LISTED + 1
+
+
+async def test_what_has_expired_is_not_loaded_again_every_few_seconds(sessions) -> None:
+    """Every instance reloads its suspensions every few seconds and every request walks them, so
+    the load reads what can still apply — not every rule-made row ever written."""
+    from aira_gateway.anomalies.suspensions import _load
+
+    await _add(
+        sessions,
+        _suspension(target_value="expired", expires_at=datetime.now(UTC) - timedelta(minutes=1)),
+    )
+    await _add(sessions, _suspension(target_value="held", expires_at=None))
+
+    async with sessions() as session:
+        loaded = await _load(session)
+
+    assert [row.target_value for row in loaded] == ["held"]
+
+
+def test_a_reason_keeps_its_words_and_loses_what_no_column_can_hold() -> None:
+    """A reason is free text, so it is cleaned rather than refused: a NUL is what Postgres refuses,
+    and losing the stop over it would be the worst answer during an incident."""
+    with _api() as client:
+        created = client.post(
+            "/v1beta/suspensions",
+            json={"target": "subject", "target_value": "ada", "reason": "probing\u0000 again"},
+        )
+
+    assert created.status_code == 201, created.text
+    assert created.json()["reason"] == "probing again"
+
+
+def test_a_whole_use_case_may_be_scoped_to_itself() -> None:
+    """The paired case: naming the use case twice is redundant, and it is what it says."""
+    with _api() as client:
+        created = client.post(
+            "/v1beta/suspensions",
+            json={"target": "use_case", "target_value": "uc-a", "use_case": "uc-a"},
+        )
+
+    assert created.status_code == 201, created.text

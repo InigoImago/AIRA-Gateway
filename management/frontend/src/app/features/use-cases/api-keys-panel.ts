@@ -2,21 +2,19 @@ import { DatePipe } from '@angular/common';
 import { Component, computed, inject, input, model, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiKey, CatalogModel, IssuedApiKey } from '../../core/api/models';
+import { gatewayBase } from '../../core/api/prefixes';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { copyText } from '../../core/ui/clipboard';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { saveBlob } from '../../core/ui/save-blob';
 import { openCodeModel } from './opencode-config';
 import { OPENCODE_BUDGET_PLUGIN } from './opencode-plugin.generated';
 
-/** The model an OpenCode configuration names when the catalogue offers none that calls tools. */
+/** The model an OpenCode configuration names when nothing is released to the use case at all. */
 const FALLBACK_OPENCODE_MODEL = 'qwen2.5:3b';
-
-/** The clipboard, or `undefined` outside a secure context. */
-function clipboard(): Clipboard | undefined {
-  return typeof navigator === 'undefined' ? undefined : navigator.clipboard;
-}
 
 /**
  * The use case's API keys: issuing, revealing once, revoking (`FRD-604`).
@@ -37,6 +35,8 @@ export class ApiKeysPanel {
   readonly isMember = input(false);
   /** The model catalogue, for the OpenCode configuration. */
   readonly models = input<CatalogModel[]>([]);
+  /** What this use case may call (`FRD-308`) — the gateway refuses every other model by name. */
+  readonly released = input<string[]>([]);
   readonly currency = input('');
   /** The installation's key policy, as `/me` states it; the server decides (`ADR-0015`). */
   readonly defaultKeyDays = input.required<number>();
@@ -69,23 +69,46 @@ export class ApiKeysPanel {
   protected readonly configCopied = signal(false);
   protected readonly copyFailed = signal(false);
 
-  /** Models the catalogue declares able to call tools — the only ones an assistant can use. */
-  private readonly toolModels = computed(() =>
-    this.models().filter((m) => (m.capabilities ?? []).includes('tools')),
-  );
+  /**
+   * The models an assistant with this key can actually use: released to this use case, approved
+   * for the installation, and able to call tools. A configuration listing anything else names
+   * models the gateway refuses — and its first request fails.
+   */
+  private readonly toolModels = computed(() => {
+    const released = new Set(this.released());
+    return this.models().filter(
+      (m) =>
+        released.has(m.name) && m.approved !== false && (m.capabilities ?? []).includes('tools'),
+    );
+  });
+
+  /** Whom the key will answer to: the typed owner, or the reader. */
+  protected readonly ownerToBe = computed(() => this.keyOwner().trim());
+
+  /**
+   * Whether a key has lapsed. Kept apart from revocation, as the server keeps it: "it lapsed as
+   * planned" and "we took it away" are different answers to an audit, and neither is "active".
+   */
+  protected expired(key: ApiKey): boolean {
+    return !!key.expires_at && new Date(key.expires_at).getTime() <= Date.now();
+  }
+
+  /** Open the window afresh: an earlier failure on the page is not this window's outcome. */
+  protected openIssueKey(): void {
+    this.feedback.clear();
+    this.showIssueKey.set(true);
+  }
 
   protected issueKey(): void {
     if (this.feedback.busy()) {
       return;
     }
-    const days = Number(this.keyExpiresInDays());
+    // Whatever was typed is sent, and the server refuses what it will not issue in its own words
+    // ("at least 1", "at most 180"); only an empty field leaves the lifetime to its default.
+    const typed = this.keyExpiresInDays() as string | number | null;
+    const days = typed === null || String(typed).trim() === '' ? null : Number(typed);
     this.feedback.run(
-      this.service.issueApiKey(
-        this.slug(),
-        this.keyLabel(),
-        days > 0 ? days : null,
-        this.keyOwner().trim() || null,
-      ),
+      this.service.issueApiKey(this.slug(), this.keyLabel(), days, this.keyOwner().trim() || null),
       {
         failure: 'Could not issue the key.',
         success: (issued: IssuedApiKey) => {
@@ -118,13 +141,13 @@ export class ApiKeysPanel {
           aira: {
             npm: '@ai-sdk/google',
             name: 'AIRA Gateway',
-            options: { baseURL: `${window.location.origin}/gw/v1beta`, apiKey: issued.api_key },
+            options: { baseURL: `${gatewayBase()}/v1beta`, apiKey: issued.api_key },
             models: Object.fromEntries(
               this.toolModels().map((m) => [m.name, openCodeModel(m, this.currency())]),
             ),
           },
         },
-        model: `aira/${this.toolModels()[0]?.name ?? FALLBACK_OPENCODE_MODEL}`,
+        model: `aira/${this.toolModels()[0]?.name ?? this.released()[0] ?? FALLBACK_OPENCODE_MODEL}`,
       },
       null,
       2,
@@ -132,13 +155,10 @@ export class ApiKeysPanel {
   }
 
   protected downloadOpenCodeConfig(issued: IssuedApiKey): void {
-    const blob = new Blob([this.openCodeConfig(issued)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'opencode.json';
-    link.click();
-    URL.revokeObjectURL(url);
+    saveBlob(
+      new Blob([this.openCodeConfig(issued)], { type: 'application/json' }),
+      'opencode.json',
+    );
   }
 
   /**
@@ -153,25 +173,14 @@ export class ApiKeysPanel {
    * So this file, unlike that one, is not a credential.
    */
   protected downloadBudgetPlugin(): void {
-    const blob = new Blob([OPENCODE_BUDGET_PLUGIN], { type: 'text/javascript' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'aira-budget.js';
-    link.click();
-    URL.revokeObjectURL(url);
+    saveBlob(new Blob([OPENCODE_BUDGET_PLUGIN], { type: 'text/javascript' }), 'aira-budget.js');
   }
 
   protected copyOpenCodeConfig(issued: IssuedApiKey): void {
-    const board = clipboard();
-    if (!board) {
-      this.copyFailed.set(true);
-      return;
-    }
-    void board.writeText(this.openCodeConfig(issued)).then(
-      () => this.configCopied.set(true),
-      () => this.copyFailed.set(true),
-    );
+    void copyText(this.openCodeConfig(issued)).then((done) => {
+      this.configCopied.set(done);
+      this.copyFailed.set(!done);
+    });
   }
 
   protected dismissIssued(): void {
@@ -183,18 +192,10 @@ export class ApiKeysPanel {
 
   /** Without a clipboard the key is still on screen, so the panel says "copy it manually". */
   protected copyKey(value: string): void {
-    const board = clipboard();
-    if (!board) {
-      this.copyFailed.set(true);
-      return;
-    }
-    void board.writeText(value).then(
-      () => {
-        this.copied.set(true);
-        this.copyFailed.set(false);
-      },
-      () => this.copyFailed.set(true),
-    );
+    void copyText(value).then((done) => {
+      this.copied.set(done);
+      this.copyFailed.set(!done);
+    });
   }
 
   protected revokeKey(prefix: string): void {

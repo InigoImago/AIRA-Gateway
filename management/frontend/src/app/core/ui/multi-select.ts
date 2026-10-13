@@ -2,8 +2,8 @@ import {
   Component,
   ElementRef,
   computed,
-  effect,
   input,
+  linkedSignal,
   output,
   signal,
   viewChild,
@@ -27,7 +27,7 @@ export interface MultiSelectOption {
  *
  * **Keyboard first** — a picker has no fallback the way a checkbox does. Arrow keys move, Enter
  * toggles and **keeps the list open**, Escape closes, Backspace on an empty query takes the last
- * chip back.
+ * chip back, and Tab leaves — closing the list rather than leaving it over the next control.
  */
 @Component({
   selector: 'app-multi-select',
@@ -35,6 +35,7 @@ export interface MultiSelectOption {
   host: {
     '(document:click)': 'onDocumentClick($event)',
     '(document:keydown.escape)': 'close()',
+    '(focusout)': 'onFocusOut($event)',
   },
 })
 export class MultiSelect {
@@ -50,20 +51,9 @@ export class MultiSelect {
 
   protected readonly query = signal('');
   protected readonly open = signal(false);
-  /** Which option the keyboard is on. An index into `matches()`, reset whenever it changes. */
-  protected readonly active = signal(0);
 
   private readonly root = viewChild<ElementRef<HTMLElement>>('root');
   private readonly field = viewChild<ElementRef<HTMLInputElement>>('field');
-
-  constructor() {
-    // A stale index points at a different option than the highlight, so Enter would pick
-    // something the reader was not looking at.
-    effect(() => {
-      this.query();
-      this.active.set(0);
-    });
-  }
 
   protected readonly chosen = computed(() => {
     const known = new Map(this.options().map((option) => [option.value, option]));
@@ -82,6 +72,13 @@ export class MultiSelect {
       `${option.value} ${option.label} ${option.detail ?? ''}`.toLowerCase().includes(query),
     );
   });
+
+  /**
+   * Which option the keyboard is on: an index into `matches()`, back at the first whenever that
+   * list changes — by typing, or by options arriving or going. A stale index points past the end
+   * or at another option than the highlight, so Enter would pick something nobody was looking at.
+   */
+  protected readonly active = linkedSignal({ source: this.matches, computation: () => 0 });
 
   protected isSelected(value: string): boolean {
     return this.selected().includes(value);
@@ -127,6 +124,17 @@ export class MultiSelect {
   protected onDocumentClick(event: Event): void {
     const root = this.root()?.nativeElement;
     if (root && !root.contains(event.target as Node)) this.close();
+  }
+
+  /**
+   * Focus going somewhere else closes it, so Tab does not leave the list over the next control.
+   * Only a known destination outside counts: a press on an option that does not take focus — a
+   * button on macOS — reports none, and closing then would remove the option before its click.
+   */
+  protected onFocusOut(event: FocusEvent): void {
+    const next = event.relatedTarget as Node | null;
+    const root = this.root()?.nativeElement;
+    if (next && root && !root.contains(next)) this.close();
   }
 
   protected onKey(event: KeyboardEvent): void {

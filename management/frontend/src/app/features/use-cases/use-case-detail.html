@@ -32,7 +32,7 @@
          exist": a member reached through a Keycloak group is known to the gateway, and the tabs
          below still show what it records. -->
     <section class="panel" data-testid="use-case-missing">
-      <h2 class="card__title">Management has no use case “{{ slug }}” for you</h2>
+      <h2 class="card__title">Management has no use case “{{ slug() }}” for you</h2>
       <p class="muted">
         It was purged, it was never created here, or your access comes only through the gateway — a
         Keycloak group — in which case the tabs below still show what the gateway recorded.
@@ -105,7 +105,10 @@
       [class.is-active]="tab() === 'rules'"
       (click)="selectTab('rules')"
     >
-      Rules <span class="tab__count">{{ ruleCount() }}</span>
+      Rules
+      @if (rules(); as list) {
+        <span class="tab__count" data-testid="rules-count">{{ list.length }}</span>
+      }
     </button>
     <button
       type="button"
@@ -117,8 +120,16 @@
       (click)="selectTab('warnings')"
     >
       Warnings
-      @if (warningCount()) {
-        <span class="tab__count tab__count--alert">{{ warningCount() }}</span>
+      <!-- Recent findings only: a red badge is a call to look now, not a count of all history. -->
+      @if (warnings(); as recent) {
+        @if (recent.count) {
+          <span
+            class="tab__count tab__count--alert"
+            data-testid="warnings-count"
+            [attr.title]="'Findings in the last 24 hours'"
+            >{{ recent.count }}{{ recent.more ? '+' : '' }}</span
+          >
+        }
       }
     </button>
     <button
@@ -145,13 +156,16 @@
       [attr.aria-labelledby]="onOverview() ? 'tab-overview' : null"
       [style.display]="onOverview() ? null : 'contents'"
     >
+      <!-- The two forms with drafts stay on the page off the Overview, like the settings panels
+           below, so an unsaved description or release survives a look at another tab. -->
+      <app-about-panel
+        [shown]="onOverview()"
+        [slug]="slug()"
+        [canManage]="canManage()"
+        [useCase]="useCase()"
+        (saved)="useCase.set($event)"
+      />
       @if (onOverview()) {
-        <app-about-panel
-          [slug]="slug"
-          [canManage]="canManage()"
-          [useCase]="useCase()"
-          (saved)="useCase.set($event)"
-        />
         <div class="tiles">
           <div class="tile">
             <div class="tile__value">{{ members().length }}</div>
@@ -180,14 +194,18 @@
         </div>
 
         <!-- What it has used, beside how it is configured (`FRD-603`). -->
-        <app-consumption-panel [slug]="slug" [consumption]="consumption()" />
+        <app-consumption-panel
+          [slug]="slug()"
+          [consumption]="consumption()"
+          [currency]="currency()"
+        />
 
         <!-- The reader's own share, twice: over time, then as the figures and what is left of an
              allowance. Both about the same person, so they appear and disappear together. -->
         @if (myName(); as me) {
           <app-usage-chart
             [heading]="'What you used, over time'"
-            [subject]="'Your own requests in this use case, day by day'"
+            [subject]="'Your own requests in this use case'"
             [series]="chartSeries()"
             [loading]="chartLoading()"
             [reason]="chartReason()"
@@ -207,24 +225,32 @@
             [today]="peopleToday()"
             [budgets]="budgets()"
             [usage]="usage()"
-            [unavailable]="consumption().unavailable"
+            [monthUnavailable]="monthFailed()"
+            [todayUnavailable]="todayFailed()"
             [reason]="consumption().reason"
+            [currency]="currency()"
           />
         }
+      }
 
-        <!-- Which models this use case may call (`FRD-308`): with nothing released it refuses every
+      <!-- Which models this use case may call (`FRD-308`): with nothing released it refuses every
            request, so it sits on the overview. -->
-        <app-model-release-panel
-          [slug]="slug"
-          [canManage]="canAdmin()"
-          [released]="useCase()?.allowed_models ?? []"
-          (saved)="useCase.set($event)"
-        />
+      <app-model-release-panel
+        [shown]="onOverview()"
+        [slug]="slug()"
+        [canManage]="canAdmin()"
+        [released]="useCase()?.allowed_models ?? []"
+        [catalog]="catalog()"
+        [catalogFailure]="catalogFailure()"
+        (saved)="useCase.set($event)"
+      />
 
+      @if (onOverview()) {
         <!-- How to call it. Below the release, because the examples are built from what is released. -->
         <app-connection-panel
-          [slug]="slug"
+          [slug]="slug()"
           [released]="useCase()?.allowed_models ?? []"
+          [catalog]="catalog()"
           [kira]="kiraModels()"
           [failure]="kiraFailure()"
         />
@@ -232,7 +258,7 @@
 
       <app-capabilities-panel
         [shown]="onOverview()"
-        [slug]="slug"
+        [slug]="slug()"
         [useCase]="useCase()"
         [canManage]="canManage()"
         (saved)="useCase.set($event)"
@@ -240,7 +266,7 @@
 
       <app-data-protection-panel
         [shown]="onOverview()"
-        [slug]="slug"
+        [slug]="slug()"
         [useCase]="useCase()"
         [canManage]="canManage()"
         (saved)="useCase.set($event)"
@@ -251,10 +277,10 @@
   <!-- Who can reach this use case (`FRD-209`), then what each of them used (`FRD-606`). -->
   @if (tab() === 'members') {
     <app-access-panel
-      [slug]="slug"
+      [slug]="slug()"
       [canManage]="canManage()"
       [members]="members()"
-      (changed)="reloadMembers()"
+      (changed)="accessChanged()"
     />
     <app-people-panel
       [month]="peopleMonth()"
@@ -262,18 +288,21 @@
       [budgets]="budgets()"
       [only]="peopleNarrowedTo()"
       [whyOnly]="whyPeopleNarrowed()"
-      [unavailable]="consumption().unavailable"
+      [monthUnavailable]="monthFailed()"
+      [todayUnavailable]="todayFailed()"
       [reason]="consumption().reason"
+      [currency]="currency()"
     />
   }
 
   @if (tab() === 'keys') {
     <app-api-keys-panel
-      [slug]="slug"
+      [slug]="slug()"
       [keys]="apiKeys()"
       [canManage]="canManage()"
       [isMember]="isMember()"
-      [models]="catalog()"
+      [models]="catalog() ?? []"
+      [released]="useCase()?.allowed_models ?? []"
       [currency]="currency()"
       [defaultKeyDays]="defaultKeyDays()"
       [maxKeyDays]="maxKeyDays()"
@@ -284,7 +313,7 @@
 
   @if (tab() === 'budgets') {
     <app-budgets-tab
-      [slug]="slug"
+      [slug]="slug()"
       [currency]="currency()"
       [budgets]="budgets()"
       [usage]="usage()"
@@ -297,20 +326,26 @@
   }
 
   @if (tab() === 'rules') {
-    <app-rules-tab [slug]="slug" [canManage]="canManage()" (countChanged)="ruleCount.set($event)" />
+    <app-rules-tab
+      [slug]="slug()"
+      [canManage]="canManage()"
+      [rules]="rules()"
+      [failed]="rulesFailed()"
+      (changed)="loadRules()"
+    />
   }
 
   @if (tab() === 'warnings') {
-    <app-warnings-tab [slug]="slug" (countChanged)="warningCount.set($event)" />
+    <app-warnings-tab [slug]="slug()" (countChanged)="warnings.set($event)" />
   }
 
   @if (tab() === 'traces') {
-    <app-traces-tab [slug]="slug" />
+    <app-traces-tab [slug]="slug()" />
   }
 
   @if (tab() === 'rate-limits') {
     <app-rate-limits-tab
-      [slug]="slug"
+      [slug]="slug()"
       [limits]="rateLimits()"
       [canManage]="canManage()"
       (changed)="loadRateLimits()"

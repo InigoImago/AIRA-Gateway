@@ -11,11 +11,11 @@ from datetime import timedelta
 from typing import Any
 
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -24,9 +24,22 @@ from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.apikeys.serializers import ApiKeySerializer, IssueApiKeySerializer
 from aira_management.apps.usecases.access import holds_a_grant, may_manage
 from aira_management.apps.usecases.events import emit
-from aira_management.apps.usecases.models import UseCase
+from aira_management.apps.usecases.models import UseCase, UseCaseMembership
 from aira_management.apps.usecases.views.base import UseCaseViewBase
-from aira_management.apps.usecases.views.grants import _revoke_key
+from aira_management.apps.usecases.views.grants import _admit, _revoke_key
+from aira_management.apps.usecases.views.payloads import _api_key_payload
+
+#: How many fresh prefixes issuance draws before giving up. A prefix is 32 random bits and unique,
+#: so a collision is rare and two in a row rarer still; the bound keeps "rare" from being a loop.
+PREFIX_ATTEMPTS = 3
+
+
+class NoFreePrefix(APIException):
+    """Every prefix drawn was taken — astronomically unlikely, and nothing the caller did."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "No unused key prefix could be drawn. Try again."
+    default_code = "key_prefix_exhausted"
 
 
 class ApiKeysMixin(UseCaseViewBase):
@@ -46,6 +59,7 @@ class ApiKeysMixin(UseCaseViewBase):
         """
         caller: Any = self.request.user
         if not requested or requested == caller.get_username():
+            # The caller's own key rests on the caller's grant, checked when it is issued.
             return caller, ""
 
         if not may_manage(caller, usecase):
@@ -93,33 +107,36 @@ class ApiKeysMixin(UseCaseViewBase):
         # Always a date: the serializer fills in the default and refuses anything past the maximum.
         days = payload.validated_data["expires_in_days"]
         expires_at = timezone.now() + timedelta(days=days)
-        full, prefix, key_hash = generate_api_key()
-        with transaction.atomic():
-            ApiKey.objects.create(
-                use_case=usecase,
-                owner=owner,
-                issued_by=issued_by,
-                prefix=prefix,
-                key_hash=key_hash,
-                label=label,
-                expires_at=expires_at,
-            )
-            emit(
-                "api_key.created",
-                {
-                    "prefix": prefix,
-                    "key_hash": key_hash,
-                    # The **owner**, the name every audit row carries: a row describes what
-                    # called, not who authorised the credential (`FRD-604` §5.3).
-                    "subject": owner.get_username(),
-                    "issued_by": issued_by,
-                    "use_case": usecase.slug,
-                    "label": label,
-                    "status": "active",
-                    # The gateway enforces it; Management only decides it.
-                    "expires_at": expires_at.isoformat(),
-                },
-            )
+        for _attempt in range(PREFIX_ATTEMPTS):
+            full, prefix, key_hash = generate_api_key()
+            try:
+                with transaction.atomic():
+                    if not holds_a_grant(owner, usecase):
+                        # Only somebody who may manage every use case gets here (`is_member`'s
+                        # blanket, the Global Administrator's): issuing is open to them without a
+                        # grant, and a key must rest on access that can end (`FRD-613`). So issuing
+                        # one makes them a member — a grant the sweep sees and an administrator can
+                        # take away — rather than a key whose access was never recorded and that
+                        # any unrelated removal would revoke.
+                        _admit(usecase, owner, UseCaseMembership.USER)
+                    key = ApiKey.objects.create(
+                        use_case=usecase,
+                        owner=owner,
+                        issued_by=issued_by,
+                        prefix=prefix,
+                        key_hash=key_hash,
+                        label=label,
+                        expires_at=expires_at,
+                    )
+                    emit("api_key.created", _api_key_payload(key))
+            except IntegrityError:
+                # Another key holds this prefix: draw again. Anything else is not ours to retry.
+                if not ApiKey.objects.filter(prefix=prefix).exists():
+                    raise
+                continue
+            break
+        else:
+            raise NoFreePrefix()
         # The one and only time the plaintext leaves Management.
         return Response(
             {

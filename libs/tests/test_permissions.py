@@ -75,6 +75,19 @@ def test_a_builtin_role_answers_what_the_old_checks_answered(
     assert allows(granted, permission) == (role in holders), where
 
 
+def test_stopping_traffic_is_narrower_than_seeing_it() -> None:
+    """Every built-in role that may stop traffic also sees every use case, and IT Steuerung sees
+    every use case without stopping any (PRD §154) — the distinction `FRD-503` is about, stated
+    over permissions now that no check asks a role."""
+    defined = {role.slug: role.permissions for role in builtin_roles(MAPPING)}
+
+    for slug, permissions in defined.items():
+        if Permission.INCIDENT_SUSPEND in permissions:
+            assert Permission.USECASE_READ_ALL in permissions, slug
+    assert Permission.USECASE_READ_ALL in defined[STG]
+    assert Permission.INCIDENT_SUSPEND not in defined[STG]
+
+
 def test_the_global_administrator_holds_every_permission_by_construction() -> None:
     """Not a stored list: a permission added later is held without anybody ticking it."""
     assert effective(MAPPING[GA], builtin_roles(MAPPING)) == ALL_PERMISSIONS
@@ -130,6 +143,19 @@ def test_no_group_and_no_mapping_confer_nothing() -> None:
 def test_a_stored_role_can_never_hold_the_reserved_permission_or_an_unknown_one() -> None:
     parsed = parse_permissions(["role.manage", "usecase.create", "no.such.permission"])
     assert parsed == frozenset({Permission.USECASE_CREATE})
+
+
+def test_a_stored_value_that_is_not_a_name_grants_nothing_rather_than_raising() -> None:
+    """A role row is JSON, written by hand or by a newer release. An object or a list in it is a
+    permission nobody can hold — not a reason the whole row stops being read."""
+    parsed = parse_permissions(["usecase.create", ["x"], {"name": "catalog.write"}, 7, None])  # type: ignore[list-item]
+    assert parsed == frozenset({Permission.USECASE_CREATE})
+
+
+def test_a_group_that_is_not_a_path_matches_no_role_rather_than_raising() -> None:
+    roles = builtin_roles({Role.IT_SECURITY: ("/aira/it-security",)})
+    held = held_roles([{"path": "/aira/it-security"}, ["x"], "/aira/it-security"], roles)  # type: ignore[list-item]
+    assert [role.slug for role in held] == [SEC]
 
 
 def test_every_permission_is_described_and_only_role_manage_is_reserved() -> None:

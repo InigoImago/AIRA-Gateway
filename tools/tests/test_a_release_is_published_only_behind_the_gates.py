@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
 
 import yaml
 
@@ -86,10 +87,51 @@ def test_the_annotation_is_checked_by_the_tool_a_tagger_can_run() -> None:
     the check is a surprise rather than a guard."""
     check = _step("described", "release_notes.py --check")
 
-    assert "github.ref_name" in str(check["run"])
+    assert 'release_notes.py --check "$TAG"' in str(check["run"])
+    assert _job("described")["env"]["TAG"] == "${{ github.ref_name }}"
     assert "release-check:" in MAKEFILE.read_text(), (
         "there is no make target for the annotation check, so a tagger cannot run it first"
     )
+
+
+#: Expressions a script may have spliced into its text. A commit digest is hex, whatever the pusher
+#: did; every other value an event carries — a tag or branch name above all — is chosen by them.
+SPLICEABLE = {"${{ github.sha }}"}
+
+
+def test_no_script_has_a_value_the_pusher_chooses_written_into_it() -> None:
+    """**A tag name is input, and in a `run:` block an expression is code.** Actions substitutes
+    `${{ github.ref_name }}` into the script text before the shell starts, Git allows `$(…)`, `;`
+    and backticks in a tag name, and `v*.*.*` matches such a name — so a pushed tag could run a
+    command in a job holding `contents: write` and `packages: write`. The name travels through the
+    environment instead, where the shell treats a quoted `"$TAG"` as data."""
+    spliced = [
+        f"{job}: {step.get('name', step.get('run', '')[:40])!r} has {expression}"
+        for job, body in _workflow()["jobs"].items()
+        for step in body.get("steps", [])
+        for expression in re.findall(r"\$\{\{[^}]*\}\}", str(step.get("run", "")))
+        if " ".join(expression.split()) not in SPLICEABLE
+    ]
+
+    assert not spliced, "an event's value is written into a script:\n  " + "\n  ".join(spliced)
+
+
+def test_a_tag_that_is_not_a_release_version_stops_both_jobs_before_anything_runs() -> None:
+    """Quoting makes a hostile name inert; refusing it first means no step ever sees one. The
+    spelling is `tools/release_version.py`'s, so CI and `make release-check` agree on what a
+    release tag is."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import release_version
+
+    for job in ("described", "publish"):
+        first = _job(job)["steps"][0]
+        assert first.get("name") == "Refuse a tag name that is not a release version", (
+            f"{job} runs something before it has looked at the tag's name"
+        )
+        pattern = re.search(r'\[\[ "\$TAG" =~ \^(.*)\$ \]\]', str(first["run"]))
+        assert pattern, f"{job}'s first step no longer matches $TAG against a pattern"
+        assert pattern.group(1) == release_version._RELEASE_TAG.pattern
+        assert "exit 1" in str(first["run"])
 
 
 def test_a_tag_that_is_not_on_the_default_branch_is_refused() -> None:

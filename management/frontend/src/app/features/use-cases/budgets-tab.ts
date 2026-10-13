@@ -8,7 +8,9 @@ import { Budget, BudgetUsage } from '../../core/api/models';
 import { LimitScope } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
+import { displayCount, nanosOf, storedAmount } from '../../core/ui/money';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { bindsEachMember, scopeLabel } from './limit-scope';
 
 /** A budget the gateway has never counted: nothing has been spent, and that is known. */
 const NO_USAGE: BudgetUsage = {
@@ -84,10 +86,31 @@ export class BudgetsTab {
     if (cost && !/^\d+([.,]\d{1,6})?$/.test(cost)) {
       return 'The spend limit must be an amount, e.g. 250 or 250.00.';
     }
+    // Checked here because the browser's `min` is inert in an Angular form (`novalidate`), and the
+    // server accepts 0: a budget of 0 requests refuses every request, which nobody sets on purpose.
+    if (!isWholeAtLeastOne(this.budgetTokens())) {
+      return 'A token limit is a whole number of at least 1.';
+    }
+    if (!isWholeAtLeastOne(this.budgetRequests())) {
+      return 'A request limit is a whole number of at least 1.';
+    }
     if (!cost && this.budgetTokens() == null && this.budgetRequests() == null) {
       return 'Set a spend limit, a token limit, or a request limit.';
     }
     return null;
+  }
+
+  /** Open the window afresh: an earlier failure on the page is not this window's outcome. */
+  protected openForm(): void {
+    this.feedback.clear();
+    this.showForm.set(true);
+  }
+
+  /** The budget a new one would replace: the endpoint upserts on scope, subject and period. */
+  private replaces(scope: LimitScope, period: string): Budget | undefined {
+    return this.budgets().find(
+      (row) => row.scope === scope && !row.subject && row.period === period,
+    );
   }
 
   protected canAdd(): boolean {
@@ -96,6 +119,19 @@ export class BudgetsTab {
 
   protected add(): void {
     if (!this.canAdd()) {
+      return;
+    }
+    // "+ Add" with the scope and period of a budget that exists replaces it, and a limit left
+    // empty here is cleared there — asked first, and said afterwards.
+    const replaced = this.replaces(this.budgetScope(), this.budgetPeriod());
+    if (
+      replaced &&
+      !this.confirmService.ask(
+        `A ${replaced.period}ly budget for ${this.labelFor(replaced).toLowerCase()} already ` +
+          `exists (${this.limitsOf(replaced)}). Saving replaces it; a limit left empty here is ` +
+          `removed from it.`,
+      )
+    ) {
       return;
     }
     const cost = this.budgetCost().trim().replace(',', '.');
@@ -114,7 +150,7 @@ export class BudgetsTab {
     this.feedback.run(this.service.createBudget(this.slug(), budget), {
       failure: 'Could not save the budget.',
       success: () => {
-        this.feedback.succeed('Budget saved.');
+        this.feedback.succeed(replaced ? 'Budget replaced.' : 'Budget saved.');
         this.budgetCost.set('');
         this.budgetTokens.set(null);
         this.budgetRequests.set(null);
@@ -170,12 +206,32 @@ export class BudgetsTab {
       out.push({ label: `spent${this.costUnit()}`, value: used.used_cost });
     }
     if (budget.limit_tokens == null && used.used_tokens != null) {
-      out.push({ label: 'tokens', value: `${used.used_tokens}` });
+      out.push({ label: 'tokens', value: displayCount(used.used_tokens) });
     }
     if (budget.limit_requests == null && used.used_requests != null) {
-      out.push({ label: 'request(s)', value: `${used.used_requests}` });
+      out.push({ label: 'request(s)', value: displayCount(used.used_requests) });
     }
     return out;
+  }
+
+  /** A limit as it was set: `'250.000000'` reads `250.00`, and `'0.125000'` reads `0.125`. */
+  protected limitText(limit: string): string {
+    return storedAmount(limit) ?? limit;
+  }
+
+  /** A count, grouped like every other count on the page; unknown is a dash, never `0`. */
+  protected count(value: number | null | undefined): string {
+    return value == null ? '—' : displayCount(value);
+  }
+
+  /** What a budget limits, in words — for the question before one replaces it. */
+  private limitsOf(budget: Budget): string {
+    const parts = [
+      budget.limit_cost ? `${this.limitText(budget.limit_cost)}${this.costUnit()}` : null,
+      budget.limit_tokens != null ? `${displayCount(budget.limit_tokens)} tokens` : null,
+      budget.limit_requests != null ? `${displayCount(budget.limit_requests)} requests` : null,
+    ].filter(Boolean);
+    return parts.length ? parts.join(', ') : 'no limit';
   }
 
   protected usedFor(budget: Budget): BudgetUsage {
@@ -183,35 +239,46 @@ export class BudgetsTab {
   }
 
   /**
-   * Whether the figures on this card describe the reader.
+   * Whether the figures on this card were measured at all.
    *
-   * For a per-person budget the gateway answers with the reader's own counter, and with nothing for
-   * somebody the row does not bind; an empty bar would then falsely claim an untouched allowance.
-   * A row never counted at all stays at zero, which is known.
+   * Not when the gateway did not answer: every budget then has no usage entry, and drawing that as
+   * zero is "0.00 / 250.00" and an empty bar over a budget that may be 95 % spent — a measurement
+   * nobody made. For a per-person budget the gateway answers with the reader's own counter, and with
+   * nothing for somebody the row does not bind; an empty bar would then falsely claim an untouched
+   * allowance. A row the gateway answered for and never counted stays at zero, which is known.
    */
   protected measured(budget: Budget): boolean {
+    if (this.usageUnavailable()) return false;
     const entry = budget.id != null ? this.usage()[budget.id] : undefined;
     return !entry || entry.used_cost_nanos != null;
   }
 
-  /** Percentage of a spend limit consumed, compared in nano-units so no decimal is divided. */
+  /** Percentage of a spend limit consumed, compared in nano-units read on the digits. */
   protected costPct(budget: Budget): number {
-    const limit = budget.limit_cost ? Number(budget.limit_cost) * 1_000_000_000 : 0;
-    return limit
-      ? Math.min(100, Math.round(((this.usedFor(budget).used_cost_nanos ?? 0) / limit) * 100))
-      : 0;
+    const limit = budget.limit_cost ? nanosOf(budget.limit_cost) : null;
+    return this.pct(this.usedFor(budget).used_cost_nanos, limit);
   }
 
+  /**
+   * Percentage of a limit consumed. A limit of zero is drawn **full**: it refuses every request,
+   * and an empty bar beside it would read as the most room there could be.
+   */
   protected pct(used: number | null, limit: number | null | undefined): number {
+    if (limit === 0) return 100;
     return limit ? Math.min(100, Math.round(((used ?? 0) / limit) * 100)) : 0;
   }
 
   /** True where a per-head row exists, which is what makes the per-person note relevant. */
   protected hasPerHead(): boolean {
-    return this.budgets().some((row) => row.scope === 'each_member');
+    return bindsEachMember(this.budgets());
   }
 
   protected labelFor(budget: Budget): string {
-    return budget.scope === 'each_member' ? 'Each member, individually' : 'Whole use case';
+    return scopeLabel(budget.scope);
   }
+}
+
+/** Empty, or a whole number of at least one. */
+function isWholeAtLeastOne(value: number | null): boolean {
+  return value == null || (Number.isInteger(value) && value >= 1);
 }

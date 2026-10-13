@@ -31,9 +31,12 @@ from aira_gateway.core.canonical import (
     CanonicalMessage,
     CanonicalRequest,
     DataPart,
+    FinishReason,
     Role,
     TextPart,
     Thinking,
+    ToolCallPart,
+    ToolResultPart,
 )
 from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.residency import RegionNotAllowed
@@ -50,12 +53,13 @@ from aira_gateway.upstreams.openai import (
 )
 from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
 from aira_gateway.upstreams.openai.mapping import (
+    StreamAssembler,
     canonical_to_openai,
     canonical_to_openai_embedding,
     embedding_values,
+    finish_reason,
     openai_chunk_to_canonical,
     openai_to_canonical,
-    parse_sse_line,
 )
 from aira_gateway.upstreams.openai.transport import OpenAITransport
 
@@ -125,9 +129,75 @@ def test_the_output_cap_and_temperature_are_carried() -> None:
     assert body["temperature"] == 0.2
 
 
+async def test_a_self_hosted_server_gets_the_cap_in_the_field_every_server_takes() -> None:
+    """`max_tokens` is what every compatible server accepts; only a platform that names another
+    field (`Routes.output_cap_field`) gets another."""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "x"}}]})
+
+    await _adapter(handler).generate(_request(max_output_tokens=64))
+
+    assert seen["max_tokens"] == 64
+    assert "max_completion_tokens" not in seen
+
+
 def test_a_request_with_no_options_carries_none_of_them() -> None:
     body = canonical_to_openai(_request())
     assert set(body) == {"model", "messages"}
+
+
+def test_what_a_turn_says_beside_its_tool_results_is_not_dropped() -> None:
+    """**A turn of results and a new instruction.** Each result is a `tool` message of its own here,
+    and the rest of the turn was discarded without a word: "now also translate it to Rust" never
+    reached the model, which answered a different question with a 200. The other two dialects keep
+    it. It follows the results, which must come straight after the calls they answer."""
+    request = CanonicalRequest(
+        model="local-1",
+        messages=[
+            CanonicalMessage(role=Role.USER, text="read hello.py"),
+            CanonicalMessage(
+                role=Role.MODEL,
+                parts=[ToolCallPart(id="call_1", name="read_file", arguments={"path": "hello.py"})],
+            ),
+            CanonicalMessage(
+                role=Role.USER,
+                parts=[
+                    ToolResultPart(call_id="call_1", name="read_file", content="print(1)"),
+                    TextPart(text="Now ALSO translate the file to Rust."),
+                ],
+            ),
+        ],
+    )
+
+    messages = canonical_to_openai(request)["messages"]
+
+    assert [message["role"] for message in messages] == ["user", "assistant", "tool", "user"]
+    assert messages[2]["tool_call_id"] == "call_1"
+    assert messages[3]["content"] == "Now ALSO translate the file to Rust."
+
+
+def test_an_image_beside_a_tool_result_travels_too() -> None:
+    request = CanonicalRequest(
+        model="local-1",
+        messages=[
+            CanonicalMessage(role=Role.MODEL, parts=[ToolCallPart(id="c", name="shot")]),
+            CanonicalMessage(
+                role=Role.USER,
+                parts=[
+                    ToolResultPart(call_id="c", name="shot", content="{}"),
+                    DataPart(media_type="image/png", data=PNG),
+                ],
+            ),
+        ],
+    )
+
+    last = canonical_to_openai(request)["messages"][-1]
+
+    assert last["role"] == "user"
+    assert [part["type"] for part in last["content"]] == ["image_url"]
 
 
 # == thinking, which this vendor expresses differently ===========================================
@@ -197,6 +267,49 @@ def test_a_schema_becomes_a_named_strict_json_schema() -> None:
     assert fmt["json_schema"]["schema"]["properties"]["a"]["type"] == "string"
 
 
+def test_a_strict_schema_is_closed_and_requires_every_property_at_every_level() -> None:
+    """**Strict mode refuses an open object and an unrequired property**, and a Gemini-shaped schema
+    is both by default — so the plain schema every client sends was refused by a strict platform on
+    every structured request. Requiring every property keeps the answer valid against the schema
+    the caller sent: a document may always carry more than it must."""
+    schema = parse_schema(
+        {
+            "type": "OBJECT",
+            "properties": {
+                "name": {"type": "STRING"},
+                "address": {
+                    "type": "OBJECT",
+                    "properties": {"city": {"type": "STRING"}, "zip": {"type": "STRING"}},
+                    "required": ["city"],
+                },
+                "tags": {
+                    "type": "ARRAY",
+                    "items": {"type": "OBJECT", "properties": {"k": {"type": "STRING"}}},
+                },
+                "either": {
+                    "type": "OBJECT",
+                    "anyOf": [{"type": "OBJECT", "properties": {"x": {"type": "STRING"}}}],
+                },
+            },
+            "required": ["name"],
+        }
+    )
+
+    sent = canonical_to_openai(_request(response_schema=schema))["response_format"]["json_schema"]
+    root = sent["schema"]
+
+    objects = [
+        root,
+        root["properties"]["address"],
+        root["properties"]["tags"]["items"],
+        root["properties"]["either"],
+        root["properties"]["either"]["anyOf"][0],
+    ]
+    assert all(node["additionalProperties"] is False for node in objects)
+    assert root["required"] == ["name", "address", "tags", "either"]
+    assert root["properties"]["address"]["required"] == ["city", "zip"]
+
+
 # == the response ================================================================================
 
 
@@ -219,9 +332,54 @@ def test_length_means_truncation_not_a_normal_stop() -> None:
     assert openai_to_canonical(payload, "local-1").finish_reason == "max_tokens"
 
 
-def test_an_empty_response_does_not_raise() -> None:
-    """A compatible server that answers `{}` is a configuration problem, not a crash."""
-    assert openai_to_canonical({}, "local-1").text == ""
+def test_an_answer_with_no_choice_is_the_upstreams_fault() -> None:
+    """A compatible server that answers `{}` has answered nothing: an `UpstreamError` (the chain
+    moves on, the surface says the upstream failed), never a crash — and never an empty answer that
+    finished normally, which a structured request would take for a document."""
+    with pytest.raises(UpstreamError) as caught:
+        openai_to_canonical({}, "local-1")
+
+    assert caught.value.status_code == 502
+
+
+@pytest.mark.parametrize(
+    ("wire", "expected"),
+    [
+        ("stop", FinishReason.STOP),
+        ("length", FinishReason.MAX_TOKENS),
+        ("content_filter", FinishReason.REFUSAL),
+        ("tool_calls", FinishReason.TOOL_USE),
+        ("function_call", FinishReason.TOOL_USE),
+        ("a_reason_added_next_year", FinishReason.OTHER),
+        (None, FinishReason.STOP),
+    ],
+)
+def test_every_finish_reason_has_one_canonical_word(
+    wire: str | None, expected: FinishReason
+) -> None:
+    """One vocabulary for every dialect. An unknown word is `OTHER`, never `STOP`: it is no evidence
+    that a document is complete."""
+    assert finish_reason(wire) is expected
+
+
+def test_an_error_inside_the_stream_is_the_upstream_failing() -> None:
+    """`data: {"error": …}` inside a 200 — out of memory half way through, say. Read as nothing,
+    the answer simply stopped with no finish reason, the audit row said the caller left, and the
+    request was free."""
+    with pytest.raises(UpstreamError) as caught:
+        openai_chunk_to_canonical(
+            {"error": {"message": "CUDA out of memory", "type": "server_error"}}
+        )
+
+    assert caught.value.status_code == 500
+    assert "server_error" in caught.value.message
+    assert "CUDA" not in caught.value.message, "a 5xx's text is the provider's noise"
+
+
+def test_an_error_as_a_bare_string_is_still_an_error() -> None:
+    """Some self-hosted servers send the error as a string rather than an object."""
+    with pytest.raises(UpstreamError):
+        openai_chunk_to_canonical({"error": "model not loaded"})
 
 
 # == streaming ===================================================================================
@@ -241,14 +399,60 @@ def test_a_chunk_with_neither_content_nor_usage_is_dropped() -> None:
     assert openai_chunk_to_canonical({"choices": []}) is None
 
 
+#: What Agent Platform's open-model endpoint puts on every chunk before the last.
+_TRAFFIC_ONLY = {"extra_properties": {"google": {"traffic_type": "ON_DEMAND"}}}
+
+
+def test_a_usage_block_with_no_count_in_it_is_no_report() -> None:
+    """A `usage` is a report when it counts something. One holding only a traffic type, read as a
+    report, is zero tokens on every chunk — the running total a stream is booked at when its
+    caller leaves before the last one (`FRD-128` FR-6), so a request that spent was booked as free
+    instead of as unreported."""
+    text = openai_chunk_to_canonical(
+        {"choices": [{"delta": {"content": "Hel"}}], "usage": _TRAFFIC_ONLY}
+    )
+    assert text is not None and text.usage is None
+    assert openai_chunk_to_canonical({"choices": [], "usage": _TRAFFIC_ONLY}) is None
+
+    counted = openai_chunk_to_canonical(
+        {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 2, **_TRAFFIC_ONLY}}
+    )
+    assert counted is not None and counted.usage is not None
+    assert (counted.usage.prompt_tokens, counted.usage.completion_tokens) == (12, 2)
+
+
+def test_the_assembler_is_the_whole_stream_reader() -> None:
+    """Text through, tool calls held until the message ends, usage where it is reported — one
+    reader for every platform that streams this dialect, so the OpenAI-compatible servers and
+    Agent Platform cannot assemble a tool call two different ways."""
+    assembler = StreamAssembler()
+    first = assembler.feed({"choices": [{"delta": {"content": "Hi"}}]})
+    held = assembler.feed(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "id": "c1", "function": {"name": "f", "arguments": "{}"}}
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+    done = assembler.feed({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
+
+    assert first is not None and first.text_delta == "Hi"
+    assert held is not None and held.tool_calls == ()
+    assert done is not None and [call.name for call in done.tool_calls] == ["f"]
+    # A second message on the same reader starts with nothing pending.
+    again = assembler.feed({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+    assert again is not None and again.tool_calls == ()
+
+
 def test_a_delta_becomes_a_text_chunk() -> None:
     chunk = openai_chunk_to_canonical({"choices": [{"delta": {"content": "Hel"}}]})
     assert chunk is not None and chunk.text_delta == "Hel"
-
-
-@pytest.mark.parametrize("line", ["data: [DONE]", "data:", ": keep-alive", "event: ping"])
-def test_the_sentinel_and_the_noise_parse_to_nothing(line: str) -> None:
-    assert parse_sse_line(line) is None
 
 
 async def test_a_stream_reconstructs_the_text_and_the_final_usage() -> None:
@@ -409,10 +613,10 @@ def test_the_two_verb_sets_are_disjoint() -> None:
 def test_every_model_records_where_it_ran() -> None:
     """A self-hosted model is the strongest residency story available, and one nothing records is
     a claim rather than evidence (`FRD-123` §5.3)."""
-    adapter = _adapter(lambda request: httpx.Response(200), region="on-premises")
+    adapter = _adapter(lambda request: httpx.Response(200), region="on-premises", provider="gpu-a")
     described = adapter.models()[0]
 
-    assert described.provider == "openai-compatible" or described.provider
+    assert described.provider == "gpu-a"
     assert described.region == "on-premises"
 
 
@@ -655,7 +859,7 @@ def test_thinking_tokens_are_billed_inside_the_output_count() -> None:
     assert usage.total_tokens == 125
 
 
-def test_a_credential_failure_from_the_provider_is_not_handed_to_the_caller() -> None:
+async def test_a_credential_failure_from_the_provider_is_not_handed_to_the_caller() -> None:
     """`FRD-129`. A 400 means the provider refused the **body we built**, and its reason is the
     most actionable thing anybody gets — a catalog declaring a mode the server rejects by name
     surfaced as "Upstream returned 400." with status `UNAVAILABLE`, which sends an operator to a
@@ -664,29 +868,24 @@ def test_a_credential_failure_from_the_provider_is_not_handed_to_the_caller() ->
     A 401 is a different thing entirely: it is about *our* credentials, the caller cannot act on
     it, and the message may name the credential. That one stays masked.
     """
-    import httpx
-
-    from aira_gateway.upstreams.openai.transport import OpenAITransport
-
-    transport = OpenAITransport(client=httpx.AsyncClient())
-
-    refused = httpx.Response(
-        400,
-        json={"error": {"message": "invalid reasoning value: 'minimal'"}},
-        request=httpx.Request("POST", "http://x/v1/chat/completions"),
+    refused = _adapter(
+        lambda request: httpx.Response(
+            400, json={"error": {"message": "invalid reasoning value: 'minimal'"}}
+        )
     )
-    with pytest.raises(Exception) as caught:  # noqa: PT011 — the type is asserted below
-        transport._raise_for_status(refused)
+    with pytest.raises(UpstreamError) as caught:
+        await refused.generate(_request())
     assert "minimal" in str(caught.value)
 
-    unauthorised = httpx.Response(
-        401,
-        json={"error": {"message": "invalid api key sk-abc123"}},
-        request=httpx.Request("POST", "http://x/v1/chat/completions"),
+    unauthorised = _adapter(
+        lambda request: httpx.Response(
+            401, json={"error": {"message": "invalid api key sk-abc123"}}
+        )
     )
-    with pytest.raises(Exception) as masked:
-        transport._raise_for_status(unauthorised)
+    with pytest.raises(UpstreamError) as masked:
+        await unauthorised.generate(_request())
     assert "sk-abc123" not in str(masked.value)
+    assert masked.value.status_code == 401
 
 
 # == what this endpoint offers, asked rather than typed (`FRD-507` stage C) =======================
@@ -712,6 +911,19 @@ async def test_the_listing_becomes_names_and_nothing_else() -> None:
     assert [model.name for model in offered] == ["qwen3:0.6b", "nomic-embed-text"]
     assert offered[0].can_generate is None
     assert offered[0].max_output_tokens is None
+
+
+async def test_the_reachability_check_looks_the_model_up_in_the_listing() -> None:
+    """*Check reachability* answered "reachable" for any name: the endpoint answered, and the
+    listing it had just fetched — which names exactly what a caller can use on this platform — was
+    never asked whether the model was in it. A typo in the catalogue read green."""
+    from aira_gateway.upstreams.base import ModelNotListed
+
+    adapter = _adapter(lambda request: httpx.Response(200, json={"data": [{"id": "qwen3:0.6b"}]}))
+
+    assert await adapter.ping("qwen3:0.6b") == "qwen3:0.6b is listed"
+    with pytest.raises(ModelNotListed, match="qwen3:6b"):
+        await adapter.ping("qwen3:6b")
 
 
 def test_a_server_that_serves_nothing_configured_still_states_where_it_ran() -> None:

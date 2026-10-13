@@ -420,6 +420,25 @@ async def test_the_mock_speaks_one_text_one_way_and_a_longer_text_for_longer() -
     assert longer.usage.completion_tokens > short.usage.completion_tokens
 
 
+async def test_the_mock_speaks_for_at_most_a_minute_however_long_the_prompt() -> None:
+    """Its audio grows with the text, and was built byte by byte on the event loop: a 250 KB prompt
+    was ten minutes of fiction — 600 MB — and forty seconds with every other request waiting. It
+    stops at a minute, still derived from the text, and the bytes are the same as before."""
+    import hashlib
+
+    from aira_gateway.upstreams.mock import _SPEECH_MAX_SECONDS, _SPEECH_RATE
+
+    mock = MockProvider("tts")
+    text = "wort " * 50_000
+
+    spoken = await mock.generate(_canonical(text))
+
+    assert spoken.audio is not None
+    assert len(spoken.audio.data) == int(_SPEECH_RATE * _SPEECH_MAX_SECONDS) * 2
+    seed = hashlib.sha256(f"Kore\x00{text.strip()}".encode()).digest()
+    assert spoken.audio.data[:64] == (seed * 2)[:64], "the same deterministic bytes, built faster"
+
+
 async def test_the_mock_streams_pieces_that_join_to_its_answer() -> None:
     mock = MockProvider("tts")
     request = _canonical("Guten Morgen, das ist ein Test.")

@@ -2,19 +2,22 @@ import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
+import { Subject, Subscription, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import { Trace, TracePayload } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { can } from '../../core/auth/roles';
 import { InfoHint } from '../../core/ui/info-hint';
-import { Live, agoLabel } from '../../core/ui/live';
+import { Live } from '../../core/ui/live';
+import { displayAmount, displayCount } from '../../core/ui/money';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
 const REFRESH_SECONDS = 10;
 const PAGE = 50;
 /** One typed address is one question, not one round trip per letter (`FRD-208`). */
 const TYPING_PAUSE_MS = 300;
+/** Decimals a request's cost is shown to: requests are cheap, and a cent would read as free. */
+const COST_PLACES = 4;
 
 /** The closed outcome vocabulary, offered as a filter (`FRD-122`). */
 const OUTCOMES = [
@@ -59,6 +62,9 @@ export class TracesTab implements OnInit {
   protected readonly feedback = inject(PageFeedback);
   protected readonly live = inject(Live);
 
+  /** The unit costs are in (`AIRA_CURRENCY`), or nothing until `/me` has said. */
+  protected readonly currency = this.meService.currency;
+
   protected readonly traces = signal<Trace[]>([]);
   /**
    * False when the gateway says this caller's visibility does not cover this use case.
@@ -89,16 +95,26 @@ export class TracesTab implements OnInit {
    */
   protected readonly focus = signal<string | null>(null);
 
-  /** The row whose content is open. One at a time: several open payloads is an unreadable screen
-   *  and a disclosure nobody meant to make. */
-  protected readonly openPayload = signal<string | null>(null);
+  /** The row whose detail is open. One at a time: several open rows is an unreadable screen. */
+  protected readonly openRow = signal<string | null>(null);
+  /**
+   * The prompt and answer read for the open row. Only ever set from an answer whose id is the open
+   * row's: content shown under another request would attribute one person's prompt to another.
+   */
   protected readonly payload = signal<TracePayload | null>(null);
   protected readonly payloadLoading = signal(false);
 
   /** The permission the gateway enforces the incident fields with, as `/me` lists it. */
   protected readonly mayInvestigate = computed(() => can(this.me(), 'incident.investigate'));
   private readonly me = signal<{ permissions?: string[] } | null>(null);
-  private readonly typed = new Subject<void>();
+  /** What the two typed filters say, so a pause that changed nothing asks nothing. */
+  private readonly typed = new Subject<string>();
+  /** The content read in flight; dropped when another row is opened, so it can never land there. */
+  private payloadRequest: Subscription | null = null;
+  /** The older page in flight; dropped when the question changes, or it appends excluded rows. */
+  private moreRequest: Subscription | null = null;
+  /** The page banner's message for a failed live load, withdrawn when a later load answers. */
+  private liveFailure: string | null = null;
 
   protected readonly outcomes = OUTCOMES;
 
@@ -122,20 +138,31 @@ export class TracesTab implements OnInit {
       next: (me) => this.me.set(me),
       error: () => undefined,
     });
+    // The values themselves are compared, not the fact of a keystroke: every keystroke is the same
+    // event, so a distinct-check over events lets the first pause through and no other.
     const typing = this.typed
       .pipe(debounceTime(TYPING_PAUSE_MS), distinctUntilChanged())
       .subscribe(() => this.startLive());
-    this.destroyRef.onDestroy(() => typing.unsubscribe());
+    this.destroyRef.onDestroy(() => {
+      typing.unsubscribe();
+      this.payloadRequest?.unsubscribe();
+      this.moreRequest?.unsubscribe();
+    });
   }
 
   protected setCredential(value: string): void {
     this.credential.set(value);
-    this.typed.next();
+    this.typed.next(this.typedFilters());
   }
 
   protected setSourceIp(value: string): void {
     this.sourceIp.set(value);
-    this.typed.next();
+    this.typed.next(this.typedFilters());
+  }
+
+  /** The typed filters as they are sent — trimmed, so a trailing space asks nothing new. */
+  private typedFilters(): string {
+    return `${this.credential().trim()}\n${this.sourceIp().trim()}`;
   }
 
   /** Back to the whole list. The address changes and the list follows it, so a reload agrees. */
@@ -149,8 +176,13 @@ export class TracesTab implements OnInit {
   }
 
   /** Restart the live view from the top — also on a filter change, since a cursor from one filter
-   *  means nothing under another. */
+   *  means nothing under another. A load or a page of the previous question still on its way is
+   *  dropped, so its rows can never appear under this one. */
   protected startLive(): void {
+    this.moreRequest?.unsubscribe();
+    this.moreRequest = null;
+    this.loadingMore.set(false);
+    this.closeRow();
     this.loading.set(true);
     this.live.start(
       REFRESH_SECONDS,
@@ -162,6 +194,12 @@ export class TracesTab implements OnInit {
         this.cursor.set(page.next_cursor);
         this.inScope.set(page.in_scope !== false);
         this.loading.set(false);
+        if (this.liveFailure) this.feedback.withdraw(this.liveFailure);
+        this.liveFailure = null;
+      },
+      (response) => {
+        this.loading.set(false);
+        this.liveFailure = this.feedback.fail(response, 'Could not load the requests.');
       },
     );
   }
@@ -211,13 +249,13 @@ export class TracesTab implements OnInit {
   }
 
   /** Fetch the next page and append it. Live goes off while paging, or a refresh would replace the
-   *  first page and discard what the reader scrolled to. */
+   *  first page and discard what the reader scrolled to — including one already in flight. */
   protected loadMore(): void {
     const next = this.cursor();
     if (!next || this.loadingMore()) return;
-    this.live.enabled.set(false);
+    this.live.pause();
     this.loadingMore.set(true);
-    this.service.traces({ ...this.query(), cursor: next }).subscribe({
+    this.moreRequest = this.service.traces({ ...this.query(), cursor: next }).subscribe({
       next: (page) => {
         this.traces.update((rows) => [...rows, ...page.traces]);
         this.cursor.set(page.next_cursor);
@@ -230,39 +268,79 @@ export class TracesTab implements OnInit {
     });
   }
 
-  protected ago(): string {
-    return agoLabel(this.live.lastUpdated());
-  }
-
   protected served(row: Trace): boolean {
     // A row from before `FRD-122` has no outcome; a 2xx there is served, never a red "200".
     if (row.outcome) return row.outcome === 'served';
     return row.status >= 200 && row.status < 300;
   }
 
-  protected togglePayload(row: Trace): void {
-    if (this.openPayload() === row.id) {
-      this.openPayload.set(null);
-      this.payload.set(null);
+  /**
+   * Open or close a row's details — its metadata, never its content.
+   *
+   * The whole row is the target because a small button at the far left of a wide table is a small
+   * target. It does **not** read the prompt: that read is recorded under the reader's name, and a
+   * click meant to select or copy a name or a time must not make one (`FRD-622`).
+   */
+  protected toggleRow(row: Trace): void {
+    // A click that ends a text selection is somebody copying a cell, not opening the row.
+    if (window.getSelection()?.toString()) return;
+    if (this.openRow() === row.id) {
+      this.closeRow();
+    } else {
+      this.openDetail(row);
+    }
+  }
+
+  /** The row's own button: labelled "Show the prompt and response", so pressing it is the read. */
+  protected toggleContent(row: Trace, event: Event): void {
+    event.stopPropagation();
+    if (this.openRow() === row.id) {
+      this.closeRow();
       return;
     }
-    this.openPayload.set(row.id);
-    this.payload.set(null);
+    this.openDetail(row);
+    this.readPayload(row);
+  }
+
+  /**
+   * The prompt and the answer for the open row — and, on the server, a record that they were read.
+   *
+   * A read still in flight for another row is dropped first, and an answer for any row but the open
+   * one is never placed: opening A and then B must not show A's prompt under B's caller.
+   */
+  protected readPayload(row: Trace): void {
+    this.dropPayload();
     this.payloadLoading.set(true);
-    // Live goes off while content is open, or a refresh would leave the open panel pointing at a
-    // request no longer on screen.
-    this.live.enabled.set(false);
-    this.service.tracePayload(row.id).subscribe({
+    this.payloadRequest = this.service.tracePayload(row.id).subscribe({
       next: (body) => {
-        this.payload.set(body);
         this.payloadLoading.set(false);
+        if (body.id === row.id && this.openRow() === row.id) this.payload.set(body);
       },
       error: (response: unknown) => {
         this.payloadLoading.set(false);
-        this.openPayload.set(null);
         this.feedback.fail(response, 'Could not open this request.');
       },
     });
+  }
+
+  private openDetail(row: Trace): void {
+    this.dropPayload();
+    this.openRow.set(row.id);
+    // Paused while a row is open: a refresh replaces the list, and the open row may then be off
+    // the first page — the detail would point at a request no longer on screen.
+    this.live.pause();
+  }
+
+  private closeRow(): void {
+    this.dropPayload();
+    this.openRow.set(null);
+  }
+
+  private dropPayload(): void {
+    this.payloadRequest?.unsubscribe();
+    this.payloadRequest = null;
+    this.payload.set(null);
+    this.payloadLoading.set(false);
   }
 
   /** Pretty-printed, because a prompt is read by a person. */
@@ -271,9 +349,16 @@ export class TracesTab implements OnInit {
     return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   }
 
-  /** Money for people; the exact integer stays in the API for scripts. */
+  /** Money for people, never through a float; the exact integer stays in the API for scripts. */
   protected cost(row: Trace): string {
     if (row.cost_nanos === null) return '—';
-    return (row.cost_nanos / 1_000_000_000).toFixed(4);
+    const unit = this.currency();
+    const amount = displayAmount(row.cost_nanos, COST_PLACES);
+    return unit ? `${amount} ${unit}` : amount;
+  }
+
+  /** A token count, grouped like every other count here; unknown is a dash, never `0`. */
+  protected tokens(count: number | null): string {
+    return count === null ? '—' : displayCount(count);
   }
 }

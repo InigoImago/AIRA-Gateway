@@ -69,17 +69,22 @@ class TokenSource:
         self._issued_at = 0.0
         self._lock = asyncio.Lock()
         self._retry_not_before = 0.0
+        #: How many fetches have finished, and why the last one failed (``None`` when it did not):
+        #: what a caller that waited out a fetch answers with instead of making its own.
+        self._fetches = 0
+        self._failure: Exception | None = None
 
     async def token(self) -> str:
         now = self._clock()
         held = self._token
         if held is not None and held.usable(now) and not held.refresh_due(now, self._issued_at):
             return held.value
-        return await self._refresh(held)
+        return await self._refresh()
 
-    async def _refresh(self, held: AccessToken | None) -> str:
+    async def _refresh(self) -> str:
         # Single-flight: whoever wins the lock re-checks, so the waiters return the new token
-        # rather than each fetching one of their own.
+        # rather than each fetching one of their own — and share a failed fetch the same way.
+        waited_from = self._fetches
         async with self._lock:
             now = self._clock()
             current = self._token
@@ -95,14 +100,25 @@ class TokenSource:
             if current is not None and current.usable(now) and now < self._retry_not_before:
                 return current.value
 
+            # A fetch that failed while this caller waited is its answer as well. Otherwise every
+            # queued caller fetches in turn, each paying the identity provider's whole timeout.
+            if self._fetches != waited_from and self._failure is not None:
+                raise TokenUnavailable(
+                    f"Could not obtain an access token: {self._failure}"
+                ) from self._failure
+
             try:
                 fresh = await self._acquirer.acquire(now)
             except Exception as exc:
+                self._fetches += 1
+                self._failure = exc
                 self._retry_not_before = now + RETRY_AFTER_SECONDS
                 if current is not None and current.usable(now):
                     return current.value
                 raise TokenUnavailable(f"Could not obtain an access token: {exc}") from exc
 
+            self._fetches += 1
+            self._failure = None
             self._token = fresh
             self._issued_at = now
             self._retry_not_before = 0.0

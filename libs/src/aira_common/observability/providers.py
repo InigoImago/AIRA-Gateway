@@ -26,10 +26,16 @@ from opentelemetry.util.types import Attributes
 from aira_common.observability.diagnostics import route_sdk_diagnostics
 from aira_common.observability.export import watched_export
 
-#: Paths kept out of the traces: the health probes. A probe has no caller, use case or outcome, and
-#: at one ask per container every 15 s it crowds real requests out of the trace backend, the OTLP
-#: quota and the debug payload. `/readyz` reports its own verdict (`FRD-117`).
-HEALTH_PATHS = "healthz,readyz"
+#: Requests kept out of the traces: the health probes. A probe has no caller, use case or outcome,
+#: and at one ask per container every 15 s it crowds real requests out of the trace backend, the
+#: OTLP quota and the debug payload. `/readyz` reports its own verdict (`FRD-117`).
+#:
+#: **One expression over the whole URL, anchored at both ends, matching the path alone.** The
+#: instrumentations search it in `scheme://<Host header><path>`, and the host is the caller's to
+#: write — so a pattern that matched anywhere would let any request, a refused credential included,
+#: leave the traces by naming a host or a slug that contains a probe's name. The optional `?` is
+#: Django's: it matches `build_absolute_uri("?")`. No comma, because the variable is a list of them.
+HEALTH_PATHS = r"^[a-z]+://[^/]+/(healthz|readyz)\??$"
 
 #: The variable every `opentelemetry.util.http` instrumentation reads, absent a per-library one.
 EXCLUDED_URLS_ENV = "OTEL_PYTHON_EXCLUDED_URLS"

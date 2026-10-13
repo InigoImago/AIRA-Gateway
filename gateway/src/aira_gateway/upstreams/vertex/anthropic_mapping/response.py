@@ -14,13 +14,15 @@ from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalResponse,
     CanonicalUsage,
+    FinishReason,
     ToolCallPart,
 )
+from aira_gateway.upstreams.base import stream_failure
 
 #: The finish reason for "the model answered, but not with the document asked for". A value rather
 #: than an error, so it takes the path every abnormal finish takes and is refused in one place
 #: (`FRD-112` FR-6).
-SCHEMA_UNSATISFIED = "schema_unsatisfied"
+SCHEMA_UNSATISFIED = FinishReason.SCHEMA_UNSATISFIED
 
 #: Content-block types read for the answer. `thinking` is deliberately **not** one of them.
 _ANSWER_BLOCKS = frozenset({"text"})
@@ -29,12 +31,23 @@ _ANSWER_BLOCKS = frozenset({"text"})
 _THINKING_BLOCK = "thinking"
 
 _STOP_REASONS = {
-    "end_turn": "stop",
-    "stop_sequence": "stop",
-    "max_tokens": "max_tokens",
-    "tool_use": "tool_use",
-    "refusal": "refusal",
+    "end_turn": FinishReason.STOP,
+    "stop_sequence": FinishReason.STOP,
+    "max_tokens": FinishReason.MAX_TOKENS,
+    # The context window ran out before the output cap did: truncated all the same.
+    "model_context_window_exceeded": FinishReason.MAX_TOKENS,
+    "tool_use": FinishReason.TOOL_USE,
+    "refusal": FinishReason.REFUSAL,
 }
+
+#: The usage fields this API reports, each a **running total** in every event that carries it
+#: (`message_start`, then `message_delta`) — the vendor's SDK assigns them, it does not add them.
+_USAGE_FIELDS = (
+    "input_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+    "output_tokens",
+)
 
 
 def answer_text(content: Any) -> str:
@@ -80,9 +93,14 @@ def usage_of(payload: Any) -> CanonicalUsage:
     )
 
 
-def finish_reason(stop_reason: Any) -> str:
-    """Mapped so `FRD-112` FR-6 can tell a complete document from a truncated one."""
-    return _STOP_REASONS.get(str(stop_reason), "stop")
+def finish_reason(stop_reason: Any) -> FinishReason:
+    """Mapped so `FRD-112` FR-6 can tell a complete document from a truncated one.
+
+    An absent reason is a normal end; one this table does not know is `OTHER`, never `STOP`.
+    """
+    if stop_reason is None:
+        return FinishReason.STOP
+    return _STOP_REASONS.get(str(stop_reason), FinishReason.OTHER)
 
 
 def structured_document(content: Any) -> str | None:
@@ -161,7 +179,7 @@ def anthropic_to_canonical(
         text = document
         # A `tool_use` stop beside a complete document is reported as `stop`, so FR-6's check
         # does not refuse the document.
-        reason = "stop" if reason == "tool_use" else reason
+        reason = FinishReason.STOP if reason is FinishReason.TOOL_USE else reason
 
     return CanonicalResponse(
         model=model,
@@ -176,16 +194,22 @@ def anthropic_to_canonical(
 class StreamAssembler:
     """Turns Anthropic's typed SSE events into canonical chunks.
 
-    Usage arrives in **two** events — ``message_start`` carries the input count, ``message_delta``
-    the output — so the counts are accumulated; last-event-wins would report zero input tokens for
-    every streamed request. A tool call's arguments arrive as `input_json_delta` fragments and are
-    accumulated, never emitted as text, until the call is whole (`FRD-131` FR-6).
+    **Usage is a running total, held whole.** ``message_start`` carries the input counts — cache
+    reads and writes included — and ``message_delta`` the output count, repeating whichever input
+    counts the API version sends; each field an event carries is the total so far and *replaces*
+    the one held. Adding them would count the first output token twice and, where the input is
+    repeated, every input token; keeping only the plain counts would price a cached prefix as
+    uncached input. The total so far rides every chunk, so a stream that breaks off still says what
+    it had cost.
+
+    A tool call's arguments arrive as `input_json_delta` fragments and are accumulated, never
+    emitted as text, until the call is whole (`FRD-131` FR-6). An `error` event is the upstream
+    failing mid-stream and is raised (`stream_failure`), never read as the end of the answer.
     """
 
     def __init__(self) -> None:
-        self._prompt = 0
-        self._completion = 0
-        self._finish: str | None = None
+        self._usage: dict[str, int] = {}
+        self._finish: FinishReason | None = None
         #: The open `tool_use` block, if any: its id, its name, and the argument fragments so far.
         self._open_call: dict[str, str] | None = None
         self._calls: list[ToolCallPart] = []
@@ -193,10 +217,11 @@ class StreamAssembler:
     def feed(self, event: dict[str, Any]) -> CanonicalChunk | None:
         kind = event.get("type")
 
+        if kind == "error":
+            raise stream_failure(event.get("error"))
+
         if kind == "message_start":
-            usage = usage_of((event.get("message") or {}).get("usage"))
-            self._prompt = usage.prompt_tokens
-            self._completion = usage.completion_tokens
+            self._update_usage((event.get("message") or {}).get("usage"))
             return None
 
         if kind == "content_block_start":
@@ -219,15 +244,18 @@ class StreamAssembler:
             if delta.get("type") == "input_json_delta" and self._open_call is not None:
                 self._open_call["arguments"] += str(delta.get("partial_json") or "")
                 return None
-            if delta.get("type") in ("text_delta", "input_json_delta"):
-                text = str(delta.get("text") or delta.get("partial_json") or "")
-                return CanonicalChunk(text_delta=text) if text else None
+            if delta.get("type") == "text_delta":
+                text = str(delta.get("text") or "")
+                if not text:
+                    return None
+                # Nothing reported yet is unknown, not zero: a zero would settle as free.
+                return CanonicalChunk(
+                    text_delta=text, usage=self._running() if self._usage else None
+                )
             return None
 
         if kind == "message_delta":
-            usage = usage_of(event.get("usage"))
-            self._prompt += usage.prompt_tokens
-            self._completion += usage.completion_tokens
+            self._update_usage(event.get("usage"))
             self._finish = finish_reason((event.get("delta") or {}).get("stop_reason"))
             return None
 
@@ -237,14 +265,25 @@ class StreamAssembler:
             self._finish_call()
             return CanonicalChunk(
                 text_delta="",
-                finish_reason=self._finish or "stop",
-                usage=CanonicalUsage(
-                    prompt_tokens=self._prompt, completion_tokens=self._completion
-                ),
+                finish_reason=self._finish or FinishReason.STOP,
+                usage=self._running(),
                 # Whole, on the chunk that ends the message.
                 tool_calls=tuple(self._calls),
             )
         return None
+
+    def _update_usage(self, reported: Any) -> None:
+        """Take each count the event carries: it is the total so far, never an increment."""
+        if not isinstance(reported, dict):
+            return
+        for field in _USAGE_FIELDS:
+            value = reported.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                self._usage[field] = value
+
+    def _running(self) -> CanonicalUsage:
+        """The usage so far, read exactly as a finished answer's is (`usage_of`)."""
+        return usage_of(self._usage)
 
     def _finish_call(self) -> None:
         """Close the open `tool_use` block, if the fragments amount to a usable call."""

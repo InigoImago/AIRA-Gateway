@@ -124,8 +124,10 @@
                         generation
                       } @else if (model.embeds) {
                         embeddings
-                      } @else if (answered()) {
-                        <span class="muted">not in the gateway's KIRA listing</span>
+                      } @else if (model.generates === false) {
+                        <span class="muted">neither, as the catalog declares it</span>
+                      } @else if (declaredKnown()) {
+                        <span class="muted">not declared in the catalog</span>
                       } @else {
                         <span class="muted">…</span>
                       }
@@ -153,10 +155,11 @@
                 geminiChat(chat)
               }}</pre>
             </div>
-          } @else if (answered()) {
+          } @else if (declaredKnown()) {
             <p class="callout" data-testid="connection-no-chat">
-              None of the released models generates text, so there is no generation example to give.
-              Release one that does if a client needs to send prompts.
+              None of the released models is declared in the catalog as generating text, so there is
+              no generation example to give. Release one that does if a client needs to send
+              prompts.
             </p>
           }
 
@@ -234,11 +237,11 @@
                       }
                     </td>
                     <td>
-                      @if (model.generates && model.embeds) {
+                      @if (model.kiraGenerates && model.kiraEmbeds) {
                         generation and embeddings
-                      } @else if (model.generates) {
+                      } @else if (model.kiraGenerates) {
                         generation
-                      } @else if (model.embeds) {
+                      } @else if (model.kiraEmbeds) {
                         embeddings
                       } @else if (answered()) {
                         <!-- Absent from the listing means no id *or* not served; say only that. -->
@@ -253,7 +256,7 @@
             </table>
           </div>
 
-          @if (chatModel(); as chat) {
+          @if (kiraChatModel(); as chat) {
             <div>
               <div class="spread">
                 <p class="muted" style="margin: 0">Generation</p>
@@ -270,11 +273,12 @@
             </div>
           } @else if (answered()) {
             <p class="callout" data-testid="connection-no-chat">
-              None of the released models generates text, so there is no generation example to give.
+              None of the released models is listed for generation with a number in the gateway's
+              KIRA listing, so there is no example for this API to give.
             </p>
           }
 
-          @if (embedModel(); as embed) {
+          @if (kiraEmbedModel(); as embed) {
             <div>
               <div class="spread">
                 <p class="muted" style="margin: 0">Embeddings</p>

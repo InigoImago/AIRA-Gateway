@@ -21,10 +21,15 @@ offers that the gateway does not know is a promise nothing keeps.
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 
 from aira_common.models import Capability
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+REALM = REPO / "deploy" / "compose" / "keycloak" / "realms" / "aira-realm.json"
+ENV_EXAMPLE = REPO / "deploy" / "compose" / ".env.example"
 
 MODELS_TS = (
     pathlib.Path(__file__).resolve().parents[2]
@@ -68,37 +73,65 @@ def test_the_console_offers_nothing_the_gateway_does_not_know() -> None:
     assert not unknown, f"the console offers {sorted(unknown)}, which no model can be judged by"
 
 
-def test_the_realm_defines_exactly_the_roles_that_exist() -> None:
-    """The dev realm and the code must name the same roles.
+def test_a_capability_this_version_cannot_read_is_dropped_rather_than_raising() -> None:
+    """A newer Management may declare a capability this gateway has never heard of — in a shape it
+    has never seen. Dropping it is the contract (`parse_capabilities`), because the gateway could
+    not enforce it anyway; raising on an object failed the whole `model.upserted` event instead, so
+    the model's other fields were never applied either."""
+    from aira_common.models import parse_capabilities
 
-    `ADR-0017` abolished `use-case-admin` and `use-case-user`; they stayed in the `Role` enum, in
-    the seed, in the console's specs **and in the realm file** for a day afterwards. A realm role
-    nothing reads is a role somebody can be assigned in Keycloak with no effect anywhere — the
-    plainest version of a control that looks present and is absent.
+    declared = ["tools", {"name": "speech"}, ["embed"], 7, "brand_new"]
+    assert parse_capabilities(declared) == frozenset({Capability.TOOLS})
 
-    Compared in both directions, the answer this repository keeps arriving at: a role in the code
-    that the realm cannot confer is unreachable, and a role in the realm that the code does not
-    know is a promise nothing keeps.
+
+def _realm_group_paths(nodes: list[dict], prefix: str = "") -> set[str]:
+    """Every group path the realm defines, as a token would carry it."""
+    found: set[str] = set()
+    for node in nodes:
+        path = f"{prefix}/{node['name']}"
+        found |= {path, *_realm_group_paths(node.get("subGroups", []), path)}
+    return found
+
+
+def _env_example(name: str) -> str:
+    """One variable's value in the stack's `.env.example`, which `make env` copies."""
+    for line in ENV_EXAMPLE.read_text().splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == name:
+            return value.strip()
+    raise AssertionError(f"{name} is not in {ENV_EXAMPLE.name}")
+
+
+def test_every_role_is_conferred_by_a_group_the_realm_defines() -> None:
+    """A role is held through a group and through nothing else (`ADR-0017`): neither plane reads
+    `realm_access.roles`. So what the dev realm owes the code is a **group** for every role, not a
+    realm role — one of those is a role somebody can be assigned in Keycloak with no effect
+    anywhere, the plainest version of a control that looks present and is absent.
+
+    Compared in both directions, through the parser both planes use: the stack's
+    `AIRA_ROLE_GROUPS` names every role, and every group it names is one the realm defines —
+    a mapping to a group that does not exist confers the role on nobody. And no account holds an
+    AIRA role as a realm role, which would read as that role in Keycloak's console and grant
+    nothing here.
     """
-    import json
+    from aira_common.roles import ALL_ROLES, parse_role_groups
 
-    from aira_common.roles import ALL_ROLES
+    realm = json.loads(REALM.read_text())
+    mapping = parse_role_groups(_env_example("AIRA_ROLE_GROUPS"))
 
-    realm_file = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "deploy"
-        / "compose"
-        / "keycloak"
-        / "realms"
-        / "aira-realm.json"
+    unconferred = sorted(str(role) for role in set(ALL_ROLES) - set(mapping))
+    assert not unconferred, f"no group confers {unconferred}"
+    groups = _realm_group_paths(realm.get("groups", []))
+    missing = sorted(path for paths in mapping.values() for path in paths if path not in groups)
+    assert not missing, f"AIRA_ROLE_GROUPS names groups the dev realm does not define: {missing}"
+
+    named = {role.value for role in ALL_ROLES}
+    holders = sorted(
+        user["username"]
+        for user in realm.get("users", [])
+        if named & set(user.get("realmRoles") or [])
     )
-    realm = json.loads(realm_file.read_text())
-    defined = {role["name"] for role in realm["roles"]["realm"]}
-    known = {role.value for role in ALL_ROLES}
-
-    assert defined == known, (
-        f"realm-only: {sorted(defined - known)}, code-only: {sorted(known - defined)}"
-    )
+    assert not holders, f"{holders} hold an AIRA role as a realm role, which grants nothing"
 
 
 def _console_list(name: str, pattern: str = r"'([a-z0-9_/.+-]+)'") -> set[str]:

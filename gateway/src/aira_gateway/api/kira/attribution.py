@@ -69,14 +69,4 @@ def resolve(request: Request, principal: Principal) -> Attribution:
             f"bypass every budget and limit. Name one with {_HOW_TO_SELECT}.",
         )
 
-    return attribute(
-        request,
-        Attribution(
-            subject=principal.subject,
-            method=principal.method,
-            username=principal.username,
-            use_case=selected,
-            credential=principal.credential,
-            issuer=principal.issuer,
-        ),
-    )
+    return attribute(request, Attribution.of(principal, selected))

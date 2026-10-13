@@ -34,6 +34,12 @@ export interface AnomalyEvent {
   /** What was **done** — kept separate from what the rule asked for (`ADR-0014` §3). */
   action_taken: string;
   detail: string;
+  /**
+   * The rule that fired, by id — absent from a gateway that does not send it yet, and `null` for
+   * a finding whose rule no longer exists. A name alone is not unique across a global rule and a
+   * use case's own.
+   */
+  rule_id?: number | null;
 }
 
 /** One page of findings — cursor-paged, because findings are an append-only log. */

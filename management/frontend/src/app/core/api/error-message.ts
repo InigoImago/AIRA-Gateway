@@ -16,6 +16,46 @@ interface HttpErrorLike {
 }
 
 /**
+ * Said for a successful status whose body is not JSON — what an SSO proxy's login page or an HTML
+ * error page from something between the browser and AIRA looks like to the client.
+ */
+const NOT_THE_API =
+  'The server answered with something that is not the AIRA API — typically a sign-in or error ' +
+  'page from something in between. Reload the page; if it stays, the proxy in front of AIRA needs ' +
+  'a look.';
+
+/** A server-written envelope: a plain object. An `Error` is something the client made up. */
+function isEnvelope(
+  value: unknown,
+): value is { code?: string; message?: string; details?: unknown } {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Error);
+}
+
+/** `field: text`, or the text alone where there is no field to name. */
+const labelled = (field: string, text: string) => (field ? `${field}: ${text}` : text);
+
+/**
+ * A DRF detail tree as `field.sub: message` entries. A nested serializer nests its errors — a list
+ * of objects, or an object of lists — and printing those whole is `[object Object]`.
+ */
+function flatten(value: unknown, field: string): string[] {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) {
+    const texts = value.filter((item) => item === null || typeof item !== 'object').map(String);
+    const nested = value
+      .filter((item) => item !== null && typeof item === 'object')
+      .flatMap((item) => flatten(item, field));
+    return [...(texts.length ? [labelled(field, texts.join(' '))] : []), ...nested];
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, inner]) =>
+      flatten(inner, key === 'non_field_errors' ? field : field ? `${field}.${key}` : key),
+    );
+  }
+  return [labelled(field, String(value))];
+}
+
+/**
  * `details` in either shape: DRF's map of field → messages, or the compatibility surface's list of
  * `{loc, msg}`. Read apart, because one loop over both prints `0: [object Object]`.
  */
@@ -32,10 +72,7 @@ function fromDetails(details: unknown): string | null {
       .filter((text) => text.trim());
     return listed.length ? listed.join(' ') : null;
   }
-  const messages = Object.entries(details as Record<string, unknown>).map(([field, value]) => {
-    const text = Array.isArray(value) ? value.join(' ') : String(value);
-    return field === 'non_field_errors' ? text : `${field}: ${text}`;
-  });
+  const messages = flatten(details, '');
   return messages.length ? messages.join(' ') : null;
 }
 
@@ -54,8 +91,21 @@ export function errorMessage(response: unknown, fallback: string): string {
   }
 
   const body = failure.error;
-  if (body && typeof body === 'object' && 'error' in body) {
-    const envelope = (body as ErrorEnvelope).error ?? {};
+  const status = failure.status ?? 0;
+  // A 2xx the client could not parse arrives as `{error: SyntaxError, text}`; the parser's message
+  // ("Unexpected token '<'…") is no answer for a reader.
+  if (
+    status >= 200 &&
+    status < 300 &&
+    body &&
+    typeof body === 'object' &&
+    (body as { error?: unknown }).error instanceof Error
+  ) {
+    return NOT_THE_API;
+  }
+
+  if (body && typeof body === 'object' && 'error' in body && isEnvelope(body.error)) {
+    const envelope = body.error as NonNullable<ErrorEnvelope['error']>;
     const detail = fromDetails(envelope.details);
     if (envelope.message && detail) return `${envelope.message} ${detail}`;
     if (envelope.message) return envelope.message;

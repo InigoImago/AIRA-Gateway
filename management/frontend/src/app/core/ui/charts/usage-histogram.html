@@ -1,5 +1,9 @@
 @if (model().empty) {
   <p class="table__empty" data-testid="histogram-empty">{{ emptyText() }}</p>
+} @else if (model().costUnknown) {
+  <!-- Requests ran and none could be priced: a flat plot would draw `0.00` for every one of them,
+       which is a measurement nobody made. -->
+  <p class="table__empty" data-testid="histogram-unknown">{{ unknownText() }}</p>
 } @else {
   <!--
     `aria-hidden`: a column's meaning is its height and its colours. The same figures are in the

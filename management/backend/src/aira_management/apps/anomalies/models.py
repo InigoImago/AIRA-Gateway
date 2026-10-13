@@ -23,6 +23,7 @@ from aira_common.anomalies import (
     RuleKind,
     RuleTarget,
 )
+from aira_management.apps.ratelimits.models import MAX_REQUESTS_PER_MINUTE
 from aira_management.apps.usecases.models import UseCase
 
 
@@ -73,7 +74,9 @@ class AnomalyRule(models.Model):
     )
     #: Requests per minute a throttled target is held to. Required for `throttle` and meaningless
     #: for anything else — an action that reduces a rate has to say to what.
-    throttle_rpm = models.PositiveIntegerField(null=True, blank=True)
+    throttle_rpm = models.PositiveIntegerField(
+        null=True, blank=True, validators=[MaxValueValidator(MAX_REQUESTS_PER_MINUTE)]
+    )
     enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

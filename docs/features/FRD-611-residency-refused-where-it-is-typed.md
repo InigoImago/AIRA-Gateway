@@ -53,13 +53,27 @@ less often: the field is legitimately **empty** for a platform addressed by mode
 somebody who has just widened the policy on the gateway should be able to type the new region
 before this console has been reloaded.
 
+### 2.3 A region permitted for one model by name (`ADR-0034`)
+
+Agent Platform's open models — GLM, DeepSeek — answer at `global` and nowhere else (`FRD-115`
+FR-2a), and the owner chose to use them. Putting `global` back in the list would permit it for
+every model a catalogue entry could later place there, `gemini-3.5-flash` first; so the decision is
+written down as made: `AIRA_ALLOWED_MODEL_REGIONS=global=glm-4.7-maas,deepseek-v3.2-maas`.
+
+- The gateway publishes it as `modelRegions` beside `allowedRegions`, and the editor permits a
+  region for **exactly** the model it names — refusing it there would block the very entry the
+  decision was made for; accepting it for another model would be a second, wider policy.
+- The refusal names both settings, because a region can now be widened in either.
+- An older gateway sends no `modelRegions`. It also permits nothing by name, so absence is read as
+  exactly that — none — while an absent `allowedRegions` still means *no opinion* (§2.1).
+
 ## 3. What it changes for a reader
 
 | | before | now |
 | --- | --- | --- |
 | a forbidden region | catalogued silently; a caller's 4xx, later | red the moment the row is opened, Save disabled |
 | what is allowed | not visible anywhere in the console | named in the field's own error |
-| `global` in this deployment | permitted, and used twice | not permitted |
+| `global` in this deployment | permitted, and used twice | not permitted — except for a model permitted it by name (§2.3) |
 
 **The consequence is stated rather than worked around.** `gemini-3.5-flash` is reachable with this
 installation's credential **only** at `global` — measured across five endpoints — so under an EU
@@ -78,6 +92,13 @@ only two separate mutations tell those apart. Seven were broken by hand and seen
 Verified in a browser against the running stack: the catalogued `gemini-3.5-flash` row shows its
 `global` in red the moment it is opened, names what is allowed, and Save is disabled until the
 region is one of them.
+
+**The permission by name (§2.3)** has its own: `test_a_region_permitted_by_name.py` (the setting
+read and refused when malformed, the rule permitting the named model and no other, a whole
+endpoint never opened by a model's name, and the dispatch condition asking the same rule), the
+providers answer publishing it, three console cases (the named model permitted and another refused,
+the suggestions per model, and the gateway's silence still meaning no opinion), and mutations
+`OPEN-1`–`OPEN-7` and `OPEN-19`–`OPEN-21`, each seen caught.
 
 ## 5. Risks
 

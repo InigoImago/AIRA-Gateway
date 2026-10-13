@@ -7,8 +7,14 @@ and the bounds that keep an operator-supplied regex from stalling a worker.
 from collections.abc import Iterator
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+import aira_gateway.config as config_module
 from aira_common.observability import redact_query_string
 from aira_gateway.app import create_app, redact_span_query
 from aira_gateway.auth.attribution import is_valid_use_case
@@ -49,6 +55,64 @@ def test_streamed_oversized_body_is_rejected() -> None:
     with TestClient(app) as client:
         resp = client.post(_URL, content=chunks(), headers={"content-type": "application/json"})
     assert resp.status_code == 413
+
+
+async def _oversized_rows(app) -> list[object]:  # noqa: ANN001
+    from sqlalchemy import select
+
+    from aira_gateway.db.models import RequestLog
+
+    async with app.state.db_sessionmaker() as session:
+        return list((await session.execute(select(RequestLog))).scalars().all())
+
+
+async def test_an_oversized_request_under_a_use_case_prefix_is_still_a_kira_request() -> None:
+    """`/uc/<slug>/kira/…` is the prefix `api/kira/attribution.py` recommends to a migrating client.
+    The ceiling read the path before the prefix was stripped, so its 413 came out in Google's
+    envelope and its row said `api="gemini"` — while the same body streamed got KIRA's."""
+    app = create_app(GatewaySettings(auth_required=False, max_request_bytes=100, log_queue_size=0))
+    with TestClient(app) as client:
+        response = client.post(
+            "/uc/demo-uc/kira/api/external/chat",
+            content=b"x",
+            headers={"content-length": "5000", "content-type": "application/json"},
+        )
+        rows = await _oversized_rows(app)
+
+    assert response.status_code == 413
+    assert response.json() == {"code": "VALIDATION_ERROR", "message": "Request body too large."}
+    assert [row.api for row in rows] == ["kira"]
+
+
+async def test_an_oversized_request_is_recorded_where_it_came_from_and_how_large() -> None:
+    """Behind the trusted proxy every 413 row named the proxy, and none carried a size — so the
+    incident view's address filter could not find them and the `payload_size` rule (`FRD-501`)
+    left the largest requests out of its measurement altogether."""
+    app = create_app(
+        GatewaySettings(
+            auth_required=False, max_request_bytes=100, log_queue_size=0, trust_forwarded_for=True
+        )
+    )
+
+    def chunks() -> Iterator[bytes]:
+        yield b'{"contents":[{"parts":[{"text":"'
+        yield b"x" * 500
+        yield b'"}]}]}'
+
+    forwarded = {"x-forwarded-for": "203.0.113.7", "content-type": "application/json"}
+    with TestClient(app) as client:
+        client.post(_URL, content=b"x", headers={**forwarded, "content-length": "5000"})
+        client.post(_URL, content=chunks(), headers=forwarded)
+        client.post(_URL, content=b"x", headers={**forwarded, "content-length": str(10**12)})
+        rows = await _oversized_rows(app)
+
+    assert [row.status for row in rows] == [413, 413, 413]
+    assert {row.source_ip for row in rows} == {"203.0.113.7"}
+    declared, streamed, absurd = (row.request_bytes for row in rows)
+    assert declared == 5000
+    assert streamed is not None and streamed > 100
+    # The caller's own number, held to what the column stores rather than failing the write.
+    assert absurd == 2**31 - 1
 
 
 async def _outcomes(app) -> list[tuple[str | None, int, str | None]]:
@@ -211,6 +275,67 @@ def test_span_hook_ignores_non_recording_or_empty() -> None:
     redact_span_query(None, {"path": "/", "query_string": b"key=s"})  # must not raise
 
 
+#: Shaped like a presented API key. A literal, so a failure prints the thing that leaked.
+_QUERY_SECRET = "SUPERSECRETVALUE"
+
+
+@pytest.fixture
+def server_spans(instrumentation_restored: None) -> Iterator[tuple[FastAPI, InMemorySpanExporter]]:
+    """A gateway built by `create_app` with telemetry on, exporting into memory.
+
+    Through `create_app` rather than a hand-made instrumentation call, so the spans checked are the
+    ones the shipped wiring produces — attributes the instrumentation sets included, which a fake
+    span never has.
+    """
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    original_configure = config_module.configure_observability
+    config_module.configure_observability = lambda **_kwargs: True  # type: ignore[assignment]
+    previous = trace._TRACER_PROVIDER
+    trace._TRACER_PROVIDER = provider
+    try:
+        app = create_app(
+            GatewaySettings(
+                environment="local",
+                auth_required=True,
+                otel_enabled=True,
+                otel_endpoint="http://127.0.0.1:4318",
+            )
+        )
+        yield app, exporter
+    finally:
+        trace._TRACER_PROVIDER = previous
+        config_module.configure_observability = original_configure  # type: ignore[assignment]
+
+
+@pytest.mark.parametrize(
+    "path", ["/v1beta/models", "/kira/api/external/models", "/not/a/route"], ids=str
+)
+def test_a_query_credential_reaches_no_attribute_of_any_exported_span(
+    server_spans: tuple[FastAPI, InMemorySpanExporter], path: str
+) -> None:
+    """`?key=` is how a Gemini client authenticates, and the server span records the URL.
+
+    Every attribute of every span, not the two the hook names: the instrumentation also writes the
+    whole URL (`http.url`), and which names carry it is the library's choice.
+    """
+    app, exporter = server_spans
+    with TestClient(app) as client:
+        client.get(f"{path}?alt=sse&key=aira_abcd1234_{_QUERY_SECRET}")
+
+    spans = exporter.get_finished_spans()
+    assert any(span.kind is trace.SpanKind.SERVER for span in spans), "no server span was exported"
+    leaked = [
+        (span.name, key, value)
+        for span in spans
+        for key, value in (span.attributes or {}).items()
+        if isinstance(value, str) and _QUERY_SECRET in value
+    ]
+    assert leaked == []
+    assert not [span.name for span in spans if _QUERY_SECRET in span.name]
+
+
 # -- regex / config bounds -----------------------------------------------------------------
 
 
@@ -228,10 +353,29 @@ async def test_overlong_patterns_are_dropped() -> None:
 
 
 async def test_scanned_text_is_bounded() -> None:
+    """Bounded, and at both ends: the head and the tail of a long text are read, the middle is not
+    (`MAX_SCANNED_CHARS`). A head-only window let anything after enough filler through."""
     classifier = HeuristicInjectionClassifier(("needle",), use_builtins=False)
-    beyond = "x" * MAX_SCANNED_CHARS + "needle"
-    assert await classifier.verdict(beyond) is Verdict.CLEAN
-    assert await classifier.verdict("needle" + beyond) is Verdict.INJECTION
+    filler = "x" * MAX_SCANNED_CHARS
+    assert await classifier.verdict(filler + "needle") is Verdict.INJECTION, "the tail is read"
+    assert await classifier.verdict("needle" + filler) is Verdict.INJECTION, "the head is read"
+    assert await classifier.verdict(filler + "needle" + filler) is Verdict.CLEAN, "the middle not"
+
+
+async def test_the_scan_costs_the_bound_however_long_the_text() -> None:
+    """The cost stays the bound's: eight megabytes — the largest body a request may carry — are
+    scanned as `MAX_SCANNED_CHARS` characters, and the rest is counted as unread, never skipped
+    silently."""
+    import time
+
+    classifier = HeuristicInjectionClassifier()
+    text = "a" * (8 * 1024 * 1024)
+
+    started = time.perf_counter()
+    classification = await classifier.classify_text(text)
+
+    assert time.perf_counter() - started < 1
+    assert classification.unscanned == len(text) - MAX_SCANNED_CHARS
 
 
 def test_pipeline_from_dict_bounds_steps_and_fallbacks() -> None:

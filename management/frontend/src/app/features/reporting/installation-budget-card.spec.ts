@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, defer, of, throwError } from 'rxjs';
 import { Budget, Me } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -10,6 +10,7 @@ import { InstallationBudgetCard } from './installation-budget-card';
 
 interface Card {
   canManage: () => boolean;
+  retryIfFailed: () => void;
   limitsOf: (b: Budget) => string[];
   setEnabled: (b: Budget, enabled: boolean) => void;
   remove: (id: number | undefined) => void;
@@ -39,6 +40,8 @@ interface Options {
   me?: Observable<Me>;
   /** What the page's report said about enforcement; `undefined` means the gateway has not said. */
   enforced?: boolean | null;
+  /** `AIRA_CURRENCY` as `/v1/me` reported it; empty until it has. */
+  currency?: string;
 }
 
 function setup(options: Options = {}) {
@@ -64,7 +67,7 @@ function setup(options: Options = {}) {
   const me = {
     // The double carries every member the real service has; a less capable one fails as a
     // template error in every test at once.
-    currency: signal(''),
+    currency: signal(options.currency ?? ''),
     get: () =>
       options.me ??
       of({
@@ -140,10 +143,14 @@ describe('InstallationBudgetCard', () => {
 
   it('shows a governance reader the limit and offers no way to change it', () => {
     // `ADR-0007`: reading every figure is not setting one.
-    const { testid, text } = setup({ permissions: ['report.read_all'], budgets: [MONTHLY] });
+    const { testid, text } = setup({
+      permissions: ['report.read_all'],
+      budgets: [MONTHLY],
+      currency: 'CHF',
+    });
 
     expect(testid('installation-budget')).not.toBeNull();
-    expect(text()).toContain('$20.000000');
+    expect(text()).toContain('20.00 CHF');
     expect(testid('add-installation-budget')).toBeNull();
     expect(testid('toggle-installation-budget-7')).toBeNull();
     expect(testid('remove-installation-budget-7')).toBeNull();
@@ -218,6 +225,24 @@ describe('InstallationBudgetCard', () => {
     expect(testid('no-installation-budget')).toBeNull();
   });
 
+  it('asks again when the page asks, only after a load that failed', () => {
+    // The page clears its one banner for each new period; the card's failed load was said only
+    // there, so the card is asked again rather than left blank — and a good answer is not re-asked.
+    let asked = 0;
+    const { component, calls, fixture, text } = setup({
+      list: defer(() => (++asked === 1 ? httpError(502) : of([MONTHLY]))),
+      currency: 'EUR',
+    });
+    expect(text()).not.toContain('20.00');
+
+    component.retryIfFailed();
+    fixture.detectChanges();
+    expect(text()).toContain('20.00 EUR');
+
+    component.retryIfFailed();
+    expect(calls.filter((c) => c === 'list').length).toBe(2);
+  });
+
   it('lifts a limit by sending the whole row back', () => {
     // The endpoint upserts on the period, so a body carrying only the switch would blank the
     // limits beside it.
@@ -245,9 +270,10 @@ describe('InstallationBudgetCard', () => {
   });
 
   it('names every limit it shows with its unit', () => {
-    // A card showing a bare `50` says nothing: fifty dollars, fifty tokens and fifty requests are
-    // three different limits, and two of them are what binds a model with no price on file.
-    const { component } = setup();
+    // A card showing a bare `50` says nothing: fifty in the currency, fifty tokens and fifty
+    // requests are three different limits, and two of them are what binds a model with no price
+    // on file.
+    const { component } = setup({ currency: 'EUR' });
 
     expect(
       component.limitsOf({
@@ -256,8 +282,28 @@ describe('InstallationBudgetCard', () => {
         limit_tokens: 1000,
         limit_requests: 50,
       }),
-    ).toEqual(['$5.000000', '1000 tokens', '50 request(s)']);
+    ).toEqual(['5.00 EUR', '1,000 tokens', '50 request(s)']);
     expect(component.limitsOf({ ...MONTHLY, limit_cost: null })).toEqual([]);
+  });
+
+  it('states a spend limit in the installation’s currency, never in a symbol of its own', () => {
+    // `$` beside a figure in `AIRA_CURRENCY` is a figure in the wrong currency; the stored
+    // `20.000000` is trimmed for a reader on the digits, never through a float.
+    const { text, component } = setup({ budgets: [MONTHLY], currency: 'CHF' });
+
+    expect(text()).toContain('20.00 CHF');
+    expect(text()).not.toContain('$');
+    expect(component.limitsOf({ ...MONTHLY, limit_cost: '20.500000' })).toEqual(['20.50 CHF']);
+    expect(component.limitsOf({ ...MONTHLY, limit_cost: '0.000125' })).toEqual(['0.000125 CHF']);
+    expect(component.limitsOf({ ...MONTHLY, limit_cost: '300' })).toEqual(['300.00 CHF']);
+  });
+
+  it('names a spend limit as spend while the currency is not known yet', () => {
+    // Never a bare number: until `/v1/me` has answered there is no unit to state, and the word
+    // says which of the three limits this one is.
+    const { component } = setup();
+
+    expect(component.limitsOf(MONTHLY)).toEqual(['spend 20.00']);
   });
 
   it('tells a governance reader that a limit is lifted, since the figure alone would mislead', () => {
@@ -309,7 +355,7 @@ describe('InstallationBudgetCard', () => {
     const { testid, feedback, text } = setup({ budgets: [MONTHLY], me: httpError(500) });
 
     expect(testid('installation-budget')).not.toBeNull();
-    expect(text()).toContain('$20.000000');
+    expect(text()).toContain('20.00');
     expect(feedback.error()).toBeNull();
     expect(testid('add-installation-budget')).toBeNull();
   });

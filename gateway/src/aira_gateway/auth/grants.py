@@ -12,6 +12,7 @@ refused (`FRD-405`, `FRD-125`).
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Iterable
 
@@ -25,6 +26,11 @@ from aira_gateway.db.models import UseCaseGroupRead, UseCaseMemberRead
 #: How long a loaded set of grants is trusted. Short enough that granting access feels immediate,
 #: long enough that a busy gateway reads the table once a period rather than once a request.
 CACHE_TTL_SECONDS = 5.0
+
+#: How long a failed read's answer — every grant dropped — stands before the table is read again:
+#: long enough that the callers queued behind the failure do not each repeat it, short enough that
+#: a database that blinked is read again within a second.
+RETRY_AFTER_FAILURE_SECONDS = 1.0
 
 _log = get_logger("aira_gateway.grants")
 
@@ -41,6 +47,15 @@ class GroupGrantResolver:
         #: False until the first successful load — distinct from "loaded and empty", which is a
         #: normal state.
         self._ready = False
+        #: Until when a failed read's dropped answer stands (`RETRY_AFTER_FAILURE_SECONDS`).
+        self._retry_at = 0.0
+        #: One reload at a time: a caller that finds the cache expired while another is already
+        #: reading waits for that read, rather than reading both tables again itself.
+        self._reload = asyncio.Lock()
+
+    def _settled(self, now: float) -> bool:
+        fresh = self._ready and now - self._loaded_at < CACHE_TTL_SECONDS
+        return fresh or now < self._retry_at
 
     async def use_cases(
         self, group_paths: Iterable[str], username: str | None = None
@@ -60,9 +75,15 @@ class GroupGrantResolver:
     async def _current(
         self,
     ) -> tuple[tuple[tuple[str, str, str], ...], tuple[tuple[str, str, str], ...]]:
-        now = time.monotonic()
-        if self._ready and now - self._loaded_at < CACHE_TTL_SECONDS:
+        if self._settled(time.monotonic()):
             return self._grants, self._members
+        async with self._reload:
+            now = time.monotonic()
+            if not self._settled(now):
+                await self._load(now)
+        return self._grants, self._members
+
+    async def _load(self, now: float) -> None:
         try:
             async with self._sessionmaker() as session:
                 rows = (
@@ -97,4 +118,4 @@ class GroupGrantResolver:
             _log.warning("group_grants_unavailable", error=str(exc), error_type=type(exc).__name__)
             self._grants = ()
             self._members = ()
-        return self._grants, self._members
+            self._retry_at = now + RETRY_AFTER_FAILURE_SECONDS

@@ -19,6 +19,7 @@ from aira_management.apps.smoketests.models import DEMO_MODEL_TEST_USE_CASE, Tes
 from aira_management.apps.usecases import events
 from aira_management.apps.usecases.models import UseCase
 from aira_management.apps.usecases.views import _snapshot
+from aira_management.apps.usecases.views.payloads import _pipeline_payload
 
 #: IT Security's model-evaluation use case (`ADR-0020`) — an ordinary use case, seeded so a fresh
 #: installation has somewhere to demonstrate a model test from.
@@ -41,14 +42,21 @@ EVALUATION_USE_CASE: dict[str, Any] = {
 }
 
 
-# After the showcase, so a reader who has just seen the use cases finds the catalogue next.
-@register(name="test_catalogue", order=60)
-def seed_test_catalogue(fresh: bool) -> SeedResult:
-    """Idempotent, and keyed so that **correcting a question corrects it in place**.
+def _evaluation_use_case() -> list[str]:
+    return [DEMO_MODEL_TEST_USE_CASE]
 
-    Keyed by **position**, not `topic`: a rename keyed on the topic would create a second question
-    beside the old one, with the old answers still attached. Questions no longer declared are
-    **retired, never deleted** — their verdicts are the evidence that anything changed.
+
+# After the showcase, so a reader who has just seen the use cases finds the catalogue next.
+@register(name="test_catalogue", order=60, use_cases=_evaluation_use_case)
+def seed_test_catalogue(fresh: bool) -> SeedResult:
+    """Idempotent, and it **only fills positions nobody has used**, live or retired.
+
+    The catalogue is seeded and then owned by IT Security in the console (`test_catalogue_data`),
+    and nothing records which rows the seed wrote, so a seed that wrote to an existing position
+    would undo the owner's work: reword a question they had reworded, bring back one they had
+    retired, or retire one they had added past the end. A position is the question's identity — a
+    rename keyed on the topic would put a second question beside the old one — so a position in
+    use, by anybody, is left as it is.
     """
     added = 0
     with transaction.atomic():
@@ -59,17 +67,15 @@ def seed_test_catalogue(fresh: bool) -> SeedResult:
         # The event, not just the row: the gateway learns configuration over Kafka (`FRD-204`)
         # and refuses every request for a use case it has not heard of.
         events.emit("usecase.upserted", _snapshot(use_case))
+        used = set(TestCase.objects.values_list("position", flat=True))
         for position, (topic, prompt, expectation) in enumerate(QUESTIONS, start=1):
-            _, created = TestCase.objects.update_or_create(
-                position=position,
-                retired=False,
-                defaults={"topic": topic, "prompt": prompt, "expectation": expectation},
+            if position in used:
+                continue
+            TestCase.objects.create(
+                position=position, topic=topic, prompt=prompt, expectation=expectation
             )
-            added += int(created)
-        retired = TestCase.objects.filter(retired=False, position__gt=len(QUESTIONS)).update(
-            retired=True
-        )
-    return {"use_case": DEMO_MODEL_TEST_USE_CASE, "questions": added, "retired": retired}
+            added += 1
+    return {"use_case": DEMO_MODEL_TEST_USE_CASE, "questions": added}
 
 
 def _point_it_at_a_model(use_case: UseCase) -> None:
@@ -94,11 +100,4 @@ def _point_it_at_a_model(use_case: UseCase) -> None:
         # **No steps**: a model test wants the model's own answer, not a test of a filter.
         defaults={"steps": [], "fallback_models": []},
     )
-    events.emit(
-        "pipeline.upserted",
-        {
-            "use_case": use_case.slug,
-            "steps": config.steps,
-            "fallback_models": config.fallback_models,
-        },
-    )
+    events.emit("pipeline.upserted", _pipeline_payload(use_case.slug, config))

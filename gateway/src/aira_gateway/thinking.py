@@ -146,6 +146,15 @@ def _limited_budget(tokens: int | None, declaration: ModelDeclaration) -> int:
             MISSING_THINKING_TOKEN_COUNT,
             "The 'limited' thinking mode requires a token count.",
         )
+    if tokens < 1:
+        # Unconditional, because the declared minimum is nullable: a budget below one token was
+        # forwarded upstream and reserved, and a negative reservation lowers the shared counter
+        # every request beside it is checked against (`FRD-405`). Google's `0` and `-1` are modes
+        # by now, never a `limited` budget.
+        raise ThinkingRejected(
+            THINKING_TOKEN_COUNT_TOO_LOW,
+            f"A thinking budget is a positive number of tokens, not {tokens}.",
+        )
     minimum, maximum = declaration.thinking_bounds
     if minimum is not None and tokens < minimum:
         raise ThinkingRejected(
@@ -167,6 +176,25 @@ def _limited_budget(tokens: int | None, declaration: ModelDeclaration) -> int:
             "can account for.",
         )
     return tokens
+
+
+def check_budget_fits(setting: Thinking | None, cap: int | None) -> None:
+    """Refuse a `limited` budget that fills the output allowance ``cap`` it is drawn from.
+
+    Thinking bills as output, so a budget of the whole allowance leaves the answer nothing, and
+    Anthropic refuses one that is not below `max_tokens` outright. Asked before dispatch against the
+    cap that will be sent — the caller's, else the model's declared default; with neither, the
+    adapter's own default applies and the adapter decides.
+    """
+    if setting is None or setting.mode != ThinkingMode.LIMITED or setting.tokens is None:
+        return
+    if cap is not None and setting.tokens >= cap:
+        raise ThinkingRejected(
+            THINKING_TOKEN_COUNT_TOO_HIGH,
+            f"A thinking budget of {setting.tokens} does not fit inside the {cap}-token output "
+            "allowance it is drawn from. Raise maxOutputTokens above the budget, or lower the "
+            "budget.",
+        )
 
 
 def reserved_tokens(setting: Thinking | None, declaration: ModelDeclaration) -> int:

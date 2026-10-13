@@ -146,6 +146,7 @@ def test_the_fixture_above_uses_the_keys_the_report_actually_carries() -> None:
             cost_nanos=0,
             unpriced_requests=0,
             unmetered_requests=0,
+            partial_usage_requests=0,
             failed_requests=0,
             avg_latency_ms=None,
             max_latency_ms=None,
@@ -497,3 +498,18 @@ def test_every_endpoint_here_resolves_the_visible_scope_exactly_once() -> None:
     ]
     assert sources, "no modules found — the assertion would pass by describing nothing"
     assert all("def render" not in source for source in sources), "the CSV path grew its own query"
+
+
+def test_a_floor_is_said_in_the_file_as_it_is_on_the_screen() -> None:
+    """Requests booked at what could be established after their caller left make the cost column
+    a lower bound, and the forwarded document says so (`FRD-128` FR-6)."""
+    report = {"by_use_case": [{**REPORT["by_use_case"][0], "partial_usage_requests": 3}]}
+
+    text = render(report, "use_case", "EUR")
+
+    assert "# 3 request(s) were left by their caller" in text
+    assert "lower bound" in text
+
+
+def test_no_floor_no_note() -> None:
+    assert "left by their caller" not in render(REPORT, "use_case", "EUR")

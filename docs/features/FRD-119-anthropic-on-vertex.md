@@ -182,6 +182,13 @@ Two obligations the new parameter adds, filled in by the adapter rather than dem
 caller, whose Gemini-shaped schema is a perfectly valid request: every object must carry
 `additionalProperties: false`, and every object must list its `required` fields.
 
+**A tool's schema is held to the same rules only where that changes nothing.** `strict` on a tool is
+this gateway's addition — the caller asked for no guarantee — so a declaration that already says
+which arguments it requires and keeps its objects closed is closed the same way and sent `strict`;
+one that strict mode would change (an unrequired argument made mandatory, a `pattern` dropped, an
+open object closed) is sent as declared, without `strict`. Never a strict schema the provider
+refuses: that failed every request carrying the tool.
+
 **One thing had to be *added* to keep a guarantee.** Under the forced tool, "the model answered in
 prose instead" was visible for free — there was no tool call to read. Now prose and a document
 arrive through the same text block, so the adapter **parses the text**: a text that is not JSON is

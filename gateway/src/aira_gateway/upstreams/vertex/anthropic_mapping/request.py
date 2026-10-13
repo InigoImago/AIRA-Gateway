@@ -13,11 +13,15 @@ from aira_gateway.core.canonical import (
     Role,
     TextPart,
     ToolCallPart,
+    ToolDeclaration,
     ToolResultPart,
+    paired_tool_results,
 )
-from aira_gateway.core.schema import to_json_schema
 from aira_gateway.upstreams.base import DialectUnsupported
-from aira_gateway.upstreams.vertex.anthropic_mapping.schema import schema_for_anthropic
+from aira_gateway.upstreams.vertex.anthropic_mapping.schema import (
+    schema_for_anthropic,
+    tool_input_schema,
+)
 
 #: Vertex requires this in the body rather than as a header.
 ANTHROPIC_VERSION = "vertex-2023-10-16"
@@ -49,7 +53,8 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
     messages: list[dict[str, Any]] = []
     system_parts: list[str] = []
 
-    for message in request.messages:
+    # Results are paired with their calls by id here, and a Gemini-speaking client sends none.
+    for message in paired_tool_results(request.messages):
         if message.role is Role.SYSTEM:
             # One system prompt here, several allowed canonically: concatenated, never reduced.
             system_parts.append(message.text)
@@ -73,43 +78,14 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
     if request.temperature is not None:
         body["temperature"] = request.temperature
     _add_sampling(body, request)
-    if request.thinking is not None and request.thinking.mode != ThinkingMode.DISABLED:
-        budget = request.thinking.tokens
-        if budget is None:
-            # **Refused, not omitted**: this dialect says "think" only by naming a budget, and a
-            # body without one is the `disabled` body — a 200 with no thinking and no word said.
-            # Reached by a level word or `auto`; the fix is not offering that mode for this model,
-            # never an invented budget (`ADR-0021`).
-            raise DialectUnsupported(
-                f"This model was asked to think in mode '{request.thinking.mode}', and the "
-                "Anthropic dialect requests thinking only by naming a token budget: it has no "
-                "field for a level and no way to say 'you decide'. Use the 'limited' mode with a "
-                "token count, or do not offer this level for this model."
-            )
-        # Thinking tokens are drawn from `max_tokens`, so a budget at or above it can never
-        # answer. The catalog refuses that where it is authored; this is the backstop for a
-        # request whose own cap is lower.
-        if budget >= max_tokens:
-            raise ValueError(
-                f"A thinking budget of {budget} does not fit inside a {max_tokens}-token "
-                "output allowance — the budget is drawn from it."
-            )
-        body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+    if request.thinking is not None and request.thinking.mode == ThinkingMode.DISABLED:
+        # **Said, not omitted**: a model that thinks by default thinks whenever the parameter is
+        # absent — and bills for it — so "off" is a value on the wire, as on every other dialect.
+        body["thinking"] = {"type": "disabled"}
+    elif request.thinking is not None:
+        body["thinking"] = _thinking(request, max_tokens)
     if request.tools:
-        body["tools"] = [
-            {
-                "name": tool.name,
-                # Asks the provider to guarantee the arguments match the schema.
-                "strict": True,
-                "description": tool.description,
-                "input_schema": (
-                    to_json_schema(tool.parameters)
-                    if tool.parameters is not None
-                    else {"type": "object", "properties": {}}
-                ),
-            }
-            for tool in request.tools
-        ]
+        body["tools"] = [_tool(tool) for tool in request.tools]
         if request.cache_prefix:
             # On the last tool only: a breakpoint caches everything before it, and a request may
             # carry only four.
@@ -125,6 +101,70 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
             }
         }
     return body
+
+
+def _thinking(request: CanonicalRequest, max_tokens: int) -> dict[str, Any]:
+    """The `thinking` block for a request that asks the model to think.
+
+    Every refusal here is `DialectUnsupported`, a named refusal the dispatch chain skips the
+    candidate for: each is a request this wire format cannot carry, which a fallback on another
+    dialect may well serve.
+    """
+    assert request.thinking is not None
+    budget = request.thinking.tokens
+    if budget is None:
+        # **Refused, not omitted**: this dialect says "think" only by naming a budget, and a
+        # body without one is the `disabled` body — a 200 with no thinking and no word said.
+        # Reached by a level word or `auto`; the fix is not offering that mode for this model,
+        # never an invented budget (`ADR-0021`).
+        raise DialectUnsupported(
+            f"This model was asked to think in mode '{request.thinking.mode}', and the "
+            "Anthropic dialect requests thinking only by naming a token budget: it has no "
+            "field for a level and no way to say 'you decide'. Use the 'limited' mode with a "
+            "token count, or do not offer this level for this model."
+        )
+    # Thinking tokens are drawn from `max_tokens`, so a budget at or above it can never answer.
+    # The catalogue refuses that where it is authored; this is the backstop for a request whose own
+    # cap — or the adapter's default, where neither caller nor catalogue named one — is lower.
+    if budget >= max_tokens:
+        raise DialectUnsupported(
+            f"A thinking budget of {budget} tokens does not fit inside this request's "
+            f"{max_tokens}-token output allowance: Anthropic draws the thinking from that "
+            "allowance, so the budget must be below it. Raise maxOutputTokens or lower the budget."
+        )
+    if _continues_a_tool_call(request):
+        # Anthropic requires the model's own `thinking` block, signature and all, in front of a
+        # call it is continuing, and refuses the turn without one. This gateway never hands those
+        # blocks to a caller — their text is the model's reasoning, withheld unless a use case
+        # enables it — so it has none to send back.
+        raise DialectUnsupported(
+            "This turn continues a function call on a Claude model with thinking enabled. "
+            "Anthropic requires the model's own thinking block in front of the call it continues, "
+            "and this gateway does not carry thinking blocks to the caller, so it cannot send one "
+            "back. Send this turn with thinking disabled, or use a model that does not think by "
+            "default for tool loops."
+        )
+    return {"type": "enabled", "budget_tokens": budget}
+
+
+def _continues_a_tool_call(request: CanonicalRequest) -> bool:
+    """Whether the latest model turn asked for a function call — the turn Anthropic validates."""
+    model_turns = [message for message in request.messages if message.role is Role.MODEL]
+    return bool(model_turns and model_turns[-1].tool_calls)
+
+
+def _tool(declaration: ToolDeclaration) -> dict[str, Any]:
+    """One declared function. `strict` — the provider guaranteeing the arguments match — only
+    where the schema can be sent strict without changing the tool (`tool_input_schema`)."""
+    schema, strict = tool_input_schema(declaration.parameters)
+    tool: dict[str, Any] = {
+        "name": declaration.name,
+        "description": declaration.description,
+        "input_schema": schema,
+    }
+    if strict:
+        tool["strict"] = True
+    return tool
 
 
 def _add_sampling(body: dict[str, Any], request: CanonicalRequest) -> None:

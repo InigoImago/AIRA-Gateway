@@ -33,7 +33,9 @@ class Migration(migrations.Migration):
     dependencies = [("budgets", "0003_alter_budget_scope")]
 
     operations = [
-        migrations.RunPython(drop_member_budgets, migrations.RunPython.noop),
+        # No reverse: a rollback cannot restore deleted rows, so `migrate` refuses one by name
+        # (`IrreversibleError`) rather than reporting a rollback that did not happen.
+        migrations.RunPython(drop_member_budgets),
         migrations.AlterField(
             model_name="budget",
             name="scope",

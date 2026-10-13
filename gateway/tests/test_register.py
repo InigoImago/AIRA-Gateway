@@ -517,6 +517,19 @@ async def test_the_register_says_when_the_sweep_last_ran_and_what_it_took() -> N
     }
 
 
+async def test_a_member_sees_the_evidence_for_their_own_deadline() -> None:
+    """Shown to a member as well, on purpose: the record is what makes their use case's erasure
+    deadline more than a sentence, it names nobody, and withholding it would print `null` — which
+    this document uses to say the sweep never ran."""
+    app = _app(MEMBER)
+    ran = datetime(2026, 8, 21, 3, 0, tzinfo=UTC)
+    with TestClient(app) as client:
+        await _seed(app, _use_case("mine"), RetentionRun(ran_at=ran, payloads_cleared=5))
+        body = _register(client)
+
+    assert body["last_erasure"]["ran_at"] == ran.isoformat()
+
+
 async def test_a_sweep_that_has_never_run_is_null_and_not_zero() -> None:
     """*Unknown is not zero*, in the column where it matters most. `0 cleared` reads as "the sweep
     ran and there was nothing to remove"; `null` reads as what it is, which is that the erasure

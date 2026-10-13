@@ -62,17 +62,6 @@ def test_create_use_case_budget_and_emit(captured_events) -> None:
     assert published[0]["limit_tokens"] == 100000
 
 
-def test_member_budget_requires_subject() -> None:
-    admin = _user("admin1", "global-admin")
-    _make_uc(admin, "demo-uc")
-    resp = _client(admin).post(
-        f"{BASE}demo-uc/budgets/",
-        {"scope": "member", "period": "day", "limit_requests": 10},
-        format="json",
-    )
-    assert resp.status_code == 400
-
-
 def test_a_budget_naming_one_person_is_refused() -> None:
     """The `member` scope was removed on the owner's decision (2026-08-14): singling somebody out
     is not a governance decision this product wants to make easy.
@@ -224,8 +213,8 @@ def test_budget_write_forbidden_for_non_admin_member() -> None:
 def test_str_representation() -> None:
     admin = _user("admin1", "global-admin")
     uc = _make_uc(admin, "demo-uc")
-    budget = Budget.objects.create(use_case=uc, scope="member", subject="bob", period="day")
-    assert str(budget) == "budget member:bob (day)"
+    budget = Budget.objects.create(use_case=uc, scope="each_member", period="day")
+    assert str(budget) == "budget each_member:demo-uc (day)"
 
 
 # ---- cost limits (FRD-403) ---------------------------------------------------------------
@@ -320,3 +309,77 @@ def test_enabled_is_honoured_when_it_is_said(captured_events) -> None:
     # The gateway decides on its own copy, so the switch is only real if the event carries it.
     published = [p for t, p in captured_events if t == "budget.upserted"]
     assert [p["enabled"] for p in published[-3:]] == [True, False, True]
+
+
+# ---- what a body may leave out, and what it may not say (`FRD-400` FR-2) ----------------------
+
+
+def test_a_budget_without_a_period_is_a_monthly_one(captured_events) -> None:
+    """`period` has a model default, so DRF made it optional and left it out of the validated data
+    — and the upsert indexed it: `KeyError`, a `500`, for a body the field itself had accepted. An
+    omitted period is the model's own default, and the event says which one it became."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/budgets/", {"scope": "use_case", "limit_cost": "10"}, format="json"
+    )
+
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["period"] == Budget.MONTH
+    published = [p for t, p in captured_events if t == "budget.upserted"]
+    assert published[-1]["period"] == Budget.MONTH
+
+
+def test_an_installation_budget_is_not_set_on_a_use_case() -> None:
+    """The scope belongs to the installation's own route (`FRD-610`). Accepted here, it reached the
+    check constraint as an `IntegrityError` — a `500` naming nothing a caller could act on."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/budgets/",
+        {"scope": "installation", "period": "day", "limit_cost": "10"},
+        format="json",
+    )
+
+    assert resp.status_code == 400, resp.content
+    assert "installation-budgets" in str(resp.json())
+    assert not Budget.objects.exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("limit_tokens", 0), ("limit_requests", 0), ("limit_cost", "0"), ("limit_cost", "0.0000")],
+)
+def test_a_limit_of_zero_is_refused_by_name(field: str, value: object) -> None:
+    """A limit of zero refuses every request — the gateway's ledger holds `usage >= limit` at
+    zero — which is the accident the rate limit already refuses ("zero would mean refuse
+    everything"). No limit is said by leaving the field empty, and a pause by switching the budget
+    off."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/budgets/",
+        {"scope": "use_case", "period": "month", field: value},
+        format="json",
+    )
+
+    assert resp.status_code == 400, resp.content
+    assert field in resp.json() or field in str(resp.json()), resp.json()
+    assert not Budget.objects.exists()
+
+
+def test_dropping_the_member_scope_cannot_be_rolled_back() -> None:
+    """The migration says it is irreversible on purpose: a rollback cannot restore the rows it
+    deleted. Its reverse was a no-op, so `migrate budgets 0003` reported a rollback that did not
+    happen — Django raises `IrreversibleError` only for an operation that declares no reverse."""
+    import importlib
+
+    for module in (
+        "aira_management.apps.budgets.migrations.0004_drop_member_scope",
+        "aira_management.apps.ratelimits.migrations.0003_drop_member_scope",
+    ):
+        migration = importlib.import_module(module).Migration
+        assert not all(operation.reversible for operation in migration.operations), module

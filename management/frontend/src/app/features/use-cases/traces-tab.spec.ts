@@ -1,8 +1,8 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
-import { Subject, of, throwError } from 'rxjs';
-import { Trace, TracePage } from '../../core/api/models';
+import { Observable, Subject, of, throwError } from 'rxjs';
+import { Trace, TracePage, TracePayload } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -57,12 +57,22 @@ interface Options {
   payload?: Record<string, unknown>;
   payloadFails?: boolean;
   failMore?: boolean;
+  /** Answers held back per request id, to answer in whatever order a test needs. */
+  heldPayloads?: Record<string, Subject<TracePayload>>;
+  /** First-page answers held back, one per call in order; later calls fall back to `pages`. */
+  heldPages?: Subject<TracePage>[];
+  /** What every first-page load fails with. */
+  pagesFail?: unknown;
+  /** `/me` fails instead of answering. */
+  meFails?: boolean;
 }
 
 function setup(options: Options = {}) {
   TestBed.resetTestingModule();
   const queries: Record<string, unknown>[] = [];
   const pages = options.pages ?? [{ traces: [trace()], next_cursor: null, scope: 'use_cases' }];
+  // A copy: answered in order, without emptying the list the test still refers to.
+  const heldPages = [...(options.heldPages ?? [])];
   let call = 0;
   TestBed.configureTestingModule({
     imports: [Host],
@@ -74,7 +84,10 @@ function setup(options: Options = {}) {
         provide: MeService,
         useValue: {
           currency: signal(''),
-          get: () => of({ roles: options.roles ?? [], permissions: options.permissions ?? [] }),
+          get: () =>
+            options.meFails
+              ? throwError(() => ({ status: 503 }))
+              : of({ roles: options.roles ?? [], permissions: options.permissions ?? [] }),
         },
       },
       {
@@ -82,6 +95,7 @@ function setup(options: Options = {}) {
         useValue: {
           tracePayload: (id: string) => {
             queries.push({ payloadFor: id });
+            if (options.heldPayloads?.[id]) return options.heldPayloads[id];
             if (options.payloadFails) return throwError(() => ({ status: 403 }));
             return of(
               options.payload ?? {
@@ -93,9 +107,12 @@ function setup(options: Options = {}) {
               },
             );
           },
-          traces: (query: Record<string, unknown>) => {
+          traces: (query: Record<string, unknown>): Observable<TracePage> => {
             queries.push(query);
             if (options.failMore && query['cursor']) return throwError(() => ({ status: 500 }));
+            if (options.pagesFail && !query['cursor']) return throwError(() => options.pagesFail);
+            const held = heldPages.shift();
+            if (held) return held;
             const page = pages[Math.min(call, pages.length - 1)];
             call += 1;
             return of(page);
@@ -326,8 +343,16 @@ describe('TracesTab — reading one row', () => {
     expect(text()).toContain('—');
   });
 
-  it('shows a half-known token count rather than dropping it', () => {
-    expect(one({ prompt_tokens: 12, completion_tokens: null }).text()).toContain('12 in / 0 out');
+  it('shows a half-known token count rather than dropping it, and the unknown half as unknown', () => {
+    // "Unknown is not zero": printing the missing half as 0 says the model answered with nothing.
+    const { text } = one({ prompt_tokens: 12_345, completion_tokens: null });
+    expect(text()).toContain('12,345 in / — out');
+    expect(text()).not.toContain('0 out');
+  });
+
+  it('prints a cheap request as what it cost, never as zero, through the shared money rule', () => {
+    // 12 345 nanos at four decimals is 0.0000 — a priced request shown as free.
+    expect(one({ cost_nanos: 12_345 }).text()).toContain('0.000012');
   });
 
   it('shows the trace id, which is what correlates this row with the logs', () => {
@@ -461,8 +486,9 @@ describe('TracesTab — while a page is in flight', () => {
 
   it('withholds the incident field when the permissions could not be read', () => {
     /** The safe direction. A failed `/me` that left the field on screen would produce a control
-     *  that 403s, and the reader would conclude the recording is broken. */
-    const { testid } = setup({ permissions: [] });
+     *  that 403s, and the reader would conclude the recording is broken. The answer the stub
+     *  would give lists the permission, so only the failure can be what withholds it. */
+    const { testid } = setup({ permissions: ['incident.investigate'], meFails: true });
 
     expect(testid('trace-source-ip')).toBeNull();
   });
@@ -636,14 +662,23 @@ describe('TracesTab — while a page is in flight', () => {
     expect(firstCell?.querySelector('[data-testid^="open-payload-"]')).not.toBeNull();
   });
 
-  it('opens a request by clicking anywhere on its row', () => {
-    /** A 2.5rem target at the far left of a wide table is a small target. The row is the whole
-     *  width of the thing the reader is looking at. */
-    const { fixture, element, testid } = setup({ permissions: ['incident.investigate'] });
-    element.querySelector<HTMLElement>('tbody tr')?.click();
+  it("opens a request's details by clicking anywhere on its row — and reads no content", () => {
+    /** A 2.5rem target at the far left of a wide table is a small target, so the whole row opens
+     *  the details. It does not read the prompt: that read is recorded under the reader's name,
+     *  and a click meant to select or copy a subject or a time must not make one (`FRD-622`). */
+    const { fixture, element, testid, queries } = setup({ permissions: ['incident.investigate'] });
+    element.querySelector<HTMLElement>('tbody tr td:nth-child(2)')?.click();
     fixture.detectChanges();
 
-    expect(testid('payload-request')).not.toBeNull();
+    expect(testid('payload-request')).toBeNull();
+    expect(queries.some((query) => 'payloadFor' in query)).toBe(false);
+    expect(element.querySelector('.row-detail')?.textContent).toContain('qwen3:0.6b');
+
+    // The content is one deliberate, labelled press away — and that press is the read.
+    testid('read-payload-t1')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    fixture.detectChanges();
+    expect(queries.filter((query) => 'payloadFor' in query).length).toBe(1);
+    expect(testid('payload-request')?.textContent).toContain('hello');
   });
 
   it('marks a request a pipeline step objected to', () => {
@@ -778,5 +813,226 @@ describe('TracesTab — one request, linked from the content-read log (`FRD-622`
     harness.fixture.detectChanges();
 
     expect(harness.queries.length).toBe(asked);
+  });
+});
+
+/**
+ * Two answers in flight at once — the races a slow gateway produces and an instant stub never does.
+ */
+describe('TracesTab — answers that arrive late', () => {
+  const payloadOf = (id: string, prompt: string): TracePayload => ({
+    id,
+    available: true,
+    request: { text: prompt },
+    response: { text: 'answer' },
+    ground: 'incident',
+  });
+
+  it("never shows one request's prompt under another request's row", () => {
+    // Open A, then B before A has answered. A answering last used to land under B — one person's
+    // prompt attributed to another's name, model and time, under "this read was recorded".
+    const held = { a: new Subject<TracePayload>(), b: new Subject<TracePayload>() };
+    const harness = setup({
+      permissions: ['incident.investigate'],
+      heldPayloads: held,
+      pages: [
+        {
+          traces: [
+            trace({ id: 'a', subject: 'subject-of-a' }),
+            trace({ id: 'b', subject: 'subject-of-b' }),
+          ],
+          next_cursor: null,
+          scope: 'all',
+        },
+      ],
+    });
+
+    harness.click('open-payload-a');
+    harness.click('open-payload-b');
+    held.b.next(payloadOf('b', 'PROMPT OF B'));
+    held.a.next(payloadOf('a', 'PROMPT OF A'));
+    harness.fixture.detectChanges();
+
+    const detail = harness.element.querySelector('.row-detail');
+    expect(detail?.previousElementSibling?.textContent).toContain('subject-of-b');
+    expect(harness.testid('payload-request')?.textContent).toContain('PROMPT OF B');
+    expect(harness.text()).not.toContain('PROMPT OF A');
+  });
+
+  it('never places an answer about another request under the open row', () => {
+    // Whatever went wrong on the way — a cache, a proxy, a server mixing two up — content is shown
+    // only under the request it says it belongs to.
+    const held = { b: new Subject<TracePayload>() };
+    const harness = setup({
+      permissions: ['incident.investigate'],
+      heldPayloads: held,
+      pages: [
+        { traces: [trace({ id: 'a' }), trace({ id: 'b' })], next_cursor: null, scope: 'all' },
+      ],
+    });
+
+    harness.click('open-payload-b');
+    held.b.next(payloadOf('a', 'PROMPT OF A'));
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).not.toContain('PROMPT OF A');
+  });
+
+  it('drops the read still in flight when another row is opened', () => {
+    const held = { a: new Subject<TracePayload>(), b: new Subject<TracePayload>() };
+    const harness = setup({
+      permissions: ['incident.investigate'],
+      heldPayloads: held,
+      pages: [
+        { traces: [trace({ id: 'a' }), trace({ id: 'b' })], next_cursor: null, scope: 'all' },
+      ],
+    });
+
+    harness.click('open-payload-a');
+    expect(held.a.observed).toBe(true);
+    harness.click('open-payload-b');
+
+    expect(held.a.observed).toBe(false);
+  });
+
+  it('runs a filter at once while the first page is still on its way, and shows its rows', () => {
+    // The filter's load was skipped while a poll was in flight: the old answer then landed under
+    // the ticked box — for ten seconds with live on, for good with it off.
+    const first = new Subject<TracePage>();
+    const filtered = new Subject<TracePage>();
+    const harness = setup({ heldPages: [first, filtered] });
+
+    harness.click('tools-only');
+    expect(harness.queries.at(-1)?.['toolsOnly']).toBe(true);
+
+    filtered.next({
+      traces: [trace({ id: 'tool-turn', subject: 'filtered' })],
+      next_cursor: null,
+      scope: 'all',
+    });
+    first.next({
+      traces: [trace({ id: 'any', subject: 'unfiltered' })],
+      next_cursor: null,
+      scope: 'all',
+    });
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('filtered');
+    expect(harness.text()).not.toContain('unfiltered');
+  });
+
+  it('asks again for every pause in typing that changed the filter, not only the first', async () => {
+    // Every keystroke was the same event, so a distinct-check over events let the first pause
+    // through and no other: the box said 9c01 while the table listed 7f2a's requests.
+    const { tab, queries } = setup();
+    const type = (tab as unknown as { setCredential: (v: string) => void }).setCredential.bind(tab);
+
+    type('7f2a');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    type('9c01');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(queries.filter((query) => 'credential' in query).map((q) => q['credential'])).toEqual([
+      '',
+      '7f2a',
+      '9c01',
+    ]);
+  });
+
+  it('asks nothing new when a pause leaves the filter as it was', async () => {
+    const { tab, queries } = setup();
+    const type = (tab as unknown as { setCredential: (v: string) => void }).setCredential.bind(tab);
+
+    type('7f2a');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    type('7f2a ');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(queries.filter((query) => query['credential'] === '7f2a').length).toBe(1);
+  });
+
+  it('shows the first page when live is switched off while it is still on its way', () => {
+    // Switching live off dropped the load in flight, the first one included: the tab then said
+    // "Loading requests…" for good, and a reader who paused to read a row never got one.
+    const first = new Subject<TracePage>();
+    const harness = setup({ heldPages: [first] });
+
+    harness.click('traces-live');
+    first.next({
+      traces: [trace({ id: 'first', subject: 'arrived-after-the-pause' })],
+      next_cursor: null,
+      scope: 'all',
+    });
+    harness.fixture.detectChanges();
+
+    expect((harness.testid('traces-live') as HTMLInputElement).checked).toBe(false);
+    expect(harness.text()).toContain('arrived-after-the-pause');
+    expect(harness.element.querySelector('.loading')).toBeNull();
+  });
+
+  it('reports a failed load in the page banner instead of loading for ever', () => {
+    // No load reported anything: a gateway that was down left "Loading requests…" on screen
+    // indefinitely, with the server's explanation nowhere.
+    const harness = setup({
+      pagesFail: { status: 503, error: { error: { message: 'The gateway is restarting.' } } },
+    });
+    const feedback = harness.fixture.debugElement.injector.get(PageFeedback);
+
+    expect(feedback.error()).toBe('The gateway is restarting.');
+    expect(harness.element.querySelector('.loading')).toBeNull();
+  });
+
+  it('takes its failure back once a later load answers', () => {
+    const held = [new Subject<TracePage>(), new Subject<TracePage>()];
+    const harness = setup({ heldPages: held });
+    const feedback = harness.fixture.debugElement.injector.get(PageFeedback);
+
+    held[0].error({ status: 502 });
+    expect(feedback.error()).toBe('Could not load the requests.');
+
+    harness.click('refusals-only');
+    held[1].next({ traces: [trace()], next_cursor: null, scope: 'all' });
+    expect(feedback.error()).toBeNull();
+  });
+
+  it('drops an older page still on its way when the filter changes', () => {
+    // Its rows were drawn from the previous filter and would be appended under the new one.
+    const older = new Subject<TracePage>();
+    const harness = setup({
+      pages: [{ traces: [trace({ id: 't1' })], next_cursor: 'c1', scope: 'all' }],
+    });
+    const service = TestBed.inject(UseCaseService) as unknown as {
+      traces: (query: Record<string, unknown>) => Observable<TracePage>;
+    };
+    const original = service.traces;
+    service.traces = (query) => (query['cursor'] ? older : original(query));
+
+    harness.click('load-more');
+    harness.click('mine-only');
+    older.next({
+      traces: [trace({ id: 'stale', subject: 'from-the-old-filter' })],
+      next_cursor: null,
+      scope: 'all',
+    });
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).not.toContain('from-the-old-filter');
+  });
+});
+
+describe('TracesTab — how stale the list is', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('keeps counting while live is off, instead of saying "0s ago" for good', () => {
+    // The stamp read a clock no signal carried, so in this zoneless application it froze at the
+    // moment of the last refresh.
+    vi.useFakeTimers();
+    const harness = setup();
+    harness.click('traces-live');
+
+    vi.advanceTimersByTime(3 * 60 * 1000);
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('traces-stamp')?.textContent).toContain('3m ago');
   });
 });

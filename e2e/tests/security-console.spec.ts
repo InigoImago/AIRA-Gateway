@@ -1,6 +1,9 @@
 import { GATEWAY_URL } from '../stack';
 import { APIRequestContext, Page, expect, test } from '@playwright/test';
 import {
+  openUseCase,
+  grantGroup,
+  awaitGatewayMembership,
   USERS,
   createUseCase,
   expectNoHorizontalOverflow,
@@ -279,11 +282,19 @@ test.describe('Warnings and traces on a use case', () => {
   });
 
   test('a member of a real use case reaches their own warnings', async ({ page }) => {
-    // `demo-uc` is a seeded use case whose Keycloak group `ucadmin` is actually in, which is what
-    // makes this the members' view rather than an oversight one.
-    await login(page, USERS.useCaseAdmin);
+    // A use case made here, granted to a group `ucadmin` is in — `/use-cases/entwicklung`, which
+    // holds nobody else — as a **member**: that is what makes this the members' view rather than
+    // an oversight one. (`demo-uc`, which this used, is created by nothing.) The gateway learns
+    // the grant over Kafka, so it is waited for before the warnings are asked.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('warnings');
+    await createUseCase(page, slug, 'Own warnings probe');
+    await grantGroup(page, slug, '/use-cases/entwicklung', 'user');
+    await logout(page);
 
-    await page.goto('/use-cases/demo-uc?tab=warnings');
+    await login(page, USERS.useCaseAdmin);
+    await awaitGatewayMembership(page, slug);
+    await openUseCase(page, slug, 'warnings');
     // Nothing has fired, and the page says that rather than showing an empty table that reads as
     // broken — and it is *this* empty, not the out-of-scope one.
     await expect(page.locator('[data-testid="no-warnings"]')).toBeVisible({ timeout: 20_000 });

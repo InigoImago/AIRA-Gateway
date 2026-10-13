@@ -61,6 +61,7 @@ REQUEST_METADATA = (
     "publisher", "region", "status", "outcome", "pipeline_decisions", "flagged", "tool_calls",
     "degraded", "prompt_tokens", "cached_input_tokens", "cache_write_tokens", "completion_tokens",
     "reasoning_tokens", "total_tokens", "latency_ms", "request_bytes", "trace_id", "cost_nanos",
+    "usage_basis",
 )  # fmt: skip
 
 ACCOUNT = Activity(
@@ -105,7 +106,7 @@ ADMINISTRATION = Activity(
         _mg("usecases_usecase", "deleted_by"),
         _mg("usecases_usecasegroupgrant", "granted_by"),
         _mg("api_pendingidentity", "invited_by"),
-        _mg("outbox_outboxevent", "traceparent", "published_at"),
+        _mg("outbox_outboxevent", "traceparent", "published_at", "parked_at", "parked_reason"),
     ),
 )
 API_KEYS = Activity(
@@ -156,6 +157,8 @@ CONTENT_READS = Activity(
             "username",
             "ground",
             "roles",
+            "auth_method",
+            "credential",
         ),  # fmt: skip
     ),
 )

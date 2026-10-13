@@ -15,6 +15,9 @@ from aira_gateway.core.canonical import (
     Role,
     TextPart,
     Thinking,
+    ToolCallPart,
+    ToolResultPart,
+    paired_tool_results,
 )
 from aira_gateway.core.schema import ResponseSchema, to_json_schema
 from aira_gateway.upstreams.base import DialectUnsupported
@@ -23,6 +26,17 @@ _ROLE = {Role.SYSTEM: "system", Role.USER: "user", Role.MODEL: "assistant"}
 
 #: The name the schema is registered under. OpenAI requires one; it is never shown to the caller.
 SCHEMA_NAME = "aira_response"
+
+#: The body field for the output cap where a platform does not name its own (`Routes`): the one
+#: every OpenAI-compatible server accepts.
+DEFAULT_OUTPUT_CAP_FIELD = "max_tokens"
+
+#: Constraints this dialect's **strict** mode cannot express (OpenAI's structured outputs refuse
+#: them by name). On a platform that validates strict schemas, a schema using one skips the
+#: candidate by name rather than being sent with the constraint dropped (`ADR-0012` §3).
+UNSUPPORTED_STRICT_FIELDS = frozenset(
+    {"min_length", "max_length", "min_properties", "max_properties"}
+)
 
 #: What this dialect can express (`FRD-124`). `top_k` is absent from the chat API and therefore
 #: **refused** on a candidate served this way, not dropped: a caller who pinned `top_k=1` and got
@@ -34,7 +48,8 @@ def _content(message: CanonicalMessage) -> str | list[dict[str, Any]]:
     """Canonical parts → OpenAI content.
 
     A text-only message stays a plain string: the common case, and several implementations of this
-    API are fussier about the array form.
+    API are fussier about the array form. Tool parts are not content here: `_wire_messages` carries
+    them as messages of their own.
     """
     if not message.attachments:
         return message.text
@@ -73,7 +88,8 @@ def _wire_messages(request: CanonicalRequest) -> list[dict[str, Any]]:
     order.
     """
     out: list[dict[str, Any]] = []
-    for message in request.messages:
+    # Results are paired with their calls by id here, and a Gemini-speaking client sends none.
+    for message in paired_tool_results(request.messages):
         calls = message.tool_calls
         results = message.tool_results
         if not calls and not results:
@@ -96,6 +112,19 @@ def _wire_messages(request: CanonicalRequest) -> list[dict[str, Any]]:
             out.append(entry)
         for result in results:
             out.append({"role": "tool", "tool_call_id": result.call_id, "content": result.content})
+        said = [
+            part for part in message.parts if not isinstance(part, ToolCallPart | ToolResultPart)
+        ]
+        if results and said:
+            # What the turn says beside its results — "now also translate it" — follows them as a
+            # message of its own: the results must come straight after the calls they answer, and
+            # dropping the rest would answer a different question with a 200.
+            out.append(
+                {
+                    "role": _ROLE[message.role],
+                    "content": _content(message.model_copy(update={"parts": said})),
+                }
+            )
     return out
 
 
@@ -118,8 +147,17 @@ def _wire_tools(request: CanonicalRequest) -> list[dict[str, Any]]:
     ]
 
 
-def canonical_to_openai(request: CanonicalRequest, *, stream: bool = False) -> dict[str, Any]:
-    """Build a `/v1/chat/completions` body. The system prompt is simply the first message."""
+def canonical_to_openai(
+    request: CanonicalRequest,
+    *,
+    stream: bool = False,
+    output_cap_field: str = DEFAULT_OUTPUT_CAP_FIELD,
+) -> dict[str, Any]:
+    """Build a `/v1/chat/completions` body. The system prompt is simply the first message.
+
+    ``output_cap_field`` is the platform's name for the output cap (`Routes.output_cap_field`): a
+    platform whose reasoning deployments refuse `max_tokens` takes `max_completion_tokens`.
+    """
     body: dict[str, Any] = {
         "model": request.model,
         "messages": _wire_messages(request),
@@ -129,7 +167,7 @@ def canonical_to_openai(request: CanonicalRequest, *, stream: bool = False) -> d
     if request.temperature is not None:
         body["temperature"] = request.temperature
     if request.max_output_tokens is not None:
-        body["max_tokens"] = request.max_output_tokens
+        body[output_cap_field] = request.max_output_tokens
     if request.thinking is not None:
         body["reasoning_effort"] = _reasoning_effort(request.thinking)
     if request.response_schema is not None:
@@ -199,8 +237,63 @@ def _response_format(schema: ResponseSchema) -> dict[str, Any]:
     so no dialect imports it from another."""
     return {
         "type": "json_schema",
-        "json_schema": {"name": SCHEMA_NAME, "strict": True, "schema": to_json_schema(schema)},
+        "json_schema": {"name": SCHEMA_NAME, "strict": True, "schema": strict_schema(schema)},
     }
+
+
+def strict_schema(schema: ResponseSchema) -> dict[str, Any]:
+    """Our schema as strict mode accepts it: every object closed, every property required.
+
+    Strict mode refuses an object that allows other keys or leaves a property out of `required`,
+    and a Gemini-shaped schema does both by default. Requiring every property keeps the answer
+    valid against the schema the caller sent — a document may always carry more than it must —
+    where the alternative, a nullable stand-in for an optional property, would put a `null` where
+    the caller's schema allows none.
+    """
+    strict = _strict(to_json_schema(schema))
+    assert isinstance(strict, dict)  # a schema's root is an object by construction
+    return strict
+
+
+def _strict(node: Any) -> Any:
+    if isinstance(node, list):
+        # `anyOf` keeps its variants in a list; an object among them is closed like any other.
+        return [_strict(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    out = {key: _strict(value) for key, value in node.items()}
+    node_type = out.get("type")
+    if node_type == "object" or (isinstance(node_type, list) and "object" in node_type):
+        out["additionalProperties"] = False
+        out["required"] = list(out.get("properties") or {})
+    return out
+
+
+def schema_refusal(schema: ResponseSchema) -> str | None:
+    """Why strict mode cannot express ``schema``, or ``None``.
+
+    Asked by the dispatch chain (`ADR-0012` §3) on a platform that validates strict schemas, so an
+    inexpressible one skips the candidate by name instead of failing it with the vendor's 400.
+    """
+    used = sorted(
+        field for field in UNSUPPORTED_STRICT_FIELDS if getattr(schema, field, None) is not None
+    )
+    if schema.additional_properties is True:
+        used.append("additionalProperties: true")
+    nested = list((schema.properties or {}).values())
+    if schema.items is not None:
+        nested.append(schema.items)
+    nested.extend(schema.any_of or ())
+    for child in nested:
+        deeper = schema_refusal(child)
+        if deeper is not None:
+            return deeper
+    if not used:
+        return None
+    return (
+        f"this platform's strict structured output does not support {', '.join(used)}, and a "
+        "schema sent without them would be satisfied by an answer the caller's constraint excludes"
+    )
 
 
 def canonical_to_openai_embedding(request: CanonicalEmbeddingRequest) -> dict[str, Any]:

@@ -9,14 +9,75 @@ The trigger is an annotated tag now, and its message *is* the release notes. Tha
 load-bearing, so it is checked before anything is published, which is the only point at which
 refusing is still free.
 
-Hermetic: every test passes a message string. The two functions that touch Git are exercised against
-the repository's own tags, where the only honest assertion is that they report what Git reports.
+Hermetic: the rules are tested on message strings, and the functions that ask Git are tested
+against **a repository of their own, made per test** — never by tagging the developer's checkout. A
+test that tags the real repository and removes the tag in `finally` leaves it behind when the run is
+killed, and a leftover `v99.99.98` with a perfectly good annotation is a release one `git push
+--follow-tags` away, after which every real release is refused as older.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
+import release_notes
 from release_notes import NotDescribed, Notes, read
+
+REPOSITORY = Path(__file__).resolve().parents[2]
+
+#: Git as the scratch repositories see it: no global or system configuration — so a developer's
+#: `tag.gpgSign` cannot prompt for a passphrase — and an identity, which an annotated tag needs and
+#: a fresh CI checkout does not have.
+ISOLATED_GIT = {
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "the test suite",
+    "GIT_AUTHOR_EMAIL": "tests@example.invalid",
+    "GIT_COMMITTER_NAME": "the test suite",
+    "GIT_COMMITTER_EMAIL": "tests@example.invalid",
+}
+
+
+def _tags(repository: Path) -> list[str]:
+    return subprocess.run(
+        ["git", "tag", "--list"], cwd=repository, capture_output=True, text=True, check=True
+    ).stdout.split()
+
+
+@pytest.fixture(autouse=True)
+def _the_real_repository_is_never_tagged() -> Iterator[None]:
+    """The property this module once broke: whatever a test does, the checkout's tags are as they
+    were — checked after every test, so a test that tags the wrong repository fails here."""
+    before = _tags(REPOSITORY)
+    yield
+    assert _tags(REPOSITORY) == before, "a test changed the tags of the repository it runs in"
+
+
+@pytest.fixture
+def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A one-commit repository that `release_notes` asks instead of the checkout."""
+    for name, value in ISOLATED_GIT.items():
+        monkeypatch.setenv(name, value)
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    (repository / "README").write_text("scratch\n")
+    subprocess.run(["git", "add", "README"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "scratch"], cwd=repository, check=True)
+    monkeypatch.setattr(release_notes, "ROOT", repository)
+    return repository
+
+
+def _tag(repository: Path, name: str, message: str | None = None) -> None:
+    """A lightweight tag without a message, an annotated one with."""
+    annotation = ["-a", "-m", message] if message is not None else []
+    subprocess.run(
+        ["git", "tag", *annotation, name], cwd=repository, check=True, capture_output=True
+    )
 
 
 def _read(message: str, version: str = "v1.2.3") -> Notes:
@@ -185,7 +246,7 @@ def test_the_repositorys_own_tags_are_read_as_git_reports_them() -> None:
     assert previous("v0.1.0") is None
 
 
-def test_a_lightweight_tag_is_not_mistaken_for_an_annotated_one() -> None:
+def test_a_lightweight_tag_is_not_mistaken_for_an_annotated_one(scratch: Path) -> None:
     """**Rule 1 did not work, and this is the test that would have caught it.**
 
     `annotation` asked Git for `%(contents)`, and its comment claimed that was empty for a
@@ -198,26 +259,20 @@ def test_a_lightweight_tag_is_not_mistaken_for_an_annotated_one() -> None:
     while the annotated tag on the remote carried the real description the whole time. The release
     job had been handed a flattened tag by `actions/checkout` and had no way to notice.
 
-    Asserted against a real lightweight tag, created and removed here, because the whole defect was
-    a claim about what Git returns that nobody had asked Git about.
+    Asserted against a real lightweight tag, because the whole defect was a claim about what Git
+    returns that nobody had asked Git about.
     """
-    import subprocess
-
     from release_notes import annotation
 
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-    ).stdout.strip()
-    subprocess.run(["git", "tag", "v99.99.99", head], check=True, capture_output=True)
-    try:
-        assert annotation("v99.99.99") == "", (
-            "a lightweight tag reports an annotation — which is the commit's message, and will be "
-            "published as the release notes"
-        )
-        with pytest.raises(NotDescribed, match="git tag -a"):
-            read(annotation("v99.99.99"), version="v99.99.99")
-    finally:
-        subprocess.run(["git", "tag", "-d", "v99.99.99"], check=True, capture_output=True)
+    _tag(scratch, "v99.99.99")
+    assert "v99.99.99" not in _tags(REPOSITORY), "the test tagged the checkout it runs in"
+
+    assert annotation("v99.99.99") == "", (
+        "a lightweight tag reports an annotation — which is the commit's message, and will be "
+        "published as the release notes"
+    )
+    with pytest.raises(NotDescribed, match="git tag -a"):
+        read(annotation("v99.99.99"), version="v99.99.99")
 
 
 def test_the_template_exists_and_asks_for_something() -> None:
@@ -274,7 +329,7 @@ def test_answering_the_template_is_accepted() -> None:
     assert "UPGRADING" in notes.body
 
 
-def test_the_title_and_the_body_come_from_the_same_place() -> None:
+def test_the_title_and_the_body_come_from_the_same_place(scratch: Path) -> None:
     """**Two places asking Git what a tag says are two chances to be told about a commit**, and
     only one of them was checked. The Release's title was a second `git tag --format` in the
     workflow; when the tag arrived flattened, the title became the commit's subject and nothing
@@ -288,43 +343,39 @@ def test_the_title_and_the_body_come_from_the_same_place() -> None:
     in every clone — and the alternative it tempts you into, skipping when the tag is absent, means
     the property goes unchecked in the one place that publishes.
 
-    The tagger identity is passed in rather than assumed, because an annotated tag needs one and a
-    fresh checkout has none: `git tag -a` exits 128 with *Committer identity unknown* in CI, where
-    nothing has configured a `user.email`.
+    The tagger identity comes from the scratch repository's environment, because an annotated tag
+    needs one and a fresh checkout has none: `git tag -a` exits 128 with *Committer identity
+    unknown* in CI, where nothing has configured a `user.email`.
     """
-    import os
-    import subprocess
-
     from release_notes import annotation, subject
 
-    tagging = {
-        **os.environ,
-        "GIT_COMMITTER_NAME": "the test suite",
-        "GIT_COMMITTER_EMAIL": "tests@example.invalid",
-    }
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-    ).stdout.strip()
     described, bare = "v99.99.98", "v99.99.97"
-    for tag, message in (
-        (described, "The gateway speaks a second dialect\n\nAnd why."),
-        (bare, f"Release {bare}\n\nA body that is fine on its own."),
-    ):
-        subprocess.run(
-            ["git", "tag", "-a", tag, "-m", message, head],
-            check=True,
-            capture_output=True,
-            env=tagging,
-        )
-    try:
-        assert (
-            subject(described)
-            == read(annotation(described), version=described).subject
-            == "The gateway speaks a second dialect"
-        )
+    _tag(scratch, described, "The gateway speaks a second dialect\n\nAnd why.")
+    _tag(scratch, bare, f"Release {bare}\n\nA body that is fine on its own.")
+    assert not {described, bare} & set(_tags(REPOSITORY)), "the test tagged its own checkout"
 
-        # The half that matters: a title is not published from an annotation the rules refuse.
-        with pytest.raises(NotDescribed, match="only restates the version"):
-            subject(bare)
-    finally:
-        subprocess.run(["git", "tag", "-d", described, bare], check=True, capture_output=True)
+    assert (
+        subject(described)
+        == read(annotation(described), version=described).subject
+        == "The gateway speaks a second dialect"
+    )
+
+    # The half that matters: a title is not published from an annotation the rules refuse.
+    with pytest.raises(NotDescribed, match="only restates the version"):
+        subject(bare)
+
+
+def test_the_first_releases_own_annotation_is_refused_wherever_this_runs(scratch: Path) -> None:
+    """The case the rules were written for, checked in CI too.
+
+    The test above that reads `v0.1.0` from the checkout skips wherever the tag is absent — and a
+    CI checkout fetches no tags — so the property would be unchecked in the one place that
+    publishes. The same annotation, on a tag made here.
+    """
+    from release_notes import annotation, previous
+
+    _tag(scratch, "v0.1.0", "Release v0.1.0")
+
+    with pytest.raises(NotDescribed, match="only restates the version"):
+        read(annotation("v0.1.0"), version="v0.1.0")
+    assert previous("v0.1.0") is None

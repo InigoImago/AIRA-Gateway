@@ -24,6 +24,7 @@ import uuid
 
 import httpx
 import pytest
+import stack_addresses
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -36,11 +37,13 @@ from aira_gateway.ratelimit.buckets import BucketRequest, RedisTokenBucket
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.ratelimit.service import RateLimitService
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, read_model_id
 
 pytestmark = pytest.mark.integration
 
-REDIS_URL = "redis://127.0.0.1:6379/0"
+#: The published Redis, from the owner of the stack's addresses: a literal here would talk to
+#: whatever listens on 6379 once the stack's own Redis is moved to dodge a collision.
+REDIS_URL = stack_addresses.redis_url()
 
 
 @pytest.fixture
@@ -50,23 +53,6 @@ async def runner():
     await runner.close()
 
 
-async def _use_case(engine: AsyncEngine, slug: str) -> None:
-    async with engine.begin() as connection:
-        await connection.execute(
-            text("INSERT INTO use_cases (slug, name) VALUES (:slug, :slug)"), {"slug": slug}
-        )
-
-
-def _read_model_id() -> int:
-    """An explicit id, because these read-model tables never generate their own.
-
-    Every row arrives from Management carrying the id it has there, so the identity sequence is
-    never advanced and cannot be relied on — inserting without an id collides with whatever
-    Kafka delivered earlier.
-    """
-    return 900_000_000 + int(uuid.uuid4().int % 90_000_000)
-
-
 async def _rate_limit(engine: AsyncEngine, slug: str, rpm: int, burst: int) -> None:
     async with engine.begin() as connection:
         await connection.execute(
@@ -74,12 +60,12 @@ async def _rate_limit(engine: AsyncEngine, slug: str, rpm: int, burst: int) -> N
                 "INSERT INTO rate_limits (id, use_case, scope, subject, limit_rpm, burst, enabled)"
                 " VALUES (:id, :slug, 'use_case', '', :rpm, :burst, true)"
             ),
-            {"id": _read_model_id(), "slug": slug, "rpm": rpm, "burst": burst},
+            {"id": read_model_id(), "slug": slug, "rpm": rpm, "burst": burst},
         )
 
 
 async def _budget(engine: AsyncEngine, slug: str, **limits) -> int:
-    budget_id = _read_model_id()
+    budget_id = read_model_id()
     async with engine.begin() as connection:
         await connection.execute(
             text(
@@ -100,12 +86,13 @@ async def _budget(engine: AsyncEngine, slug: str, **limits) -> int:
 # ---- the property no unit test can show ----------------------------------------------------
 
 
-async def test_two_gateway_instances_enforce_one_limit_not_one_each(engine, runner) -> None:
+async def test_two_gateway_instances_enforce_one_limit_not_one_each(
+    engine, runner, read_model
+) -> None:
     """The reason for Redis. With per-process counters these two would allow twice the limit,
     and each would be individually "correct" — which is exactly how a load balancer turns a
     working limiter into a broken one."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    await _use_case(engine, slug)
+    slug, _ = await read_model.use_case(key=False)
     await _rate_limit(engine, slug, rpm=60, burst=4)
     sessionmaker = build_sessionmaker(engine)
 
@@ -169,9 +156,10 @@ async def test_a_refused_scope_does_not_debit_the_other_on_real_redis(runner) ->
 # ---- the budget race, on real infrastructure -----------------------------------------------
 
 
-async def test_concurrent_requests_do_not_overshoot_a_request_budget(engine, runner) -> None:
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    await _use_case(engine, slug)
+async def test_concurrent_requests_do_not_overshoot_a_request_budget(
+    engine, runner, read_model
+) -> None:
+    slug, _ = await read_model.use_case(key=False)
     await _budget(engine, slug, limit_requests=1)
     service = BudgetService(build_sessionmaker(engine), ledger=BudgetLedger(runner))
 
@@ -187,11 +175,12 @@ async def test_concurrent_requests_do_not_overshoot_a_request_budget(engine, run
     assert sum(outcomes) == 1
 
 
-async def test_concurrent_requests_do_not_overshoot_a_cost_budget(engine, runner) -> None:
+async def test_concurrent_requests_do_not_overshoot_a_cost_budget(
+    engine, runner, read_model
+) -> None:
     """Since FRD-403 the limit is a sum of money, which is what makes the race an accounting
     defect rather than a cosmetic one."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    await _use_case(engine, slug)
+    slug, _ = await read_model.use_case(key=False)
     await _budget(engine, slug, limit_cost_nanos=1_000_000_000)  # 1.00
     service = BudgetService(build_sessionmaker(engine), ledger=BudgetLedger(runner))
     estimate = Amounts(tokens=1000, requests=1, cost_nanos=400_000_000)  # 0.40 each
@@ -208,9 +197,8 @@ async def test_concurrent_requests_do_not_overshoot_a_cost_budget(engine, runner
     assert sum(outcomes) == 3, "0.40 × 3 fits under 1.00; the fourth must see the reservations"
 
 
-async def test_a_released_reservation_returns_the_headroom(engine, runner) -> None:
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    await _use_case(engine, slug)
+async def test_a_released_reservation_returns_the_headroom(engine, runner, read_model) -> None:
+    slug, _ = await read_model.use_case(key=False)
     await _budget(engine, slug, limit_requests=2)
     service = BudgetService(build_sessionmaker(engine), ledger=BudgetLedger(runner))
 
@@ -222,11 +210,12 @@ async def test_a_released_reservation_returns_the_headroom(engine, runner) -> No
     assert (await service.guard(slug, "alice", estimated=Amounts(requests=1))).budgets != []
 
 
-async def test_the_counter_is_seeded_from_postgres_when_redis_forgets(engine, runner) -> None:
+async def test_the_counter_is_seeded_from_postgres_when_redis_forgets(
+    engine, runner, read_model
+) -> None:
     """Redis is deliberately not persisted (ADR-0008). A restart must not hand back a spent
     budget, which only holds because the counter reseeds from the system of record."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    await _use_case(engine, slug)
+    slug, _ = await read_model.use_case(key=False)
     await _budget(engine, slug, limit_requests=1)
     async with engine.begin() as connection:
         await connection.execute(
@@ -272,24 +261,13 @@ async def test_the_ledger_reports_which_limit_refused(engine, runner) -> None:
 # ---- the wired-up gateway -------------------------------------------------------------------
 
 
-async def test_the_gateway_answers_429_with_retry_after_when_over_the_limit(engine) -> None:
+async def test_the_gateway_answers_429_with_retry_after_when_over_the_limit(
+    engine, read_model
+) -> None:
     """End to end through the real service: a limit in the read-model, a burst of requests, and
     a response a client can actually act on."""
-    slug = f"itest-{uuid.uuid4().hex[:8]}"
-    await _use_case(engine, slug)
+    slug, full_key = await read_model.use_case()
     await _rate_limit(engine, slug, rpm=60, burst=2)
-
-    from aira_common.apikeys import generate_api_key
-
-    full_key, prefix, key_hash = generate_api_key()
-    async with engine.begin() as connection:
-        await connection.execute(
-            text(
-                "INSERT INTO api_keys (id, prefix, key_hash, subject, use_case, label, is_active)"
-                " VALUES (:id, :prefix, :hash, 'itest', :slug, 'itest', true)"
-            ),
-            {"id": f"{prefix}-itest", "prefix": prefix, "hash": key_hash, "slug": slug},
-        )
 
     body = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
     headers = {"x-goog-api-key": full_key}

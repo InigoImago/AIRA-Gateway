@@ -89,7 +89,7 @@ async def test_an_attachment_alone_is_not_an_empty_request() -> None:
             },
         )
 
-    assert response.status_code != 400 or "no text" not in response.text
+    assert response.status_code == 200, response.text
 
 
 # == 2. a non-positive output cap ================================================================

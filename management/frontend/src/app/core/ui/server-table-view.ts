@@ -16,6 +16,8 @@ const TYPING_PAUSE_MS = 250;
  * - **Typing does not fire a request per keystroke**: a pause, and identical queries are not re-sent.
  * - **A new search starts at page one**, or page 4 of a two-page result reads as "no matches".
  * - **A late response never overwrites a newer one**: requests are switched, not queued.
+ * - **The pager moves with the rows**: the page changes when its rows arrive, so a page that
+ *   failed to load is never the page the pager names.
  */
 export class ServerTableView<T> implements PagedView {
   readonly query = signal('');
@@ -37,6 +39,8 @@ export class ServerTableView<T> implements PagedView {
 
   private readonly typed = new Subject<string>();
   private inFlight: Subscription | null = null;
+  /** The page asked for and not answered yet — what a second Next counts from. */
+  private pending: number | null = null;
 
   constructor(
     /** Asks the server for one page. Reports its own errors; this only tracks `loading`. */
@@ -56,8 +60,7 @@ export class ServerTableView<T> implements PagedView {
       .pipe(debounceTime(TYPING_PAUSE_MS), distinctUntilChanged())
       .subscribe((value) => {
         this.query.set(value);
-        this.page.set(1);
-        this.fetch();
+        this.fetch(1);
       });
     destroyRef.onDestroy(() => {
       typing.unsubscribe();
@@ -67,12 +70,12 @@ export class ServerTableView<T> implements PagedView {
 
   /** Fetch the first page. Call from `ngOnInit`. */
   start(): void {
-    this.fetch();
+    this.fetch(this.page());
   }
 
   /** Re-fetch the page currently on screen — after a create, an edit or a delete. */
   reload(): void {
-    this.fetch();
+    this.fetch(this.pending ?? this.page());
   }
 
   search(value: string): void {
@@ -81,39 +84,46 @@ export class ServerTableView<T> implements PagedView {
 
   go(page: number): void {
     const target = Math.min(Math.max(1, page), this.pageCount());
-    if (target === this.page()) return;
-    this.page.set(target);
-    this.fetch();
+    if (target === (this.pending ?? this.page())) return;
+    this.fetch(target);
   }
 
   next(): void {
-    this.go(this.page() + 1);
+    this.go((this.pending ?? this.page()) + 1);
   }
 
   previous(): void {
-    this.go(this.page() - 1);
+    this.go((this.pending ?? this.page()) - 1);
   }
 
   current(): number {
     return this.page();
   }
 
-  private fetch(): void {
+  private fetch(page: number): void {
     // Switched, not queued: a slow request for "a" must not land after a fast one for "abc".
     this.inFlight?.unsubscribe();
+    this.pending = page;
     this.loading.set(true);
-    this.inFlight = this.load(this.query().trim(), this.page()).subscribe({
-      next: (page) => {
-        this.rows.set(page.results);
-        this.total.set(page.count);
-        this.pages.set(page.pages);
-        this.pageSize.set(page.page_size);
-        // The server has the last word on which page this is: page 9 of a list that shrank to
-        // three pages must not leave the pager claiming 9.
-        this.page.set(page.page);
+    this.inFlight = this.load(this.query().trim(), page).subscribe({
+      next: (answer) => {
+        this.pending = null;
+        this.rows.set(answer.results);
+        this.total.set(answer.count);
+        this.pages.set(answer.pages);
+        this.pageSize.set(answer.page_size);
+        // The page the server says this is, set with its rows: the pager names what is on screen.
+        this.page.set(answer.page);
         this.loading.set(false);
       },
       error: (response: unknown) => {
+        this.pending = null;
+        // A page past the end of a list that shrank meanwhile. The server does not clamp, it
+        // answers 404 — and stale rows under a banner would leave only Previous as a way out.
+        if ((response as { status?: number } | null)?.status === 404 && page > 1) {
+          this.fetch(1);
+          return;
+        }
         this.loading.set(false);
         this.onError(response);
       },

@@ -26,6 +26,13 @@ def period_key(period: str, now: datetime) -> str:
     return moment.strftime("%Y-%m-%d") if period == "day" else moment.strftime("%Y-%m")
 
 
+def period_starts(period: str, now: datetime) -> datetime:
+    """The first moment of the counter `period_key` names — **UTC**, the other end of
+    `period_ends`, decided by the same arithmetic so the two cannot disagree about a boundary."""
+    moment = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    return moment if period == "day" else moment.replace(day=1)
+
+
 def period_ends(period: str, now: datetime) -> datetime:
     """When the counter `period_key` names is replaced by the next one — **UTC**, half-open.
 
@@ -41,21 +48,26 @@ def period_ends(period: str, now: datetime) -> datetime:
     return moment.replace(year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
+class Unbound(LookupError):
+    """A budget asked for the counter of a caller it does not bind — or with a scope this build
+    does not know, which binds nobody."""
+
+
 def scope_key(budget: BudgetRead, caller: str | None = None) -> str:
     """The key this budget's consumption is accounted under.
 
-    Applicability is decided before this is asked (`store.applicable`). An `each_member` budget
-    names nobody, so **the caller is the key**: one configured row, one counter per head.
+    Enforcement asks only about budgets `store.applicable` found binding; a reader asking about
+    every budget of a use case resolves the scope first (`BudgetService.usage`). An `each_member`
+    budget names nobody, so **the caller is the key**: one configured row, one counter per head.
+    An explicit check rather than an `assert`, which `python -O` removes.
     """
     scope = Scope.applying(
         scope=budget.scope,
         use_case=budget.use_case,
         caller=caller,
     )
-    assert scope is not None, (
-        f"budget {budget.id} ({budget.scope}) does not bind caller {caller!r} — it should never "
-        "have reached here, since applicable() resolves the same question"
-    )
+    if scope is None:
+        raise Unbound(f"budget {budget.id} ({budget.scope}) does not bind caller {caller!r}")
     return scope.usage_key
 
 

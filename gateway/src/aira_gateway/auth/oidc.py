@@ -35,9 +35,9 @@ class OidcValidator:
     **One realm or several** (`FRD-118` FR-1), so a migration between realms is not a flag day for
     every client. Routing is by the token's **own `iss` claim, read unverified** — a hint, never a
     trust decision: the selected verifier checks `iss` for real, so a forged `iss` selects a
-    verifier that refuses it. Where no issuer matches, each verifier is tried in turn (the `kid`
-    probe). Routing first matters: a probe makes each JWKS client refresh on a key it will never
-    hold, a remote call per request.
+    verifier that refuses it. A token naming no configured realm, or none, is refused without
+    asking any: every verifier checks `iss` exactly and would refuse it, and asking makes each
+    JWKS client refetch its set for a key it will never hold — a remote call per request.
     """
 
     def __init__(
@@ -62,25 +62,27 @@ class OidcValidator:
         self._role_groups = role_groups or {}
 
     def _claimed_issuer(self, token: str) -> str | None:
-        """The `iss` of an **unverified** token, for routing only."""
+        """The `iss` of an **unverified** token, for routing only.
+
+        Every parse failure is the caller's value, `RecursionError` included: a payload nested
+        deeper than `json` follows raises it, and PyJWT wraps only `ValueError`.
+        """
         try:
             return (
                 str(jwt.decode(token, options={"verify_signature": False}).get("iss") or "") or None
             )
-        except jwt.PyJWTError:
+        except jwt.PyJWTError, ValueError, RecursionError:
             return None
 
     def validate(self, token: str) -> Principal | None:
         claimed = self._claimed_issuer(token)
-        ordered = sorted(self._verifiers, key=lambda pair: pair[0] != claimed)
-        for issuer, verifier in ordered:
+        for issuer, verifier in self._verifiers:
+            if issuer != claimed:
+                continue
             claims = verifier.verify(token)
             if claims is not None:
                 return self._principal(claims, issuer)
-            if claimed is not None and issuer == claimed:
-                # The realm it named refused it; the others would refuse it too, each after a JWKS
-                # refresh for a key id they will never hold.
-                return None
+            return None
         return None
 
     def _principal(self, claims: dict[str, Any], issuer: str) -> Principal | None:
@@ -99,9 +101,15 @@ class OidcValidator:
         # so one person's tokens from two applications differ in the audit trail.
         client = claims.get("azp") or claims.get("client_id")
         # The name, carried **beside** `sub` and never instead of it. An absent or blank claim is
-        # no name, not an empty one.
+        # no name, not an empty one. One longer than the column is not cut to fit — cut, every name
+        # sharing its first characters became one person — and the subject stands in for it, which
+        # is what Management names that person's account (`safe_username`).
         name = claims.get("preferred_username")
-        username = str(name)[:_MAX_USERNAME] if isinstance(name, str) and name.strip() else None
+        username = (
+            (name if len(name) <= _MAX_USERNAME else str(subject)[:_MAX_USERNAME])
+            if isinstance(name, str) and name.strip()
+            else None
+        )
         return Principal(
             subject=str(subject),
             method="oidc",

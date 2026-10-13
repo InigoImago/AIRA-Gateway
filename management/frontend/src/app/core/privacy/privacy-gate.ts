@@ -48,13 +48,19 @@ export class PrivacyGate implements OnInit {
     if (this.auth.isAuthenticated()) this.load();
   }
 
-  /** Load the notice — in `language` when the reader chose one — and open it when it is due. */
-  protected load(language?: string): void {
+  /**
+   * Load the notice — in `language` when the reader chose one — and open it when it is due.
+   *
+   * A load that worked ends what the window said about a failed one, except after a refused
+   * acknowledgement (`keepMessage`): there the message is why a newer notice is on screen.
+   */
+  protected load(language?: string, keepMessage = false): void {
     this.busy.set(true);
     this.service.get(language).subscribe({
       next: (notice) => {
         this.busy.set(false);
         this.loadError.set(null);
+        if (!keepMessage) this.acknowledgeError.set(null);
         this.notice.set(notice);
         if (notice.due) this.open.set(true);
       },
@@ -85,7 +91,9 @@ export class PrivacyGate implements OnInit {
         this.busy.set(false);
         this.acknowledgeError.set(errorMessage(response, notice.labels['acknowledge_failed']));
         // The notice changed while it was open: show the current one, and keep asking.
-        if ((response as { status?: number } | null)?.status === 409) this.load(notice.language);
+        if ((response as { status?: number } | null)?.status === 409) {
+          this.load(notice.language, true);
+        }
       },
     });
   }

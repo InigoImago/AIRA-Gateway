@@ -31,12 +31,15 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aira_common.apikeys import generate_api_key
+from aira_gateway.anomalies.suspensions import CACHE_TTL_SECONDS as SUSPENSION_CACHE_SECONDS
 
 # Imported, not restated: a pipeline step's own row is identified by the prefix the gateway
 # writes it with, so a rename cannot leave this reading the caller's row as a step's.
 from aira_gateway.audit import PIPELINE_OPERATION_PREFIX
+from aira_gateway.ratelimit.service import CONFIG_CACHE_SECONDS
 
-from .conftest import GATEWAY_URL
+from . import installation
+from .conftest import GATEWAY_URL, insert_use_case_and_key, read_model_id, write_suspension
 
 #: The two models `make showcase` and CI pull. Small on purpose: what is under test is the gateway,
 #: not the answer.
@@ -50,18 +53,23 @@ KIRA = "/kira/api/external"
 GEMINI = "/v1beta"
 
 #: How long a policy written into the read-model may take to be felt. The rate limiter caches its
-#: configuration for `CONFIG_CACHE_SECONDS` and the suspension gate for five; both are deliberate
-#: (`FRD-405`, `FRD-503`), so this waits them out rather than pretending they are not there.
-POLICY_SETTLE_SECONDS = 7.0
+#: configuration and the suspension gate its rows, both deliberately (`FRD-405`, `FRD-503`), so
+#: this waits them out rather than pretending they are not there — **from the constants**, so a
+#: longer cache lengthens the wait instead of turning it into a wait for nothing.
+POLICY_SETTLE_SECONDS = max(CONFIG_CACHE_SECONDS, SUSPENSION_CACHE_SECONDS) + 2.0
 
 
 class Governed:
     """A use case that can call both models, plus every policy this round changes."""
 
-    def __init__(self, engine: AsyncEngine, slug: str, key: str) -> None:
+    def __init__(self, engine: AsyncEngine, slug: str, key: str, subject: str) -> None:
         self.engine = engine
         self.slug = slug
         self.key = key
+        #: The key's owner — this use case's own name for its caller, so two use cases' refusals
+        #: never add up into one caller an installation-wide rule then reports.
+        self.subject = subject
+        self._suspensions: list[str] = []
 
     # ---- talking to it ------------------------------------------------------------------
 
@@ -76,6 +84,8 @@ class Governed:
         is the only way to ask, at this layer, whether a per-head allowance really binds per head.
         """
         full_key, prefix, key_hash = generate_api_key()
+        installation.remember("subject", subject)
+        installation.remember("subject", prefix)
         async with self.engine.begin() as connection:
             await connection.execute(
                 text(
@@ -168,7 +178,7 @@ class Governed:
         await self._exec(
             "INSERT INTO rate_limits (id, use_case, scope, subject, limit_rpm, burst, enabled)"
             " VALUES (:id, :slug, :scope, :subject, :rpm, :burst, true)",
-            id=_row_id(),
+            id=read_model_id(),
             slug=self.slug,
             scope=scope,
             subject=subject,
@@ -190,7 +200,7 @@ class Governed:
             "INSERT INTO budgets (id, use_case, scope, subject, period, limit_tokens,"
             " limit_requests, limit_cost_nanos, enabled)"
             " VALUES (:id, :slug, :scope, :subject, :period, :tokens, :requests, :cost, true)",
-            id=_row_id(),
+            id=read_model_id(),
             slug=self.slug,
             scope=scope,
             subject=subject,
@@ -221,6 +231,16 @@ class Governed:
             slug=self.slug,
             value=value,
         )
+
+    async def suspend(self, **spec: Any) -> str:
+        """Stop this use case's traffic, or narrow it — a suspension written into the read-model.
+
+        Aimed at the use case unless ``spec`` says otherwise; removed by its id when the use case
+        is, which reaches a row aimed at somebody else as well.
+        """
+        row_id = await write_suspension(self.engine, **{"use_case": self.slug, **spec})
+        self._suspensions.append(row_id)
+        return row_id
 
     async def settle(self, seconds: float = POLICY_SETTLE_SECONDS) -> None:
         """Wait out the configuration caches the gateway deliberately keeps."""
@@ -259,6 +279,25 @@ class Governed:
             if asyncio.get_running_loop().time() >= deadline:
                 raise AssertionError(f"expected {count} audit rows, saw {len(rows)}: {rows}")
             await asyncio.sleep(0.25)
+
+    async def quiet_rows(
+        self, *, quiet: float = 1.5, timeout: float = 25.0
+    ) -> list[dict[str, Any]]:
+        """Every row this use case has, once none has arrived for ``quiet`` seconds.
+
+        For an assertion about **how many** — exactly one, never a second — which `wait_for_rows`
+        cannot make: it returns the moment the first row lands, and a duplicate written a moment
+        later passes "exactly one" by not being there yet.
+        """
+        rows = await self.wait_for_rows(1, timeout=timeout)
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(quiet)
+            again = await self.rows()
+            if len(again) == len(rows):
+                return again
+            rows = again
+        raise AssertionError(f"rows kept arriving for {timeout}s: {len(rows)}")
 
     async def last_row(self, *, timeout: float = 25.0) -> dict[str, Any]:
         """The one row this use case has — refusing when a pipeline step recorded its own.
@@ -325,48 +364,26 @@ class Governed:
         await self._exec("DELETE FROM request_logs WHERE use_case = :slug", slug=self.slug)
 
 
-def _row_id() -> int:
-    """A read-model id. These tables are fed by events, so nothing here generates one."""
-    return uuid.uuid4().int % 2_000_000_000
-
-
 async def build(engine: AsyncEngine, *, released: tuple[str, ...] | None = None) -> Governed:
     slug = f"dev-{uuid.uuid4().hex[:8]}"
-    full_key, prefix, key_hash = generate_api_key()
+    subject = installation.subject("dev-round")
     models = (CHAT_MODEL, EMBED_MODEL, MOCK_MODEL) if released is None else released
-
-    async with engine.begin() as connection:
-        await connection.execute(
-            text(
-                "INSERT INTO use_cases (slug, name, store_payloads, retention_days,"
-                " allowed_models) VALUES (:slug, :slug, true, 7, CAST(:models AS json))"
-            ),
-            {"slug": slug, "models": json.dumps(list(models))},
-        )
-        await connection.execute(
-            text(
-                "INSERT INTO api_keys (id, prefix, key_hash, subject, use_case, label, is_active)"
-                " VALUES (:id, :prefix, :hash, 'dev-round', :slug, 'dev-round', true)"
-            ),
-            {"id": str(uuid.uuid4()), "prefix": prefix, "hash": key_hash, "slug": slug},
-        )
-    return Governed(engine, slug, full_key)
+    full_key, _ = await insert_use_case_and_key(
+        engine,
+        slug,
+        subject=subject,
+        released=list(models),
+        store_payloads=True,
+        retention_days=7,
+        label="dev-round",
+    )
+    return Governed(engine, slug, full_key, subject)
 
 
 async def destroy(governed: Governed) -> None:
     async with governed.engine.begin() as connection:
-        for statement in (
-            "DELETE FROM request_logs WHERE use_case = :slug",
-            "DELETE FROM budgets WHERE use_case = :slug",
-            "DELETE FROM budget_usage WHERE scope_key LIKE :like",
-            "DELETE FROM rate_limits WHERE use_case = :slug",
-            "DELETE FROM pipeline_configs WHERE use_case = :slug",
-            "DELETE FROM anomaly_events WHERE use_case = :slug",
-            "DELETE FROM anomaly_rules WHERE use_case = :slug",
-            "DELETE FROM access_suspensions WHERE use_case = :slug OR target_value = :slug",
-            "DELETE FROM api_keys WHERE use_case = :slug",
-            "DELETE FROM use_cases WHERE slug = :slug",
-        ):
+        for row_id in governed._suspensions:  # noqa: SLF001 - the class's own clean-up
             await connection.execute(
-                text(statement), {"slug": governed.slug, "like": f"%{governed.slug}%"}
+                text("DELETE FROM access_suspensions WHERE id = :id"), {"id": row_id}
             )
+    await installation.delete_gateway_rows(governed.engine, governed.slug)

@@ -15,8 +15,6 @@ carefully as the read.
 
 from __future__ import annotations
 
-import pathlib
-
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -285,7 +283,7 @@ def test_the_five_minute_lifetime_is_chosen_rather_than_the_hour() -> None:
     assert "ttl" not in body["system"][0]["cache_control"]
 
 
-def test_a_model_that_cannot_cache_is_served_uncached_and_not_skipped() -> None:
+async def test_a_model_that_cannot_cache_is_served_uncached_and_not_skipped() -> None:
     """**The one capability gap that is not a skip** (`FRD-133` FR-2).
 
     Every other flag in the vocabulary guards the *answer*: a model that cannot read the attachment
@@ -295,21 +293,39 @@ def test_a_model_that_cannot_cache_is_served_uncached_and_not_skipped() -> None:
     fallback chain is for.
 
     Asserted as behaviour and not as a comment, because the inconsistency is the kind somebody
-    tidies up: the request must still be **served**, and the marker must be off.
+    tidies up: the request must still be **served**, and the marker must be off — through the
+    route, for a use case that asked for caching, beside a model that can cache and gets it.
     """
-    from aira_common.models import Capability
-    from aira_gateway.requirements import permits
+    from fastapi.testclient import TestClient
 
-    # Whatever the requirement machinery checks per hop, `prompt_caching` must not be among the
-    # things that can exclude a candidate.
-    source = pathlib.Path("gateway/src/aira_gateway/requirements.py").read_text()
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+    from aira_gateway.db.models import UseCaseRead
+    from aira_gateway.upstreams.base import ProviderRegistry
+    from aira_gateway.upstreams.mock import MockProvider
 
-    assert "PROMPT_CACHING" not in source and "prompt_caching" not in source, (
-        "prompt caching has become a dispatch condition — a candidate would now be skipped over a "
-        "price rather than over the answer it would give (FRD-133 FR-2)"
-    )
-    assert Capability.PROMPT_CACHING.value == "prompt_caching"
-    assert callable(permits)
+    app = create_app(GatewaySettings(auth_required=False, enforce_budgets=False, log_queue_size=0))
+    with TestClient(app) as client:
+        app.state.providers = ProviderRegistry([MockProvider("no-cache-1", "cache-1")])
+        async with app.state.db_sessionmaker() as session:
+            session.add(UseCaseRead(slug="caching-uc", name="c", prompt_caching_enabled=True))
+            session.add(ModelRead(model="no-cache-1", capabilities=["generate"]))
+            session.add(ModelRead(model="cache-1", capabilities=["generate", "prompt_caching"]))
+            await session.commit()
+        body = {
+            "systemInstruction": {"parts": [{"text": "You are a coding assistant."}]},
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+        }
+        headers = {"x-aira-use-case": "caching-uc"}
+        uncached = client.post(
+            "/v1beta/models/no-cache-1:generateContent", json=body, headers=headers
+        )
+        cached = client.post("/v1beta/models/cache-1:generateContent", json=body, headers=headers)
+
+    assert uncached.status_code == 200, uncached.text
+    assert "[cache:" not in uncached.text, "a model that cannot cache was sent the marker"
+    assert cached.status_code == 200, cached.text
+    assert "[cache:5m]" in cached.text, "the use case's choice never reached the request"
 
 
 def test_the_long_lifetime_is_sent_only_when_it_was_chosen() -> None:

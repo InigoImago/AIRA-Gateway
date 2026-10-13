@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aira_gateway.api.gemini.errors import GeminiHTTPError
+
 
 class RateLimited(Exception):
     """Raised pre-dispatch when a caller is over its configured request rate.
@@ -15,3 +17,16 @@ class RateLimited(Exception):
         super().__init__(message)
         self.message = message
         self.retry_after = retry_after
+
+
+class TooHeavyForTheLimit(GeminiHTTPError):
+    """A request weighing more than a bucket can ever hold — a batch larger than the allowance.
+
+    **Not a `RateLimited`.** No wait admits it, so a `429` with a `Retry-After` sends a client that
+    honours both into a retry loop that never ends. A `400 FAILED_PRECONDITION`, without one: the
+    request has to change, not the moment it is sent (`FRD-113` §11). Every surface renders the
+    type it extends, and the audit row reads it as an invalid request.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(400, message, "FAILED_PRECONDITION")

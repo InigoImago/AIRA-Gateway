@@ -21,6 +21,8 @@ export interface CursorPage<T> {
  *
  * - **A late response never overwrites a newer one**: requests are switched, not queued.
  * - **A changed filter is a different list**: {@link reset} starts it again at its first page.
+ * - **The pager moves with the rows**: the trail grows or shrinks when the page it opens arrives,
+ *   so a page that failed to load is never the one named, and Next asks for it again.
  */
 export class CursorTableView<T> implements PagedView {
   /** The rows of the page on screen. */
@@ -70,38 +72,41 @@ export class CursorTableView<T> implements PagedView {
 
   /** Fetch the first page. Call from `ngOnInit`. */
   start(): void {
-    this.fetch();
+    this.fetch(this.trail());
   }
 
-  /** The first page again — after a filter changed, or to see what was recorded since. */
+  /**
+   * The first page again — after a filter changed, or to see what was recorded since. The old
+   * cursors go at once: they belong to the previous list, and following one under a new filter
+   * mixes two result sets, even when this first page fails to arrive.
+   */
   reset(): void {
     this.trail.set([null]);
-    this.fetch();
+    this.following.set(null);
+    this.fetch([null]);
   }
 
   next(): void {
     const cursor = this.following();
     if (!cursor || this.loading()) return;
-    this.trail.update((trail) => [...trail, cursor]);
-    this.fetch();
+    this.fetch([...this.trail(), cursor]);
   }
 
   previous(): void {
     if (this.page() === 1 || this.loading()) return;
-    this.trail.update((trail) => trail.slice(0, -1));
-    this.fetch();
+    this.fetch(this.trail().slice(0, -1));
   }
 
   current(): number {
     return this.page();
   }
 
-  private fetch(): void {
+  private fetch(trail: (string | null)[]): void {
     this.inFlight?.unsubscribe();
     this.loading.set(true);
-    const trail = this.trail();
     this.inFlight = this.load(trail[trail.length - 1]).subscribe({
       next: (page) => {
+        this.trail.set(trail);
         this.rows.set(page.rows);
         this.total.set(page.count);
         this.following.set(page.next);

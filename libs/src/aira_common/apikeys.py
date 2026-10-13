@@ -12,11 +12,39 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 
 NAMESPACE = "aira"
 _PREFIX_BYTES = 4
 _SECRET_BYTES = 24
+
+#: What a key's public half is made of: lowercase letters and digits, no longer than the column
+#: that stores it (`api_keys.prefix`, 32 on both planes). Checked before the lookup, because until
+#: then the prefix is the caller's own bytes — and Postgres answers a NUL in a text parameter with
+#: an error, not with "no such key".
+_PREFIX_SHAPE = re.compile(r"[0-9a-z]{1,32}")
+
+
+class KeyLifetimeOutOfRange(ValueError):
+    """A key lifetime this installation does not issue (`ADR-0015`)."""
+
+
+def check_key_lifetime(days: int, max_days: int) -> int:
+    """``days``, if it is a lifetime this installation issues; refused by name otherwise.
+
+    **A key is always bounded** (`ADR-0015`): at least a day, at most ``max_days``
+    (`AIRA_API_KEY_MAX_DAYS`), and never silently shortened. One definition for both planes —
+    Management's issuing API and the gateway's break-glass CLI — because a second copy of a rule
+    is the one that drifts, and a key either plane mints is honoured by the same gateway.
+    """
+    if days < 1:
+        raise KeyLifetimeOutOfRange("A lifetime is a number of days, at least 1.")
+    if days > max_days:
+        raise KeyLifetimeOutOfRange(
+            f"The longest lifetime this installation allows is {max_days} days."
+        )
+    return days
 
 
 def generate_api_key() -> tuple[str, str, str]:
@@ -37,7 +65,7 @@ def parse_prefix(full: str) -> str | None:
     parts = full.split("_")
     if len(parts) != 3 or parts[0] != NAMESPACE:
         return None
-    return parts[1]
+    return parts[1] if _PREFIX_SHAPE.fullmatch(parts[1]) else None
 
 
 def is_aira_key(token: str) -> bool:

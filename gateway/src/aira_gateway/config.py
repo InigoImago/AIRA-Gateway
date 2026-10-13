@@ -6,7 +6,10 @@ of them.
 
 from __future__ import annotations
 
-from pydantic import field_validator
+import sys
+
+from pydantic import Field, field_validator
+from sqlalchemy import URL
 
 from aira_common.config import BaseAiraSettings
 from aira_common.counters import SentinelConfig, SentinelConfigError, parse_sentinels
@@ -17,6 +20,40 @@ from aira_common.observability import configure_observability, set_payload_rende
 from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
 from aira_common.roles import Role, parse_role_groups
 from aira_gateway import __version__
+from aira_gateway.residency import parse_model_regions
+
+#: Kafka's own port, for a broker written without one.
+DEFAULT_KAFKA_PORT = 9092
+
+
+def parse_bootstrap_servers(value: str) -> tuple[tuple[str, int], ...]:
+    """``(host, port)`` per entry of a comma-separated broker list, as a Kafka client dials it.
+
+    A bare host takes Kafka's port, and an IPv6 broker is written ``[address]:port`` — the brackets
+    are not part of the host. An entry nothing could dial raises `ValueError` naming it.
+    """
+    return tuple(_broker(entry.strip()) for entry in value.split(",") if entry.strip())
+
+
+def _broker(entry: str) -> tuple[str, int]:
+    port_text: str | None
+    if entry.startswith("["):
+        host, closed, rest = entry[1:].partition("]")
+        if not closed or (rest and not rest.startswith(":")):
+            raise ValueError(f"{entry!r} is neither [address] nor [address]:port")
+        port_text = rest[1:] if rest else None
+    elif entry.count(":") > 1:
+        raise ValueError(f"{entry!r}: write an IPv6 broker as [address]:port")
+    else:
+        host, colon, after = entry.partition(":")
+        port_text = after if colon else None
+    if not host:
+        raise ValueError(f"{entry!r} names no host")
+    if port_text is None:
+        return host, DEFAULT_KAFKA_PORT
+    if not (port_text.isascii() and port_text.isdigit() and 0 < int(port_text) < 65536):
+        raise ValueError(f"{entry!r}: the port must be a number from 1 to 65535")
+    return host, int(port_text)
 
 
 def _default_jwks_uri(issuer: str) -> str:
@@ -74,12 +111,17 @@ class GatewaySettings(BaseAiraSettings):
     #: reader scans, and all four answer *what does this installation refuse*. The precision — only
     #: under a cost limit, only a model with no price — is here, in the FRD and in the refusal.
     enforce_priced_models: bool = True
+    #: Count a stream the caller left before its vendor reported usage, at the vendor's own free
+    #: counting endpoint, and book that floor (`FRD-128` FR-6). Off sends nothing a second time,
+    #: and such a stream stays unknown — booked as nothing. On by default: a cancelled stream was
+    #: billed, and a budget that cannot see it is a budget an agent client walks through.
+    count_cancelled_streams: bool = True
     #: Anomaly detection (`FRD-501`). Off evaluates nothing; authored rules stay authored.
     detect_anomalies: bool = True
     #: Whether a suspension stops traffic (`FRD-503`). Off records findings and refuses nobody.
     enforce_suspensions: bool = True
     #: How often the detector wakes. A longer interval costs findings latency, not accuracy.
-    anomaly_interval_seconds: float = 60.0
+    anomaly_interval_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
 
     # Shared counter store for rate limits and budget reservations (ADR-0008 / FRD-405). Empty
     # makes rate limits per process and budgets racy — documented degradations, not silent ones.
@@ -102,15 +144,15 @@ class GatewaySettings(BaseAiraSettings):
 
     # Failed authentications one source address may make per minute before it must wait. Counts
     # refusals only, so a working credential is never throttled by it. 0 disables it.
-    max_auth_failures_per_minute: int = 60
+    max_auth_failures_per_minute: int = Field(default=60, ge=0)
 
     # Output tokens assumed when a request does not bound its output, for the budget reservation
     # (FRD-405 §4.2). Reconciled to actual usage; erring high is the safe direction.
-    budget_estimate_output_tokens: int = 1024
+    budget_estimate_output_tokens: int = Field(default=1024, ge=0)
 
     # Requests buffered for the off-path request-log writer (FRD-405 §4.4). A full queue writes
     # inline rather than dropping; 0 writes every record on the request path.
-    log_queue_size: int = 512
+    log_queue_size: int = Field(default=512, ge=0)
 
     # How this service authenticates to Kafka. `PLAINTEXT` is refused outside `local`: these topics
     # feed the read-model authorization comes from, so an open broker grants admin to anyone.
@@ -127,6 +169,17 @@ class GatewaySettings(BaseAiraSettings):
     @classmethod
     def _one_stage(cls, value: str) -> str:
         return validate_stage(value)
+
+    @field_validator("kafka_bootstrap_servers")
+    @classmethod
+    def _brokers_can_be_dialled(cls, value: str) -> str:
+        """At startup: read only by the readiness probe, an undiallable entry was a 500 on every
+        probe and never a refusal anybody saw."""
+        try:
+            parse_bootstrap_servers(value)
+        except ValueError as exc:
+            raise ValueError(f"AIRA_KAFKA_BOOTSTRAP_SERVERS: {exc}") from exc
+        return value
 
     @field_validator("redis_sentinels")
     @classmethod
@@ -164,19 +217,21 @@ class GatewaySettings(BaseAiraSettings):
     trusted_proxy_hops: int = 1
 
     # Hard ceiling on an accepted request body; larger bodies are rejected with 413 before
-    # they are buffered (ADR-0007).
-    max_request_bytes: int = 8 * 1024 * 1024
+    # they are buffered (ADR-0007). Sizes, counts and intervals that no request could pass are
+    # refused at startup: `-1`, a common way to write "unlimited", made every request a 413, the
+    # liveness probe's included.
+    max_request_bytes: int = Field(default=8 * 1024 * 1024, gt=0)
 
     # Bounds on a caller-supplied response schema (FRD-112 FR-3). It is forwarded, never executed,
     # so these are the gateway's whole exposure to it.
-    max_response_schema_bytes: int = 32 * 1024
-    max_response_schema_depth: int = 8
-    max_response_schema_properties: int = 256
+    max_response_schema_bytes: int = Field(default=32 * 1024, gt=0)
+    max_response_schema_depth: int = Field(default=8, gt=0)
+    max_response_schema_properties: int = Field(default=256, gt=0)
 
     # Embedding batch bounds (FRD-113 FR-5), chosen with the default rate limits in view: a batch
     # bound above every bucket would make large batches fail permanently.
-    max_embedding_batch: int = 256
-    max_embedding_chars: int = 1_000_000
+    max_embedding_batch: int = Field(default=256, gt=0)
+    max_embedding_chars: int = Field(default=1_000_000, gt=0)
 
     # Google AI Studio (FRD-304). Registered only with an API key, and only where `allowed_regions`
     # include `global` — that endpoint names no region and guarantees none.
@@ -189,6 +244,20 @@ class GatewaySettings(BaseAiraSettings):
     #: Where requests may be processed — one list for every cloud (`ADR-0012` §6). Empty falls
     #: back to the EU regions of every supported cloud.
     allowed_regions: str = ""
+    #: Regions permitted for **named models alone**, beyond the list: ``region=model,model;…``.
+    #: For a model served only where the list does not reach — Agent Platform's open models answer
+    #: at `global` alone (`FRD-115` FR-2a) — without permitting that region for every model.
+    allowed_model_regions: str = ""
+
+    @field_validator("allowed_model_regions")
+    @classmethod
+    def _model_regions_are_readable(cls, value: str) -> str:
+        """At startup: read per request, a typo would refuse the very model it meant to permit."""
+        try:
+            parse_model_regions(value)
+        except ValueError as exc:
+            raise ValueError(f"AIRA_ALLOWED_MODEL_REGIONS: {exc}") from exc
+        return value
 
     # Vertex AI / Model Garden (FRD-115). Registered only when a project and credentials are
     # configured; a laptop keeps working on the Generative Language adapter above.
@@ -200,7 +269,7 @@ class GatewaySettings(BaseAiraSettings):
     vertex_api_key: str = ""
     #: ``region/publisher/model`` per entry. The three things the URL and the dialect need.
     vertex_models: str = ""
-    vertex_timeout_seconds: float = 120.0
+    vertex_timeout_seconds: float = Field(default=120.0, gt=0, allow_inf_nan=False)
     #: Backstop for Anthropic's required ``max_tokens`` when the catalog declares no default.
     vertex_default_max_tokens: int = 4096
 
@@ -219,7 +288,7 @@ class GatewaySettings(BaseAiraSettings):
     #: `AIRA_ALLOWED_REGIONS`, or the gateway refuses to start.
     ollama_region: str = ""
     #: Generous: a cold self-deployed model loads for a minute or more (`ADR-0012` §5).
-    ollama_timeout_seconds: float = 300.0
+    ollama_timeout_seconds: float = Field(default=300.0, gt=0, allow_inf_nan=False)
 
     # Cross-origin access (FRD-117 §5.4): an allow-list, empty by default. `*` with credentials
     # refuses to start.
@@ -235,7 +304,7 @@ class GatewaySettings(BaseAiraSettings):
     foundry_deployments: str = ""
     #: Pinned rather than "latest", so response shapes never change without a deploy.
     foundry_api_version: str = "2024-10-21"
-    foundry_timeout_seconds: float = 120.0
+    foundry_timeout_seconds: float = Field(default=120.0, gt=0, allow_inf_nan=False)
 
     #: The KIRA surface's stated end date, RFC 8594 (`ADR-0010` Option C). Empty means deprecated
     #: with no date yet; set it the day a migration plan exists.
@@ -310,23 +379,40 @@ class GatewaySettings(BaseAiraSettings):
             return self.oidc_jwks_uri
         return _default_jwks_uri(self.oidc_issuer)
 
+    def uses_sqlite(self) -> bool:
+        """Whether this process runs on an in-memory SQLite database rather than Postgres.
+
+        Declared (`AIRA_TEST_DATABASE`), or implied by running under pytest: the hermetic suite
+        builds settings in hundreds of places, and one that reached for whatever Postgres the
+        machine runs would be a green that depends on the machine. Decided here only, so the
+        application and the CLI cannot disagree about which database they are on.
+        """
+        return self.test_database or "pytest" in sys.modules
+
     def database_url(self, *, use_sqlite: bool) -> str:
-        """Return the async SQLAlchemy URL for the gateway database."""
+        """Return the async SQLAlchemy URL for the gateway database.
+
+        Built from its parts, never interpolated: a password may hold any character, and a URL is
+        split on `@` and percent-decoded — interpolated, `p@ss` named another host and `pa%40ss`
+        arrived as `pa@ss`.
+        """
         if use_sqlite:
             return "sqlite+aiosqlite:///:memory:"
-        return (
-            f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+        return URL.create(
+            "postgresql+psycopg",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        ).render_as_string(hide_password=False)
 
     @property
-    def kafka_host_port(self) -> tuple[str, int]:
-        """Return the (host, port) of the first Kafka bootstrap server for TCP checks."""
-        first = self.kafka_bootstrap_servers.split(",")[0].strip()
-        if ":" in first:
-            host, _, port = first.rpartition(":")
-            return host or "localhost", int(port)
-        return first or "localhost", 9092
+    def kafka_host_port(self) -> tuple[str, int] | None:
+        """The first broker's ``(host, port)`` for the readiness check; ``None`` when no broker is
+        configured — a single-node install with Kafka switched off, which `security.py` accepts."""
+        brokers = parse_bootstrap_servers(self.kafka_bootstrap_servers)
+        return brokers[0] if brokers else None
 
 
 def configure_process(settings: GatewaySettings) -> bool:

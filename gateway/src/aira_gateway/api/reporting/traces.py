@@ -157,7 +157,15 @@ async def traces(
     async with sessionmaker() as session:
         restricted = await restricted_use_cases(session, principal)
     if restricted:
-        stmt = stmt.where(or_(RequestLog.use_case.notin_(restricted), own_requests(principal)))
+        stmt = stmt.where(
+            or_(
+                # In no use case, so in none of the restricted ones: said, because SQL reads
+                # `NULL NOT IN (…)` as unknown and would drop every unattributed row.
+                RequestLog.use_case.is_(None),
+                RequestLog.use_case.notin_(restricted),
+                own_requests(principal),
+            )
+        )
 
     if cursor:
         at, row_id = parse_cursor(cursor)
@@ -244,6 +252,10 @@ async def trace_payload(
                 # The roles held at this moment (`FRD-622` FR-3): `incident` alone does not say
                 # which role read it, and today's roles are not evidence of the ones held then.
                 roles=",".join(sorted(principal.roles)),
+                # What read it: a key reads on its owner's grant, and its reads must not be filed
+                # as the owner's own (`FRD-622` FR-6).
+                auth_method=principal.method,
+                credential=principal.credential,
             )
         )
         await session.commit()
@@ -255,6 +267,8 @@ async def trace_payload(
         use_case=row.use_case,
         subject=principal.subject,
         person=principal.person,
+        method=principal.method,
+        credential=principal.credential,
         ground=verdict.ground,
     )
     return JSONResponse({**body, "available": True, "ground": verdict.ground})

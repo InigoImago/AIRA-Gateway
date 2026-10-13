@@ -25,8 +25,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aira_gateway.app import create_app
+from aira_gateway.auth import keys
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
+from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.models import ModelRead, RateLimitRead, RequestLog, UseCaseRead
 
 pytestmark = pytest.mark.anyio
@@ -136,6 +138,56 @@ async def test_the_refusal_is_not_a_model_call() -> None:
 
     assert [row.status for row in rows if row.use_case == SLUG] in ([], [403])
     assert all((row.total_tokens or 0) == 0 for row in rows)
+
+
+async def test_the_row_files_it_as_a_retired_use_case_not_a_pipeline_block() -> None:
+    """The refusal comes before the pipeline, so `blocked_by_pipeline` was a false statement — and
+    the outcome the blocked-prompt anomaly rule counts, so a retired use case's leftover traffic
+    read as an injection campaign. The closed vocabulary has no word for retirement; the request
+    names a use case that no longer serves, which is the caller's to correct."""
+    app = _app()
+    with TestClient(app) as client:
+        await _seed(app, retired=True)
+        assert _post(client).status_code == 403
+        async with app.state.db_sessionmaker() as session:
+            rows = (await session.execute(RequestLog.__table__.select())).fetchall()
+
+    assert [(row.status, row.outcome) for row in rows if row.use_case == SLUG] == [
+        (403, "invalid_request")
+    ]
+
+
+async def test_a_read_model_rebuilt_from_the_topics_still_refuses_it() -> None:
+    """A rebuild applies what compaction kept: the retirement — the last event on the slug's key —
+    and the use case's key and membership, which nothing ever deleted (`FRD-204` FR-6).
+
+    Without a tombstone written from the event itself, every retired use case would serve again
+    on a new stage or after a restore, to its keys and to its token members alike.
+    """
+    app = _app()
+    full, prefix, key_hash = keys.generate_api_key()
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="mock-1", capabilities=["generate"], approved=True))
+            await session.commit()
+            await apply_event(session, "usecase.deleted", {"slug": SLUG, "name": SLUG})
+            await apply_event(
+                session,
+                "api_key.created",
+                {"prefix": prefix, "key_hash": key_hash, "subject": "alice", "use_case": SLUG},
+            )
+            await apply_event(
+                session, "membership.upserted", {"slug": SLUG, "username": "alice", "role": "admin"}
+            )
+
+        by_token = _post(client)
+        by_key = client.post(
+            "/v1beta/models/mock-1:generateContent", json=BODY, headers={"x-goog-api-key": full}
+        )
+
+    assert by_token.status_code == 403, by_token.text
+    assert "retired" in by_token.text
+    assert by_key.status_code in (401, 403), by_key.text
 
 
 async def test_a_request_naming_no_use_case_is_unaffected() -> None:

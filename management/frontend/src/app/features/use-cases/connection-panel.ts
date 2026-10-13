@@ -1,5 +1,7 @@
 import { Component, computed, input, signal } from '@angular/core';
-import { KiraModel } from '../../core/api/models';
+import { CatalogModel, KiraModel } from '../../core/api/models';
+import { gatewayBase } from '../../core/api/prefixes';
+import { copyText } from '../../core/ui/clipboard';
 import { InfoHint } from '../../core/ui/info-hint';
 
 /** A released model, with what each surface needs to address it. */
@@ -8,20 +10,28 @@ interface Reachable {
   name: string;
   /** The integer the compatibility surface addresses, where one is assigned. */
   kiraId: number | null;
-  /** Whether it generates, embeds, or both — decides which example it belongs in. */
-  generates: boolean;
-  embeds: boolean;
+  /** What the KIRA listing says it does — the KIRA surface's examples come from this. */
+  kiraGenerates: boolean;
+  kiraEmbeds: boolean;
+  /**
+   * What the catalogue declares it does — the Gemini surface's examples come from this, because
+   * that surface addresses a model by name whether or not the KIRA listing carries it. `null` where
+   * the catalogue has not answered or does not hold the model.
+   */
+  generates: boolean | null;
+  embeds: boolean | null;
 }
 
 /**
  * How to call this use case: base URLs, addressing, credentials and examples (`FRD-206`).
  *
  * Everything is derived, so nothing goes stale: the base URL is the one this console reaches the
- * gateway at, the models are the use case's release (`FRD-308`) intersected with what the gateway
- * serves, and the KIRA ids come from the gateway. It never invents a model the use case may not
- * call, nor a KIRA id for a model without one — an example that fails when pasted is worse than
- * none. A model missing from the KIRA listing is either unserved or served without a number; the
- * panel cannot tell which, so it claims neither.
+ * gateway at, and the models are the use case's release (`FRD-308`). What each one does comes from
+ * where each surface learns it — the catalogue for the Gemini surface, the gateway's KIRA listing
+ * for the KIRA surface, with its ids. It never invents a model the use case may not call, nor a
+ * KIRA id for a model without one — an example that fails when pasted is worse than none. A model
+ * missing from the KIRA listing is either unserved or served without a number; the panel cannot
+ * tell which, so it claims neither, and the Gemini surface is not affected by it.
  */
 @Component({
   selector: 'app-connection-panel',
@@ -53,6 +63,8 @@ export class ConnectionPanel {
   readonly slug = input.required<string>();
   /** The release, straight from the use case — the same list the release panel shows. */
   readonly released = input.required<string[]>();
+  /** The model catalogue the page loaded, or `null` until it answers. */
+  readonly catalog = input<CatalogModel[] | null>(null);
   /**
    * The gateway's KIRA listing, or `null` while it has not answered. An input, because the page
    * loads and the panel renders (`CLAUDE.md` §3).
@@ -78,7 +90,7 @@ export class ConnectionPanel {
    * gateway, so it works for any client that can reach the console; it is deliberately not
    * presented as *the* gateway address, which only the operator knows.
    */
-  protected readonly base = computed(() => `${window.location.origin}/gw`);
+  protected readonly base = computed(() => gatewayBase());
   protected readonly geminiBase = computed(() => `${this.base()}/v1beta`);
   protected readonly kiraBase = computed(() => `${this.base()}/kira/api/external`);
 
@@ -86,24 +98,43 @@ export class ConnectionPanel {
   protected readonly reachable = computed<Reachable[]>(() => {
     const listing = this.kira();
     const byName = new Map((listing ?? []).map((model) => [model.name, model]));
+    const catalog = this.catalog();
+    const declared = new Map((catalog ?? []).map((model) => [model.name, model]));
     return this.released().map((name) => {
       const entry = byName.get(name);
       const capabilities = entry?.capabilities ?? [];
+      const own = declared.get(name)?.capabilities;
       return {
         name,
         // `?? null` rather than `?? 0`: a model without a number has none, and zero is a number.
         kiraId: entry?.id ?? null,
-        generates: capabilities.includes('CHAT'),
-        embeds: capabilities.includes('EMBEDDING'),
+        kiraGenerates: capabilities.includes('CHAT'),
+        kiraEmbeds: capabilities.includes('EMBEDDING'),
+        generates: own ? own.includes('generate') : null,
+        embeds: own ? own.includes('embed') : null,
       };
     });
   });
 
-  protected readonly chatModel = computed(() => this.reachable().find((m) => m.generates) ?? null);
-  protected readonly embedModel = computed(() => this.reachable().find((m) => m.embeds) ?? null);
+  /** The Gemini examples' models: declared able to do it in the catalogue. */
+  protected readonly chatModel = computed(
+    () => this.reachable().find((m) => m.generates === true) ?? null,
+  );
+  protected readonly embedModel = computed(
+    () => this.reachable().find((m) => m.embeds === true) ?? null,
+  );
+  /** The KIRA examples' models: listed for it by the gateway, with a number to address it by. */
+  protected readonly kiraChatModel = computed(
+    () => this.reachable().find((m) => m.kiraGenerates && m.kiraId !== null) ?? null,
+  );
+  protected readonly kiraEmbedModel = computed(
+    () => this.reachable().find((m) => m.kiraEmbeds && m.kiraId !== null) ?? null,
+  );
 
   /** True once the gateway has answered, whatever it said — so "no ids" is not shown while loading. */
   protected readonly answered = computed(() => this.kira() !== null);
+  /** True once the catalogue has answered — "nothing generates" is only said from an answer. */
+  protected readonly declaredKnown = computed(() => this.catalog() !== null);
 
   // The four builders take the model rather than looking it up: the template calls them only
   // inside the `@if` that produced it, so there is no absent case to guard.
@@ -159,14 +190,15 @@ export class ConnectionPanel {
 
   /** Copy, and say that it happened — or that the clipboard refused (an insecure origin, a permission). */
   protected async copy(what: string, text: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-      this.copied.set(what);
-      setTimeout(() => this.copied.update((current) => (current === what ? '' : current)), 2000);
-    } catch {
+    if (!(await copyText(text))) {
       this.copyFailure.set(
         'The browser refused to write to the clipboard; select and copy manually.',
       );
+      return;
     }
+    // A refusal earlier in the session is not true of this copy.
+    this.copyFailure.set('');
+    this.copied.set(what);
+    setTimeout(() => this.copied.update((current) => (current === what ? '' : current)), 2000);
   }
 }

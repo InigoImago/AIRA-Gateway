@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, wait_for_row
 
 pytestmark = pytest.mark.integration
 
@@ -93,29 +93,31 @@ async def test_a_refused_request_reaches_the_real_request_log(engine: AsyncEngin
         )
     assert response.status_code == 404, response.text
 
-    async with engine.connect() as connection:
-        row = (
-            await connection.execute(
-                text(
-                    "SELECT outcome, requested_model, status FROM request_logs"
-                    " WHERE requested_model = :model ORDER BY created_at DESC LIMIT 1"
-                ),
-                {"model": model},
-            )
-        ).first()
+    # Waited for: the write is off the request path (`FRD-405`), and a row read too early is a
+    # "lost" audit row that was merely late.
+    row = await wait_for_row(
+        engine,
+        "SELECT outcome, requested_model, status FROM request_logs"
+        " WHERE requested_model = :model AND use_case = :slug",
+        {"model": model, "slug": fixture.slug},
+        timeout=20.0,
+    )
 
-    assert row is not None, "a refused request left no trace in the audit trail"
     assert row[0] == "model_not_found"
     assert row[1] == model
     assert row[2] == 404
 
 
-async def test_a_refusal_becomes_a_figure_in_the_report(governance_token: str, fixture) -> None:
+async def test_a_refusal_becomes_a_figure_in_the_report(
+    governance_token: str, fixture, engine: AsyncEngine
+) -> None:
     """The refusals have to be *countable*, not merely stored — a use case hitting a wall should
     be a number on a screen rather than a log search.
 
     The window is a day rather than all of history: the endpoint bounds a report to 366 days
-    (`FRD-601`), which is the correct behaviour and worth exercising by staying inside it.
+    (`FRD-601`), which is the correct behaviour and worth exercising by staying inside it. And the
+    figure read is **this use case's**: every `model_not_found` in the installation within the hour
+    would count other tests' refusals, and pass with this one's never recorded.
     """
     model = f"ghost-{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC)
@@ -130,12 +132,19 @@ async def test_a_refusal_becomes_a_figure_in_the_report(governance_token: str, f
             json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
         )
         assert refused.status_code == 404, refused.text
+        await wait_for_row(
+            engine,
+            "SELECT 1 FROM request_logs WHERE use_case = :slug",
+            {"slug": fixture.slug},
+            timeout=20.0,
+        )
 
         response = await client.get(
             "/v1beta/reporting",
             params={
                 "from": (now - timedelta(hours=1)).isoformat(),
                 "to": (now + timedelta(hours=1)).isoformat(),
+                "use_case": fixture.slug,
             },
             headers={"authorization": f"Bearer {governance_token}"},
         )
@@ -143,6 +152,6 @@ async def test_a_refusal_becomes_a_figure_in_the_report(governance_token: str, f
 
     report = response.json()
     by_outcome = {row["key"]: row["requests"] for row in report["by_outcome"]}
-    assert by_outcome.get("model_not_found", 0) >= 1, (
+    assert by_outcome == {"model_not_found": 1}, (
         f"the refusal was stored but is not countable: {by_outcome}"
     )

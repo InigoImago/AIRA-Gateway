@@ -1,6 +1,8 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Subscription } from 'rxjs';
 import {
+  AnomalyRule,
   ApiKey,
   Budget,
   BudgetUsage,
@@ -36,7 +38,7 @@ import { PeoplePanel } from './people-panel';
 import { RateLimitsTab } from './rate-limits-tab';
 import { RulesTab } from './rules-tab';
 import { TracesTab } from './traces-tab';
-import { WarningsTab } from './warnings-tab';
+import { FINDINGS_PAGE, RecentFindings, WarningsTab, recentFindings } from './warnings-tab';
 
 const TABS = [
   'overview',
@@ -86,11 +88,13 @@ export class UseCaseDetail implements OnInit {
   private readonly router = inject(Router);
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly feedback = inject(PageFeedback);
-  /** Passed down to the panels that price things, which must not fetch it themselves. */
+  /** Passed down to the panels that price things, so the unit reaches them one way. */
   protected readonly currency = this.meService.currency;
 
-  protected slug = '';
+  /** The use case this page is about, from the address. */
+  protected readonly slug = signal('');
   protected readonly loading = signal(true);
   /** The server answered 404: no such use case, or none this caller may see. */
   protected readonly missing = signal(false);
@@ -113,9 +117,15 @@ export class UseCaseDetail implements OnInit {
    * authority over it, so the answer comes with the figures, from the plane that enforces.
    */
   protected readonly enforced = signal<boolean | null>(null);
-  /** Held here so the tab badges are right before a tab is opened. */
-  protected readonly warningCount = signal(0);
-  protected readonly ruleCount = signal(0);
+  /**
+   * The use case's own anomaly rules — loaded here, not by the tab, because the tab bar counts them
+   * and a count must be right before its tab is opened (`CLAUDE.md` §3). `null` until they arrive,
+   * so the badge shows no figure rather than a "0" nobody measured.
+   */
+  protected readonly rules = signal<AnomalyRule[] | null>(null);
+  protected readonly rulesFailed = signal(false);
+  /** Recent findings, for the Warnings badge — `null` until the gateway has answered. */
+  protected readonly warnings = signal<RecentFindings | null>(null);
 
   /**
    * What this use case consumed, from the request log rather than a budget counter (`FRD-603`).
@@ -127,10 +137,11 @@ export class UseCaseDetail implements OnInit {
   protected readonly peopleMonth = signal<PersonRow[]>([]);
   protected readonly peopleToday = signal<PersonRow[]>([]);
   /**
-   * How many of the two windows failed — a count, because neither request knows about the other,
-   * and a flag written by both let the later one hide a window that had arrived.
+   * Which of the two windows failed — one flag each, because neither request knows about the other,
+   * and the people panel reads one window or the other depending on the budget's period.
    */
-  private readonly consumptionFailures = signal(0);
+  protected readonly monthFailed = signal(false);
+  protected readonly todayFailed = signal(false);
   private readonly consumptionReason = signal('');
   protected readonly consumptionOutOfScope = signal(false);
 
@@ -169,10 +180,12 @@ export class UseCaseDetail implements OnInit {
   protected readonly chartSplit = signal<SeriesSplit>('model');
   protected readonly chartLoading = signal(true);
   protected readonly chartReason = signal('');
+  /** The chart's request in flight: a new period, granularity or split replaces it. */
+  private chartRequest: Subscription | null = null;
   protected readonly consumption = computed<UseCaseConsumption>(() => {
     const month = this.consumptionMonth();
     const today = this.consumptionToday();
-    const failed = this.consumptionFailures() > 0;
+    const failed = this.monthFailed() || this.todayFailed();
     return {
       month,
       today,
@@ -207,8 +220,13 @@ export class UseCaseDetail implements OnInit {
   /** The gateway's KIRA listing for the connection block; `null` until it answers. */
   protected readonly kiraModels = signal<KiraModel[] | null>(null);
   protected readonly kiraFailure = signal('');
-  /** The model catalogue, for the OpenCode configuration a new key comes with. */
-  protected readonly catalog = signal<CatalogModel[]>([]);
+  /**
+   * The model catalogue — for the release picker, the connection examples and the OpenCode file a
+   * new key comes with. Loaded once, here. `null` until it answers, and `catalogFailure` says why
+   * it did not: an empty catalogue would read as "every released model was withdrawn".
+   */
+  protected readonly catalog = signal<CatalogModel[] | null>(null);
+  protected readonly catalogFailure = signal('');
   /** The key just issued, held here so its one-time plaintext survives a tab switch. */
   protected readonly issued = signal<IssuedApiKey | null>(null);
   /**
@@ -230,16 +248,21 @@ export class UseCaseDetail implements OnInit {
   protected readonly isMember = computed(() => this.useCase()?.permissions?.is_member ?? false);
 
   ngOnInit(): void {
-    this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
+    this.slug.set(this.route.snapshot.paramMap.get('slug') ?? '');
     const requested = this.route.snapshot.queryParamMap?.get('tab') as Tab | null;
     if (requested && TABS.includes(requested)) {
       this.tab.set(requested);
     }
+    this.destroyRef.onDestroy(() => this.chartRequest?.unsubscribe());
     this.load();
-    // A failure leaves the catalogue empty; the OpenCode config then names a fallback model.
     this.service.models().subscribe({
-      next: (models) => this.catalog.set(models),
-      error: () => undefined,
+      next: (models) => {
+        this.catalog.set(models);
+        this.catalogFailure.set('');
+      },
+      error: (response: unknown) => {
+        this.catalogFailure.set(this.feedback.fail(response, 'Could not load the model catalog.'));
+      },
     });
     // Loaded here rather than in the connection panel, which only renders. A failure is carried
     // down: without it every id would read as absent, which is a different, real state.
@@ -281,7 +304,7 @@ export class UseCaseDetail implements OnInit {
 
   protected load(): void {
     this.loading.set(true);
-    this.service.get(this.slug).subscribe({
+    this.service.get(this.slug()).subscribe({
       next: (useCase) => {
         this.useCase.set(useCase);
         this.loading.set(false);
@@ -296,38 +319,76 @@ export class UseCaseDetail implements OnInit {
     this.loadKeys();
     this.loadBudgets();
     this.loadRateLimits();
+    this.loadRules();
+    this.loadWarnings();
     // Its own load: consumption is a fact about the use case, not about its limits.
     this.loadConsumption();
   }
 
-  /** Re-read the members; the access panel raises `changed` after a grant changes. */
+  /**
+   * After a grant changed. The keys too: removing a member or revoking a group revokes the keys
+   * of whoever loses access (`FRD-613`), and the keys tab would otherwise list them as active.
+   */
+  protected accessChanged(): void {
+    this.reloadMembers();
+    this.loadKeys();
+  }
+
+  /** Re-read the members. */
   protected reloadMembers(): void {
-    this.service.members(this.slug).subscribe({
+    this.service.members(this.slug()).subscribe({
       next: (members) => this.members.set(members),
       error: (response: unknown) => this.feedback.fail(response, 'Could not load the members.'),
     });
   }
 
   protected loadKeys(): void {
-    this.service.apiKeys(this.slug).subscribe({
+    this.service.apiKeys(this.slug()).subscribe({
       next: (keys) => this.apiKeys.set(keys),
       error: (response: unknown) => this.feedback.fail(response, 'Could not load the API keys.'),
     });
   }
 
   protected loadRateLimits(): void {
-    this.service.rateLimits(this.slug).subscribe({
+    this.service.rateLimits(this.slug()).subscribe({
       next: (limits) => this.rateLimits.set(limits),
       error: (response: unknown) => this.feedback.fail(response, 'Could not load the rate limits.'),
     });
   }
 
+  /** The use case's rules, for the tab and its badge; the rules tab raises `changed` to re-read. */
+  protected loadRules(): void {
+    this.service.useCaseRules(this.slug()).subscribe({
+      next: (rules) => {
+        this.rules.set(rules);
+        this.rulesFailed.set(false);
+      },
+      error: (response: unknown) => {
+        this.rules.set(null);
+        this.rulesFailed.set(true);
+        this.feedback.fail(response, 'Could not load the anomaly rules of this use case.');
+      },
+    });
+  }
+
+  /**
+   * The newest findings, for the Warnings badge. A failure leaves the badge without a figure and
+   * is not raised over the page: the reader did not ask for it, and the tab reports it in full the
+   * moment it is opened.
+   */
+  protected loadWarnings(): void {
+    this.service.anomalies(FINDINGS_PAGE, this.slug()).subscribe({
+      next: (page) => this.warnings.set(recentFindings(page, new Date())),
+      error: () => this.warnings.set(null),
+    });
+  }
+
   protected loadBudgets(): void {
-    this.service.budgets(this.slug).subscribe({
+    this.service.budgets(this.slug()).subscribe({
       next: (budgets) => this.budgets.set(budgets),
       error: (response: unknown) => this.feedback.fail(response, 'Could not load the budgets.'),
     });
-    this.service.budgetUsage(this.slug).subscribe({
+    this.service.budgetUsage(this.slug()).subscribe({
       next: ({ usage, enforced }) => {
         const map: Record<number, BudgetUsage> = {};
         for (const entry of usage) map[entry.id] = entry;
@@ -358,11 +419,13 @@ export class UseCaseDetail implements OnInit {
    * not ask for failing would otherwise read as the use case failing to load.
    */
   protected loadConsumption(): void {
-    this.consumptionFailures.set(0);
+    this.monthFailed.set(false);
+    this.todayFailed.set(false);
     this.consumptionReason.set('');
     const load = (preset: 'this-month' | 'today', into: (row: ReportRow | null) => void) => {
+      const failed = preset === 'today' ? this.todayFailed : this.monthFailed;
       const { from, to } = windowFor(preset, new Date());
-      this.service.useCaseReport(this.slug, from, to).subscribe({
+      this.service.useCaseReport(this.slug(), from, to).subscribe({
         next: (report) => {
           // `in_scope: false` is an empty report the caller was not entitled to fill; its zeroes
           // would claim this use case consumed nothing.
@@ -374,7 +437,7 @@ export class UseCaseDetail implements OnInit {
         },
         error: (response: unknown) => {
           into(null);
-          this.consumptionFailures.update((count) => count + 1);
+          failed.set(true);
           this.consumptionReason.set(errorMessage(response, 'The gateway could not be reached.'));
         },
       });
@@ -401,9 +464,12 @@ export class UseCaseDetail implements OnInit {
     const { from, to } = windowFor(this.chartPeriod(), new Date());
     this.chartLoading.set(true);
     this.chartReason.set('');
-    this.service
+    // The previous choice's answer is dropped: arriving last, it would draw thirty days under a
+    // control that says seven.
+    this.chartRequest?.unsubscribe();
+    this.chartRequest = this.service
       .useCaseReport(
-        this.slug,
+        this.slug(),
         from,
         to,
         { granularity: this.chartGranularity(), split: this.chartSplit() },

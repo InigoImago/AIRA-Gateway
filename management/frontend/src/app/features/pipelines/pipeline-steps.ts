@@ -1,4 +1,5 @@
 import { DryRunResult, PipelineStep, StepType } from '../../core/api/models';
+import { displayCount } from '../../core/ui/money';
 
 /**
  * The step types the builder offers, in the order it offers them.
@@ -46,13 +47,32 @@ export const BUILTIN_LABELS = [
 ];
 
 /**
- * Bounds on the live preview, which compiles operator-authored patterns in the browser.
- *
- * A pathological regex would block the UI thread, so the preview caps both the text it scans and
- * the patterns it runs. The saved config is validated server-side as well (ADR-0007).
+ * How much of the sample the live preview scans. Less than the gateway's 20,000
+ * (`GATEWAY_SCANNED_CHARS`): the preview compiles operator-authored patterns on the UI thread,
+ * where a pathological regex has no timeout. A longer sample is said to have been cut, because the
+ * gateway reads past where the preview stopped. The saved config is validated server-side too
+ * (`ADR-0007`).
  */
 export const PREVIEW_MAX_CHARS = 4_000;
-export const PREVIEW_MAX_PATTERNS = 64;
+/** How much of the prompt the gateway's heuristic scans (`MAX_SCANNED_CHARS`). */
+export const GATEWAY_SCANNED_CHARS = 20_000;
+/**
+ * The gateway's bounds on a step's **custom** patterns (`MAX_CUSTOM_PATTERNS`,
+ * `MAX_PATTERN_LENGTH`): a longer pattern is dropped, and the rest are capped on their own — the
+ * built-ins never count against the cap, so the preview must not let them either.
+ */
+export const MAX_CUSTOM_PATTERNS = 64;
+export const MAX_PATTERN_LENGTH = 256;
+
+/**
+ * What the preview says of a step a model decides, in that step's own terms: one note for all of
+ * them told the reader that the personal-data filter picks a category.
+ */
+const DECIDED_AT_REQUEST: Record<StepType, string> = {
+  injection_filter: 'LLM classifier — decided at request time',
+  pii_filter: 'a model replaces the personal data — decided at request time',
+  model_route: 'LLM picks a category — decided at request time',
+};
 
 export interface PreviewRow {
   label: string;
@@ -179,30 +199,24 @@ export function previewOf(steps: PipelineStep[], system: string, user: string): 
   const rows: PreviewRow[] = [];
   for (const step of steps) {
     const name = STEP_LABELS[step.type];
-    if (step.type !== 'injection_filter') {
-      rows.push({
-        label: name,
-        action: 'runtime',
-        note: 'LLM picks a category — decided at request time',
-      });
-      continue;
-    }
-    if (step.config.mode === 'llm') {
-      rows.push({
-        label: name,
-        action: 'runtime',
-        note: 'LLM classifier — decided at request time',
-      });
+    if (step.type !== 'injection_filter' || step.config.mode === 'llm') {
+      rows.push({ label: name, action: 'runtime', note: DECIDED_AT_REQUEST[step.type] });
       continue;
     }
     const scanned = step.config.scope === 'system_user' ? `${system}\n${user}` : user;
-    const patterns = [
-      ...(step.config.use_builtins !== false ? BUILTIN_REGEXES : []),
-      ...(step.config.patterns ?? []),
-    ].slice(0, PREVIEW_MAX_PATTERNS);
+    const custom = (step.config.patterns ?? [])
+      .filter((pattern) => pattern && pattern.length <= MAX_PATTERN_LENGTH)
+      .slice(0, MAX_CUSTOM_PATTERNS);
+    const patterns = [...(step.config.use_builtins !== false ? BUILTIN_REGEXES : []), ...custom];
     const hit = patterns.some((p) => matches(p, scanned));
     const action = hit ? (step.config.action === 'flag' ? 'flagged' : 'blocked') : 'passed';
-    rows.push({ label: name, action, note: hit ? 'matched a pattern' : 'no pattern matched' });
+    const found = hit ? 'matched a pattern' : 'no pattern matched';
+    const note =
+      scanned.length > PREVIEW_MAX_CHARS
+        ? `${found} in the first ${displayCount(PREVIEW_MAX_CHARS)} characters — the gateway ` +
+          `scans up to ${displayCount(GATEWAY_SCANNED_CHARS)}`
+        : found;
+    rows.push({ label: name, action, note });
     if (action === 'blocked') break;
   }
   return rows;
@@ -227,7 +241,12 @@ function describe(type: string, action: string, detail: Record<string, unknown>)
   }
   if (type === 'model_route') {
     if (action === 'rerouted') {
-      return `Classified as “${text(detail, 'category')}” → ${text(detail, 'to')}.`;
+      // The engine reroutes with no category when nothing matched and the default model differs
+      // from the one asked for.
+      const category = text(detail, 'category');
+      return category
+        ? `Classified as “${category}” → ${text(detail, 'to')}.`
+        : `No category matched — sent to the default model ${text(detail, 'to')}.`;
     }
     if (action === 'not_asked') return `Not asked: ${why ?? 'the classifier did not answer'}.`;
     const category = text(detail, 'category');
@@ -243,6 +262,14 @@ function describe(type: string, action: string, detail: Record<string, unknown>)
       : `Could not redact (${why ?? 'unknown'}) — the request stops here.`;
   }
   return action;
+}
+
+/**
+ * What follows the model a dry run was dispatched to: `, falling back to strong-1, backup-1`, or
+ * nothing. Joined in code, because a template block puts a space before the comma.
+ */
+export function fallbackClause(models: string[]): string {
+  return models.length ? `, falling back to ${models.join(', ')}` : '';
 }
 
 /** A dry run's trace as cards. Empty until a run has been made. */

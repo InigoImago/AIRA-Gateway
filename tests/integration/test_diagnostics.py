@@ -30,8 +30,20 @@ async def _readyz() -> dict:
     return response.json()
 
 
+#: The local model server's container, as **this** stack names it (`${AIRA_STACK:-aira}-ollama`).
+OLLAMA = stack_addresses.container("ollama")
+
+
 def _container(action: str, name: str) -> None:
-    subprocess.run(["docker", action, name], capture_output=True, text=True, timeout=60)
+    """Stop or start a container, and fail at once if docker did not.
+
+    A stop that silently failed surfaced ninety seconds later as "the degradation never showed";
+    a start that silently failed left every later test answering `502`.
+    """
+    done = subprocess.run(  # noqa: S603 - fixed argv
+        ["docker", action, name], capture_output=True, text=True, timeout=60
+    )
+    assert done.returncode == 0, f"docker {action} {name} failed: {done.stderr.strip()}"
 
 
 async def _wait_for(predicate, timeout: float = 90.0) -> dict:
@@ -105,10 +117,10 @@ async def test_the_probe_does_not_load_a_model() -> None:
     async with httpx.AsyncClient(base_url=stack_addresses.url("ollama"), timeout=10.0) as client:
         after = await client.get("/api/ps")
 
-    if before.status_code == 200 and after.status_code == 200:
-        loaded_before = {m["name"] for m in before.json().get("models", [])}
-        loaded_after = {m["name"] for m in after.json().get("models", [])}
-        assert loaded_after <= loaded_before, "readiness probing loaded a model"
+    assert before.status_code == 200 and after.status_code == 200, (before.text, after.text)
+    loaded_before = {m["name"] for m in before.json().get("models", [])}
+    loaded_after = {m["name"] for m in after.json().get("models", [])}
+    assert loaded_after <= loaded_before, "readiness probing loaded a model"
 
 
 # == an upstream that stops answering ============================================================
@@ -127,7 +139,7 @@ async def test_a_stopped_upstream_becomes_degraded_but_the_gateway_stays_ready()
     if not probed:
         pytest.skip("no adapter with a cheap remote probe is configured")
 
-    _container("stop", "aira-ollama")
+    _container("stop", OLLAMA)
     try:
         degraded = await _wait_for(
             lambda body: any(not v["ok"] for name, v in body["upstreams"].items() if name in probed)
@@ -138,7 +150,7 @@ async def test_a_stopped_upstream_becomes_degraded_but_the_gateway_stays_ready()
         # eviction — that distinction is the entire feature.
         assert any(not v["ok"] for name, v in degraded["upstreams"].items() if name in probed)
     finally:
-        _container("start", "aira-ollama")
+        _container("start", OLLAMA)
 
     recovered = await _wait_for(
         lambda body: all(v["ok"] for name, v in body["upstreams"].items() if name in probed)

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from aira_common.logging import configure_logging
 from aira_common.observability import (
     ACCESS_LOGGERS,
@@ -46,6 +48,26 @@ def test_the_rest_of_the_line_survives() -> None:
     assert args[1] == "POST"
     assert "/v1beta/models/m:generateContent?alt=sse&" in str(args[2])
     assert args[4] == 200
+
+
+@pytest.mark.parametrize("name", ["%6Bey", "k%65y", "%6B%65%79", "KEY", "api%5Fkey", "%74oken"])
+def test_a_parameter_name_is_read_as_the_server_reads_it(name: str) -> None:
+    """Starlette and Django percent-decode a parameter's name, so `?%6Bey=` authenticates exactly
+    as `?key=` does — and a redactor comparing the raw text left that key in every log line and
+    span of a client whose library encodes names."""
+    args = _emit(
+        ("10.0.0.1:5", "POST", f"/v1beta/models/m:generateContent?{name}={KEY}", "1.1", 200)
+    )
+
+    assert KEY not in str(args)
+    # The name stays as it was sent: the line is still evidence of what arrived.
+    assert f"{name}=REDACTED" in str(args)
+
+
+def test_a_name_that_only_contains_a_sensitive_one_is_kept() -> None:
+    args = _emit(("10.0.0.1:5", "GET", "/x?monkey=1&key_id=2", "1.1", 200))
+
+    assert args[2] == "/x?monkey=1&key_id=2"
 
 
 def test_a_request_without_a_query_is_untouched() -> None:

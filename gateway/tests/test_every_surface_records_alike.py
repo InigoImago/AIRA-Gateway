@@ -51,11 +51,14 @@ ALLOWED_OMISSIONS: dict[str, dict[str, str]] = {
         "model_selection": "a classifier call is not routed and falls back to nothing",
         "pipeline_decisions": "the decisions belong to the caller's row, not to the step's own",
         "tool_calls": "a classifier is asked for a word, never for a function",
+        "usage_basis": (
+            "a step's model call is buffered, so the vendor's report arrives whole with the answer "
+            "and is never counted or partial"
+        ),
     },
-    # Both surfaces' refusals, through `record_refusal`.
-    "api/serving/accounting.py:_write_refusal": {
-        "cost_nanos": "nothing was served, so nothing is priced — and unpriced is not zero",
-    },
+    # Both surfaces' refusals, through `record_refusal`. Nothing omitted: a refusal raised after
+    # the upstream answered — a document it did not finish — was paid for, and its row says so.
+    "api/serving/accounting.py:_write_refusal": {},
     "api/incidents/diagnostics.py:_record_diagnostic": {
         # An administrator asking a model about itself (`FRD-610`). Four fields are not omitted so
         # much as **inapplicable**, and each for its own reason rather than as a group:
@@ -71,6 +74,10 @@ ALLOWED_OMISSIONS: dict[str, dict[str, str]] = {
             "identical to `model` by construction: a check names one model and reaches that one"
         ),
         "tool_calls": "a probe declares no functions and the answer is one word",
+        "usage_basis": (
+            "a check is buffered, so the vendor's report arrives whole with the answer and is "
+            "never counted or partial"
+        ),
     },
 }
 
@@ -170,3 +177,124 @@ def test_a_surface_cannot_inherit_one() -> None:
     """
     with pytest.raises(TypeError):
         AuditTrail(operation="chat")  # type: ignore[call-arg]
+
+
+# == a stream ends alike on both surfaces =========================================================
+#
+# The two streams had two hand-written finishers, and each was wrong in a case the other got right:
+# Gemini recorded a delivered answer whose upstream never reported usage as a caller who hung up
+# (`499`, nothing booked); KIRA recorded an upstream failure after usage as a bare `502` with
+# nothing settled, though the text had reached the caller and the provider had billed it.
+
+
+class _NoUsage:
+    """An OpenAI-compatible server that ignores `stream_options.include_usage`."""
+
+    is_test_double = True
+
+    def models(self) -> list:  # noqa: ANN401
+        from aira_gateway.upstreams.base import UpstreamModel
+
+        return [UpstreamModel("mock-9", "1", ("streamGenerateContent",), provider="test")]
+
+    async def generate(self, request):  # noqa: ANN001, ANN201
+        raise NotImplementedError
+
+    async def stream_generate(self, request):  # noqa: ANN001, ANN201
+        from aira_gateway.core.canonical import CanonicalChunk
+
+        yield CanonicalChunk(text_delta="Hallo ")
+        yield CanonicalChunk(text_delta="Welt", finish_reason="stop")
+
+    async def embed(self, request):  # noqa: ANN001, ANN201
+        return [[0.0]]
+
+
+class _BreaksOffAfterUsage(_NoUsage):
+    """A provider that drops the connection mid-answer, after reporting what it had spent."""
+
+    async def stream_generate(self, request):  # noqa: ANN001, ANN201
+        from aira_gateway.core.canonical import CanonicalChunk, CanonicalUsage
+        from aira_gateway.upstreams.base import UpstreamError
+
+        yield CanonicalChunk(
+            text_delta="Die erste ", usage=CanonicalUsage(prompt_tokens=3, completion_tokens=2)
+        )
+        yield CanonicalChunk(
+            text_delta="Hälfte", usage=CanonicalUsage(prompt_tokens=3, completion_tokens=4)
+        )
+        raise UpstreamError("upstream connection reset", status_code=503)
+
+
+STREAMED = {
+    "gemini": (
+        "/v1beta/models/mock-9:streamGenerateContent?alt=sse",
+        {"contents": [{"role": "user", "parts": [{"text": "hallo"}]}]},
+    ),
+    "kira": (
+        "/kira/api/external/streaming-chat",
+        {"request": {"parts": [{"text": "hallo"}]}, "model_id": 9},
+    ),
+}
+
+
+async def _streamed_once(surface: str, provider: object) -> tuple[tuple, list[tuple]]:
+    """One streamed request against a use case with a budget: its row, and what was booked."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+    from aira_gateway.db.models import BudgetRead, BudgetUsage, ModelRead, RequestLog
+    from aira_gateway.upstreams.base import ProviderRegistry
+
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.state.providers = ProviderRegistry([provider])
+    path, body = STREAMED[surface]
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="mock-9", numeric_id=9, capabilities=["generate"]))
+            session.add(
+                BudgetRead(
+                    id=1,
+                    use_case="demo",
+                    scope="use_case",
+                    subject="",
+                    period="month",
+                    limit_tokens=10_000_000,
+                    enabled=True,
+                )
+            )
+            await session.commit()
+        response = client.post(path, json=body, headers={"x-aira-use-case": "demo"})
+        assert response.status_code == 200, response.text
+        async with app.state.db_sessionmaker() as session:
+            (row,) = (await session.execute(select(RequestLog))).scalars()
+            booked = [
+                (usage.tokens, usage.requests)
+                for usage in (await session.execute(select(BudgetUsage))).scalars()
+            ]
+    recorded = (row.status, row.outcome, row.prompt_tokens, row.completion_tokens)
+    return recorded, booked
+
+
+@pytest.mark.parametrize("surface", sorted(STREAMED))
+async def test_a_delivered_stream_without_usage_is_served_on_both_surfaces(surface: str) -> None:
+    """Delivered is delivered. Without usage the row has no tokens to show, and the request still
+    weighs one against a request limit — or every stream from such a server is free."""
+    recorded, booked = await _streamed_once(surface, _NoUsage())
+
+    assert recorded == (200, "served", None, None)
+    assert booked == [(0, 1)]
+
+
+@pytest.mark.parametrize("surface", sorted(STREAMED))
+async def test_a_stream_the_upstream_broke_off_is_settled_and_failed_on_both_surfaces(
+    surface: str,
+) -> None:
+    """What the upstream reported was spent and reached the caller, so it is booked; the row keeps
+    the upstream's status rather than claiming the request was served."""
+    recorded, booked = await _streamed_once(surface, _BreaksOffAfterUsage())
+
+    assert recorded == (503, "upstream_error", 3, 4)
+    assert booked == [(7, 1)]

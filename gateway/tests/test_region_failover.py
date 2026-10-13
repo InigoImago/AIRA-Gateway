@@ -296,3 +296,144 @@ async def test_a_catalogued_model_records_the_region_that_answered_too() -> None
     request = _Request(_Unknown(), _Catalog())
 
     assert await provenance(request, "gemini-2.5-pro", "eu") == ("vertex", "google", "eu")
+
+
+# == a stream says where it was opened (G3-4) =====================================================
+
+
+def _failing_over(region_refusing: str, contacted: list[str]) -> Any:
+    """A real Vertex transport over a mock: ``region_refusing`` answers 429, every other region
+    streams one chunk."""
+    import httpx
+
+    from aira_common.tokens import StaticTokenSource
+    from aira_gateway.upstreams.vertex.transport import VertexTransport
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        contacted.append(request.url.host)
+        if request.url.host.startswith(region_refusing):
+            return httpx.Response(429, json={"error": {"message": "no quota here"}})
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"candidates":[{"content":{"parts":[{"text":"Hi"}]}}]}\n\n'
+                b'data: {"candidates":[{"content":{"parts":[{"text":"!"}]},'
+                b'"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,'
+                b'"candidatesTokenCount":2}}\n\n'
+            ),
+        )
+
+    return VertexTransport(
+        project="p",
+        tokens=StaticTokenSource("t"),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        allowed_regions=("europe-west1", "europe-west4"),
+    )
+
+
+async def test_a_stream_names_the_region_that_opened_it() -> None:
+    """**The verb every chat client uses could not record where it went.** `:generateContent`
+    reported the region that answered; a stream opened in the second region, after the first
+    refused, was recorded in the first — the region that refused it. The first chunk now names the
+    region that opened the stream, and only the first."""
+    contacted: list[str] = []
+    adapter = VertexGeminiAdapter(_failing_over("europe-west1", contacted), [])
+
+    chunks = [
+        chunk async for chunk in adapter.stream_generate(_request(["europe-west1", "europe-west4"]))
+    ]
+
+    assert [host.split("-aiplatform")[0] for host in contacted] == ["europe-west1", "europe-west4"]
+    assert chunks[0].served_region == "europe-west4"
+    assert [chunk.served_region for chunk in chunks[1:]] == [None]
+    assert "".join(chunk.text_delta for chunk in chunks) == "Hi!"
+
+
+async def test_a_stream_in_its_first_region_says_so_too() -> None:
+    """The ordinary case carries it as well, or the column would be filled only for the streams
+    that failed over — which reads as "every other stream went to the default"."""
+    contacted: list[str] = []
+    adapter = VertexGeminiAdapter(_failing_over("nowhere", contacted), [])
+
+    chunks = [chunk async for chunk in adapter.stream_generate(_request(["europe-west1"]))]
+
+    assert chunks[0].served_region == "europe-west1"
+
+
+async def test_a_stream_left_early_releases_its_connection_at_once() -> None:
+    """A caller that stops reading closes the adapter's iterator — and closing an async generator
+    does not close the one it iterates, so the response stayed open until the garbage collector
+    got to it. It is closed with the adapter's own iterator."""
+    import httpx
+
+    from aira_common.tokens import StaticTokenSource
+    from aira_gateway.upstreams.vertex.transport import VertexTransport
+
+    closed: list[bool] = []
+
+    class _Body(httpx.AsyncByteStream):
+        async def __aiter__(self) -> Any:
+            yield b'data: {"candidates":[{"content":{"parts":[{"text":"Hi"}]}}]}\n\n'
+            yield b'data: {"candidates":[{"content":{"parts":[{"text":"there"}]}}]}\n\n'
+
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    transport = VertexTransport(
+        project="p",
+        tokens=StaticTokenSource("t"),
+        client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=_Body()))
+        ),
+        allowed_regions=("europe-west1",),
+    )
+    stream = VertexGeminiAdapter(transport, []).stream_generate(_request(["europe-west1"]))
+
+    first = await anext(stream)
+    await stream.aclose()  # type: ignore[attr-defined]
+
+    assert first.text_delta == "Hi"
+    assert closed == [True], "the response outlived the iterator that was reading it"
+
+
+async def test_the_audit_row_of_a_stream_names_the_region_that_answered() -> None:
+    """The finding end to end, both halves: the adapter says where its stream was opened, and the
+    surface records it. A stream opened in `europe-west4` after `europe-west1` refused it was
+    recorded in `europe-west1` — the region that refused it, read as evidence."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+    from aira_gateway.db.models import ModelRead, RequestLog
+    from aira_gateway.pipeline.engine import PipelineEngine
+    from aira_gateway.upstreams.base import ProviderRegistry
+
+    contacted: list[str] = []
+    adapter = VertexGeminiAdapter(_failing_over("europe-west1", contacted), [])
+    app = create_app(GatewaySettings(auth_required=False, require_use_case=False, log_queue_size=0))
+    registry = ProviderRegistry([adapter])
+    app.state.providers = registry
+    app.state.pipeline_engine = PipelineEngine(registry)
+
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                ModelRead(
+                    model="gemini-2.5-pro",
+                    capabilities=["generate"],
+                    provider="vertex",
+                    publisher="google",
+                    addressing={"regions": ["europe-west1", "europe-west4"]},
+                )
+            )
+            await session.commit()
+        response = client.post(
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+            json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+        )
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    assert response.status_code == 200, response.text
+    assert [row.region for row in rows] == ["europe-west4"]

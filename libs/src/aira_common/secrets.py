@@ -14,6 +14,7 @@ One loader for both planes, so "where do secrets come from" cannot diverge betwe
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +38,13 @@ SECRET_ID_ENV = "VAULT_SECRET_ID"
 SECRET_ID_FILE_ENV = "VAULT_SECRET_ID_FILE"
 DEV_TOKEN_ENV = "VAULT_TOKEN"
 
+#: Seconds, and the variable that overrides them. Named in the refusal of a value that is not one.
+TIMEOUT_ENV = "VAULT_TIMEOUT"
 DEFAULT_TIMEOUT = 10.0
+
+#: The prefix the settings classes read their variables under, and so the one a Vault key without
+#: it is completed with (FR-3).
+SETTINGS_PREFIX = "AIRA_"
 
 _log = get_logger("aira_common.secrets")
 
@@ -51,6 +58,14 @@ class SecretMissing(Exception):
 
     Distinct from :class:`VaultUnavailable`: "Vault is down" and "nobody has written that key yet"
     call for different actions by different people.
+    """
+
+
+class SecretAmbiguous(Exception):
+    """Vault holds one setting under two spellings, with different values. A startup failure.
+
+    Which of the two the process ran on would be decided by the order of a JSON object — and the
+    likeliest pair is a rotated value beside the stale one it was meant to replace.
     """
 
 
@@ -84,9 +99,28 @@ class VaultConfig:
             path=source.get("VAULT_PATH", "aira").strip() or "aira",
             role_id=source.get("VAULT_ROLE_ID", "").strip(),
             namespace=source.get("VAULT_NAMESPACE", "").strip(),
-            # Empty means unset: compose's `${VAULT_TIMEOUT:-}` yields "" and `float("")` raises.
-            timeout=float(source.get("VAULT_TIMEOUT", "").strip() or DEFAULT_TIMEOUT),
+            timeout=_timeout(source.get(TIMEOUT_ENV, "")),
         )
+
+
+def _timeout(raw: str) -> float:
+    """``VAULT_TIMEOUT`` as seconds: empty is the default, anything else a positive finite number.
+
+    Empty means unset, because compose's `${VAULT_TIMEOUT:-}` passes an empty string. Anything else
+    that is not a number of seconds is refused **by name**: `10s` would otherwise stop the process
+    with a parse error naming no variable, and `nan`, `inf` or `-1` would reach the HTTP client as a
+    bound that bounds nothing.
+    """
+    text = raw.strip()
+    if not text:
+        return DEFAULT_TIMEOUT
+    try:
+        seconds = float(text)
+    except ValueError:
+        seconds = math.nan
+    if not (math.isfinite(seconds) and seconds > 0):
+        raise ValueError(f"{TIMEOUT_ENV} must be a number of seconds above zero, not {raw!r}.")
+    return seconds
 
 
 class VaultSourceCache:
@@ -105,6 +139,16 @@ class VaultSourceCache:
 
 def _dev_token() -> str:
     return os.environ.get(DEV_TOKEN_ENV, "").strip()
+
+
+def _dev_token_in_use(config: VaultConfig) -> str:
+    """The development token, when it is what authenticates — never beside a role id.
+
+    An AppRole wins when both are set, so a token left in the environment next to one is not in
+    use. Read by the login and by `/readyz` alike, so neither reports a credential the other did
+    not use.
+    """
+    return "" if config.role_id else _dev_token()
 
 
 def _secret_id() -> tuple[str, str]:
@@ -157,8 +201,8 @@ class VaultClient:
         A dev token is accepted only because `make up` runs Vault in dev mode (the escape hatch
         `ADR-0007` allows for `local`); it is logged, so a deployment running on one is visible.
         """
-        token = _dev_token()
-        if token and not self._config.role_id:
+        token = _dev_token_in_use(self._config)
+        if token:
             _log.warning("vault_dev_token_used", address=self._config.address)
             return token
 
@@ -291,21 +335,36 @@ def load_secrets(
     return secrets
 
 
-def resolve(
-    secrets: dict[str, str], env_prefix: str = "AIRA_", env: dict[str, str] | None = None
-) -> dict[str, str]:
-    """Merge Vault over the environment, in the prefix the settings classes expect (FR-3).
+def setting_key(key: str, prefix: str = SETTINGS_PREFIX) -> str:
+    """The setting a Vault key names, spelled as the variable the environment would carry it in.
 
-    Vault wins where a key is in both; there is no third source, so a key in neither is absent and
-    whatever requires it says so at start-up. Keys match case-insensitively and with or without the
-    prefix, because a key that is present but spelled differently looks exactly like a missing one.
+    Case, surrounding blanks and the prefix do not matter — `google_api_key`, `GOOGLE_API_KEY` and
+    `AIRA_GOOGLE_API_KEY` are one setting — because a key that is present but spelled differently
+    looks exactly like a missing one (FR-3). The one rule, so no reader matches a narrower set.
     """
-    source = dict(env if env is not None else os.environ)
-    merged = dict(source)
+    prefix = prefix.upper()
+    name = key.strip().upper()
+    return name if name.startswith(prefix) else f"{prefix}{name}"
+
+
+def by_setting(secrets: dict[str, str], prefix: str = SETTINGS_PREFIX) -> dict[str, str]:
+    """``secrets`` keyed by the setting each one names (:func:`setting_key`).
+
+    Raises :class:`SecretAmbiguous` when two keys name one setting with different values; the same
+    value written twice is one setting. The message names keys, never values.
+    """
+    named: dict[str, str] = {}
+    spelled: dict[str, str] = {}
     for key, value in secrets.items():
-        name = key.strip().upper()
-        merged[name if name.startswith(env_prefix) else f"{env_prefix}{name}"] = value
-    return merged
+        name = setting_key(key, prefix)
+        if name in named and named[name] != value:
+            raise SecretAmbiguous(
+                f"Vault holds {name} twice, as '{spelled[name]}' and as '{key}', with different "
+                "values. Remove one: which of them the process would run on is not ours to choose."
+            )
+        named[name] = value
+        spelled.setdefault(name, key)
+    return named
 
 
 def secrets_state(config: VaultConfig | None = None) -> dict[str, Any]:
@@ -325,5 +384,5 @@ def secrets_state(config: VaultConfig | None = None) -> dict[str, Any]:
         # Which keys Vault supplied: "did it pick up the new one?" without "what is it?".
         "keys": sorted(VaultSourceCache.keys()),
         # A root token standing in for an AppRole is a local convenience and a production accident.
-        "dev_token": bool(_dev_token()),
+        "dev_token": bool(_dev_token_in_use(config)),
     }

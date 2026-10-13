@@ -215,6 +215,79 @@ def _resolve(name: str, default: str) -> str:
     return default
 
 
+def _written_default(variable: str) -> str:
+    """The first non-empty default Compose writes for `variable`, braces balanced.
+
+    Balanced rather than read to the end of the line, because most references are not at the end
+    of one: `container_name: ${AIRA_STACK:-aira}-gateway` names the prefix and goes on. A variable
+    written only with an empty default (`${AIRA_KAFKA_STAGE:-}`) is empty.
+    """
+    marker = "${" + variable + ":-"
+    seen = False
+    for compose in COMPOSE_FILES:
+        if not compose.exists():
+            continue
+        text = compose.read_text()
+        start = text.find(marker)
+        while start >= 0:
+            depth, index = 1, start + len(marker)
+            while index < len(text) and depth:
+                if text.startswith("${", index):
+                    depth, index = depth + 1, index + 2
+                    continue
+                if text[index] == "}":
+                    depth -= 1
+                index += 1
+            value = text[start + len(marker) : index - 1]
+            if value:
+                return value
+            seen = True
+            start = text.find(marker, index)
+    if seen:
+        return ""
+    raise KeyError(f"{variable} is not a variable the Compose files use.")
+
+
+def setting(variable: str) -> str:
+    """A Compose variable that is not an address, resolved the way Compose resolves it.
+
+    The environment, then `deploy/compose/.env`, then the default the Compose files write — a
+    `${…}` inside that default resolved by the same rule. For what a client must agree with the
+    stack about besides a port: a database password, the Keycloak administrator, the prefix every
+    container name carries. Written down at a call site, each of these is the stack's value until
+    somebody sets the variable, and then it is the wrong one with an error that names neither.
+    """
+    for source in (os.environ, _env_file_values()):
+        value = source.get(variable)
+        if value:
+            return value
+    default = _written_default(variable)
+    return _NESTED.sub(lambda match: _resolve(match.group(1), match.group(2)), default)
+
+
+def postgres_url(database: str) -> str:
+    """A SQLAlchemy URL for `database` on the published Postgres, as the account Compose creates."""
+    from urllib.parse import quote
+
+    user = quote(setting("POSTGRES_USER"), safe="")
+    password = quote(setting("POSTGRES_PASSWORD"), safe="")
+    return f"postgresql+psycopg://{user}:{password}@{netloc('postgres')}/{database}"
+
+
+def redis_url(database: int = 0) -> str:
+    """The published Redis, as a URL a client takes."""
+    return f"redis://{netloc('redis')}/{database}"
+
+
+def container(service: str) -> str:
+    """The name Compose gives `service`'s container: `${AIRA_STACK:-aira}-<service>`.
+
+    A second stack on the same machine (`AIRA_STACK=b`) moves every name; a client that wrote
+    `aira-gateway` down would then act on the first stack's container, or on none.
+    """
+    return f"{setting('AIRA_STACK')}-{service}"
+
+
 def as_make() -> str:
     """Every address on one line, as `name=value` pairs, for a Makefile to slice up.
 
@@ -235,5 +308,8 @@ if __name__ == "__main__":  # pragma: no cover - the Makefile's entry point
     if len(sys.argv) > 1 and sys.argv[1] == "make":
         print(as_make())
     else:
-        what, service = sys.argv[1], sys.argv[2]
-        print(url(service) if what == "url" else netloc(service))
+        what, name = sys.argv[1], sys.argv[2]
+        # `setting` and `container` are what the browser suite asks for besides an address: the
+        # Keycloak administrator, the database account, the name a container carries.
+        answers = {"url": url, "netloc": netloc, "setting": setting, "container": container}
+        print(answers[what](name))

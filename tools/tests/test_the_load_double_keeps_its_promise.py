@@ -259,3 +259,16 @@ def test_a_rate_limit_admits_the_heaviest_request_the_run_sends() -> None:
         f"a profile sends batches of {heaviest}, above the {seed.MAX_BATCH_WEIGHT} the seed "
         "guarantees the rate limit's burst will admit"
     )
+
+
+def test_a_steps_log_window_names_its_time_zone() -> None:
+    """`docker logs --since` reads a zoneless timestamp as the *client's* local time, so a UTC
+    clock without `Z` moved each step's window by the host's offset."""
+    from datetime import datetime
+
+    from tools.loadtest import sample
+
+    stamp = sample.now_stamp()
+
+    assert stamp.endswith("Z"), stamp
+    assert datetime.fromisoformat(stamp).utcoffset() is not None

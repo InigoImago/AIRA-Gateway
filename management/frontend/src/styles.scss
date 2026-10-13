@@ -9,6 +9,12 @@
   --aira-brand-soft: #eef2ff;
   --aira-bg: #f6f7fb;
   --aira-surface: #ffffff;
+  /* A quieter surface inside a card: a stated fact, an opened row. Defined, because three rules
+   * named this token with three different fallbacks and so painted three different greys. */
+  --aira-surface-muted: #f9fafb;
+  /* A row that has been opened in place, and a block of stored content shown inside it. */
+  --aira-surface-open: rgba(127, 127, 127, 0.06);
+  --aira-surface-code: rgba(127, 127, 127, 0.12);
   --aira-border: #e5e7eb;
   --aira-border-strong: #d1d5db;
 
@@ -29,6 +35,28 @@
 
   --aira-radius: 10px;
   --aira-radius-sm: 6px;
+
+  /* **One height for every control that can stand in a row with another.** A text input is two
+   * 0.5rem paddings, two 1px borders and one 1.5-line of 16px text; a `<select>` ignores
+   * `line-height` and a `.btn` sets a smaller font, so side by side they measured 42, 39 and 39px
+   * and a row of them was ragged at the bottom edge. Every one of them now starts from this. */
+  --aira-control-height: calc(1.5rem + 1rem + 2px);
+  /* The width the console's pages are laid out in. */
+  --aira-content-max: 960px;
+
+  /* **The type scale: eight sizes, and a size is one of them.** There were seventeen, six of them
+   * within 0.1rem of each other (0.72, 0.74, 0.75, 0.78, 0.8, 0.82) — a badge, a tab count and a
+   * hint that are meant to read alike each picked its own number, and side by side they did not.
+   * The exceptions below this list are deliberate and say why where they are written: the chart
+   * axis compressed to fit a phone, and the info glyph drawn to its circle. */
+  --aira-text-2xs: 0.7rem;
+  --aira-text-xs: 0.75rem;
+  --aira-text-sm: 0.8rem;
+  --aira-text-md: 0.875rem;
+  --aira-text-base: 0.9rem;
+  --aira-text-lg: 1.05rem;
+  --aira-text-xl: 1.15rem;
+  --aira-text-2xl: 1.5rem;
   --aira-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
   --aira-shadow-lg: 0 10px 25px rgba(16, 24, 40, 0.12);
   --aira-mono: ui-monospace, 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
@@ -91,6 +119,15 @@ a {
 }
 a:hover {
   text-decoration: underline;
+}
+/* A link inside a sentence is underlined: its colour is too close to the words around it to tell
+   the two apart by colour alone (WCAG 1.4.1). A link that stands alone — navigation, a table cell,
+   a back link — keeps the plain style. */
+p a:not(.btn),
+.callout a:not(.btn),
+span.muted a {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
 code,
@@ -185,9 +222,32 @@ code,
 .card > h3 {
   margin-top: 0;
 }
+/* **A card whose table runs edge to edge.** The table's own cell padding is then the card's inner
+ * distance, so whatever sits above or below the table — a search, a note, a pager, a "loading" —
+ * is inset by that same 0.75rem and starts where the first column's text starts. Written inline as
+ * `1rem` on every such card, the search box stood 4px to the right of the column under it. */
+.card--flush {
+  padding: 0;
+}
+.card__inset {
+  margin: 0;
+  padding: 0.9rem 0.75rem;
+}
+/* Directly above the table: the table's header row is the distance below. */
+.card__inset--above {
+  padding-bottom: 0;
+}
+/* Directly below the table: its last row is the distance above. */
+.card__inset--below {
+  padding-top: 0;
+}
+/* A card inside a list of cards — one budget among several — set tighter than a page's card. */
+.card--compact {
+  padding: 0.9rem 1rem;
+}
 .card__title {
   margin: 0 0 0.25rem;
-  font-size: 1.05rem;
+  font-size: var(--aira-text-lg);
 }
 
 /* The heading of a page reached from the navigation — one size on every one of them. Some pages
@@ -195,7 +255,7 @@ code,
  * levels depending on where you were. */
 .page-title {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: var(--aira-text-2xl);
 }
 
 .section-title {
@@ -203,7 +263,26 @@ code,
   align-items: baseline;
   gap: 0.5rem;
   margin: 0 0 0.75rem;
-  font-size: 1.05rem;
+  font-size: var(--aira-text-lg);
+}
+/* A title that shares its row with an action has no margin of its own: the row is the unit, and
+ * the distance to what follows is the lead's (or the next block's). Written fourteen times as an
+ * inline `style="margin: 0"`, which is a rule nobody can see from the stylesheet. */
+.spread > .section-title,
+.spread > .card__title {
+  margin: 0;
+}
+/* The sentence under a page's or a section's title: one distance, everywhere. */
+.lead {
+  margin: 0.25rem 0 0;
+}
+/* Secondary text set smaller than the text around it — a unit, a provenance note, a count. One of
+ * the scale's two small sizes, so two such notes on two pages are the same size. */
+.text-sm {
+  font-size: var(--aira-text-sm);
+}
+.text-xs {
+  font-size: var(--aira-text-xs);
 }
 
 /* ---- buttons --------------------------------------------------------------------- */
@@ -212,10 +291,11 @@ code,
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  min-height: var(--aira-control-height);
   padding: 0.5rem 0.9rem;
   font: inherit;
   font-weight: 600;
-  font-size: 0.875rem;
+  font-size: var(--aira-text-md);
   color: var(--aira-text);
   background: var(--aira-surface);
   border: 1px solid var(--aira-border-strong);
@@ -255,8 +335,10 @@ code,
   background: transparent;
 }
 .btn--sm {
+  /* Small on purpose — a row action, a pager — so it does not take the control height. */
+  min-height: 0;
   padding: 0.3rem 0.6rem;
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
 }
 
 /* ---- forms ----------------------------------------------------------------------- */
@@ -267,7 +349,7 @@ code,
   gap: 0.3rem;
 }
 .field label {
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
   font-weight: 600;
   color: var(--aira-text-muted);
 }
@@ -284,6 +366,18 @@ textarea {
    * these two they overflow every narrow column and flex row they are placed in. */
   min-width: 0;
   max-width: 100%;
+}
+/* See `--aira-control-height`: a select ignores the line-height the input above is sized by. */
+select {
+  min-height: var(--aira-control-height);
+}
+/* A date field draws its calendar control taller than a line of text — 44px beside the 42px select
+ * and button of the reporting period's row — so it is held to the same height outright. */
+input[type='date'],
+input[type='time'],
+input[type='datetime-local'],
+input[type='month'] {
+  height: var(--aira-control-height);
 }
 textarea {
   width: 100%;
@@ -308,7 +402,7 @@ textarea:disabled {
   cursor: not-allowed;
 }
 .field__hint {
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   color: var(--aira-text-muted);
 }
 .field__hint--error {
@@ -324,8 +418,8 @@ textarea:disabled {
   padding: 0.5rem 0.7rem;
   border: 1px solid var(--aira-border);
   border-radius: 6px;
-  background: var(--aira-surface-muted, #f9fafb);
-  font-size: 0.85rem;
+  background: var(--aira-surface-muted);
+  font-size: var(--aira-text-md);
   color: var(--aira-text);
   /* **Prose, so it flows like prose.** Written first as a flex row with `gap: 0.5rem`, which puts
    * half a rem between every child — and one of the children is a `<strong>` in the middle of a
@@ -345,9 +439,11 @@ input::placeholder {
 /* Height of one label line, so a row of fields can reserve exactly that much and line their
  * controls up regardless of what sits underneath them. */
 $field-label-height: 1.2rem;
-/* An input's outer height: two 0.5rem paddings, two 1px borders, one line of text. Named so a row
-   can line something that is *not* a control up against one. */
-$control-height: calc(1.5em + 1rem + 2px);
+/* An input's outer height, named so a row can line something that is *not* a control up against
+   one. The custom property, not a second calculation: written as `1.5em`, it measured the line in
+   the font of whatever used it, and a checkbox line at 0.9rem came out 2px short of the select it
+   is centred against. */
+$control-height: var(--aira-control-height);
 $field-label-gap: 0.3rem;
 
 /* **A row-spanning child of a wrapping flex form.**
@@ -558,7 +654,7 @@ $field-label-gap: 0.3rem;
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: var(--aira-text-base);
 }
 .table th,
 .table td {
@@ -599,8 +695,14 @@ $field-label-gap: 0.3rem;
    * grows to hold them. The cell already refuses to wrap its text; this makes its buttons agree. */
   flex-wrap: nowrap;
 }
+/* The same distance when the cell holds its controls directly. The rate-limit table wrote its
+ * Disable and Remove without the `.actions` wrapper and they touched — the pairing the rule above
+ * exists to prevent — so the spacing no longer depends on remembering the wrapper. */
+.table .table__actions > * + * {
+  margin-left: 0.4rem;
+}
 .table th {
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--aira-text-muted);
@@ -620,7 +722,10 @@ $field-label-gap: 0.3rem;
 .table code {
   overflow-wrap: break-word;
 }
-.table tr:last-child td {
+/* Every cell of the last row, the row header included: written for `td` alone, it left a rule
+ * under the first column only wherever a row is headed by its name (`th scope="row"`). */
+.table tr:last-child > td,
+.table tr:last-child > th {
   border-bottom: none;
 }
 .table__empty {
@@ -636,7 +741,7 @@ $field-label-gap: 0.3rem;
   /* A status is one word or two; broken across lines it reads "recorde / d". */
   white-space: nowrap;
   padding: 0.15rem 0.5rem;
-  font-size: 0.72rem;
+  font-size: var(--aira-text-xs);
   font-weight: 700;
   letter-spacing: 0.02em;
   border-radius: 999px;
@@ -682,7 +787,7 @@ $field-label-gap: 0.3rem;
   display: block;
   padding: 0.6rem 0.75rem;
   font-family: var(--aira-mono);
-  font-size: 0.85rem;
+  font-size: var(--aira-text-md);
   word-break: break-all;
   background: #111827;
   color: #f9fafb;
@@ -693,9 +798,13 @@ $field-label-gap: 0.3rem;
 
 .tabs {
   display: flex;
+  /* **A tab that does not fit wraps; it is never scrolled out of sight.** The use-case detail's
+   * eight tabs measured 922px in a 904px column at 1440px — the widest common desktop — so its
+   * last tab was cut in half and, once *Requests* was selected, *Overview* was. A tab nobody can
+   * see is a section nobody knows exists, which is the reason given below for the list layout. */
+  flex-wrap: wrap;
   gap: 0.25rem;
   border-bottom: 1px solid var(--aira-border);
-  /* Four tabs do not fit a phone: scroll the strip rather than the page. */
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -745,10 +854,10 @@ $field-label-gap: 0.3rem;
 .tab {
   flex: none;
   white-space: nowrap;
-  padding: 0.55rem 0.9rem;
+  padding: 0.55rem 0.75rem;
   font: inherit;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--aira-text-base);
   color: var(--aira-text-muted);
   background: none;
   border: none;
@@ -777,7 +886,7 @@ $field-label-gap: 0.3rem;
 }
 .tab__count {
   margin-left: 0.35rem;
-  font-size: 0.72rem;
+  font-size: var(--aira-text-xs);
   color: var(--aira-text-muted);
 }
 
@@ -795,11 +904,11 @@ $field-label-gap: 0.3rem;
   background: var(--aira-surface);
 }
 .tile__value {
-  font-size: 1.5rem;
+  font-size: var(--aira-text-2xl);
   font-weight: 700;
 }
 .tile__label {
-  font-size: 0.78rem;
+  font-size: var(--aira-text-sm);
   color: var(--aira-text-muted);
 }
 
@@ -856,7 +965,7 @@ $field-label-gap: 0.3rem;
   align-items: center;
   gap: 0.5rem;
   color: var(--aira-text-muted);
-  font-size: 0.9rem;
+  font-size: var(--aira-text-base);
 }
 .spinner {
   width: 14px;
@@ -885,7 +994,7 @@ $field-label-gap: 0.3rem;
   padding: 1.25rem 0.25rem;
   text-align: center;
   color: var(--aira-text-muted);
-  font-size: 0.9rem;
+  font-size: var(--aira-text-base);
 }
 
 /* ---- small screens --------------------------------------------------------------- */
@@ -906,6 +1015,13 @@ $field-label-gap: 0.3rem;
   }
   .form-inline .btn {
     justify-content: center;
+  }
+  /* Stacked, nothing shares a line with a label, so nothing skips one: the offset that lines a
+   * button up with the control beside it would be an empty band above it. `.filter-row` does the
+   * same after its own rules, which this block precedes. */
+  .form-inline > .btn,
+  .form-inline > .field__hint {
+    margin-top: 0;
   }
 }
 
@@ -932,13 +1048,13 @@ $field-label-gap: 0.3rem;
   padding: 0.75rem;
   border: 1px solid var(--aira-border);
   border-radius: var(--aira-radius-sm);
-  background: var(--aira-surface-muted, transparent);
+  background: var(--aira-surface);
 }
 .stat dt {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--aira-text-muted);
@@ -952,7 +1068,7 @@ $field-label-gap: 0.3rem;
  * heading where it doubled the heading's length. */
 .stat__unit {
   display: block;
-  font-size: 0.7rem;
+  font-size: var(--aira-text-2xs);
   font-weight: 400;
   text-transform: none;
   letter-spacing: 0;
@@ -960,7 +1076,7 @@ $field-label-gap: 0.3rem;
 }
 .stat dd {
   margin: 0.25rem 0 0;
-  font-size: 1.15rem;
+  font-size: var(--aira-text-xl);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -972,7 +1088,7 @@ $field-label-gap: 0.3rem;
 .checkline {
   display: flex;
   gap: 0.4rem;
-  font-size: 0.9rem;
+  font-size: var(--aira-text-base);
   /* `nowrap` keeps a box beside its two-word label — "Refusals only" must not break in half. A
      sentence-length label is a different thing, and on a 360px phone an unbreakable one pushes
      the whole document sideways: the layout test caught exactly that, ten pixels, the day a
@@ -1008,7 +1124,7 @@ $field-label-gap: 0.3rem;
 
 .field__legend {
   display: block;
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
   font-weight: 600;
   color: var(--aira-text-muted);
   margin-bottom: 0.3rem;
@@ -1234,7 +1350,7 @@ fieldset.bare {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.78rem;
+  font-size: var(--aira-text-sm);
   font-variant-numeric: tabular-nums;
   /* Wide enough for "updated 59m ago" so nothing after it ever moves. */
   min-width: 15ch;
@@ -1277,15 +1393,21 @@ fieldset.bare {
 /* A trace id is long, unbroken and worth copying. */
 .trace-id {
   font-family: var(--aira-mono);
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   overflow-wrap: anywhere;
 }
 
-/* A count that means "look at this", rather than "there are this many". */
+/* A count that means "look at this", rather than "there are this many". A pill of its own: the
+ * plain count has no box, so a background and a border colour alone painted a tight pink
+ * rectangle with no border at all. */
 .tab__count--alert {
+  display: inline-block;
+  padding: 0 0.4rem;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
   background: var(--aira-danger-soft);
   color: var(--aira-danger);
-  border-color: #fecaca;
+  font-weight: 700;
 }
 
 /* ---- a row of filters (FRD-206 follow-up) ------------------------------------------ */
@@ -1295,6 +1417,12 @@ fieldset.bare {
  * the select sits visibly lower than it — the two controls a reader reads as a pair are on two
  * different lines. So a filter row aligns on the **bottom**, where the controls actually are,
  * and every item carries a label so the heading row lines up too. */
+/* A filter row under a section's lead sentence or its header row: one distance — the usage chart's
+ * — rather than the 0.75rem and 0.9rem the two panels that have one wrote inline. */
+.lead + .filter-row,
+.spread + .filter-row {
+  margin-top: 0.75rem;
+}
 .filter-row {
   display: flex;
   flex-wrap: wrap;
@@ -1305,6 +1433,14 @@ fieldset.bare {
    * select beside it. `FRD-207`'s finding, in the one container its fix did not reach. */
   align-items: flex-start;
   gap: 1.1rem 1.4rem;
+}
+
+/* A field that takes the row's slack may not be squeezed out of it. `.grow` is `flex: 1` — a basis
+ * of nothing — so on a phone the access panel's search field was given what the role select left
+ * over: **53px**, with its hint wrapped one word per line down 379px. The same floor
+ * `.form-inline > .field.grow` has had since the catalog editor's 30px model-id field. */
+.filter-row > .field.grow {
+  min-width: min(14rem, 100%);
 }
 
 /* Every label occupies the same single line, so the controls below them start at the same y. */
@@ -1337,6 +1473,30 @@ fieldset.bare {
    That is the `FRD-207` finding, reintroduced by adding two fields to a row that had two. */
 .filter-row .field--narrow input {
   width: 9.5rem;
+}
+
+/* On a phone a filter row stacks, as a form does. Once its items no longer share a line, the label
+ * offset above a button or a checkbox lines it up with nothing and only widens the gap before it,
+ * so every gap in the row is the row's own again. Placed after the rules above, which it has to win
+ * against at the same specificity. */
+@media (max-width: 640px) {
+  .filter-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .filter-row > * {
+    flex-basis: auto;
+  }
+  .filter-row > .btn {
+    justify-content: center;
+  }
+  .filter-row > .btn,
+  .filter-row .checkline {
+    margin-top: 0;
+  }
+  .filter-row .checkline {
+    min-height: 0;
+  }
 }
 
 /* ---- the "i" that carries the rest of a sentence ---------------------------------- */
@@ -1415,7 +1575,7 @@ fieldset.bare {
   border: 1px solid var(--aira-border-strong);
   border-radius: var(--aira-radius-sm);
   box-shadow: var(--aira-shadow-lg);
-  font-size: 0.78rem;
+  font-size: var(--aira-text-sm);
   font-weight: 400;
   line-height: 1.45;
   letter-spacing: 0;
@@ -1458,6 +1618,13 @@ fieldset.bare {
   gap: 0.3rem;
   min-width: min(18rem, 100%);
 }
+/* A search box's label reads like every other field's label. Set in body type, "Find a use case"
+ * looked like a sentence beside the "Grant access to" of the panel next to it. */
+.search > span:first-child {
+  font-size: var(--aira-text-sm);
+  font-weight: 600;
+  color: var(--aira-text-muted);
+}
 .search input {
   width: 100%;
 }
@@ -1469,7 +1636,7 @@ fieldset.bare {
   justify-content: space-between;
   gap: 0.5rem 1rem;
   margin-top: 0.75rem;
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
   color: var(--aira-text-muted);
 }
 /* Pinned to the right **on its own line too**.
@@ -1516,7 +1683,7 @@ fieldset.bare {
 }
 .row-toggle__caret {
   display: inline-block;
-  font-size: 0.7rem;
+  font-size: var(--aira-text-2xs);
   transition: transform 120ms ease;
 }
 .row-toggle__caret.is-open {
@@ -1526,29 +1693,35 @@ tr.is-open > * {
   background: var(--aira-brand-soft, rgba(37, 99, 235, 0.06));
 }
 .row-detail > td {
-  background: var(--aira-surface-muted, #f8fafc);
+  background: var(--aira-surface-open);
   border-top: none;
 }
+/* What an opened row holds: its fields as a grid of label and value.
+ *
+ * **One definition.** There were two, written for two screens a few hundred lines apart, and the
+ * later one silently won half the properties of the earlier: every opened row on every screen was
+ * a mixture of both — the second's track width and gaps, the first's padding and weight — that
+ * neither author had written. */
 .detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
-  gap: 0.6rem 1.5rem;
-  margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem 1.25rem;
+  margin: 0 0 1rem;
   padding: 0.35rem 0 0.15rem;
 }
 .detail-grid > div {
   min-width: 0;
 }
 .detail-grid dt {
-  font-size: 0.72rem;
+  font-size: var(--aira-text-xs);
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--aira-text-muted);
 }
 .detail-grid dd {
   margin: 0.15rem 0 0;
-  font-size: 0.85rem;
+  font-size: var(--aira-text-md);
   /* Ids, model names and reasons are long and unbroken; a cell that cannot break makes the whole
    * table scroll sideways. */
   overflow-wrap: anywhere;
@@ -1559,17 +1732,15 @@ tr.is-open > * {
   background: var(--aira-surface);
   border: 1px solid var(--aira-border);
   border-radius: var(--aira-radius-sm);
-  font-size: 0.85rem;
+  font-size: var(--aira-text-md);
   line-height: 1.5;
 }
 
 /* ---- a request's content, opened in place (`FRD-505`) ------------------------------ */
 
 /* In the row rather than in a drawer: the figures that made somebody open it stay on screen, and
-   a panel that covers the table makes the reader lose the row they came from. */
-.row-detail > td {
-  background: var(--surface-2, rgba(127, 127, 127, 0.06));
-}
+   a panel that covers the table makes the reader lose the row they came from. The opened row is
+   `.row-detail` above. */
 
 .payload-grid {
   display: grid;
@@ -1584,10 +1755,10 @@ tr.is-open > * {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
   padding: 0.6rem 0.75rem;
   border-radius: 6px;
-  background: var(--code-bg, rgba(127, 127, 127, 0.12));
+  background: var(--aira-surface-code);
 }
 
 /* The control that opens a request. First column, because the table scrolls sideways once it
@@ -1604,28 +1775,11 @@ tr.is-open > * {
 
 .row-openable:hover,
 .row-openable.is-open {
-  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+  background: var(--aira-surface-open);
 }
 
-/* A request's metadata, once it has been opened. The columns carry what a list is scanned by;
-   this carries what a single request is. */
-.detail-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 0.75rem 1.25rem;
-  margin: 0 0 1rem;
-}
-.detail-grid dt {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--aira-text-muted);
-}
-.detail-grid dd {
-  margin: 0.15rem 0 0;
-  font-size: 0.88rem;
-  word-break: break-word;
-}
+/* A request's metadata, once it has been opened, is a `.detail-grid` (above). The columns carry
+   what a list is scanned by; the grid carries what a single request is. */
 
 /* A request a pipeline step objected to. Marked on the row, not only in a cell: it is what an
    oversight role opened the screen to find, and a badge in the last column is a badge nobody
@@ -1690,7 +1844,7 @@ tr.is-open > * {
 }
 
 .reg-slug {
-  font-size: 0.78rem;
+  font-size: var(--aira-text-sm);
 }
 
 /* One line, cut where it runs out — so every collapsed row is the same height and forty of them
@@ -1802,7 +1956,7 @@ tr.is-open > * {
   border: 1px solid var(--aira-border-strong);
   border-radius: 999px;
   background: var(--aira-brand-soft);
-  font-size: 0.82rem;
+  font-size: var(--aira-text-sm);
   line-height: 1.6;
 }
 .chip--warning {
@@ -1817,7 +1971,7 @@ tr.is-open > * {
   overflow-wrap: anywhere;
 }
 .chip__note {
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   font-style: italic;
 }
 .chip__remove {
@@ -1833,7 +1987,7 @@ tr.is-open > * {
   border-radius: 999px;
   background: transparent;
   color: inherit;
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   cursor: pointer;
 }
 .chip__remove:hover {
@@ -1894,20 +2048,20 @@ tr.is-open > * {
   flex: 1 1 auto;
   min-width: 0;
   font-family: var(--aira-mono);
-  font-size: 0.85rem;
+  font-size: var(--aira-text-md);
   overflow-wrap: anywhere;
 }
 .picker__detail {
   display: block;
   font-family: inherit;
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   font-weight: 400;
   color: var(--aira-text-muted);
 }
 .picker__empty {
   padding: 0.5rem;
   color: var(--aira-text-muted);
-  font-size: 0.85rem;
+  font-size: var(--aira-text-md);
 }
 
 /* **A word you typed, as a thing you can see and remove.**
@@ -1915,9 +2069,16 @@ tr.is-open > * {
  * The model editor's thinking levels are free text (`ADR-0021`): a vendor's own words, typed one
  * at a time, because no closed list in this repository survives the vendors' next release. A chip
  * is what makes "typed freely" legible — each word is separately present, separately removable,
- * and separately marked once the model has been asked whether it takes it.
+ * and separately marked once the model has been asked whether it takes it. Its regions are the
+ * same shape.
+ *
+ * **Its own class, not `.chip`.** This block was written as a second `.chip`, `.chips`,
+ * `.chip__note` and `.chip__remove`, and as the later of two equally specific rules it restyled
+ * the multi-select's chips everywhere in the console: white instead of the brand tint, a warning
+ * chip without its warning colours, the chosen set glued to the search field below it, every note
+ * bold. Two components may share a look; they may not share a name.
  */
-.chips {
+.verdict-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
@@ -1925,7 +2086,7 @@ tr.is-open > * {
   padding: 0;
   list-style: none;
 }
-.chip {
+.verdict-chip {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -1933,34 +2094,45 @@ tr.is-open > * {
   border: 1px solid var(--aira-border-strong);
   border-radius: 999px;
   background: var(--aira-surface);
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
+  line-height: 1.6;
 }
 /* The verdict is a border and a mark, never colour alone — the same rule the badges follow. */
-.chip--ok {
-  border-color: var(--aira-success, #15803d);
+.verdict-chip--ok {
+  border-color: var(--aira-success);
 }
-.chip--bad {
+.verdict-chip--bad {
   border-color: var(--aira-danger);
 }
-.chip__note {
+.verdict-chip__note {
+  font-size: var(--aira-text-xs);
   font-weight: 700;
 }
-.chip--ok .chip__note {
-  color: var(--aira-success, #15803d);
+.verdict-chip--ok .verdict-chip__note {
+  color: var(--aira-success);
 }
-.chip--bad .chip__note {
+.verdict-chip--bad .verdict-chip__note {
   color: var(--aira-danger);
 }
-.chip__remove {
+.verdict-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 24 px to tap, and the margins return the difference so the chip stays its height. */
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: -0.2rem -0.3rem -0.2rem 0;
+  padding: 0;
   border: 0;
+  border-radius: 999px;
   background: none;
-  cursor: pointer;
-  padding: 0 0.1rem;
+  color: var(--aira-text-muted);
   font-size: 1rem;
   line-height: 1;
-  color: var(--aira-text-muted);
+  cursor: pointer;
 }
-.chip__remove:hover {
+.verdict-chip__remove:hover {
+  background: rgba(17, 24, 39, 0.1);
   color: var(--aira-danger);
 }
 
@@ -1992,7 +2164,7 @@ tr.is-open > * {
 
 .role-area__title {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--aira-text-muted);
@@ -2002,7 +2174,7 @@ tr.is-open > * {
    so it cannot be granted by a person who did not see the mark. */
 .role-sensitive {
   margin-left: 0.25rem;
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   font-weight: 700;
   color: var(--aira-warning);
   white-space: nowrap;
@@ -2153,7 +2325,7 @@ $histogram-scale: 4.5rem;
   position: absolute;
   right: 0;
   transform: translateY(50%);
-  font-size: 0.7rem;
+  font-size: var(--aira-text-2xs);
   color: var(--aira-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -2261,7 +2433,7 @@ $histogram-scale: 4.5rem;
   flex: 1 0 0;
   min-width: 4px;
   text-align: center;
-  font-size: 0.68rem;
+  font-size: var(--aira-text-2xs);
   color: var(--aira-text-muted);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
@@ -2306,7 +2478,7 @@ $histogram-scale: 4.5rem;
   margin: 0;
 }
 .histogram__tip-head {
-  font-size: 0.75rem;
+  font-size: var(--aira-text-xs);
   color: var(--aira-text-muted);
 }
 .histogram__tip-total {
@@ -2318,7 +2490,7 @@ $histogram-scale: 4.5rem;
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.78rem;
+  font-size: var(--aira-text-sm);
   line-height: 1.5;
 }
 .histogram__tip-key {
@@ -2360,7 +2532,7 @@ $histogram-scale: 4.5rem;
   min-width: 2px;
   padding: 0 0.4rem;
   overflow: hidden;
-  font-size: 0.74rem;
+  font-size: var(--aira-text-xs);
   line-height: 1.25;
 }
 /*
@@ -2405,7 +2577,7 @@ $histogram-scale: 4.5rem;
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.8rem;
+  font-size: var(--aira-text-sm);
 }
 .legend__key {
   color: var(--aira-text);
@@ -2441,7 +2613,7 @@ $histogram-scale: 4.5rem;
   align-items: center;
   gap: 0.25rem 0.9rem;
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--aira-text-sm);
 }
 .histogram__readout-hint,
 .histogram__readout-value {
@@ -2508,7 +2680,7 @@ $histogram-scale: 4.5rem;
 }
 .days-fold > summary {
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: var(--aira-text-sm);
   color: var(--aira-text-muted);
   display: flex;
   flex-wrap: wrap;

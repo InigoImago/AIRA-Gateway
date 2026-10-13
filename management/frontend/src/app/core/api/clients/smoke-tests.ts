@@ -7,7 +7,7 @@ import {
   TestResult,
   TestRun,
 } from '../types/smoke-tests';
-import { ApiClientClass, seg } from './base';
+import { ApiClientClass, readableErrors, seg } from './base';
 
 /** Putting the question catalogue to a use case's pipeline (`FRD-504`, `ADR-0020`). */
 export function withSmokeTests<T extends ApiClientClass>(Base: T) {
@@ -67,24 +67,33 @@ export function withSmokeTests<T extends ApiClientClass>(Base: T) {
     /**
      * Put one prompt to one model through the **gateway**, the ordinary way (`FRD-504` §5): priced,
      * budgeted, rate-limited and audited like any other request, or it measures a path nobody uses.
+     *
+     * The answer is the parts that are not marked `thought`: a use case that returns reasoning
+     * sends it first (`FRD-135`), and reasoning stored as the answer is rated as one.
      */
     askModel(model: string, prompt: string, useCase: string): Observable<string> {
       const path = useCase ? `${GW}/uc/${seg(useCase)}` : `${GW}`;
       return this.http
-        .post<{ candidates?: { content?: { parts?: { text?: string }[] } }[] }>(
-          `${path}/v1beta/models/${seg(model)}:generateContent`,
-          { contents: [{ parts: [{ text: prompt }] }] },
-        )
+        .post<{
+          candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+        }>(`${path}/v1beta/models/${seg(model)}:generateContent`, {
+          contents: [{ parts: [{ text: prompt }] }],
+        })
         .pipe(
           map((body) =>
-            (body.candidates?.[0]?.content?.parts ?? []).map((part) => part.text ?? '').join(''),
+            (body.candidates?.[0]?.content?.parts ?? [])
+              .filter((part) => !part.thought)
+              .map((part) => part.text ?? '')
+              .join(''),
           ),
         );
     }
 
     /** The evaluation as CSV — a blob, because a plain link carries no bearer token (`FRD-602`). */
     testRunCsv(runId: number): Observable<Blob> {
-      return this.http.get(`${API}/v1/test-runs/${runId}/export/`, { responseType: 'blob' });
+      return this.http
+        .get(`${API}/v1/test-runs/${runId}/export/`, { responseType: 'blob' })
+        .pipe(readableErrors());
     }
 
     testStats(): Observable<TestModelStats[]> {

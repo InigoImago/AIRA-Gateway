@@ -11,7 +11,7 @@ on it must be reviewed for what it cannot see (`FRD-110` FR-9).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
 from typing import Any
 
@@ -37,6 +37,31 @@ class Role(StrEnum):
     SYSTEM = "system"
     USER = "user"
     MODEL = "model"
+
+
+class FinishReason(StrEnum):
+    """Why an answer ended — one word per event, whatever each vendor calls it (`FRD-112` FR-6).
+
+    The vendors spell one event differently: a function call ends a Gemini answer with `STOP` and an
+    Anthropic or OpenAI one with `tool_use`/`tool_calls`; a safety system stops one with `SAFETY`,
+    `refusal` or `content_filter`. Every rule that reads a finish reason — is this document
+    complete, what does Google's enum call it — therefore reads one of these, and every dialect maps
+    its own words onto them. A word a dialect does not know becomes `OTHER`, never `STOP`: an
+    unknown ending is not evidence of a complete answer.
+    """
+
+    #: The model finished: its natural end or a stop sequence.
+    STOP = "stop"
+    #: Cut off at the output cap (or the context window), so the answer is incomplete.
+    MAX_TOKENS = "max_tokens"
+    #: The model stopped to have a function run — an ordinary agent turn (`FRD-131`).
+    TOOL_USE = "tool_use"
+    #: A vendor's safety or policy system declined the prompt or stopped the answer.
+    REFUSAL = "refusal"
+    #: The model answered, but not with the document the schema asked for (`FRD-112` FR-6).
+    SCHEMA_UNSATISFIED = "schema_unsatisfied"
+    #: Any other ending: a recitation stop, a malformed call, a word nobody here has seen.
+    OTHER = "other"
 
 
 # == parts ========================================================================================
@@ -73,6 +98,11 @@ class ToolCallPart(BaseModel):
     name: str
     #: Parsed, not raw text: every dialect sends an object or a JSON string of one.
     arguments: dict[str, Any] = {}
+    #: The vendor's opaque proof of the reasoning behind this call (Gemini's `thoughtSignature`).
+    #: A thinking model refuses a replayed call without the signature it issued, so it travels to
+    #: the caller and back on the same call, unread. It is model state, not content: nothing here
+    #: decides on it, and it is not stored with the answer.
+    signature: str | None = None
 
 
 class ToolResultPart(BaseModel):
@@ -138,6 +168,40 @@ class CanonicalMessage(BaseModel):
     @property
     def tool_results(self) -> list[ToolResultPart]:
         return [part for part in self.parts if isinstance(part, ToolResultPart)]
+
+
+def paired_tool_results(messages: Sequence[CanonicalMessage]) -> list[CanonicalMessage]:
+    """The conversation with every tool result naming the call it answers, by that call's id.
+
+    Gemini's wire pairs a result with its call by **name** and carries no id, so a client speaking
+    it replays the model's call under one id and sends the result under another — google-genai
+    builds a `functionResponse` from the name alone. Anthropic and OpenAI pair by id and refuse a
+    result whose id matches no call of the model turn before it. So a result whose id names no
+    open call takes the id of the earliest unanswered call **of the same name** in the latest model
+    turn: Google's own rule, applied where an id is required. A result that already matches, or
+    that matches no call even by name, is left as it was sent.
+    """
+    paired: list[CanonicalMessage] = []
+    open_calls: list[ToolCallPart] = []
+    for message in messages:
+        if message.role is Role.MODEL:
+            # A model turn answers whatever came before it; only its own calls are open now.
+            open_calls = list(message.tool_calls)
+            paired.append(message)
+            continue
+        parts: list[CanonicalPart] = []
+        for part in message.parts:
+            if isinstance(part, ToolResultPart):
+                answered = next((call for call in open_calls if call.id == part.call_id), None)
+                if answered is None:
+                    answered = next((call for call in open_calls if call.name == part.name), None)
+                    if answered is not None:
+                        part = part.model_copy(update={"call_id": answered.id})
+                if answered is not None:
+                    open_calls.remove(answered)
+            parts.append(part)
+        paired.append(message.model_copy(update={"parts": parts}))
+    return paired
 
 
 class Thinking(BaseModel):
@@ -335,7 +399,7 @@ class CanonicalResponse(BaseModel):
     #: The model's reasoning, when the use case asked for it and the provider returned any
     #: (`FRD-135`). **Apart from `text`**: joined in, the caller would read reasoning as the answer.
     reasoning: str = ""
-    finish_reason: str = "stop"
+    finish_reason: FinishReason = FinishReason.STOP
     usage: CanonicalUsage
     #: What the model asked to have run (`FRD-131`). A turn may carry several, and text as well.
     tool_calls: tuple[ToolCallPart, ...] = ()
@@ -348,15 +412,24 @@ class CanonicalResponse(BaseModel):
 
 
 class CanonicalChunk(BaseModel):
-    """A streaming delta. The final chunk carries ``finish_reason`` and ``usage``.
+    """A streaming delta. The final chunk carries ``finish_reason``, and ``usage`` as it stands.
+
+    ``usage`` may also ride earlier chunks as the running total — some dialects report it on every
+    chunk — so the **last** one seen is the answer's, and a stream that breaks off still says what
+    it had cost by then.
 
     ``tool_calls`` appears on the chunk that **completes** them, never in fragments (`FRD-131`
     FR-6): half-formed calls are of no use to a client.
     """
 
     text_delta: str
-    finish_reason: str | None = None
+    finish_reason: FinishReason | None = None
     usage: CanonicalUsage | None = None
     tool_calls: tuple[ToolCallPart, ...] = ()
     #: A piece of the spoken answer, in the order it was produced (`FRD-624`).
     audio_delta: DataPart | None = None
+    #: **Where this stream was opened**, on its first chunk (`FRD-609`, `FRD-115` FR-10) — the
+    #: streamed counterpart of `CanonicalResponse.served_region`. A model catalogued in several
+    #: regions is opened in the first that accepts it, so the configuration is no evidence of where
+    #: the request went. ``None`` on every later chunk and on dialects with one place.
+    served_region: str | None = None

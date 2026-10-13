@@ -15,25 +15,28 @@ import uuid
 
 import httpx
 import pytest
-import stack_addresses
 
+from . import installation, keycloak
 from .conftest import (
     GATEWAY_URL,
     MANAGEMENT_URL,
+    MEMBER_ACCOUNT,
     MEMBER_CLIENT_ID,
     MEMBER_CLIENT_SECRET,
-    REALM,
+    MEMBER_DEPARTMENT,
+    MEMBER_DEPARTMENT_NAME,
     _token,
+    wait_for_row,
 )
 
 pytestmark = pytest.mark.integration
 
-#: A department group in the dev realm that is deliberately **not** named after a use case — the
-#: point of the feature is that a grant names whatever the realm actually uses.
-DEPARTMENT = "/abteilungen/kundendienst"
-#: The suite's *member* service account is in it (see the realm file) and holds **no
-#: organisation-wide role** (`ADR-0017`) — so anything it can see, it can see because of a grant.
-#: That is what makes "they can see it now" mean something.
+#: A department group that is deliberately **not** named after a use case — the point of the
+#: feature is that a grant names whatever the realm actually uses. The suite's *member* service
+#: account is in it and holds **no organisation-wide role** (`ADR-0017`) — so anything it can see,
+#: it can see because of a grant. That is what makes "they can see it now" mean something. The
+#: session's own department, which nobody else is in: a grant must never reach a demo user.
+DEPARTMENT = MEMBER_DEPARTMENT
 MODEL = "qwen3:0.6b"
 
 
@@ -50,6 +53,7 @@ async def _create_use_case(token: str, slug: str) -> None:
     once means a new test cannot forget it, and the failure it prevents does not look like an
     access failure.
     """
+    installation.remember("use_case", slug)
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             f"{MANAGEMENT_URL}/api/v1/use-cases/",
@@ -83,15 +87,17 @@ async def _revoke(token: str, slug: str, group: str) -> httpx.Response:
         )
 
 
-async def _visible(token: str) -> set[str]:
+async def _visible(token: str, slug: str) -> bool:
+    """Whether this caller sees ``slug`` — **searched for**, not looked for on page one, where a
+    slug that sorts late is missing for every caller and "cannot see it" passes about nothing."""
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{MANAGEMENT_URL}/api/v1/use-cases/",
             headers={"Authorization": f"Bearer {token}"},
-            params={"page_size": 200},
+            params={"q": slug},
         )
     response.raise_for_status()
-    return {row["slug"] for row in response.json()["results"]}
+    return slug in {row["slug"] for row in response.json()["results"]}
 
 
 async def _delete_use_case(token: str, slug: str) -> None:
@@ -141,7 +147,7 @@ async def test_a_use_case_nobody_was_granted_is_invisible_to_a_member_role(
 ) -> None:
     """The baseline the next test is measured against. Without it, "they can see it" proves
     nothing — they might have seen it all along."""
-    assert slug not in await _visible(member_token)
+    assert not await _visible(member_token, slug)
 
 
 # ---- granting a group ---------------------------------------------------------------------
@@ -154,7 +160,7 @@ async def test_a_granted_department_reaches_its_members_with_no_row_naming_them(
     permission decision — none of which mentions this person."""
     assert (await _grant(admin_token, slug, DEPARTMENT)).status_code == 201
 
-    assert slug in await _visible(member_token)
+    assert await _visible(member_token, slug)
 
 
 async def test_the_grant_is_listed_with_how_many_it_reaches(
@@ -163,7 +169,7 @@ async def test_the_grant_is_listed_with_how_many_it_reaches(
     await _grant(admin_token, slug, DEPARTMENT)
     # The count is of people Management has seen sign in; this makes sure `member_token`'s owner
     # has, so the figure is not zero for the wrong reason.
-    await _visible(member_token)
+    await _visible(member_token, slug)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
@@ -189,7 +195,7 @@ async def test_a_grant_on_a_group_nobody_is_in_reaches_nobody_and_says_so(
         )
 
     assert response.json()[0]["reaches"] == 0
-    assert slug not in await _visible(member_token)
+    assert not await _visible(member_token, slug)
 
 
 # ---- what the role means ------------------------------------------------------------------
@@ -253,7 +259,7 @@ async def test_revoking_the_group_takes_the_access_away(
     slug: str, admin_token: str, member_token: str
 ) -> None:
     await _grant(admin_token, slug, DEPARTMENT)
-    assert slug in await _visible(member_token)
+    assert await _visible(member_token, slug)
 
     # `200` with `revoked_keys`, not `204`: revoking a grant also revokes every key of this
     # use case whose owner no longer holds one (`FRD-613`), and a removal that silently
@@ -262,7 +268,7 @@ async def test_revoking_the_group_takes_the_access_away(
     assert revoked.status_code == 200, revoked.text
     assert "revoked_keys" in revoked.json()
 
-    assert slug not in await _visible(member_token)
+    assert not await _visible(member_token, slug)
 
 
 async def test_revoking_a_group_leaves_a_direct_grant_intact(
@@ -286,7 +292,7 @@ async def test_revoking_a_group_leaves_a_direct_grant_intact(
 
     await _revoke(admin_token, slug, DEPARTMENT)
 
-    assert slug in await _visible(member_token)
+    assert await _visible(member_token, slug)
 
 
 # ---- the gateway --------------------------------------------------------------------------
@@ -323,8 +329,20 @@ async def test_the_gateway_lets_a_granted_group_call_as_the_use_case(
     assert response.status_code == 200, response.text
 
 
-async def test_the_gateway_refuses_a_use_case_nobody_granted(slug: str, member_token: str) -> None:
-    """The other half: without a grant, a valid token is still not a member."""
+async def test_the_gateway_refuses_a_use_case_nobody_granted(
+    slug: str, member_token: str, engine
+) -> None:
+    """The other half: without a grant, a valid token is still not a member.
+
+    Asked once the gateway **knows** the use case — before that the refusal is the unknown-slug
+    one, and "known but not granted" is never reached.
+    """
+    await wait_for_row(
+        engine,
+        "SELECT 1 FROM use_cases WHERE slug = :slug AND allowed_models IS NOT NULL",
+        {"slug": slug},
+        timeout=45.0,
+    )
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
             f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
@@ -336,21 +354,42 @@ async def test_the_gateway_refuses_a_use_case_nobody_granted(slug: str, member_t
     assert slug in response.text
 
 
-async def test_the_old_convention_still_resolves_from_the_token_alone(
-    slug: str, admin_token: str, member_token: str
-) -> None:
+async def test_the_old_convention_still_resolves_from_the_token_alone(slug: str) -> None:
     """`FRD-102`'s `/use-cases/<slug>` route is one way in, not the only one — and the dev realm
     and the demo depend on it.
 
-    Asserted through Management rather than the gateway, because it is the *resolution* that is
-    under test and the suite's account is not in any `/use-cases/…` group. Granting the department
-    and reading back what the caller may see exercises both routes side by side.
+    **No grant at all**: the member account is put into `/use-cases/<slug>` in the realm, and a
+    token minted afterwards is all that names the use case. The route is the gateway's — a caller
+    in that group may call as the use case — and Management states the resolution in `/me`, which
+    is where the console reads it. Both are asked before and after, so neither can be true all
+    along.
     """
-    await _grant(admin_token, slug, DEPARTMENT)
 
-    visible = await _visible(member_token)
+    async def resolved(token: str) -> bool:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            me = await client.get(
+                f"{MANAGEMENT_URL}/api/v1/me", headers={"Authorization": f"Bearer {token}"}
+            )
+        assert me.status_code == 200, me.text
+        return slug in me.json()["use_cases"]
 
-    assert slug in visible
+    before = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
+    assert not await resolved(before), "named before the account was in its group"
+    refused = await _call({"Authorization": f"Bearer {before}"}, slug, until=frozenset({403}))
+    assert refused.status_code == 403, refused.text[:300]
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        group = await keycloak.create_group(client, slug, parent="/use-cases")
+        try:
+            await keycloak.set_membership(
+                client, await keycloak.user_id(client, MEMBER_ACCOUNT), group, member=True
+            )
+            after = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
+            assert await resolved(after), "the convention's group did not name the use case"
+            served = await _call({"Authorization": f"Bearer {after}"}, slug)
+            assert served.status_code == 200, served.text[:300]
+        finally:
+            await keycloak.delete_group(client, group)
 
 
 # ---- the directory ------------------------------------------------------------------------
@@ -359,19 +398,19 @@ async def test_the_old_convention_still_resolves_from_the_token_alone(
 async def test_the_directory_offers_a_group_already_granted_somewhere(
     slug: str, admin_token: str
 ) -> None:
-    """No admin client is configured in this stack, so this exercises the honest fallback: a real
-    subset of what exists, labelled as such."""
+    """This stack has a directory client (`aira-directory`), so the realm answers — and says it
+    did. The fallback without one, a real subset labelled as such, is `test_directory.py`'s."""
     await _grant(admin_token, slug, DEPARTMENT)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{MANAGEMENT_URL}/api/v1/directory/",
             headers={"Authorization": f"Bearer {admin_token}"},
-            params={"q": "kundendienst"},
+            params={"q": MEMBER_DEPARTMENT_NAME},
         )
 
     body = response.json()
-    assert body["source"] in ("local", "keycloak")
+    assert body["source"] == "keycloak"
     assert any(row["id"] == DEPARTMENT for row in body["results"])
 
 
@@ -402,71 +441,9 @@ async def test_the_directory_never_answers_a_one_letter_query_with_the_whole_rea
 #      (`FRD-209`), so a member with no row naming them may mint a key — and the key is what a
 #      client actually uses. Nothing asserted that the key then *works*.
 #
-# The realm is written to here, which nothing else in AIRA does. The group is removed again at the
+# The realm is written to here, as `test_the_permission_matrix.py` does. The group is removed at the
 # end of the test for exactly that reason: a suite that leaves grants behind in somebody's
 # directory is doing the thing this system refuses to do.
-
-KEYCLOAK_ADMIN = stack_addresses.url("keycloak")
-
-
-async def _kc_admin_token() -> str:
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(
-            f"{KEYCLOAK_ADMIN}/realms/master/protocol/openid-connect/token",
-            data={
-                "client_id": "admin-cli",
-                "username": "admin",
-                "password": "admin",
-                "grant_type": "password",
-            },
-        )
-    assert response.status_code == 200, response.text
-    return str(response.json()["access_token"])
-
-
-async def _child_group(admin: str, parent: str, name: str) -> str:
-    """Create (or find) `/<parent>/<name>` and return its id."""
-    headers = {"Authorization": f"Bearer {admin}"}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        found = await client.get(
-            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/groups",
-            headers=headers,
-            params={"search": parent},
-        )
-        parent_id = found.json()[0]["id"]
-        await client.post(
-            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/groups/{parent_id}/children",
-            headers=headers,
-            json={"name": name},
-        )
-        children = await client.get(
-            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/groups/{parent_id}/children", headers=headers
-        )
-    return str(next(g["id"] for g in children.json() if g["name"] == name))
-
-
-async def _member_of(admin: str, group_id: str, username: str, *, join: bool) -> None:
-    headers = {"Authorization": f"Bearer {admin}"}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        users = await client.get(
-            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/users",
-            headers=headers,
-            params={"username": username, "exact": "true"},
-        )
-        user_id = users.json()[0]["id"]
-        url = f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/users/{user_id}/groups/{group_id}"
-        response = await (
-            client.put(url, headers=headers) if join else client.delete(url, headers=headers)
-        )
-    assert response.status_code in (204, 200), response.text
-
-
-async def _delete_group(admin: str, group_id: str) -> None:
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        await client.delete(
-            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/groups/{group_id}",
-            headers={"Authorization": f"Bearer {admin}"},
-        )
 
 
 async def _issue_key(token: str, slug: str, owner: str) -> httpx.Response:
@@ -478,8 +455,16 @@ async def _issue_key(token: str, slug: str, owner: str) -> httpx.Response:
         )
 
 
-async def _call(credential: dict[str, str], slug: str) -> httpx.Response:
-    """One ordinary generation, however the caller authenticates."""
+async def _call(
+    credential: dict[str, str], slug: str, *, until: frozenset[int] = frozenset({200})
+) -> httpx.Response:
+    """One ordinary generation, however the caller authenticates — repeated until the answer is
+    one of ``until`` or the attempts run out, and then the last answer either way.
+
+    A grant travels over Kafka and a key is distributed the same way; being briefly behind is the
+    deliberate cost (`FRD-204`), and a test that did not allow for it would be testing the clock.
+    Waiting for a refusal is asked for as such, not by waiting for an allowance that never comes.
+    """
     async with httpx.AsyncClient(timeout=120.0) as client:
         for _ in range(20):
             response = await client.post(
@@ -490,16 +475,10 @@ async def _call(credential: dict[str, str], slug: str) -> httpx.Response:
                     "generationConfig": {"maxOutputTokens": 8},
                 },
             )
-            # A grant travels over Kafka and a key is distributed the same way; being briefly
-            # behind is the deliberate cost (`FRD-204`), and a test that did not allow for it
-            # would be testing the clock.
-            if response.status_code not in (401, 403):
+            if response.status_code in until:
                 return response
             await asyncio.sleep(1.0)
         return response
-
-
-MEMBER_ACCOUNT = "service-account-aira-integration-tests-member"
 
 
 async def test_a_person_added_to_a_granted_group_reaches_it_with_both_credentials(
@@ -511,10 +490,11 @@ async def test_a_person_added_to_a_granted_group_reaches_it_with_both_credential
     token and with an API key that person issued for themselves. Each step is asserted before the
     next, so a failure says which link broke rather than that "access does not work".
     """
-    admin = await _kc_admin_token()
     name = f"vertrieb-{uuid.uuid4().hex[:6]}"
-    group_id = await _child_group(admin, "abteilungen", name)
     group_path = f"/abteilungen/{name}"
+    realm = httpx.AsyncClient(timeout=30.0)
+    group_id = await keycloak.create_group(realm, name, parent="/abteilungen")
+    member = await keycloak.user_id(realm, MEMBER_ACCOUNT)
 
     try:
         assert (await _grant(admin_token, slug, group_path)).status_code == 201
@@ -522,15 +502,15 @@ async def test_a_person_added_to_a_granted_group_reaches_it_with_both_credential
         # Nobody is in it yet, so the grant reaches nobody — and a token minted now carries no
         # such group. This is the "before" the rest of the test is measured against.
         before = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
-        assert slug not in await _visible(before)
+        assert not await _visible(before, slug)
 
-        await _member_of(admin, group_id, MEMBER_ACCOUNT, join=True)
+        await keycloak.set_membership(realm, member, group_id, member=True)
 
         # **A new token.** Group claims are baked in when a token is issued, so the one obtained
         # above is still correct about the past — the mirror of the hermetic rule that leaving a
         # group takes access away *on the next token*.
         after = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
-        assert slug in await _visible(after), "the grant did not reach a person added afterwards"
+        assert await _visible(after, slug), "the grant did not reach a person added afterwards"
 
         served = await _call({"Authorization": f"Bearer {after}"}, slug)
         assert served.status_code == 200, served.text[:300]
@@ -544,9 +524,10 @@ async def test_a_person_added_to_a_granted_group_reaches_it_with_both_credential
         assert with_key.status_code == 200, with_key.text[:300]
     finally:
         # The realm is left as it was found. AIRA never writes to a directory; this test does, and
-        # a suite that leaves grants behind in one is doing what the system refuses to.
-        await _member_of(admin, group_id, MEMBER_ACCOUNT, join=False)
-        await _delete_group(admin, group_id)
+        # a suite that leaves grants behind in one is doing what the system refuses to. Removing
+        # the group ends the membership with it; each call asks for a token of its own.
+        await keycloak.delete_group(realm, group_id)
+        await realm.aclose()
 
 
 async def test_taking_the_person_out_of_the_group_takes_both_credentials_with_it(
@@ -563,30 +544,32 @@ async def test_taking_the_person_out_of_the_group_takes_both_credentials_with_it
     removing somebody from a department will assume their keys went too. `FRD-604` is where that
     accountability lives: the key names its owner, so the trail says whose it was.
     """
-    admin = await _kc_admin_token()
     name = f"vertrieb-{uuid.uuid4().hex[:6]}"
-    group_id = await _child_group(admin, "abteilungen", name)
     group_path = f"/abteilungen/{name}"
+    realm = httpx.AsyncClient(timeout=30.0)
+    group_id = await keycloak.create_group(realm, name, parent="/abteilungen")
+    member = await keycloak.user_id(realm, MEMBER_ACCOUNT)
 
     try:
         assert (await _grant(admin_token, slug, group_path)).status_code == 201
-        await _member_of(admin, group_id, MEMBER_ACCOUNT, join=True)
+        await keycloak.set_membership(realm, member, group_id, member=True)
         token = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
-        assert slug in await _visible(token)
+        assert await _visible(token, slug)
 
         issued = await _issue_key(token, slug, MEMBER_ACCOUNT)
         assert issued.status_code == 201, issued.text[:300]
         key = issued.json()["api_key"]
 
-        await _member_of(admin, group_id, MEMBER_ACCOUNT, join=False)
+        await keycloak.set_membership(realm, member, group_id, member=False)
         after = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
 
-        assert slug not in await _visible(after)
-        refused = await _call({"Authorization": f"Bearer {after}"}, slug)
+        assert not await _visible(after, slug)
+        refused = await _call({"Authorization": f"Bearer {after}"}, slug, until=frozenset({403}))
         assert refused.status_code == 403, refused.text[:300]
 
         # And the key, deliberately, still serves.
         with_key = await _call({"x-goog-api-key": key}, slug)
         assert with_key.status_code == 200, with_key.text[:300]
     finally:
-        await _delete_group(admin, group_id)
+        await keycloak.delete_group(realm, group_id)
+        await realm.aclose()

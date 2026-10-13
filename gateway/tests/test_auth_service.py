@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -58,9 +59,32 @@ async def test_ensure_demo_key_idempotent(make_session) -> None:
         await service.ensure_demo_key()
 
     async with make_session() as session:
-        principal = await ApiKeyService(session).verify(keys.DEMO_API_KEY)
+        principal = await ApiKeyService(session, demo_mode=True).verify(keys.DEMO_API_KEY)
     assert principal is not None
     assert principal.subject == "demo"
+
+
+async def test_the_demo_key_is_a_credential_only_in_demo_mode(make_session) -> None:
+    """Its plaintext is published here, so a seeded row is not enough: the deployment has to
+    declare itself a demo as well (`ADR-0015`)."""
+    async with make_session() as session:
+        await ApiKeyService(session, demo_mode=True).ensure_demo_key()
+
+    async with make_session() as session:
+        assert await ApiKeyService(session).verify(keys.DEMO_API_KEY) is None
+        assert await ApiKeyService(session, demo_mode=True).verify(keys.DEMO_API_KEY) is not None
+
+
+async def test_a_revoked_demo_key_is_not_seeded_again(make_session) -> None:
+    """Revocation is terminal for every key, the published one included (`FRD-130` §4e)."""
+    async with make_session() as session:
+        service = ApiKeyService(session, demo_mode=True)
+        await service.ensure_demo_key()
+        assert await service.revoke(keys.DEMO_KEY_PREFIX) is True
+        await service.ensure_demo_key()
+
+    async with make_session() as session:
+        assert await ApiKeyService(session, demo_mode=True).verify(keys.DEMO_API_KEY) is None
 
 
 # ---- expiry (2026-08-08) --------------------------------------------------------------------
@@ -116,9 +140,23 @@ async def test_a_key_issued_before_expiry_existed_keeps_working(make_session) ->
     where keys are **issued**; the ones already out there are a migration for an operator to plan,
     and the console marks them.
     """
-    async with make_session() as session:
-        service = ApiKeyService(session)
-        full, record = await service.create("ada", expires_in_days=0)
+    from aira_gateway.db.models import ApiKey
 
-        assert record.expires_at is None
-        assert await service.verify(full) is not None
+    full, prefix, key_hash = keys.generate_api_key()
+    async with make_session() as session:
+        # Written as the read-model holds it: no issuing path makes such a row any longer.
+        session.add(ApiKey(prefix=prefix, key_hash=key_hash, subject="ada", expires_at=None))
+        await session.commit()
+
+        assert await ApiKeyService(session).verify(full) is not None
+
+
+@pytest.mark.parametrize("days", [0, -5, 181])
+async def test_no_issuing_path_mints_an_unbounded_or_overlong_key(make_session, days: int) -> None:
+    """`ADR-0015`: neither plane mints an unbounded key. Zero and a negative number meant "never
+    expires" on this path, and a ceiling applied only in Management's serializer."""
+    from aira_common.apikeys import KeyLifetimeOutOfRange
+
+    async with make_session() as session:
+        with pytest.raises(KeyLifetimeOutOfRange, match="at least 1|180 days"):
+            await ApiKeyService(session).create("ada", expires_in_days=days)

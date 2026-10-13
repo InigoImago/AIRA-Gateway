@@ -52,16 +52,26 @@ def refusal_response(exc: Exception) -> JSONResponse:
         return errors.kira_error_response(
             exc.code, KIRA_CODE_FOR.get(exc.code, errors.VALIDATION_ERROR), exc.message
         )
-    if isinstance(exc, Suspended | RateLimited | BudgetExceeded):
+    if isinstance(exc, Suspended | RateLimited):
+        # When to come back, as the Gemini surface says it: the same control, the same answer.
+        return errors.kira_error_response(
+            429,
+            errors.EXTERNAL_KI_API_TOO_MANY_REQUEST,
+            exc.message,
+            headers={"Retry-After": exc.retry_after},
+        )
+    if isinstance(exc, BudgetExceeded):
         return errors.kira_error_response(429, errors.EXTERNAL_KI_API_TOO_MANY_REQUEST, exc.message)
     if isinstance(exc, PipelineRejected):
         return errors.kira_error_response(exc.code, errors.VALIDATION_ERROR, exc.message)
-    if isinstance(exc, NoCapableModel | AmbiguousModel | RegionNotAllowed):
-        return errors.kira_error_response(400, errors.MODEL_NOT_FOUND, str(exc))
-    if isinstance(exc, DialectUnsupported):
-        # The model exists; the request as written cannot be carried to it. `MODEL_NOT_FOUND`
+    if isinstance(exc, NoCapableModel | DialectUnsupported):
+        # The model exists; the request as written cannot be served by it — no structured output,
+        # no tools, not released, a declaration its wire format cannot say. `MODEL_NOT_FOUND`
         # would send the client looking for a different id.
         return errors.kira_error_response(400, errors.VALIDATION_ERROR, str(exc))
+    if isinstance(exc, AmbiguousModel | RegionNotAllowed):
+        # Nowhere this installation may send the model: the name serves nothing here.
+        return errors.kira_error_response(400, errors.MODEL_NOT_FOUND, str(exc))
     if isinstance(exc, UpstreamError):
         code = upstream_status(exc.status_code)[0]
         name = (

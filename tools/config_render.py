@@ -25,20 +25,30 @@ settings classes in both directions instead.
 ## Secrets are refused, not requested
 
 A value that authenticates belongs in Vault. Asking for that in a comment is what `LESSONS.md`
-calls a written-down danger; this raises instead. The list is the same one `tools/vault_setup.py`
-knows, plus the two Vault credentials themselves.
+calls a written-down danger; this raises instead. What counts as a credential is
+`credential_settings`' answer — the same one `tools/vault_setup.py` copies into Vault — plus the two
+Vault credentials themselves.
+
+## Values are written in Compose's own grammar
+
+The `.env` this writes is read by Docker Compose, which interpolates `$` and unescapes `\\b`
+inside a double-quoted value. So a value is written so that Compose reads back exactly what the
+file said — see :func:`env_value` — and read back here by the same grammar
+(:func:`read_env_value`).
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import compose_files
+import credential_settings
 import yaml
 
 #: Emitted under their own names because they are read before the settings exist.
@@ -49,23 +59,17 @@ CORE_SECTION = "core"
 DESCRIPTIVE_SECTIONS = {"secrets"}
 
 #: Refused outright. Every one of these is a credential, and the file that holds them is Vault.
-FORBIDDEN = {
-    "AIRA_SECRET_KEY",
-    "AIRA_POSTGRES_PASSWORD",
-    "AIRA_VERTEX_SERVICE_ACCOUNT_JSON",
-    "AIRA_VERTEX_CREDENTIALS",
-    "AIRA_VERTEX_API_KEY",
-    "AIRA_GOOGLE_API_KEY",
-    "AIRA_AZURE_API_KEY",
-    "AIRA_FOUNDRY_API_KEY",
-    "AIRA_OPENAI_API_KEY",
-    "AIRA_KAFKA_SASL_PASSWORD",
-    "AIRA_DIRECTORY_CLIENT_SECRET",
-    "AIRA_REDIS_PASSWORD",
-    "AIRA_REDIS_SENTINEL_PASSWORD",
-    "VAULT_SECRET_ID",
-    "VAULT_TOKEN",
-}
+#: `render` also refuses a credential-shaped name no setting declares (`credential_settings`).
+FORBIDDEN = credential_settings.credentials() | credential_settings.VAULT_CREDENTIALS
+
+#: A value made only of these is written bare: Compose reads it back unchanged without quotes.
+_BARE = re.compile(r"[A-Za-z0-9_./:@%+=-]+")
+#: What a double-quoted value escapes, and how. `$` is doubled rather than backslashed because that
+#: is Compose's own spelling of a literal dollar.
+_DOUBLE_QUOTED_ESCAPES = {"\\": "\\\\", '"': '\\"', "$": "$$", "\n": "\\n", "\r": "\\r"}
+#: The escapes a double-quoted value may carry when read back, and `$$`, Compose's literal `$`.
+_DOUBLE_QUOTED_READ = re.compile(r"\\([\\\"nrt$])|\$\$")
+_UNESCAPED = {"\\": "\\", '"': '"', "n": "\n", "r": "\r", "t": "\t", "$": "$"}
 
 
 class ConfigError(Exception):
@@ -113,7 +117,7 @@ def render(document: dict[str, Any]) -> dict[str, str]:
                 name = f"AIRA_{key}".upper()
             else:
                 name = f"AIRA_{section}_{key}".upper()
-            if name in FORBIDDEN:
+            if name in FORBIDDEN or credential_settings.is_credential(name):
                 raise ConfigError(
                     f"'{section}.{key}' would set {name}, which is a credential. It belongs in "
                     "HashiCorp Vault (`FRD-116`) — see the `secrets:` section of the examples."
@@ -140,12 +144,46 @@ def digest_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def env_value(value: str) -> str:
+    """`value` as a `.env` line's right-hand side, such that Compose reads back exactly `value`.
+
+    - **Bare** when it holds nothing Compose interprets.
+    - **Single-quoted** otherwise: Compose reads a single-quoted value literally — no `$`
+      interpolation, no backslash escapes — so `\\bACME-\\d{8}\\b` and `db$prod` arrive as written.
+    - **Double-quoted with every escape spelled out** only for what a single-quoted value cannot
+      hold: a `'`, a line break, and a trailing backslash (it would escape the closing quote).
+
+    Never plain double quotes: inside them Compose interpolates `$` and unescapes `\\b`, so a
+    redaction pattern's word boundary would arrive as a backspace and silently match nothing.
+    """
+    if _BARE.fullmatch(value):
+        return value
+    if "'" not in value and "\n" not in value and "\r" not in value and not value.endswith("\\"):
+        return f"'{value}'"
+    escaped = "".join(_DOUBLE_QUOTED_ESCAPES.get(character, character) for character in value)
+    return f'"{escaped}"'
+
+
+def read_env_value(raw: str) -> str:
+    """The value a `.env` right-hand side carries, by the grammar :func:`env_value` writes.
+
+    The reader and the writer are one grammar, and it is Compose's: a reader that merely stripped
+    the quotes would agree with any writer, which is how a quoting defect passes its own test.
+    """
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
+        return raw[1:-1].replace("\\'", "'")
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        return _DOUBLE_QUOTED_READ.sub(
+            lambda match: _UNESCAPED[match.group(1)] if match.group(1) else "$", raw[1:-1]
+        )
+    return raw
+
+
 def as_env_file(values: dict[str, str], source: Path) -> str:
     """The rendered environment, in the form Compose and `.env` readers take.
 
-    Values are quoted whenever they are not a bare word, because a `;`-separated role map and a
-    URL with a `#` in it both mean something else unquoted — and the file this writes is read by
-    Docker Compose, which has its own opinions about both.
+    Each value goes through :func:`env_value`, because a `;`-separated role map, a URL with a `#`
+    in it and a regular expression all mean something else to Compose written as they are.
 
     **Stamped with where it came from and a hash of it.** The danger this answers is the one an
     integrator cannot see: a `.env` edited by hand after rendering, or a source edited without
@@ -163,9 +201,7 @@ def as_env_file(values: dict[str, str], source: Path) -> str:
         "",
     ]
     for name in sorted(values):
-        value = values[name]
-        needs_quotes = value == "" or any(ch in value for ch in " #\"'$;,|")
-        lines.append(f"{name}=" + (f'"{value}"' if needs_quotes else value))
+        lines.append(f"{name}={env_value(values[name])}")
     return "\n".join(lines) + "\n"
 
 
@@ -212,8 +248,16 @@ def _env_pairs(text: str) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         name, _, raw = line.partition("=")
-        out[name.strip()] = raw[1:-1] if len(raw) > 1 and raw[0] == raw[-1] == '"' else raw
+        out[name.strip()] = read_env_value(raw)
     return out
+
+
+def from_compose_config(value: object) -> str:
+    """A value as `docker compose config` prints it, read back: `None` is empty, `$$` is `$`.
+
+    Compose prints its result as a Compose file, in which a literal dollar is spelled `$$`.
+    """
+    return "" if value is None else str(value).replace("$$", "$")
 
 
 def _effective_environment(compose_files: list[Path]) -> dict[str, set[str]] | None:
@@ -239,7 +283,7 @@ def _effective_environment(compose_files: list[Path]) -> dict[str, set[str]] | N
     seen: dict[str, set[str]] = {}
     for service in (doc.get("services") or {}).values():
         for name, value in (service.get("environment") or {}).items():
-            seen.setdefault(name, set()).add("" if value is None else str(value))
+            seen.setdefault(name, set()).add(from_compose_config(value))
     return seen
 
 

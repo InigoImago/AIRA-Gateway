@@ -141,13 +141,81 @@ def test_a_rejected_token_is_bounded_by_source_address(monkeypatch: pytest.Monke
 
 def test_a_working_credential_never_touches_that_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
     """The property that makes the bound safe to have: it counts refusals, so no legitimate
-    integration can be throttled by it however busy it is."""
+    integration can be throttled by it however busy it is.
+
+    Driven through the authentication class with a token it accepts — a forced login never runs
+    that class, and a bound that counted every presented token would pass such a test.
+    """
     from aira_management.apps.api import authentication
 
+    monkeypatch.setattr(authentication, "build_management_verifier", lambda: _AcceptsEverything())
     monkeypatch.setattr(authentication, "build_attempt_bound", lambda: _bound("1/minute"))
-    client = _client()  # authenticated, so the authentication class is not reached at all
+    client = APIClient()
+    headers = {"HTTP_AUTHORIZATION": "Bearer a-working-token"}
 
-    assert [client.get(BASE).status_code for _ in range(3)] == [200, 200, 200]
+    assert [client.get(BASE, **headers).status_code for _ in range(3)] == [200, 200, 200]
+
+
+def test_a_rejected_token_is_bounded_however_the_caller_writes_its_forwarded_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The proxy in front **appends** the address it saw, so the bound counts that entry — never
+    the whole header, whose left end the caller writes. Counting the whole header gave every
+    request with a fresh `X-Forwarded-For` a fresh bucket, and the bound never bound."""
+    from aira_management.apps.api import authentication
+
+    monkeypatch.setattr(authentication, "build_management_verifier", lambda: _RejectsEverything())
+    monkeypatch.setattr(authentication, "build_attempt_bound", lambda: _bound("2/minute"))
+    client = APIClient()
+
+    statuses = [
+        client.get(
+            BASE,
+            HTTP_AUTHORIZATION="Bearer not-a-real-token",
+            # What the shipped nginx forwards: the caller's own header, then the address it saw.
+            HTTP_X_FORWARDED_FOR=f"10.9.9.{attempt}, 203.0.113.7",
+        ).status_code
+        for attempt in range(4)
+    ]
+
+    assert statuses == [401, 401, 429, 429]
+
+
+def test_callers_behind_one_proxy_are_still_told_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The other half of reading the right entry: the address the proxy saw differs per caller,
+    so one address collecting refusals does not lock out a neighbour behind the same proxy."""
+    from aira_management.apps.api import authentication
+
+    monkeypatch.setattr(authentication, "build_management_verifier", lambda: _RejectsEverything())
+    monkeypatch.setattr(authentication, "build_attempt_bound", lambda: _bound("1/minute"))
+    client = APIClient()
+
+    def attempt(address: str) -> int:
+        return client.get(
+            BASE, HTTP_AUTHORIZATION="Bearer nope", HTTP_X_FORWARDED_FOR=address
+        ).status_code
+
+    assert [attempt("203.0.113.7"), attempt("203.0.113.7")] == [401, 429]
+    assert attempt("198.51.100.4") == 401
+
+
+@pytest.mark.parametrize(
+    "rate",
+    ["600/minute", "600/m", "1/s", "5/hour", "2/day", "600", "", "x/minute", "1/2/3", "10/", "0/m"],
+)
+def test_the_rate_grammar_read_before_drf_is_drfs_own(rate: str) -> None:
+    """`config.rates` restates DRF's grammar because DRF cannot be imported while the settings that
+    hold the rate are being read. This holds the restatement to DRF's own parser: a rate it calls
+    readable, DRF reads, and the other way round."""
+    from aira_management.config.rates import drf_rate_problem
+
+    try:
+        count, _seconds = SimpleRateThrottle.__new__(SimpleRateThrottle).parse_rate(rate)
+        drf_reads = count is not None and count >= 1
+    except ValueError, KeyError, IndexError:
+        drf_reads = False
+
+    assert (drf_rate_problem(rate) is None) is drf_reads
 
 
 def test_a_rate_of_zero_switches_the_bound_off(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -169,6 +237,14 @@ class _RejectsEverything:
     def verify(self, token: str) -> None:
         del token
         return None
+
+
+class _AcceptsEverything:
+    """A verifier that accepts, so a working credential runs the authentication class itself."""
+
+    def verify(self, token: str) -> dict[str, Any]:
+        del token
+        return {"sub": "worker-sub", "preferred_username": "worker", "groups": []}
 
 
 def _bound(rate: str) -> Any:

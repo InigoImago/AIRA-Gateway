@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from fastapi import Request
 
 from aira_common.observability import attribute_model_calls_to, set_span_attributes
 from aira_gateway.scopes import person as person_key
+
+if TYPE_CHECKING:  # pragma: no cover - imported for the annotation only
+    from aira_gateway.auth.principal import Principal
 
 #: The selector header, lowercase as it is matched.
 USE_CASE_HEADER = "x-aira-use-case"
@@ -59,6 +63,23 @@ class Attribution:
     def person(self) -> str | None:
         """Who allowances are counted against — one human, whichever credential they used."""
         return person_key(self.subject, self.username)
+
+    @classmethod
+    def of(cls, principal: Principal, use_case: str | None) -> Attribution:
+        """``principal``'s request, attributed to ``use_case``, with **every** part of the identity.
+
+        The one constructor every site uses (`test_an_attribution_is_built_in_one_place`): copied
+        field by field at each site, two of four left out the realm (`FRD-118`), and their audit
+        rows could not say which Keycloak minted the token.
+        """
+        return cls(
+            subject=principal.subject,
+            method=principal.method,
+            use_case=use_case,
+            credential=principal.credential,
+            username=principal.username,
+            issuer=principal.issuer,
+        )
 
 
 def attribute(request: Request, attribution: Attribution) -> Attribution:

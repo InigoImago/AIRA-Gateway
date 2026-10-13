@@ -41,9 +41,11 @@ add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment
 # `/gw`, and Keycloak's token endpoint cross-origin — and the issuer is deployment configuration
 # (`public/runtime-config.js`), so it cannot be baked in here. `AIRA_CSP_CONNECT_SRC` defaults to
 # the local Compose stack's Keycloak, exactly as `runtime-config.js` does, so a laptop needs no
-# configuration and a deployment sets the two together.
+# configuration and a deployment sets the two together. This header is the only place the issuer is
+# named: the policy compiled into `index.html` leaves connections open, and a browser enforces both.
 #
-# `frame-src 'self'` is the silent-refresh iframe (`useSilentRefresh`), which is same-origin.
+# `frame-src 'none'`: the console frames nothing. It renews a session with the refresh token the
+# code flow returns (`auth.config.ts`), so no hidden iframe has to load the issuer.
 # `frame-ancestors 'none'`, `object-src 'none'` and `base-uri 'self'` cost nothing and close the
 # three tricks that need no script of their own.
-add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ${AIRA_CSP_CONNECT_SRC}; frame-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ${AIRA_CSP_CONNECT_SRC}; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'" always;

@@ -88,6 +88,88 @@ test.describe('Layout', () => {
     }
   });
 
+  test('every detail tab is in sight on a desktop', async ({ page }) => {
+    // The strip scrolls inside itself, so the page never overflowed and the test above stayed
+    // green while the eighth tab was cut in half at 1440px — and, once it was selected, the first
+    // one was. A tab past the edge is a section nobody knows is there.
+    //
+    // Measured where the strip is **narrowest** as a row as well: from 1280px up the content
+    // column is capped (`--aira-content-max`), so 1280, 1440 and 1920 are one width measured three
+    // times; just above the 60rem breakpoint the row has the least room it ever gets.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('strip');
+    await createUseCase(page, slug, 'Tab strip probe');
+
+    for (const viewport of [
+      { width: 1000, height: 800 },
+      VIEWPORTS[2],
+      { width: 1440, height: 900 },
+      VIEWPORTS[3],
+    ]) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      for (const tab of ['overview', 'traces']) {
+        await page.goto(`/use-cases/${slug}?tab=${tab}`);
+        await expect(page.locator(`#tab-${tab}`)).toHaveAttribute('aria-selected', 'true');
+        // By its name: the overview can show a second tab list (a connection panel's) for a use
+        // case with released models, and `.tabs[role=tablist]` would then match two.
+        const strip = await page
+          .getByRole('tablist', { name: 'Use-case sections' })
+          .evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+        expect(
+          strip.scroll,
+          `${tab} @ ${viewport.width}px: the tabs need ${strip.scroll}px of a ${strip.client}px strip`,
+        ).toBeLessThanOrEqual(strip.client + 1);
+      }
+    }
+  });
+
+  test('the access picker keeps its width on a phone', async ({ page }) => {
+    // `.grow` is a basis of nothing, so beside the role select the search field was given what was
+    // left: 53px, with its hint wrapped one word per line. No overflow, so nothing above saw it.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('picker');
+    await createUseCase(page, slug, 'Picker probe');
+
+    await page.setViewportSize({ width: 360, height: 740 });
+    await page.goto(`/use-cases/${slug}?tab=members`);
+    const field = page.getByTestId('access-search');
+    await expect(field).toBeVisible({ timeout: 20_000 });
+    const width = (await field.boundingBox())?.width ?? 0;
+    expect(width, 'the search field is narrower than a short query').toBeGreaterThan(200);
+  });
+
+  test('a stacked filter row keeps one gap between its lines on a phone', async ({ page }) => {
+    // A button or a checkbox is pushed down by a label's height so it lines up with the control
+    // beside it. Stacked on a phone it is beside nothing, and the offset made the gap above it
+    // twice every other gap in the row: under the role select, under the checkboxes.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('stack');
+    await createUseCase(page, slug, 'Stacked row probe');
+    await page.setViewportSize({ width: 360, height: 740 });
+
+    for (const [tab, ready] of [
+      ['members', 'access-grant'],
+      ['traces', 'traces-live'],
+    ] as const) {
+      await page.goto(`/use-cases/${slug}?tab=${tab}`);
+      await expect(page.getByTestId(ready)).toBeVisible({ timeout: 20_000 });
+      const gaps = await page
+        .locator('.filter-row')
+        .first()
+        .evaluate((row) => {
+          const boxes = Array.from(row.children)
+            .map((item) => item.getBoundingClientRect())
+            .filter((box) => box.width > 0 && box.height > 0);
+          return boxes.slice(1).map((box, index) => Math.round(box.top - boxes[index].bottom));
+        });
+      expect(gaps.length, `${tab}: the row stacks into several lines`).toBeGreaterThan(1);
+      expect(
+        Math.max(...gaps) - Math.min(...gaps),
+        `${tab}: gaps between the stacked lines ${gaps.join(', ')}`,
+      ).toBeLessThanOrEqual(1);
+    }
+  });
+
   test('a long name and description do not widen the page', async ({ page }) => {
     // The regression this guards: one unbroken server-supplied string used to push the whole
     // layout wider than the screen.
@@ -117,16 +199,23 @@ test.describe('Layout', () => {
     await page.setViewportSize({ width: 360, height: 740 });
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await page.click('button:has-text("Issue key")');
-    await page.fill('#key-label', 'a-deliberately-long-label-for-the-table');
+    // **Made wide**: a label with nowhere to break is wider than a phone's card, so the table has
+    // to be — and then the one question this asks has an answer. A table that happened to fit
+    // asserted nothing, which is what `typeof scrolls === 'boolean'` did.
+    await page.fill('#key-label', 'an-unbreakable-label-' + 'x'.repeat(48));
     await (await submitOfOpenForm(page)).click();
     await expect(page.locator('.secret')).toBeVisible();
+    await page.click('button:has-text("Done")');
 
     const wrap = page.locator('.table-wrap').last();
-    const scrolls = await wrap.evaluate((el) => el.scrollWidth > el.clientWidth);
-    const overflowX = await wrap.evaluate((el) => getComputedStyle(el).overflowX);
-    expect(overflowX).toBe('auto');
-    // Whether or not this particular table is wider than the card, the page must not scroll.
-    expect(typeof scrolls).toBe('boolean');
+    await expect(wrap).toContainText('an-unbreakable-label-');
+    const sizes = await wrap.evaluate((el) => ({
+      scroll: el.scrollWidth,
+      client: el.clientWidth,
+      overflowX: getComputedStyle(el).overflowX,
+    }));
+    expect(sizes.overflowX).toBe('auto');
+    expect(sizes.scroll, 'the table was not wider than its card').toBeGreaterThan(sizes.client);
     await expectNoHorizontalOverflow(page, 'keys table @ phone');
   });
 
@@ -217,16 +306,13 @@ test.describe('Form alignment', () => {
     // is what holds it. Recorded rather than deleted, like the other two: the next person should
     // know it was considered.
     //
-    // The reporting filter row takes its place, so this guard keeps a **wide** multi-control form
-    // to compare. It is the widest one the console has: a preset, two dates, a search and a
-    // breakdown on one line.
-    //
-    // Waited for by the control that makes the row two wide, not by the first `.filter-row` on the
-    // page: the report's breakdown picker renders once the figures arrive, and the helper's own
-    // wait is satisfied by the preset form above it. That is the race its docstring warns about,
-    // met from the other side — the guard refuses a vacuous pass now, so it fails instead of
-    // quietly checking nothing.
+    // The reporting period row takes its place, so this guard keeps a **wide** multi-control form
+    // to compare: a preset, two dates — one of them with a hint under it — and **Show**. They are
+    // there only for a custom period, so one is chosen first; on the default preset the row is a
+    // single select and the export row beside it a select and a button.
     await page.goto('/reporting');
+    await page.selectOption('#report-preset', 'custom');
+    await expect(page.locator('#report-to')).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('#export-breakdown')).toBeVisible({ timeout: 20_000 });
     await expectFormControlsAligned(page, 'reporting filters');
   });
@@ -419,11 +505,13 @@ test.describe('Form alignment', () => {
 
     await page.setViewportSize({ width: 900, height: 800 });
 
-    // **Alignment is asked of a form that still wraps.** The budget window stacks one question per
-    // row now, so at 900 px it has nothing to wrap and this assertion would compare nothing — the
-    // vacuous pass this guard was rewritten to refuse. The reporting filters are a genuine
-    // wrapping row at this width.
+    // **Alignment is asked of the widest row there is.** The budget window stacks one question per
+    // row now, so at 900 px it has nothing to wrap and this assertion would compare nothing — a
+    // vacuous pass, which is what this guard exists to refuse. The custom-period row is the
+    // widest: a preset, two dates (one with a hint) and **Show**, only there once custom is chosen.
     await page.goto('/reporting');
+    await page.selectOption('#report-preset', 'custom');
+    await expect(page.locator('#report-to')).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('#export-breakdown')).toBeVisible({ timeout: 20_000 });
     await expectFormControlsAligned(page, 'reporting filters @ 900px');
     await expectNoHorizontalOverflow(page, 'reporting filters @ 900px');

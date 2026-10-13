@@ -11,8 +11,15 @@ is asserted is what the *gateway* did: the row exists, the stored prompt is the 
 sent, the token counts are positive and consistent, the cost is the declared price applied to those
 counts, and the outcome and the caller are recorded.
 
-Skipped with a reason when no local model is serving. A suite that passes silently while the thing
-under test is absent is worse than one that fails.
+Skipped with a reason when no local model is serving — asked of the endpoint **before** anything is
+sent. Once a request has gone out, whatever comes back is asserted: a skip on the answer would turn
+a broken route, price or stream into "skipped". A suite that passes silently while the thing under
+test is absent is worse than one that fails.
+
+Two cases below do read the model's answer (`model_output`): a schema-constrained document and a
+withheld chain of thought. They are about what the gateway *made* of a request — a schema the model
+had to honour, a reasoning switch — and each first asserts the request was served, so an error can
+never stand in for the answer.
 """
 
 from __future__ import annotations
@@ -123,10 +130,6 @@ async def test_a_real_answer_is_stored_exactly_as_it_was_sent(
             },
             headers=fixture.headers(),
         )
-    if response.status_code in (401, 403):
-        pytest.skip("the gateway requires authentication for this route")
-    if response.status_code == 404:
-        pytest.skip(f"'{CHAT_MODEL}' is not registered — set AIRA_OLLAMA_MODELS")
     assert response.status_code == 200, response.text
 
     row = await _latest_row(engine, CHAT_MODEL, use_case=fixture.slug)
@@ -157,27 +160,12 @@ async def test_the_recorded_cost_is_the_declared_price_applied_to_the_real_count
     engine: AsyncEngine, fixture: Fixture
 ) -> None:
     """`FRD-403` end to end. The price is fictitious and says so in its display name; the
-    *arithmetic* is not, and it has never been checked against token counts we did not choose."""
+    *arithmetic* is not, and it has never been checked against token counts we did not choose.
+
+    The price is asked of the catalogue **before** the request: an unpriced model is a stack that
+    was not seeded, while a priced model whose request records no cost is the defect this is for.
+    """
     await _require(CHAT_MODEL)
-
-    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=300.0) as client:
-        response = await client.post(
-            f"/v1beta/models/{CHAT_MODEL}:generateContent",
-            json={
-                "contents": [{"role": "user", "parts": [{"text": "one sentence about rain"}]}],
-                "generationConfig": {"maxOutputTokens": 600},
-            },
-            headers=fixture.headers(),
-        )
-    if response.status_code != 200:
-        pytest.skip(f"the model did not serve this request ({response.status_code})")
-
-    row = await _latest_row(engine, CHAT_MODEL, use_case=fixture.slug)
-    assert row is not None
-    cost = row["cost_nanos"]
-    if cost is None:
-        pytest.skip("no price on file for this model — run `make seed`")
-
     async with engine.connect() as connection:
         prices = (
             await connection.execute(
@@ -188,8 +176,24 @@ async def test_the_recorded_cost_is_the_declared_price_applied_to_the_real_count
                 {"model": CHAT_MODEL},
             )
         ).first()
-    if prices is None or prices[0] is None:
-        pytest.skip("the catalog carries no price for this model")
+    if prices is None or prices[0] is None or prices[1] is None:
+        pytest.skip(f"the catalogue carries no price for {CHAT_MODEL} — run `make seed`")
+
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=300.0) as client:
+        response = await client.post(
+            f"/v1beta/models/{CHAT_MODEL}:generateContent",
+            json={
+                "contents": [{"role": "user", "parts": [{"text": "one sentence about rain"}]}],
+                "generationConfig": {"maxOutputTokens": 600},
+            },
+            headers=fixture.headers(),
+        )
+    assert response.status_code == 200, response.text[:300]
+
+    row = await _latest_row(engine, CHAT_MODEL, use_case=fixture.slug)
+    assert row is not None
+    cost = row["cost_nanos"]
+    assert cost is not None, "a priced model's request was recorded with no cost"
 
     expected = (
         int(row["prompt_tokens"]) * int(prices[0]) + int(row["completion_tokens"]) * int(prices[1])
@@ -216,8 +220,7 @@ async def test_a_streamed_answer_is_accounted_for_like_a_whole_one(
             headers=fixture.headers(),
         ) as response,
     ):
-        if response.status_code != 200:
-            pytest.skip(f"the model did not stream ({response.status_code})")
+        assert response.status_code == 200, await response.aread()
         body = "".join([chunk async for chunk in response.aiter_text()])
 
     assert body.strip(), "the stream produced nothing at all"
@@ -248,10 +251,7 @@ async def test_a_real_batch_returns_one_vector_per_text(
             },
             headers=fixture.headers(),
         )
-    if response.status_code == 404:
-        pytest.skip(f"'{EMBED_MODEL}' is not registered — set AIRA_OLLAMA_EMBEDDING_MODELS")
-    if response.status_code != 200:
-        pytest.skip(f"the model did not serve the batch ({response.status_code})")
+    assert response.status_code == 200, response.text[:300]
 
     embeddings = response.json()["embeddings"]
     assert len(embeddings) == 2
@@ -265,32 +265,44 @@ async def test_a_real_batch_returns_one_vector_per_text(
 async def test_a_cold_model_is_not_woken_by_a_health_check() -> None:
     """`ADR-0012` §5. A probe that loads the model turns every health check into a cold start —
     and against a paid self-deployed endpoint, into a billable call. The probe must be able to say
-    "the server is up" without asking the model anything."""
+    "the server is up" without asking the model anything.
+
+    Measured as a **difference**: what is resident before the container's healthcheck and the
+    gateway's own readiness probes, and after. Whatever was resident already says nothing either
+    way; a model that became resident is the defect.
+    """
     served = await _served_models()
     if not served:
         pytest.skip(f"no local endpoint at {OLLAMA_URL} — run `make verify-up`")
 
     async with httpx.AsyncClient(base_url=OLLAMA_URL, timeout=10.0) as client:
-        # `/api/tags` is what the container's healthcheck uses. It must answer promptly and
-        # without loading anything, which is the property being pinned.
-        response = await client.get("/api/tags")
-        loaded = await client.get("/api/ps")
+        before = await client.get("/api/ps")
+        # `/api/tags` is what the container's healthcheck uses.
+        tags = await client.get("/api/tags")
+        async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as gateway:
+            for _ in range(5):
+                assert (await gateway.get("/readyz")).status_code in (200, 503)
+        after = await client.get("/api/ps")
 
-    assert response.status_code == 200
-    if loaded.status_code == 200:
-        # Listing tags must not have caused a model to be resident. If one already is, this says
-        # nothing — hence the guard rather than a hard assertion on an empty list.
-        assert isinstance(loaded.json().get("models", []), list)
+    assert tags.status_code == 200
+    assert before.status_code == 200 and after.status_code == 200, (before.text, after.text)
+    resident_before = {model["name"] for model in before.json().get("models", [])}
+    resident_after = {model["name"] for model in after.json().get("models", [])}
+    assert resident_after <= resident_before, (
+        f"a health check made {sorted(resident_after - resident_before)} resident"
+    )
 
 
 # == what a real model does with the options (measured, not assumed) =============================
 
 
+@pytest.mark.model_output
 async def test_a_schema_request_comes_back_as_a_document(
     engine: AsyncEngine, fixture: Fixture
 ) -> None:
     """`FRD-112` against a model that never agreed to anything. The mock produces a conforming
-    document because the same code wrote the schema handling and the generator."""
+    document because the same code wrote the schema handling and the generator. Reads the answer:
+    the schema the gateway forwarded is what constrains it."""
     await _require(CHAT_MODEL)
     schema = {
         "type": "OBJECT",
@@ -307,8 +319,7 @@ async def test_a_schema_request_comes_back_as_a_document(
             },
             headers=fixture.headers(),
         )
-    if response.status_code != 200:
-        pytest.skip(f"the model did not serve a schema request ({response.status_code})")
+    assert response.status_code == 200, response.text[:300]
 
     import json as _json
 
@@ -318,6 +329,7 @@ async def test_a_schema_request_comes_back_as_a_document(
     assert isinstance(document["colour"], str)
 
 
+@pytest.mark.model_output
 async def test_thinking_is_billed_as_output_and_withheld_where_reasoning_is_off(
     engine: AsyncEngine, fixture: Fixture
 ) -> None:
@@ -360,8 +372,7 @@ async def _billed_and_withheld(engine: AsyncEngine, fixture: Fixture) -> None:
             },
             headers=fixture.headers(),
         )
-    if response.status_code != 200:
-        pytest.skip(f"the model did not serve a thinking request ({response.status_code})")
+    assert response.status_code == 200, response.text[:300]
 
     parts = response.json()["candidates"][0]["content"]["parts"]
     assert not any(part.get("thought") for part in parts), "reasoning reached the caller"
@@ -398,5 +409,7 @@ async def test_a_thinking_mode_the_dialect_cannot_express_is_refused(fixture: Fi
             headers=fixture.headers(),
         )
 
-    assert response.status_code in (400, 500), response.text
+    # A 400, never a 500: a mode the dialect cannot express is the caller's request meeting this
+    # model's limits, and a 500 would say the gateway broke.
+    assert response.status_code == 400, response.text
     assert "INVALID_THINKING_MODE" in response.text or "effort level" in response.text

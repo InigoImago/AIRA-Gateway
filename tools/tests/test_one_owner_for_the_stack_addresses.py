@@ -28,6 +28,8 @@ import subprocess
 from pathlib import Path
 
 import compose_files
+import credential_settings
+import pytest
 import stack_addresses
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,14 +56,42 @@ OWNERS = {
     # `test_documented_addresses_are_todays_defaults` below rather than banned.
 }
 
-#: Directories searched. Documentation is handled separately — see the docstring above.
-SEARCHED = ("tools", "tests", "e2e", "management/frontend/src", "management/frontend/deploy")
+#: What is searched. Documentation is handled separately — see the docstring above. The Makefile is
+#: here because its header promises this test fails when a literal reappears in it.
+SEARCHED = (
+    "tools",
+    "tests",
+    "e2e",
+    "management/frontend/src",
+    "management/frontend/deploy",
+    "Makefile",
+)
 
 #: Ports that are not this stack's and must stay literal: `:1` is a deliberately-dead address in
 #: the Vault test, and `:80`/`:443` are the world's.
-NOT_OURS = {"1", "80", "443", "8080"}
+NOT_OURS = {"1", "80", "443"}
 
-ADDRESS = re.compile(r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d+)")
+#: A published address written as **data** that nothing connects to, per file and per port, with
+#: the reason. Narrow on purpose: a connection anywhere else, or to another port here, is caught.
+DATA_NOT_A_CONNECTION = {
+    ("management/frontend/src/app/app.spec.ts", "8080"): "an issuer the startup error renders",
+    ("management/frontend/src/app/core/auth/auth.guard.spec.ts", "8080"): (
+        "an issuer inside a stubbed startup error"
+    ),
+    ("management/frontend/deploy/10-runtime-config.envsh", "8080"): (
+        "the console image's issuer when run without Compose, which always passes "
+        "AIRA_OIDC_ISSUER (docker-compose.apps.yml)"
+    ),
+    ("tools/tests/test_the_console_policy_admits_its_issuer.py", "8080"): (
+        "issuers the content policies must admit, as data; nothing connects to them"
+    ),
+}
+
+#: A loopback address with a port, **whatever the scheme** — `http://`, `redis://`,
+#: `postgresql+psycopg://user:pass@`, or a bare `host:port` such as a Kafka bootstrap list. Only
+#: `http(s)://` was recognised once, and the demo scripts' `@localhost:5432` and `localhost:6379`
+#: reset the wrong stack's counters behind it.
+ADDRESS = re.compile(r"(?<![\w.-])(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d+)(?!\d)")
 
 
 def _tracked(directory: str) -> list[Path]:
@@ -107,6 +137,25 @@ def test_the_search_finds_files_at_all() -> None:
     assert len(files) > 100, len(files)
 
 
+def _literal_addresses(path: Path, relative: str, source: str, published: set[str]) -> list[str]:
+    """Every line of one file that writes a published address down."""
+    found: list[str] = []
+    prose = _docstring_lines(path, source)
+    for number, line in enumerate(source.splitlines(), 1):
+        stripped = line.strip()
+        # Prose may quote an address — that is how the reason gets recorded. Comments are matched
+        # by prefix (`@#` is a Makefile recipe's); **docstrings are parsed**, because half of this
+        # repository's explanations live in one and a prefix heuristic would either miss their
+        # middle lines or, worse, be widened until it excused real code.
+        if stripped.startswith(("#", "@#", "*", "//", "/*")) or number in prose:
+            continue
+        for port in ADDRESS.findall(line):
+            waived = port in NOT_OURS or (relative, port) in DATA_NOT_A_CONNECTION
+            if port in published and not waived:
+                found.append(f"{relative}:{number}  {stripped[:90]}")
+    return found
+
+
 def test_no_file_outside_the_owner_writes_a_published_address() -> None:
     published = _published_ports()
     offenders: list[str] = []
@@ -116,18 +165,7 @@ def test_no_file_outside_the_owner_writes_a_published_address() -> None:
             if relative in OWNERS or path.suffix in {".md", ".json", ".lock"}:
                 continue
             source = path.read_text(errors="replace")
-            prose = _docstring_lines(path, source)
-            for number, line in enumerate(source.splitlines(), 1):
-                stripped = line.strip()
-                # Prose may quote an address — that is how the reason gets recorded. Comments are
-                # matched by prefix; **docstrings are parsed**, because half of this repository's
-                # explanations live in one and a prefix heuristic would either miss their middle
-                # lines or, worse, be widened until it excused real code.
-                if stripped.startswith(("#", "*", "//", "/*")) or number in prose:
-                    continue
-                for port in ADDRESS.findall(line):
-                    if port in published and port not in NOT_OURS:
-                        offenders.append(f"{relative}:{number}  {stripped[:90]}")
+            offenders += _literal_addresses(path, relative, source, published)
 
     assert not offenders, (
         "These write down an address the stack publishes, so moving that port with "
@@ -136,6 +174,35 @@ def test_no_file_outside_the_owner_writes_a_published_address() -> None:
         "Ask `tools/stack_addresses.py` instead (`stack_addresses.url('gateway')`), or "
         "`tools/stack-addresses.cjs` from Node, or `$(GATEWAY_URL)` in the Makefile."
     )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '    "AIRA_DEMO_RESET_DSN", "postgresql+psycopg://aira:aira-local@localhost:5432/aira_gateway"',
+        'REDIS_URL = "redis://127.0.0.1:6379/0"',
+        'BOOTSTRAP = "localhost:29092"',
+        "\tcurl -sf http://localhost:8001/healthz",
+        "issuer = 'http://[::1]:8080/realms/aira'",
+    ],
+)
+def test_an_address_of_any_scheme_is_found(line: str) -> None:
+    """The guard's own reach, broken on purpose: each of these talks to the stack."""
+    published = _published_ports() | {"5432", "6379", "29092", "8001", "8080"}
+
+    assert _literal_addresses(ROOT / "Makefile", "Makefile", line, published), line
+
+
+def test_the_makefile_and_the_waivers_are_still_what_they_claim() -> None:
+    """The Makefile is searched, and every waiver still names a literal — a waiver that outlives its
+    line silently covers the next one written there."""
+    assert ROOT / "Makefile" in _tracked("Makefile")
+    stale = [
+        f"{relative}:{port}"
+        for relative, port in DATA_NOT_A_CONNECTION
+        if f":{port}" not in (ROOT / relative).read_text(errors="replace")
+    ]
+    assert not stale, f"these waivers no longer match anything: {stale}"
 
 
 def test_every_published_variable_is_one_the_owner_knows() -> None:
@@ -257,15 +324,9 @@ def test_the_makefile_reads_no_variable_that_nothing_sets() -> None:
         text = path.read_text()
         defined |= set(re.findall(r"\$\{(AIRA_[A-Z0-9_]+)", text))
         defined |= set(re.findall(r"^\s*(AIRA_[A-Z0-9_]+):", text, re.M))
-    for settings in (
-        ROOT / "gateway" / "src" / "aira_gateway" / "config.py",
-        ROOT / "management" / "backend" / "src" / "aira_management" / "settings.py",
-    ):
-        if settings.is_file():
-            body = settings.read_text()
-            defined |= {
-                f"AIRA_{name.upper()}" for name in re.findall(r"^\s*([a-z0-9_]+)\s*:", body, re.M)
-            }
+    # Both planes' settings, **imported** rather than read from a path: a file that is looked for
+    # only if it exists is a check that quietly stops checking when the file moves.
+    defined |= credential_settings.settings_names()
 
     orphans = sorted(read - defined)
     assert not orphans, (

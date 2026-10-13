@@ -28,6 +28,7 @@ from aira_common.apikeys import generate_api_key
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_sessionmaker
 
+from . import installation
 from .conftest import MANAGEMENT_DB
 
 pytestmark = pytest.mark.integration
@@ -108,6 +109,7 @@ async def _wait_for(engine: AsyncEngine, query: str, params: dict[str, str], tim
 
 async def test_a_use_case_published_by_the_relay_reaches_the_gateway(engine: AsyncEngine) -> None:
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", slug)
     management = await _management_engine()
     try:
         await _queue_outbox_event(
@@ -156,6 +158,9 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
 
     full, prefix, key_hash = keys.generate_api_key()
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", slug)
+    # Its own caller name: the rows it waits for, and deletes afterwards, are this test's alone.
+    subject = installation.subject("integration-distributed")
     management = await _management_engine()
     try:
         await _queue_outbox_event(
@@ -166,7 +171,7 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
             {
                 "prefix": prefix,
                 "key_hash": key_hash,
-                "subject": "integration-distributed",
+                "subject": subject,
                 "use_case": slug,
                 "label": "integration",
                 "status": "active",
@@ -193,9 +198,8 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
         # it rather than reading immediately — the row is guaranteed, its timing is not.
         logged = await _wait_for(
             engine,
-            "SELECT use_case FROM request_logs WHERE subject = 'integration-distributed'"
-            " ORDER BY created_at DESC LIMIT 1",
-            {},
+            "SELECT use_case FROM request_logs WHERE subject = :subject",
+            {"subject": subject},
             timeout=10.0,
         )
         assert logged is not None, "the request was never written to the audit log"
@@ -203,7 +207,7 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
     finally:
         async with engine.begin() as connection:
             await connection.execute(
-                text("DELETE FROM request_logs WHERE subject = 'integration-distributed'")
+                text("DELETE FROM request_logs WHERE subject = :subject"), {"subject": subject}
             )
             await connection.execute(
                 text("DELETE FROM api_keys WHERE prefix = :prefix"), {"prefix": prefix}
@@ -216,12 +220,15 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
 
 
 async def test_deleting_a_use_case_stops_its_key_from_working(engine: AsyncEngine) -> None:
-    """The whole point, over the real event path and the real HTTP surface.
+    """The cascade the gateway applies when a retirement arrives, and the HTTP surface after it.
 
-    Before the cascade, a key bound to a deleted use case kept answering 200: whoever deleted the
-    use case believed access had ended, and it had not.
+    The event is applied in-process with the consumer's own `apply_event` — the transport is the
+    tests above; what is asked here is what that event does to a key. Before the cascade, a key
+    bound to a deleted use case kept answering 200: whoever deleted the use case believed access
+    had ended, and it had not. The tombstone it leaves is removed with the session's clean-up.
     """
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", slug)
     async with engine.begin() as connection:
         await connection.execute(
             text("INSERT INTO use_cases (slug, name) VALUES (:slug, :slug)"), {"slug": slug}
@@ -273,6 +280,7 @@ async def test_the_content_visibility_a_use_case_chooses_reaches_the_gateway(
     the column it lands in is the one the payload decision reads.
     """
     slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", slug)
     management = await _management_engine()
     try:
         for payload, expected in (

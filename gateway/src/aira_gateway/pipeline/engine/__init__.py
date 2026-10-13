@@ -25,7 +25,6 @@ from aira_gateway.pipeline.engine.steps import (
     UNDETERMINED_BLOCKS,
     DeclarationOf,
     StepEvaluator,
-    _filled,
 )
 from aira_gateway.pipeline.engine.texts import REDACTIONS_AT_ONCE, TEXT_ONLY_STEPS
 
@@ -42,5 +41,4 @@ __all__ = [
     "StepEvaluator",
     "TextsOutcome",
     "TraceEntry",
-    "_filled",
 ]

@@ -1,15 +1,7 @@
-import {
-  Component,
-  ElementRef,
-  computed,
-  effect,
-  inject,
-  output,
-  signal,
-  viewChild,
-} from '@angular/core';
+import { Component, computed, inject, input, output, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
+import { Subscription } from 'rxjs';
 import {
   CAPABILITIES,
   MEDIA_TYPES,
@@ -29,16 +21,58 @@ import {
 import { MeService, perMillion } from '../../core/api/me.service';
 import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
+import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { checkVerdict, providerLabel } from './catalog-display';
 import { CAPABILITY_HELP, thinkingModeMeans } from './declaration-help';
 import { GatewayProviders } from './gateway-providers';
 
 /** An amount as people type it: "0.075", "10", "10,50". Kept as text end to end. */
-const AMOUNT = /^\d+([.,]\d{1,6})?$/;
+const AMOUNT = /^\d+([.,]\d+)?$/;
+
+/** Digits a price may carry on either side of the point: the catalog stores `DecimalField(12, 6)`,
+ *  so a seventh decimal or a seventh whole digit is refused by the server — said here, by field. */
+const PRICE_DIGITS = 6;
+
+/** A width as the embedding field takes it: a whole number, nothing else. */
+const WIDTH = /^\d+$/;
 
 /** What the model or the gateway answered about one word, mode or region. */
 type Verdict = { ok: boolean; detail: string };
+
+/** Where a model lives, as an entrance knows it — the four facts an import may copy (`FRD-507`). */
+interface Whereabouts {
+  provider: string;
+  publisher: string;
+  region: string;
+  platform: string;
+}
+
+/** Why a typed price cannot be stored, naming the field and the limit — or `null` if it can. */
+function priceProblem(label: string, value: string): string | null {
+  if (!value) return null;
+  if (!AMOUNT.test(value)) {
+    return `${label}: '${value}' is not an amount. Prices are amounts per 1,000,000 tokens, e.g. 0.075.`;
+  }
+  const [whole, fraction = ''] = value.split(/[.,]/);
+  if (whole.replace(/^0+(?=\d)/, '').length > PRICE_DIGITS) {
+    return `${label}: at most ${PRICE_DIGITS} digits before the decimal point — the catalog stores up to 999999.999999.`;
+  }
+  if (fraction.length > PRICE_DIGITS) {
+    return `${label}: at most ${PRICE_DIGITS} decimal places — '${value}' has ${fraction.length}.`;
+  }
+  return null;
+}
+
+/** A configured provider as the four facts it states about where its models live. */
+function provenanceOf(upstream: GatewayProvider): Whereabouts {
+  return {
+    provider: upstream.name,
+    publisher: upstream.publisher ?? '',
+    region: upstream.region ?? '',
+    platform: upstream.name,
+  };
+}
 
 /**
  * The window a model is declared or corrected in (`FRD-114`, `FRD-403`, `FRD-507`).
@@ -50,10 +84,10 @@ type Verdict = { ok: boolean; detail: string };
  */
 @Component({
   selector: 'app-model-editor',
-  imports: [InfoHint, FormsModule],
+  imports: [InfoHint, FormsModule, Modal],
   templateUrl: './model-editor.html',
-  // Escape closes the editor: a window whose only exit is the mouse is one somebody gets stuck in.
-  host: { '(document:keydown.escape)': 'close()', style: 'display: contents' },
+  styleUrl: './model-editor.scss',
+  host: { style: 'display: contents' },
 })
 export class ModelEditor {
   private readonly service = inject(UseCaseService);
@@ -65,6 +99,21 @@ export class ModelEditor {
   /** Raised after a successful save, so the page reloads the catalog. */
   readonly saved = output<void>();
 
+  /**
+   * What the catalog already holds. A save is an upsert by name, so an "add" under a catalogued
+   * name would replace that model's whole declaration — release, price, capabilities, KIRA id —
+   * with the empty form's. Adding refuses such a name and offers the declaration on file instead.
+   */
+  readonly catalogued = input<readonly CatalogModel[]>([]);
+
+  /**
+   * Whether the reader may ask the gateway about a model (`operations.diagnose`). The reachability
+   * check and "Ask the model" answer 403 without it, so they are offered only with it — and adding
+   * a model no longer waits on a check its author cannot run. Off until said otherwise: a button
+   * that can only fail is worse than one that is absent.
+   */
+  readonly canDiagnose = input(false);
+
   // ---- the window ---------------------------------------------------------------------------
 
   readonly showAdd = signal(false);
@@ -73,7 +122,10 @@ export class ModelEditor {
   /** Which third of the declaration is on screen. The values live in signals, so switching tabs
    *  keeps everything typed; only the DOM comes and goes. */
   protected readonly editorTab = signal<'identity' | 'capabilities' | 'price'>('identity');
-  private readonly dialog = viewChild<ElementRef<HTMLElement>>('dialog');
+  /** The window's heading: which model it is about, or that it adds one. */
+  protected readonly title = computed(() =>
+    this.editing() ? `Edit ${this.editing()}` : 'Add a model',
+  );
 
   // ---- what it is ---------------------------------------------------------------------------
 
@@ -88,6 +140,9 @@ export class ModelEditor {
    * server assigns the next free number. Worth setting when migrating clients already send an id.
    */
   protected readonly kiraId = signal<number | null>(null);
+  /** The id the model holds on file. The server assigns one only when a model is created, so an
+   *  edit that clears it stores nothing and the model stops answering on the KIRA surface. */
+  private readonly storedKiraId = signal<number | null>(null);
   /**
    * Where this model lives, **in the order it should be tried** (`FRD-609`): the first is where an
    * ordinary request goes, the rest are what the gateway falls back to. Chips, so each entry is
@@ -98,6 +153,9 @@ export class ModelEditor {
   protected readonly regionDraft = signal('');
   /** Region → what the gateway said when asked. Empty until the check has run. */
   protected readonly regionVerdicts = signal<Record<string, Verdict>>({});
+  /** The addressing block as stored. The form edits its regions only; every other key — a
+   *  deployment, an endpoint id — written through the API or a seed is carried through an edit. */
+  private readonly storedAddressing = signal<Record<string, unknown> | null>(null);
 
   /**
    * Whether the provenance fields are open, rather than summarised in a sentence.
@@ -121,13 +179,26 @@ export class ModelEditor {
   protected readonly loadingProviders = this.gateway.loading;
   protected readonly providersError = this.gateway.error;
   protected readonly allowedRegions = this.gateway.allowedRegions;
+  /**
+   * Where **this** model may be processed: every model's regions, and those the gateway permits
+   * it by name (`AIRA_ALLOWED_MODEL_REGIONS`) — a model served only at `global` is permitted there
+   * alone, so the editor must not refuse what the gateway allows. Empty where the gateway did not
+   * say.
+   */
+  protected readonly permittedRegions = computed<string[]>(() => {
+    const allowed = this.allowedRegions();
+    if (!allowed.length) return [];
+    const byName = this.gateway.modelRegions()[this.name().trim()] ?? [];
+    return [...allowed, ...byName.filter((region) => !allowed.includes(region))];
+  });
   protected readonly selectedProvider = computed(() => this.gateway.find(this.provider()));
 
   /**
-   * What an import copied, named: an import that silently fills some fields and leaves others is
-   * indistinguishable from one that failed at the rest.
+   * Whether the form was filled from a provider or a vendor's listing. The provenance sentence says
+   * what is now known; this shows the note saying what the import deliberately left alone — the
+   * price and the measured capabilities — so the two halves are each said once.
    */
-  protected readonly vendorFilled = signal<string[]>([]);
+  protected readonly imported = signal(false);
   /** What the vendor said that the console deliberately did **not** turn into a declaration. */
   protected readonly vendorSaid = signal<string[]>([]);
 
@@ -196,6 +267,13 @@ export class ModelEditor {
   /** The name a reachability check has been **answered** for — answered, not passed. An error
    *  counts: a diagnostic that cannot answer must not lock anybody out of their own catalog. */
   protected readonly checkedName = signal<string | null>(null);
+  /**
+   * The two questions in flight, kept so they can be dropped. An answer belongs to the model and
+   * provenance it was asked about; one landing after the window closed, or after the provider
+   * changed, would otherwise mark another model's form with this one's verdict.
+   */
+  private checkRequest: Subscription | null = null;
+  private levelsRequest: Subscription | null = null;
 
   protected readonly checkVerdict = checkVerdict;
   protected readonly providerLabel = providerLabel;
@@ -215,13 +293,39 @@ export class ModelEditor {
       .filter((value) => Number.isInteger(value) && value > 0),
   );
 
+  /** What was typed into the widths and is not one — refused by name rather than dropped, or
+   *  `768, 1O24` would be saved as `[768]` without a word. */
+  protected readonly unreadableWidths = computed(() =>
+    this.dimensions()
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value && (!WIDTH.test(value) || Number(value) === 0)),
+  );
+
+  /** The catalog's model under the name typed into an **empty** form, if it has one. */
+  protected readonly alreadyCatalogued = computed<CatalogModel | null>(() => {
+    if (this.editing()) return null;
+    const name = this.name().trim();
+    return this.catalogued().find((model) => model.name === name) ?? null;
+  });
+
+  /** "Ask the model" has something to ask: a word, a draft about to become one, or a ticked mode —
+   *  a model with modes and no levels is asked about its modes. */
+  protected readonly canAskModel = computed(
+    () =>
+      !!this.name().trim() &&
+      (this.thinkingLevels().length > 0 ||
+        this.thinkingModes().length > 0 ||
+        !!this.levelDraft().trim()),
+  );
+
   /** The regions in the form that this installation does not permit. */
   protected readonly forbiddenRegions = computed<string[]>(() => {
-    const allowed = this.allowedRegions();
+    const permitted = this.permittedRegions();
     // Empty means the gateway did not say: reading it as an empty allow-list would refuse every
     // region anybody typed, enforcing a policy the console has never heard.
-    if (!allowed.length) return [];
-    return this.regions().filter((region) => !allowed.includes(region));
+    if (!permitted.length) return [];
+    return this.regions().filter((region) => !permitted.includes(region));
   });
 
   /**
@@ -230,7 +334,9 @@ export class ModelEditor {
    */
   protected readonly provenanceDetail = computed(() => {
     const parts: string[] = [];
-    if (this.publisher()) parts.push(`speaking the ${this.publisher()} dialect`);
+    // The publisher, not a dialect: it selects one, and Vertex's open models from `zai-org` or
+    // `deepseek-ai` all speak the OpenAI one (`FRD-115` FR-2a).
+    if (this.publisher()) parts.push(`published by ${this.publisher()}`);
     if (this.platform()) parts.push(`on the ${this.platform()} platform`);
     if (this.hosting() === 'self_deployed') parts.push('self-deployed on our own capacity');
     return parts.length ? `, ${parts.join(', ')}.` : '.';
@@ -245,10 +351,6 @@ export class ModelEditor {
   });
 
   constructor() {
-    // Move the keyboard into the window when it opens, or Escape and Tab still belong to the page.
-    effect(() => {
-      if (this.showAdd()) this.dialog()?.nativeElement.focus();
-    });
     // Settle the provider field when the gateway answers — in both directions, because a form
     // opened on a provider is laid out before the answer arrives. A provider the gateway does not
     // have stays typed: a model declared ahead of its credential, not an error.
@@ -262,27 +364,32 @@ export class ModelEditor {
 
   // ---- opening the window -------------------------------------------------------------------
 
+  /**
+   * Every way into the window starts here: an empty form, no question in flight, and nothing said
+   * about a previous window — a verdict or a refusal about the last model must not appear on this
+   * one, and the window is where this page's outcome is shown while it is open.
+   */
+  private begin(editing: string): void {
+    this.reset();
+    this.feedback.clear();
+    this.gateway.load();
+    this.editing.set(editing);
+    this.showAdd.set(true);
+  }
+
   /** Open the window empty, for a model the catalog does not have yet. */
   add(): void {
-    this.reset();
-    this.gateway.load();
-    this.checkedName.set(null);
-    this.editing.set('');
-    this.showAdd.set(true);
+    this.begin('');
   }
 
   /** Load a catalog row into the window so its declaration can be corrected. */
   edit(model: CatalogModel): void {
-    this.check.set(null);
-    this.checkedName.set(null);
-    this.gateway.load();
+    this.begin(model.name);
     // A provider the gateway does not have is shown as typed, not silently blanked. The vendor
     // listing stays shut: beside a declaration somebody measured it invites replacing it.
     this.providerIsCustom.set(
       !!model.provider && !(this.providers() ?? []).some((p) => p.name === model.provider),
     );
-    this.vendorFilled.set([]);
-    this.vendorSaid.set([]);
     this.name.set(model.name);
     this.displayName.set(model.display_name ?? '');
     this.provider.set(model.provider ?? '');
@@ -293,35 +400,35 @@ export class ModelEditor {
     this.capabilities.set([...(model.capabilities ?? [])]);
     this.publisher.set(model.publisher ?? '');
     this.regions.set(readRegions(model.addressing));
+    this.storedAddressing.set(model.addressing ?? null);
     this.platform.set(model.platform ?? '');
     this.hosting.set(model.hosting ?? '');
     this.contextWindow.set(model.context_window ?? null);
     this.maxOutput.set(model.max_output_tokens ?? null);
     this.kiraId.set(model.numeric_id ?? null);
+    this.storedKiraId.set(model.numeric_id ?? null);
     this.defaultOutput.set(model.default_max_output_tokens ?? null);
     this.deprecated.set(model.deprecated ?? false);
     this.approved.set(model.approved ?? false);
     this.loadDeclarations(model);
-    this.editing.set(model.name);
-    this.showAdd.set(true);
   }
 
   /**
    * Start an entry from a model the gateway serves (`FRD-507`) — **provenance only**.
    *
-   * Name, provider, publisher and platform are facts the adapter was configured with. Price,
-   * capabilities and release stay as the empty form has them: a vendor's flag is a claim
-   * (`FRD-131`), and a price nobody set is not zero (`FRD-403`).
+   * Name, provider, publisher, region and platform are facts the adapter was configured with
+   * (`FRD-507` FR-3). Price, capabilities and release stay as the empty form has them: a vendor's
+   * flag is a claim (`FRD-131`), and a price nobody set is not zero (`FRD-403`).
    */
   importServed(model: ServedModel): void {
-    this.reset();
-    this.gateway.load();
+    this.begin('');
     this.name.set(model.name);
-    this.provider.set(model.airaProvider ?? '');
-    this.publisher.set(model.airaPublisher ?? '');
-    this.platform.set(model.airaProvider ?? '');
-    this.editing.set('');
-    this.showAdd.set(true);
+    this.applyProvenance({
+      provider: model.airaProvider ?? '',
+      publisher: model.airaPublisher ?? '',
+      region: model.airaRegion ?? '',
+      platform: model.airaProvider ?? '',
+    });
   }
 
   /**
@@ -329,31 +436,33 @@ export class ModelEditor {
    * way in for a platform that publishes no list, or a model its list does not carry.
    */
   startOn(upstream: GatewayProvider | null): void {
-    // Through `add()`, so this entrance also clears the id being corrected and the last verdict.
-    this.add();
+    this.begin('');
     if (upstream) {
-      this.provider.set(upstream.name);
-      this.publisher.set(upstream.publisher ?? '');
-      this.regions.set(upstream.region ? [upstream.region] : []);
-      this.vendorFilled.set(
-        [upstream.name && 'provider', upstream.publisher && 'dialect'].filter(Boolean) as string[],
-      );
+      this.applyProvenance(provenanceOf(upstream));
+      this.imported.set(true);
     }
   }
 
   /** Open a new entry from one of the vendor's listed models, with the provenance of the provider
    *  that listed it (`FRD-507` stage C). */
   fromOffering(model: OfferedModel, provider: GatewayProvider | null): void {
-    this.reset();
-    this.editing.set('');
-    this.showAdd.set(true);
+    this.begin('');
     if (provider) {
-      this.provider.set(provider.name);
-      this.publisher.set(provider.publisher);
-      this.platform.set(provider.name);
+      this.applyProvenance(provenanceOf(provider));
       this.providerIsCustom.set(false);
     }
     this.useOffered(model, provider);
+  }
+
+  /**
+   * Where a model lives, written the same way by every entrance — the served list, a provider and a
+   * vendor's listing — so one provider yields one form whichever way in was taken.
+   */
+  private applyProvenance(where: Whereabouts): void {
+    this.provider.set(where.provider);
+    this.publisher.set(where.publisher);
+    this.platform.set(where.platform);
+    this.regions.set(where.region ? [where.region] : []);
   }
 
   /**
@@ -375,12 +484,7 @@ export class ModelEditor {
     if (model.canEmbed) stated.push('embed');
     if (model.canCachePrompts) stated.push('prompt_caching');
     this.capabilities.set([...new Set([...this.capabilities(), ...stated])]);
-
-    const filled = ['the model id', 'where it is reached'];
-    if (model.displayName) filled.push('its display name');
-    if (model.maxOutputTokens) filled.push('its output cap');
-    if (stated.length) filled.push(`what it may be asked to do (${stated.join(', ')})`);
-    this.vendorFilled.set(filled);
+    this.imported.set(true);
 
     const said: string[] = [];
     if (model.thinking)
@@ -394,12 +498,14 @@ export class ModelEditor {
     this.checkedName.set(provider?.cataloguedIsEnough ? model.name : null);
   }
 
-  /** Close the window, discarding whatever was typed. Deliberately not a save. */
+  /** Close the window, discarding whatever was typed. Deliberately not a save — and what went wrong
+   *  in it goes with it: a refusal about a form nobody is looking at is a report about nothing. */
   protected close(): void {
     if (!this.showAdd()) return;
     this.showAdd.set(false);
     this.editing.set('');
     this.reset();
+    this.feedback.clear();
   }
 
   // ---- provenance and regions ---------------------------------------------------------------
@@ -421,11 +527,13 @@ export class ModelEditor {
   protected typeProvider(value: string): void {
     this.latchProvenance();
     this.provider.set(value);
+    this.forgetAnswers();
   }
 
   /** The provider select changed: a configured provider, or "type it yourself". */
   protected chooseProvider(value: string): void {
     this.latchProvenance();
+    this.forgetAnswers();
     if (value === this.OTHER) {
       this.providerIsCustom.set(true);
       this.provider.set('');
@@ -440,6 +548,12 @@ export class ModelEditor {
     }
   }
 
+  /** The dialect typed by hand. Every answer so far was given in the previous one. */
+  protected setPublisher(value: string): void {
+    this.publisher.set(value);
+    this.forgetAnswers();
+  }
+
   /** Commit the box as a region. Order is kept, because order is the meaning; a repeat is dropped,
    *  because a list naming a place twice would retry the failure it just had. */
   protected addRegion(): void {
@@ -447,6 +561,7 @@ export class ModelEditor {
     this.regionDraft.set('');
     if (!region || this.regions().includes(region)) return;
     this.regions.set([...this.regions(), region]);
+    this.forgetCheck();
   }
 
   protected removeRegion(region: string): void {
@@ -454,6 +569,31 @@ export class ModelEditor {
     const verdicts = { ...this.regionVerdicts() };
     delete verdicts[region];
     this.regionVerdicts.set(verdicts);
+    this.forgetCheck();
+  }
+
+  /**
+   * The provenance a check was asked with changed, so its overall verdict — and the look that
+   * adding a model requires — no longer describe this form. Each region's own mark stays: it is
+   * still a true statement about that region.
+   */
+  private forgetCheck(): void {
+    this.checkRequest?.unsubscribe();
+    this.checkRequest = null;
+    this.checking.set(false);
+    this.check.set(null);
+    this.checkedName.set(null);
+  }
+
+  /** The provider or dialect changed: every answer so far was about another one. */
+  private forgetAnswers(): void {
+    this.forgetCheck();
+    this.levelsRequest?.unsubscribe();
+    this.levelsRequest = null;
+    this.checkingLevels.set(false);
+    this.regionVerdicts.set({});
+    this.levelVerdicts.set({});
+    this.modeVerdicts.set({});
   }
 
   /** A region's verdict from the last check, or `null` if it has not been asked about. */
@@ -463,8 +603,8 @@ export class ModelEditor {
 
   /** Whether this installation permits a region — `null` where the gateway did not say. */
   protected regionAllowed(region: string): boolean | null {
-    const allowed = this.allowedRegions();
-    return allowed.length ? allowed.includes(region) : null;
+    const permitted = this.permittedRegions();
+    return permitted.length ? permitted.includes(region) : null;
   }
 
   // ---- capabilities and declarations --------------------------------------------------------
@@ -504,7 +644,8 @@ export class ModelEditor {
     this.levelDraft.set('');
     if (!word) return;
     if ((THINKING_MODES as readonly string[]).includes(word)) {
-      // The page's banner, because `formError` is about the form's state, not about a keystroke.
+      // The page's one outcome, shown in this window while it is open: `formError` is about the
+      // form's state, not about a keystroke.
       this.feedback.error.set(
         `'${word}' is a thinking mode rather than a vendor's level word — tick it above instead.`,
       );
@@ -536,34 +677,40 @@ export class ModelEditor {
    * word the reader is looking at would be the one not checked.
    */
   protected checkLevels(): void {
+    // A new question replaces the last one's outcome, before the draft is committed — so a mode
+    // typed as a word is still reported.
+    this.feedback.clear();
     this.addLevel();
     const words = this.thinkingLevels();
     const modes = this.thinkingModes();
     const model = this.name().trim();
     if ((!words.length && !modes.length) || !model) return;
     this.checkingLevels.set(true);
-    this.service.checkThinkingLevels(model, words, this.formProvenance(), modes).subscribe({
-      next: (answer) => {
-        const verdicts: Record<string, Verdict> = {};
-        for (const result of answer.results) {
-          verdicts[result.level] = { ok: result.accepted, detail: result.detail };
-        }
-        this.levelVerdicts.set(verdicts);
-        const modeVerdicts: Record<string, Verdict> = {};
-        for (const result of answer.modes ?? []) {
-          modeVerdicts[result.mode] = { ok: result.accepted, detail: result.detail };
-        }
-        this.modeVerdicts.set(modeVerdicts);
-        this.checkingLevels.set(false);
-      },
-      error: (response: unknown) => {
-        this.checkingLevels.set(false);
-        // Nothing is marked: a failed *question* must not read as a refused *word*.
-        this.levelVerdicts.set({});
-        this.modeVerdicts.set({});
-        this.feedback.fail(response, 'Could not ask this model about its levels.');
-      },
-    });
+    this.levelsRequest?.unsubscribe();
+    this.levelsRequest = this.service
+      .checkThinkingLevels(model, words, this.formProvenance(), modes)
+      .subscribe({
+        next: (answer) => {
+          const verdicts: Record<string, Verdict> = {};
+          for (const result of answer.results) {
+            verdicts[result.level] = { ok: result.accepted, detail: result.detail };
+          }
+          this.levelVerdicts.set(verdicts);
+          const modeVerdicts: Record<string, Verdict> = {};
+          for (const result of answer.modes ?? []) {
+            modeVerdicts[result.mode] = { ok: result.accepted, detail: result.detail };
+          }
+          this.modeVerdicts.set(modeVerdicts);
+          this.checkingLevels.set(false);
+        },
+        error: (response: unknown) => {
+          this.checkingLevels.set(false);
+          // Nothing is marked: a failed *question* must not read as a refused *word*.
+          this.levelVerdicts.set({});
+          this.modeVerdicts.set({});
+          this.feedback.fail(response, 'Could not ask this model about its levels.');
+        },
+      });
   }
 
   protected hasMediaType(mediaType: string): boolean {
@@ -597,7 +744,22 @@ export class ModelEditor {
   // ---- checking and saving ------------------------------------------------------------------
 
   protected formError(): string | null {
-    if (!this.name().trim()) return 'A model id is required.';
+    const name = this.name().trim();
+    if (!name) return 'A model id is required.';
+    if (this.alreadyCatalogued()) {
+      return (
+        `'${name}' is already in the catalog. Open it to correct it — a new declaration under ` +
+        'its name would replace the one on file, its release and its price with it.'
+      );
+    }
+    // The server assigns an id only when a model is created; an edit sending none stores none.
+    const storedId = this.storedKiraId();
+    if (this.editing() && storedId !== null && this.kiraId() === null) {
+      return (
+        `Clearing the KIRA id takes ${name} off the KIRA surface — its clients address it as ` +
+        `${storedId}. Type another id to change it.`
+      );
+    }
     // Residency refused where it is typed, judged against the gateway's own published list — the
     // same policy said earlier, not a second one (`ADR-0012` §6).
     const forbidden = this.forbiddenRegions();
@@ -605,22 +767,22 @@ export class ModelEditor {
       return (
         `${forbidden.length === 1 ? 'Region' : 'Regions'} ${forbidden.map((r) => `'${r}'`).join(', ')} ` +
         `${forbidden.length === 1 ? 'is' : 'are'} not permitted by this installation. ` +
-        `Allowed: ${this.allowedRegions().join(', ')}. ` +
-        'Residency is set on the gateway (AIRA_ALLOWED_REGIONS); widen it there if that is intended.'
+        `Allowed: ${this.permittedRegions().join(', ')}. ` +
+        'Residency is set on the gateway (AIRA_ALLOWED_REGIONS, or AIRA_ALLOWED_MODEL_REGIONS for ' +
+        'one model by name); widen it there if that is intended.'
       );
     }
     const input = this.inputPrice().trim();
     const output = this.outputPrice().trim();
     const cached = this.cachedPrice().trim();
     const cacheWrite = this.cacheWritePrice().trim();
-    if (
-      (input && !AMOUNT.test(input)) ||
-      (output && !AMOUNT.test(output)) ||
-      (cached && !AMOUNT.test(cached)) ||
-      (cacheWrite && !AMOUNT.test(cacheWrite))
-    ) {
-      return 'Prices are amounts per 1,000,000 tokens, e.g. 0.075.';
-    }
+    const priced = [
+      priceProblem('Input price', input),
+      priceProblem('Output price', output),
+      priceProblem('Cached input price', cached),
+      priceProblem('Cache write price', cacheWrite),
+    ].find(Boolean);
+    if (priced) return priced;
     // Half a price — or a cache rate without its base — produces a cost figure that looks
     // complete and is not.
     if ((cached || cacheWrite) && !input) {
@@ -629,17 +791,56 @@ export class ModelEditor {
     if (!!input !== !!output) {
       return 'Set both the input and the output price, or neither.';
     }
+    return this.capError() ?? this.declarationError();
+  }
+
+  /** The server's rules about the caps, said before the save rather than behind the window. */
+  private capError(): string | null {
     const max = this.maxOutput();
     const fallback = this.defaultOutput();
+    const window = this.contextWindow();
     if (max != null && fallback != null && fallback > max) {
       return 'The default output cap cannot exceed the maximum.';
+    }
+    if (max != null && window != null && max > window) {
+      return 'The output cap cannot exceed the context window — the answer is part of what it holds.';
     }
     return null;
   }
 
-  /** True while a **new** model has not been checked yet. */
+  /** The server's rules about the declaration blocks that are ticked, said where they are typed. */
+  private declarationError(): string | null {
+    if (this.hasCapability('thinking')) {
+      const min = this.thinkingMin();
+      const max = this.thinkingMax();
+      const cap = this.maxOutput();
+      if (min != null && max != null && min > max) {
+        return 'The smallest thinking budget cannot exceed the largest.';
+      }
+      if (max != null && cap != null && max >= cap) {
+        return 'The largest thinking budget must stay below the output cap — it is drawn from it.';
+      }
+      if (this.hasThinkingMode('limited') && max == null) {
+        return "Offering 'limited' needs a largest thinking budget: it bounds what a caller may name.";
+      }
+    }
+    if (this.hasCapability('embed')) {
+      const unreadable = this.unreadableWidths();
+      if (unreadable.length) {
+        return (
+          `Dimensions: ${unreadable.map((value) => `'${value}'`).join(', ')} ` +
+          `${unreadable.length === 1 ? 'is not a width' : 'are not widths'} — list whole numbers, e.g. 384, 768.`
+        );
+      }
+    }
+    return null;
+  }
+
+  /** True while a **new** model has not been checked yet — by somebody who may check it. Without
+   *  `operations.diagnose` the check can only answer 403, and demanding it would lock a
+   *  catalogue-only role out of adding anything; the footer says why it was not asked. */
   protected mustCheck(): boolean {
-    return !this.editing() && this.checkedName() !== this.name().trim();
+    return this.canDiagnose() && !this.editing() && this.checkedName() !== this.name().trim();
   }
 
   /**
@@ -662,9 +863,13 @@ export class ModelEditor {
   }
 
   protected runCheck(model: Pick<CatalogModel, 'name'>): void {
+    // A new question replaces the last one's outcome: a failed check left beside a verdict that
+    // has since arrived would contradict it.
+    this.feedback.clear();
     this.checking.set(true);
     this.check.set(null);
-    this.service.checkModel(model.name, this.formProvenance()).subscribe({
+    this.checkRequest?.unsubscribe();
+    this.checkRequest = this.service.checkModel(model.name, this.formProvenance()).subscribe({
       next: (verdict) => {
         this.check.set(verdict);
         // One verdict per region, so a model in three places says which of them answered.
@@ -704,9 +909,7 @@ export class ModelEditor {
         cache_write_price_per_million: amount(this.cacheWritePrice()),
         capabilities: this.capabilities(),
         publisher: this.publisher().trim(),
-        // `null` rather than `{}` when empty: an empty object claims the addressing was considered
-        // and is nothing.
-        addressing: this.regions().length ? { regions: this.regions() } : null,
+        addressing: this.addressing(),
         platform: this.platform().trim(),
         hosting: this.hosting(),
         context_window: this.contextWindow(),
@@ -733,9 +936,25 @@ export class ModelEditor {
       });
   }
 
+  /**
+   * The addressing block to send: the stored one with the form's regions in it, so a key the form
+   * does not offer survives the edit. The single-region spelling `region` is read into the list and
+   * written back as `regions`, the one shape both planes read. `null` rather than `{}` when
+   * nothing is left: an empty object claims the addressing was considered and is nothing.
+   */
+  private addressing(): Record<string, unknown> | null {
+    const rest = { ...(this.storedAddressing() ?? {}) };
+    delete rest['regions'];
+    delete rest['region'];
+    const block = this.regions().length ? { ...rest, regions: this.regions() } : rest;
+    return Object.keys(block).length ? block : null;
+  }
+
   /** Back to the empty form. The vendor's answers and the verdicts belong to the model that was
-   *  open; left standing they would describe the previous one. */
+   *  open, and so do the questions still in flight; left standing they would describe the
+   *  previous one. */
   private reset(): void {
+    this.forgetAnswers();
     this.editorTab.set('identity');
     this.name.set('');
     this.displayName.set('');
@@ -748,21 +967,21 @@ export class ModelEditor {
     this.publisher.set('');
     this.regions.set([]);
     this.regionDraft.set('');
-    this.regionVerdicts.set({});
+    this.storedAddressing.set(null);
     this.platform.set('');
     this.hosting.set('');
     this.contextWindow.set(null);
     this.maxOutput.set(null);
     this.kiraId.set(null);
+    this.storedKiraId.set(null);
     this.defaultOutput.set(null);
     this.deprecated.set(false);
     this.approved.set(false);
     this.clearDeclarations();
     this.providerIsCustom.set(false);
     this.provenanceOpened.set(false);
-    this.vendorFilled.set([]);
+    this.imported.set(false);
     this.vendorSaid.set([]);
-    this.check.set(null);
   }
 
   private clearDeclarations(): void {

@@ -257,7 +257,9 @@ async def test_the_use_cases_storage_setting_is_applied_by_the_worker(sessionmak
 
     row = (await _rows(sessionmaker))[0]
     assert row.request_payload is None
-    assert row.total_tokens is None or row.status == 200  # the accounting still landed
+    # The accounting still landed: status and cost, which the entry carries — its usage is `None`,
+    # so the token count is no evidence either way.
+    assert (row.status, row.cost_nanos) == (200, 100)
     await writer.stop()
 
 
@@ -464,6 +466,32 @@ async def test_a_payload_that_is_not_an_object_is_written_rather_than_lost(sessi
     assert rows[0].response_payload == {"payload": "a bare string"}
 
 
+async def test_a_payload_that_is_not_an_object_is_redacted_too(sessionmaker) -> None:
+    """**Kept is not enough; kept redacted.** The redactor is handed the mapping its signature
+    names and returned anything else unchanged — so a list or a string answer, which the writer
+    keeps on purpose (above), reached the row with its credentials in it. Wrapped before the
+    redactor runs, not after. With the real redactor: a stand-in that redacts nothing would pass."""
+    import dataclasses
+
+    from aira_gateway.persistence.redaction import build_redactor
+
+    key = "sk-proj-abcdefghijklmnopqrstuvwx"
+    entry = dataclasses.replace(
+        _entry(),
+        request_payload=[f"a list carrying {key}"],  # type: ignore[arg-type]
+        response_payload=f"a string carrying {key}",  # type: ignore[arg-type]
+    )
+
+    await RequestLogWriter(sessionmaker, GatewaySettings(), build_redactor(), max_queue=0).submit(
+        entry
+    )
+    (row,) = await _rows(sessionmaker)
+
+    assert key not in json.dumps(row.request_payload)
+    assert key not in json.dumps(row.response_payload)
+    assert row.request_payload == {"payload": ["a list carrying [REDACTED]"]}
+
+
 async def test_an_object_payload_is_not_wrapped(sessionmaker) -> None:
     """The comparison. A writer that wrapped everything would change the shape of every stored
     payload and break every reader that indexes into one."""
@@ -471,3 +499,31 @@ async def test_an_object_payload_is_not_wrapped(sessionmaker) -> None:
     rows = await _rows(sessionmaker)
 
     assert rows[0].request_payload == {"contents": [{"parts": [{"text": "personnel number 4711"}]}]}
+
+
+class _WhereItRan:
+    """A redactor that notes which thread it was asked on."""
+
+    def __init__(self) -> None:
+        self.threads: set[int] = set()
+
+    def redact(self, payload: dict) -> dict:  # noqa: ANN001
+        import threading
+
+        self.threads.add(threading.get_ident())
+        return payload
+
+
+async def test_the_payload_walks_run_off_the_event_loop(sessionmaker) -> None:
+    """Bounding, stripping, redacting and making storable a body of up to 8 MiB takes a few
+    hundred milliseconds, and on the event loop every request this worker serves waits for it.
+    On a worker thread the loop is held at most for one regular expression's pass."""
+    import threading
+
+    redactor = _WhereItRan()
+    writer = RequestLogWriter(sessionmaker, GatewaySettings(), redactor, max_queue=0)
+
+    await writer.submit(_entry())
+
+    assert redactor.threads, "the redactor was never asked"
+    assert threading.get_ident() not in redactor.threads

@@ -18,6 +18,7 @@ from aira_gateway.core.canonical import (
     CanonicalResponse,
     CanonicalUsage,
     DataPart,
+    FinishReason,
     Role,
     Speech,
     TextPart,
@@ -25,7 +26,7 @@ from aira_gateway.core.canonical import (
     ToolCallPart,
     ToolResultPart,
 )
-from aira_gateway.upstreams.base import DialectUnsupported
+from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError, stream_failure
 
 #: Google's `GenerationConfig` names all six sampling controls (`FRD-124`) — the one dialect that
 #: can express everything the canonical request carries.
@@ -41,6 +42,30 @@ _SAMPLING_WIRE = {
     "frequency_penalty": "frequencyPenalty",
 }
 
+#: Google's finish reasons in the canonical vocabulary. Every word for a safety or policy system
+#: stopping the answer is one event, `REFUSAL` — recitation included: the answer was withheld by a
+#: policy, not finished. Anything not listed (`OTHER`, `LANGUAGE`, a malformed call, a word Google
+#: adds later) is `OTHER`: not evidence of a complete answer.
+_FINISH_REASONS = {
+    "STOP": FinishReason.STOP,
+    "MAX_TOKENS": FinishReason.MAX_TOKENS,
+    "SAFETY": FinishReason.REFUSAL,
+    "RECITATION": FinishReason.REFUSAL,
+    "BLOCKLIST": FinishReason.REFUSAL,
+    "PROHIBITED_CONTENT": FinishReason.REFUSAL,
+    "SPII": FinishReason.REFUSAL,
+    "IMAGE_SAFETY": FinishReason.REFUSAL,
+    "IMAGE_PROHIBITED_CONTENT": FinishReason.REFUSAL,
+    "IMAGE_RECITATION": FinishReason.REFUSAL,
+}
+
+#: The fields of `usageMetadata` that count tokens; one of them is what makes it a report.
+USAGE_COUNT_FIELDS = ("promptTokenCount", "candidatesTokenCount", "totalTokenCount")
+
+#: Google's field for the opaque signature a thinking model puts on the part it called a function
+#: from, and refuses a replayed call without (`ToolCallPart.signature`).
+_SIGNATURE_FIELD = "thoughtSignature"
+
 
 # == canonical → Gemini ===========================================================================
 
@@ -55,7 +80,11 @@ def _wire_parts(message: CanonicalMessage) -> list[dict[str, Any]]:
             continue
         if isinstance(part, ToolCallPart):
             # Google matches a result to a call by name and carries no call id, so none is sent.
-            wire.append({"functionCall": {"name": part.name, "args": part.arguments}})
+            call: dict[str, Any] = {"functionCall": {"name": part.name, "args": part.arguments}}
+            if part.signature:
+                # Back on the part it came from: the model validates it on the call it continues.
+                call[_SIGNATURE_FIELD] = part.signature
+            wire.append(call)
             continue
         if isinstance(part, ToolResultPart):
             wire.append(
@@ -91,17 +120,20 @@ def _result_object(content: str) -> dict[str, Any]:
 def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
     """Build a Gemini ``generateContent`` request body from a canonical request."""
     contents: list[dict[str, Any]] = []
-    system: dict[str, Any] | None = None
+    # One `systemInstruction` here and several system messages canonically — the caller's own and
+    # a `system` turn, say: every one is kept, in order. Keeping the last would discard an
+    # instruction the caller gave, with nothing in the answer to show it.
+    system_parts: list[dict[str, Any]] = []
     for message in request.messages:
         if message.role is Role.SYSTEM:
-            system = {"parts": _wire_parts(message)}
+            system_parts.extend(_wire_parts(message))
         else:
             role = "model" if message.role is Role.MODEL else "user"
             contents.append({"role": role, "parts": _wire_parts(message)})
 
     body: dict[str, Any] = {"contents": contents}
-    if system is not None:
-        body["systemInstruction"] = system
+    if system_parts:
+        body["systemInstruction"] = {"parts": system_parts}
     if request.tools:
         body["tools"] = [
             {
@@ -149,6 +181,16 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
     if generation_config:
         body["generationConfig"] = generation_config
     return body
+
+
+#: What `:countTokens` counts of a generation's body: what it is billed for as input. The rest —
+#: sampling, safety, the tool mode — shapes the answer and adds no input token.
+_COUNTED_FIELDS = ("contents", "systemInstruction", "tools")
+
+
+def count_tokens_body(body: dict[str, Any]) -> dict[str, Any]:
+    """The `:countTokens` body for a generation's ``body``: the parts of it billed as input."""
+    return {field: body[field] for field in _COUNTED_FIELDS if field in body}
 
 
 def _add_sampling(config: dict[str, Any], request: CanonicalRequest) -> None:
@@ -267,6 +309,14 @@ def _audio_of(candidate: dict[str, Any]) -> DataPart | None:
     return DataPart(media_type=media_type, data=b"".join(pieces)) if pieces else None
 
 
+def _reports_usage(data: dict[str, Any]) -> bool:
+    """Whether a chunk says how many tokens were used. Vertex puts `usageMetadata` on every chunk
+    of a stream, holding only `trafficType` until the last one: an object with no count in it is
+    no report, and reading it as one books a stream the caller left as having cost nothing."""
+    meta = data.get("usageMetadata")
+    return isinstance(meta, dict) and any(field in meta for field in USAGE_COUNT_FIELDS)
+
+
 def _usage_of(data: dict[str, Any]) -> CanonicalUsage:
     meta = data.get("usageMetadata") or {}
     # Thinking is output and billed as output (`FRD-135` FR-1); `candidatesTokenCount` counts only
@@ -297,38 +347,58 @@ def _calls_of(candidate: dict[str, Any]) -> tuple[ToolCallPart, ...]:
         if not name:
             continue
         arguments = call.get("args")
+        signature = part.get(_SIGNATURE_FIELD)
         calls.append(
             ToolCallPart(
                 id=str(call.get("id") or f"{name}-{index}"),
                 name=name,
                 arguments=arguments if isinstance(arguments, dict) else {},
+                signature=signature if isinstance(signature, str) and signature else None,
             )
         )
     return tuple(calls)
 
 
+def _finish_of(raw: Any, calls: tuple[ToolCallPart, ...]) -> FinishReason:
+    """Google's word for how a candidate ended, in the canonical vocabulary.
+
+    A function call ends a Gemini answer with `STOP`, and every other dialect with its own word for
+    a call: it is the same event, so it is the same word here.
+    """
+    reason = _FINISH_REASONS.get(str(raw).upper(), FinishReason.OTHER)
+    return FinishReason.TOOL_USE if reason is FinishReason.STOP and calls else reason
+
+
+def _blocked(data: dict[str, Any]) -> bool:
+    """Whether Google refused the **prompt**: then there is no candidate, only the reason."""
+    feedback = data.get("promptFeedback")
+    return isinstance(feedback, dict) and bool(feedback.get("blockReason"))
+
+
 def gemini_response_to_canonical(data: dict[str, Any], model: str) -> CanonicalResponse:
-    """Parse a Gemini ``generateContent`` response into a canonical response."""
+    """Parse a Gemini ``generateContent`` response into a canonical response.
+
+    A prompt Google blocked has no candidate and says why in `promptFeedback`: that is a refusal,
+    never an empty answer that finished normally — which a structured request would take for a
+    document. An answer with neither a candidate nor a blocked prompt is no answer at all, and the
+    upstream's fault.
+    """
     candidates = data.get("candidates") or []
-    text = ""
-    finish_reason = "stop"
-    calls: tuple[ToolCallPart, ...] = ()
-    reasoning = ""
-    audio: DataPart | None = None
-    if candidates:
-        text = _text_of(candidates[0])
-        reasoning = _reasoning_of(candidates[0])
-        audio = _audio_of(candidates[0])
-        finish_reason = str(candidates[0].get("finishReason", "STOP")).lower()
-        calls = _calls_of(candidates[0])
+    if not candidates:
+        if not _blocked(data):
+            raise UpstreamError("The upstream answered with no candidate and no reason.", 502)
+        return CanonicalResponse(
+            model=model, text="", finish_reason=FinishReason.REFUSAL, usage=_usage_of(data)
+        )
+    calls = _calls_of(candidates[0])
     return CanonicalResponse(
         model=model,
-        text=text,
-        reasoning=reasoning,
-        finish_reason=finish_reason,
+        text=_text_of(candidates[0]),
+        reasoning=_reasoning_of(candidates[0]),
+        finish_reason=_finish_of(candidates[0].get("finishReason", "STOP"), calls),
         usage=_usage_of(data),
         tool_calls=calls,
-        audio=audio,
+        audio=_audio_of(candidates[0]),
     )
 
 
@@ -336,17 +406,25 @@ def gemini_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk:
     """Parse one Gemini stream chunk into a canonical chunk.
 
     Google sends a function call whole inside one chunk, so, unlike the OpenAI dialect, there is
-    nothing to reassemble.
+    nothing to reassemble. An `error` payload is the upstream failing mid-stream and is raised
+    (`stream_failure`); a blocked prompt ends the stream as a refusal.
     """
+    if data.get("error") is not None:
+        raise stream_failure(data["error"])
     candidates = data.get("candidates") or []
-    text = _text_of(candidates[0]) if candidates else ""
-    finish = candidates[0].get("finishReason") if candidates else None
-    usage = _usage_of(data) if data.get("usageMetadata") else None
-    calls = _calls_of(candidates[0]) if candidates else ()
+    usage = _usage_of(data) if _reports_usage(data) else None
+    if not candidates:
+        return CanonicalChunk(
+            text_delta="",
+            finish_reason=FinishReason.REFUSAL if _blocked(data) else None,
+            usage=usage,
+        )
+    calls = _calls_of(candidates[0])
+    finish = candidates[0].get("finishReason")
     return CanonicalChunk(
-        text_delta=text,
-        finish_reason=str(finish).lower() if finish else None,
+        text_delta=_text_of(candidates[0]),
+        finish_reason=_finish_of(finish, calls) if finish else None,
         usage=usage,
         tool_calls=calls,
-        audio_delta=_audio_of(candidates[0]) if candidates else None,
+        audio_delta=_audio_of(candidates[0]),
     )

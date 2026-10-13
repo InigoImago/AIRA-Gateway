@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from aira_common.logging import get_logger
 from aira_gateway.db.models import RateLimitRead
 from aira_gateway.ratelimit.buckets import BucketRequest, TokenBucket, per_minute
-from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.ratelimit.errors import RateLimited, TooHeavyForTheLimit
 from aira_gateway.scopes import Scope
 
 _log = get_logger("aira_gateway.ratelimit")
@@ -73,11 +73,10 @@ class RateLimitService:
         # is refused by name rather than with a `Retry-After` that stays wrong (`FRD-113` §11).
         for bucket in buckets:
             if units > bucket.capacity:
-                raise RateLimited(
+                raise TooHeavyForTheLimit(
                     f"A request weighing {units} cannot fit the {bucket.capacity}-request "
                     f"allowance of the {bucket.label}. Send it in smaller batches, or raise the "
-                    "limit.",
-                    retry_after="1",
+                    "limit."
                 )
 
         # One call, all or nothing (`FRD-405` FR-4).

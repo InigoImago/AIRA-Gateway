@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test';
-import { USERS, login } from './support';
+import { Page, expect, test } from '@playwright/test';
+import { forget, remember } from '../created';
+import { USERS, api, login } from './support';
 
 /**
  * Which models a use case may call (`FRD-308`).
@@ -38,6 +39,27 @@ test.describe('Model release', () => {
 
   test('releases a model and takes it away again', async ({ page }) => {
     await login(page, USERS.globalAdmin);
+    // The demo's use case, which this suite did not make: its release as found is written down
+    // before anything changes and put back in `finally`, whatever happens between.
+    const found = await api<{ allowed_models: string[] }>(
+      page,
+      'GET',
+      '/api/v1/use-cases/personalwesen/',
+    );
+    expect(found.status).toBe(200);
+    remember('release', 'personalwesen', found.body.allowed_models);
+    try {
+      await releaseAndTakeBack(page);
+    } finally {
+      const restored = await api(page, 'PATCH', '/api/v1/use-cases/personalwesen/', {
+        allowed_models: found.body.allowed_models,
+      });
+      expect(restored.status).toBe(200);
+      forget((entry) => entry.kind === 'release' && entry.name === 'personalwesen');
+    }
+  });
+
+  async function releaseAndTakeBack(page: Page): Promise<void> {
     await page.goto('/use-cases/personalwesen');
     await page.getByText('Models this use case may call').scrollIntoViewIfNeeded();
 
@@ -99,7 +121,7 @@ test.describe('Model release', () => {
     await expect(chip).toHaveCount(wasChosen ? 1 : 0);
     await page.getByTestId('save-release').click();
     await expect(page.getByTestId('save-release')).toBeDisabled({ timeout: 20_000 });
-  });
+  }
 
   test('offers no way to change it to somebody who only oversees', async ({ page }) => {
     // IT Steuerung sees every figure and writes nothing anywhere (PRD §154). Read-only means

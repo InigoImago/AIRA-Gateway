@@ -34,7 +34,7 @@
 # **3. Topic creation becomes opt-in.** See `kafka-topics` below.
 #
 # What this file deliberately does **not** do is reach your infrastructure in any way. It passes
-# addresses. Everything else — the two databases, the realm, the eight compacted topics, the Vault
+# addresses. Everything else — the two databases, the realm, the nine compacted topics, the Vault
 # mount — is `docs/INTEGRATIONS.md` and `docs/deployment/integrated.md`, in that order.
 
 # **The project name, which this composition would otherwise take from a directory.** Compose
@@ -84,7 +84,7 @@ services:
   # one-shot has no way to assemble — so against a secured cluster it fails, and two services
   # wait on `service_completed_successfully` and never start.
   #
-  # The topics are eight lines of `kafka-topics.sh` and most platform teams would rather run them
+  # The topics are nine lines of `kafka-topics.sh` and most platform teams would rather run them
   # themselves (`docs/INTEGRATIONS.md` §3 is the list, with `cleanup.policy=compact`, which is not
   # optional: the gateway rebuilds its read-model by replaying them from the beginning).
   #

@@ -32,7 +32,9 @@ from aira_gateway.api.incidents.diagnostics import (
 from aira_gateway.api.serving import elapsed_ms
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
+from aira_gateway.diagnostics import describe_failure
 from aira_gateway.residency import RegionNotAllowed
+from aira_gateway.upstreams.base import ModelNotListed
 
 #: Why a declared model is not served. Two causes — no credential for its platform, or a model the
 #: adapter's configuration does not name (`AIRA_VERTEX_MODELS`, `AIRA_FOUNDRY_DEPLOYMENTS`) — and
@@ -129,7 +131,11 @@ async def _reach(ping: Any, model: str, region: str) -> dict[str, Any]:
     except RegionNotAllowed as exc:
         # Named apart: this is fixed in `AIRA_ALLOWED_REGIONS`, never at the provider.
         return {"reachable": False, "detail": str(exc)}
+    except ModelNotListed as exc:
+        # The endpoint answered and does not offer the model: a catalogue entry to correct, in the
+        # gateway's own words.
+        return {"reachable": False, "detail": str(exc)}
     except Exception as exc:  # noqa: BLE001 — anything else here means "not reachable"
         # The type, not the message: a provider's error text can carry a URL with a key in it.
-        return {"reachable": False, "detail": f"Not reachable ({type(exc).__name__})."}
+        return {"reachable": False, "detail": f"Not reachable ({describe_failure(exc)})."}
     return {"reachable": True, "detail": str(detail)}

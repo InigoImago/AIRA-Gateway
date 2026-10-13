@@ -1,8 +1,10 @@
-import { Component, computed, inject, input } from '@angular/core';
-import { MeService, unitSuffix } from '../../core/api/me.service';
+import { Component, computed, input } from '@angular/core';
+import { unitSuffix } from '../../core/api/me.service';
 import { RouterLink } from '@angular/router';
 import { ReportRow, UseCaseConsumption } from '../../core/api/models';
 import { InfoHint } from '../../core/ui/info-hint';
+import { displayCount } from '../../core/ui/money';
+import { PERIOD_CLOCK } from '../../core/ui/periods';
 
 /** One figure in the card: what it is called, what it says, and what it counts. */
 interface Stat {
@@ -44,11 +46,20 @@ const FIGURE_HELP = {
   selector: 'app-consumption-panel',
   imports: [RouterLink, InfoHint],
   templateUrl: './consumption-panel.html',
+  styles: `
+    .window-label {
+      margin: 0 0 0.35rem;
+    }
+  `,
 })
 export class ConsumptionPanel {
   readonly slug = input.required<string>();
-  private readonly currency = inject(MeService).currency;
   readonly consumption = input.required<UseCaseConsumption>();
+  /** The unit money is in, as the page has it (`AIRA_CURRENCY`). */
+  readonly currency = input('');
+
+  /** The clock both windows are on — the budgets', so these figures and the limits agree. */
+  protected readonly clock = PERIOD_CLOCK;
 
   protected readonly monthStats = computed(() => this.statsFor(this.consumption().month));
   protected readonly todayStats = computed(() => this.statsFor(this.consumption().today));
@@ -84,13 +95,13 @@ export class ConsumptionPanel {
       {
         key: 'requests',
         label: 'Requests',
-        value: row ? `${row.requests}` : '—',
+        value: row ? displayCount(row.requests) : '—',
         help: FIGURE_HELP.requests,
       },
       {
         key: 'tokens',
         label: 'Tokens',
-        value: row ? `${row.total_tokens}` : '—',
+        value: row ? displayCount(row.total_tokens) : '—',
         help: FIGURE_HELP.tokens,
       },
       {

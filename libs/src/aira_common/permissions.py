@@ -202,10 +202,16 @@ def parse_permissions(values: Iterable[str]) -> frozenset[Permission]:
     """The permissions a stored role names, as a set a role may hold.
 
     A name the catalogue no longer has grants nothing, and a reserved permission is dropped: a row
-    that was written by hand, or before a permission became reserved, must not confer it.
+    that was written by hand, or before a permission became reserved, must not confer it. A value
+    that is not a string is no name at all, and grants nothing the same way.
     """
     known = {str(permission) for permission in Permission}
-    return frozenset(Permission(value) for value in values if value in known) & GRANTABLE
+    return (
+        frozenset(
+            Permission(value) for value in values if isinstance(value, str) and value in known
+        )
+        & GRANTABLE
+    )
 
 
 def builtin_roles(
@@ -245,9 +251,10 @@ def held_roles(
     """The roles whose group the caller's token carries.
 
     An exact path match, never a prefix: `/aira/global-admins-readonly` must not confer what
-    `/aira/global-admins` does (`FRD-605` FR-3).
+    `/aira/global-admins` does (`FRD-605` FR-3). A group that is not a string matches nothing,
+    rather than raising on whoever carries it.
     """
-    held = set(groups)
+    held = {group for group in groups if isinstance(group, str)}
     return tuple(role for role in roles if any(path in held for path in role.group_paths))
 
 

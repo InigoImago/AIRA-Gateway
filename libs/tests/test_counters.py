@@ -45,16 +45,24 @@ async def test_an_unreachable_server_reports_unavailable_rather_than_raising_red
 async def test_a_failure_opens_the_circuit_so_the_next_call_does_not_wait_again() -> None:
     """Without this, every request pays a connection timeout while Redis is down — a degraded
     dependency would become a slow gateway, which is what the fallbacks exist to prevent."""
-    runner = RedisRunner("redis://127.0.0.1:6390/0", connect_timeout=0.05)
+    # Counted, and on a clock that cannot move between the calls: a wall-clock bound measures the
+    # machine the suite happens to run on as much as the breaker.
+    runner = RedisRunner("redis://127.0.0.1:6390/0", connect_timeout=0.05, clock=lambda: 1000.0)
+    attempts = 0
+    connect = runner._connect
+
+    def counted() -> object:
+        nonlocal attempts
+        attempts += 1
+        return connect()
+
+    runner._connect = counted  # type: ignore[method-assign]
     with pytest.raises(CountersUnavailable):
         await runner.run("return 1", [], [])
 
-    import time
-
-    started = time.monotonic()
-    with pytest.raises(CountersUnavailable):
+    with pytest.raises(CountersUnavailable, match="not retrying yet"):
         await runner.run("return 1", [], [])
-    assert time.monotonic() - started < 0.02  # short-circuited, no second connection attempt
+    assert attempts == 1, "the second call tried the connection again"
     await runner.close()
 
 

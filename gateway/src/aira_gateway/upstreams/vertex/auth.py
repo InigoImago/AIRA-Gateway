@@ -46,21 +46,40 @@ class ServiceAccount:
 
     @classmethod
     def from_json(cls, raw: str) -> ServiceAccount:
+        """Read a service-account key, refusing at startup whatever would fail at the first call.
+
+        The key is **used** here, once, by signing a throwaway claim: a garbled PEM is otherwise
+        accepted at startup and turns every request into a 503 that looks like Google being down —
+        the case `CredentialsInvalid` exists to rule out.
+        """
         try:
-            data: dict[str, Any] = json.loads(raw)
+            data: Any = json.loads(raw)
         except ValueError as exc:
             raise CredentialsInvalid("Service-account credentials are not valid JSON.") from exc
+        if not isinstance(data, dict):
+            raise CredentialsInvalid(
+                "Service-account credentials must be a JSON object, as Google issues them."
+            )
         missing = [key for key in ("client_email", "private_key") if not data.get(key)]
         if missing:
             # Names the field, never the value: an error message is a log line (FR-8).
             raise CredentialsInvalid(
                 f"Service-account credentials are missing: {', '.join(missing)}."
             )
-        return cls(
+        account = cls(
             client_email=str(data["client_email"]),
             private_key=str(data["private_key"]),
             token_uri=str(data.get("token_uri") or "https://oauth2.googleapis.com/token"),
         )
+        try:
+            jwt.encode({"aud": account.token_uri}, account.private_key, algorithm="RS256")
+        except Exception as exc:  # noqa: BLE001 — every way a key fails to sign is this refusal
+            # The type, never the message or the key: an error message is a log line (FR-8).
+            raise CredentialsInvalid(
+                "The service account's private_key cannot sign a token "
+                f"({type(exc).__name__}). It must be the PEM key Google issued with the account."
+            ) from None
+        return account
 
 
 class GoogleServiceAccountAcquirer:

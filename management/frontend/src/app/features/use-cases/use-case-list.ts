@@ -1,13 +1,4 @@
-import {
-  Component,
-  ElementRef,
-  OnInit,
-  computed,
-  effect,
-  inject,
-  signal,
-  viewChild,
-} from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/api/error-message';
@@ -15,15 +6,16 @@ import { MeService } from '../../core/api/me.service';
 import { Me, UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { can } from '../../core/auth/roles';
+import { Modal } from '../../core/ui/modal';
 import { ServerTableView } from '../../core/ui/server-table-view';
 import { TablePager } from '../../core/ui/table-pager';
 import { SLUG_PATTERN, slugify } from './use-case-slug';
 
 @Component({
   selector: 'app-use-case-list',
-  imports: [FormsModule, RouterLink, TablePager],
+  // The create window is the shared `Modal`, which owns Escape, the keyboard and the backdrop.
+  imports: [FormsModule, Modal, RouterLink, TablePager],
   templateUrl: './use-case-list.html',
-  host: { '(document:keydown.escape)': 'closeCreate()' },
 })
 export class UseCaseList implements OnInit {
   private readonly service = inject(UseCaseService);
@@ -44,20 +36,16 @@ export class UseCaseList implements OnInit {
   protected readonly useCases = this.view.rows;
   protected readonly loading = this.view.loading;
   protected readonly creating = signal(false);
+  /** Why the list could not be loaded — the page's banner. */
   protected readonly error = signal<string | null>(null);
+  /** Why a creation was refused — said inside the window, beside the button that was pressed. */
+  protected readonly createError = signal<string | null>(null);
   protected readonly me = signal<Me | null>(null);
   protected readonly showCreate = signal(false);
   protected readonly slug = signal('');
   protected readonly name = signal('');
   /** Whether the id was typed by hand. Once it was, the name stops overwriting it. */
   private readonly slugEdited = signal(false);
-  private readonly dialog = viewChild<ElementRef<HTMLElement>>('dialog');
-
-  constructor() {
-    effect(() => {
-      if (this.showCreate()) this.dialog()?.nativeElement.focus();
-    });
-  }
 
   /** Creating a use case needs `usecase.create`; the server refuses anyone without it, so nobody
    *  else is offered the action. */
@@ -107,6 +95,7 @@ export class UseCaseList implements OnInit {
     this.name.set('');
     this.slug.set('');
     this.slugEdited.set(false);
+    this.createError.set(null);
     this.showCreate.set(true);
   }
 
@@ -116,6 +105,7 @@ export class UseCaseList implements OnInit {
     this.name.set('');
     this.slug.set('');
     this.slugEdited.set(false);
+    this.createError.set(null);
   }
 
   protected reload(): void {
@@ -128,17 +118,17 @@ export class UseCaseList implements OnInit {
       return;
     }
     this.creating.set(true);
+    this.createError.set(null);
     const slug = this.slug();
     this.service.create({ slug, name: this.name() }).subscribe({
       next: () => {
-        this.error.set(null);
         this.creating.set(false);
         this.closeCreate();
         // Straight to its settings: a use case with no members, budget or limits is not finished.
         void this.router.navigate(['/use-cases', slug]);
       },
       error: (response: unknown) => {
-        this.error.set(errorMessage(response, 'Could not create the use case.'));
+        this.createError.set(errorMessage(response, 'Could not create the use case.'));
         this.creating.set(false);
       },
     });

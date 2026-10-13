@@ -45,8 +45,9 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **1022 properties** across auth, budgets,
-  pipeline, retention, the management control plane and the gateway's counters; when
+  `make mutants` (`tools/mutation_check.py`) does this for **1668 properties** across auth, budgets,
+  pipeline, retention, the management control plane, the gateway's counters and the console — a
+  `.spec.ts` selection runs under Vitest, everything else under pytest; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
   can), and a test whose setup never reaches the path it is named after — SQLite enforces no
@@ -197,7 +198,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | Where to look | For |
 | --- | --- |
 | [`docs/features/README.md`](docs/features/README.md) | every feature, its status, its document |
-| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (33 ADRs) |
+| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (34 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1a | **what one instance carries**, measured — read before promising a concurrency |
@@ -230,10 +231,10 @@ requires a test to notice.
 - `FRD-610` is **built**: an unpriced model cannot hide from a cost limit (§3.2,
   `AIRA_ENFORCE_PRICED_MODELS`, a dispatch condition so a chain prefers a priced candidate), and
   both budget screens say when enforcement is off (§3.3).
-- **A model reachable only at `global` is not usable here** (`FRD-611`, `ADR-0012` §6). `global`
-  names no region and guarantees none, so it is not in the shipped residency default;
-  `gemini-3.5-flash` is catalogued, unapproved, and refused where its region is typed. Stated
-  rather than worked around — this is a policy outcome, not a defect to fix.
+- **A model reachable only at `global` is not usable here — unless permitted by name**
+  (`FRD-611`, `ADR-0012` §6, `ADR-0034`). `global` names no region and guarantees none, so it is not
+  in the residency default and `gemini-3.5-flash` stays refused where its region is typed. The open
+  models GLM and DeepSeek answer only there, so each is permitted it in `AIRA_ALLOWED_MODEL_REGIONS`.
 
 - **Capacity is measured** (`FRD-136`) and the answer is *not the request path*: a
   chat request costs **48 ms** of gateway CPU, an agentic one **93 ms**, and both scale linearly

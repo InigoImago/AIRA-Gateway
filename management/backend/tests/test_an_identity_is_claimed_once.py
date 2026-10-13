@@ -300,6 +300,70 @@ def test_a_realm_group_named_after_a_role_confers_nothing() -> None:
     hand out the role by accident."""
     user = _provision("sub-1", preferred_username="ada")
     sync_user_groups(user, {"groups": ["/it-security"]})
-    from aira_management.rbac import role_slugs
+    from aira_management.rbac import held_roles_of, permissions_of
 
-    assert role_slugs(user) == set()
+    assert held_roles_of(user) == ()
+    assert permissions_of(user) == frozenset()
+
+
+# ═══ 4. a name the gateway reads differently ═══════════════════════════════════════════════════
+#
+# A direct membership crosses to the gateway as this plane's username, matched there against the
+# token's `preferred_username`. Once provisioning has had to suffix a second person who signs in
+# under a name already taken here, that name stands for two people, and the suffixed account's own
+# name for nobody — so a grant by either name would reach somebody other than the one recorded.
+
+
+def _admin_of(usecase: UseCase) -> Any:
+    from rest_framework.test import APIClient
+
+    admin = get_user_model().objects.create(username="boss")
+    _grant(admin, usecase, UseCaseMembership.ADMIN)
+    client = APIClient()
+    client.force_authenticate(user=get_user_model().objects.get(pk=admin.pk))
+    return client
+
+
+def test_a_name_two_people_sign_in_under_is_not_granted_to_either() -> None:
+    usecase = UseCase.objects.create(slug="uc-a", name="A")
+    departed = _provision("sub-old", preferred_username="jdoe")
+    newcomer = _provision("sub-new-123", preferred_username="jdoe")
+
+    refused = _admin_of(usecase).post(
+        "/api/v1/use-cases/uc-a/members/", {"username": "jdoe"}, format="json"
+    )
+
+    assert refused.status_code == 400, refused.content
+    message = str(refused.json()["error"]["details"]["username"])
+    assert "ambiguous" in message and newcomer.get_username() in message
+    assert (
+        not UseCaseMembership.objects.filter(use_case=usecase)
+        .exclude(user__username="boss")
+        .exists()
+    )
+    assert departed.get_username() == "jdoe"
+
+
+def test_a_renamed_account_is_not_granted_under_a_name_its_owner_never_signs_in_with() -> None:
+    usecase = UseCase.objects.create(slug="uc-a", name="A")
+    _provision("sub-old", preferred_username="jdoe")
+    newcomer = _provision("sub-new-123", preferred_username="jdoe")
+
+    refused = _admin_of(usecase).post(
+        "/api/v1/use-cases/uc-a/members/", {"username": newcomer.get_username()}, format="json"
+    )
+
+    assert refused.status_code == 400, refused.content
+    assert "signs in as 'jdoe'" in str(refused.json()["error"]["details"]["username"])
+
+
+def test_an_unambiguous_name_is_granted_as_before() -> None:
+    """The comparison: nobody shares `ada`, so `ada` is who the gateway will match."""
+    usecase = UseCase.objects.create(slug="uc-a", name="A")
+    _provision("sub-ada", preferred_username="ada")
+
+    granted = _admin_of(usecase).post(
+        "/api/v1/use-cases/uc-a/members/", {"username": "ada"}, format="json"
+    )
+
+    assert granted.status_code == 201, granted.content

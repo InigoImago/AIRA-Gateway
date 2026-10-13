@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { Page, expect, test } from '@playwright/test';
 import { USERS, login } from './support';
 
 /**
@@ -23,28 +23,46 @@ import { USERS, login } from './support';
  * of scrolling.
  */
 
-/** Fields grouped by the line they sit on, ignoring any inside a `fieldset`. */
-const ROWS = `(() => {
-  const out = [];
-  for (const body of document.querySelectorAll('.modal__body')) {
-    const rows = new Map();
-    for (const field of body.querySelectorAll('.field')) {
+/**
+ * Fields grouped by the line they sit on, ignoring any inside a `fieldset`.
+ *
+ * **A line is a set of boxes that overlap vertically**, the way the browser lays them out — not a
+ * band of pixels. A band (`round(top / 6)`) splits two fields of different heights on one line
+ * into two "lines" and calls the window stacked; `expectFormControlsAligned` groups by overlap for
+ * the same reason.
+ */
+function fieldsSharingALine(): string[][] {
+  const out: string[][] = [];
+  for (const body of Array.from(document.querySelectorAll('.modal__body'))) {
+    const lines: { top: number; bottom: number; labels: string[] }[] = [];
+    for (const field of Array.from(body.querySelectorAll('.field'))) {
       const box = field.getBoundingClientRect();
       if (box.width === 0) continue;
       if (field.closest('fieldset')) continue;
       if (field.parentElement && field.parentElement.closest('.field')) continue;
-      const line = Math.round(box.top / 6);
-      if (!rows.has(line)) rows.set(line, []);
-      rows.get(line).push((field.querySelector('label')?.textContent || '?').trim().replace(/\\s+/g, ' ').slice(0, 30));
+      const label = (field.querySelector('label')?.textContent || '?')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, 30);
+      const line = lines.find((l) => box.top < l.bottom && box.bottom > l.top);
+      if (line) {
+        line.top = Math.min(line.top, box.top);
+        line.bottom = Math.max(line.bottom, box.bottom);
+        line.labels.push(label);
+      } else {
+        lines.push({ top: box.top, bottom: box.bottom, labels: [label] });
+      }
     }
-    for (const group of rows.values()) if (group.length > 1) out.push(group);
+    for (const line of lines) if (line.labels.length > 1) out.push(line.labels);
   }
   return out;
-})()`;
+}
 
-async function expectStacked(page: any, window_: string) {
-  await page.waitForTimeout(700);
-  const shared = await page.evaluate(ROWS);
+async function expectStacked(page: Page, window_: string) {
+  // **Waited for, not slept.** After a fixed sleep a window that has not rendered has no
+  // `.modal__body`, the measurement finds nothing, and the test passes about an empty page.
+  await page.locator('.modal__body .field').first().waitFor({ timeout: 20_000 });
+  const shared = await page.evaluate(fieldsSharingALine);
   expect(
     shared,
     `${window_}: these fields share a line, and a window asks one question per row`,

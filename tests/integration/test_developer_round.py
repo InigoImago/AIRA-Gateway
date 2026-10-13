@@ -24,12 +24,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 
 import httpx
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
-from tests.integration.conftest import GATEWAY_URL
+from tests.integration.conftest import GATEWAY_URL, read_model_id, wait_for_row
+
+from aira_gateway.audit import PIPELINE_OPERATION_PREFIX
 
 pytestmark = pytest.mark.integration
 
@@ -230,6 +233,9 @@ async def test_a_client_that_walks_away_mid_stream_is_still_recorded(fixture, en
 
     rows = await _settled_rows(engine, fixture.slug, 1)
     assert rows[0]["operation"] == "streamGenerateContent"
+    # The status and the outcome agree, as on the KIRA surface: served (200), or the caller left
+    # (499). A row that recorded a hang-up as served-with-nothing is the lost settle, half found.
+    assert (rows[0]["outcome"], rows[0]["status"]) in {("served", 200), ("client_gone", 499)}
 
 
 async def test_a_kira_stream_completes_and_is_recorded(fixture, engine) -> None:
@@ -260,9 +266,9 @@ async def test_a_kira_stream_completes_and_is_recorded(fixture, engine) -> None:
 
 
 async def test_a_client_that_hangs_up_on_a_kira_stream_is_still_recorded(fixture, engine) -> None:
-    """The window `FRD-127` closed: this surface's whole answer arrives in one terminal event, so
-    what is exposed is the long await in the middle — a caller who goes away while the model is
-    still thinking."""
+    """The window `FRD-127` closed: a caller who goes away while the answer is still being written
+    — the surface sends `update` events per delta and one `completed` at the end, and the hang-up
+    lands between them."""
     model_id = await _kira_model_id(engine, CHAT)
     async with (
         httpx.AsyncClient(timeout=60.0) as client,
@@ -354,9 +360,13 @@ async def test_an_embedding_batch_weighs_what_it_is(fixture, engine) -> None:
     assert counted == 5, f"a batch of five was counted as {counted}"
 
 
-async def test_an_exhausted_budget_refuses_and_stops_spending(fixture, engine) -> None:
-    """`FRD-125c`. The refusal itself used to cost a classifier call on every retry — a
-    denial-of-wallet wearing a budget's name."""
+async def test_an_exhausted_budget_refuses_and_records_each_refusal_unbilled(
+    fixture, engine
+) -> None:
+    """`FRD-122` and `FRD-125c`: every refusal leaves a row, and none of them is billed. (What a
+    refusal costs in classifier calls is `test_an_exhausted_budget_stops_the_pipeline_spending_too`
+    below, which has a pipeline to spend.) Read once **all three** rows exist: read sooner, a
+    refusal's row still on its way passes "every refusal is unbilled" by not being there."""
     await fixture.budget(limit_tokens=1)
 
     codes = []
@@ -365,7 +375,7 @@ async def test_an_exhausted_budget_refuses_and_stops_spending(fixture, engine) -
         codes.append(response.status_code)
 
     assert codes[-1] == 429, f"an exhausted budget kept serving: {codes}"
-    rows = await _rows(engine, fixture.slug)
+    rows = await _settled_rows(engine, fixture.slug, len(codes))
     refusals = [row for row in rows if row["status"] == 429]
     assert refusals, "a refused request left no trace (FRD-122)"
     assert all(row["outcome"] == "budget_exceeded" for row in refusals)
@@ -392,6 +402,7 @@ async def test_payload_storage_can_be_switched_off_per_use_case(fixture, engine)
 # rather than which line moved.
 
 
+@pytest.mark.model_output
 async def test_a_seed_makes_the_answer_reproducible(fixture) -> None:
     """`FRD-124`. Accepted and discarded before: three identical calls, three different answers,
     200 on each — the exact failure a seed exists to rule out, presented as creativity."""
@@ -410,17 +421,21 @@ async def test_a_seed_makes_the_answer_reproducible(fixture) -> None:
             f"/v1beta/models/{CHAT}:generateContent",
             _gemini_body(prompt, temperature=1.0, seed=4242),
         )
+        # Served first: three identical refusals would agree with each other too.
+        assert response.status_code == 200, response.text[:300]
         answers.add(_answer(response))
 
     assert len(answers) == 1, f"the same seed produced {len(answers)} different answers"
 
 
+@pytest.mark.model_output
 async def test_a_stop_sequence_truncates_the_answer(fixture) -> None:
     """`FRD-124`. Accepted and dropped before, so a caller relying on it got unbounded output."""
     prompt = "Output exactly: A B C D E"
     free = await _post(
         fixture, f"/v1beta/models/{CHAT}:generateContent", _gemini_body(prompt, temperature=0.0)
     )
+    assert free.status_code == 200, free.text[:300]
     unconstrained = _answer(free)
     if "C" not in unconstrained:
         pytest.skip(f"the model did not produce the token to stop at: {unconstrained!r}")
@@ -431,9 +446,11 @@ async def test_a_stop_sequence_truncates_the_answer(fixture) -> None:
         _gemini_body(prompt, temperature=0.0, stopSequences=["C"]),
     )
 
+    assert cut.status_code == 200, cut.text[:300]
     assert "C" not in _answer(cut)
 
 
+@pytest.mark.model_output
 async def test_thinking_switched_off_is_switched_off(fixture) -> None:
     """`FRD-124`. `disabled` mapped to an *absent* parameter, which a reasoning model reads as its
     own default — 600 tokens of hidden reasoning, an empty answer, and a 200."""
@@ -449,6 +466,8 @@ async def test_thinking_switched_off_is_switched_off(fixture) -> None:
         _gemini_body(prompt, maxOutputTokens=60, thinkingConfig={"mode": "high"}),
     )
 
+    assert off.status_code == 200, off.text[:300]
+    assert on.status_code == 200, on.text[:300]
     direct = _answer(off)
     thinking = _answer(on)
     assert direct.strip(), "thinking was switched off and the model still returned nothing"
@@ -557,59 +576,64 @@ async def test_an_oversized_body_is_refused_and_recorded_without_an_identity(
     """`FRD-122` §12. The ceiling answers in pure ASGI *before* any route, so this refusal used to
     leave no trace at all. The row deliberately carries no identity: the credential was never
     verified there, and recording it would let anyone write another system's name into the audit
-    trail with one oversized request."""
-    async with engine.connect() as connection:
-        before = (
-            await connection.execute(
-                text("SELECT count(*) FROM request_logs WHERE outcome = 'request_too_large'")
-            )
-        ).scalar()
+    trail with one oversized request.
 
+    The row is found by a model name nobody else asks for — the ceiling records the model from the
+    path it refused — and waited for: counting every such refusal in the installation around a
+    fixed sleep counted other tests' 413s, and read whichever was newest.
+    """
+    probe = f"ceiling-{uuid.uuid4().hex[:8]}"
     response = await _post(
         fixture,
-        f"/v1beta/models/{CHAT}:generateContent",
+        f"/v1beta/models/{probe}:generateContent",
         {"contents": [{"role": "user", "parts": [{"text": "x" * (9 * 1024 * 1024)}]}]},
     )
     assert response.status_code == 413
 
-    await asyncio.sleep(2.0)
-    async with engine.connect() as connection:
-        row = (
-            (
-                await connection.execute(
-                    text(
-                        "SELECT subject, credential, source_ip, model,"
-                        " request_payload IS NULL AS no_body FROM request_logs"
-                        " WHERE outcome = 'request_too_large' ORDER BY created_at DESC LIMIT 1"
-                    )
-                )
-            )
-            .mappings()
-            .first()
+    try:
+        row = await wait_for_row(
+            engine,
+            "SELECT outcome, subject, credential, source_ip, use_case,"
+            " request_payload IS NULL AS no_body FROM request_logs WHERE model = :model",
+            {"model": probe},
+            timeout=20.0,
         )
-        after = (
+    finally:
+        async with engine.begin() as connection:
             await connection.execute(
-                text("SELECT count(*) FROM request_logs WHERE outcome = 'request_too_large'")
+                text("DELETE FROM request_logs WHERE model = :model"), {"model": probe}
             )
-        ).scalar()
 
-    assert after == before + 1
-    assert row["model"] == CHAT
-    assert not row["subject"] and not row["credential"]
-    assert row["source_ip"] and row["no_body"]
+    assert row.outcome == "request_too_large"
+    assert not row.subject and not row.credential and row.use_case is None
+    assert row.source_ip and row.no_body
 
 
-async def test_an_unauthenticated_request_is_refused(fixture) -> None:
+async def test_an_unauthenticated_request_is_refused(fixture, engine) -> None:
     """And leaves no usage row — a decision, not an oversight (`FRD-122` §12): an unauthenticated
     request is a *security* event for `FRD-500`/`501`/`503`, not a usage row attributed to
-    nobody."""
+    nobody. Asked by a model name nobody else uses, after a later request's row has landed — the
+    audit writer is one queue, so an earlier row would be there by then."""
+    probe = f"anonymous-{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
-            f"{GATEWAY_URL}/v1beta/models/{CHAT}:generateContent",
+            f"{GATEWAY_URL}/v1beta/models/{probe}:generateContent",
             headers={"content-type": "application/json"},
             json=_gemini_body(),
         )
     assert response.status_code == 401
+
+    served = await _post(fixture, "/v1beta/models/mock-1:generateContent", _gemini_body())
+    assert served.status_code == 200, served.text[:300]
+    await _settled_rows(engine, fixture.slug, 1)
+    async with engine.connect() as connection:
+        left = (
+            await connection.execute(
+                text("SELECT count(*) FROM request_logs WHERE requested_model = :m OR model = :m"),
+                {"m": probe},
+            )
+        ).scalar_one()
+    assert left == 0, "an unauthenticated request left a usage row"
 
 
 async def test_the_kira_surface_names_what_its_contract_does_not_model(fixture, engine) -> None:
@@ -680,7 +704,8 @@ async def _set_pipeline(engine: AsyncEngine, slug: str, steps: list) -> None:
             ),
             {"slug": slug, "steps": json.dumps(steps)},
         )
-    await asyncio.sleep(1.5)  # the store caches
+    # No wait: the pipeline store reads the configuration on every request, so the next one
+    # already sees it (`pipeline/store.py`).
 
 
 async def test_the_heuristic_filter_blocks_an_injection(fixture, engine) -> None:
@@ -768,18 +793,35 @@ async def test_an_exhausted_budget_stops_the_pipeline_spending_too(fixture, engi
     )
     await fixture.budget(limit_tokens=1)
 
-    for _ in range(4):
-        await _post(fixture, f"/v1beta/models/{CHAT}:generateContent", _gemini_body())
-    await asyncio.sleep(2.0)
+    codes = [
+        (await _post(fixture, f"/v1beta/models/{CHAT}:generateContent", _gemini_body())).status_code
+        for _ in range(4)
+    ]
+    served = codes.count(200)
+    # Read once **every caller row** has landed. The writer is one queue and a classifier row is
+    # queued during its request, so by then each one is in as well — and a row read too early
+    # could only hide the defect, which is *more* classifier rows.
+    deadline = asyncio.get_running_loop().time() + 40.0
+    while True:
+        rows = await _rows(engine, fixture.slug)
+        callers = [r for r in rows if not r["operation"].startswith(PIPELINE_OPERATION_PREFIX)]
+        if len(callers) >= len(codes):
+            break
+        assert asyncio.get_running_loop().time() < deadline, (
+            f"{len(callers)} of {len(codes)} caller rows landed: {rows}"
+        )
+        await asyncio.sleep(0.25)
+    classifier_calls = [r for r in rows if r["operation"].startswith(PIPELINE_OPERATION_PREFIX)]
+    refusals = [row for row in callers if row["status"] == 429]
 
-    rows = await _rows(engine, fixture.slug)
-    classifier_calls = [row for row in rows if row["operation"].startswith("pipeline:")]
-    refusals = [row for row in rows if row["status"] == 429]
-
-    assert refusals, "an exhausted budget kept serving"
-    assert len(classifier_calls) <= 2, (
-        f"{len(classifier_calls)} classifier calls for {len(refusals)} refusals — the refusals are "
-        "being paid for, which is unbounded under a retry loop"
+    # Two refusals at least, or one call per refused retry could not be told from the one below.
+    assert len(refusals) >= 2, f"an exhausted budget kept serving: {codes}"
+    # The early guard admits a request while the budget still has room, so every served request
+    # and at most the one during which the budget ran out pay for their classifier. Every later
+    # refusal comes before the pipeline.
+    assert len(classifier_calls) <= served + 1, (
+        f"{len(classifier_calls)} classifier calls for {served} served and {len(refusals)} refused "
+        "— the refusals are being paid for, which is unbounded under a retry loop"
     )
 
 
@@ -793,9 +835,8 @@ async def test_a_rate_limit_holds_on_both_surfaces(fixture, engine) -> None:
                 "INSERT INTO rate_limits (id, use_case, scope, subject, limit_rpm, burst,"
                 " enabled) VALUES (:id, :slug, 'use_case', '', 2, 0, true)"
             ),
-            {"id": 930_000_001, "slug": fixture.slug},
+            {"id": read_model_id(), "slug": fixture.slug},
         )
-    await asyncio.sleep(1.5)
     model_id = await _kira_model_id(engine, CHAT)
 
     try:
@@ -858,6 +899,7 @@ async def test_reporting_counts_what_the_round_produced(fixture, engine) -> None
 # == 6. the capabilities, and the surfaces' own endpoints =======================================
 
 
+@pytest.mark.model_output
 async def test_structured_output_returns_a_document(fixture, engine) -> None:
     """`FRD-112`. One flag, three mechanisms — Gemini takes a schema, Anthropic a forced tool call,
     this dialect a named `json_schema`. The catalog never learns how."""

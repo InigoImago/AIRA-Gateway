@@ -4,13 +4,12 @@ import { CatalogModel } from '../../core/api/models';
  * The currency OpenCode's `cost` is quoted in by convention: models.dev uses US dollars per
  * million tokens and OpenCode prints the total with a `$`.
  *
- * **The prices are written anyway** (2026-10-11). They were withheld for any other currency, so
- * an installation running in euros got no `cost` at all — and OpenCode then shows `$0.00` for
- * every session, which is what a developer was actually looking at. No figure is not the safe
- * answer here; it is the useless one. So the figures go in and the **currency travels in the
- * model's name**, which is the one field this file controls and which OpenCode shows in its model
- * list and beside the session. Converting instead would need an exchange rate per booking
- * (`FRD-403`), which is the one thing that must not be invented.
+ * **The prices are written whatever the installation's currency.** Without a `cost` OpenCode
+ * shows `$0.00` for every session; no figure is not the safe answer here, it is the useless one.
+ * So the figures go in and the **currency travels in the model's name**, which is the one field
+ * this file controls and which OpenCode shows in its model list and beside the session.
+ * Converting instead would need an exchange rate per booking (`FRD-403`), which is the one thing
+ * that must not be invented.
  */
 const OPENCODE_CURRENCY = 'USD';
 

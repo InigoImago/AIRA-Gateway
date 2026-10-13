@@ -71,6 +71,35 @@ function fixed(nanos: number, places: number): string {
 }
 
 /**
+ * A decimal amount as the server writes it — a limit's `'250.000000'` — in nano-units, read on the
+ * **digits**: `Number('0.1') * 1e9` is a float, and the one rule money arithmetic has here is that
+ * it never becomes one. Digits past the ninth decimal are below a nano-unit and dropped. `null` for
+ * anything that is not a plain decimal, so a caller shows "unknown" rather than a guessed zero.
+ */
+export function nanosOf(amount: string): number | null {
+  const match = /^(-?)(\d+)(?:\.(\d*))?$/.exec(amount.trim());
+  if (!match) return null;
+  const [, sign, units, fraction = ''] = match;
+  const nanos = Number(
+    units + fraction.slice(0, NANOS_PER_UNIT_DIGITS).padEnd(NANOS_PER_UNIT_DIGITS, '0'),
+  );
+  return sign && nanos !== 0 ? -nanos : nanos;
+}
+
+/**
+ * A stored amount — a limit the server writes as `'250.000000'` — as it was set: every significant
+ * decimal, and at least two. A configured figure is never rounded for display, because `0.125`
+ * shown as `0.13` is a limit nobody chose. `null` for anything that is not a plain decimal, so the
+ * caller shows what it was given rather than a guessed zero.
+ */
+export function storedAmount(amount: string): string | null {
+  const nanos = nanosOf(amount);
+  if (nanos === null) return null;
+  const significant = (amount.trim().split('.')[1] ?? '').replace(/0+$/, '').length;
+  return displayAmount(nanos, Math.min(NANOS_PER_UNIT_DIGITS, Math.max(2, significant)));
+}
+
+/**
  * A count with thousands separators, so `12840` is read rather than counted.
  *
  * `en-US` explicitly, not the browser's locale: the console is English throughout (`ADR-0001`), and

@@ -20,14 +20,11 @@ from rest_framework.test import APIClient
 from aira_common.directory import KeycloakDirectory
 from aira_common.permissions import CATALOGUE, IT_STEUERUNG_DEFAULT, Permission
 
+from .conftest import GROUP_FOR
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/roles/"
-GROUP_FOR = {
-    "global-admin": "/aira/global-admins",
-    "it-security": "/aira/it-security",
-    "it-steuerung": "/aira/it-steuerung",
-}
 #: The groups the fake Keycloak has. Every other path is its 404.
 EXISTING = {"/finance/controlling", "/finance/audit"}
 BY_PATH = "/admin/realms/aira/group-by-path"
@@ -348,3 +345,68 @@ def test_administering_every_use_case_includes_seeing_them(directory) -> None:
     assert reader.get("/api/v1/use-cases/not-theirs/").status_code == 200
     refused = reader.patch("/api/v1/use-cases/not-theirs/", {"name": "Again"}, format="json")
     assert refused.status_code == 403
+
+
+# ---- what a save refuses, and in whose words -----------------------------------------------
+
+
+def test_a_first_change_to_it_steuerung_that_names_no_permissions_changes_none(
+    directory: dict[str, bool],
+) -> None:
+    """Before anybody changed IT Steuerung it has no row, and its default set is what it holds.
+    The row the first change creates started empty, so a change that named only something else —
+    or nothing — took every permission away and logged it as a narrowing."""
+    del directory
+    StoredRole.objects.filter(slug="it-steuerung").delete()
+    root = _user("root", "global-admin")
+
+    response = _client(root).patch(f"{BASE}it-steuerung/", {}, format="json")
+
+    assert response.status_code == 200, response.content
+    assert set(response.json()["permissions"]) == {str(p) for p in IT_STEUERUNG_DEFAULT}
+    held = permissions_of(_user("steuerer", "it-steuerung"))
+    assert held == IT_STEUERUNG_DEFAULT
+
+
+def test_a_name_taken_while_the_group_was_being_checked_is_named_as_the_name(
+    directory: dict[str, bool], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two administrators saving the same role name at once — a window the directory call widens.
+    The constraint that fires is the name's, and the refusal says so instead of blaming a group
+    nobody else holds."""
+    del directory
+    from aira_management.apps.roles import views as role_views
+
+    verified = role_views._verified_group
+
+    def a_colleague_saves_first(raw: Any, *, keep: str | None = None) -> str:
+        path = verified(raw, keep=keep)
+        StoredRole.objects.create(slug="finance", label="Finance", group_path="/finance/audit")
+        return path
+
+    monkeypatch.setattr(role_views, "_verified_group", a_colleague_saves_first)
+    root = _user("root", "global-admin")
+
+    response = _client(root).post(
+        BASE,
+        {"label": "Finance", "group_path": "/finance/controlling", "permissions": []},
+        format="json",
+    )
+
+    assert response.status_code == 400, response.content
+    assert "label" in response.json()["error"]["details"]
+
+
+def test_a_group_path_longer_than_its_column_is_refused_before_anybody_is_asked(
+    directory: dict[str, bool],
+) -> None:
+    """The column is 255 characters and only PostgreSQL enforces it, as a `500` on the save."""
+    del directory
+    root = _user("root", "global-admin")
+
+    response = _client(root).post(
+        f"{BASE}check-group/", {"group_path": "/" + "g" * 255}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["details"]["group_path"] == ["At most 255 characters."]

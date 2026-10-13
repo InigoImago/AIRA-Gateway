@@ -6,6 +6,7 @@ from typing import Any
 
 from rest_framework import serializers
 
+from aira_common.apikeys import KeyLifetimeOutOfRange, check_key_lifetime
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.config.runtime import get_settings
 
@@ -35,8 +36,12 @@ class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
 
 class IssueApiKeySerializer(serializers.Serializer[Any]):
     # ``label`` shadows the inherited ``Field.label`` attribute; the field is what we want here.
+    # Bounded to its column, which only PostgreSQL enforces — as a `DataError`, past this check.
     label = serializers.CharField(  # type: ignore[assignment]
-        required=False, allow_blank=True, default=""
+        required=False,
+        allow_blank=True,
+        default="",
+        max_length=ApiKey._meta.get_field("label").max_length,
     )
     #: Lifetime in days. **Optional to state, never optional to have**: omitted, it takes
     #: `AIRA_API_KEY_DEFAULT_DAYS`; past `AIRA_API_KEY_MAX_DAYS` it is refused. No key never
@@ -54,17 +59,9 @@ class IssueApiKeySerializer(serializers.Serializer[Any]):
         if days is None:
             attrs["expires_in_days"] = settings.api_key_default_days
             return attrs
-        if days < 1:
-            raise serializers.ValidationError(
-                {"expires_in_days": ["A lifetime is a number of days, at least 1."]}
-            )
-        if days > settings.api_key_max_days:
-            raise serializers.ValidationError(
-                {
-                    "expires_in_days": [
-                        "The longest lifetime this installation allows is "
-                        f"{settings.api_key_max_days} days."
-                    ]
-                }
-            )
+        # The rule the gateway's break-glass CLI applies too: one definition, two planes.
+        try:
+            check_key_lifetime(days, settings.api_key_max_days)
+        except KeyLifetimeOutOfRange as exc:
+            raise serializers.ValidationError({"expires_in_days": [str(exc)]}) from exc
         return attrs

@@ -119,6 +119,24 @@ def test_the_environment_the_planes_are_asked_in_is_only_the_rendered_one(monkey
     assert any("AIRA_SECRET_KEY" in line for line in lines), "\n".join(lines)
 
 
+def test_a_dotenv_where_the_check_runs_is_not_read_either(tmp_path: Path, monkeypatch) -> None:
+    """The same property one file along: the settings classes read `.env` from the working
+    directory, and the probe ran in the checkout — so a developer's own `.env` answered for a
+    deployment that has none, and the check accepted what the deployment then refused at boot."""
+    source = ROOT / "config" / "integrated.example.yaml"
+    if not source.is_file():
+        pytest.skip("no integrated example")
+    before, _ = config_check.check(source, without_vault=True)
+    (tmp_path / ".env").write_text(f"AIRA_SECRET_KEY={'x' * 60}\nAIRA_POSTGRES_PASSWORD=p\n")
+    monkeypatch.setattr(config_check, "ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    after, lines = config_check.check(source, without_vault=True)
+
+    assert after == before, "\n".join(lines)
+    assert any("AIRA_SECRET_KEY" in line for line in lines), "\n".join(lines)
+
+
 def test_both_planes_are_asked() -> None:
     """One plane answering for both is how half a configuration passes a whole check."""
     assert set(config_check.PLANES) == {"gateway", "management"}

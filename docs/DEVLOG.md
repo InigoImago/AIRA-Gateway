@@ -5,6 +5,328 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## GLM and DeepSeek through Agent Platform, permitted at `global` by name (2026-10-13)
+
+The owner decided to use GLM and DeepSeek — the open models Agent Platform serves — knowing they
+answer only at `global`, which names no region. Two things had to be built, and the second is the
+one with a decision in it.
+
+**The adapter** (`FRD-115` FR-2a, now built for the managed models). Google serves them at one
+OpenAI-compatible path, the model named in the body as `publisher/model`. `VertexOpenModelAdapter`
+puts the OpenAI dialect on `VertexTransport` — same credential, residency check and regional
+failover — one instance per publisher (`zai-org`, `deepseek-ai`), since the catalogue routes by
+`(provider, publisher)`. The stream loop the three Vertex adapters shared by copy now lives once in
+their base; each says only how it opens a stream in one place. Measured before any of it was
+written, at well under a cent: GLM thinks unless `chat_template_kwargs.enable_thinking` is false,
+DeepSeek only when `thinking` is true, so thinking is a switch here — `disabled` and `auto`, no
+budget, no level, refused by name. `reasoning_effort` is documented for neither and never sent.
+
+**Three things the OpenAI dialect had not met**, each wrong quietly, each fixed for every server
+that speaks it:
+
+- the reasoning arrives as `reasoning_content`, DeepSeek's spelling, where the mapper read only
+  `reasoning` — a use case that asked got nothing, under a 200;
+- every stream chunk carries a `usage` holding only a traffic type — Google's same habit as on
+  Gemini — which read as a report is zero tokens, the running total a stream is booked at when its
+  caller leaves early; a `usage` with no count is now no report;
+- errors arrive as a one-element **list**, and `upstream_reason` lost every `400`'s reason.
+
+A configured Vertex model from a publisher no adapter speaks used to be dropped and answered "not
+found"; it now stops the start. The probe is free here too: an empty conversation is refused `400`
+for a model that exists and `404` for one that does not — `max_tokens: 0`, the obvious alternative,
+is no cap at all and generated a whole answer.
+
+**The decision: `global` by name, not by list** (`ADR-0034`). Adding `global` to
+`AIRA_ALLOWED_REGIONS` would have permitted it for every model — `gemini-3.5-flash` the moment
+somebody approves it, a Gemini model's failover whenever its EU region runs out of quota — and
+undone `FRD-611`. `AIRA_ALLOWED_MODEL_REGIONS=global=glm-4.7-maas,deepseek-v3.2-maas` permits it for
+those two and nothing else. One rule (`residency.check_region`, now taking the model) asked by every
+place that measures a model: startup, the transport, the chain's condition. An endpoint serving many
+models is never opened by one model's name. The gateway publishes the permissions beside the list,
+the model editor accepts `global` for exactly the named model, and the privacy notice says what
+`global` means in both languages (new digest; edition stays 2026-10-13, unreleased).
+
+**Live, through the running gateway** (all Agent Platform calls together under half a cent): GLM
+plain, thinking on and off, streamed, a streamed tool call, structured output, and through KIRA by
+numeric id; DeepSeek with its thinking returned and a two-turn tool call. Every audit row says
+`vertex / zai-org | deepseek-ai / global`, with tokens, cached tokens where Google reported them,
+and cost. `glm-5-maas`, catalogued at `global` and not permitted, was refused before Google with
+the residency reason; a GLM stream left after its first chunk was recorded `client_gone` with its
+usage unknown — not zero. This installation's `deploy/compose/.env` now permits the two models.
+
+Two sentences a reader of this feature would have tripped over were wrong and are corrected:
+`docs/CONFIGURATION.md` said `AIRA_VERTEX_MODELS` was `name=publisher/model@region` (it is
+`region/publisher/model`), and the console's add-model window told everybody on an unlistable
+platform to name the model in `AIRA_VERTEX_MODELS` too — on Vertex, where the gateway itself reports
+that cataloguing is enough, and where this round's live run used no such line. It now follows the
+gateway's `cataloguedIsEnough`. The editor's provenance sentence says *published by zai-org*
+rather than *speaking the zai-org dialect*, which was never true of the open models.
+
+Tests: `test_vertex_open_models.py` (27), `test_a_region_permitted_by_name.py` (9), the open models
+in the cross-platform failure matrix, the reasoning matrix and the declaration guards, four console
+cases. 22 new mutations (`OPEN-1`–`OPEN-22`) and seven re-anchored, all caught. `CLAUDE.md`:
+1668 properties.
+
+## A cancelled stream is counted, never estimated (2026-10-13)
+
+Testing the round's changes against real Vertex (europe-west1, under a tenth of a cent) found what no
+hermetic test could: **Vertex puts `usageMetadata` on every chunk of a stream and leaves the counts
+out of all but the last** — `{"trafficType": "ON_DEMAND"}`, measured directly at Vertex. The Gemini
+parser read that object as a report of zero, so every stream a caller left before the end was booked
+and recorded as having cost nothing, though the prompt had been read and an answer begun, both
+billed. Unchanged since `v0.1.3`; an agent client that cancels long generations walks through a
+budget this way.
+
+The owner ruled out an estimate, and asked what could be **known**. Measured against Vertex, both
+exact: `:countTokens` — which Google does not charge for — returns the very `promptTokenCount` a
+generation of the same body is billed (3 of 3: plain, with system text and tools, several turns),
+and counting the received text as a model message returns the billed `candidatesTokenCount` (3 of
+3). So now (`FRD-128` FR-6):
+
+- a usage object with no count in it is no report;
+- a stream left before any report is counted in the exit — the caller gone, nobody waiting — at the
+  vendor's endpoint, in the region that answered: the request as sent, the answer as received, never
+  a notice this gateway put in front of it, never a signature;
+- that is booked once and recorded with `usage_basis = counted`, a **floor**: the answer produced
+  after the caller left and the thinking are in no count. The row stores the two counts and leaves
+  the cache split and thinking unknown — a zero there would claim a cache miss;
+- priced as a floor too: a prompt under Google's smallest implicit-cache minimum (1024) at the
+  ordinary rate, which is exact, a longer one as cached, so the price never exceeds the bill;
+- a usage reported before the answer ended — Claude's input at the start — is the vendor's running
+  total and marked `partial`;
+- reports count both (`partial_usage_requests`), and the reporting screen and the CSV say the spend
+  is a lower bound;
+- a vendor that cannot count (OpenAI-compatible, Anthropic for its output, AI Studio unverified), a
+  count that fails or exceeds 5 s, and `AIRA_COUNT_CANCELLED_STREAMS=false` leave it unknown.
+
+Counting sends the request and the received answer to the same vendor and region a second time, so
+the privacy notice says so (edition **2026-10-13**: everybody acknowledges again), and the new
+column is in the register. Gateway migration `0049` adds the column without a default, so the
+request log is not rewritten. Fourteen mutations (`COUNT-1`–`COUNT-14`), all caught; two older ones
+(`SA1`, `MF4`) re-anchored onto the lines this moved. `CLAUDE.md`: 1646 properties.
+
+Also from the same live session, none of them changes in this round: the surface accepts only
+`toolConfig` mode `AUTO` (as in `v0.1.3`), offers no `countTokens` to callers, and a tool call needs
+the use case's tool calling switched on; Claude on Vertex refuses an API key (`401`, answered as a
+clean `502`), so it was not run live. A `thoughtSignature` in a **stream** is now held by a test end
+to end — Vertex's 2.5 Flash sends none in streams, so only a Gemini 3 model would show it, and none
+is reachable in an EU region here.
+
+Asked afterwards whether the open models Agent Platform serves were tested: they were not, and AIRA
+cannot address them. Google serves them — GLM-4.7 and GLM-5, DeepSeek-V3.2, two Qwen3, gpt-oss-120b,
+Kimi-K2-Thinking, MiniMax-M2 — through an OpenAI-compatible endpoint (`endpoints/openapi`), and
+`FRD-115` FR-2a, the OpenAI dialect on the Vertex transport, was never built though the FRD said
+*Done*; it now says so. Probed directly: the API key works there as `x-goog-api-key`, every one of
+them answered at `global`, and none in `europe-west1` or `europe-west4`. Under the EU residency policy
+they would be refused even with an adapter, like every `global`-only model (`FRD-611`).
+
+## Refactoring: every test read against its code, 395 findings, and what fixing them measured (2026-10-13)
+
+The owner's request: go through **every** test and the code it exercises — is it correct, abstracted
+once, readable, secure; in the console, are equivalent elements spaced and sized alike — and fix
+what is found without removing a feature, so that nothing simply crashes and every failure says
+what went wrong.
+
+**How.** The code base was split into fourteen partitions — five of the gateway, the shared
+library, two of the control plane, four of the console, the repository's tooling, and the two
+live-stack test layers — each read test file by test file with the code it reaches. A finding
+needed evidence: a probe test that fails for the stated reason, or a trace with line numbers; the
+`NUL`, column-length and overflow probes ran against a throwaway Postgres 17, because SQLite enforces
+none of it. Every fix then followed one rule: **reproduce, fix, and watch the test go red under the
+one-line mutation that reintroduces the defect.** The console was also measured in a real browser
+against the running stack (all pages, five roles, 1440 px and 390 px).
+
+**395 findings**, of which about a quarter high or medium severity. All but a handful are fixed;
+the rest are owner decisions, listed at the end.
+
+### The defects worth remembering
+
+- **Evidence and privacy.**
+  - KIRA refusals wrote the caller's raw body — prompts, PDFs, credential-shaped strings — into the
+    application log, whatever `store_payloads` said and against the notice's "never the content".
+    Log lines now carry field names, kinds and sizes only.
+  - `?key=` reached exported trace spans through `http.url`, which only the outgoing hook scrubbed;
+    the inbound hook now scrubs every attribute.
+  - The `Authorization:` redaction removed the word `Bearer` and kept the token.
+  - Database errors were logged with their bound parameters, and Postgres's `DETAIL` line quoted the
+    refused row, prompt included.
+  - Opening two stored requests in quick succession could show one person's prompt under another's
+    row; the payload is now matched to the row it was asked for, and reading content needs an
+    explicit control rather than any click on the row.
+  - `person=` on the reporting endpoint returned a colleague's figures to a people-limited reader.
+- **Money and limits.**
+  - `budget_usage.tokens` was a 32-bit integer holding a scope's running total: past 2.1 billion
+    tokens every booking failed, and the exit wrote no audit row and answered a served, billed
+    request with 500. The column is 64-bit, and a failed booking no longer takes the row or the
+    answer with it.
+  - A client that hung up mid-stream resolved its reservation twice or never — anyio cancels
+    level-triggered, and the shield on the exit did not hold; the exit is now one unit
+    (`shielding.uninterrupted`).
+  - The generation reservation ignored the prompt: twelve concurrent agentic requests were admitted
+    against a 50 000-token limit and booked 1.21 M. Streamed Anthropic usage dropped the cache split
+    and added cumulative counts, so a cached agentic turn was billed as fresh input.
+  - Negative thinking budgets made the reservation negative.
+- **The request path.**
+  - Errors a provider sends **inside** a 200 stream were read as nothing by all three dialects: an
+    overloaded Claude was an empty 200, the fallback never tried, the row `client_gone`.
+  - Read timeouts, malformed stream lines and an HTML 200 from a proxy escaped as library
+    exceptions — 500s with no fallback. One exchange helper now judges every transport alike.
+  - Tool results replayed by name paired with no call on Anthropic and OpenAI, so every agent loop
+    failed at its second turn; Gemini 3's `thoughtSignature` was dropped, failing the same way.
+  - A thinking budget ≥ the output cap on Claude was a bare `ValueError` (500) that aborted the chain.
+  - `/kira/api/external/ki-usage` answered 500 as soon as there was any traffic.
+  - A UTF-16 body passed the depth guard (in UTF-16 `Ģ` is `22 01`, read as a closing quote) and
+    raised `RecursionError` with no audit row — on both planes.
+- **Configuration distribution.**
+  - One oversized event (a 1 MB description) stopped the relay at that row for good, and with it
+    every later event of the installation, revocations included. Events are now refused at write
+    time, a poison event is parked, and runs hold an advisory lock so two cannot reorder one key.
+  - A rebuild from the compacted topics resurrected retired use cases with working keys.
+  - One malformed Kafka message stopped the consumer in a loop.
+- **The control plane.**
+  - The JSON parser decoded with whatever codec the caller named — `bz2` turned 172 bytes into
+    100 MB before any bound; garbage answered 500.
+  - `NUL` and over-long values in paths, queries, bodies and tokens answered 500 on Postgres; a
+    group path longer than 147 characters made every request of everyone in it a 500.
+  - The failed-authentication bound was keyed on a caller-written `X-Forwarded-For`.
+  - A retired use case's anomaly rules stayed readable and writable through the global list.
+  - Pipeline-test results — reviewable evidence — could be deleted or rewritten under their verdict.
+  - An injection filter whose `action` was spelt `Block` let every injection through: the gateway
+    blocked only on the exact word. Unknown values now fail closed, and both planes read one
+    vocabulary from `aira_common.pipelines`.
+- **Security checks that checked less than they said.** The ReDoS guard missed verbose mode, wrapped
+  atoms and overlapping classes (`(?x)(a+) +$` took 4.9 s on 26 characters); it now analyses the
+  parse tree, and 744 000 fuzzed patterns found none it admits that grows faster than quadratically.
+  Two credential redaction patterns were quadratic on caller text (160 kB: 6.4 s on the event loop).
+  The published demo key kept working after demo mode was switched off.
+- **The console.**
+  - Token renewal could never succeed: the silent-refresh iframe was blocked three times over by
+    the CSP and the headers, so every five minutes the console did a full round trip through
+    Keycloak and lost whatever was unsaved. It now uses the refresh token.
+  - `runtime-config.js` was served as immutable for a year, so a changed issuer reached returning
+    browsers a year late.
+  - Deleting a use-case rule never worked (no trailing slash; the backend does not append one).
+  - Filters stopped reacting after the first change (`distinctUntilChanged` over `void`), live views
+    rendered a stale answer under a new filter, and a failed load showed "Loading…" for ever.
+  - Adding a model under a name the catalogue already held wiped its price, approval and KIRA id;
+    Save on the pipeline builder was enabled before the pipeline had loaded, so it could replace the
+    stored injection and PII filters with nothing.
+  - Unknown was rendered as zero on budget cards when the gateway was unreachable.
+  - A stored spend limit was written three ways on three screens, and the budget tab's way rounded
+    it: a limit of `0.125` read `0.13`. One helper (`storedAmount`) writes a configured amount as it
+    was set, and every count on a budget card is grouped alike.
+
+### Design, measured
+
+Measured in Chromium against the running stack: text inputs were **42 px**, selects **39 px** and
+buttons **39 px**, so every row of controls was ragged along its bottom edge; the use-case detail's
+eight tabs needed **922 px** of a **904 px** column at 1440 px, cutting the last tab in half; on a
+phone the access picker's search field was squeezed to **53 px**, its hint one word per line down
+379 px. One control height (`--aira-control-height`), a wrapping tab strip and a floor on growing
+filter fields fix all three — re-measured: every control 42 px, no hidden tab, nothing squeezed.
+
+The global stylesheet defined `.chip` and `.detail-grid` twice for two components, and the later
+copy silently restyled the earlier one's elements everywhere — the release picker's chips lost their
+tint, their warning colours and their distance to the search box. Seventeen font sizes, six of them
+within 0.1 rem of each other, are now a scale of eight. Flush cards inset their toolbars by the
+table's own cell padding, so a search box starts where the first column does (it stood 4 px off).
+Inline `style=""` attributes went from 262 to 142. The UI audit had reported **0 findings** over all
+of this; it now has three more checks — a hidden tab, a ragged row, squeezed text — and the layout
+suite asserts heights as well as tops.
+
+Two more, found by measuring after the fixes. On a phone a filter row wraps, and a button or a
+checkbox kept the label-height offset that lines it up with the control beside it — beside nothing
+now, so the gap above it was **42 px** where every other gap in the row was **18 px** (the access
+panel's *Grant*, reporting's CSV button, the request filters' checkboxes, the register's). Forms
+already stacked on a phone; filter rows stack the same way now and drop the offset, and the layout
+suite measures the gaps (red at 18/42 with the offset put back). And the audit's one finding after
+the round: a link inside a callout's sentence was told from its words by colour alone, 2.24 : 1
+against them where WCAG asks 3 : 1 — a link inside running text is underlined now.
+
+### The test layers
+
+- The live-stack suites cleaned up almost nothing: the development installation had grown to 541
+  use cases, fake incidents, and 72 audit rows dated **2031** — newest-first views opened on
+  invented traffic. Every creation is now registered and removed, including after a failure, and a
+  session finaliser fails on growth.
+- Release tests created tags in the developer's real repository; a killed run could leave a
+  `v99.99.98` that `--follow-tags` would publish. They run in a throwaway repository now.
+- Four mutations produced code that does not parse, so they were always "caught" whatever the
+  tests did; the harness now checks every mutant parses, recovers before refusing, restores only a
+  file that still holds the mutant, times out a hanging test, and can run Vitest specs.
+- `deploy/compose/.vault-secret-id` — an AppRole secret-id — was tracked by git and had been
+  committed three times; `config_render` double-quoted values so Compose turned `\b` in the
+  redaction patterns into a backspace, silently disabling an installation's own patterns.
+
+### Behaviour that changed on purpose
+
+- A truncated structured answer now books the tokens the provider billed (FRD-128 FR-5 updated).
+- Traffic to a retired use case is `invalid_request`, no longer `blocked_by_pipeline`.
+- Embedding vectors are no longer stored, only their count, width and fingerprint; the privacy
+  notice says so (edition 2026-10-12, also covering the content-read record's credential and the
+  outbox's 30-day retention).
+- All reporting windows are UTC and the screens say so; lapsed API keys read "expired".
+- `/docs` and `/openapi.json` are served only locally or in demo mode.
+- A Global Administrator issuing their own key on a use case they are not a member of is recorded
+  as a member.
+- An embedding batch larger than a whole rate-limit bucket is a `400 FAILED_PRECONDITION` without
+  `Retry-After`; the `429` with `Retry-After: 1` sent a client that honours both into a retry loop
+  no wait could end (`FRD-113` §11).
+- Trying an **unsaved** pipeline is authoring one, so it is for the use case's administrators; a
+  member tests the saved pipeline and is not shown the words a step's model wrote (`FRD-306`).
+- A group path may hold inner spaces — Keycloak names a department what it is called — and loses
+  the ones at its edges; a tab or a newline is still refused.
+- `failed_requests` counts what could not be served (`upstream_error`, `internal_error`); a refusal
+  is counted under its outcome only, where it used to be counted twice (`FRD-601` FR-6).
+
+Four live-stack tests still asserted the old answers to the last four and were rewritten to the new
+ones, each asserting both sides of the rule; nothing else in the live suites changed its verdict.
+
+### Left for the owner
+
+G1-24 (a passwordless Redis outside local), G2-11 (confirm the booking above), G4-5 (redact every
+turn, at one model call per turn), G4-15 (`:checkThinking` generates outside every bucket; the
+documentation now says so), G5-8 (may an API key read stored prompts at all), G5-11 (oversight mode
+against the request list — FRD-603 §5.5 and FRD-622 FR-1c contradict), G5-25 (an audit row's time is
+when it was written, not when the request arrived), L1-5's gateway half (a bound before a token is
+verified; the key-set refetch is bounded now), L1-12 (a Vault address with no credential), L1-13
+(`SASL_PLAINTEXT` outside local), M1-7 (a key outlives its owner's group membership; documented,
+three options), M1-8's gateway half (the subject on membership events), M2-17 (CLAUDE.md promises
+versioned Kafka schemas the code does not have), T1-5 (the core infrastructure file carries the
+development realm and a `-dev` Vault; the documentation and a guard now say so), T1-18 (CI and
+`make ci` still differ in places), T2-22 (whether a live test that depends on a real model's words
+belongs in the gate).
+
+### Measured at the end
+
+- Hermetic Python suite: **6097 passed**, coverage **97.16 %** (96.72 % before). Console: **1515**
+  tests across 63 files; coverage statements 94.1 → 95.8 %, branches 92.8 → 93.8 %, functions
+  80.9 → 86.7 %, lines 95.7 → 97.2 %. ruff, ruff format, mypy (395 files), Prettier and the
+  production build are clean.
+- `make mutants` now names **1632** properties (1022 before): 617 added — each one a fix's own
+  mutation, seen red before it was recorded — 75 re-anchored where a fix moved the line, and 7
+  removed with the code they guarded. A seeded sample of 42 of the new ones, run through the
+  harness at the end: all caught.
+- Live stack, rebuilt from this tree (gateway migration `0048`, five control-plane migrations):
+  - `make test-integration`, first run: **1066 passed**, 13 skipped, 4 failed — and the four
+    asserted behaviour this round changed on purpose (above). Rewritten to assert both sides of
+    each rule, they pass; the second run passed **1070**, none failed. The 13 skips are
+    preconditions this stack does not have: a tool-capable model, a second OpenAI-compatible
+    server, a thinking model, and directory state for three role positions.
+  - `make test-e2e`, first run: **173 of 180**. Four failures asserted the old money display (a
+    raw `250.000000`, a `$`, an ungrouped `1000`, an empty bar over unknown consumption) and were
+    rewritten. Two were **a regression of this round's own making** that only a browser could
+    show: switching a live view off dropped the load in flight, the *first* one included, so a
+    reader who unticked *Live* while the Requests tab was still loading kept "Loading requests…"
+    for good. The first answer to a question is kept now (`Live.pause`, mutation `LIVE-1`); a
+    fixer's unit test had asserted the regression as the rule. Second run, against the rebuilt
+    console: **179 passed**, none failed, one skipped by design (a hundred-question run against a
+    local model).
+  - `make ui-audit`: **128 states** across five roles at 1440 px and 390 px, **0 findings** with
+    the three new checks — after fixing the one it found once the round was done (the link above).
+- The per-finding record — location, failure, evidence, fix, test — is kept untracked in
+  `security-audit/REVIEW-2026-10-13/`, beside the September assessment.
+
 ## Unpriced is not unlimited: the last hole in spend control (2026-10-12)
 
 `FRD-610` §3.2, the one the file itself left as an open question *to the owner*, because the answer

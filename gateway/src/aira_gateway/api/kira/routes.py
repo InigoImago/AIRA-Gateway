@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from aira_common.models import Capability
@@ -34,8 +34,9 @@ from aira_gateway.api.kira.mapping import (
 )
 from aira_gateway.api.kira.refusals import KIRA_REFUSALS, refusal_response
 from aira_gateway.api.serving import (
+    AccountedStream,
     Prepared,
-    StreamedNotice,
+    StreamAccounting,
     accounting,
     annotate,
     catalog_of,
@@ -45,7 +46,6 @@ from aira_gateway.api.serving import (
     json_body,
     prepare_for_dispatch,
     record_refusal,
-    refusal_outcome,
     requirements_for,
     resolve_direct_target,
     schema_bounds,
@@ -68,8 +68,13 @@ router = APIRouter(tags=["kira"], prefix=BASE)
 
 _log = structlog.get_logger(__name__)
 
-#: How much of a refused body goes into the log line: a generous conversation, a negligible log.
-REFUSAL_BODY_LIMIT = 12 * 1024
+#: How many fields, list entries and parts a refused body's logged *shape* names. The shape grows
+#: with the body, which the caller writes, so it is bounded here; past it the rest is counted.
+SHAPE_ENTRIES = 256
+#: A field name is the caller's string too, and a name longer than this is not one anybody needs.
+SHAPE_NAME_LENGTH = 64
+#: How many of a validation failure's field paths the refusal's log line names.
+INVALID_FIELDS_LOGGED = 32
 
 
 # == routes =======================================================================================
@@ -96,6 +101,9 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             answer = annotate(canonical, dispatched.response, prepared, trail)
             trail.served_by(answer.model, dispatched.candidate_index)
             trail.passed_over(dispatched.skipped, dispatched.failed)
+            # Spent before it is checked: a document the model did not finish is refused, and was
+            # paid for all the same.
+            acct.spent(answer.model, answer.usage)
             check_structured_result(canonical, answer)
             payload = to_chat_response(answer).model_dump()
             acct.served(answer.model, answer.usage, payload)
@@ -132,60 +140,41 @@ async def streaming_chat(
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
 
-    # Recorded here rather than at the end of the stream: this is where it is known, and the
-    # terminal event is not reached by a stream the caller abandons.
+    stream = StreamAccounting(
+        request,
+        trail,
+        prepared,
+        streamed,
+        api="kira",
+        operation="streaming-chat",
+        started=started,
+    )
     served = streamed.model
-    trail.served_by(served, streamed.candidate_index)
-    trail.passed_over(streamed.skipped, streamed.failed)
 
-    async def events() -> AsyncIterator[str]:
-        async with accounting(
-            request, trail, prepared, api="kira", operation="streaming-chat", started=started
-        ) as acct:
-            parts: list[str] = []
-            usage: CanonicalUsage | None = None
-            finish_reason = "stop"
-            # Accumulated as sent, so the terminal event carries exactly what was streamed.
-            notice = StreamedNotice(
-                prepared.notices, structured=canonical.response_schema is not None
-            )
-            # Whether the stream ended on its own — answered, or stopped by a refusal.
-            finished = False
+    async def events() -> AsyncGenerator[str]:
+        async with stream.accounted():
             try:
                 # The first chunk is already in hand; the chain marked its model call where the
                 # request was issued.
-                async for chunk in streamed.chunks:
-                    if chunk.usage is not None:
-                        usage = chunk.usage
-                    if chunk.finish_reason:
-                        finish_reason = chunk.finish_reason
-                    if not chunk.text_delta:
+                async for chunk in stream.chunks:
+                    led = stream.take(chunk).text_delta
+                    if not led:
                         # No event without text: an empty one is the synthetic heartbeat `FRD-111`
                         # §5.4 refused.
                         continue
-                    led = notice.lead(chunk.text_delta)
-                    parts.append(led)
                     yield f"data: {json.dumps(update_event(led))}\n\n"
-                finished = True
             except KIRA_REFUSALS as exc:
-                # The status is already sent; the failure is reported into the accounting.
-                finished = True
-                acct.failed(502, refusal_outcome(exc))
+                # The status is already sent: the stream ends without `completed`, which is how a
+                # client of this contract learns that the answer is not whole.
+                stream.broke_off(exc)
                 return
-            finally:
-                if not finished and usage is not None:
-                    # The caller left mid-answer after the upstream reported usage: that much was
-                    # spent and reached them, so it is settled — and recorded as `499`.
-                    acct.abandoned(served, usage, {"text": "".join(parts)})
-                outcome_note = notice.outcome()
-                if outcome_note is not None:
-                    trail.decisions.append(outcome_note)
 
+            # Built from what was streamed, so the terminal event carries exactly that.
             answer = CanonicalResponse(
                 model=served,
-                text="".join(parts),
-                usage=usage or CanonicalUsage(prompt_tokens=0, completion_tokens=0),
-                finish_reason=finish_reason,
+                text=stream.text,
+                usage=stream.usage or CanonicalUsage(prompt_tokens=0, completion_tokens=0),
+                finish_reason=stream.finish_reason or "stop",
             )
             try:
                 # An unfinished schema-constrained answer is not data (`FRD-112` FR-6). The status
@@ -193,14 +182,14 @@ async def streaming_chat(
                 # `completed` never treats half a document as whole.
                 check_structured_result(canonical, answer)
             except KIRA_REFUSALS as exc:
-                acct.failed(502, refusal_outcome(exc))
+                stream.broke_off(exc)
                 return
             event = completed_event(answer)
-            acct.served(answer.model, usage, event["data"])
+            stream.delivered(event["data"])
             yield f"data: {json.dumps(event)}\n\n"
 
-    return StreamingResponse(
-        events(), media_type="text/event-stream", headers=surface_headers(request)
+    return AccountedStream(
+        stream, events(), media_type="text/event-stream", headers=surface_headers(request)
     )
 
 
@@ -214,6 +203,25 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
         note_unmodelled(request, parsed)
         model = await _resolve_model(request, parsed.model_id)
         trail.requested_model = model
+        embedding = to_embedding(parsed, model)
+
+        # Aggregation is asked here, where `parsed.text` still says whether a list was sent: the
+        # mapper joins a list into one text, so the shared batch check can no longer see it. And
+        # before the shared sequence, which spends the caller's allowance on its way — a request
+        # that can never be served must not (`prepare_for_dispatch`). A model that cannot embed at
+        # all is left to that sequence, which names that instead.
+        declaration = await catalog_of(request).declaration(model)
+        if (
+            isinstance(parsed.text, list)
+            and len(parsed.text) > 1
+            and declaration.can(Capability.EMBED)
+            and not declaration.supports_batch
+        ):
+            raise EmbeddingRejected(
+                EMBEDDING_AGGREGATION_NOT_SUPPORTED,
+                f"Model '{declaration.name}' does not accept a list of texts. Send them one at a "
+                "time, or use a model whose catalog entry declares batch support.",
+            )
 
         # This surface owns only the predecessor's default task type; what may be embedded, and
         # the order of the controls around it, belong to the shared sequence.
@@ -221,24 +229,11 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
             request,
             trail,
             method="embedContent",
-            embed=to_embedding(parsed, model),
+            embed=embedding,
             default_task_type=DEFAULT_TASK_TYPE,
         )
         embed_request = prepared.embed
         assert embed_request is not None
-
-        # Aggregation is asked here, where `parsed.text` still says whether a list was sent: the
-        # mapper joins a list into one text, so the shared batch check can no longer see it.
-        if (
-            isinstance(parsed.text, list)
-            and len(parsed.text) > 1
-            and not prepared.declaration.supports_batch
-        ):
-            raise EmbeddingRejected(
-                EMBEDDING_AGGREGATION_NOT_SUPPORTED,
-                f"Model '{prepared.declaration.name}' does not accept a list of texts. Send them "
-                "one at a time, or use a model whose catalog entry declares batch support.",
-            )
         async with accounting(
             request, trail, prepared, api="kira", operation="embed", started=started
         ) as acct:
@@ -248,7 +243,7 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
                 vectors = await provider.embed(embed_request)
             # One vector, whatever the input shape: a list was joined into one text.
             payload = schemas.EmbeddingResponse(vector=vectors[0] if vectors else []).model_dump()
-            acct.embedded(model, payload, units=embed_request.size, vectors=vectors)
+            acct.embedded(model, units=embed_request.size, vectors=vectors)
         return JSONResponse(payload, headers=surface_headers(request))
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
@@ -392,12 +387,17 @@ async def _check_chat(request: Request, model: str, max_tokens: int | None) -> N
 async def _refused(
     request: Request, trail: AuditTrail, exc: Exception, *, started: float
 ) -> JSONResponse:
-    """Render a refusal in this surface's envelope, log it, and record it."""
+    """Render a refusal in this surface's envelope, log it, and record it.
+
+    The log line names what the body *was* — its fields, each value's kind and size, and the paths
+    a validation failure names — so a client's 422 can be diagnosed without a database query. Never
+    what it *said*: a log line is outside every control on stored content (a use case's
+    `store_payloads`, redaction, the retention clock, the recorded read — `ADR-0016`), and the
+    privacy notice promises that no log line carries the content of a request (`FRD-625`). The
+    content itself is in the audit row, where those controls apply.
+    """
     response = _error_response(request, exc)
-    # The refused body goes into the log as well as the audit row: diagnosing a client's 422 must
-    # not need a database query against a use case that may not store payloads. Truncated rather
-    # than dropped — the first 12 KB of a large body name its fields.
-    encoded = json.dumps(trail.body, default=str) if trail.body else ""
+    details = exc.details if isinstance(exc, errors.KiraError) and exc.details else []
     _log.warning(
         "kira_request_refused",
         operation=trail.operation,
@@ -405,11 +405,49 @@ async def _refused(
         error=type(exc).__name__,
         model=trail.served_model or None,
         unmodelled_fields=list(getattr(request.state, "unmodelled", ())),
-        request_body=encoded[:REFUSAL_BODY_LIMIT],
-        request_body_truncated=len(encoded) > REFUSAL_BODY_LIMIT,
+        request_shape=body_shape(trail.body) if trail.body else None,
+        invalid_fields=[".".join(detail["loc"]) for detail in details[:INVALID_FIELDS_LOGGED]],
     )
     await record_refusal(request, trail, exc, status=response.status_code, started=started)
     return response
+
+
+def body_shape(body: Any) -> Any:
+    """``body`` with every value replaced by its kind and size: ``{"text": "str(27)"}``.
+
+    Field names stay, since they are the contract's and name what a refusal is about; strings
+    become their length, numbers, booleans and nulls their kind. Bounded by `SHAPE_ENTRIES`, so a
+    body of a hundred thousand entries does not become a log line of the same size.
+    """
+    remaining = SHAPE_ENTRIES
+
+    def walk(value: Any) -> Any:
+        nonlocal remaining
+        if isinstance(value, dict):
+            fields: dict[str, Any] = {}
+            for index, (name, item) in enumerate(value.items()):
+                if remaining <= 0:
+                    fields["…"] = f"{len(value) - index} more"
+                    break
+                remaining -= 1
+                fields[str(name)[:SHAPE_NAME_LENGTH]] = walk(item)
+            return fields
+        if isinstance(value, list):
+            entries: list[Any] = []
+            for index, item in enumerate(value):
+                if remaining <= 0:
+                    entries.append(f"… {len(value) - index} more")
+                    break
+                remaining -= 1
+                entries.append(walk(item))
+            return entries
+        if isinstance(value, str):
+            return f"str({len(value)})"
+        if isinstance(value, bool):
+            return "bool"
+        return "null" if value is None else "number"
+
+    return walk(body)
 
 
 def _error_response(request: Request, exc: Exception) -> JSONResponse:

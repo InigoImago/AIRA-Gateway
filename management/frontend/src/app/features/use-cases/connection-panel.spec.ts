@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { KiraModel } from '../../core/api/models';
+import { CatalogModel, KiraModel } from '../../core/api/models';
 import { ConnectionPanel } from './connection-panel';
 
 /**
@@ -26,9 +26,27 @@ describe('ConnectionPanel', () => {
     fixture.detectChanges();
   }
 
-  /** The page has answered — which is an input now, because the page loads and the panel renders. */
+  /**
+   * The page has answered — which is an input now, because the page loads and the panel renders.
+   * The catalogue says the same as the listing unless a test says otherwise: the two disagreeing is
+   * its own case below.
+   */
   function answer(models: KiraModel[] = KIRA_MODELS): void {
     fixture.componentRef.setInput('kira', models);
+    declare(
+      models.map((model) => ({
+        name: model.name,
+        capabilities: [
+          ...(model.capabilities.includes('CHAT') ? (['generate'] as const) : []),
+          ...(model.capabilities.includes('EMBEDDING') ? (['embed'] as const) : []),
+        ],
+      })),
+    );
+  }
+
+  /** What the model catalogue declares — the Gemini surface's source. */
+  function declare(catalog: CatalogModel[] | null): void {
+    fixture.componentRef.setInput('catalog', catalog);
     fixture.detectChanges();
   }
 
@@ -179,7 +197,37 @@ describe('ConnectionPanel', () => {
     answer();
 
     expect(testid('connection-gemini-chat')).toBeNull();
-    expect(testid('connection-no-chat')?.textContent).toContain('generates text');
+    expect(testid('connection-no-chat')?.textContent).toContain('generating text');
+  });
+
+  it('takes the Gemini example from the catalogue, so a failed KIRA listing costs only KIRA', () => {
+    // The KIRA listing failed and the page passed `[]`: the Gemini tab then said nothing released
+    // could generate text, about a released chat model — while its own hint said the Gemini API
+    // "is unaffected" by the KIRA listing.
+    build(['chat-model']);
+    fixture.componentRef.setInput('kira', []);
+    fixture.componentRef.setInput('failure', 'The gateway could not be asked for its model ids.');
+    declare([{ name: 'chat-model', capabilities: ['generate'] }]);
+
+    expect(testid('connection-gemini-chat')?.textContent).toContain('chat-model:generateContent');
+    expect(testid('connection-no-chat')).toBeNull();
+  });
+
+  it('says nothing about what generates before the catalogue has answered', () => {
+    build(['chat-model']);
+    fixture.componentRef.setInput('kira', KIRA_MODELS);
+    declare(null);
+
+    expect(testid('connection-no-chat')).toBeNull();
+    expect(testid('connection-gemini-chat')).toBeNull();
+  });
+
+  it('says a released model the catalogue does not hold is undeclared, not that it is unserved', () => {
+    build(['chat-model', 'local-model']);
+    answer();
+
+    expect(testid('connection-models')?.textContent).toContain('not declared in the catalog');
+    expect(testid('connection-models')?.textContent).not.toContain('KIRA listing');
   });
 
   it('reports a gateway that cannot be asked instead of showing every id as absent', () => {

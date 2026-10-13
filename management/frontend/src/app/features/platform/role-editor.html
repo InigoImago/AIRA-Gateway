@@ -106,6 +106,14 @@
     </div>
   </fieldset>
 
+  <!-- The page's one outcome, shown inside the window while it is open: the page's own banner sits
+       under the backdrop, where a refusal is a report about nothing. -->
+  @if (feedback.error(); as error) {
+    <div class="callout callout--danger" role="alert" data-testid="role-editor-error">
+      {{ error }}
+    </div>
+  }
+
   <div class="form-actions">
     <button type="submit" class="btn btn--primary" data-testid="save-role" [disabled]="!canSave()">
       {{ feedback.busy() ? 'Saving…' : isNew() ? 'Create role' : 'Save' }}

@@ -12,6 +12,7 @@ from typing import Any
 from rest_framework import serializers
 
 from aira_common.anomalies import (
+    DEFAULT_MIN_SAMPLE,
     MAX_ACTION_MINUTES,
     MIN_ACTION_MINUTES,
     PARAMETER_MEANING,
@@ -54,6 +55,11 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
             "updated_at",
         ]
         read_only_fields = ["id", "use_case", "is_global", "created_at", "updated_at"]
+        #: DRF's generated `UniqueValidator` is dropped: built from the **global** rules'
+        #: constraint, it applies to every write, so a global rule's name would block every use
+        #: case from using it. `_unique_name` asks the scope the rule will actually live in.
+        extra_kwargs: dict[str, dict[str, Any]] = {"name": {"validators": []}}
+        validators: list[Any] = []
 
     def _effective(self, attrs: dict[str, Any], field: str, default: Any = None) -> Any:
         """What this field will hold **after** the save: the incoming value, or the stored one.
@@ -69,7 +75,26 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
             return getattr(self.instance, field, default)
         return default
 
+    def _unique_name(self, attrs: dict[str, Any]) -> None:
+        """A name is unique among the rules of one use case, and among the global rules — never
+        across the two. The scope is the stored rule's on an edit, else the use case the route
+        names (`context["use_case"]`), else global."""
+        name = self._effective(attrs, "name")
+        if self.instance is not None:
+            scope = self.instance.use_case
+        else:
+            scope = self.context.get("use_case")
+        clash = AnomalyRule.objects.filter(name=name, use_case=scope)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            where = f"the rules of use case '{scope.slug}'" if scope else "the global rules"
+            raise serializers.ValidationError(
+                {"name": f"A rule called '{name}' already exists among {where}. Choose another."}
+            )
+
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        self._unique_name(attrs)
         kind = RuleKind(self._effective(attrs, "kind", RuleKind.REFUSAL_RATE))
         action = RuleAction(self._effective(attrs, "action", RuleAction.ALERT))
         threshold = self._effective(attrs, "threshold")
@@ -160,7 +185,7 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
             # A credential used from a new address is one observation, not a proportion. Requiring
             # a sample of twenty would be requiring twenty leaks.
             attrs["min_sample"] = 0
-        elif self._effective(attrs, "min_sample", 0) < 1:
+        elif self._effective(attrs, "min_sample", DEFAULT_MIN_SAMPLE) < 1:
             raise serializers.ValidationError(
                 {
                     "min_sample": (

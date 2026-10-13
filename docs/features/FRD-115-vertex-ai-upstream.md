@@ -49,7 +49,7 @@ either dialect exists, and keeps the dialect work free of authentication concern
   consume *models* through Model Garden; if the agent surface is ever wanted it is a separate
   upstream with a separate decision. See §11.
 - Tuning and batch prediction. (Third-party Model Garden vendors *are* in scope where they speak a
-  dialect we have — see FR-2a.)
+  dialect we have — see FR-2a, which serves the managed open models in the OpenAI one.)
 - Reading the credential from Vault — `FRD-116`.
 
 ## 3. User Stories
@@ -72,10 +72,21 @@ either dialect exists, and keeps the dialect work free of authentication concern
   its `embedContent` for an API key (401) — found against a real project, where every embedding
   had answered 500. `autoTruncate` is off so an over-long text is refused, not embedded in part.
   `publishers/anthropic` → `:rawPredict` / `:streamRawPredict`, Anthropic body (`FRD-119`).
-- **FR-2a Self-deployed endpoints.** Models deployed from Model Garden onto our own capacity
-  (Nemotron and similar NIM containers) are addressed by endpoint id and speak the **OpenAI**
-  dialect. Same transport, same credential, different addressing and different failure modes
-  (§5.3a).
+- **FR-2a The OpenAI dialect on this transport.** Two kinds of model speak it here.
+  - **Managed open models — built** (§10b). Google serves GLM, DeepSeek, Qwen, gpt-oss, Kimi and
+    MiniMax at **one** path, `endpoints/openapi/chat/completions`, the model named in the body as
+    `publisher/model`. `VertexOpenModelAdapter` puts the OpenAI dialect on `VertexTransport` —
+    same credential, same residency check, same regional failover — one instance per publisher,
+    because the publisher is half the name and the catalogue routes by it (`FRD-507`). Listed
+    publishers: `zai-org` (GLM) and `deepseek-ai` (DeepSeek), each with the template key it reads
+    as its thinking switch. Another publisher is added once its answers have been read: the open
+    models do not agree on where their thinking goes, and MiniMax writes it into the answer text,
+    which this dialect would hand to a caller who never asked for reasoning. They answer **only at
+    `global`**, so each needs a permission by name (`ADR-0034`).
+  - **Self-deployed endpoints — not built.** Models deployed from Model Garden onto our own
+    capacity (Nemotron and similar NIM containers) are addressed by **endpoint id** and fail
+    differently (§5.3a). The adapter above is the dialect half of that; the addressing and the
+    cold-start policy are not written. This status said *Done* over both until 2026-10-13.
 - **FR-3 Service-account auth.** RS256-signed JWT assertion exchanged for an access token; cached
   and refreshed **before** expiry, not on failure. One credential for both publishers.
 - **FR-3a A second credential: an API key.** The same adapter, the same hosts, the same paths —
@@ -123,16 +134,18 @@ either dialect exists, and keeps the dialect work free of authentication concern
 
 ## 5. Design & Architecture
 
-### 5.1 One transport, two dialects
+### 5.1 One transport, three dialects
 
 ```
-VertexTransport          # URL building, auth, retries, error mapping — publisher-agnostic
+VertexTransport            # URL building, auth, retries, error mapping — publisher-agnostic
 ├── VertexGeminiAdapter    # Gemini bodies (reuses FRD-304's mappers unchanged)
-└── VertexAnthropicAdapter # Anthropic bodies (FRD-119)
+├── VertexAnthropicAdapter # Anthropic bodies (FRD-119)
+└── VertexOpenModelAdapter # OpenAI chat bodies (FRD-123's mapper), one per open-model publisher
 ```
 
-Both adapters implement the existing `Upstream` protocol, so nothing above `upstreams/` learns that
-a second vendor exists. The transport owns everything that is about *Google the platform*
+Every adapter implements the existing `Upstream` protocol, so nothing above `upstreams/` learns that
+another vendor exists. The stream loop — open in the first place that accepts, then commit — lives
+once in their shared base; each dialect says only how it opens a stream in one place. The transport owns everything that is about *Google the platform*
 (endpoint, OAuth, quota errors); each adapter owns everything that is about *the vendor's API*.
 
 Getting that seam right is the whole design. Put authentication in the adapters and it is written
@@ -323,6 +336,36 @@ Coverage: 27 gateway tests and 10 token-source tests, all hermetic against `http
 > so removing the block-type filter changed nothing, because the *field name* differed too. It
 > proved nothing about the filter it was named after. Rewritten to put the reasoning in a `text`
 > field, which is what holds the selection to being by **block type**.
+
+## 10b. The managed open models (FR-2a, 2026-10-13)
+
+Built because the owner chose to use GLM and DeepSeek. Every fact below was measured against the
+project before any of it was written, at a cost well under a cent:
+
+- **Where.** `global` answers for GLM 4.7, GLM 5, GLM 5.2 and DeepSeek V3.2; `europe-west1`,
+  `europe-west4` and `eu` answer `404`. Hence `ADR-0034`: `global` is permitted per model in
+  `AIRA_ALLOWED_MODEL_REGIONS`, the list stays EU-only, and the audit row names `global`.
+- **Credential.** The API key works as `x-goog-api-key`; as a bearer it is `401`. The service
+  account's bearer token works as everywhere else.
+- **Thinking.** GLM thinks unless `chat_template_kwargs.enable_thinking` is `false`; DeepSeek
+  V3.2 only when `chat_template_kwargs.thinking` is `true`. Neither takes a budget or a level, so
+  the adapter declares `disabled` and `auto` and refuses the rest by name. `reasoning_effort` is
+  documented for neither and is never sent.
+- **Reasoning.** Both return it in `reasoning_content`, the OpenAI dialect's second spelling, which
+  the mapper now reads beside `reasoning` — under the use case's switch, as before (`FRD-135`).
+- **Usage.** Every chunk of a stream carries a `usage` holding only a traffic type; only the last
+  has counts. The dialect now treats a `usage` with no count as no report, so a stream whose caller
+  leaves early is booked as unreported rather than as zero (`FRD-128` FR-6). No count endpoint
+  exists for these models (`:countTokens` answers `404`), so they are not counted after the fact.
+- **Errors.** An error object arrives wrapped in a one-element list, which used to lose every
+  `400`'s reason (`FRD-129`); `upstream_reason` reads both shapes.
+- **Tools, schemas, sampling.** Tool calls and their streamed fragments, `json_schema` (decoding is
+  constrained by it, constraints included), `seed`, `top_p`, the penalties and `stop` are accepted.
+- **The probe.** Nothing here is free to ask, but an **empty conversation** is: the endpoint looks
+  the model up before it reads the body, so a model that is there is refused `400` and one that is
+  not `404`, and nothing is generated. `max_tokens: 0` is **not** a safe probe — it means no cap.
+- **A configured model from a publisher nothing speaks** used to be dropped silently and answered
+  "not found"; it now stops the start, naming the publisher.
 
 ## 11. Dependencies & Risks
 

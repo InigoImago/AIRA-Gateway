@@ -14,12 +14,15 @@ reservation made against the model the caller *named* rather than the one that a
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import uuid
 
 import httpx
 import pytest
+from sqlalchemy import text
 
-from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, READS_PDF, declare_mock
 from .governed import CHAT_MODEL, EMBED_MODEL, GEMINI, KIRA, MOCK_MODEL, Governed
 
 pytestmark = pytest.mark.integration
@@ -176,9 +179,12 @@ async def test_the_calling_system_and_the_subject_are_both_on_the_row(
 
 
 async def test_latency_is_recorded_for_a_served_request(governed: Governed) -> None:
+    """Recorded, and a duration: a served request took time, so `NULL` and `0` are both a missing
+    measurement rather than a fast one."""
     assert (await governed.generate(_body())).status_code == 200
 
-    assert int((await governed.last_row())["latency_ms"] or 0) >= 0
+    latency = (await governed.last_row())["latency_ms"]
+    assert latency is not None and latency > 0, latency
 
 
 # ═══ 2. documents, and the refusal that matters most ═══════════════════════════════════════════
@@ -236,17 +242,39 @@ async def test_a_document_is_refused_the_same_way_on_the_kira_surface(
     assert response.status_code in (400, 422), response.text[:300]
 
 
-async def test_an_attachment_never_reaches_the_stored_payload(governed: Governed) -> None:
+async def test_an_attachment_never_reaches_the_stored_payload(
+    governed: Governed, engine, mock_catalogue_row
+) -> None:
     """Attachment bytes are stripped before redaction and **unconditionally** — stripping is not
     redaction. A column quietly holding megabytes of base64 would be found by an operator rather
-    than by us."""
-    await governed.set_flag("store_payloads", True)
-    await governed.generate(_with_pdf())
-    row = await governed.last_row()
+    than by us.
 
-    stored = str(row["request_payload"] or "")
-    assert "%PDF" not in stored
-    assert len(stored) < 5000, f"the payload column is carrying the document: {len(stored)} chars"
+    Sent to a model that **reads** the document (the double, declared a PDF reader for the length of
+    the test): a refused request stores no attachment, so checking it would check nothing. And the
+    bytes are looked for as they travel — base64 — anywhere in the row: `%PDF` never appears in an
+    encoded document whether it was stripped or not.
+    """
+    await declare_mock(engine, **READS_PDF)
+    await governed.set_flag("store_payloads", True)
+    for _ in range(20):
+        response = await governed.generate(_with_pdf(), model=MOCK_MODEL)
+        if response.status_code == 200:
+            break
+        await asyncio.sleep(0.5)
+    assert response.status_code == 200, response.text[:300]
+    await governed.last_row()
+
+    async with engine.connect() as connection:
+        stored = (
+            await connection.execute(
+                text("SELECT row_to_json(r)::text FROM request_logs r WHERE use_case = :slug"),
+                {"slug": governed.slug},
+            )
+        ).scalar_one()
+    encoded = base64.b64encode(PDF).decode("ascii")
+    assert "sha256" in stored, "the attachment was not described"
+    assert encoded[:40] not in stored, "the document's base64 reached the audit row"
+    assert len(stored) < len(encoded), f"the row is carrying the document: {len(stored)} chars"
 
 
 # ═══ 3. thinking, on both surfaces ═════════════════════════════════════════════════════════════
@@ -458,13 +486,7 @@ async def test_a_suspended_caller_is_not_told_about_their_pipeline(governed: Gov
     await governed.pipeline(
         {"type": "injection_filter", "config": {"mode": "heuristic", "action": "block"}}
     )
-    await governed._exec(  # noqa: SLF001 - the read-model is what these suites write
-        "INSERT INTO access_suspensions (id, use_case, target, target_value, action, throttle_rpm,"
-        " expires_at, author, reason)"
-        " VALUES (gen_random_uuid(), :slug, 'use_case', :slug, 'block', NULL,"
-        " now() + interval '1 hour', 'user:dev-round', 'developer round')",
-        slug=governed.slug,
-    )
+    await governed.suspend(author="user:dev-round", reason="developer round")
     await governed.settle()
 
     response = await governed.generate(_body(INJECTION), model=MOCK_MODEL)
@@ -502,15 +524,7 @@ async def test_a_use_case_can_be_stopped_and_started_again(governed: Governed) -
     """A suspension is kept after being lifted, because "blocked for two hours last Tuesday" is
     what a review asks. Lifting it has to actually restore service, and being late to *remove* a
     restriction is the harmless direction — hence the wait."""
-    from sqlalchemy import text
-
-    await governed._exec(  # noqa: SLF001
-        "INSERT INTO access_suspensions (id, use_case, target, target_value, action, throttle_rpm,"
-        " expires_at, author, reason)"
-        " VALUES (gen_random_uuid(), :slug, 'use_case', :slug, 'block', NULL,"
-        " now() + interval '1 hour', 'user:dev-round', 'developer round')",
-        slug=governed.slug,
-    )
+    await governed.suspend(author="user:dev-round", reason="developer round")
     await governed.settle()
     assert (await governed.generate(_body(), model=MOCK_MODEL)).status_code == 429
 
@@ -635,35 +649,48 @@ async def test_both_streams_record_a_hang_up_with_the_same_status(governed: Gove
 # ═══ 7. the credential itself ══════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.parametrize(
-    ("headers", "label"),
-    [
-        pytest.param({}, "no credential at all", id="none"),
-        pytest.param(
-            {"x-goog-api-key": "aira_deadbeef_notarealsecretatall"},
-            "a key that is not one",
-            id="wrong-key",
-        ),
-        pytest.param(
-            {"authorization": "Bearer not-a-token"}, "a bearer that is not one", id="wrong-bearer"
-        ),
-    ],
-)
+UNUSABLE = {
+    "no credential at all": {},
+    "a key that is not one": {"x-goog-api-key": "aira_deadbeef_notarealsecretatall"},
+    "a bearer that is not one": {"authorization": "Bearer not-a-token"},
+}
+
+
 async def test_an_unusable_credential_is_refused_without_naming_which_half_was_wrong(
-    governed: Governed, headers: dict, label: str
+    governed: Governed, engine
 ) -> None:
     """A 401 has nothing to name without telling an attacker which half of the credential was
-    wrong. It also leaves **no usage row** — deliberately: an unauthenticated request is a security
-    event, not a usage row attributed to nobody."""
-    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
-        response = await client.post(
-            f"{GEMINI}/models/{CHAT_MODEL}:generateContent",
-            json=_body(),
-            headers={"content-type": "application/json", **headers},
-        )
+    wrong — so the three ways of being wrong get **one** answer. It also leaves **no usage row**,
+    anywhere: an unauthenticated request is a security event, not a usage row attributed to nobody.
 
-    assert response.status_code == 401, f"{label}: {response.status_code} {response.text[:200]}"
-    assert not await governed.rows(), "an unauthenticated request was billed to this use case"
+    The request names a model nobody else asks for, so a row it left would be findable; and "none"
+    is read only after a later request's row has landed — the audit writer is one queue, so by then
+    an earlier row would have been written too.
+    """
+    probe = f"unusable-{uuid.uuid4().hex[:8]}"
+    answers: dict[str, str] = {}
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+        for label, headers in UNUSABLE.items():
+            response = await client.post(
+                f"{GEMINI}/models/{probe}:generateContent",
+                json=_body(),
+                headers={"content-type": "application/json", **headers},
+            )
+            assert response.status_code == 401, f"{label}: {response.status_code} {response.text}"
+            answers[label] = _message(response)
+
+    assert len(set(answers.values())) == 1, f"the refusal says which half was wrong: {answers}"
+
+    assert (await governed.generate(_body(), model=MOCK_MODEL)).status_code == 200
+    await governed.last_row()
+    async with engine.connect() as connection:
+        left = (
+            await connection.execute(
+                text("SELECT count(*) FROM request_logs WHERE requested_model = :m OR model = :m"),
+                {"m": probe},
+            )
+        ).scalar_one()
+    assert left == 0, "an unauthenticated request left a usage row"
 
 
 async def test_a_revoked_key_stops_working(governed: Governed) -> None:

@@ -17,25 +17,10 @@ from rest_framework.response import Response
 
 from aira_common.permissions import Permission
 from aira_management.apps.budgets.models import Budget
-from aira_management.apps.budgets.serializers import BudgetSerializer
+from aira_management.apps.budgets.serializers import BudgetSerializer, InstallationBudgetSerializer
 from aira_management.apps.usecases.events import emit
+from aira_management.apps.usecases.views.payloads import _budget_payload
 from aira_management.rbac import may, requires
-
-
-def payload(budget: Budget) -> dict[str, Any]:
-    """The event the gateway applies. `use_case` is **empty**, which is what selects the scope."""
-    return {
-        "id": budget.pk,
-        "use_case": "",
-        "scope": budget.scope,
-        "subject": budget.subject,
-        "period": budget.period,
-        # Decimal as a string: JSON numbers are floats, and money must not round-trip through one.
-        "limit_cost": str(budget.limit_cost) if budget.limit_cost is not None else None,
-        "limit_tokens": budget.limit_tokens,
-        "limit_requests": budget.limit_requests,
-        "enabled": budget.enabled,
-    }
 
 
 class InstallationBudgetViewSet(viewsets.ViewSet):
@@ -51,9 +36,13 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
         return [IsAuthenticated(), requires(Permission.BUDGET_INSTALLATION_WRITE)()]
 
     def list(self, request: Request) -> Response:
+        rows = Budget.objects.filter(use_case__isnull=True).order_by("period")
+        # Whoever may set it sees what they set: an empty answer would read as "none set", and the
+        # next save would silently replace the budget it could not see.
+        if may(request.user, Permission.BUDGET_INSTALLATION_WRITE):
+            return Response(BudgetSerializer(rows, many=True).data)
         if not may(request.user, Permission.REPORT_READ_ALL):
             return Response([], status=status.HTTP_200_OK)
-        rows = Budget.objects.filter(use_case__isnull=True).order_by("period")
         return Response(BudgetSerializer(rows, many=True).data)
 
     def create(self, request: Request) -> Response:
@@ -64,7 +53,7 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
         partial unique constraint in the model says the same thing to the database.
         """
         body = request.data if isinstance(request.data, dict) else {}
-        serializer = BudgetSerializer(data={**body, "scope": Budget.INSTALLATION})
+        serializer = InstallationBudgetSerializer(data={**body, "scope": Budget.INSTALLATION})
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         defaults: dict[str, Any] = {
@@ -84,7 +73,8 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
                 period=data["period"],
                 defaults=defaults,
             )
-            emit("budget.upserted", payload(budget))
+            # Every budget's shape; an **empty** `use_case` is what selects the installation scope.
+            emit("budget.upserted", _budget_payload(budget, ""))
         return Response(BudgetSerializer(budget).data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request: Request, pk: str | None = None) -> Response:

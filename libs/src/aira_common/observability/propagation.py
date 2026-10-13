@@ -48,10 +48,16 @@ def kafka_headers_for(traceparent: str = "") -> KafkaHeaders:
 
 
 def context_from_kafka_headers(headers: KafkaHeaders | None) -> Context:
-    """Extract an OTel context from Kafka-style headers for the consumer side."""
+    """Extract an OTel context from Kafka-style headers for the consumer side.
+
+    Every header is read, ours or not, so none may raise: a null value is skipped and bytes that
+    are not UTF-8 are replaced — an unreadable `traceparent` is then simply not a context, and a
+    consumer is not stopped by a header it never needed.
+    """
     carrier = {
-        key: (value.decode() if isinstance(value, bytes) else value)
+        key: (value.decode(errors="replace") if isinstance(value, bytes) else value)
         for key, value in (headers or [])
+        if value is not None
     }
     return extract(carrier)
 

@@ -1,7 +1,7 @@
 <div class="stack">
   <header>
     <h2 class="page-title">Pipeline tests</h2>
-    <p class="muted" style="margin: 0.25rem 0 0">
+    <p class="muted lead">
       One catalogue of questions, put to a use case's own pipeline, and judged by a person. Every
       use case is asked all of them, which is what makes two of them comparable. Testing a
       <em>model</em> is a use case whose pipeline starts there. Nothing here decides whether an
@@ -65,8 +65,8 @@
     because it can change between two runs of one use case.
   -->
     @if (tab() === 'results') {
-      <section class="card" style="padding: 0">
-        <div style="padding: 0.9rem 1rem 0">
+      <section class="card card--flush">
+        <div class="card__inset card__inset--above">
           <h3 class="section-title" style="margin: 0">
             Where each use case stands
             <app-info-hint label="What these numbers count">
@@ -78,7 +78,12 @@
             </app-info-hint>
           </h3>
         </div>
-        @if (!stats().length) {
+        @if (!statsKnown()) {
+          <p class="loading card__inset" data-testid="stats-loading">
+            <span class="spinner" aria-hidden="true"></span>
+            Loading the latest results…
+          </p>
+        } @else if (!stats().length) {
           <p class="empty" data-testid="no-stats">
             Nothing has been tested yet. Start a run under Runs.
           </p>
@@ -143,7 +148,7 @@
     <!-- Runs -->
     @if (tab() === 'runs') {
       <section class="card">
-        <h3 class="section-title" style="margin: 0 0 0.75rem">
+        <h3 class="section-title">
           Run the catalogue against a use case
           <app-info-hint label="What a run asks">
             Every question in the catalogue, in order, one at a time, through that use case's own
@@ -178,12 +183,14 @@
                   </app-info-hint>
                 </label>
                 <!-- Must stay bounded: a `<select>` sizes itself to its widest option, and a use
-                     case may be named anything at all. -->
+                     case may be named anything at all. Not offered during a run: what the two
+                     pickers show is where the questions are being asked. -->
                 <select
                   id="smoke-use-case"
                   name="use_case"
                   [ngModel]="useCase()"
                   (ngModelChange)="chooseUseCase($event)"
+                  [disabled]="running()"
                   data-testid="smoke-use-case"
                 >
                   <option value="">choose a use case</option>
@@ -210,6 +217,7 @@
                     name="model"
                     [ngModel]="startModel()"
                     (ngModelChange)="startModel.set($event)"
+                    [disabled]="running()"
                     data-testid="smoke-model"
                   >
                     @for (model of entryModels(); track model) {
@@ -243,8 +251,8 @@
         }
       </section>
 
-      <section class="card" style="padding: 0">
-        <div style="padding: 0.9rem 1rem 0">
+      <section class="card card--flush">
+        <div class="card__inset card__inset--above">
           <h3 class="section-title" style="margin: 0">
             Every run, newest first
             <app-info-hint label="Why older runs stay">
@@ -255,10 +263,10 @@
             </app-info-hint>
           </h3>
         </div>
-        @if (loading()) {
-          <p class="loading">
+        @if (!runsKnown()) {
+          <p class="loading card__inset" data-testid="runs-loading">
             <span class="spinner" aria-hidden="true"></span>
-            Loading…
+            Loading the runs…
           </p>
         } @else if (!runs().length) {
           <p class="empty" data-testid="no-runs">Nothing has been run yet.</p>
@@ -281,6 +289,16 @@
                       {{ run.started_at | date: 'yyyy-MM-dd HH:mm' }}
                       @if (isLatest(run)) {
                         <span class="badge badge--success">current</span>
+                      }
+                      <!-- Every result row exists from the start, so a run that stopped early
+                           would otherwise look complete and short. -->
+                      @if (run.finished_at === null) {
+                        <span
+                          class="badge badge--muted"
+                          title="This run did not finish: it stopped early, or it is still being asked. A question it did not reach shows as never asked."
+                          [attr.data-testid]="'run-unfinished-' + run.id"
+                          >unfinished</span
+                        >
                       }
                     </td>
                     <td>
@@ -311,10 +329,11 @@
                         <button
                           type="button"
                           class="btn btn--sm"
+                          [disabled]="exporting() !== null"
                           (click)="download(run)"
                           [attr.data-testid]="'export-run-' + run.id"
                         >
-                          Export CSV
+                          {{ exporting() === run.id ? 'Exporting…' : 'Export CSV' }}
                         </button>
                       </div>
                     </td>
@@ -329,6 +348,7 @@
 
     <app-question-catalogue
       [cases]="cases()"
+      [loading]="loading()"
       [mayAuthor]="mayAuthor()"
       [shown]="tab() === 'catalogue'"
       (changed)="reloadCatalogue()"

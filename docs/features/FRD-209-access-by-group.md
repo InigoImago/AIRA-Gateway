@@ -151,6 +151,11 @@ currently reaches so an empty one is visible rather than silent.
   carries the parent path too. Inventing our own hierarchy on top would be a second answer to a
   question the identity provider already answers.
 - **No change to the role vocabulary.** Two roles, as today.
+- **No sweep on a change made in the directory.** Removing somebody from a group in Keycloak ends
+  their *token's* access on their next request, and ends nothing for an API key they own through
+  that group: keys are revoked when access ends here (`FRD-613` FR-6), and Management learns of a
+  person's groups only from their own tokens. Offboarding revokes their keys explicitly, or they
+  serve until they expire (`FRD-613` §9).
 
 ## 7. Testing, as built
 
@@ -231,6 +236,14 @@ A grant on the bare realm root `/` was accepted. It can never match — every pa
 begins with a name — so it was permanently inert while reading to a person as "the whole realm". A
 grant that cannot match anything is precisely what the path validation exists to catch; it is
 refused now.
+
+The validation checks a path's **shape**, not its existence — the identity provider may create the
+group tomorrow. A leading slash and at least one character after it; **spaces inside** it, because
+Keycloak names a department what it is called (`/Finance Department/Team A`) and the token carries
+exactly that path; no tab, newline or other whitespace, which no token carries; and the edges
+trimmed before the check, so a path pasted with a trailing space is stored as the token reports it
+rather than refused. The first version refused every space and made a department with a two-word
+name impossible to grant (corrected in the refactoring, `DEVLOG`).
 
 ### 8.4 The third route was specified, written down, replicated — and read by nobody
 

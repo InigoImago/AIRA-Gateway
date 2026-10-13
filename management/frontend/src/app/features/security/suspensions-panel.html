@@ -1,7 +1,7 @@
 @if (shown()) {
   <div class="card" role="tabpanel">
     <div class="spread">
-      <h3 class="section-title" style="margin: 0">
+      <h3 class="section-title">
         Stopped traffic
         <!--
           How far a stop reaches, told before it is pressed. There is deliberately no switch for the
@@ -33,9 +33,15 @@
     </div>
 
     @if (!canStop() && !hidden()) {
-      <p class="muted" style="margin: 0.25rem 0 0" data-testid="stop-readonly">
-        You can see everything that is stopped and why. Stopping and restoring traffic is done by IT
-        Security or a Global Administrator.
+      <p class="muted lead" data-testid="stop-readonly">
+        @if (permissionsKnown()) {
+          You can see everything that is stopped and why. Stopping and restoring traffic is done by
+          IT Security or a Global Administrator.
+        } @else {
+          <!-- Who this reader is could not be read, so naming who else does it would be a guess. -->
+          Your permissions could not be loaded, so stopping and restoring traffic are not offered
+          here. Reload the page to try again.
+        }
       </p>
     }
 
@@ -47,7 +53,8 @@
             id="stop-target"
             name="target"
             [ngModel]="target()"
-            (ngModelChange)="target.set($event)"
+            (ngModelChange)="chooseTarget($event)"
+            data-testid="stop-target"
           >
             <option value="subject">caller</option>
             <option value="credential">credential (API key)</option>
@@ -63,6 +70,7 @@
             (ngModelChange)="targetValue.set($event)"
             placeholder="a username, a key prefix, or a use-case id"
             autocomplete="off"
+            data-testid="stop-value"
           />
         </div>
         <div class="field grow">
@@ -77,25 +85,34 @@
           />
           <span class="field__hint">Kept with the decision, and read by whoever reviews it.</span>
         </div>
-        <div class="field">
-          <label for="stop-scope">Where</label>
-          <select
-            id="stop-scope"
-            name="use_case"
-            [ngModel]="scope()"
-            (ngModelChange)="scope.set($event)"
-            data-testid="stop-scope"
-          >
-            <option value="">everywhere</option>
-            @for (slug of useCases(); track slug) {
-              <option [value]="slug">only in {{ slug }}</option>
+        <!-- No "Where" for a whole use case: it is stopped wherever it is called (`chooseTarget`). -->
+        @if (target() !== 'use_case') {
+          <div class="field">
+            <label for="stop-scope">Where</label>
+            <select
+              id="stop-scope"
+              name="use_case"
+              [ngModel]="scope()"
+              (ngModelChange)="scope.set($event)"
+              data-testid="stop-scope"
+            >
+              <option value="">everywhere</option>
+              @for (slug of useCases(); track slug) {
+                <option [value]="slug">only in {{ slug }}</option>
+              }
+            </select>
+            @if (useCasesError(); as reason) {
+              <span class="field__hint field__hint--error" data-testid="stop-scope-error">
+                {{ reason }} Only "everywhere" can be chosen until the page is reloaded.
+              </span>
+            } @else {
+              <span class="field__hint">
+                A credential is often bound to one use case; stopping it everywhere stops more than
+                the incident.
+              </span>
             }
-          </select>
-          <span class="field__hint">
-            A credential is often bound to one use case; stopping it everywhere stops more than the
-            incident.
-          </span>
-        </div>
+          </div>
+        }
         <div class="field">
           <label for="stop-action">Do what</label>
           <select
@@ -140,7 +157,12 @@
           />
           <span class="field__hint">Empty means until somebody lifts it.</span>
         </div>
-        <button type="submit" class="btn btn--danger" [disabled]="!canSubmit()">
+        <button
+          type="submit"
+          class="btn btn--danger"
+          [disabled]="!canSubmit()"
+          data-testid="stop-submit"
+        >
           {{ feedback.busy() ? 'Stopping…' : 'Stop' }}
         </button>
       </form>
@@ -189,9 +211,7 @@
               <tr>
                 <td>
                   <code>{{ row.target_value }}</code>
-                  <div class="muted" style="font-size: 0.78rem">
-                    {{ row.target }}{{ row.use_case ? ' · ' + row.use_case : ' · everywhere' }}
-                  </div>
+                  <div class="muted text-sm">{{ reachOf(row) }}</div>
                 </td>
                 <td>
                   @if (row.action === 'throttle') {
@@ -233,9 +253,7 @@
           </tbody>
         </table>
       </div>
-      <div style="padding: 0 1rem 0.9rem">
-        <app-table-pager [view]="activeView" noun="suspensions" testid="active-pager" />
-      </div>
+      <app-table-pager [view]="activeView" noun="suspensions" testid="active-pager" />
 
       @if (past().length) {
         <details style="margin-top: 1rem">
@@ -243,27 +261,54 @@
             Earlier decisions ({{ past().length }}) — already lifted or expired. Kept as a record of
             who stopped what, when, and why.
           </summary>
+          <!-- The active table's columns, plus when each decision started and ended: a review asks
+               "everywhere or only in uc-a, and for how long?", which a name and a reason cannot
+               answer. -->
           <div class="table-wrap" style="margin-top: 0.5rem">
-            <table class="table">
+            <table class="table" data-testid="past-suspensions">
+              <thead>
+                <tr>
+                  <th scope="col">Target</th>
+                  <th scope="col">Action</th>
+                  <th scope="col">From</th>
+                  <th scope="col">Ended</th>
+                  <th scope="col">By</th>
+                  <th scope="col">Reason</th>
+                </tr>
+              </thead>
               <tbody>
                 @for (row of pastView.rows(); track row.id) {
-                  <tr>
+                  <tr [attr.data-testid]="'past-' + row.id">
                     <td>
                       <code>{{ row.target_value }}</code>
+                      <div class="muted text-sm">{{ reachOf(row) }}</div>
                     </td>
-                    <td>{{ row.author }}</td>
-                    <td>{{ row.reason || '—' }}</td>
+                    <td>
+                      @if (row.action === 'throttle') {
+                        <span class="badge badge--warning">{{ row.throttle_rpm }}/min</span>
+                      } @else {
+                        <span class="badge badge--danger">blocked</span>
+                      }
+                    </td>
                     <td class="nowrap">
-                      {{ row.lifted_at ? 'lifted by ' + row.lifted_by : 'expired' }}
+                      {{ row.created_at ? (row.created_at | date: 'yyyy-MM-dd HH:mm') : '—' }}
                     </td>
+                    <td class="nowrap">
+                      {{ endedAt(row) ? (endedAt(row) | date: 'yyyy-MM-dd HH:mm') : '—' }}
+                      <div class="muted text-sm">
+                        {{ row.lifted_at ? 'lifted by ' + row.lifted_by : 'expired' }}
+                      </div>
+                    </td>
+                    <td>
+                      <code>{{ row.author }}</code>
+                    </td>
+                    <td>{{ row.reason || '—' }}</td>
                   </tr>
                 }
               </tbody>
             </table>
           </div>
-          <div style="padding: 0.5rem 0 0">
-            <app-table-pager [view]="pastView" noun="decisions" testid="past-pager" />
-          </div>
+          <app-table-pager [view]="pastView" noun="decisions" testid="past-pager" />
         </details>
       }
     }

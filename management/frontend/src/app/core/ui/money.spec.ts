@@ -1,4 +1,4 @@
-import { displayAmount, displayCount } from './money';
+import { displayAmount, displayCount, nanosOf, storedAmount } from './money';
 
 /**
  * The client-side half of `aira_common.money.format_display`.
@@ -47,5 +47,47 @@ describe('displayCount', () => {
   it('groups thousands so a figure is read rather than counted', () => {
     expect(displayCount(12840)).toBe('12,840');
     expect(displayCount(7)).toBe('7');
+  });
+});
+
+describe('nanosOf', () => {
+  it('reads a decimal the server sent without passing it through a float', () => {
+    expect(nanosOf('250.000000')).toBe(250_000_000_000);
+    expect(nanosOf('0.1')).toBe(100_000_000);
+    // 1.005 is 1.00499999… as a float; on the digits it is exactly what it says.
+    expect(nanosOf('1.005')).toBe(1_005_000_000);
+    expect(nanosOf('7')).toBe(7_000_000_000);
+    expect(nanosOf('-1.5')).toBe(-1_500_000_000);
+  });
+
+  it('drops what lies below a nano-unit', () => {
+    expect(nanosOf('0.0000000019')).toBe(1);
+  });
+
+  it('refuses what is not a plain decimal, rather than guessing zero', () => {
+    expect(nanosOf('')).toBeNull();
+    expect(nanosOf('abc')).toBeNull();
+    expect(nanosOf('1e3')).toBeNull();
+  });
+
+  it('writes a stored limit the way every other amount here is written', () => {
+    // "0.00 / 250.000000" printed the limit as stored, beside a figure formatted to two places.
+    expect(displayAmount(nanosOf('250.000000') ?? 0)).toBe('250.00');
+  });
+});
+
+describe('storedAmount', () => {
+  it('shows a configured amount as it was set: every significant decimal, at least two', () => {
+    expect(storedAmount('250.000000')).toBe('250.00');
+    expect(storedAmount('0.010000')).toBe('0.01');
+    // Rounded to two places this read 0.13 — a limit nobody chose.
+    expect(storedAmount('0.125000')).toBe('0.125');
+    expect(storedAmount('0.000001')).toBe('0.000001');
+    expect(storedAmount('20')).toBe('20.00');
+  });
+
+  it('hands back nothing for what is not a plain decimal, so no zero is guessed', () => {
+    expect(storedAmount('')).toBeNull();
+    expect(storedAmount('20,00')).toBeNull();
   });
 });

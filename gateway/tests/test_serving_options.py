@@ -388,6 +388,53 @@ async def test_batch_embed_returns_a_vector_per_text_and_is_recorded_as_many_req
         assert row.operation == "batchEmbedContents"
 
 
+@pytest.mark.parametrize(
+    ("path", "body", "vectors"),
+    [
+        (
+            "/v1beta/models/mock-1:batchEmbedContents",
+            {"requests": [{"content": {"parts": [{"text": f"text {n}"}]}} for n in range(64)]},
+            64,
+        ),
+        ("/kira/api/external/embed", {"text": "one text", "model_id": 77}, 1),
+    ],
+    ids=["gemini-batch", "kira"],
+)
+async def test_the_audit_row_describes_the_vectors_and_keeps_none_of_them(
+    path: str, body: dict[str, Any], vectors: int
+) -> None:
+    """AIRA is not a vector database (`FRD-113` non-goal), and the attachment rule exists because
+    stored bytes would make each row megabytes. Every embedding response was stored verbatim: a
+    batch of 256 texts at 3 072 dimensions wrote 15.6 MB of floats per audit row, walked by every
+    writer pass. The row keeps what the answer *was* — how many vectors, how wide, and a digest that
+    links an identical answer — and the caller still receives every value."""
+    import json
+
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(
+            app, numeric_id=77, capabilities=["embed"], embedding={"supports_batch": True}
+        )
+        response = client.post(path, json=body)
+        assert response.status_code == 200, response.text
+        async with app.state.db_sessionmaker() as session:
+            row = (await session.execute(select(RequestLog))).scalars().one()
+
+    answered = response.json()
+    returned = answered.get("embeddings", [answered])
+    assert len(returned) == vectors
+    width = len(returned[0].get("values") or returned[0].get("vector"))
+    assert width > 0, "the caller receives every value"
+
+    stored = row.response_payload
+    assert stored is not None
+    assert stored["vectors"]["count"] == vectors
+    assert stored["vectors"]["dimensions"] == width
+    assert len(stored["vectors"]["sha256"]) == 64
+    assert "values" not in json.dumps(stored) and "vector" not in stored
+    assert len(json.dumps(stored)) < 300
+
+
 async def test_a_batch_mixing_task_types_is_refused_rather_than_flattened() -> None:
     """One call carries one task type, because that is what is metered, validated and recorded.
     Serving a mixed batch would put one task type on an audit row for vectors built with two."""
@@ -460,20 +507,67 @@ async def test_a_truncated_ordinary_answer_is_still_returned() -> None:
     assert response.status_code == 200
 
 
-async def test_a_refused_document_releases_its_reservation() -> None:
-    """The refusal happens after dispatch, inside the hold — so it must give the budget back
-    rather than charging a use case for an answer it never received."""
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/v1beta/models/mock-1:generateContent", _body(responseSchema=SCHEMA, maxOutputTokens=1)),
+        (
+            "/kira/api/external/chat",
+            {
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": 77,
+                "responseSchema": SCHEMA,
+                "maxTokens": 1,
+            },
+        ),
+    ],
+    ids=["gemini", "kira"],
+)
+async def test_a_refused_document_books_what_the_model_spent(
+    path: str, body: dict[str, Any]
+) -> None:
+    """The model stopped before the document was complete, so the caller is refused — and the
+    provider billed every token of it all the same. Released instead of settled, that spend
+    reached no budget, no cost report and no anomaly rule: schema requests that reliably truncate
+    were unbounded spend against a cost limit that never moved. The row keeps what was spent, and
+    files it as the model stopping, not as the caller's mistake."""
+    from aira_gateway.db.models import BudgetRead, BudgetUsage
+
     app = _app()
-    budgets = _RecordingBudgets()
-    app.state.budgets = budgets
     with TestClient(app) as client:
-        await _catalogue(app, capabilities=["generate", "structured_output"])
-        response = client.post(
-            "/v1beta/models/mock-1:generateContent",
-            json=_body(responseSchema=SCHEMA, maxOutputTokens=1),
+        await _catalogue(
+            app,
+            numeric_id=77,
+            capabilities=["generate", "structured_output"],
+            input_price_per_million_nanos=1_000_000_000,
+            output_price_per_million_nanos=2_000_000_000,
         )
-        assert response.status_code == 502
-        assert budgets.released == 1
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                BudgetRead(
+                    id=1,
+                    use_case="demo",
+                    scope="use_case",
+                    subject="",
+                    period="month",
+                    limit_tokens=10_000_000,
+                    enabled=True,
+                )
+            )
+            await session.commit()
+        response = client.post(path, json=body, headers={"x-aira-use-case": "demo"})
+        async with app.state.db_sessionmaker() as session:
+            (row,) = (await session.execute(select(RequestLog))).scalars()
+            booked = [
+                (usage.tokens, usage.requests)
+                for usage in (await session.execute(select(BudgetUsage))).scalars()
+            ]
+
+    assert response.status_code == 502, response.text
+    assert (row.status, row.outcome) == (502, "upstream_error")
+    assert row.completion_tokens and row.prompt_tokens
+    assert row.cost_nanos and row.cost_nanos > 0
+    assert booked == [(row.prompt_tokens + row.completion_tokens, 1)]
 
 
 class _WeighingLimiter:
@@ -506,6 +600,64 @@ async def test_a_batch_reaches_the_rate_limiter_as_the_many_requests_it_is() -> 
 
     assert response.status_code == 200, response.text
     assert limiter.weights == [5]
+
+
+def _batch(size: int, *, blank_at: int | None = None) -> dict[str, Any]:
+    texts = ["" if n == blank_at else f"text {n}" for n in range(size)]
+    return {"requests": [{"content": {"parts": [{"text": text}]}} for text in texts]}
+
+
+GEMINI_BATCH = "/v1beta/models/mock-1:batchEmbedContents"
+KIRA_EMBED = "/kira/api/external/embed"
+
+
+@pytest.mark.parametrize(
+    ("rpm", "refused", "then"),
+    [
+        # 300 is over the batch bound: before, it took 300 of 500 and the next 250 did not fit.
+        (500, (GEMINI_BATCH, _batch(300)), [(GEMINI_BATCH, _batch(250))]),
+        # One blank text refuses the whole batch, and refused it after taking 255 of 500.
+        (500, (GEMINI_BATCH, _batch(255, blank_at=254)), [(GEMINI_BATCH, _batch(250))]),
+        # A list is one embedding on this surface, refused by a model that takes no lists — after
+        # taking one of the use case's two requests a minute.
+        (
+            2,
+            (KIRA_EMBED, {"text": ["a", "b"], "model_id": 77}),
+            [(KIRA_EMBED, {"text": "a", "model_id": 77})] * 2,
+        ),
+    ],
+    ids=["over-the-batch-bound", "a-blank-text", "kira-list-to-a-model-without-batches"],
+)
+async def test_an_unservable_embedding_spends_no_allowance(
+    rpm: int, refused: tuple[str, Any], then: list[tuple[str, Any]]
+) -> None:
+    """Requests that can never succeed are refused before they spend an allowance — the rule the
+    generation path already kept (`check_not_empty`, `check_sampling`). An embedding refused for
+    its own shape was refused only after the rate limit had taken its full weight, so the next
+    *valid* request — from anyone in the use case — was a `429`."""
+    from aira_gateway.db.models import RateLimitRead, UseCaseRead
+
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(
+            app,
+            numeric_id=77,
+            capabilities=["embed"],
+            embedding={"supports_batch": refused[0] == GEMINI_BATCH},
+        )
+        async with app.state.db_sessionmaker() as session:
+            session.add(UseCaseRead(slug="uc", name="uc"))
+            session.add(
+                RateLimitRead(id=1, use_case="uc", scope="use_case", limit_rpm=rpm, enabled=True)
+            )
+            await session.commit()
+        headers = {"x-aira-use-case": "uc"}
+        path, body = refused
+        response = client.post(path, json=body, headers=headers)
+        assert response.status_code in (400, 422), response.text
+        for path, body in then:
+            response = client.post(path, json=body, headers=headers)
+            assert response.status_code == 200, response.text
 
 
 async def test_a_batch_reserves_and_settles_as_the_many_requests_it_is() -> None:

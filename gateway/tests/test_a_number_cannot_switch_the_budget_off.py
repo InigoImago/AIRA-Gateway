@@ -35,11 +35,12 @@ from typing import Any
 import fakeredis.aioredis as fakeredis
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Integer
+from sqlalchemy import BigInteger, Integer
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from aira_common.counters import RedisRunner
+from aira_gateway.api.serving.controls import text_tokens
 from aira_gateway.app import create_app
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger
 from aira_gateway.budgets.service import BudgetService
@@ -58,19 +59,26 @@ GEMINI = "/v1beta/models/mock-1:generateContent"
 
 
 def test_the_ceiling_is_what_a_token_budget_can_hold() -> None:
-    """`MAX_ACCOUNTABLE_TOKENS` is not a number somebody liked; it is the width of the column.
+    """`MAX_ACCOUNTABLE_TOKENS` is not a number somebody liked; it is the width of the column a
+    token budget is configured in — `budgets.limit_tokens`, as wide as Management's own field.
 
-    Asserted against the column rather than against `2**31 - 1`, so that widening `budget_usage`
-    to a `BigInteger` fails here and asks the question rather than leaving a ceiling that no longer
-    means what its comment says. *A ceiling nobody can account for is a number somebody raises*
-    (`LESSONS.md` §3), and this is the accounting.
+    Asserted against the columns rather than against `2**31 - 1`, so that widening the limit fails
+    here and asks the question rather than leaving a ceiling that no longer means what its comment
+    says. *A ceiling nobody can account for is a number somebody raises* (`LESSONS.md` §3), and
+    this is the accounting.
+
+    The running total is a different number and must be wider: `budget_usage.tokens` adds up every
+    request of a scope for a whole day or month, so it holds many ceilings' worth — two billion
+    tokens is days of one busy use case's month, and a total that cannot hold the next booking
+    fails every request after it. `BigInteger` subclasses `Integer`, hence the exact comparison.
     """
-    tokens = BudgetUsage.__table__.c.tokens
+    usage = BudgetUsage.__table__.c
     limit = BudgetRead.__table__.c.limit_tokens
 
-    assert isinstance(tokens.type, Integer), tokens.type
-    assert isinstance(limit.type, Integer), limit.type
+    assert type(limit.type) is Integer, limit.type
     assert MAX_ACCOUNTABLE_TOKENS == 2**31 - 1
+    for total in (usage.tokens, usage.requests, usage.unpriced_requests, usage.cost_nanos):
+        assert isinstance(total.type, BigInteger), f"{total.name} is {total.type}"
 
 
 # =================================================================================================
@@ -318,7 +326,8 @@ async def test_the_estimate_still_carries_the_figure_it_is_for() -> None:
 
     A clamp that flattened every estimate would pass the test above — and quietly stop the
     reservation bounding anything, which is `FRD-405` §4.2 switched off by the fix meant to protect
-    it. The caller asked for 4 096 output tokens, so 4 096 is what has to be set aside.
+    it. The caller asked for 4 096 output tokens, so 4 096 is what has to be set aside — with the
+    prompt it sends, which is input it is billed for too.
     """
     app = _app()
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -347,7 +356,7 @@ async def test_the_estimate_still_carries_the_figure_it_is_for() -> None:
         )
 
     assert response.status_code == 200, response.text
-    assert [amounts.tokens for amounts in spy.reserved] == [4096]
+    assert [amounts.tokens for amounts in spy.reserved] == [4096 + text_tokens(["hi"])]
 
 
 KIRA = "/kira/api/external/chat"
@@ -391,3 +400,69 @@ async def test_an_ordinary_request_is_untouched() -> None:
         )
 
     assert response.status_code == 200, response.text
+
+
+# =================================================================================================
+# A budget below nothing, and one that fills the allowance it is drawn from
+# =================================================================================================
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        (
+            GEMINI,
+            {
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+                "generationConfig": {"thinkingConfig": {"thinkingBudget": -1_000_000}},
+            },
+        ),
+        (
+            KIRA,
+            {
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": 9001,
+                "thinking": {"mode": "limited", "tokens": -5},
+            },
+        ),
+    ],
+    ids=["gemini", "kira"],
+)
+async def test_a_negative_thinking_budget_is_refused_by_name(path: str, body: Any) -> None:
+    """The floor had the same hole as the ceiling: bounded only where the model declared a
+    minimum. A budget of `-1 000 000` was forwarded upstream and **reserved** — the Lua script moved
+    the use case's counter down by a million tokens for as long as the request ran, so every
+    request beside it passed its check."""
+    app = _app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        await _catalogue(app)
+        response = client.post(path, json=body, headers={"x-aira-use-case": "uc"})
+
+    assert response.status_code in (400, 422), response.text
+    assert "THINKING_TOKEN_COUNT_TOO_LOW" in response.text
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"maxOutputTokens": 1000, "thinkingConfig": {"thinkingBudget": 2048}},
+        {"maxOutputTokens": 1000, "thinkingConfig": {"thinkingBudget": 1000}},
+    ],
+)
+async def test_a_budget_that_fills_the_output_allowance_is_refused_before_dispatch(
+    config: dict[str, Any],
+) -> None:
+    """A thinking budget is drawn from the output allowance. One that fills it leaves the answer
+    nothing, and Anthropic refuses it outright — which reached the caller as a `500` and an
+    `internal_error` row. It is the caller's request that cannot be served, so it is the caller's
+    `400`, by name."""
+    app = _app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        await _catalogue(app)
+        response = _post(
+            client,
+            {"contents": [{"role": "user", "parts": [{"text": "hi"}]}], "generationConfig": config},
+        )
+
+    assert response.status_code == 400, response.text
+    assert "THINKING_TOKEN_COUNT_TOO_HIGH" in response.text

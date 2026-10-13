@@ -80,6 +80,22 @@ keys stop working; group grants go with the read-model rows. But a Keycloak grou
 AIRA table. Every OIDC member of a retired use case could have gone on calling it, with all of its
 own controls deleted underneath them — no budget, no rate limit, no pipeline, no release.
 
+### 4.1a A rebuilt read-model retires too
+
+The topics are compacted (`FRD-204` FR-6), and `usecase.deleted` shares the slug's key with
+`usecase.upserted` — so for a retired use case the retirement is the **only** event compaction
+keeps, while its keys, memberships and grants survive on their own topics because nothing ever
+deleted them. A gateway rebuilding its read-model from the topics (a new stage, a restore) meets
+the retirement with no row to stamp.
+
+So the event carries the use case as it stood (the same snapshot `usecase.upserted` sends), and
+`_retire_usecase` writes the tombstone from it when there is no row — retention promise included.
+A retirement that names the slug alone (from before the event carried more) still leaves a
+tombstone; it grants nothing either way. Children arriving after the tombstone are not applied (a
+key arrives deactivated), and children arriving before it are swept by the retirement, so both
+orders converge. Pinned by `test_a_read_model_rebuilt_from_the_topics_still_refuses_it` and
+`test_a_replay_does_not_bring_back_what_the_retirement_ended`.
+
 ### 4.2 The retention promise survives the deletion
 
 `retention.py` reads a use case's `retention_days` and `store_payloads` from that same row. While

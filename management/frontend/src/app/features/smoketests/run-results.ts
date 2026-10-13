@@ -1,4 +1,6 @@
-import { TestRun, TestVerdict } from '../../core/api/models';
+import { formatDate } from '@angular/common';
+import { errorMessage } from '../../core/api/error-message';
+import { TestResult, TestRun, TestVerdict } from '../../core/api/models';
 
 /** How much of a failed request's message is stored on the result. */
 const FAILURE_NOTE_MAX = 240;
@@ -12,17 +14,37 @@ export function verdictBadge(verdict: TestVerdict): string {
 }
 
 /**
- * What is stored for a request that failed: the gateway's own message, or the status.
+ * Whether the run never put this question to the model.
  *
- * A network drop carries no error envelope, and the stored note must still say something.
+ * A run creates every result row before its first question, and only asking fills one in — with an
+ * answer or an error, and always a latency. A row with none of the three is a question the run did
+ * not reach: it stopped early, or it is still going. There is nothing in it to judge.
  */
-export function describeFailure(error: unknown): string {
-  const body = (error as { error?: { error?: { message?: string } } })?.error?.error?.message;
-  const status = (error as { status?: number })?.status;
-  return (body ?? `request failed${status ? ` (${status})` : ''}`).slice(0, FAILURE_NOTE_MAX);
+export function neverAsked(result: TestResult): boolean {
+  return !result.response && !result.error && result.latency_ms === null;
 }
 
-/** The export's file name, with anything a file name cannot carry replaced. */
+/**
+ * What is stored for a request that failed, in the words of whichever envelope answered.
+ *
+ * Read through `errorMessage`, so the compatibility surface's flat `{code, message}` and a
+ * validation answer's `details` are kept like everywhere else in the console. A network drop
+ * carries no envelope at all, and the stored note must still say something.
+ */
+export function describeFailure(error: unknown): string {
+  const status = (error as { status?: number })?.status;
+  const fallback = `request failed${status ? ` (${status})` : ''}`;
+  return errorMessage(error, fallback).slice(0, FAILURE_NOTE_MAX);
+}
+
+/**
+ * The export's file name: the use case, the run and the day it started, with anything a file name
+ * cannot carry replaced. The run id is in it because a use case is run again and again, and two
+ * exports of the same use case must not save as one file and a "(1)".
+ */
 export function csvFileName(run: TestRun): string {
-  return `aira-smoketest-${run.use_case.replace(/[^\w.-]/g, '_')}.csv`;
+  const useCase = run.use_case.replace(/[^\w.-]/g, '_');
+  // The day as the runs table shows it — local, like every date on this page.
+  const day = formatDate(run.started_at, 'yyyy-MM-dd', 'en-US');
+  return `aira-smoketest_${useCase}_run-${run.id}_${day}.csv`;
 }

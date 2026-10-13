@@ -1,7 +1,8 @@
 import { TestBed } from '@angular/core/testing';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import { CatalogModel, Register, RegisterEntry, RegisterModel } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { isoDay } from '../../core/ui/periods';
 import { RegisterPage } from './register-page';
 
 /**
@@ -63,32 +64,47 @@ interface Page {
   load: () => void;
   onSearch: (term: string) => void;
   toggleFindings: (only: boolean) => void;
-  applyPreset: (preset: 'this-month' | 'custom') => void;
+  applyPreset: (preset: 'this-month' | 'last-month' | 'custom') => void;
   toggle: (slug: string) => void;
   isOpen: (slug: string) => boolean;
   download: () => void;
   exporting: () => boolean;
+  from: { set: (v: string) => void; (): string };
+  to: { set: (v: string) => void; (): string };
+}
+
+/** A register per call, for a test about which of several answers ends up on screen. */
+type Answer = Observable<Register> | ((from: string, to: string) => Observable<Register>);
+
+/** The last day a `[from, to)` window includes, as the file name states it. */
+function lastDayOf(to: string): string {
+  const [year, month, day] = to.split('-').map(Number);
+  return isoDay(new Date(year, month - 1, day - 1));
 }
 
 function setup(
-  response: Observable<Register> = of(register()),
+  response: Answer = of(register()),
   csv?: Observable<Blob>,
   authored: Observable<CatalogModel[]> = of([{ name: 'gemini-2.5-flash' }]),
 ) {
   TestBed.resetTestingModule();
   const calls: Array<{ from: string; to: string }> = [];
   const exports: Array<{ from: string; to: string }> = [];
+  let catalogueAsks = 0;
   const service = {
     register: (from: string, to: string) => {
       calls.push({ from, to });
-      return response;
+      return typeof response === 'function' ? response(from, to) : response;
     },
     registerCsv: (from: string, to: string) => {
       exports.push({ from, to });
       return csv ?? of(new Blob(['use_case\n'], { type: 'text/csv' }));
     },
-    // Management's half of the catalogue comparison, asked for on every load.
-    models: () => authored,
+    // Management's half of the catalogue comparison.
+    models: () => {
+      catalogueAsks += 1;
+      return authored;
+    },
   };
   TestBed.configureTestingModule({
     imports: [RegisterPage],
@@ -101,6 +117,7 @@ function setup(
     fixture,
     calls,
     exports,
+    catalogueAsks: () => catalogueAsks,
     element,
     component: fixture.componentInstance as unknown as Page,
     text: () => element.textContent ?? '',
@@ -395,7 +412,8 @@ describe('RegisterPage', () => {
 
   it('says when the sweep last ran, and warns when it never has', () => {
     const ran = setup();
-    expect(ran.testid('register-erasure')?.textContent).toContain('1412');
+    // Grouped, like every other count in the console.
+    expect(ran.testid('register-erasure')?.textContent).toContain('1,412');
     // A time a person reads, not the wire's ISO string with its offset.
     expect(ran.testid('register-erasure')?.textContent).toMatch(
       /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/,
@@ -445,6 +463,133 @@ describe('RegisterPage', () => {
     expect(harness.exports[0].to).toBe(harness.calls[0].to);
   });
 
+  it('exports the period whose rows are on screen, not dates typed since', () => {
+    // The file is the register on screen. Dates typed into Custom… and not yet shown are a period
+    // nobody has looked at, and the screen still shows the old one.
+    const harness = setup();
+    const shown = harness.calls[0];
+    harness.component.applyPreset('custom');
+    harness.component.from.set('2025-01-01');
+    harness.component.to.set('2025-02-01');
+    harness.fixture.detectChanges();
+
+    harness.component.download();
+
+    expect(harness.exports).toEqual([shown]);
+  });
+
+  it('names the file by the last day it includes', () => {
+    const clicks: string[] = [];
+    const realCreate = URL.createObjectURL;
+    const realRevoke = URL.revokeObjectURL;
+    const realClick = HTMLAnchorElement.prototype.click;
+    URL.createObjectURL = (() => 'blob:test') as typeof URL.createObjectURL;
+    URL.revokeObjectURL = (() => undefined) as typeof URL.revokeObjectURL;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      clicks.push(this.download);
+    };
+    try {
+      const harness = setup();
+      harness.component.download();
+
+      const shown = harness.calls[0];
+      expect(clicks).toEqual([`aira-register_${shown.from}_${lastDayOf(shown.to)}.csv`]);
+    } finally {
+      URL.createObjectURL = realCreate;
+      URL.revokeObjectURL = realRevoke;
+      HTMLAnchorElement.prototype.click = realClick;
+    }
+  });
+
+  it('says which period the traffic on screen was measured over', () => {
+    // The window the rows were asked for, ending on the last day it includes — so dates typed into
+    // Custom… and not yet shown cannot be mistaken for the period of the figures on screen.
+    const harness = setup();
+    const shown = harness.calls[0];
+    harness.component.applyPreset('custom');
+    harness.component.from.set('2025-01-01');
+    harness.component.to.set('2025-02-01');
+    harness.fixture.detectChanges();
+
+    const period = harness.testid('register-period')?.textContent ?? '';
+    expect(period).toContain(shown.from);
+    expect(period).toContain(lastDayOf(shown.to));
+    // Days on the gateway's clock, which is not the reader's: said, not assumed.
+    expect(period).toContain('(UTC)');
+    expect(period).not.toContain('2025-01-01');
+  });
+
+  it('shows the period asked for last, whichever answer arrives last', () => {
+    // A month is a slower query than a week; the first period's rows must not land on screen
+    // under the second period's name.
+    const pending = new Map<string, Subject<Register>>();
+    const harness = setup((from) => {
+      const answer = new Subject<Register>();
+      pending.set(from, answer);
+      return answer;
+    });
+    const thisMonth = harness.component.from();
+
+    harness.component.applyPreset('last-month');
+    const lastMonth = harness.component.from();
+    pending.get(lastMonth)!.next(register({ use_cases: [entry({ slug: 'asked-last' })] }));
+    pending.get(thisMonth)!.next(register({ use_cases: [entry({ slug: 'asked-first' })] }));
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('register-row-asked-last')).not.toBeNull();
+    expect(harness.testid('register-row-asked-first')).toBeNull();
+  });
+
+  it('takes a failed load’s banner down once a later load succeeds', () => {
+    // Otherwise a complete register sits under "Could not load the register".
+    let asked = 0;
+    const harness = setup(() =>
+      ++asked === 1
+        ? (throwError(() => ({
+            status: 502,
+            error: { error: { message: 'gateway down' } },
+          })) as Observable<Register>)
+        : of(register()),
+    );
+    expect(harness.element.querySelector('[role="alert"]')?.textContent).toContain('gateway down');
+
+    harness.component.applyPreset('last-month');
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('register-table')).not.toBeNull();
+    expect(harness.element.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('keeps the search box out of the period form, so Enter in it does not reload', () => {
+    // The search was the form's only text field, so Enter in it submitted the period form: the
+    // register and the catalogue reloaded and the table flickered away mid-search.
+    const harness = setup();
+    const search = harness.testid('register-search') as HTMLInputElement;
+    const findings = harness.testid('register-findings-only') as HTMLInputElement;
+
+    expect(search.closest('form')).toBeNull();
+    expect(findings.closest('form')).toBeNull();
+  });
+
+  it('refuses a window that ends before it starts, and says so before asking', () => {
+    const harness = setup();
+    harness.component.applyPreset('custom');
+    harness.component.from.set('2026-09-10');
+    harness.component.to.set('2026-09-01');
+    harness.fixture.detectChanges();
+
+    const show = Array.from(harness.element.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Show',
+    )!;
+    expect(show.disabled).toBe(true);
+    expect(harness.element.querySelector('[role="alert"]')?.textContent).toContain(
+      'after the start date',
+    );
+
+    harness.component.load();
+    expect(harness.calls.length).toBe(1);
+  });
+
   it('says so when the export fails, rather than looking like it worked', () => {
     const harness = setup(
       of(register()),
@@ -481,15 +626,42 @@ describe('RegisterPage', () => {
     expect(harness.testid('register-drift')).toBeNull();
   });
 
-  it('does not report drift while Management is unreachable', () => {
-    // A diff against a list that never arrived would report every model as missing.
+  it('says the comparison could not be made while Management is unreachable', () => {
+    // A diff against a list that never arrived would report every model as missing — and saying
+    // nothing looks exactly like the two planes agreeing, which is the one thing not known.
     const harness = setup(
       of(register()),
       undefined,
-      throwError(() => new Error('down')),
+      throwError(() => ({ status: 503, error: { error: { message: 'Management is down.' } } })),
     );
     harness.fixture.detectChanges();
 
     expect(harness.testid('register-drift')).toBeNull();
+    const note = harness.testid('register-drift-unknown');
+    expect(note?.textContent).toContain('could not be made');
+    expect(note?.textContent).toContain('Management is down.');
+  });
+
+  it('says nothing about the comparison to a reader who sees only their own use cases', () => {
+    // The comparison is an installation-wide statement (`FRD-608` §4), never made for a scoped
+    // register — so a failure to make it is not news to that reader either.
+    const harness = setup(
+      of(register({ scope: 'use_cases' })),
+      undefined,
+      throwError(() => ({ status: 503 })),
+    );
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('register-drift-unknown')).toBeNull();
+  });
+
+  it('asks Management for its catalogue once, not for every period', () => {
+    // The catalogue does not depend on the period.
+    const harness = setup();
+    harness.component.applyPreset('last-month');
+    harness.fixture.detectChanges();
+
+    expect(harness.calls.length).toBe(2);
+    expect(harness.catalogueAsks()).toBe(1);
   });
 });

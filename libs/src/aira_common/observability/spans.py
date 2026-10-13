@@ -58,7 +58,7 @@ def trace_context_fields() -> dict[str, str]:
 def attribute_model_calls_to(attributes: Mapping[str, object]) -> None:
     """Remember who this request is for, so a model call it makes can say so.
 
-    Called from one place only — `gateway.auth.attribution.set_attribution`, guarded by
+    Called from one place only — `gateway.auth.attribution.attribute`, guarded by
     `test_every_attribution_reaches_the_span.py`. Never reset: the context is per task, and a
     request is a task.
     """

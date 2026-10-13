@@ -31,7 +31,11 @@ from aira_common.secrets import (
 pytestmark = pytest.mark.integration
 
 VAULT_ADDR = stack_addresses.url("vault")
-ROOT_TOKEN = "root"
+#: The dev server's root token as **this** stack set it (`VAULT_DEV_ROOT_TOKEN_ID`).
+ROOT_TOKEN = stack_addresses.setting("VAULT_DEV_ROOT_TOKEN_ID")
+#: The container, as this stack names it. Inside it the CLI uses the container's own `VAULT_ADDR`:
+#: the address published on the host is the wrong one there whenever the port has been moved.
+VAULT_CONTAINER = stack_addresses.container("vault")
 
 
 def _vault(*args: str) -> subprocess.CompletedProcess[str]:
@@ -41,10 +45,8 @@ def _vault(*args: str) -> subprocess.CompletedProcess[str]:
             "docker",
             "exec",
             "-e",
-            f"VAULT_ADDR={stack_addresses.url('vault')}",
-            "-e",
             f"VAULT_TOKEN={ROOT_TOKEN}",
-            "aira-vault",
+            VAULT_CONTAINER,
             "vault",
             *args,
         ],
@@ -160,10 +162,8 @@ def approle(secret_path: str, monkeypatch: pytest.MonkeyPatch):
             "exec",
             "-i",
             "-e",
-            f"VAULT_ADDR={stack_addresses.url('vault')}",
-            "-e",
             f"VAULT_TOKEN={ROOT_TOKEN}",
-            "aira-vault",
+            VAULT_CONTAINER,
             "vault",
             "policy",
             "write",

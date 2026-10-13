@@ -98,9 +98,12 @@ test.describe('Reporting', () => {
     await expect(page.locator('[data-testid="total-requests"]')).toBeVisible();
     await expect(page.locator('[role="alert"]')).toHaveCount(0);
     // Searched for as well, so "not visible" cannot mean "on another page". If this member could
-    // see it at all, the search would find it.
+    // see it at all, the search would find it. The search is waited for — a count taken the moment
+    // the page opens reads zero before the table has rendered, and the search would be skipped.
     const search = page.locator('[data-testid="breakdown-search"]');
-    if (await search.count()) await search.fill(slug);
+    const empty = page.locator('.table__empty');
+    await expect(search.or(empty).first()).toBeVisible({ timeout: 20_000 });
+    if (await search.isVisible()) await search.fill(slug);
     await expect(page.locator(`code:text-is("${slug}")`)).toHaveCount(0);
   });
 

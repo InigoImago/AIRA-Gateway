@@ -27,12 +27,55 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 
 #: How the optimiser gets switched on: the flag, or the environment variable the interpreter reads
 #: on startup. `PYTHONOPTIMIZE=0` is explicitly *off* and is left alone — the pattern demands a
 #: value, so "somebody wrote it down as off" is not reported as somebody turning it on.
-_FLAG = re.compile(r"python3?\s+-O|PYTHONOPTIMIZE\s*[=:]\s*[\"']?[1-9]")
+#:
+#: Every spelling a start-up file uses: a versioned interpreter (`python3.14 -O`), the flag among
+#: others (`-OO`, `-u -O`), the **exec form** (`CMD ["python", "-O", …]`), and Docker's legacy
+#: `ENV PYTHONOPTIMIZE 1` without `=`. A flag after `-m <module>` belongs to the module.
+_FLAG = re.compile(
+    r"\bpython[\d.]*\s+(?:-[A-Za-z]*\s+)*-[A-Za-z]*O"
+    r"|[\"']python[\d.]*[\"']\s*,\s*(?:[\"']-[A-Za-z]*[\"']\s*,\s*)*[\"']-[A-Za-z]*O"
+    r"|PYTHONOPTIMIZE[\"']?\s*[=:\s]\s*[\"']?[1-9]"
+)
+
+
+def _commands(path: Path) -> list[str]:
+    """A YAML file's `command`/`entrypoint` lists, each as one line — the form `_FLAG` reads.
+
+    A Compose list puts the interpreter and its flags on lines of their own (`- python`, `- -O`),
+    which no line-by-line pattern can see.
+    """
+
+    class _AnyTag(yaml.SafeLoader):
+        pass
+
+    _AnyTag.add_multi_constructor("!", lambda loader, suffix, node: None)
+    try:
+        documents = list(yaml.load_all(path.read_text(errors="ignore"), Loader=_AnyTag))
+    except yaml.YAMLError:
+        return []
+    found: list[str] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ("command", "entrypoint") and isinstance(value, list):
+                    found.append(" ".join(str(item) for item in value))
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    for document in documents:
+        walk(document)
+    return found
 
 
 #: Everything that decides how a container starts. A `Dockerfile` sets it directly; a compose file
@@ -68,6 +111,13 @@ def test_nothing_starts_python_with_assertions_disabled() -> None:
         for number, line in enumerate(path.read_text(errors="ignore").splitlines(), start=1)
         if _FLAG.search(line)
     ]
+    offenders += [
+        f"{path.relative_to(ROOT)}: {command}"
+        for path in _startup_files()
+        if path.suffix in (".yml", ".yaml")
+        for command in _commands(path)
+        if _FLAG.search(command)
+    ]
 
     assert not offenders, (
         "these start Python with assertions optimised away:\n  "
@@ -77,3 +127,38 @@ def test_nothing_starts_python_with_assertions_disabled() -> None:
         "flag, or convert the load-bearing assertions into real checks first and then delete this "
         "test deliberately."
     )
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "python -O -m aira_gateway",
+        "python3.14 -O app.py",
+        "RUN python -OO setup.py",
+        "exec python -u -O main.py",
+        'CMD ["python", "-O", "-m", "uvicorn"]',
+        "ENTRYPOINT ['python3', '-u', '-O', 'main.py']",
+        "ENV PYTHONOPTIMIZE 1",
+        "ENV PYTHONOPTIMIZE=2",
+        "PYTHONOPTIMIZE: '1'",
+    ],
+)
+def test_every_spelling_of_the_optimiser_is_found(spelling: str) -> None:
+    assert _FLAG.search(spelling), spelling
+
+
+@pytest.mark.parametrize(
+    "harmless",
+    ["PYTHONOPTIMIZE=0", "python -m pytest -q", "python -Wd -m app", "uv run python tools/x.py"],
+)
+def test_a_line_that_does_not_switch_it_on_is_left_alone(harmless: str) -> None:
+    assert not _FLAG.search(harmless), harmless
+
+
+def test_a_compose_list_is_read_as_one_command(tmp_path: Path) -> None:
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "services:\n  app:\n    command:\n      - python\n      - -O\n      - main.py\n"
+    )
+
+    assert [c for c in _commands(compose) if _FLAG.search(c)] == ["python -O main.py"]

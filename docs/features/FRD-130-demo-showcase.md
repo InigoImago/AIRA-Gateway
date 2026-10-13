@@ -82,7 +82,11 @@ owns it instead; the point survives.
 
 **`--fresh` resets the demo, and only the demo.** An early version deleted every use case, and
 deleting a use case revokes its keys **terminally** (`FRD-205`) — a reset is not a retirement. It
-now removes only the demo slugs.
+now keeps every slug a seed contribution declares (the showcase's and the evaluation use case,
+`registry.seeded_use_cases`) and removes the rest, announced as a retirement and a purge. Demo
+people are removed with their keys and memberships announced — except the demo keys the showcase
+reissues — and a person named in the question catalogue's evidence is kept and made claimable
+again, because a run's requester is `PROTECT` and a verdict should keep its author.
 
 ## 4a. A coding assistant, from `make showcase` (2026-08-10)
 

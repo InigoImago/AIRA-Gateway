@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { errorMessage } from './error-message';
 import { UseCaseService } from './use-case.service';
 
 describe('UseCaseService', () => {
@@ -184,12 +185,14 @@ describe('UseCaseService', () => {
     service.providers().subscribe((answer) => {
       expect(answer.providers.length).toBe(1);
       expect(answer.allowedRegions).toEqual(['eu', 'europe-west1']);
+      expect(answer.modelRegions).toEqual({ 'glm-4.7-maas': ['global'] });
     });
     const req = http.expectOne('/gw/v1beta/providers');
     expect(req.request.method).toBe('GET');
     req.flush({
       providers: [{ name: 'generative-language' }],
       allowedRegions: ['eu', 'europe-west1'],
+      modelRegions: { 'glm-4.7-maas': ['global'] },
     });
   });
 
@@ -200,6 +203,8 @@ describe('UseCaseService', () => {
     service.providers().subscribe((answer) => {
       expect(answer.providers).toEqual([]);
       expect(answer.allowedRegions).toEqual([]);
+      // An older gateway permits no model anything by name, so absence is exactly "none".
+      expect(answer.modelRegions).toEqual({});
     });
     http.expectOne('/gw/v1beta/providers').flush({});
   });
@@ -249,18 +254,19 @@ describe('UseCaseService', () => {
     http.expectOne('/api/v1/use-cases/uc/pipeline/').flush({ steps: [], fallback_models: [] });
   });
 
-  it('saves the pipeline with PUT', () => {
+  it('saves the pipeline with PUT, the whole configuration as the editor holds it', () => {
+    // PUT, because the editor holds the whole configuration; the body is the one it was given.
     const config = {
       steps: [{ type: 'model_route' as const, config: {} }],
       fallback_models: ['b'],
-      // Where a caller who names no model enters (`ADR-0020`). Sent on every save, because the
-      // editor holds the whole configuration and a PUT that omitted it would clear it.
-      models: ['start-1'],
     };
     service.savePipeline('uc', config).subscribe();
     const req = http.expectOne('/api/v1/use-cases/uc/pipeline/');
     expect(req.request.method).toBe('PUT');
-    expect(req.request.body).toEqual(config);
+    expect(req.request.body).toEqual({
+      steps: [{ type: 'model_route', config: {} }],
+      fallback_models: ['b'],
+    });
     req.flush(config);
   });
 
@@ -445,9 +451,12 @@ describe('UseCaseService', () => {
   });
 
   it('leaves the expiry out when the caller named none', () => {
-    /** NULL means never (`ADR-0015`), and an omitted field is how the server is told to apply its
-     *  own default — sending `0` would be a request for a key that expires immediately. */
+    /** An omitted field is how the server is told to apply its own default lifetime
+     *  (`AIRA_API_KEY_DEFAULT_DAYS`); every key ends (`ADR-0015`). */
     service.issueApiKey('uc-a', 'laptop').subscribe();
+    expect(http.expectOne((r) => r.method === 'POST').request.body).toEqual({ label: 'laptop' });
+
+    service.issueApiKey('uc-a', 'laptop', null).subscribe();
     expect(http.expectOne((r) => r.method === 'POST').request.body).toEqual({ label: 'laptop' });
 
     service.issueApiKey('uc-a', 'laptop', 30).subscribe();
@@ -455,6 +464,19 @@ describe('UseCaseService', () => {
       label: 'laptop',
       expires_in_days: 30,
     });
+  });
+
+  it('sends a lifetime the server will refuse, so the refusal can be shown', () => {
+    // `0` and a negative number were dropped as if nothing had been typed, and the key was issued
+    // for the default lifetime with no message. The server refuses them by name ("at least 1").
+    service.issueApiKey('uc-a', 'laptop', 0).subscribe();
+    expect(http.expectOne((r) => r.method === 'POST').request.body).toEqual({
+      label: 'laptop',
+      expires_in_days: 0,
+    });
+
+    service.issueApiKey('uc-a', 'laptop', -30).subscribe();
+    expect(http.expectOne((r) => r.method === 'POST').request.body.expires_in_days).toBe(-30);
   });
 
   it('asks for findings by use case rather than sifting the newest hundred', () => {
@@ -466,6 +488,23 @@ describe('UseCaseService', () => {
   });
 
   // ---- model smoke tests (`FRD-504`) ---------------------------------------------------------
+
+  it("keeps the model's reasoning out of the answer that is stored and rated", () => {
+    // A use case that returns reasoning sends `thought: true` parts first (`FRD-135`); joined in,
+    // the reasoning was stored and rated as "the model's answer".
+    let answer = '';
+    service.askModel('qwen3', 'Say OK', 'uc-a').subscribe((text) => (answer = text));
+
+    http
+      .expectOne((r) => r.url.includes(':generateContent'))
+      .flush({
+        candidates: [
+          { content: { parts: [{ text: 'The user wants OK. ', thought: true }, { text: 'OK.' }] } },
+        ],
+      });
+
+    expect(answer).toBe('OK.');
+  });
 
   it('asks the model through the gateway, attributed to a use case', () => {
     /** `FRD-504` §5: a smoke test travels the ordinary request path, so it is priced, budgeted,
@@ -516,5 +555,60 @@ describe('UseCaseService', () => {
     // the wrong plane would work in a demo and return a stale copy in production.
     service.globalRules().subscribe((rules) => expect(rules).toEqual([]));
     http.expectOne('/api/v1/anomaly-rules/').flush([]);
+  });
+
+  it("reads a refused export's reason, which arrives as a blob like the file would have", async () => {
+    // A failed `responseType: 'blob'` request carries the error envelope as a Blob, and every
+    // export failure showed the generic fallback instead of the gateway's reason.
+    let failure: unknown;
+    service.reportCsv('2026-08-07', '2026-08-01', 'use_case').subscribe({
+      error: (response: unknown) => (failure = response),
+    });
+    http
+      .expectOne((r) => r.url === '/gw/v1beta/reporting')
+      .flush(
+        new Blob([JSON.stringify({ error: { message: "'to' must be after 'from'." } })], {
+          type: 'application/json',
+        }),
+        { status: 400, statusText: 'Bad Request' },
+      );
+    await new Promise((resolve) => setTimeout(resolve));
+
+    expect(errorMessage(failure, 'Could not export the report.')).toBe(
+      "'to' must be after 'from'.",
+    );
+  });
+
+  it('reads the reason of a refused register export and test-run export the same way', async () => {
+    const failures: unknown[] = [];
+    service
+      .registerCsv('2026-08-01', '2026-09-01')
+      .subscribe({ error: (e: unknown) => failures.push(e) });
+    service.testRunCsv(7).subscribe({ error: (e: unknown) => failures.push(e) });
+    const envelope = () =>
+      new Blob([JSON.stringify({ error: { message: 'refused for a reason' } })], {
+        type: 'application/json',
+      });
+    http
+      .expectOne((r) => r.url === '/gw/v1beta/register')
+      .flush(envelope(), { status: 403, statusText: 'Forbidden' });
+    http
+      .expectOne('/api/v1/test-runs/7/export/')
+      .flush(envelope(), { status: 404, statusText: 'Not Found' });
+    await new Promise((resolve) => setTimeout(resolve));
+
+    expect(failures.map((failure) => errorMessage(failure, 'fallback'))).toEqual([
+      'refused for a reason',
+      'refused for a reason',
+    ]);
+  });
+
+  it("deletes a use case's rule at the address the router serves, trailing slash included", () => {
+    // Management routes with a trailing slash and `APPEND_SLASH` is off, so the address without
+    // it is a 404 and the rule keeps watching.
+    service.deleteUseCaseRule('uc', 7).subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/anomaly-rules/7/');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null);
   });
 });

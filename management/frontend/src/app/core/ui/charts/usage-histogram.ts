@@ -10,7 +10,10 @@ import { ChartModel, formatMetric } from './usage-series';
  */
 const LABELS_FIT = 32;
 
-/** Where the gridlines sit, as fractions of the peak. The baseline needs no label of its own. */
+/**
+ * Where a money axis draws its lines, as fractions of the peak, and where a count axis looks for
+ * whole numbers to draw. The baseline needs no label of its own.
+ */
 const GRID_FRACTIONS = [1, 0.75, 0.5, 0.25];
 
 /** The precisions a money scale may use, coarsest first. */
@@ -56,6 +59,10 @@ export class UsageHistogram {
   readonly model = input.required<ChartModel>();
   /** Shown instead of a flat plot when nothing happened in the period. */
   readonly emptyText = input('No traffic in this period.');
+  /** Shown instead of a flat plot when spend is drawn and none of it could be priced. */
+  readonly unknownText = input(
+    'No request in this period could be priced, so there is no spend to plot — it is unknown, not zero.',
+  );
 
   /** Which column the pointer is on, by bucket — not by index, because the list changes under it. */
   protected readonly hovered = signal<string | null>(null);
@@ -82,17 +89,25 @@ export class UsageHistogram {
    */
   protected readonly gridlines = computed(() => {
     const model = this.model();
-    // Counts are rounded to a whole unit: "7.75 requests" is not a tick a reader trusts. Spend is
-    // not, because its interesting magnitudes are below one unit of the currency.
-    const values = GRID_FRACTIONS.map((fraction) =>
-      model.metric === 'cost' ? model.peak * fraction : Math.round(model.peak * fraction),
-    );
-    const labels =
-      model.metric === 'cost' ? scaleOf(values) : values.map((value) => displayCount(value));
+    if (!model.peak) return [];
+    if (model.metric !== 'cost') {
+      // **A count is labelled with a whole number, and drawn where that number is.** "7.75
+      // requests" is not a tick a reader trusts — and rounding the label of a line that stays at
+      // its fraction is worse: the 75 % line of a peak of three marks 2.25 and read "2", so a
+      // column of two ended below the line that says two. So the whole numbers near the fractions
+      // are found first, and each line is drawn at its own height.
+      const values = new Set(GRID_FRACTIONS.map((fraction) => Math.round(model.peak * fraction)));
+      return [...values]
+        .filter((value) => value > 0)
+        .map((value) => ({ at: (value / model.peak) * 100, label: displayCount(value) }));
+    }
+    // Spend keeps its fractions: its interesting magnitudes are below one unit of the currency, and
+    // the scale's one precision writes each line's own value.
+    const labels = scaleOf(GRID_FRACTIONS.map((fraction) => model.peak * fraction));
 
-    // **A repeated label is worse than a missing one**, and a small peak produces them whatever the
-    // precision: four ticks over two requests are 2, 2, 1, 1. The line stays — it is reference —
-    // and the second `1` goes.
+    // **A repeated label is worse than a missing one.** A peak of a few nano-units can print the
+    // same figure twice at the finest precision; the line stays — it is reference — and the repeat
+    // goes.
     const seen = new Set<string>();
     return GRID_FRACTIONS.map((fraction, index) => {
       const label = labels[index];

@@ -38,7 +38,10 @@ def _request(text: str = "hi") -> CanonicalRequest:
 async def test_generate_maps_response_and_sends_key() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/models/gemini-2.0-flash:generateContent")
-        assert request.url.params["key"] == "secret-key"
+        # In the header Google's own SDK uses, and never in the URL: a URL is what proxies and
+        # access logs keep.
+        assert request.headers["x-goog-api-key"] == "secret-key"
+        assert "secret-key" not in str(request.url)
         return httpx.Response(
             200,
             json={
@@ -302,3 +305,107 @@ def test_residency_is_enforced_in_local_too() -> None:
 
     assert "global" in str(caught.value)
     assert "AIRA_ALLOWED_REGIONS" in str(caught.value) or "allowed set" in str(caught.value)
+
+
+# == a model name addresses one model, never another resource (security) =========================
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "x/../../v1/tunedModels/someone",
+        "../../upload/v1beta/files",
+        "m?alt=other",
+        "m#fragment",
+        "..%2f..%2fevil",
+    ],
+)
+async def test_a_model_name_cannot_escape_its_path_segment(model: str) -> None:
+    """**The key travelled with it.** The name went into `/models/{model}:…` unencoded, so a name
+    holding `/`, `..`, `?` or `#` walked out of `/models/` to another resource of the same API —
+    tuned models, uploaded files — with this installation's credential attached. Reachable from a
+    request `:checkThinking` takes a model and a provider for. Vertex encodes the same segment, and
+    now so does this adapter."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "x"}]}, "finishReason": "STOP"}]},
+        )
+
+    await _upstream(handler).generate(_request().model_copy(update={"model": model}))
+
+    path = seen[0].url.raw_path.decode("ascii")
+    assert path.startswith("/v1beta/models/"), path
+    assert path.endswith(":generateContent"), "a '?' or '#' in the name must not cut the verb off"
+    assert "/" not in path[len("/v1beta/models/") :], "the name stays one path segment"
+    assert not seen[0].url.query or seen[0].url.query == b""
+
+
+async def test_the_key_is_never_in_a_url_on_any_verb() -> None:
+    """The listing, a generation, a stream and an embedding: each carries the key in the header and
+    none in its URL, so no proxy log or redirect ever holds it."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"models": []})
+        if request.url.path.endswith(":streamGenerateContent"):
+            return httpx.Response(
+                200, content=b'data: {"candidates":[{"content":{"parts":[{"text":"x"}]}}]}\n\n'
+            )
+        if request.url.path.endswith(":embedContent"):
+            return httpx.Response(200, json={"embedding": {"values": [0.1]}})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "x"}]}}]})
+
+    upstream = _upstream(handler)
+    await upstream.available_models()
+    await upstream.generate(_request())
+    [chunk async for chunk in upstream.stream_generate(_request())]
+    await upstream.embed(CanonicalEmbeddingRequest(model="gemini-2.0-flash", texts=["t"]))
+
+    assert len(seen) == 4
+    for request in seen:
+        assert request.headers["x-goog-api-key"] == "secret-key"
+        assert "secret-key" not in str(request.url)
+
+
+# == the reachability check looks the model up (FRD-506) ========================================
+
+
+async def test_a_model_the_listing_does_not_name_is_not_reported_reachable() -> None:
+    """*Check reachability* answered "reachable" for any name on this adapter — a typo in the
+    catalogue read green — although the listing it had just fetched said whether the model was
+    there."""
+    from aira_gateway.upstreams.base import ModelNotListed
+
+    upstream = _upstream(
+        lambda request: httpx.Response(200, json={"models": [{"name": "models/gemini-2.0-flash"}]})
+    )
+
+    assert await upstream.ping("gemini-2.0-flash") == "gemini-2.0-flash is listed"
+    with pytest.raises(ModelNotListed, match="gemini-2.0-flsh"):
+        await upstream.ping("gemini-2.0-flsh")
+
+
+# == connecting is bounded apart from answering (G3-19) =========================================
+
+
+def test_connecting_is_bounded_apart_from_answering() -> None:
+    """A model may think for minutes before its first byte; a host that accepts no connection in
+    seconds is down. One scalar made the connect allowance the read allowance, so the chain waited
+    out the whole of it before trying the next model — slowest for exactly the outage it exists
+    for."""
+    from aira_gateway.upstreams.exchange import CONNECT_TIMEOUT_SECONDS
+    from aira_gateway.upstreams.gemini import TIMEOUT_SECONDS
+
+    upstream = build_gemini_upstream(GatewaySettings(google_api_key="k", allowed_regions="global"))
+
+    assert upstream is not None
+    timeout = upstream._client.timeout
+    assert timeout.connect == CONNECT_TIMEOUT_SECONDS
+    assert timeout.read == TIMEOUT_SECONDS
+    assert TIMEOUT_SECONDS > 60, "a thinking answer takes longer than the old fixed minute"

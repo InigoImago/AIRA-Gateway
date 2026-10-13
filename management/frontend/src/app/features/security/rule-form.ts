@@ -1,7 +1,23 @@
-import { Component, effect, input, output, signal } from '@angular/core';
+import { Component, computed, effect, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AnomalyRule } from '../../core/api/models';
-import { unitOf } from './rule-language';
+import { isMultiple, isShare, needsSample, thresholdHint } from './rule-language';
+
+/** The longest rule name the server stores (`AnomalyRule.name`, `max_length=120`). */
+const MAX_NAME = 120;
+/** A share of requests cannot exceed the whole (`AnomalyRuleSerializer.validate`). */
+const MAX_SHARE = 100;
+/** A day: the longest window "the window before this one" still describes comparable traffic
+ *  (`aira_common.anomalies.MAX_WINDOW_MINUTES`). */
+const MAX_WINDOW_MINUTES = 24 * 60;
+/** A week: an automatic action that outlives the incident is an outage with a good reason
+ *  (`aira_common.anomalies.MAX_ACTION_MINUTES`). */
+const MAX_ACTION_MINUTES = 7 * 24 * 60;
+
+/** A whole number at least `min` (and at most `max`) — what a `PositiveIntegerField` accepts. */
+function whole(value: number | null, min: number, max = Number.MAX_SAFE_INTEGER): boolean {
+  return value !== null && Number.isInteger(value) && value >= min && value <= max;
+}
 
 /** What a new rule starts as — the safe end of every axis. */
 export const NEW_RULE: AnomalyRule = {
@@ -106,17 +122,19 @@ export const RULE_KINDS: { value: string; label: string }[] = [
         }
 
         <div class="field">
-          <label [attr.for]="id('threshold')">Above</label>
+          <!-- "At or above", because the evaluator fires at equality (\`share >= threshold\`). -->
+          <label [attr.for]="id('threshold')">At or above</label>
           <input
             [attr.id]="id('threshold')"
             type="number"
             name="threshold"
-            min="1"
+            [attr.min]="isMultiple(kind()) ? 101 : 1"
+            [attr.max]="isShare(kind()) ? 100 : null"
             [ngModel]="threshold()"
             (ngModelChange)="threshold.set($event)"
             [attr.data-testid]="id('threshold')"
           />
-          <span class="field__hint">{{ unit() || 'as counted' }}</span>
+          <span class="field__hint">{{ hint() }}</span>
         </div>
 
         <div class="field">
@@ -126,29 +144,33 @@ export const RULE_KINDS: { value: string; label: string }[] = [
             type="number"
             name="window"
             min="1"
+            max="1440"
             [ngModel]="window()"
             (ngModelChange)="window.set($event)"
             [attr.data-testid]="id('window')"
           />
         </div>
 
-        <div class="field">
-          <label [attr.for]="id('sample')">Smallest sample</label>
-          <input
-            [attr.id]="id('sample')"
-            type="number"
-            name="sample"
-            min="0"
-            [ngModel]="sample()"
-            (ngModelChange)="sample.set($event)"
-            [attr.data-testid]="id('sample')"
-          />
-          <span class="field__hint">Below this many requests it is not judged at all.</span>
-        </div>
+        <!-- Only for a proportion: the server stores 0 for an event kind whatever is sent. -->
+        @if (needsSample(kind())) {
+          <div class="field">
+            <label [attr.for]="id('sample')">Smallest sample</label>
+            <input
+              [attr.id]="id('sample')"
+              type="number"
+              name="sample"
+              min="1"
+              [ngModel]="sample()"
+              (ngModelChange)="sample.set($event)"
+              [attr.data-testid]="id('sample')"
+            />
+            <span class="field__hint">Below this many requests it is not judged at all.</span>
+          </div>
+        }
 
         @if (kind() === 'payload_size') {
           <div class="field">
-            <label [attr.for]="id('parameter')">Larger than</label>
+            <label [attr.for]="id('parameter')">At least (bytes)</label>
             <input
               [attr.id]="id('parameter')"
               type="number"
@@ -158,7 +180,7 @@ export const RULE_KINDS: { value: string; label: string }[] = [
               (ngModelChange)="parameter.set($event)"
               [attr.data-testid]="id('parameter')"
             />
-            <span class="field__hint">bytes</span>
+            <span class="field__hint">the request size the share is measured against</span>
           </div>
         }
 
@@ -185,11 +207,14 @@ export const RULE_KINDS: { value: string; label: string }[] = [
               type="number"
               name="minutes"
               min="1"
+              max="10080"
               [ngModel]="minutes()"
               (ngModelChange)="minutes.set($event)"
               [attr.data-testid]="id('minutes')"
             />
-            <span class="field__hint">Empty means until somebody lifts it.</span>
+            <span class="field__hint">
+              Required: 1 to 10080 (a week). An automatic action with no expiry is an outage.
+            </span>
           </div>
         }
 
@@ -211,6 +236,14 @@ export const RULE_KINDS: { value: string; label: string }[] = [
           </div>
         }
       </div>
+
+      <!-- Why Save is unavailable, in the server's own terms, rather than a button that is simply
+           grey — or a 400 the author has to translate. -->
+      @if (problem(); as reason) {
+        <p class="field__hint field__hint--error" [attr.data-testid]="id('problem')">
+          {{ reason }}
+        </p>
+      }
 
       <div class="form-actions">
         <label class="checkline">
@@ -247,6 +280,9 @@ export class RuleForm {
   readonly cancelled = output<void>();
 
   protected readonly kinds = RULE_KINDS;
+  protected readonly needsSample = needsSample;
+  protected readonly isShare = isShare;
+  protected readonly isMultiple = isMultiple;
 
   protected readonly name = signal('');
   protected readonly kind = signal('refusal_rate');
@@ -279,12 +315,62 @@ export class RuleForm {
     });
   }
 
+  /** What the threshold field takes, in the unit the server checks and refuses it in. */
+  protected readonly hint = computed(() => thresholdHint(this.kind(), this.threshold()));
+
+  /**
+   * Why the server would refuse this rule, or `null` when it would not.
+   *
+   * The same checks, in the same order and the same terms, as `AnomalyRuleSerializer.validate` and
+   * the model's bounds — so Save is withheld with its reason beside it instead of being answered
+   * with a 400. An older row the server would no longer accept (a block with no duration, a rate
+   * judged on zero requests) has to be corrected before it can be saved, as it would there.
+   */
+  protected readonly problem = computed<string | null>(() => {
+    const kind = this.kind();
+    const threshold = this.threshold();
+    if (this.isNew() && !this.name().trim()) {
+      return 'A rule needs a name: it is what somebody reading a finding sees.';
+    }
+    if (this.name().trim().length > MAX_NAME) {
+      return `A name is at most ${MAX_NAME} characters.`;
+    }
+    if (!whole(threshold, 1)) return 'The threshold is a whole number, at least 1.';
+    if (isShare(kind) && threshold! > MAX_SHARE) {
+      return 'A share of requests cannot exceed 100 percent.';
+    }
+    if (isMultiple(kind) && threshold! <= MAX_SHARE) {
+      return (
+        'A spike is a multiple of the previous window, so the threshold must be above 100 ' +
+        'percent — 200 means twice as much.'
+      );
+    }
+    if (!whole(this.window(), 1, MAX_WINDOW_MINUTES)) {
+      return `The window is between 1 and ${MAX_WINDOW_MINUTES} minutes (a day).`;
+    }
+    if (needsSample(kind) && !whole(this.sample(), 1)) {
+      return (
+        'The smallest sample is at least 1: without a floor, one refused request out of one is ' +
+        '100 percent.'
+      );
+    }
+    if (kind === 'payload_size' && !whole(this.parameter(), 1)) {
+      return 'A size rule needs the request size, in bytes, that the share is measured against.';
+    }
+    if (this.action() !== 'alert' && !whole(this.minutes(), 1, MAX_ACTION_MINUTES)) {
+      return (
+        `An automatic action lasts between 1 and ${MAX_ACTION_MINUTES} minutes (a week): one ` +
+        'with no expiry is an outage with a good reason.'
+      );
+    }
+    if (this.action() === 'throttle' && !whole(this.rpm(), 1)) {
+      return 'A throttle needs a rate: a rate reduced to nothing is a block.';
+    }
+    return null;
+  });
+
   protected isNew(): boolean {
     return !this.rule().id;
-  }
-
-  protected unit(): string {
-    return unitOf(this.kind());
   }
 
   protected id(field: string): string {
@@ -292,8 +378,7 @@ export class RuleForm {
   }
 
   protected canSubmit(): boolean {
-    if (this.isNew() && !this.name().trim()) return false;
-    return !!this.threshold() && !!this.window();
+    return this.problem() === null;
   }
 
   protected submit(): void {

@@ -20,22 +20,10 @@ from typing import Any
 from django.core.cache import cache
 from rest_framework.throttling import BaseThrottle
 
+from aira_management.config.rates import PERIODS
+
 #: Cache key shape. Namespaced so it cannot collide with DRF's own scoped keys.
 _KEY = "aira_auth_failures_%s"
-
-#: Seconds per period name in DRF's `<n>/<period>` notation.
-_PERIODS = {
-    "s": 1,
-    "sec": 1,
-    "second": 1,
-    "m": 60,
-    "min": 60,
-    "minute": 60,
-    "h": 3600,
-    "hour": 3600,
-    "d": 86400,
-    "day": 86400,
-}
 
 
 class FailedAuthentications:
@@ -84,17 +72,22 @@ class FailedAuthentications:
 
 
 def _ident(request: Any) -> str:
-    """The source address as DRF resolves it (honouring `NUM_PROXIES`), so this bounds the same
-    caller the rest of the stack sees."""
+    """The source address as DRF resolves it: `NUM_PROXIES` (`AIRA_TRUSTED_PROXY_HOPS`) entries
+    from the right of `X-Forwarded-For`, the socket peer when it is `0`.
+
+    Never the whole header: a proxy appends, so everything left of what it appended is whatever
+    the caller sent, and a key the caller can choose is one they can rotate past the bound.
+    """
     return str(BaseThrottle().get_ident(request))
 
 
 def _parse(rate: str) -> tuple[int, int]:
-    """``"60/minute"`` → ``(60, 60)``. An unreadable rate switches the bound **off** rather than
-    guessing: a bound nobody configured that starts refusing traffic is worse than none."""
+    """``"60/minute"`` → ``(60, 60)``. A rate `config.rates.bound_rate_problem` refuses never
+    reaches a running process (`config.security`); were one to, the bound is **off** rather than
+    guessed: a bound nobody configured that starts refusing traffic is worse than none."""
     count, _, period = str(rate).partition("/")
     try:
         limit = int(count)
     except ValueError:
         return 0, 60
-    return limit, _PERIODS.get(period.strip().lower(), 60)
+    return limit, PERIODS.get(period.strip().lower(), 60)

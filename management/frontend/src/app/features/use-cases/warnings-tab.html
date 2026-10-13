@@ -1,24 +1,35 @@
 <div class="card" role="tabpanel">
   <div class="spread">
-    <h3 class="section-title" style="margin: 0">Warnings</h3>
+    <h3 class="section-title">Warnings</h3>
     <div class="row live">
       <label class="checkline" title="Refresh automatically">
-        <input type="checkbox" [checked]="live.enabled()" (change)="live.toggle()" />
+        <input
+          type="checkbox"
+          [checked]="live.enabled()"
+          (change)="live.toggle()"
+          data-testid="warnings-live"
+        />
         Live
       </label>
-      <span class="muted live__stamp">
+      <span class="muted live__stamp" data-testid="warnings-stamp">
         <span class="live__dot" [class.is-busy]="live.refreshing()" aria-hidden="true"></span>
-        updated {{ ago() }}
+        updated {{ live.ago() }}
       </span>
     </div>
   </div>
 
-  <p class="muted" style="margin: 0.25rem 0 0">
+  <p class="muted lead">
     What the anomaly rules have found about this use case. Every finding says what was measured and
     how many requests it was drawn from, so it can be checked rather than taken on trust.
   </p>
 
   <!-- The fact a member most needs, and the one that explains everything else on the screen. -->
+  @if (stopsUnknown()) {
+    <!-- The reason is in the page banner; here, only that "nothing is stopped" was not checked. -->
+    <p class="callout callout--warning" data-testid="stops-unknown">
+      Whether anything is stopped here could not be checked.
+    </p>
+  }
   @for (row of stopped(); track row.id) {
     <p class="callout callout--danger" role="alert" data-testid="stopped-banner">
       <strong>{{ stoppedWhat(row) }}</strong>
@@ -68,15 +79,15 @@
               <td class="nowrap">{{ event.created_at | date: 'yyyy-MM-dd HH:mm' }}</td>
               <td>
                 {{ event.rule }}
-                <div class="muted" style="font-size: 0.78rem">{{ event.kind }}</div>
+                <div class="muted text-sm">{{ event.kind }}</div>
               </td>
               <td>
                 <code>{{ event.target_value }}</code>
-                <div class="muted" style="font-size: 0.78rem">{{ event.target }}</div>
+                <div class="muted text-sm">{{ event.target }}</div>
               </td>
               <td>
                 <strong>{{ event.observed }}</strong> vs {{ event.threshold }}
-                <div class="muted" style="font-size: 0.78rem">
+                <div class="muted text-sm">
                   over {{ event.sample }} request(s), {{ event.window_minutes }} min
                 </div>
               </td>
@@ -96,5 +107,22 @@
         </tbody>
       </table>
     </div>
+
+    @if (cursor()) {
+      <div class="row" style="margin-top: 0.75rem">
+        <button
+          type="button"
+          class="btn btn--sm"
+          [disabled]="loadingMore()"
+          (click)="loadOlder()"
+          data-testid="warnings-load-older"
+        >
+          {{ loadingMore() ? 'Loading…' : 'Load older' }}
+        </button>
+        <span class="muted text-sm">
+          Loading older warnings pauses the live refresh, so what you are reading stays put.
+        </span>
+      </div>
+    }
   }
 </div>

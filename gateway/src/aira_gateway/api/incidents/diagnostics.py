@@ -25,6 +25,11 @@ from aira_gateway.upstreams.base import Upstream
 #: A check must be quick enough that somebody presses the button and waits for it.
 MODEL_CHECK_TIMEOUT_SECONDS = 5.0
 
+#: How many regions one press may ask about. Every region multiplies the probes — and the thinking
+#: check's one-token generations, each billed and audited — so the list a form sends is bounded
+#: like the words are (`thinking_check.MAX_LEVELS_PER_CHECK`), well above any model's real list.
+MAX_REGIONS_PER_CHECK = 16
+
 _log = structlog.get_logger(__name__)
 
 
@@ -55,10 +60,21 @@ async def _asked_upstream(
 
 
 def _regions_asked(region: str, declaration: ModelDeclaration) -> list[str]:
-    """Which regions to check: the form's, where it named any, otherwise the catalogue's."""
-    if region:
-        return [part.strip() for part in region.split(",") if part.strip()]
-    return list(declaration.regions)
+    """Which regions to check: the form's, where it named any, otherwise the catalogue's.
+
+    Each once, in the order named — a region asked twice is the same question, asked and paid for
+    twice — and at most `MAX_REGIONS_PER_CHECK`, refused by name beyond that rather than cut short.
+    """
+    named = [part.strip() for part in region.split(",")] if region else list(declaration.regions)
+    asked = list(dict.fromkeys(part for part in named if part))
+    if len(asked) > MAX_REGIONS_PER_CHECK:
+        raise GeminiHTTPError(
+            400,
+            f"A check asks at most {MAX_REGIONS_PER_CHECK} regions at once, and {len(asked)} were "
+            "named. Check them in groups.",
+            "INVALID_ARGUMENT",
+        )
+    return asked
 
 
 def _attribute_diagnostic(request: Request, principal: Principal) -> None:
@@ -67,16 +83,7 @@ def _attribute_diagnostic(request: Request, principal: Principal) -> None:
     Set here rather than by widening `require_principal`, which would make every diagnostic look
     like a use case's request.
     """
-    attribute(
-        request,
-        Attribution(
-            subject=principal.subject,
-            method=principal.method,
-            use_case=None,
-            credential=principal.credential,
-            username=principal.username,
-        ),
-    )
+    attribute(request, Attribution.of(principal, None))
 
 
 async def _record_diagnostic(

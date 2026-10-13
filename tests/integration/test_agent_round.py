@@ -19,20 +19,14 @@ Nothing here asserts an answer's content — that tests the model, and flakes.
 
 from __future__ import annotations
 
-import pathlib
-
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, TOOL_MODEL, wait_for_row
 
 pytestmark = pytest.mark.integration
 
 MODEL = "qwen3:0.6b"
-#: A model **measured** to emit real tool calls (`FRD-131`). Not the one `make showcase` and CI
-#: pull — those take the two smallest models there are, on purpose — so a stack that serves the
-#: rest of this file may well not serve this one.
-TOOL_MODEL = "qwen2.5:3b"
 SHORT = {"generationConfig": {"maxOutputTokens": 8}}
 
 WEATHER = {
@@ -44,60 +38,6 @@ WEATHER = {
         }
     ]
 }
-
-
-@pytest.fixture
-async def tool_model(fixture) -> str:
-    """Skip unless this stack actually serves :data:`TOOL_MODEL`.
-
-    **A precondition stated once, because it was stated once out of five times.** The guard existed
-    — an inline `if response.status_code == 404: pytest.skip(...)` in a single test — and the other
-    four asked the same model on a stack that does not serve it and failed with
-    `404 Model 'qwen2.5:3b' not found`. That reads as a broken gateway; it means somebody chose not
-    to pull a 2 GB model for four tests.
-
-    A fixture rather than another inline `if`, and it asks **before** the request rather than
-    interpreting the answer: a 404 can also mean the model was retired, mistyped, or never
-    catalogued, and a skip that swallows those hides the failures worth seeing. Requesting the
-    fixture is also visible in a signature, which is what
-    :func:`test_every_tool_model_test_states_that_it_needs_one` can check — an inline skip is not.
-    """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(f"{GATEWAY_URL}/v1beta/models", headers=fixture.headers())
-    response.raise_for_status()
-    served = {model.get("name", "").removeprefix("models/") for model in response.json()["models"]}
-    if TOOL_MODEL not in served:
-        pytest.skip(
-            f"this stack does not serve {TOOL_MODEL}; it serves {sorted(served)}. "
-            f"Pull it with: docker exec aira-ollama ollama pull {TOOL_MODEL}"
-        )
-    return TOOL_MODEL
-
-
-def test_every_tool_model_test_states_that_it_needs_one() -> None:
-    """A test that reaches for `TOOL_MODEL` without the fixture fails instead of skipping — which
-    is how four of the five came to report a missing model as a broken gateway.
-
-    Parsed rather than trusted: the whole reason this file needed fixing is that the rule was
-    applied where somebody remembered it.
-    """
-    import ast
-
-    source = pathlib.Path(__file__).read_text()
-    offenders = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.AsyncFunctionDef) or not node.name.startswith("test"):
-            continue
-        uses = any(
-            isinstance(inner, ast.Name) and inner.id == "TOOL_MODEL" for inner in ast.walk(node)
-        )
-        if uses and "tool_model" not in {argument.arg for argument in node.args.args}:
-            offenders.append(node.name)
-
-    assert not offenders, (
-        f"these ask for TOOL_MODEL without requesting the `tool_model` fixture: {offenders}. "
-        "On a stack that does not serve it they fail with a 404 that reads as a broken gateway."
-    )
 
 
 async def _traces(client: httpx.AsyncClient, token: str, **params) -> httpx.Response:
@@ -140,17 +80,40 @@ def _check(response: httpx.Response, *allowed: int) -> dict:
         "served-and-refusals",
     ],
 )
-async def test_a_filter_combination_is_answered_and_never_widens(governance_token, params) -> None:
+async def test_a_filter_combination_is_answered_and_never_widens(
+    governance_token, member_token, fixture, params
+) -> None:
     """`mine` plus another subject is a contradiction, not a request for both — an OR here would
-    hand somebody else's traffic to a reader who asked for their own."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    hand somebody else's traffic to a reader who asked for their own.
+
+    And whatever the combination, it never widens: asked by a member about a use case that has a
+    row they may not see, every one of them answers nothing about it.
+    """
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        served = await client.post(
+            f"{GATEWAY_URL}/v1beta/models/mock-1:generateContent",
+            headers=fixture.headers(),
+            json={"contents": [{"parts": [{"text": "hi"}]}]},
+        )
+        assert served.status_code == 200, served.text
+        await wait_for_row(
+            fixture.engine,
+            "SELECT 1 FROM request_logs WHERE use_case = :slug",
+            {"slug": fixture.slug},
+            timeout=20.0,
+        )
         body = _check(await _traces(client, governance_token, **params), 200)
+        outsider = _check(await _traces(client, member_token, use_case=fixture.slug, **params), 200)
 
     assert isinstance(body["traces"], list)
     if params.get("mine") == "true" and params.get("subject"):
         assert body["traces"] == [], "two identity filters were treated as alternatives"
+    if params.get("credential") == "no-such-prefix":
+        assert body["traces"] == [], "a credential nobody has matched something"
     if params.get("outcome") == "served" and params.get("refusals_only") == "true":
         assert body["traces"] == [], "'served' and 'refusals only' cannot both be satisfied"
+    assert outsider["traces"] == [], f"{params} reached a use case the caller cannot see"
+    assert outsider["in_scope"] is False
 
 
 @pytest.mark.parametrize(

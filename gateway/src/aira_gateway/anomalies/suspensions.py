@@ -13,11 +13,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.anomalies import RuleAction, RuleTarget
 from aira_common.logging import get_logger
+from aira_gateway.anomalies.evaluator import without_addresses
 from aira_gateway.db.models import AccessSuspension
 
 _log = get_logger(__name__)
@@ -26,6 +28,9 @@ _log = get_logger(__name__)
 #: instance — the harmless direction to be late in. A new suspension is not delayed: the rule that
 #: writes it invalidates this instance's cache.
 CACHE_TTL_SECONDS = 5.0
+
+#: How a decision a rule wrote names its author; a person's reads ``user:<name>``.
+RULE_AUTHOR = "rule:"
 
 
 class Suspended(Exception):
@@ -133,8 +138,23 @@ class SuspensionService:
         ]
 
 
+def in_force(moment: datetime) -> ColumnElement[bool]:
+    """The suspensions that still apply at ``moment``: not lifted, and not yet expired.
+
+    One definition for the two readers: the cache every request consults, and the list a person
+    lifts from. A rule's suspension expires and is never lifted, so the rows that no longer apply
+    outnumber the ones that do, and grow without end.
+    """
+    return and_(
+        AccessSuspension.lifted_at.is_(None),
+        or_(AccessSuspension.expires_at.is_(None), AccessSuspension.expires_at > moment),
+    )
+
+
 async def _load(session: AsyncSession) -> list[AccessSuspension]:
-    stmt = select(AccessSuspension).where(AccessSuspension.lifted_at.is_(None))
+    """What can still apply. Expiry is checked again on every read (`_still_applies`), because a
+    row loaded in force may run out before the cache does."""
+    stmt = select(AccessSuspension).where(in_force(datetime.now(UTC)))
     return list((await session.execute(stmt)).scalars().all())
 
 
@@ -200,13 +220,20 @@ def suspension_from_rule(
         action=action,
         throttle_rpm=throttle_rpm,
         expires_at=now + timedelta(minutes=max(minutes, 1)),
-        author=f"rule:{rule_name}",
+        author=f"{RULE_AUTHOR}{rule_name}",
         reason=detail[:500],
     )
 
 
-def as_dict(row: AccessSuspension) -> dict[str, object]:
-    """The wire shape. Written once so the list endpoint and the create response agree."""
+def as_dict(row: AccessSuspension, *, addresses: bool = True) -> dict[str, object]:
+    """The wire shape. Written once so the list endpoint and the create response agree.
+
+    A rule's reason is its finding's description, so without ``addresses`` it is cut as the
+    finding is (`FRD-502` FR-12). A person's reason is what they chose to write, and stays.
+    """
+    reason = row.reason
+    if not addresses and row.author.startswith(RULE_AUTHOR):
+        reason = without_addresses(reason)
     return {
         "id": row.id,
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -217,7 +244,7 @@ def as_dict(row: AccessSuspension) -> dict[str, object]:
         "throttle_rpm": row.throttle_rpm,
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "author": row.author,
-        "reason": row.reason,
+        "reason": reason,
         "lifted_at": row.lifted_at.isoformat() if row.lifted_at else None,
         "lifted_by": row.lifted_by,
     }
@@ -225,10 +252,12 @@ def as_dict(row: AccessSuspension) -> dict[str, object]:
 
 __all__: Sequence[str] = [
     "CACHE_TTL_SECONDS",
+    "RULE_AUTHOR",
     "AccessSuspension",
     "Suspended",
     "SuspensionService",
     "Throttle",
     "as_dict",
+    "in_force",
     "suspension_from_rule",
 ]

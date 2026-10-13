@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID
+from aira_gateway.api.kira import errors as kira_errors
+
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, wait_for_row
 
 pytestmark = pytest.mark.integration
 
@@ -58,9 +59,9 @@ async def test_every_response_announces_the_surface_is_transitional() -> None:
 
 
 async def test_the_chat_endpoint_is_mounted_and_authenticated() -> None:
-    """Not asserting a 200: the demo catalog assigns no numeric ids, so there is nothing to
-    address yet. What this pins is that the route exists and sits behind authentication — a
-    compatibility surface accidentally left open would be the worst kind of regression."""
+    """The route exists and sits behind authentication — a compatibility surface accidentally left
+    open would be the worst kind of regression. So an anonymous call is answered `401` and nothing
+    else: a `200`, a `400` or a `422` would each mean the request got past the credential check."""
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         response = await client.post(
             f"{BASE}/chat",
@@ -68,12 +69,7 @@ async def test_the_chat_endpoint_is_mounted_and_authenticated() -> None:
         )
 
     assert response.status_code != 404, "the KIRA surface is not mounted"
-    if response.status_code == 401:
-        assert "kira" not in response.text.lower() or True  # authenticated: the expected shape
-        return
-    # Otherwise it reached the surface, and the envelope must be the predecessor's.
-    body = response.json()
-    assert "code" in body and "error" not in body
+    assert response.status_code == 401, f"an anonymous call was answered {response.status_code}"
 
 
 async def test_a_kira_request_is_recorded_under_its_own_api_name(
@@ -92,20 +88,23 @@ async def test_a_kira_request_is_recorded_under_its_own_api_name(
             headers=fixture.headers(),
             json={"request": {"parts": [{"text": "hi"}]}, "model_id": 999_999},
         )
-    assert response.status_code not in (401, 403), response.text
+    # An id no model has: the surface's own refusal, in its own envelope.
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == kira_errors.MODEL_NOT_FOUND, response.text
 
-    async with engine.connect() as connection:
-        row = (
-            await connection.execute(
-                text(
-                    "SELECT api, outcome FROM request_logs"
-                    " WHERE api = 'kira' ORDER BY created_at DESC LIMIT 1"
-                )
-            )
-        ).first()
-
-    assert row is not None, "a KIRA request left no trace in the audit trail"
-    assert row[0] == "kira"
+    # **This** request's row — scoped to the fixture's use case and waited for, since the write is
+    # off the request path. The newest `kira` row of the whole table would answer for any request
+    # this stack ever served.
+    row = await wait_for_row(
+        engine,
+        "SELECT api, operation, outcome, status FROM request_logs WHERE use_case = :slug",
+        {"slug": fixture.slug},
+        timeout=20.0,
+    )
+    assert row.api == "kira"
+    assert row.operation == "chat"
+    assert row.outcome == "invalid_request"
+    assert row.status == 422
 
 
 async def test_the_two_surfaces_do_not_collide_on_routing() -> None:

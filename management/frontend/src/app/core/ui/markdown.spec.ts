@@ -88,3 +88,86 @@ describe('Markdown', () => {
     ]);
   });
 });
+
+/**
+ * The inline rules as one regular expression — what `inlines` is held to.
+ *
+ * Not what it runs: with every opener whose closer never comes, the pattern rescans the rest of the
+ * line, which is quadratic in a hostile description. What a line *means* is still defined here.
+ */
+const REFERENCE =
+  /`([^`]+)`|\*\*(.+?)\*\*|__(.+?)__|(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])|(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)/g;
+
+function referenceInlines(line: string) {
+  const out: { kind: string; text: string; href?: string }[] = [];
+  let last = 0;
+  for (const match of line.matchAll(REFERENCE)) {
+    const at = match.index ?? 0;
+    if (at > last) out.push({ kind: 'text', text: line.slice(last, at) });
+    const [whole, code, strong, strongUnderscore, em, emUnderscore, linkText, href] = match;
+    if (code !== undefined) out.push({ kind: 'code', text: code });
+    else if (strong !== undefined || strongUnderscore !== undefined) {
+      out.push({ kind: 'strong', text: strong ?? strongUnderscore });
+    } else if (em !== undefined || emUnderscore !== undefined) {
+      out.push({ kind: 'em', text: em ?? emUnderscore });
+    } else if (/^https?:\/\//i.test(href)) {
+      out.push({ kind: 'link', text: linkText, href });
+    } else {
+      out.push({ kind: 'text', text: whole });
+    }
+    last = at + whole.length;
+  }
+  if (last < line.length) out.push({ kind: 'text', text: line.slice(last) });
+  return out;
+}
+
+describe('Markdown — what a hostile description costs', () => {
+  /** Long enough that the quadratic reading took seconds; short enough to stay a unit test. */
+  const LENGTH = 50_000;
+  /**
+   * The bound separates orders of magnitude, not milliseconds: the quadratic reading of this line
+   * took 10–16 s and the linear one under 10 ms. Under coverage instrumentation and a full parallel
+   * suite the linear one has measured 120 ms, so a bound near it fails for load, not for a defect.
+   */
+  const BOUND_MS = 1_000;
+
+  it.each([
+    ['an opening bracket that never closes', '['],
+    ['an asterisk that never closes', ' *a'],
+    ['an underscore that never closes', ' _a'],
+  ])('reads %s in linear time', (_name, unit) => {
+    // A use-case administrator writes the description and every member renders it — and the
+    // register renders it for every oversight reader. A line that freezes the tab is an outage
+    // anybody with that one permission can cause.
+    const line = unit.repeat(Math.ceil(LENGTH / unit.length));
+
+    const started = performance.now();
+    const pieces = inlines(line);
+    const elapsed = performance.now() - started;
+
+    expect(pieces.map((piece) => piece.text).join('')).toBe(line);
+    expect(elapsed).toBeLessThan(BOUND_MS);
+  });
+
+  it('reads exactly what the pattern it replaced read', () => {
+    // Every rule, every lookbehind and every "the first rule that matches wins", compared on
+    // thousands of short lines built from the characters the rules are made of. Seeded, so a
+    // failure names a line that can be replayed.
+    const alphabet = ['*', '*', '_', '_', '`', '[', ']', '(', ')', 'a', 'b', '1', ' ', '\t'];
+    alphabet.push('\u00a0', '\u2028', 'https://x', 'ftp:', '-');
+    let seed = 20261012;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+
+    for (let round = 0; round < 6000; round += 1) {
+      const length = Math.floor(random() * 14);
+      const line = Array.from(
+        { length },
+        () => alphabet[Math.floor(random() * alphabet.length)],
+      ).join('');
+      expect(inlines(line), JSON.stringify(line)).toEqual(referenceInlines(line));
+    }
+  });
+});

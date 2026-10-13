@@ -2,7 +2,7 @@
   <div class="spread">
     <div>
       <h2 class="page-title">Security</h2>
-      <p class="muted" style="margin: 0.25rem 0 0">
+      <p class="muted lead">
         What the detector has found, what is stopped right now, and the rules that apply everywhere.
       </p>
     </div>
@@ -22,9 +22,11 @@
            button beside it. -->
       <span class="muted live__stamp" data-testid="live-stamp">
         <span class="live__dot" [class.is-busy]="live.refreshing()" aria-hidden="true"></span>
-        updated {{ ago() }}
+        updated {{ live.ago() }}
       </span>
-      <button type="button" class="btn btn--sm" (click)="refreshNow()">Refresh</button>
+      <button type="button" class="btn btn--sm" (click)="refreshNow()" data-testid="refresh-now">
+        Refresh
+      </button>
     </div>
   </div>
 
@@ -50,7 +52,11 @@
       [class.is-active]="tab() === 'findings'"
       (click)="tab.set('findings')"
     >
-      Findings <span class="tab__count">{{ events().length }}</span>
+      <!-- "50+" while older pages exist: the count is of what is loaded, not of every finding. -->
+      Findings
+      <span class="tab__count" data-testid="findings-count"
+        >{{ events().length }}{{ moreEvents() ? '+' : '' }}</span
+      >
     </button>
     <button
       type="button"
@@ -79,11 +85,26 @@
 
   <!-- ── Findings ─────────────────────────────────────────────────────────────────────────── -->
   @if (tab() === 'findings') {
-    <div class="card" style="padding: 0" role="tabpanel">
+    <div class="card card--flush" role="tabpanel">
+      @if (eventsScope() === 'use_cases') {
+        <!-- Narrowed by the server to this caller's use cases (`AnomalyPage.scope`); an
+             unexplained narrower list reads as a quieter installation. -->
+        <p class="muted text-sm card__inset card__inset--above" data-testid="findings-scope">
+          Only the findings on your own use cases are shown. Findings across every use case are
+          shown to the roles that read them all — IT Security and the Global Administrator unless
+          this installation says otherwise.
+        </p>
+      }
       @if (loading()) {
-        <p class="loading" style="padding: 1rem">
+        <p class="loading card__inset">
           <span class="spinner" aria-hidden="true"></span>
           Loading findings…
+        </p>
+      } @else if (findingsFailure() && !events().length) {
+        <!-- Not the empty state: "nothing has crossed a threshold" would be a claim about traffic
+             nobody could read. -->
+        <p class="empty" data-testid="findings-failed">
+          The findings could not be loaded, so this list says nothing about what has been found.
         </p>
       } @else if (!events().length) {
         <p class="empty">
@@ -92,7 +113,7 @@
         </p>
       } @else {
         <div class="table-wrap">
-          <table class="table">
+          <table class="table" data-testid="findings-table">
             <thead>
               <tr>
                 <th scope="col">When</th>
@@ -122,17 +143,19 @@
                       >
                       {{ event.rule }}
                     </button>
-                    <div class="muted" style="font-size: 0.78rem">{{ event.kind }}</div>
+                    <div class="muted text-sm">{{ event.kind }}</div>
                   </td>
                   <td>{{ event.use_case ?? '—' }}</td>
                   <td>
                     <code>{{ event.target_value }}</code>
-                    <div class="muted" style="font-size: 0.78rem">{{ event.target }}</div>
+                    <div class="muted text-sm">{{ event.target }}</div>
                   </td>
                   <td>
-                    <!-- The numbers it was drawn from, not just that it fired. -->
-                    <strong>{{ event.observed }}</strong> vs {{ event.threshold }}
-                    <div class="muted" style="font-size: 0.78rem">
+                    <!-- The numbers it was drawn from, not just that it fired — in the unit they
+                         mean: a spike's stored 450 is 4.5× the previous window. -->
+                    <strong>{{ figure(event, event.observed) }}</strong> vs
+                    {{ figure(event, event.threshold) }}
+                    <div class="muted text-sm">
                       over {{ event.sample }} request(s), {{ event.window_minutes }} min
                     </div>
                   </td>
@@ -225,7 +248,7 @@
         </div>
 
         @if (moreEvents()) {
-          <div class="row" style="padding: 0.75rem 1rem">
+          <div class="row card__inset">
             <button
               type="button"
               class="btn btn--sm"
@@ -235,7 +258,7 @@
             >
               {{ loadingMore() ? 'Loading…' : 'Load older findings' }}
             </button>
-            <span class="muted" style="font-size: 0.78rem">
+            <span class="muted text-sm">
               Loading older findings pauses the live refresh, so what you are reading stays put.
             </span>
           </div>
@@ -250,7 +273,9 @@
     [past]="past()"
     [canStop]="canStop()"
     [hidden]="suspensionsHidden()"
+    [permissionsKnown]="permissionsKnown()"
     [useCases]="useCases()"
+    [useCasesError]="useCasesError()"
     (changed)="loadSuspensions()"
   />
 

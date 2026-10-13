@@ -1,6 +1,6 @@
 <div class="card" role="tabpanel">
   <div class="spread">
-    <h3 class="section-title" style="margin: 0">
+    <h3 class="section-title">
       Anomaly rules
       <app-info-hint label="anomaly rules" testid="rules-scope" [wide]="true">
         What this use case considers abnormal. Each rule watches one measurement over a window and
@@ -18,7 +18,7 @@
   </div>
 
   @if (!canManage()) {
-    <p class="muted" style="margin: 0.25rem 0 0" data-testid="rules-readonly">
+    <p class="muted lead" data-testid="rules-readonly">
       You can see what is being watched here. Changing it is done by somebody who administers this
       use case.
     </p>
@@ -29,6 +29,7 @@
     title="A rule for this use case"
     testid="rule-editor"
     [withFoot]="false"
+    [error]="feedback.error()"
     (closed)="cancel()"
   >
     <div modal-body>
@@ -42,12 +43,18 @@
     </div>
   </app-modal>
 
-  @if (loading()) {
+  @if (failed()) {
+    <!-- Not the empty state: "nothing is watched" would be a claim about rules nobody could read.
+         The page banner says why. -->
+    <p class="empty" data-testid="rules-unavailable">
+      The rules of this use case could not be loaded, so what is watched here is not shown.
+    </p>
+  } @else if (rules() === null) {
     <p class="loading" style="margin-top: 1rem">
       <span class="spinner" aria-hidden="true"></span>
       Loading rules…
     </p>
-  } @else if (!rules().length) {
+  } @else if (!rules()?.length) {
     <!-- A quiet detector and an absent one look identical from a findings list, so the place that
          knows says which (`FRD-502`). -->
     <p class="empty" data-testid="no-rules">
@@ -68,22 +75,17 @@
           </tr>
         </thead>
         <tbody>
-          @for (rule of rules(); track rule.id) {
+          @for (rule of rules() ?? []; track rule.id) {
             <tr [class.is-open]="editing() === rule.id">
               <td>
                 {{ rule.name }}
-                <div class="muted" style="font-size: 0.78rem">per {{ rule.target }}</div>
+                <div class="muted text-sm">per {{ rule.target }}</div>
               </td>
               <td>
                 {{ rule.kind }}
-                <div class="muted" style="font-size: 0.78rem">
-                  {{ rule.window_minutes }} min window
-                </div>
+                <div class="muted text-sm">{{ rule.window_minutes }} min window</div>
               </td>
-              <td class="nowrap">
-                {{ rule.threshold }}
-                <span class="muted" style="font-size: 0.78rem">{{ unit(rule) }}</span>
-              </td>
+              <td class="nowrap">{{ threshold(rule) }}</td>
               <td>
                 <span
                   class="badge"
@@ -135,6 +137,17 @@
                     (saved)="save($event)"
                     (cancelled)="cancel()"
                   />
+                  <!-- Beside the form whose save it refuses, not only in the banner at the top of
+                       the page, which a long table has scrolled away. -->
+                  @if (feedback.error(); as message) {
+                    <p
+                      class="field__hint field__hint--error"
+                      role="alert"
+                      [attr.data-testid]="'rule-' + rule.id + '-error'"
+                    >
+                      {{ message }}
+                    </p>
+                  }
                 }
               </td>
             </tr>

@@ -1,6 +1,7 @@
 import { Component, computed, effect, input } from '@angular/core';
 import { ReportRow } from '../../core/api/models';
 import { InfoHint } from '../../core/ui/info-hint';
+import { displayCount } from '../../core/ui/money';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
 
@@ -18,6 +19,8 @@ import { TableView } from '../../core/ui/table-view';
 export class BreakdownTable {
   /** What the first column is: "Use case", "Model", "Member". */
   readonly label = input.required<string>();
+  /** One row of it with its article — "a model", "an outcome" — as the search box names it. */
+  readonly item = input('a row');
   readonly rows = input.required<ReportRow[]>();
   /** Shown when there is nothing, in the terms of this particular breakdown. */
   readonly emptyText = input('Nothing in this period.');
@@ -26,6 +29,8 @@ export class BreakdownTable {
 
   /** Searched and paged: a breakdown by member can run to hundreds of rows. */
   protected readonly view = new TableView<ReportRow>(this.rows, (row) => row.key);
+  /** A count as a person reads it, grouped like every other figure in the console. */
+  protected readonly count = displayCount;
 
   /**
    * The largest spend, so every bar shares one scale. Over **all** rows, not the page: a per-page
@@ -40,6 +45,12 @@ export class BreakdownTable {
     effect(() => {
       this.rows();
       this.view.page.set(1);
+    });
+    // Another breakdown is another kind of row: a search typed among members means nothing among
+    // models, and a table that opened filtered by it would read as "no such model".
+    effect(() => {
+      this.label();
+      this.view.search('');
     });
   }
 
@@ -67,5 +78,20 @@ export class BreakdownTable {
   /** What each row's spend cell says. An em dash is a measurement nobody made. */
   protected spend(row: ReportRow): string {
     return this.unknown(row) ? '—' : row.cost;
+  }
+
+  /**
+   * Why a row's unpriced requests have no cost, cause by cause (`FRD-626` FR-18): an upstream that
+   * reported no usage, which no price can fix, and a model with no price on file, which one can.
+   */
+  protected causesOf(row: ReportRow): string {
+    const unmetered = row.unmetered_requests ?? 0;
+    const noPrice = row.unpriced_requests - unmetered;
+    return [
+      unmetered > 0 ? `${displayCount(unmetered)} reported no token usage to price` : '',
+      noPrice > 0 ? `${displayCount(noPrice)} ran on a model with no price on file` : '',
+    ]
+      .filter(Boolean)
+      .join(', and ');
   }
 }

@@ -1,7 +1,7 @@
 """Liveness and readiness endpoints.
 
 ``/healthz`` reports process liveness. ``/readyz`` probes the dependencies the gateway needs
-(Postgres, Kafka) and returns 503 until they are reachable.
+(Postgres, and Kafka where a broker is configured) and returns 503 until they are reachable.
 
 **The verdict is public, the diagnosis is not.** A probe needs only the status code; the full body
 maps the deployment and its weak spots, so it is served to operators (and to everyone locally).
@@ -14,6 +14,8 @@ experienced on the request path — the two can disagree in either direction.
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -21,10 +23,13 @@ from aira_common.counters import CountersUnavailable
 from aira_common.health import check_tcp
 from aira_common.permissions import Permission
 from aira_common.secrets import secrets_state
+from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.auth.attempts import record_failed_authentication
+from aira_gateway.auth.credentials import extract_token
 from aira_gateway.auth.dependencies import resolve_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.diagnostics import UpstreamProbe
-from aira_gateway.security import is_local
+from aira_gateway.security import is_local_or_demo
 from aira_gateway.state import settings_of
 
 router = APIRouter(tags=["health"])
@@ -76,21 +81,32 @@ def _is_operator(principal: Principal) -> bool:
     return principal.method == "api_key" and not principal.use_cases
 
 
-async def _may_see_detail(request: Request) -> bool:
-    """Whether this caller gets the diagnosis as well as the verdict.
+async def may_see_diagnosis(request: Request) -> bool:
+    """Whether this caller gets the diagnosis as well as the verdict — here and on the KIRA
+    surface's own health endpoint, which reports the same probe.
 
     `/readyz` stays unauthenticated — a Kubernetes probe carries no credential — but the full body
     names the database and Kafka hosts, every upstream, the fallbacks in force and the secrets
     loaded. An operator (:func:`_is_operator`) presents the credential they already have; locally
     everything is shown.
+
+    A credential that is refused here counts against the failed-authentication bound like one
+    refused on any other route (`ADR-0015` §6): this endpoint is public, so it is otherwise a way
+    to try credentials that no bound meets. Over the bound, the probe still gets its verdict.
     """
     settings = settings_of(request)
-    if is_local(settings):
+    if is_local_or_demo(settings):
         return True
+    if extract_token(request) is None:
+        # A probe that presents nothing has failed no authentication.
+        return False
     try:
         principal = await resolve_principal(request)
     except Exception:  # noqa: BLE001 - a broken credential must not break the readiness probe
         return False
+    if principal is None:
+        with contextlib.suppress(GeminiHTTPError):
+            await record_failed_authentication(request)
     return principal is not None and _is_operator(principal)
 
 
@@ -98,14 +114,16 @@ async def _may_see_detail(request: Request) -> bool:
 async def readyz(request: Request) -> JSONResponse:
     """Readiness probe: dependencies are reachable."""
     settings = settings_of(request)
-    kafka_host, kafka_port = settings.kafka_host_port
+    kafka = settings.kafka_host_port
 
-    results = [
-        await check_tcp("postgres", settings.postgres_host, settings.postgres_port),
-        await check_tcp("kafka", kafka_host, kafka_port),
-    ]
+    results = [await check_tcp("postgres", settings.postgres_host, settings.postgres_port)]
+    if kafka is not None:
+        results.append(await check_tcp("kafka", *kafka))
     ready = all(r.ok for r in results)
     checks: dict[str, object] = {r.name: {"ok": r.ok, "detail": r.detail} for r in results}
+    if kafka is None:
+        # No broker configured is a deployment `security.py` accepts, not one that is unreachable.
+        checks["kafka"] = {"ok": True, "detail": "not configured", "required": False}
 
     counters_ok, counters_detail = await _counters_state(request)
     checks["counters"] = {"ok": counters_ok, "detail": counters_detail, "required": False}
@@ -119,7 +137,7 @@ async def readyz(request: Request) -> JSONResponse:
     upstreams = probe.snapshot() if probe is not None else {}
 
     degraded = not counters_ok or bool(fallbacks) or bool(probe and probe.degraded)
-    if not await _may_see_detail(request):
+    if not await may_see_diagnosis(request):
         # `degraded` stays: it is the answer, not a detail describing the deployment.
         return JSONResponse(
             status_code=200 if ready else 503,

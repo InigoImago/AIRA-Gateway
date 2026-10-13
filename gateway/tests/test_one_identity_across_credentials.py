@@ -12,7 +12,9 @@ limit bucket, the kill switch, the detector, the trace list, the payload gate, t
 lookup and the findings list — and asks each the same question with the same two credentials. A
 reader added tomorrow that reads `subject` alone is meant to fail here, which is why
 :func:`test_every_comparison_against_a_stored_identity_is_named` exists at the bottom: it reads the
-source rather than the behaviour, so a *ninth* reader cannot be added silently.
+source rather than the behaviour — every comparison with a `subject` among its operands, against a
+list that names each site and why it is in the right alphabet — so a new one cannot be added
+silently.
 
 The fixtures give the two credentials the shape production has, and that is deliberate: the
 previous round's tests passed for months because their principals carried no `preferred_username`,
@@ -778,3 +780,89 @@ async def test_the_gate_hands_the_kill_switch_the_person_as_well_as_the_subject(
         await guard_before_work(request)  # type: ignore[arg-type]
 
     assert suspensions.asked == ("uc-a", DIRECTORY_ID, None, NAME)
+
+
+# ═══ the guard this module's docstring promises ═════════════════════════════════════════════════
+
+#: Every place in the gateway that compares a `subject`, and why it compares in the right alphabet.
+#: A comparison written anywhere else fails below until it is named here — which is the moment to
+#: add a case above that asks it the two-credential question.
+NAMED_COMPARISONS = {
+    "payloads.py::is_own_request": "the row's own subject, then the person both credentials share",
+    "payloads.py::own_requests": "the same rule as a query: subject or person, never subject alone",
+    "payloads.py::_narrowed": "a membership row is keyed by `_member_key`, Management's alphabet",
+    "payloads.py::grant_role_in": "the same membership key",
+    "api/reporting/spend.py::reporting": "a narrowing that takes the caller in either alphabet",
+    "api/reporting/traces.py::traces": "a filter: the subject the incident view was asked for",
+    "api/incidents/content_reads.py::content_reads": "a filter, matched beside `username` too",
+    "consumer/apply.py::_upsert_member": "the event's username is what the membership row stores",
+    "consumer/apply.py::_remove_member": "the same event key",
+}
+
+
+def _subject_comparisons() -> dict[str, list[str]]:
+    """``module::function`` for every comparison, or SQL ``in_``, with a `subject` among its
+    operands — read from the source, so a reader nobody wrote a test for is still found."""
+    import ast
+    import pathlib
+
+    import aira_gateway
+
+    root = pathlib.Path(aira_gateway.__file__).parent
+    found: dict[str, list[str]] = {}
+
+    def _names_a_subject(node: ast.AST) -> bool:
+        return any(isinstance(n, ast.Attribute) and n.attr == "subject" for n in ast.walk(node))
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self, module: str) -> None:
+            self.module = module
+            self.functions: list[str] = []
+
+        def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            self.functions.append(node.name)
+            self.generic_visit(node)
+            self.functions.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+        def _note(self, node: ast.AST) -> None:
+            where = f"{self.module}::{self.functions[-1] if self.functions else '<module>'}"
+            found.setdefault(where, []).append(ast.unparse(node))
+
+        def visit_Compare(self, node: ast.Compare) -> None:
+            if any(_names_a_subject(side) for side in (node.left, *node.comparators)):
+                self._note(node)
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in ("in_", "notin_")
+                and any(_names_a_subject(part) for part in (func.value, *node.args))
+            ):
+                self._note(node)
+            self.generic_visit(node)
+
+    for path in sorted(root.rglob("*.py")):
+        module = path.relative_to(root).as_posix()
+        _Visitor(module).visit(ast.parse(path.read_text(encoding="utf-8")))
+    return found
+
+
+def test_every_comparison_against_a_stored_identity_is_named() -> None:
+    """The defect this module exists for has recurred five times, each time as one more place that
+    compared `subject` where the stored value was a name. Asked of the source: a new comparison
+    fails here until it is named above, and a named one that is gone fails until it is removed."""
+    found = _subject_comparisons()
+
+    unnamed = {site: found[site] for site in found.keys() - NAMED_COMPARISONS.keys()}
+    assert not unnamed, (
+        f"{unnamed}: compares a `subject` outside the readers named here. Compare the person "
+        "(`scopes.person`, `Principal.person`) — or, if this site is right as written, name it in "
+        "NAMED_COMPARISONS with the reason, and add the two-credential case above."
+    )
+    assert NAMED_COMPARISONS.keys() <= found.keys(), (
+        f"named but no longer comparing: {sorted(NAMED_COMPARISONS.keys() - found.keys())}"
+    )

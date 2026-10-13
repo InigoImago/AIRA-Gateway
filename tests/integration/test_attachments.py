@@ -9,6 +9,7 @@ document.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import uuid
 
@@ -17,7 +18,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL, wait_for_row
+from .conftest import GATEWAY_URL, READS_PDF, declare_mock, wait_for_row
 
 pytestmark = pytest.mark.integration
 
@@ -99,14 +100,46 @@ async def test_the_refusal_is_recorded_as_a_capability_problem(
     assert row[1] == 400
 
 
+async def _stored_row(engine: AsyncEngine, fixture) -> str:
+    """A document the double **reads**, served and stored — the row these checks are about.
+
+    `mock-1` is declared a PDF reader for the length of the test (`mock_catalogue_row` puts the
+    shared row back): a model that refuses the document stores no attachment at all, and a check of
+    what is stored would then be about nothing. Polled, because the catalogue reaches the gateway's
+    decision the next time it is read.
+    """
+    await declare_mock(engine, **READS_PDF)
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
+        for _ in range(20):
+            response = await client.post(
+                "/v1beta/models/mock-1:generateContent",
+                headers=fixture.headers(),
+                json=_body(uuid.uuid4().hex[:8]),
+            )
+            if response.status_code == 200:
+                break
+            await asyncio.sleep(0.5)
+    assert response.status_code == 200, response.text
+    row = await wait_for_row(
+        engine,
+        "SELECT row_to_json(r)::text FROM request_logs r"
+        " WHERE use_case = :slug AND request_payload IS NOT NULL",
+        {"slug": fixture.slug},
+        timeout=20.0,
+    )
+    return str(row[0])
+
+
 async def test_no_stored_payload_in_the_real_database_holds_base64_bytes(
-    engine: AsyncEngine,
+    engine: AsyncEngine, fixture, mock_catalogue_row
 ) -> None:
     """The size guard. A base64 PDF in a JSONB column makes each row megabytes and puts binary
     the gateway never inspected inside the retention and redaction boundary.
 
-    Checked against what Postgres actually holds rather than against what we intended to write.
+    Checked against what Postgres actually holds rather than against what we intended to write —
+    and only after this test has put a document there, so the scan cannot pass by finding nothing.
     """
+    await _stored_row(engine, fixture)
     async with engine.connect() as connection:
         oversized = (
             await connection.execute(
@@ -121,26 +154,23 @@ async def test_no_stored_payload_in_the_real_database_holds_base64_bytes(
     assert oversized == 0, "an audit row holds a payload large enough to be raw attachment bytes"
 
 
-async def test_a_stored_attachment_keeps_its_description(engine: AsyncEngine) -> None:
-    """Whatever attachments the stack has seen, every one of them is described rather than
-    stored — the digest is what links repeated submissions of the same file without keeping it."""
-    async with engine.connect() as connection:
-        rows = (
-            await connection.execute(
-                text(
-                    "SELECT request_payload::text FROM request_logs"
-                    " WHERE request_payload::text LIKE '%inlineData%' LIMIT 5"
-                )
-            )
-        ).all()
+async def test_a_stored_attachment_keeps_its_description(
+    engine: AsyncEngine, fixture, mock_catalogue_row
+) -> None:
+    """A stored attachment is **described** rather than stored — the digest links repeated
+    submissions of the same file without keeping it — and nothing of its bytes is anywhere in the
+    row, in any column."""
+    row = await _stored_row(engine, fixture)
+    encoded = base64.b64encode(PDF).decode("ascii")
 
-    for (payload,) in rows:
-        assert "sha256" in payload, "an attachment was stored without its description"
-        assert '"bytes"' in payload
-        # `"data":` as a **key** is what a stored document looks like. Matching bare `"data"` would
-        # also hit `{"kind": "data"}` in the description itself — a first version of this assertion
-        # did exactly that and failed on a correctly stripped payload, which is the kind of
-        # too-crude check that later gets weakened rather than sharpened.
-        assert '"data":' not in payload, "the attachment's bytes survived into the audit table"
-        # And a description is small. A row in the megabytes means bytes got through some other way.
-        assert len(payload) < 100_000
+    assert "inlineData" in row, "the stored request lost the attachment's place altogether"
+    assert "sha256" in row, "an attachment was stored without its description"
+    assert '"bytes"' in row
+    # `"data":` as a **key** is what a stored document looks like. Matching bare `"data"` would
+    # also hit `{"kind": "data"}` in the description itself — a first version of this assertion
+    # did exactly that and failed on a correctly stripped payload, which is the kind of
+    # too-crude check that later gets weakened rather than sharpened.
+    assert '"data":' not in row, "the attachment's bytes survived into the audit table"
+    assert encoded[:40] not in row, "the start of the document's base64 is in the row"
+    # And a description is small. A row in the megabytes means bytes got through some other way.
+    assert len(row) < 100_000

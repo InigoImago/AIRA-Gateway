@@ -12,6 +12,7 @@ locked out of it.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from sqlalchemy import select
@@ -25,6 +26,10 @@ from aira_gateway.db.models import RoleRead
 #: How long a loaded table is trusted. A withdrawn permission holds within this, without a new
 #: token (`FRD-614` FR-8).
 CACHE_TTL_SECONDS = 5.0
+
+#: How long a failed read's answer — the fixed roles only — stands before the table is read again;
+#: the `GroupGrantResolver` reasoning, for the same shape of cache.
+RETRY_AFTER_FAILURE_SECONDS = 1.0
 
 #: The names a stored role may not take: a row calling itself `global-admin` is not that role.
 _BUILTIN_SLUGS = frozenset(str(role) for role in Role)
@@ -46,15 +51,29 @@ class RoleResolver:
         self._loaded_at = 0.0
         #: False until the first successful load, and again after a failed one.
         self._ready = False
+        #: Until when a failed read's answer stands (`RETRY_AFTER_FAILURE_SECONDS`).
+        self._retry_at = 0.0
+        #: One reload at a time (`GroupGrantResolver._reload`).
+        self._reload = asyncio.Lock()
+
+    def _settled(self, now: float) -> bool:
+        fresh = self._ready and now - self._loaded_at < CACHE_TTL_SECONDS
+        return fresh or now < self._retry_at
 
     def _fixed_only(self) -> tuple[RoleDefinition, ...]:
         """What holds while nothing stored can be read: IT Steuerung confers nothing."""
         return builtin_roles(self._mapping, it_steuerung=frozenset())
 
     async def definitions(self) -> tuple[RoleDefinition, ...]:
-        now = time.monotonic()
-        if self._ready and now - self._loaded_at < CACHE_TTL_SECONDS:
+        if self._settled(time.monotonic()):
             return self._definitions
+        async with self._reload:
+            now = time.monotonic()
+            if not self._settled(now):
+                await self._load(now)
+        return self._definitions
+
+    async def _load(self, now: float) -> None:
         try:
             async with self._sessionmaker() as session:
                 rows = (
@@ -75,7 +94,8 @@ class RoleResolver:
             _log.warning("roles_unavailable", error=str(exc), error_type=type(exc).__name__)
             self._definitions = self._fixed_only()
             self._ready = False
-            return self._definitions
+            self._retry_at = now + RETRY_AFTER_FAILURE_SECONDS
+            return
 
         steuerung = next(
             (row for row in rows if row.slug == str(Role.IT_STEUERUNG) and row.builtin), None
@@ -94,4 +114,3 @@ class RoleResolver:
         self._definitions = builtin_roles(self._mapping, stored_set) + custom
         self._loaded_at = now
         self._ready = True
-        return self._definitions

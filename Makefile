@@ -41,9 +41,11 @@ endif
 EXTERNAL_F := -f $(COMPOSE_DIR)/docker-compose.external.yml
 COMPOSE_INTEGRATED := docker compose $(APPS_F) $(EXTERNAL_F) $(RELEASE_F)
 
-# Infrastructure + the application processes: **what a real deployment runs**, and nothing that
-# exists for the demo. Startable on its own — `tools/tests/test_the_core_stack_carries_no_demo.py`
-# fails if a demo service or a demo dependency creeps back into it.
+# Infrastructure + the application processes. The applications file is the product and carries
+# nothing that exists for the demo — `tools/tests/test_the_core_stack_carries_no_demo.py` fails if
+# a demo service or a demo dependency creeps back into it. The infrastructure file is a
+# **development** one, though: its Keycloak imports the development realm (published passwords)
+# and its Vault runs in `-dev` mode. A deployment uses its own infrastructure: `up-integrated`.
 COMPOSE_APPS := docker compose $(INFRA_F) $(APPS_F) $(RELEASE_F) --profile observability
 
 # The above, plus the demo provisioning: a development Keycloak realm, a `-dev` Vault that forgets
@@ -122,7 +124,9 @@ INSPECTOR_URL  := $(call stack_url,otlp_inspector)
 # The bare port, for the sentence that tells somebody on **another machine** where to point:
 # the container name and its 4318 exist only inside this stack's network.
 INSPECTOR_PORT := $(lastword $(subst :, ,$(INSPECTOR_URL)))
-KAFKA_ADDR     := $(call stack_url,kafka.netloc)
+# The broker's own listener, as a command run **inside** its container reaches it — the in-network
+# `PLAINTEXT` listener of `docker-compose.yml`, not a published port, so it does not move with one.
+KAFKA_IN_CONTAINER := localhost:9092
 
 # The bare ports, for the two dev targets that **bind** rather than connect: `ng serve` and Django's
 # `runserver`. They take the published port on purpose — those processes stand in for the
@@ -206,7 +210,7 @@ up: env ## Start the full stack (infra + observability)
 up-core: env ## Start only core infra (no observability backend)
 	$(COMPOSE_CORE) up -d
 
-up-apps: env ## Start the product: infra + the application processes, no demo provisioning
+up-apps: env ## Start the product on the development infrastructure (dev realm and dev Vault included)
 	@-$(MAKE) --no-print-directory config-verify
 	$(COMPOSE_APPS) up -d $(BUILD_FLAG)
 
@@ -244,7 +248,7 @@ up-integrated: env ## Start the applications ALONE, against infrastructure you p
 kafka-topics-external: ## Create the config topics on a broker YOU provide (PLAINTEXT only; see up-integrated)
 	@# **Not `kafka-topics`, and the difference is which broker.** That target `docker exec`s into
 	@# this repository's own Kafka container, which an integrated deployment does not have. This one
-	@# runs the same eight `--create --if-not-exists` commands from a one-shot container against
+	@# runs the same nine `--create --if-not-exists` commands from a one-shot container against
 	@# `AIRA_KAFKA_BOOTSTRAP_SERVERS` — the address the applications were configured with, so there
 	@# is no second idea of where the broker is.
 	@#
@@ -700,7 +704,9 @@ lint-py: ## Run ruff lint + format check + mypy
 
 lint-frontend: ## Check frontend formatting (Prettier) and types (console build + e2e tsc)
 	cd $(FRONTEND_DIR) && npx prettier --check "src/**/*.{ts,html,scss}"
-	cd $(FRONTEND_DIR) && npx ng build --configuration development
+	@# The **production** build, as CI runs it: only that configuration applies the content policy
+	@# that once disabled the whole stylesheet, so a development build passes what CI refuses.
+	cd $(FRONTEND_DIR) && npx ng build
 	cd $(FRONTEND_DIR) && npx prettier --check "proxy.conf.cjs"
 	@# **The browser suite is TypeScript too, and nothing type-checked it.** `ng build` covers the
 	@# console and stops at its own `src/`; `e2e/` has `"strict": true` in its tsconfig and no
@@ -740,7 +746,7 @@ kafka-topics: ## Create the compacted config-distribution topics in THIS stack's
 	@prefix="aira."; if [ -n "$${AIRA_KAFKA_STAGE:-}" ]; then prefix="aira.$${AIRA_KAFKA_STAGE}."; fi; \
 	for t in usecases memberships api-keys pipelines budgets rate-limits models anomaly-rules roles; do \
 		docker exec $${AIRA_STACK:-aira}-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$prefix$$t \
-			--bootstrap-server $(KAFKA_ADDR) --partitions 1 --replication-factor 1 \
+			--bootstrap-server $(KAFKA_IN_CONTAINER) --partitions 1 --replication-factor 1 \
 			--config cleanup.policy=compact; \
 	done
 

@@ -40,29 +40,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.integration
 
-#: Indexes `compare_metadata` cannot compare, **by name**, each with what checks it instead.
-#:
-#: Alembic reflects a descending index column as a `UnaryExpression` and has no way to match that
-#: against a declared `postgresql_ops={"created_at": "DESC"}`. It therefore reports every such
-#: index as *remove and re-add*, on every run, forever. That is the tool's blind spot rather than
-#: a difference, and it was verified by reading both sides: `db/models.py` and `0033` declare the
-#: same three columns with the same two DESC ops.
-#:
-#: **Named, not blanketed.** Exempting the *kind* (`add_index`/`remove_index`) would have hidden
-#: the real finding this check made on its first run — `ix_request_logs_use_case_created_at`, an
-#: index `0008` created, no model declared, and `0033`'s superseding index left behind on the
-#: table that takes a row per request. An exemption is a list, never a `return []` (`ADR-0015`).
-#: What the exemption gives up is checked by `test_the_paging_index_really_descends` below.
-UNCOMPARABLE_INDEXES = {
-    "ix_request_logs_use_case_page": "descending columns reflect as expressions (Alembic)",
-}
-
-
-def _name_of(difference: object) -> str:
-    """The index name a `compare_metadata` entry is about, or `""` if it is not about an index."""
-    if isinstance(difference, tuple) and len(difference) == 2 and "index" in str(difference[0]):
-        return getattr(difference[1], "name", "") or ""
-    return ""
+#: **Nothing is exempt.** A descending index is compared like any other because the model says its
+#: order with the columns' own `.desc()`, which is what Alembic reflects a descending column as;
+#: declared through `postgresql_ops` it could not be matched and was reported as *remove and re-add*
+#: on every run. Exempting the kind (`add_index`/`remove_index`) would have hidden the real finding
+#: this check made on its first run — `ix_request_logs_use_case_created_at`, an index `0008`
+#: created, no model declared, and `0033`'s superseding index left behind on the table that takes a
+#: row per request (`ADR-0015`: an exemption is a list, never a `return []`).
 
 
 def _sync_url(settings: GatewaySettings, database: str) -> str:
@@ -141,11 +125,7 @@ def test_nothing_is_pending_between_the_migrations_and_the_models(scratch_databa
                 "else, and every model would be reported as missing"
             )
             context = MigrationContext.configure(connection)
-            differences = [
-                d
-                for d in compare_metadata(context, Base.metadata)
-                if _name_of(d) not in UNCOMPARABLE_INDEXES
-            ]
+            differences = compare_metadata(context, Base.metadata)
     finally:
         engine.dispose()
 
@@ -159,12 +139,11 @@ def test_nothing_is_pending_between_the_migrations_and_the_models(scratch_databa
 
 
 def test_the_paging_index_really_descends(scratch_database: str) -> None:
-    """What the exemption above gives up, checked where Alembic cannot look.
+    """The order itself, asked of Postgres's own definition.
 
-    `ix_request_logs_use_case_page` is exempt from the comparison because a descending column
-    reflects as an expression, so an exemption without this would let the index quietly lose its
-    `DESC` — and the trace view's keyset page (`FRD-502`) would go on working while sorting the
-    hottest table in the system on every request. Asked of Postgres's own definition instead.
+    The comparison above sees the declaration and the migration agree; this sees that what they
+    agree on is a descending index. Without its `DESC` the trace view's keyset page (`FRD-502`)
+    would go on working while sorting the hottest table in the system on every request.
     """
     url = _sync_url(GatewaySettings(), scratch_database)
 

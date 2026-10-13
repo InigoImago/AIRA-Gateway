@@ -93,6 +93,8 @@ export function withCatalog<T extends ApiClientClass>(Base: T) {
           // An older gateway sends no list. Absence means *it did not say*, never "nothing is
           // allowed", which would refuse every region a reader typed.
           allowedRegions: body.allowedRegions ?? [],
+          // An older gateway permits nothing by name, so absence is exactly "none".
+          modelRegions: body.modelRegions ?? {},
         })),
       );
     }

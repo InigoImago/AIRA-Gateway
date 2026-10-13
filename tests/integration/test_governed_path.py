@@ -30,6 +30,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from . import installation
 from .conftest import GATEWAY_URL, Fixture  # noqa: F401  (Fixture is the annotation)
 
 pytestmark = pytest.mark.integration
@@ -90,7 +91,7 @@ async def test_the_row_names_the_use_case_the_subject_and_the_calling_key(
 
     row = (await _settled(fixture, 1))[0]
     assert row["use_case"] == fixture.slug
-    assert row["subject"] == "integration-probe"
+    assert row["subject"] == fixture.subject
     assert row["credential"], "the calling system is not identified"
 
 
@@ -122,7 +123,9 @@ async def test_the_marker_is_nowhere_in_the_table_when_storage_is_off(
     fixture: Fixture, engine: AsyncEngine
 ) -> None:
     """Asserting the two columns are NULL is not quite enough: a payload copied into some other
-    column would satisfy that and still be stored. This asks the table."""
+    column would satisfy that and still be stored. So this asks **every** column of the row —
+    `pipeline_decisions`, the error detail, anything added later — rather than the two it is
+    already known to be absent from."""
     await fixture.set_store_payloads(False)
     marker = f"secret-{uuid.uuid4().hex[:8]}"
     assert (await _generate(fixture, marker)).status_code == 200
@@ -132,8 +135,8 @@ async def test_the_marker_is_nowhere_in_the_table_when_storage_is_off(
         found = (
             await connection.execute(
                 text(
-                    "SELECT count(*) FROM request_logs WHERE use_case = :slug"
-                    " AND (request_payload::text LIKE :like OR response_payload::text LIKE :like)"
+                    "SELECT count(*) FROM request_logs r WHERE use_case = :slug"
+                    " AND row_to_json(r)::text LIKE :like"
                 ),
                 {"slug": fixture.slug, "like": f"%{marker}%"},
             )
@@ -200,6 +203,7 @@ async def test_a_key_bound_to_one_use_case_cannot_select_another(
     than a quiet re-attribution. Without this, one team's traffic could be charged to another's
     budget by adding a header."""
     other = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", other)
     async with engine.begin() as connection:
         await connection.execute(
             text("INSERT INTO use_cases (slug, name) VALUES (:slug, :slug)"), {"slug": other}
@@ -233,15 +237,31 @@ async def test_a_revoked_key_stops_working(fixture: Fixture, engine: AsyncEngine
     assert (await _generate(fixture)).status_code == 401
 
 
-async def test_no_credential_is_refused_before_anything_else(fixture: Fixture) -> None:
+async def test_no_credential_is_refused_before_anything_else(
+    fixture: Fixture, engine: AsyncEngine
+) -> None:
+    """Refused, and no row written: a row per unauthenticated request makes the audit table a
+    target. A request with no credential names no use case, so "no row for the fixture" would hold
+    whatever was written — the request names a model nobody else asks for instead, and the check
+    waits until a later request's row has landed (the audit writer is one queue)."""
+    probe = f"anonymous-{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         response = await client.post(
-            f"/v1beta/models/{MODEL}:generateContent",
+            f"/v1beta/models/{probe}:generateContent",
             json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
         )
     assert response.status_code == 401
-    # And it wrote no row: a row per unauthenticated request makes the audit table a target.
-    assert await fixture.rows() == []
+
+    assert (await _generate(fixture)).status_code == 200
+    await _settled(fixture, 1)
+    async with engine.connect() as connection:
+        left = (
+            await connection.execute(
+                text("SELECT count(*) FROM request_logs WHERE requested_model = :m OR model = :m"),
+                {"m": probe},
+            )
+        ).scalar_one()
+    assert left == 0, "an unauthenticated request left an audit row"
 
 
 # == 5. stability ================================================================================

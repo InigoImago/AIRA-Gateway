@@ -21,12 +21,15 @@ from fastapi import Request
 
 from aira_common.logging import get_logger
 from aira_gateway.api.serving.context import attribution_of, provenance
+from aira_gateway.api.serving.counting import Unreported, count_unreported, floor_priced
 from aira_gateway.api.serving.prepare import Prepared
 from aira_gateway.api.serving.refusals import REFUSALS, refusal_outcome
-from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
+from aira_gateway.audit import AuditTrail, Outcome, UsageBasis, decision_summary, tool_summary
 from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
+from aira_gateway.embedding import describe_vectors
 from aira_gateway.persistence.recorder import record_request
-from aira_gateway.state import budgets_of, pricing_of
+from aira_gateway.shielding import uninterrupted
+from aira_gateway.state import budgets_of, pricing_of, settings_of
 
 _log = get_logger("aira_gateway")
 
@@ -60,6 +63,12 @@ class Accounting:
     requests: int = 1
     #: Set by `accounting`, so `served` records tool calls on every exit alike.
     trail: AuditTrail | None = None
+    #: What the settle priced it at, for a refusal's row written after this exit (`record_refusal`).
+    cost_nanos: int | None = None
+    #: A stream the caller left before its vendor reported usage: counted before the booking.
+    unreported: Unreported | None = None
+    #: How `usage` was established, where it is not the vendor's final report (`UsageBasis`).
+    usage_basis: UsageBasis | None = None
 
     def served(
         self,
@@ -80,7 +89,6 @@ class Accounting:
     def embedded(
         self,
         model: str,
-        payload: dict[str, Any],
         *,
         units: int,
         vectors: Sequence[list[float]] = (),
@@ -89,17 +97,30 @@ class Accounting:
 
         Priced by the input tokens the adapter reported (`FRD-403`) and recorded where it says they
         were produced (`FRD-115` FR-10). An adapter that reports neither leaves the row unpriced
-        and the region to configuration — unknown, never zero.
+        and the region to configuration — unknown, never zero. The row keeps a description of the
+        vectors, never the values (`embedding.describe_vectors`), whatever the surface sent.
         """
         tokens = getattr(vectors, "input_tokens", None)
         usage: CanonicalUsage | None = None
         if tokens is not None:
             usage = CanonicalUsage(prompt_tokens=tokens, completion_tokens=0)
-        self.served(model, usage, payload)
+        self.served(model, usage, {"vectors": describe_vectors(vectors)})
         self.requests = units
         region = getattr(vectors, "served_region", "")
         if region and self.trail is not None:
             self.trail.served_region = region
+
+    def spent(self, model: str, usage: CanonicalUsage | None) -> None:
+        """The upstream answered and billed this, whatever becomes of the answer now.
+
+        Reported before a check that may still refuse the answer — a document the model did not
+        finish (`check_structured_result`): the caller is refused, the provider was paid, and a
+        release would hide that spend from every budget. Settled either way; the refusal's row
+        carries it.
+        """
+        self.model = model
+        self.usage = usage
+        self.produced = True
 
     def abandoned(
         self,
@@ -107,15 +128,41 @@ class Accounting:
         usage: CanonicalUsage | None,
         payload: dict[str, Any],
         tool_calls: Sequence[str] = (),
+        *,
+        complete: bool = True,
     ) -> None:
         """The caller left mid-stream after the upstream had reported usage (`FRD-128` FR-2).
 
         What was reported was produced and reached them, so it is settled; the row still says
-        `499`/`client_gone` rather than that the request was served.
+        `499`/`client_gone` rather than that the request was served. Reported before the stream
+        finished, the figure is the vendor's running total and a floor (`UsageBasis.PARTIAL`).
         """
         self.served(model, usage, payload, tool_calls)
         self.status = CLIENT_CLOSED_REQUEST
         self.outcome = Outcome.CLIENT_GONE
+        if not complete:
+            self.usage_basis = UsageBasis.PARTIAL
+
+    def left_unreported(
+        self,
+        model: str,
+        unreported: Unreported | None,
+        payload: dict[str, Any],
+        tool_calls: Sequence[str] = (),
+    ) -> None:
+        """The caller left before the upstream reported anything it used (`FRD-128` FR-6).
+
+        Nothing is known yet. The exit counts it at the vendor where it can, and settles that;
+        where it cannot, nothing was produced as far as anybody can show, the reservation goes back
+        and the row's usage stays unknown.
+        """
+        self.model = model
+        self.payload = payload
+        self.status = CLIENT_CLOSED_REQUEST
+        self.outcome = Outcome.CLIENT_GONE
+        self.unreported = unreported
+        if tool_calls and self.trail is not None:
+            self.trail.tool_calls = list(tool_calls)
 
     def failed(self, status: int, outcome: Outcome) -> None:
         self.status = status
@@ -138,12 +185,18 @@ async def accounting(
     - A refusal propagating to the surface is recorded there, by :func:`record_refusal`; this exit
       only settles, so no request gets two rows. Any other exception is this gateway failing, and
       nothing else would record it: it leaves a `500`/`internal_error` row here.
-    - The settle-and-record is **shielded**: a dropped socket cancels the task, and an unshielded
-      `await` in `finally` would lose exactly the row this exists to write.
+    - The exit is **one unit that runs to its end** (`shielding.uninterrupted`): settle what was
+      produced or give the reservation back, then write the row. A dropped socket cancels the
+      task, and it is that request's evidence which matters most. Shielding only the wait was not
+      enough: anyio cancels level-triggered, control left the exit while the settle still ran, and
+      `hold` released the reservation the settle was about to book — resolving it twice.
     - Nothing produced means the reservation is released, not settled, so a caller who hung up or
       an upstream outage never consumes a request limit.
     """
     state = Accounting(model=prepared.model, trail=trail)
+    # For the refusal boundary, which writes the row of a refusal raised in here: what was spent
+    # before it belongs on that row.
+    request.state.accounted = state
     record = True
     # Inside `hold`, not around it: outside, `hold` would release the reservation on the way out
     # and the settle would book it a second time.
@@ -160,7 +213,7 @@ async def accounting(
             state.failed(500, Outcome.INTERNAL_ERROR)
             raise
         finally:
-            await asyncio.shield(
+            await uninterrupted(
                 _settle_and_record(
                     request,
                     trail,
@@ -186,17 +239,40 @@ async def _settle_and_record(
     record: bool = True,
 ) -> None:
     model = state.model or prepared.model
-    cost = await pricing_of(request).cost_nanos(model, state.usage)
-    if not state.produced:
-        # Nothing chargeable: nothing is settled, and `hold` has already given the unresolved
-        # reservation back — releasing here too would count the give-back twice.
-        cost = None
-    else:
-        await budgets_of(request).settle(
-            prepared.reservation,
-            state.usage.total_tokens if state.usage else 0,
-            cost_nanos=cost,
-            requests=state.requests,
+    cost: int | None = None
+    try:
+        if state.unreported is not None and not state.produced:
+            await _count_what_was_left(request, state)
+        if not state.produced:
+            # Nothing chargeable: the reservation is given back — here, inside the one exit, so it
+            # is resolved exactly once whatever cancels the request, and `hold` finds nothing to do.
+            await budgets_of(request).release(prepared.reservation)
+        else:
+            # A counted usage is priced as the floor it is (`counting`); a reported one as reported.
+            priced = (
+                floor_priced(state.usage)
+                if state.usage is not None and state.usage_basis is UsageBasis.COUNTED
+                else state.usage
+            )
+            cost = state.cost_nanos = await pricing_of(request).cost_nanos(model, priced)
+            await budgets_of(request).settle(
+                prepared.reservation,
+                state.usage.total_tokens if state.usage else 0,
+                cost_nanos=cost,
+                requests=state.requests,
+            )
+    except Exception as exc:
+        # **The row is written whatever the booking did.** A request that reached an upstream is
+        # recorded however it ended, and a booking that fails — the store away, a total its column
+        # cannot hold — must not take the row with it, nor turn an answer the provider has already
+        # billed into a 500 the caller retries and pays for again. The failure is the operator's:
+        # logged by type, never with values. Admission reads the same store, so the next request
+        # is refused at the gate rather than served blind.
+        _log.error(
+            "budget_settlement_failed",
+            error_type=type(exc).__name__,
+            model=model,
+            settled=state.produced,
         )
     if not record:
         return
@@ -211,6 +287,7 @@ async def _settle_and_record(
         response_payload=state.payload,
         cost_nanos=cost,
         outcome=state.outcome or Outcome.CLIENT_GONE,
+        usage_basis=state.usage_basis,
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
@@ -218,6 +295,22 @@ async def _settle_and_record(
         provenance=await provenance(request, model, trail.served_region),
         api=api,
     )
+
+
+async def _count_what_was_left(request: Request, state: Accounting) -> None:
+    """Establish what a stream the caller left had used, from the vendor's own count.
+
+    Run inside the exit, where the caller has gone and nobody waits for it, and before the booking
+    it informs. Off where the installation does not send the text a second time
+    (`AIRA_COUNT_CANCELLED_STREAMS`): the usage then stays unknown.
+    """
+    if state.unreported is None or not settings_of(request).count_cancelled_streams:
+        return
+    usage = await count_unreported(state.unreported)
+    if usage is not None:
+        state.usage = usage
+        state.produced = True
+        state.usage_basis = UsageBasis.COUNTED
 
 
 # == refused before dispatch ======================================================================
@@ -279,15 +372,21 @@ async def record_refusal(
 async def _write_refusal(
     request: Request, trail: AuditTrail, exc: Exception, *, status: int, started: float
 ) -> None:
+    # A refusal raised after the upstream answered — a document it did not finish — was paid for,
+    # and `accounting` has settled it; the row says what it cost. Before that, nothing was spent.
+    accounted: Accounting | None = getattr(request.state, "accounted", None)
+    spent = accounted if accounted is not None and accounted.produced else None
     await record_request(
         request,
         operation=trail.operation,
         model=trail.served_model,
         status=status,
-        usage=None,
+        usage=spent.usage if spent is not None else None,
         latency_ms=elapsed_ms(started),
         request_payload=trail.body,
         response_payload=None,
+        cost_nanos=spent.cost_nanos if spent is not None else None,
+        usage_basis=spent.usage_basis if spent is not None else None,
         outcome=refusal_outcome(exc),
         requested_model=trail.requested_model,
         model_selection=trail.selection,

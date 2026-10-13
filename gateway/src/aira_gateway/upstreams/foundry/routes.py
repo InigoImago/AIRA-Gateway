@@ -69,3 +69,11 @@ class AzureRoutes:
         # The path already names the deployment. A body `model` would put a caller-facing name on
         # the wire where a reader would take it for the deployment.
         return None
+
+    def output_cap_field(self) -> str:
+        # A reasoning deployment answers `max_tokens` with "Unsupported parameter … use
+        # 'max_completion_tokens' instead"; the pinned API version takes this one for every model.
+        return "max_completion_tokens"
+
+    def validates_strict_schemas(self) -> bool:
+        return True

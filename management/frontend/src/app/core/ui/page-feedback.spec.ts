@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { of, throwError } from 'rxjs';
+import { EMPTY, Subject, of, throwError } from 'rxjs';
 import { PageFeedback } from './page-feedback';
 
 function setup(): PageFeedback {
@@ -54,5 +54,43 @@ describe('PageFeedback', () => {
     feedback.succeed('Saved.');
     feedback.run(httpError(500), { failure: 'Could not save.', success: () => undefined });
     expect(feedback.notice()).toBeNull();
+  });
+
+  it('stays busy until every overlapping mutation has settled', () => {
+    // Two panels saving at once: the first to finish re-enabled the other's controls while its
+    // request was still in flight, which is a double submit waiting to happen.
+    const feedback = setup();
+    const first = new Subject<string>();
+    const second = new Subject<string>();
+    feedback.run(first, { failure: 'no', success: () => undefined });
+    feedback.run(second, { failure: 'no', success: () => undefined });
+
+    first.next('done');
+    expect(feedback.busy()).toBe(true);
+
+    second.error({ status: 500 });
+    expect(feedback.busy()).toBe(false);
+  });
+
+  it('is not left busy by a request that completes without an answer', () => {
+    // Nothing handled completion: an empty answer left every control on the page disabled.
+    const feedback = setup();
+    feedback.run(EMPTY, { failure: 'no', success: () => undefined });
+    expect(feedback.busy()).toBe(false);
+  });
+
+  it('lets a recovered load withdraw its own failure, and only its own', () => {
+    // A live view polls: one failed poll must not leave a banner claiming the failure after the
+    // next poll has answered — and must not clear somebody else's.
+    const feedback = setup();
+    const said = feedback.fail({ status: 502 }, 'Could not load the requests.');
+    expect(feedback.error()).toBe(said);
+
+    feedback.withdraw(said);
+    expect(feedback.error()).toBeNull();
+
+    feedback.fail({ status: 400 }, 'Could not save the budget.');
+    feedback.withdraw(said);
+    expect(feedback.error()).toBe('Could not save the budget.');
   });
 });

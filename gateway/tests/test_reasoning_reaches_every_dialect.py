@@ -39,11 +39,11 @@ THOUGHTS = "First I check the customer number, then I answer."
 ANSWER = "Your order ships on Tuesday."
 
 
-def _openai(reasoning: str = THOUGHTS) -> dict[str, Any]:
+def _openai(reasoning: str = THOUGHTS, field: str = "reasoning") -> dict[str, Any]:
     return {
         "choices": [
             {
-                "message": {"content": ANSWER, "reasoning": reasoning},
+                "message": {"content": ANSWER, field: reasoning},
                 "finish_reason": "stop",
             }
         ],
@@ -68,8 +68,14 @@ def _anthropic() -> dict[str, Any]:
 
 @pytest.mark.parametrize(
     ("mapper", "payload"),
-    [(openai_to_canonical, _openai()), (anthropic_to_canonical, _anthropic())],
-    ids=["openai-dialect", "anthropic"],
+    [
+        (openai_to_canonical, _openai()),
+        # The dialect's second spelling — DeepSeek's, and what Agent Platform's open models send
+        # (`FRD-115` FR-2a). Read as the first only, a use case that asked got nothing from them.
+        (openai_to_canonical, _openai(field="reasoning_content")),
+        (anthropic_to_canonical, _anthropic()),
+    ],
+    ids=["openai-dialect", "openai-dialect-reasoning-content", "anthropic"],
 )
 def test_the_use_case_asked_and_the_thoughts_come_back(mapper, payload) -> None:
     answer = mapper(payload, "m", include_reasoning=True)
@@ -82,8 +88,14 @@ def test_the_use_case_asked_and_the_thoughts_come_back(mapper, payload) -> None:
 
 @pytest.mark.parametrize(
     ("mapper", "payload"),
-    [(openai_to_canonical, _openai()), (anthropic_to_canonical, _anthropic())],
-    ids=["openai-dialect", "anthropic"],
+    [
+        (openai_to_canonical, _openai()),
+        # The dialect's second spelling — DeepSeek's, and what Agent Platform's open models send
+        # (`FRD-115` FR-2a). Read as the first only, a use case that asked got nothing from them.
+        (openai_to_canonical, _openai(field="reasoning_content")),
+        (anthropic_to_canonical, _anthropic()),
+    ],
+    ids=["openai-dialect", "openai-dialect-reasoning-content", "anthropic"],
 )
 def test_a_use_case_that_did_not_ask_is_told_nothing(mapper, payload) -> None:
     """The provider sent it anyway. Off is the default and has to survive a forgetful call site."""

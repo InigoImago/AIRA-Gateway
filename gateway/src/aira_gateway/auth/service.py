@@ -7,10 +7,14 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aira_common.apikeys import check_key_lifetime
+from aira_common.logging import get_logger
 from aira_gateway.auth import keys
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import ApiKey
+
+_log = get_logger("aira_gateway.auth")
 
 
 def _default_key_days() -> int:
@@ -18,11 +22,19 @@ def _default_key_days() -> int:
     return GatewaySettings().api_key_default_days
 
 
+def _max_key_days() -> int:
+    """The longest lifetime anybody may ask for, defined once with Management."""
+    return GatewaySettings().api_key_max_days
+
+
 class ApiKeyService:
     """CRUD + verification for API keys, bound to an async session."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, demo_mode: bool = False) -> None:
         self._session = session
+        #: Whether the published demo key is a credential here: only while the deployment declares
+        #: itself a demo (`ADR-0015`), whatever rows an earlier demo run left in the database.
+        self._demo_mode = demo_mode
 
     async def create(
         self, subject: str, label: str | None = None, *, expires_in_days: int | None = None
@@ -31,11 +43,13 @@ class ApiKeyService:
 
         This is the **break-glass** path, and it is bounded like every other key: a credential
         minted during an incident is the one nobody remembers to take away afterwards.
-        ``expires_in_days`` defaults to the installation's configured lifetime.
+        ``expires_in_days`` defaults to the installation's configured lifetime; one outside
+        `check_key_lifetime` raises `KeyLifetimeOutOfRange`, naming the bound.
         """
-        full, prefix, key_hash = keys.generate_api_key()
         days = expires_in_days if expires_in_days is not None else _default_key_days()
-        expires_at = datetime.now(UTC) + timedelta(days=days) if days > 0 else None
+        check_key_lifetime(days, _max_key_days())
+        full, prefix, key_hash = keys.generate_api_key()
+        expires_at = datetime.now(UTC) + timedelta(days=days)
         record = ApiKey(
             prefix=prefix,
             key_hash=key_hash,
@@ -52,6 +66,8 @@ class ApiKeyService:
         """Resolve a presented key to a Principal, or None if invalid/revoked."""
         prefix = keys.parse_prefix(full)
         if prefix is None:
+            return None
+        if prefix == keys.DEMO_KEY_PREFIX and not self._demo_mode:
             return None
         record = await self._active_by_prefix(prefix)
         if record is None or not keys.verify_hash(full, record.key_hash):
@@ -86,12 +102,24 @@ class ApiKeyService:
         """Idempotently seed the deterministic demo key (demo mode only).
 
         The one key with **no** expiry (`ADR-0015`): its plaintext is published in this repository,
-        and its safety comes from `AIRA_DEMO_MODE` being a declared state, not from a date.
+        and its safety comes from `AIRA_DEMO_MODE` being a declared state, not from a date. A row
+        revoked while this database served without that declaration stays revoked, as every
+        revoked key does; the start says so rather than leaving a demo answering 401.
         """
-        prefix = keys.parse_prefix(keys.DEMO_API_KEY)
-        assert prefix is not None  # constant is a valid key
-        existing = await self._session.execute(select(ApiKey).where(ApiKey.prefix == prefix))
-        if existing.scalar_one_or_none() is not None:
+        prefix = keys.DEMO_KEY_PREFIX
+        existing = (
+            await self._session.execute(select(ApiKey).where(ApiKey.prefix == prefix))
+        ).scalar_one_or_none()
+        if existing is not None:
+            if not existing.is_active:
+                _log.warning(
+                    "demo_key_revoked",
+                    detail=(
+                        "The demo key in this database was revoked when it served outside demo "
+                        "mode, and revocation is terminal. Delete its api_keys row (prefix "
+                        f"{prefix}) to have it seeded again."
+                    ),
+                )
             return
         self._session.add(
             ApiKey(

@@ -83,12 +83,13 @@ export class TableView<T> implements PagedView {
     this.page.set(Math.min(Math.max(1, page), this.pageCount()));
   }
 
+  /** From the page on screen, which a list that shrank under it has already moved. */
   next(): void {
-    this.go(this.page() + 1);
+    this.go(this.current() + 1);
   }
 
   previous(): void {
-    this.go(this.page() - 1);
+    this.go(this.current() - 1);
   }
 
   /** The page actually being shown, which is not always the one that was asked for. */

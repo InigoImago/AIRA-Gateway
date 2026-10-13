@@ -119,6 +119,21 @@ def test_a_stream_that_never_produces_text_shows_nothing_and_says_so() -> None:
     assert outcome is not None and outcome["action"] == "withheld"
 
 
+def test_a_streamed_tool_call_is_recorded_in_the_buffered_answers_words() -> None:
+    """A buffered tool call records *why* it carried no notice — it was a tool call — and the
+    streamed one recorded "no plain text" for the same answer: one event, two reasons, depending
+    only on the verb. The three withholdings stay three on both paths."""
+    notice = StreamedNotice((NOTICE,))
+    buffered = notice_outcome(
+        _answer(text="", tool_calls=(ToolCallPart(id="c1", name="f", arguments={}),)), (NOTICE,)
+    )
+
+    notice.saw_tool_call()
+    assert notice.lead("") == ""
+
+    assert notice.outcome() == buffered
+
+
 def test_a_structured_stream_is_never_led() -> None:
     """The caller will parse it, chunk by chunk or whole."""
     notice = StreamedNotice((NOTICE,), structured=True)

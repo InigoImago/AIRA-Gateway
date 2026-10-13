@@ -27,7 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from aira_gateway.api.serving.answers import WITHHELD_TOOL_CALL
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import (
@@ -35,8 +37,9 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
+    ToolCallPart,
 )
-from aira_gateway.db.models import ModelRead
+from aira_gateway.db.models import ModelRead, RequestLog
 from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
@@ -186,6 +189,42 @@ async def test_the_gemini_stream_is_led_by_the_notice() -> None:
     assert streamed.count(NOTICE) == 1
 
 
+class _CallsATool(_Model):
+    """Answers the caller with a function call and no text — an ordinary agent turn."""
+
+    async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
+        yield CanonicalChunk(
+            text_delta="",
+            tool_calls=(ToolCallPart(id="c1", name="lookup", arguments={}),),
+            finish_reason="stop",
+            usage=CanonicalUsage(prompt_tokens=5, completion_tokens=3),
+        )
+
+
+async def test_a_streamed_tool_call_records_why_the_notice_was_withheld() -> None:
+    """The streamed answer carried a tool call and no text, so nothing could carry the notice; the
+    row says it was a tool call, as the buffered answer's row does — not "no plain text"."""
+    app = _app()
+    registry = ProviderRegistry([_CallsATool()])
+    app.state.providers = registry
+    app.state.pipeline_engine = PipelineEngine(registry)
+    with TestClient(app) as client:
+        await _catalogue(app)
+        response = client.post(
+            f"/v1beta/models/{MODEL}:streamGenerateContent?alt=sse", json=_GEMINI_BODY
+        )
+        assert response.status_code == 200, response.text
+        async with app.state.db_sessionmaker() as session:
+            (row,) = [
+                row
+                for row in (await session.execute(select(RequestLog))).scalars()
+                if row.operation == "streamGenerateContent"
+            ]
+
+    notes = [entry for entry in row.pipeline_decisions or [] if entry.get("step") == "notice"]
+    assert notes == [{"step": "notice", "action": "withheld", "why": WITHHELD_TOOL_CALL}]
+
+
 async def test_the_kira_answer_carries_the_notice() -> None:
     """The compatibility surface applied nothing at all — on the surface whose whole premise is
     that a migrating client changes a URL and gets the same governance."""
@@ -225,14 +264,16 @@ async def test_the_kira_stream_is_led_by_the_notice_and_its_terminal_event_agree
 
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "aira_gateway" / "api"
 
-#: How an exit discharges `FRD-309`. `annotate` for a finished answer, `StreamedNotice` for one
-#: that is still arriving — see `serving.py` for why a stream cannot use the first.
-APPLIES = frozenset({"annotate", "StreamedNotice"})
+#: How an exit discharges `FRD-309`. `annotate` for a finished answer; for one that is still
+#: arriving, `StreamedNotice` — which `StreamAccounting`, the streams' shared finisher, builds from
+#: what the pipeline prepared — since a stream cannot use the first.
+APPLIES = frozenset({"annotate", "StreamedNotice", "StreamAccounting"})
 
 #: How a caller's own generation is dispatched. The pipeline's classifier and redactor call
 #: `generate` too, and they are not exits: they are the gateway acting *on* a request rather than
-#: serving it — which is why this looks for the two the **surfaces** use.
-SERVES = frozenset({"dispatch_with_fallback", "stream_generate"})
+#: serving it — which is why this looks for the ones the **surfaces** use. `stream_with_fallback`
+#: is how both streams open now; a guard that knew only `stream_generate` selected neither of them.
+SERVES = frozenset({"dispatch_with_fallback", "stream_with_fallback", "stream_generate"})
 
 Function = ast.FunctionDef | ast.AsyncFunctionDef
 
@@ -276,6 +317,30 @@ def _names_called(function: Function) -> set[str]:
     return names
 
 
+def _exits() -> set[str]:
+    """Every function the guard below treats as an exit, as `<file>:<chain>`."""
+    found: set[str] = set()
+    for path in sorted(SOURCE.rglob("*.py")):
+        for chain in _chains(path):
+            if SERVES & _names_called(chain[0]):
+                where = "/".join(path.relative_to(SOURCE).parts)
+                found.add(f"{where}:{'.'.join(f.name for f in reversed(chain))}")
+    return found
+
+
+def test_the_guard_selects_every_exit_that_exists() -> None:
+    """A selector that matches nothing makes the guard below pass for every exit it misses. It
+    looked for `stream_generate` after both streams had moved to `stream_with_fallback`, and so
+    selected neither: a stream that dropped the notice passed the structural half. Naming the
+    exits here makes a new one — or a renamed dispatch — a decision someone has to write down."""
+    assert _exits() == {
+        "gemini/routes.py:_generate_content",
+        "gemini/routes.py:_stream_response",
+        "kira/routes.py:chat",
+        "kira/routes.py:streaming_chat",
+    }
+
+
 def test_every_surface_that_serves_a_generation_applies_the_notice() -> None:
     """A fifth exit cannot be written without answering this.
 
@@ -298,7 +363,7 @@ def test_every_surface_that_serves_a_generation_applies_the_notice() -> None:
         "these serve a caller's generation and never apply FRD-309's notice, so a use case whose "
         "pipeline rewrites or re-targets a request tells that caller nothing:\n  "
         + "\n  ".join(unguarded)
-        + "\n\nUse `serving.annotate` for a finished answer or `serving.StreamedNotice` for a "
+        + "\n\nUse `serving.annotate` for a finished answer or `serving.StreamAccounting` for a "
         "stream. Both also record what became of the notice, which is the half a reader needs "
         "when it could not be shown."
     )

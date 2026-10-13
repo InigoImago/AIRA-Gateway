@@ -1,6 +1,6 @@
 import { Component, DestroyRef, OnInit, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Observable, Subject, Subscription, debounceTime, distinctUntilChanged } from 'rxjs';
+import { Observable, Subject, Subscription, debounceTime, finalize } from 'rxjs';
 import { AccessChange, DirectoryEntry, GroupGrant, Membership } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -61,15 +61,21 @@ export class AccessPanel implements OnInit {
    */
   protected readonly source = signal<'keycloak' | 'local' | 'none'>('none');
   protected readonly hint = signal('');
+  /** The last search failed: the page banner says why, and "nothing matches" would be a claim. */
+  protected readonly searchFailed = signal(false);
   protected readonly picked = signal<DirectoryEntry | null>(null);
   protected readonly role = signal<'admin' | 'user'>('user');
+  /** This panel's grant is in flight — its own, so revoking a group does not relabel Grant. */
+  protected readonly granting = signal(false);
 
   private readonly typed = new Subject<string>();
   private inFlight: Subscription | null = null;
 
   constructor() {
+    // No distinct-check: after a pick the same letters typed again must ask again — the results
+    // were cleared by the pick, and suppressing the repeat left "nothing matches" on screen.
     const typing = this.typed
-      .pipe(debounceTime(TYPING_PAUSE_MS), distinctUntilChanged())
+      .pipe(debounceTime(TYPING_PAUSE_MS))
       .subscribe((value) => this.lookup(value));
     this.destroyRef.onDestroy(() => {
       typing.unsubscribe();
@@ -114,7 +120,8 @@ export class AccessPanel implements OnInit {
       entry.kind === 'group'
         ? this.service.grantGroup(this.slug(), entry.id, this.role())
         : this.service.addMember(this.slug(), entry.id, this.role());
-    this.feedback.run(request, {
+    this.granting.set(true);
+    this.feedback.run(request.pipe(finalize(() => this.granting.set(false))), {
       failure: `Could not grant access to ${entry.label}.`,
       success: () => {
         this.feedback.succeed(
@@ -166,7 +173,10 @@ export class AccessPanel implements OnInit {
   private lookup(value: string): void {
     // Switched, not queued: a slow answer for "ku" must not land after a fast one for "kunden".
     this.inFlight?.unsubscribe();
+    this.searchFailed.set(false);
     if (value.trim().length < 2) {
+      // The search in flight was just dropped, so nothing is being searched any more.
+      this.searching.set(false);
       this.results.set([]);
       this.source.set('none');
       return;
@@ -181,6 +191,7 @@ export class AccessPanel implements OnInit {
       },
       error: (response: unknown) => {
         this.searching.set(false);
+        this.searchFailed.set(true);
         this.results.set([]);
         this.feedback.fail(response, 'Could not search the directory.');
       },

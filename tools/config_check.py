@@ -40,14 +40,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 #: One probe per plane: import the settings class, hand back what it refuses. Written as a program
 #: rather than a shared module because it must run with a **clean** environment, and the only
-#: honest way to get one is a process that never had ours.
+#: honest way to get one is a process that never had ours. `_env_file=None` for the same reason:
+#: the settings classes read a `.env` in the working directory, and a developer's own would answer
+#: for the deployment, which has none.
 _PROBE = """
 import json, sys
 sys.path[:0] = {paths!r}
 try:
     from {module} import {settings_class} as S
     from {checker_module} import unsafe_settings
-    print(json.dumps({{"ok": True, "problems": unsafe_settings(S())}}))
+    print(json.dumps({{"ok": True, "problems": unsafe_settings(S(_env_file=None))}}))
 except Exception as exc:                      # noqa: BLE001 — the message is the finding
     print(json.dumps({{"ok": False, "error": f"{{type(exc).__name__}}: {{exc}}"}}))
 """
@@ -72,7 +74,8 @@ def _ask(plane: str, environment: dict[str, str]) -> dict[str, object]:
     spec = PLANES[plane]
     probe = _PROBE.format(**spec)
     # `env=` and nothing else: the check is worthless if it inherits a value the deployment
-    # will not have. PATH is kept because a subprocess without one cannot always start.
+    # will not have. PATH is kept because a subprocess without one cannot always start. The
+    # probe's `_env_file=None` is the same rule for the one file the settings would read.
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", probe],
         capture_output=True,

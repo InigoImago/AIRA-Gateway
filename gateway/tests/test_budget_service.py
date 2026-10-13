@@ -87,10 +87,29 @@ async def test_disabled_budget_is_ignored(sessionmaker) -> None:
     assert (await service.guard("uc", "bob", NOW)).budgets == []
 
 
-async def test_enforce_off_returns_empty(sessionmaker) -> None:
+async def test_enforce_off_reserves_nothing_refuses_nobody_and_still_counts(sessionmaker) -> None:
+    """`AIRA_ENFORCE_BUDGETS=false`: "every budget keeps its figures … Spend is still counted and
+    still reported, so the figures are true." The guard returned an empty reservation, so nothing
+    an ordinary request spent was ever booked — the budget screens showed classifier spend alone,
+    and a limit switched back on started from a figure that was not."""
+
+    class _Untouchable:
+        async def reserve(self, *args: object, **kwargs: object) -> None:
+            raise AssertionError("enforcement is off: nothing may be reserved")
+
+        adjust = reserve
+
     await _add(sessionmaker, id=1, limit_requests=1)
-    service = BudgetService(sessionmaker, enforce=False)
-    assert (await service.guard("uc", "bob", NOW)).budgets == []
+    service = BudgetService(sessionmaker, enforce=False, ledger=_Untouchable())  # type: ignore[arg-type]
+
+    for _ in range(3):  # three requests against a limit of one: none is refused
+        await service.refuse_if_exhausted("uc", "bob", NOW)
+        reservation = await service.guard("uc", "bob", NOW)
+        assert not reservation.atomic
+        await service.settle(reservation, 100, cost_nanos=1000, now=NOW)
+
+    (row,) = await service.usage("uc", NOW)
+    assert (row["used_requests"], row["used_tokens"], row["used_cost_nanos"]) == (3, 300, 3000)
 
 
 async def test_no_use_case_returns_empty(sessionmaker) -> None:
@@ -353,3 +372,36 @@ def test_the_period_boundary_is_utc_and_the_console_says_so() -> None:
     ).read_text()
     assert 'testid="budget-period"' in console, "the Period control has no explanation"
     assert "UTC" in console, "the explanation does not name the clock the counters follow"
+
+
+async def test_a_budget_of_a_scope_this_build_does_not_know_is_reported_without_figures(
+    sessionmaker,
+) -> None:
+    """`usage()` read every row of the use case and asserted each one bound somebody: one row of a
+    scope this build cannot resolve — the dropped `member`, or one a newer Management adds — made
+    the budget screen and `/v1beta/me/budget` answer 500 for the whole use case, while enforcement
+    skipped the same row. It is reported as stored, with no figures, and the rest still are."""
+    await _add(sessionmaker, id=1, limit_requests=10)
+    await _add(sessionmaker, id=2, scope="member", subject="bob", limit_requests=5)
+    service = BudgetService(sessionmaker)
+    await service.record((await service.guard("uc", "bob", NOW)).budgets, 7, now=NOW)
+
+    rows = {row["id"]: row for row in await service.usage("uc", NOW, subject="bob")}
+
+    assert rows[1]["used_tokens"] == 7
+    assert rows[2]["scope"] == "member"
+    assert rows[2]["used_tokens"] is None and rows[2]["remaining_requests"] is None
+
+
+async def test_asking_a_budget_for_a_caller_it_does_not_bind_is_an_explicit_error(
+    sessionmaker,
+) -> None:
+    """An explicit check, not an `assert`: `python -O` removes assertions, and the failure would
+    then surface as an `AttributeError` somewhere further on."""
+    from aira_gateway.budgets import keys
+
+    await _add(sessionmaker, id=1, scope="each_member")
+    (budget,) = await _budgets(sessionmaker)
+
+    with pytest.raises(keys.Unbound):
+        keys.scope_key(budget, None)

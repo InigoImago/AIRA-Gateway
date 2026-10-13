@@ -23,6 +23,7 @@ did not would be testing the clock.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -99,7 +100,8 @@ async def test_a_refusal_carries_a_retry_after_a_client_would_obey(governed: Gov
 
     assert refused.status_code == 429, refused.text[:200]
     assert refused.headers.get("Retry-After"), dict(refused.headers)
-    assert int(refused.headers["Retry-After"]) >= 0
+    # At least a second: `0` invites the immediate retry the limit exists to stop.
+    assert int(refused.headers["Retry-After"]) >= 1
 
 
 async def test_a_rate_refusal_is_recorded_and_produced_no_output(governed: Governed) -> None:
@@ -210,7 +212,8 @@ async def test_a_batch_larger_than_the_bucket_says_so_instead_of_stalling(
 ) -> None:
     """A batch bigger than the bucket can never be admitted however long the caller waits, so the
     refusal names the bound rather than offering a `Retry-After` that would still be wrong an hour
-    later."""
+    later: a `400 FAILED_PRECONDITION` with no `Retry-After`, because a client that honours a `429`
+    would retry it for ever (`FRD-113` §11)."""
     await governed.rate_limit(limit_rpm=SLOW_REFILL, burst=2)
     await governed.settle()
 
@@ -227,8 +230,10 @@ async def test_a_batch_larger_than_the_bucket_says_so_instead_of_stalling(
             headers=governed.headers(),
         )
 
-    assert response.status_code == 429, response.text[:300]
-    assert "cannot fit" in _message(response) or "smaller batches" in _message(response)
+    assert response.status_code == 400, response.text[:300]
+    assert response.json()["error"]["status"] == "FAILED_PRECONDITION"
+    assert "retry-after" not in response.headers
+    assert "cannot fit" in _message(response) and "smaller batches" in _message(response)
 
 
 @pytest.mark.parametrize("surface", ["gemini", "kira"])
@@ -279,6 +284,9 @@ async def test_a_rate_limited_caller_pays_for_no_classifier(governed: Governed) 
     await governed.settle()
 
     assert (await governed.generate(_body(), model=MOCK_MODEL)).status_code == 200
+    # Both rows of the served request — its own and the classifier's — before forgetting them:
+    # cleared any sooner, a row still on its way lands afterwards and reads as the refusal's.
+    await governed.own_row(total=2)
     await governed.clear_rows()
     assert (await governed.generate(_body(), model=MOCK_MODEL)).status_code == 429
 
@@ -503,15 +511,7 @@ async def test_a_suspended_use_case_is_stopped_with_429_and_its_own_outcome(
     would send the caller to whoever issues keys. `suspended` is its own outcome rather than being
     folded into `rate_limited`, because "we stopped this caller on purpose" and "this caller is
     going too fast" are different facts."""
-    from .conftest import Fixture  # noqa: F401 - imported for the suspension helper's shape
-
-    await governed._exec(  # noqa: SLF001 - the fixture writes the read-model, as every suite does
-        "INSERT INTO access_suspensions (id, use_case, target, target_value, action, throttle_rpm,"
-        " expires_at, author, reason)"
-        " VALUES (gen_random_uuid(), :slug, 'use_case', :slug, 'block', NULL,"
-        " now() + interval '1 hour', 'user:dev-round', 'developer round')",
-        slug=governed.slug,
-    )
+    await governed.suspend(author="user:dev-round", reason="developer round")
     await governed.settle()
 
     response = await governed.generate(_body(), model=MOCK_MODEL)
@@ -530,13 +530,7 @@ async def test_a_stopped_caller_pays_for_no_classifier_either(governed: Governed
             "config": {"mode": "llm", "action": "flag", "model": CHAT_MODEL},
         }
     )
-    await governed._exec(  # noqa: SLF001
-        "INSERT INTO access_suspensions (id, use_case, target, target_value, action, throttle_rpm,"
-        " expires_at, author, reason)"
-        " VALUES (gen_random_uuid(), :slug, 'use_case', :slug, 'block', NULL,"
-        " now() + interval '1 hour', 'user:dev-round', 'developer round')",
-        slug=governed.slug,
-    )
+    await governed.suspend(author="user:dev-round", reason="developer round")
     await governed.settle()
 
     assert (await governed.generate(_body(), model=MOCK_MODEL)).status_code == 429
@@ -548,13 +542,7 @@ async def test_a_stopped_caller_pays_for_no_classifier_either(governed: Governed
 async def test_a_suspension_on_one_use_case_leaves_another_alone(
     governed: Governed, second_governed: Governed
 ) -> None:
-    await governed._exec(  # noqa: SLF001
-        "INSERT INTO access_suspensions (id, use_case, target, target_value, action, throttle_rpm,"
-        " expires_at, author, reason)"
-        " VALUES (gen_random_uuid(), :slug, 'use_case', :slug, 'block', NULL,"
-        " now() + interval '1 hour', 'user:dev-round', 'developer round')",
-        slug=governed.slug,
-    )
+    await governed.suspend(author="user:dev-round", reason="developer round")
     await governed.settle()
 
     assert (await governed.generate(_body(), model=MOCK_MODEL)).status_code == 429
@@ -564,12 +552,10 @@ async def test_a_suspension_on_one_use_case_leaves_another_alone(
 async def test_an_expired_suspension_does_not_stop_anybody(governed: Governed) -> None:
     """A decision with an expiry is what makes an automatic block something other than an outage
     with a good reason (`ADR-0014`). One that has passed must stop applying by itself."""
-    await governed._exec(  # noqa: SLF001
-        "INSERT INTO access_suspensions (id, use_case, target, target_value, action, throttle_rpm,"
-        " expires_at, author, reason)"
-        " VALUES (gen_random_uuid(), :slug, 'use_case', :slug, 'block', NULL,"
-        " now() - interval '1 minute', 'user:dev-round', 'expired')",
-        slug=governed.slug,
+    await governed.suspend(
+        author="user:dev-round",
+        reason="expired",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
     )
     await governed.settle()
 

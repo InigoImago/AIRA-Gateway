@@ -19,8 +19,10 @@ handed needs *what a receiver will be handed*. So each batch is a collapsible JS
 real document, with the exact decoded bytes one click away and at `/batch/<n>/raw`. Nothing is
 reordered, renamed or dropped on the way to the screen.
 
-**It is a debugging tool and it is shaped like one.** Everything is in memory and capped; a restart
-loses it. It is in the `debug` Compose profile, so `make up` does not start it. There is no
+**It is a debugging tool and it is shaped like one.** Everything is in memory and capped — what a
+request may *cost* as well as what is kept: a body longer than the keep limit is refused unread, and
+a compressed one is inflated only until it passes the limit. A restart loses it. It is in the
+`debug` Compose profile, so `make up` does not start it. There is no
 authentication, and there is a reason it needs none *and* must never be published anywhere but a
 developer's own machine: it holds `aira.subject`, `aira.source_ip` and whatever a log line carried,
 which is the same content `FRD-505` puts behind a role check and a retention clock. The one thing
@@ -42,12 +44,12 @@ body.
 
 from __future__ import annotations
 
-import gzip
 import html
 import json
 import os
 import threading
 import time
+import zlib
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -70,8 +72,18 @@ SIGNALS = (*SIGNAL_PATHS.values(), HEC_SIGNAL)
 DEFAULT_KEEP = 200
 
 #: And a bound on what one batch may cost in memory. A body past this is kept as its metadata only
-#: — the counts stay right, and one enormous document cannot evict two hundred useful ones.
+#: — the counts stay right, and one enormous document cannot evict two hundred useful ones. The same
+#: figure bounds what a request may make this process **read**: a longer body is refused unread
+#: (`413`), and a compressed one is inflated only until it passes the bound.
 DEFAULT_MAX_BODY = 2 * 1024 * 1024
+
+#: How much a compressed body is inflated per step, so stopping at the keep limit overshoots it by
+#: at most this much.
+INFLATE_STEP = 64 * 1024
+
+#: Seconds a connection may sit silent mid-request. Without it a sender that announces a body and
+#: never sends it holds a thread for ever.
+SOCKET_TIMEOUT = 30
 
 #: Substrings that make a **header name** a credential, whose value is therefore never shown.
 #:
@@ -89,31 +101,6 @@ CREDENTIAL_HINTS = ("auth", "key", "token", "secret", "password", "credential", 
 
 #: Headers not worth a row: set by the HTTP client on every request and about nothing.
 BORING_HEADERS = frozenset({"host", "content-length", "accept-encoding", "connection"})
-
-
-def _attributes(items: list[dict[str, Any]] | None) -> dict[str, str]:
-    """OTLP's `[{key, value: {stringValue: …}}]` as a plain mapping, values rendered as text.
-
-    The nesting is the protobuf-JSON mapping and it is the thing people are surprised by, so it is
-    flattened here once rather than in each of the three renderers. A value whose type this does
-    not know is JSON-encoded rather than dropped: an unfamiliar shape on the page is information,
-    and an absent one reads as *the attribute was not sent*.
-    """
-    out: dict[str, str] = {}
-    for item in items or []:
-        key = item.get("key")
-        if not isinstance(key, str):
-            continue
-        value = item.get("value")
-        if not isinstance(value, dict) or not value:
-            out[key] = ""
-            continue
-        kind, raw = next(iter(value.items()))
-        if kind in ("stringValue", "intValue", "boolValue", "doubleValue"):
-            out[key] = str(raw)
-        else:
-            out[key] = json.dumps(raw, ensure_ascii=False)
-    return out
 
 
 def describe_headers(headers: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str]]:
@@ -149,12 +136,36 @@ def describe_headers(headers: Mapping[str, str]) -> tuple[dict[str, str], dict[s
     return credentials, plain
 
 
-def _nanos(value: Any) -> float | None:
-    """OTLP timestamps are nanoseconds in a *string*, because JSON has no 64-bit integer."""
+def gunzip(raw: bytes, limit: int) -> tuple[bytes, int] | None:
+    """`raw` decompressed: `(body, bytes inflated)`, or `None` when it is not gzip after all.
+
+    **Bounded while it inflates**, not checked afterwards: 255 KiB of gzip is 256 MiB of zeros, and
+    a check after `gzip.decompress` bounds what is *kept* and not what the request *cost*. So it
+    inflates a step at a time and stops as soon as more than `limit` bytes have come out; the body
+    is then not kept, so it is not built either, and `body` is empty. `None` means corrupt,
+    truncated or trailed by something that is not gzip — the caller keeps the bytes as they came.
+    """
+    parts: list[bytes] = []
+    size = 0
+    rest = raw
     try:
-        return int(value) / 1e9
-    except TypeError, ValueError:
+        # Concatenated members are one gzip stream to `gzip.decompress`, and to this.
+        while rest:
+            stream = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            pending = rest
+            while not stream.eof:
+                part = stream.decompress(pending, INFLATE_STEP)
+                if not part and not stream.unconsumed_tail and not stream.eof:
+                    return None
+                size += len(part)
+                if size > limit:
+                    return b"", size
+                parts.append(part)
+                pending = stream.unconsumed_tail
+            rest = stream.unused_data
+    except zlib.error:
         return None
+    return b"".join(parts), size
 
 
 def hec_events(text: str) -> list[dict[str, Any]]:
@@ -256,12 +267,12 @@ class Inspector:
         content_encoding: str,
         headers: Mapping[str, str] | None = None,
     ) -> Arrival:
-        body = raw
-        if "gzip" in content_encoding:
-            try:
-                body = gzip.decompress(raw)
-            except OSError:
-                body = raw
+        body, size = raw, len(raw)
+        if "gzip" in content_encoding and size <= self.max_body:
+            inflated = gunzip(raw, self.max_body)
+            if inflated is not None:
+                body, size = inflated
+        over = size > self.max_body
 
         credentials, plain = describe_headers(headers or {})
 
@@ -272,13 +283,18 @@ class Inspector:
             content_type=content_type,
             content_encoding=content_encoding or "identity",
             bytes_on_wire=len(raw),
-            bytes_decoded=len(body),
+            bytes_decoded=size,
             credentials=credentials,
             headers=plain,
         )
 
-        if len(body) > self.max_body:
-            arrival.undecoded = f"{len(body)} bytes, over the {self.max_body}-byte keep limit"
+        if over:
+            arrival.undecoded = (
+                f"{size} bytes, over the {self.max_body}-byte keep limit"
+                if body is raw
+                else f"more than {self.max_body} bytes once inflated, over the keep limit — "
+                "inflating stopped there"
+            )
         elif signal == HEC_SIGNAL:
             # HEC defines one body format, so it is parsed whatever the content type says.
             try:
@@ -307,11 +323,41 @@ class Inspector:
                 "to read the contents here"
             )
 
+        return self._keep(arrival)
+
+    def refuse(
+        self,
+        *,
+        signal: str,
+        declared: int,
+        content_type: str,
+        content_encoding: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> Arrival:
+        """Count a batch that was refused unread, so *did it arrive* still has an answer."""
+        credentials, plain = describe_headers(headers or {})
+        arrival = Arrival(
+            number=0,
+            at=time.time(),
+            signal=signal,
+            content_type=content_type,
+            content_encoding=content_encoding or "identity",
+            bytes_on_wire=declared,
+            bytes_decoded=0,
+            credentials=credentials,
+            headers=plain,
+            undecoded=f"refused unread: {declared} bytes announced, over the {self.max_body}-byte "
+            "limit",
+        )
+        return self._keep(arrival)
+
+    def _keep(self, arrival: Arrival) -> Arrival:
+        """Number, count and keep one arrival — one place, so a refused batch counts like any."""
         with self._lock:
             arrival.number = self._next
             self._next += 1
-            self.totals[signal] += 1
-            self.records[signal] += arrival.records
+            self.totals[arrival.signal] += 1
+            self.records[arrival.signal] += arrival.records
             self._arrivals.append(arrival)
         return arrival
 
@@ -576,6 +622,7 @@ class Handler(BaseHTTPRequestHandler):
     inspector: Inspector
 
     protocol_version = "HTTP/1.1"
+    timeout = SOCKET_TIMEOUT
 
     def _send(self, status: int, body: bytes, content_type: str) -> None:
         self.send_response(status)
@@ -590,7 +637,24 @@ class Handler(BaseHTTPRequestHandler):
         if signal is None:
             self._send(404, b'{"error":"not an OTLP or HEC path"}', "application/json")
             return
-        length = int(self.headers.get("content-length") or 0)
+        announced = (self.headers.get("content-length") or "0").strip()
+        length = int(announced) if announced.isascii() and announced.isdigit() else -1
+        if length < 0:
+            # Unread, so the connection cannot carry another request: whatever follows is body.
+            self.close_connection = True
+            self._send(400, b'{"error":"Content-Length is not a length"}', "application/json")
+            return
+        if length > self.inspector.max_body:
+            self.inspector.refuse(
+                signal=signal,
+                declared=length,
+                content_type=(self.headers.get("content-type") or "").lower(),
+                content_encoding=(self.headers.get("content-encoding") or "").lower(),
+                headers={key.lower(): value for key, value in self.headers.items()},
+            )
+            self.close_connection = True
+            self._send(413, b'{"error":"body over the inspector\'s limit"}', "application/json")
+            return
         raw = self.rfile.read(length) if length else b""
         self.inspector.record(
             signal=signal,

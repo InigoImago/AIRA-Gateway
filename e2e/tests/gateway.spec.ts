@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test';
 import {
   USERS,
+  api,
   createUseCase,
-  ensureUseCase,
   grantGroup,
   awaitGatewayMembership,
   login,
@@ -11,6 +11,11 @@ import {
   uniqueSlug,
   submitOfOpenForm,
 } from './support';
+
+/** A Keycloak group `ucadmin` is in and `ucuser` is not — where a test that needs `ucadmin` to
+ *  administer something grants it. Granting `admin` to a group that holds `ucuser` makes the demo
+ *  user an administrator too, which every later "this account administers nothing" inherits. */
+const UCADMIN_ONLY = '/use-cases/entwicklung';
 
 /**
  * The SPA talking to the *gateway* (not just the control plane).
@@ -105,32 +110,28 @@ test.describe('Gateway integration', () => {
   test('consumption is shown for a use case the caller is a Keycloak member of', async ({
     page,
   }) => {
-    // The gateway authorizes the data plane by Keycloak group membership (FRD-102), and the
-    // usage endpoint follows the same rule (ADR-0007). `demo-uc` is the slug the demo realm
-    // puts ucadmin into, so this is the path where the numbers are visible.
-    // Created as the **global administrator**, because since `FRD-605` creating a use case is
-    // that role's act — and then read as `ucadmin`, which is what this test is about. It used to
-    // create it as `ucadmin` and passed only because some earlier run had left `demo-uc` behind:
-    // a fresh database turned it into a 45-second timeout on a button that role never gets. A
-    // fixture a test needs is a fixture the test makes.
+    // The gateway authorizes the data plane by Keycloak group membership (`FRD-209`), and the
+    // usage endpoint follows the same rule (ADR-0007). A use case of its own, made by the role
+    // that may (`FRD-605`) and administered through a grant to a group `ucadmin` is in. Not
+    // `demo-uc`, which nothing creates: the test would pass or fail on whatever an earlier run left
+    // behind. A fixture a test needs is a fixture the test makes.
+    test.slow();
     await login(page, USERS.globalAdmin);
-    await ensureUseCase(page, 'demo-uc', 'Demo use case');
-    // And the grant, which is the half that was never anybody's to create. `ucadmin` is in the
-    // Keycloak group `/use-cases/demo-uc`; administering the use case is that group's *grant on
-    // it* (`FRD-209`), and nothing in the seed or the realm makes one. The test passed because an
-    // earlier run had, which is a fixture nobody owns.
-    await grantGroup(page, 'demo-uc', '/use-cases/demo-uc', 'admin');
+    const slug = uniqueSlug('consumption');
+    await createUseCase(page, slug, 'Consumption probe');
+    await grantGroup(page, slug, UCADMIN_ONLY, 'admin');
     await logout(page);
     await login(page, USERS.useCaseAdmin);
+    await awaitGatewayMembership(page, slug);
 
-    await page.goto('/use-cases/demo-uc?tab=budgets');
-    if ((await page.locator('[role="progressbar"]').count()) === 0) {
-      await page.click('button:has-text("Add budget")');
-      await page.fill('#budget-requests', '5');
-      await (await submitOfOpenForm(page)).click();
-    }
+    // A new use case has no budget, so one is added — always, not on a count sampled before the
+    // tab had loaded.
+    await page.goto(`/use-cases/${slug}?tab=budgets`);
+    await page.click('button:has-text("Add budget")');
+    await page.fill('#budget-requests', '5');
+    await (await submitOfOpenForm(page)).click();
 
-    await expect(page.locator('[role="progressbar"]').first()).toBeVisible();
+    await expect(page.locator('[role="progressbar"]').first()).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('text=/Consumption is/')).toHaveCount(0);
   });
 
@@ -152,16 +153,11 @@ test.describe('Gateway integration', () => {
     // every use case's figures so the warning is unreachable for them, and somebody with no grant
     // at all cannot see the use case in the first place — so the grant is made here, on a group
     // `ucadmin` already holds, while nobody is in `/use-cases/<slug>`.
-    const granted = await page.evaluate(async (slug) => {
-      const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
-      const response = await fetch(`/api/v1/use-cases/${slug}/groups/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ group_path: '/use-cases/demo-uc', role: 'admin' }),
-      });
-      return response.status;
-    }, slug);
-    expect(granted, 'the grant that makes the reader an administrator').toBe(201);
+    const granted = await api(page, 'POST', `/api/v1/use-cases/${slug}/groups/`, {
+      group_path: UCADMIN_ONLY,
+      role: 'admin',
+    });
+    expect(granted.status, 'the grant that makes the reader an administrator').toBe(201);
 
     await logout(page);
     await login(page, USERS.useCaseAdmin);
@@ -172,7 +168,9 @@ test.describe('Gateway integration', () => {
     // member" as a broken screen (FRD-206 §4.5).
     await expect(page.locator('.callout--warning')).toContainText(`/use-cases/${slug}`);
     await expect(page.locator('.callout--warning')).toContainText('member list on this page');
-    // The limits themselves are still rendered.
-    await expect(page.locator('[role="progressbar"]')).toHaveCount(1);
+    // The limit itself is still rendered, beside a consumption that reads as unknown — a dash and no
+    // bar, because an empty bar would say nothing has been used, which nobody here can know.
+    await expect(page.locator('[data-testid^="budget-requests-"]')).toContainText('— / 5');
+    await expect(page.locator('[role="progressbar"]')).toHaveCount(0);
   });
 });

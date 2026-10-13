@@ -10,11 +10,11 @@
     <p class="callout callout--danger" role="alert">{{ message }}</p>
   }
 
-  <div class="card" style="padding: 0">
+  <div class="card card--flush">
     <!-- Outside the loading branch: a control that starts a request must survive it, or the
          search box is rebuilt mid-word and loses focus. -->
     @if (!isEmpty() || view.query()) {
-      <div class="table-tools" style="padding: 0.9rem 1rem 0">
+      <div class="table-tools card__inset card__inset--above">
         <label class="search">
           <span>Find a use case</span>
           <input
@@ -34,7 +34,7 @@
     }
 
     @if (loading() && !view.total()) {
-      <p class="loading" style="padding: 1rem">
+      <p class="loading card__inset">
         <span class="spinner" aria-hidden="true"></span>
         Loading use cases…
       </p>
@@ -85,7 +85,7 @@
           </table>
         </div>
 
-        <div style="padding: 0 1rem 0.9rem">
+        <div class="card__inset card__inset--below">
           <app-table-pager [view]="view" noun="use cases" testid="use-case-pager" />
         </div>
       }
@@ -95,78 +95,57 @@
 
 <!-- Creating is a window that ends on the new use case's settings: an unconfigured use case left
      on the list would look finished. -->
-@if (showCreate()) {
-  <div class="modal-backdrop" (click)="closeCreate()"></div>
-  <div
-    #dialog
-    class="modal"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="uc-create-title"
-    tabindex="-1"
-  >
-    <div class="modal__head">
-      <h3 id="uc-create-title" style="margin: 0">New use case</h3>
-      <button
-        type="button"
-        class="btn btn--sm btn--ghost"
-        aria-label="Close"
-        (click)="closeCreate()"
-      >
-        ✕
-      </button>
-    </div>
+<app-modal
+  [open]="showCreate()"
+  title="New use case"
+  testid="uc-create"
+  [error]="createError()"
+  (closed)="closeCreate()"
+>
+  <div modal-body>
+    <form id="uc-create-form" class="stack" (ngSubmit)="create()">
+      <div class="field">
+        <label for="uc-name">Name</label>
+        <input
+          id="uc-name"
+          name="name"
+          [ngModel]="name()"
+          (ngModelChange)="nameChanged($event)"
+          placeholder="Customer service assistant"
+          autocomplete="off"
+        />
+        <span class="field__hint">What people will call it. You can change this later.</span>
+      </div>
 
-    <div class="modal__body">
-      <form id="uc-create-form" class="stack" (ngSubmit)="create()">
-        <div class="field">
-          <label for="uc-name">Name</label>
-          <input
-            id="uc-name"
-            name="name"
-            [ngModel]="name()"
-            (ngModelChange)="nameChanged($event)"
-            placeholder="Customer service assistant"
-            autocomplete="off"
-          />
-          <span class="field__hint">What people will call it. You can change this later.</span>
-        </div>
-
-        <div class="field">
-          <label for="uc-slug">Technical id</label>
-          <input
-            id="uc-slug"
-            name="slug"
-            [ngModel]="slug()"
-            (ngModelChange)="slugChanged($event)"
-            placeholder="customer-service-assistant"
-            autocomplete="off"
-            [attr.aria-invalid]="slugError() ? 'true' : null"
-            [attr.aria-describedby]="slugError() ? 'uc-slug-error' : 'uc-slug-hint'"
-          />
-          @if (slugError(); as message) {
-            <span id="uc-slug-error" class="field__hint field__hint--error">{{ message }}</span>
-          } @else {
-            <span id="uc-slug-hint" class="field__hint">
-              Filled in from the name, and you rarely need to touch it. It appears in the gateway
-              URL and in every API key issued here, so it is
-              <strong>permanent</strong> — the name is not.
-            </span>
-          }
-        </div>
-      </form>
-    </div>
-
-    <div class="modal__foot">
-      <button type="button" class="btn" (click)="closeCreate()">Cancel</button>
-      <button
-        type="submit"
-        form="uc-create-form"
-        class="btn btn--primary"
-        [disabled]="!canSubmit()"
-      >
-        {{ creating() ? 'Creating…' : 'Create and configure' }}
-      </button>
-    </div>
+      <div class="field">
+        <label for="uc-slug">Technical id</label>
+        <input
+          id="uc-slug"
+          name="slug"
+          [ngModel]="slug()"
+          (ngModelChange)="slugChanged($event)"
+          placeholder="customer-service-assistant"
+          autocomplete="off"
+          [attr.aria-invalid]="slugError() ? 'true' : null"
+          [attr.aria-describedby]="slugError() ? 'uc-slug-error' : 'uc-slug-hint'"
+        />
+        @if (slugError(); as message) {
+          <span id="uc-slug-error" class="field__hint field__hint--error">{{ message }}</span>
+        } @else {
+          <span id="uc-slug-hint" class="field__hint">
+            Filled in from the name, and you rarely need to touch it. It appears in the gateway URL
+            and in every API key issued here, so it is
+            <strong>permanent</strong> — the name is not.
+          </span>
+        }
+      </div>
+    </form>
   </div>
-}
+
+  <div modal-foot>
+    <button type="button" class="btn" (click)="closeCreate()">Cancel</button>
+    <button type="submit" form="uc-create-form" class="btn btn--primary" [disabled]="!canSubmit()">
+      {{ creating() ? 'Creating…' : 'Create and configure' }}
+    </button>
+  </div>
+</app-modal>

@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { of, throwError } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -137,5 +137,17 @@ describe('AboutPanel', () => {
     page.panel.save();
 
     expect(page.feedback.error()).toContain('Could not change what this use case says');
+  });
+});
+
+describe('AboutPanel — a save in flight', () => {
+  it('sends once however often Save is pressed before the answer', () => {
+    const page = setup({ update: new Subject<UseCase>() });
+    page.panel.startEditing();
+    page.panel.edit('description', 'once');
+    page.panel.save();
+    page.panel.save();
+
+    expect(page.sent.length).toBe(1);
   });
 });

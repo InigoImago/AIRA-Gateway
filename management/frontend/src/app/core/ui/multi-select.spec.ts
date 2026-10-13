@@ -9,6 +9,8 @@ import { MultiSelect, MultiSelectOption } from './multi-select';
  * with a mouse is one a keyboard user cannot use at all — unlike a checkbox, there is no fallback
  * underneath it. The rest is the two ways a picker of this shape goes quietly wrong: it forgets
  * what was already chosen when a search hides it, and it submits the form it sits in.
+ *
+ * The host sits the picker in a `<form>`, as every real caller does.
  */
 
 const OPTIONS: MultiSelectOption[] = [
@@ -20,23 +22,23 @@ const OPTIONS: MultiSelectOption[] = [
 @Component({
   selector: 'app-host',
   imports: [MultiSelect],
-  template: `<form (ngSubmit)="submitted.set(submitted() + 1)">
-    <app-multi-select
-      label="Models"
-      testid="pick"
-      [options]="options()"
-      [selected]="selected()"
-      [disabled]="disabled()"
-      emptyHint="Nothing has been approved yet."
-      (changed)="selected.set($event)"
-    />
-  </form>`,
+  template: `<form>
+      <app-multi-select
+        label="Models"
+        testid="pick"
+        [options]="options()"
+        [selected]="selected()"
+        [disabled]="disabled()"
+        emptyHint="Nothing has been approved yet."
+        (changed)="selected.set($event)"
+      />
+    </form>
+    <button type="button" data-testid="elsewhere">Elsewhere</button>`,
 })
 class Host {
   readonly options = signal<MultiSelectOption[]>(OPTIONS);
   readonly selected = signal<string[]>([]);
   readonly disabled = signal(false);
-  readonly submitted = signal(0);
 }
 
 function setup(selected: string[] = [], options?: MultiSelectOption[]) {
@@ -137,13 +139,17 @@ describe('MultiSelect', () => {
 
   it('never submits the form it sits in', () => {
     /** A picker inside a settings form would otherwise save the page every time somebody chose an
-     *  option — and the save would carry a half-made selection. */
-    const { host, key } = setup();
-
+     *  option — and the save would carry a half-made selection. Enter in a text field submits its
+     *  form by default, and the only thing that stops it is the key's default being prevented;
+     *  no test environment performs the submission itself, so that is what is asserted. */
+    const { host, key, field } = setup();
     key('ArrowDown');
-    key('Enter');
 
-    expect(host.submitted()).toBe(0);
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    field().dispatchEvent(enter);
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(host.selected()).toEqual(['gemini-2.5-flash']);
   });
 
   it('takes the last chip back on Backspace in an empty field', () => {
@@ -274,6 +280,55 @@ describe('MultiSelect', () => {
 
     expect(host.selected()).toEqual(['gemini-2.5-flash']);
     expect(picker.open()).toBe(false);
+  });
+
+  it('closes when the keyboard leaves it, and not when it moves inside it', () => {
+    /** Tab out of an open picker and the floating list stayed, covering the controls below — the
+     *  ones the keyboard had just moved to. */
+    const { open, q, fixture, field } = setup();
+    open();
+
+    const inside = q<HTMLElement>('[data-testid="pick-option-qwen3:0.6b"]')!;
+    field().dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: inside }));
+    fixture.detectChanges();
+    expect(q('[role="listbox"]')).not.toBeNull();
+
+    const elsewhere = q<HTMLElement>('[data-testid="elsewhere"]')!;
+    field().dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: elsewhere }));
+    fixture.detectChanges();
+    expect(q('[role="listbox"]')).toBeNull();
+  });
+
+  it('keeps its options out of the tab order, and says it holds several', () => {
+    /** The arrow keys walk the options; Tab is for leaving. Fifty options in the tab order are
+     *  fifty presses between this field and the next one. */
+    const { open, root, q } = setup();
+    open();
+
+    const options = Array.from(root().querySelectorAll('[role="option"]'));
+    expect(options.length).toBe(3);
+    expect(options.every((option) => option.getAttribute('tabindex') === '-1')).toBe(true);
+    expect(q('[role="listbox"]')!.getAttribute('aria-multiselectable')).toBe('true');
+  });
+
+  it('points at an option that exists when the list shrinks under the cursor', () => {
+    /** The highlight was reset only when the query changed. Options arriving later — a catalogue
+     *  that loaded, a model withdrawn — left it on an index past the end, so a screen reader was
+     *  pointed at nothing and Enter chose nothing. */
+    const { host, key, field, fixture, root } = setup();
+    key('ArrowDown');
+    key('ArrowDown');
+    key('ArrowDown');
+    expect(field().getAttribute('aria-activedescendant')).toBe('pick-option-2');
+
+    host.options.set([OPTIONS[0]]);
+    fixture.detectChanges();
+
+    const pointed = field().getAttribute('aria-activedescendant');
+    expect(root().querySelector(`#${pointed}`)).not.toBeNull();
+    expect(root().querySelector('.picker__item.is-active')?.textContent).toContain(
+      'gemini-2.5-flash',
+    );
   });
 
   it('closes again from the chevron, and moves nowhere in an empty list', () => {

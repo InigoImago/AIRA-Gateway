@@ -186,3 +186,62 @@ describe('ContentReadsPage (`FRD-622` FR-6)', () => {
     expect(html().querySelector('[data-testid="no-reads"]')).not.toBeNull();
   });
 });
+
+describe('ContentReadsPage — a typed filter', () => {
+  // The filters are debounced and go to the server, so these drive the clock through the inputs a
+  // reader types into: a test that sets the signals and resets the view never runs the debounce.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function type(harness: ReturnType<typeof setup>, id: string, value: string): void {
+    const input = harness.html().querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    harness.fixture.detectChanges();
+  }
+
+  it('asks again with what was typed once the typing pauses, not once per letter', () => {
+    // Each field on its own: one field's pause must not be what carries the other's change.
+    const harness = setup([
+      of({ reads: [READ], next_cursor: null, count: 1 }),
+      of({ reads: [READ], next_cursor: null, count: 1 }),
+      of({ reads: [], next_cursor: null, count: 0 }),
+    ]);
+    type(harness, 'reads-use-case', 'person');
+    type(harness, 'reads-use-case', 'personalwesen');
+    expect(harness.queries.length).toBe(1);
+
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+    expect(harness.queries.length).toBe(2);
+    expect(harness.queries[1]).toMatchObject({ useCase: 'personalwesen', reader: '' });
+
+    type(harness, 'reads-reader', 'itsec');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+    expect(harness.queries.length).toBe(3);
+    expect(harness.queries[2]).toMatchObject({ useCase: 'personalwesen', reader: 'itsec' });
+    expect(harness.text()).toContain('No reads match these filters.');
+  });
+
+  it('takes a failure off the page once a later load succeeds', () => {
+    // A banner saying the log could not be loaded, over the log, contradicts the screen it is on.
+    const harness = setup([
+      throwError(() => ({
+        status: 503,
+        error: { error: { code: 'unavailable', message: 'The log is unavailable.' } },
+      })),
+      of({ reads: [READ], next_cursor: null, count: 1 }),
+    ]);
+    expect(harness.html().querySelector('[role="alert"]')?.textContent).toContain(
+      'The log is unavailable.',
+    );
+
+    type(harness, 'reads-reader', 'admin');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="read-read-1"]')).not.toBeNull();
+    expect(harness.html().querySelector('[role="alert"]')).toBeNull();
+  });
+});

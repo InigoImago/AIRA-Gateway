@@ -5,25 +5,37 @@ one that matters, and this file exists because the difference cost a defect: `di
 *did* reach the wire body — as an absent parameter, which the model read as its own default and
 answered by spending the whole output allowance on hidden reasoning, under a 200.
 
-So the assertions here are behavioural. A seed makes an answer reproducible or it does not. A stop
-sequence truncates the output or it does not. Neither can be established by inspecting a dict.
+So the first assertions here are behavioural. A seed makes an answer reproducible or it does not. A
+stop sequence truncates the output or it does not. Neither can be established by inspecting a dict
+— and both read what a real model said, so they carry `model_output` and first assert that each
+request was **served**: three identical refusals agree with each other too. The rest assert what
+the gateway itself decided and recorded.
 """
 
 from __future__ import annotations
 
-import asyncio
+import uuid
 
 import httpx
 import pytest
 import stack_addresses
-from tests.integration.conftest import GATEWAY_URL
+from sqlalchemy import text
+from tests.integration.conftest import GATEWAY_URL, wait_for_row
 
 pytestmark = pytest.mark.integration
 
 MODEL = "qwen3:0.6b"
 
 
+async def _answer(fixture, prompt: str, **config: object) -> str:
+    """The answer to a request that was **served** — never a refusal's text standing in for one."""
+    status, said = await _ask(fixture, prompt, **config)
+    assert status == 200, f"not served ({status}): {said}"
+    return said
+
+
 async def _ask(fixture, prompt: str, **config: object) -> tuple[int, str]:
+    """``(status, answer)``, or ``(status, refusal)`` when it was not served."""
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -50,6 +62,7 @@ async def _ask(fixture, prompt: str, **config: object) -> tuple[int, str]:
 # == the controls take effect ====================================================================
 
 
+@pytest.mark.model_output
 async def test_a_seed_makes_the_same_request_reproducible(fixture) -> None:
     """The property a seed exists for, asserted as the property and not as a field in a body.
 
@@ -63,37 +76,40 @@ async def test_a_seed_makes_the_same_request_reproducible(fixture) -> None:
     # measured rather than assumed: without the warm-up, calls two and three agree with each other
     # and only the first differs. Asserting three-of-three cold would be a test of Ollama's cache
     # behaviour wearing the name of a test of our seed handling.
-    await _ask(fixture, prompt, temperature=1.0, seed=777)
-    answers = [(await _ask(fixture, prompt, temperature=1.0, seed=777))[1] for _ in range(3)]
+    await _answer(fixture, prompt, temperature=1.0, seed=777)
+    answers = [await _answer(fixture, prompt, temperature=1.0, seed=777) for _ in range(3)]
 
     assert len(set(answers)) == 1, f"the same seed produced different answers: {answers}"
 
 
+@pytest.mark.model_output
 async def test_a_different_seed_gives_a_different_answer(fixture) -> None:
     """The other half. Without it, a provider that ignored sampling entirely — or a model with
     nothing to say — would pass the test above."""
     prompt = "Invent a three-word band name."
-    _, one = await _ask(fixture, prompt, temperature=1.0, seed=777)
-    _, other = await _ask(fixture, prompt, temperature=1.0, seed=31337)
+    one = await _answer(fixture, prompt, temperature=1.0, seed=777)
+    other = await _answer(fixture, prompt, temperature=1.0, seed=31337)
 
     assert one != other
 
 
+@pytest.mark.model_output
 async def test_a_stop_sequence_actually_truncates_the_output(fixture) -> None:
     """Asserted against the unconstrained answer rather than against a fixed string: a small model
     may not produce the expected text at all, and a test that assumed it would would fail for a
     reason that has nothing to do with the gateway."""
     prompt = "Output exactly: A B C D E"
-    _, unconstrained = await _ask(fixture, prompt, temperature=0.0)
+    unconstrained = await _answer(fixture, prompt, temperature=0.0)
     if "C" not in unconstrained:
         pytest.skip(f"the model did not produce the token to stop at: {unconstrained!r}")
 
-    _, truncated = await _ask(fixture, prompt, temperature=0.0, stopSequences=["C"])
+    truncated = await _answer(fixture, prompt, temperature=0.0, stopSequences=["C"])
 
     assert "C" not in truncated
     assert len(truncated) < len(unconstrained)
 
 
+@pytest.mark.model_output
 async def test_thinking_switched_off_is_switched_off(fixture) -> None:
     """The defect that started `FRD-124`.
 
@@ -106,8 +122,8 @@ async def test_thinking_switched_off_is_switched_off(fixture) -> None:
     inside: with thinking off it answers, with thinking high it does not.
     """
     prompt = "Is 391 prime? Answer with one word."
-    _, direct = await _ask(fixture, prompt, thinkingConfig={"mode": "disabled"})
-    _, thinking = await _ask(fixture, prompt, thinkingConfig={"mode": "high"})
+    direct = await _answer(fixture, prompt, thinkingConfig={"mode": "disabled"})
+    thinking = await _answer(fixture, prompt, thinkingConfig={"mode": "high"})
 
     assert direct.strip(), "thinking was switched off and the model still returned nothing"
     assert len(direct) > len(thinking)
@@ -156,11 +172,13 @@ async def test_a_refused_request_still_leaves_an_audit_row(fixture) -> None:
     """`FRD-122`'s rule, applied to the newest refusal: the log records what was *asked*, not only
     what was served. A control that made a request unservable is exactly the kind of thing somebody
     asks about a week later."""
-    await _ask(fixture, "hi", topK=5)
+    status, _ = await _ask(fixture, "hi", topK=5)
+    assert status == 400
 
-    rows = await fixture.rows()
-    assert rows, "a refused request left no trace at all"
-    assert any(row["status"] == 400 for row in rows)
+    # Waited for: the write is off the request path (`FRD-405`), and a row read at once is a
+    # "lost" audit row that was merely late.
+    (row,) = await fixture.wait_for_rows(1)
+    assert row["status"] == 400, row
 
 
 async def test_a_body_over_the_ceiling_is_refused_and_recorded(fixture, engine) -> None:
@@ -172,47 +190,35 @@ async def test_a_body_over_the_ceiling_is_refused_and_recorded(fixture, engine) 
     point, and recording it would let anybody write another system's name into the audit trail by
     sending one oversized request.
     """
-    from sqlalchemy import text
-
-    async def count() -> int:
-        async with engine.connect() as connection:
-            return int(
-                (
-                    await connection.execute(
-                        text("SELECT count(*) FROM request_logs WHERE outcome='request_too_large'")
-                    )
-                ).scalar()
-                or 0
-            )
-
-    before = await count()
+    # A model name nobody else asks for: the row is unattributed, so it is found by what it names
+    # — and counting every such refusal in the installation around a fixed sleep counted the
+    # other tests' 413s and read whichever was newest.
+    probe = f"ceiling-{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
-            f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
+            f"{GATEWAY_URL}/v1beta/models/{probe}:generateContent",
             headers=fixture.headers(),
             json={"contents": [{"role": "user", "parts": [{"text": "x" * (9 * 1024 * 1024)}]}]},
         )
-
     assert response.status_code == 413
-    await asyncio.sleep(2.0)
-    assert await count() == before + 1
 
-    async with engine.connect() as connection:
-        row = (
-            (
-                await connection.execute(
-                    text(
-                        "SELECT subject, credential, source_ip, model, operation,"
-                        " request_payload IS NULL AS no_body FROM request_logs"
-                        " WHERE outcome='request_too_large' ORDER BY created_at DESC LIMIT 1"
-                    )
-                )
-            )
-            .mappings()
-            .one()
+    try:
+        found = await wait_for_row(
+            engine,
+            "SELECT subject, credential, source_ip, model, operation, outcome,"
+            " request_payload IS NULL AS no_body FROM request_logs WHERE model = :model",
+            {"model": probe},
+            timeout=20.0,
         )
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM request_logs WHERE model = :model"), {"model": probe}
+            )
+    row = found._mapping
 
-    assert row["model"] == MODEL, "the row names what was asked for"
+    assert row["outcome"] == "request_too_large"
+    assert row["model"] == probe, "the row names what was asked for"
     assert row["operation"] == "generateContent"
     assert row["source_ip"]
     assert not row["subject"] and not row["credential"]
@@ -225,9 +231,9 @@ async def test_a_body_over_the_ceiling_is_refused_and_recorded(fixture, engine) 
 
 
 async def _with_pipeline(engine, slug: str, steps: list) -> None:
+    """The step, written where the gateway reads it. No wait afterwards: the pipeline store reads
+    the configuration on every request (`pipeline/store.py`)."""
     import json
-
-    from sqlalchemy import text
 
     async with engine.begin() as connection:
         await connection.execute(
@@ -240,8 +246,6 @@ async def _with_pipeline(engine, slug: str, steps: list) -> None:
             ),
             {"slug": slug, "steps": json.dumps(steps)},
         )
-    # The gateway caches the pipeline config for a short while.
-    await asyncio.sleep(1.5)
 
 
 async def test_an_llm_filter_no_longer_serves_the_injection_it_was_configured_to_block(
@@ -356,9 +360,8 @@ async def test_a_filter_that_passed_leaves_a_decision_on_the_audit_row(fixture, 
         )
     assert response.status_code == 200
 
-    await asyncio.sleep(2.0)
-    from sqlalchemy import text
-
+    # The heuristic calls no model, so this request leaves exactly one row: waited for, not slept.
+    (row,) = await fixture.wait_for_rows(1)
     async with engine.connect() as connection:
         decisions = (
             await connection.execute(
@@ -370,6 +373,7 @@ async def test_a_filter_that_passed_leaves_a_decision_on_the_audit_row(fixture, 
             )
         ).scalar()
 
+    assert row["status"] == 200
     assert decisions and "injection_filter" in decisions
     assert "clean" in decisions
 
@@ -381,8 +385,6 @@ async def test_the_pipeline_pays_for_itself_visibly(fixture, engine) -> None:
     guards — so a use case running an LLM filter was reporting little over half its actual spend,
     and its budget counters never saw the difference at all.
     """
-    from sqlalchemy import text
-
     await _with_pipeline(
         engine,
         fixture.slug,
@@ -403,7 +405,8 @@ async def test_the_pipeline_pays_for_itself_visibly(fixture, engine) -> None:
         )
     assert response.status_code == 200
 
-    await asyncio.sleep(2.5)
+    # The two rows this request makes — its own and the classifier's — waited for as two.
+    await fixture.wait_for_rows(2, timeout=40.0)
     async with engine.connect() as connection:
         rows = (
             (

@@ -86,6 +86,29 @@ describe('CursorTableView', () => {
     expect(view.rows().map((row) => row.id)).toEqual(['fresh']);
   });
 
+  it('keeps the page it shows when the next one fails, and asks for the same page again', () => {
+    // The trail moved before the answer came: the pager said "page 2" over page one's rows, and a
+    // second Next pushed the same cursor again.
+    let failing = true;
+    const { view, asked, errors } = build((cursor) =>
+      cursor === 'c2' && failing ? throwError(() => ({ status: 502 })) : pages(cursor),
+    );
+    view.start();
+
+    view.next();
+    expect(errors.length).toBe(1);
+    expect(view.current()).toBe(1);
+    expect(view.rows().map((row) => row.id)).toEqual(['a', 'b']);
+
+    failing = false;
+    view.next();
+    expect(view.current()).toBe(2);
+    expect(view.rows().map((row) => row.id)).toEqual(['c', 'd']);
+    view.previous();
+    expect(view.current()).toBe(1);
+    expect(asked).toEqual([null, 'c2', 'c2', null]);
+  });
+
   it('reports a failed page and stops saying it is loading', () => {
     const { view, errors } = build(() => throwError(() => ({ status: 403 })));
     view.start();

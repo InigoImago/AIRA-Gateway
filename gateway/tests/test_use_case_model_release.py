@@ -153,19 +153,31 @@ async def test_a_router_cannot_re_target_a_request_at_a_withheld_model() -> None
     assert "withheld-1" in response.json()["error"]["message"]
 
 
+class _Down(_Echo):
+    """A released model that is unavailable, so the chain has to look past it."""
+
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        from aira_gateway.upstreams.base import UpstreamError
+
+        raise UpstreamError(f"{request.model} is unavailable", 503)
+
+
 async def test_a_fallback_chain_cannot_reach_a_withheld_model() -> None:
     """Hole two, also 200 before. The chain's candidates were never compared with the list at
-    all — and a fallback is exactly where a request ends up when something is already wrong."""
-    app = _app(Pipeline(fallback_models=("withheld-1",)), _Echo("released-1"), _Echo("withheld-1"))
+    all — and a fallback is exactly where a request ends up when something is already wrong.
+
+    So the released primary **fails** here: only then does the chain consider the fallback, and
+    the withheld fallback must still not answer. With a primary that answers the fallback is never
+    looked at, and the test would pass without the rule."""
+    app = _app(Pipeline(fallback_models=("withheld-1",)), _Down("released-1"), _Echo("withheld-1"))
     with TestClient(app) as client:
         await _catalogue(app, "released-1", "withheld-1")
         await _release(app, "uc", ["released-1"])
         response = _post(client, "released-1")
 
-    # The primary is released and answers, so the chain never needed the fallback — the property
-    # under test is the one below, where it does.
-    assert response.status_code == 200
-    assert response.json()["modelVersion"] == "released-1"
+    # The primary's own outage is what the caller hears about, never the withheld model's answer.
+    assert response.status_code == 503, response.text
+    assert "[withheld-1]" not in response.text
 
 
 async def test_an_exhausted_chain_says_which_models_were_excluded_and_why() -> None:
