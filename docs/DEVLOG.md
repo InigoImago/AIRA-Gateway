@@ -5,6 +5,35 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The browser suite on a fresh stack, after the refactoring (2026-10-13)
+
+CI's first run of the refactoring failed two browser tests twice and two once. None reproduced on
+this machine's stack, run alone; each did once the condition CI has and this machine had not was
+put back.
+
+- **The pipeline tests showed their tabs before the server had answered** (`FRD-504`). The
+  refactoring made every refusal withhold the screen, rightly; a plain member's refusal then
+  arrived after the tabs, and the suite's comparison of an administrator with a plain member clicked
+  a tab that was withdrawn under it. Reproduced with a person of no use case and the screen's reads
+  held back two seconds; the screen now shows nothing of itself until the first answer, a refusal
+  withholds it at once, and a failure of all four stops saying it is loading. Unit tests for the
+  three, `SMOKE-ANSWER-1`–`3`; the third survived first, because every other read answered in the
+  existing test.
+- **A use case's chart was asserted in spend, on traffic nothing priced.** `mock-1` was priced on CI
+  only because the integration suite left it so; the refactoring's `mock_catalogue_row` fixture puts
+  the row back as found, and on a fresh stack that is no price. The chart then rightly draws no
+  spend. Reproduced by taking the price away here; the test reads requests now.
+- **Two tab positions came from two layouts.** On a CPU throttled sixfold the strip moves down
+  twice while the page loads — 188, 254.3, 294.9 px — and CI's failure compared 254.34 with
+  294.94.
+  Both navigation tests read every box in one evaluation now; each still fails at the other width.
+- **A key that did not appear, once.** Not reproduced, and no cause in the code. The five copies of
+  the helper are one, which checks the server's answer: a refusal now names the server's reason
+  instead of a missing box. Checked with a refusal forced in the browser.
+
+The seven affected specs pass whole here, 48 tests and the one skipped by design; no cloud model
+was called. `CLAUDE.md`: 1671 properties.
+
 ## GLM and DeepSeek through Agent Platform, permitted at `global` by name (2026-10-13)
 
 The owner decided to use GLM and DeepSeek — the open models Agent Platform serves — knowing they

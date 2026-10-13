@@ -6,8 +6,8 @@ import {
   grantGroup,
   login,
   releaseAllModels,
-  submitOfOpenForm,
   uniqueSlug,
+  issueKey,
 } from './support';
 
 /**
@@ -36,14 +36,9 @@ function sentence(slug: string): string {
   return `A prompt only ${slug} should contain.`;
 }
 
-async function issueKey(page: Page, slug: string): Promise<string> {
-  await page.goto(`/use-cases/${slug}?tab=keys`);
-  await page.click('button:has-text("Issue key")');
-  await page.fill('#key-label', 'content-visibility-e2e');
-  await (await submitOfOpenForm(page)).click();
-  const secret = page.locator('code.secret');
-  await expect(secret).toBeVisible();
-  const key = (await secret.innerText()).trim();
+/** A key, with the one-time box closed again: the page is read afterwards. */
+async function issueKeyAndClose(page: Page, slug: string): Promise<string> {
+  const key = await issueKey(page, slug, 'content-visibility-e2e');
   await page.click('button:has-text("Done")');
   return key;
 }
@@ -145,7 +140,7 @@ test.describe('Who may read prompts and responses', () => {
     await chooseContentMode(page, slug, 'oversight');
     await releaseAllModels(page, slug);
     await grantGroup(page, slug, DEPARTMENT, 'admin');
-    const key = await issueKey(page, slug);
+    const key = await issueKeyAndClose(page, slug);
     // This polls until the key is live, which is itself several seconds of Kafka round trips after
     // the setting was saved — so by the time there is a trace to read, the gateway has the mode.
     await spend(page, slug, key);
@@ -174,7 +169,7 @@ test.describe('Who may read prompts and responses', () => {
     const slug = await createUseCase(page, uniqueSlug('vis'), 'Oversight reads');
     await chooseContentMode(page, slug, 'oversight');
     await releaseAllModels(page, slug);
-    const key = await issueKey(page, slug);
+    const key = await issueKeyAndClose(page, slug);
     await spend(page, slug, key);
 
     const security = await asUser(page, USERS.security);

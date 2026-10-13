@@ -7,7 +7,7 @@ import {
   login,
   logout,
   uniqueSlug,
-  submitOfOpenForm,
+  issueKey,
 } from './support';
 
 /**
@@ -22,16 +22,6 @@ import {
 const GATEWAY = GATEWAY_URL;
 
 /** Issue an API key for a use case through the UI and return the plaintext. */
-async function issueKey(page: Page, slug: string): Promise<string> {
-  await page.goto(`/use-cases/${slug}?tab=keys`);
-  await page.click('button:has-text("Issue key")');
-  await page.fill('#key-label', 'reporting-e2e');
-  await (await submitOfOpenForm(page)).click();
-  const secret = page.locator('.secret');
-  await expect(secret).toBeVisible();
-  return (await secret.textContent())?.trim() ?? '';
-}
-
 /**
  * Send a request through the gateway so the period has something in it.
  *
@@ -63,7 +53,7 @@ test.describe('Reporting', () => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('report');
     await createUseCase(page, slug, 'Reporting probe');
-    await sendTraffic(request, await issueKey(page, slug));
+    await sendTraffic(request, await issueKey(page, slug, 'reporting-e2e'));
 
     // A new user needs the old Keycloak session gone, or the SPA lands straight back in as
     // whoever was there before.
@@ -190,7 +180,7 @@ test.describe('Reporting', () => {
     const slug = uniqueSlug('mine');
     await createUseCase(page, slug, 'Own usage probe');
     // The key belongs to whoever issued it (`FRD-604`), so this traffic is recorded under `admin`.
-    await sendTraffic(request, await issueKey(page, slug));
+    await sendTraffic(request, await issueKey(page, slug, 'reporting-e2e'));
 
     const [asked] = await Promise.all([
       page.waitForRequest(
@@ -203,8 +193,14 @@ test.describe('Reporting', () => {
 
     const card = page.locator('app-usage-chart');
     await expect(card).toContainText('What you used, over time');
+    // **In requests**, which are known whatever was priced. The chart opens on spend, and this
+    // traffic is `mock-1`'s, which an installation may or may not price: unpriced, its spend is
+    // unknown and the plot rightly draws nothing — which would say nothing about the filter.
+    await card.getByTestId('chart-metric-select').selectOption('requests');
+    await expect(card.getByTestId('chart-total')).toBeVisible();
     // And it came back with something: the reader is the person who called, so an empty chart here
     // would mean the filter matched nobody — the way this goes wrong without anyone noticing.
+    // Asked once the chart is drawn, so the absence below is an answer and not an early sample.
     await expect(card.locator('[data-testid="histogram-empty"]')).toHaveCount(0);
     await expect(card.locator('.histogram__seg').first()).toBeVisible();
 

@@ -1,13 +1,6 @@
 import { GATEWAY_URL } from '../stack';
 import { Page, expect, test } from '@playwright/test';
-import {
-  USERS,
-  createUseCase,
-  login,
-  releaseAllModels,
-  submitOfOpenForm,
-  uniqueSlug,
-} from './support';
+import { USERS, createUseCase, login, releaseAllModels, uniqueSlug, issueKey } from './support';
 
 /**
  * Platform administration and the content-read log, in a real browser (`FRD-622`).
@@ -17,16 +10,6 @@ import {
  * people, that its menu leads to the page, and that a read somebody has just made is on it.
  */
 
-async function issueKey(page: Page, slug: string): Promise<string> {
-  await page.goto(`/use-cases/${slug}?tab=keys`);
-  await page.click('button:has-text("Issue key")');
-  await page.fill('#key-label', 'content-reads-e2e');
-  await (await submitOfOpenForm(page)).click();
-  const secret = page.locator('.secret');
-  await expect(secret).toBeVisible();
-  return (await secret.textContent())?.trim() ?? '';
-}
-
 test.describe('Platform administration — content reads', () => {
   test('a read of a stored prompt appears in the log, with the reader and the role', async ({
     page,
@@ -35,7 +18,7 @@ test.describe('Platform administration — content reads', () => {
     await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('reads'), 'Content reads');
     await releaseAllModels(page, slug);
-    const key = await issueKey(page, slug);
+    const key = await issueKey(page, slug, 'content-reads-e2e');
 
     // One request through the gateway, retried until the key has reached it over Kafka.
     await expect

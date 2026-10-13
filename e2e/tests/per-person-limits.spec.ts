@@ -9,19 +9,10 @@ import {
   releaseAllModels,
   submitOfOpenForm,
   uniqueSlug,
+  issueKey,
 } from './support';
 
 const GATEWAY = GATEWAY_URL;
-
-async function issueKey(page: Page, slug: string): Promise<string> {
-  await page.goto(`/use-cases/${slug}?tab=keys`);
-  await page.click('button:has-text("Issue key")');
-  await page.fill('#key-label', 'per-person-e2e');
-  await (await submitOfOpenForm(page)).click();
-  const secret = page.locator('.secret');
-  await expect(secret).toBeVisible();
-  return (await secret.textContent())?.trim() ?? '';
-}
 
 async function ask(request: APIRequestContext, key: string) {
   return request.post(`${GATEWAY}/v1beta/models/mock-1:generateContent`, {
@@ -123,7 +114,7 @@ test.describe('Per-person limits', () => {
     await (await submitOfOpenForm(page)).click();
     await expect(page.locator('[data-testid="budget-editor"]')).toBeHidden();
 
-    const key = await issueKey(page, slug);
+    const key = await issueKey(page, slug, 'per-person-e2e');
 
     // The key and the budget travel over Kafka; the first served request is the signal that both
     // have arrived. Polling for it rather than sleeping, because the wait is a queue, not a clock.
@@ -158,7 +149,7 @@ test.describe('Per-person limits', () => {
     await (await submitOfOpenForm(page)).click();
     await expect(page.locator('[data-testid="rate-limit-editor"]')).toBeHidden();
 
-    const key = await issueKey(page, slug);
+    const key = await issueKey(page, slug, 'per-person-e2e');
     await expect
       .poll(async () => (await ask(request, key)).status(), {
         timeout: 30_000,
@@ -202,7 +193,7 @@ test.describe('Per-person limits', () => {
     await (await submitOfOpenForm(page)).click();
     await expect(page.locator('[data-testid="budget-editor"]')).toBeHidden();
 
-    const key = await issueKey(page, slug);
+    const key = await issueKey(page, slug, 'per-person-e2e');
     await expect
       .poll(async () => (await ask(request, key)).status(), {
         timeout: 30_000,

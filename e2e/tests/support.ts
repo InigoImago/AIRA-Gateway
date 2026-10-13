@@ -198,6 +198,30 @@ export async function grantGroup(page: Page, slug: string, path: string, role = 
 }
 
 /**
+ * Issue an API key on a use case through its window, as a member does, and return the plaintext.
+ *
+ * **The server's answer is checked, not only the screen.** A key the server refused shows no
+ * secret, and a test that waits for the secret alone reports a missing box instead of the reason
+ * it was given. One helper for every spec that needs a key, so a fix reaches all of them.
+ */
+export async function issueKey(page: Page, slug: string, label: string): Promise<string> {
+  await page.goto(`/use-cases/${slug}?tab=keys`);
+  await page.getByTestId('issue-key').click();
+  await page.fill('#key-label', label);
+  const answered = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      response.url().includes(`/use-cases/${slug}/api-keys/`),
+  );
+  await (await submitOfOpenForm(page)).click();
+  const response = await answered;
+  expect(response.status(), `no key issued on ${slug}: ${await response.text()}`).toBe(201);
+  const secret = page.locator('code.secret');
+  await expect(secret).toBeVisible();
+  return (await secret.innerText()).trim();
+}
+
+/**
  * Release every approved model to a use case, through the API (`FRD-308`).
  *
  * A new use case may call **nothing**, so any test that creates one and then sends real traffic

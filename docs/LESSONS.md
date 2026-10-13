@@ -998,6 +998,14 @@ reading code.
   the world to be a certain size, ask what the fix really established**; the measurement belongs in
   the log, and the invariant belongs in the test.
 
+  *An eighth, and the inventory was another suite's leftover.* A browser test asserted bars on a use
+  case's chart under the chart's default measure, spend — and `mock-1` has a price only where
+  something gives it one. The integration suite used to leave it priced; the refactoring gave that
+  suite a fixture that puts the row back as it found it, which is right, and on CI's fresh stack the
+  row then had no price and the chart rightly drew no spend. **A clean-up elsewhere is how a
+  dependency on leftovers announces itself.** The test now reads requests, which are known whatever
+  was priced.
+
 - **A copied block whose subject changed.** The block is correct; what it is *about* is not.
   `/v1beta/anomalies` restricted `select(AnomalyEvent)` with the trace view's condition over
   `RequestLog`, so SQLAlchemy added a second table to the FROM clause with no join predicate — a
@@ -1903,6 +1911,12 @@ reading code.
   case you may send requests to"* — including the readers for whom that is false, who would go and
   ask to be added to a group they are already in. A figure shown early is wrong for a moment; a
   statement about permission shown early sends somebody somewhere.
+
+  *And its mirror, on the same screen: a tab is a statement about permission too.* The pipeline
+  tests showed their tabs before the server had answered, and withdrew them when its refusal
+  arrived — under the click a reader had already started. CI's runner was slow enough for the
+  browser suite's click to win, every time. **A screen whose permission the server decides shows
+  nothing of itself until the server has.**
 - **A live view must stop, be visible, and never stack** — those are the three ways a polling view
   fails.
 - **Cursor paging over an appending table.** An offset page shows one row twice and misses another
@@ -2254,6 +2268,11 @@ reading code.
   selector that could never match and waited 45 s for it; a panel asserted "says neither" while its
   data was still arriving; a heading that renders before the list under it. Wait for the thing —
   `expect(a.or(b)).toBeVisible()` — then count.
+
+  *And two samples are two moments.* A test compared the heights of two tabs read one after the
+  other, while the page went on loading above the strip: the whole strip moved between the two
+  reads, 254 px to 295 px, and the comparison reported a wrap that never happened. **Read what must
+  be compared in one evaluation**, from one layout.
 - **An unqualified role query is a query about a page that has one of something.** Opening a
   disclosure put a second tab strip on the page and `getByRole('tabpanel')` became ambiguous. Name
   what you mean.

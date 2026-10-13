@@ -11,6 +11,7 @@ import {
   logout,
   uniqueSlug,
   submitOfOpenForm,
+  issueKey,
 } from './support';
 
 /**
@@ -29,16 +30,6 @@ import {
  */
 
 const GATEWAY = GATEWAY_URL;
-
-async function issueKey(page: Page, slug: string): Promise<string> {
-  await page.goto(`/use-cases/${slug}?tab=keys`);
-  await page.click('button:has-text("Issue key")');
-  await page.fill('#key-label', 'security-e2e');
-  await (await submitOfOpenForm(page)).click();
-  const secret = page.locator('.secret');
-  await expect(secret).toBeVisible();
-  return (await secret.textContent())?.trim() ?? '';
-}
 
 /** One request through the gateway, retried until the key has reached it over Kafka. */
 async function sendTraffic(request: APIRequestContext, key: string): Promise<void> {
@@ -209,7 +200,7 @@ test.describe('Warnings and traces on a use case', () => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('trace');
     await createUseCase(page, slug, 'Trace probe');
-    const key = await issueKey(page, slug);
+    const key = await issueKey(page, slug, 'security-e2e');
 
     await logout(page);
     await login(page, USERS.governance);
@@ -257,7 +248,7 @@ test.describe('Warnings and traces on a use case', () => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('nopay');
     await createUseCase(page, slug, 'Payload probe');
-    const key = await issueKey(page, slug);
+    const key = await issueKey(page, slug, 'security-e2e');
 
     const secret = `zwiebelkuchen-${Date.now()}`;
     await expect

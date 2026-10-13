@@ -373,6 +373,22 @@ test.describe('Authoring a rule that applies everywhere', () => {
   });
 });
 
+/**
+ * Every tab's box, read **in one layout pass**.
+ *
+ * The page goes on loading above the strip after its first tab is visible, and the whole strip
+ * moves down twice as it does. Two boxes asked for one after the other can come from two layouts:
+ * the first tab's before a shift and the second's after it, which reads as a strip that wrapped.
+ */
+async function tabBoxes(page: Page): Promise<{ x: number; y: number; width: number }[]> {
+  return page.locator('[role="tab"]').evaluateAll((tabs) =>
+    tabs.map((tab) => {
+      const box = tab.getBoundingClientRect();
+      return { x: box.x, y: box.y, width: box.width };
+    }),
+  );
+}
+
 test.describe('Navigation that hides nothing', () => {
   test('the tab strip becomes a list rather than scrolling out of view', async ({ page }) => {
     /**
@@ -386,20 +402,15 @@ test.describe('Navigation that hides nothing', () => {
     await page.goto(`/use-cases/${slug}`);
     await expect(page.locator('[role="tab"]').first()).toBeVisible();
 
-    const tabs = page.locator('[role="tab"]');
-    const count = await tabs.count();
-    expect(count, 'a strip of one proves nothing').toBeGreaterThan(3);
+    const boxes = await tabBoxes(page);
+    expect(boxes.length, 'a strip of one proves nothing').toBeGreaterThan(3);
 
-    for (let index = 0; index < count; index += 1) {
-      const box = await tabs.nth(index).boundingBox();
-      expect(box, `tab ${index} has no box`).not.toBeNull();
-      expect(box!.x + box!.width, `tab ${index} runs past the viewport`).toBeLessThanOrEqual(901);
-    }
+    boxes.forEach((box, index) => {
+      expect(box.x + box.width, `tab ${index} runs past the viewport`).toBeLessThanOrEqual(901);
+    });
 
-    // A list, not a row: the entries sit under one another.
-    const first = await tabs.nth(0).boundingBox();
-    const last = await tabs.nth(count - 1).boundingBox();
-    expect(last!.y).toBeGreaterThan(first!.y);
+    // A list, not a row: the entries sit under one another — in one layout, not across two.
+    expect(boxes[boxes.length - 1].y).toBeGreaterThan(boxes[0].y);
   });
 
   test('and stays a row where there is room for one', async ({ page }) => {
@@ -409,11 +420,9 @@ test.describe('Navigation that hides nothing', () => {
     await page.goto(`/use-cases/${slug}`);
     await expect(page.locator('[role="tab"]').first()).toBeVisible();
 
-    const tabs = page.locator('[role="tab"]');
-    const first = await tabs.nth(0).boundingBox();
-    const second = await tabs.nth(1).boundingBox();
+    const [first, second] = await tabBoxes(page);
 
-    expect(second!.y).toBe(first!.y);
+    expect(second.y).toBe(first.y);
   });
 });
 
