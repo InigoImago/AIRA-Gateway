@@ -111,12 +111,17 @@ confidential it might be. Hence FR-7.
 
 - **FR-1** `CanonicalRequest` carries a cache marker at **part** granularity: "everything up to here
   is stable". One flag on a part, not a separate structure — the same lesson as `FRD-110`'s ordered
-  parts.
+  parts. *As built, the marker is request-level:* `cache_prefix` marks the stable prefix — the tool
+  declarations and the system instruction — and is set from the use case's configuration, never by
+  the caller (`core/canonical.py`).
 - **FR-2** Catalog capability `prompt_caching`. Undeclared means unsupported; a candidate that
   cannot do it is **not** skipped — unlike attachments or tools, a missing cache changes the _price_
   and not the _answer_, so the correct behaviour is to serve it uncached and **record that it was
   served uncached**. This is the one place in the codebase where a capability gap is not a skip, and
-  the reason has to be written beside it or somebody will "fix" it into a skip.
+  the reason has to be written beside it or somebody will "fix" it into a skip. *As built, it is
+  served uncached and **not** recorded as such (`cache_prefix_wanted` in
+  `api/serving/controls.py`): the row shows no cached tokens, which is also what a miss looks
+  like.*
 - **FR-3** Each dialect maps it or ignores it explicitly:
   - **Anthropic**: `cache_control: {"type": "ephemeral"}` on the marked block. Usage already
     separates `cache_creation_input_tokens` and `cache_read_input_tokens`.
@@ -139,6 +144,7 @@ confidential it might be. Hence FR-7.
   and never hit" and "not supported" look identical in a report and have different fixes. The
   minimum is a number the vendor publishes per model, so it belongs beside the capability rather
   than in code — `FRD-114`'s rule: a capability belongs to a model, not to a family or a runtime.
+  *As built, only the capability: the catalog has no minimum field.*
 - **FR-9** The use case's administrator owns both settings from the console: the switch, and the
   **lifetime**. Nothing else is exposed, because nothing else has a trade-off the caller can
   resolve — and each control states, in the console, what it costs rather than what it does.
@@ -248,6 +254,7 @@ lifetime, the model does not cache, or the provider reports nothing (every self-
 
 - **Unit**: the marker survives the canonical round trip; each dialect maps or ignores it
   explicitly; a cache-incapable candidate is served **uncached and recorded as such**, not skipped.
+  *(Served uncached, not skipped — and not recorded as such; see FR-2.)*
 - **Mutation**: FR-2's non-skip (a mutation turning it into a skip must be caught), the three-way
   token split in pricing, and the **journey** each console setting makes (`U7`-`U9`) — a checkbox
   becomes an event, a read-model row and a post-routing lookup, and a setting dropped at any of

@@ -191,3 +191,42 @@ async def test_an_ipv6_broker_is_reached() -> None:
             response = client.get("/readyz")
 
     assert response.json()["checks"]["kafka"]["ok"] is True, response.text
+
+
+def test_a_kafka_outage_degrades_the_gateway_and_keeps_it_serving(client, monkeypatch) -> None:
+    """The bus carries configuration changes; the read-model every request is checked against is
+    in Postgres. Kafka down took every instance out of rotation at once — the outage the gateway
+    is built not to have (`FRD-117` FR-3a)."""
+
+    async def only_the_database(
+        name: str, host: str, port: int, *, timeout: float = 1.0
+    ) -> CheckResult:
+        return CheckResult(name=name, ok=name == "postgres")
+
+    monkeypatch.setattr(health_module, "check_tcp", only_the_database)
+    client.app.state.settings = client.app.state.settings.model_copy(
+        update={"kafka_bootstrap_servers": "kafka:9092"}
+    )
+
+    resp = client.get("/readyz")
+
+    assert resp.status_code == 200, "a Kafka outage took the gateway out of rotation"
+    body = resp.json()
+    assert body["status"] == "ready"
+    assert body["degraded"] is True
+    assert body["checks"]["kafka"] == {"ok": False, "detail": "unreachable", "required": False}
+
+
+def test_the_cluster_is_reachable_while_any_broker_is(client, monkeypatch) -> None:
+    async def first_down(name: str, host: str, port: int, *, timeout: float = 1.0) -> CheckResult:
+        return CheckResult(name=name, ok=host != "first")
+
+    monkeypatch.setattr(health_module, "check_tcp", first_down)
+    client.app.state.settings = client.app.state.settings.model_copy(
+        update={"kafka_bootstrap_servers": "first:9092,second:9092"}
+    )
+
+    body = client.get("/readyz").json()
+
+    assert body["checks"]["kafka"]["ok"] is True
+    assert body["checks"]["kafka"]["detail"] == "1 of 2 reachable"

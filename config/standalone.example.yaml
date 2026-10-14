@@ -1,4 +1,5 @@
-# AIRA — a standalone installation: everything in containers, one machine (`docs/SETUP.md` §3).
+# AIRA — a standalone installation: everything in containers, one machine
+# (`docs/deployment/standalone.md`).
 #
 #     cp config/standalone.example.yaml config/my-installation.yaml
 #     uv run python tools/config_render.py config/my-installation.yaml -o deploy/compose/.env
@@ -16,9 +17,11 @@
 # its broker speaks `PLAINTEXT`, its Keycloak and Vault are plain HTTP on a private network. There
 # is a mechanism for exactly that — `AIRA_DEMO_MODE` waives six named checks in
 # `gateway/security.py`, a list and not a blanket — and it does not help here, because
-# **Management has no equivalent**: its `unsafe_settings` exempts `local` and nothing else. Setting
-# `environment: demo` therefore stops the control plane from migrating, naming three checks a demo
-# is meant to waive. Measured, on this file, before it said `local`.
+# **Management has no equivalent**: its `unsafe_settings` exempts `local` and nothing else. Any
+# other `environment` — `demo` is no different from `production` — therefore starts the gateway
+# and stops the control plane, which names the development `AIRA_SECRET_KEY` and three of the very
+# checks a demo waives on the gateway: `PLAINTEXT` Kafka, and the plain-HTTP addresses of
+# Keycloak's key set and of Vault.
 #
 # So a standalone installation on the bundled stack is a local-grade deployment, and pretending
 # otherwise produces a file that does not start. What to change to leave that behind, in the order
@@ -26,9 +29,11 @@
 #
 #   1. a PostgreSQL whose password is not in a public repository;
 #   2. a broker with TLS and SASL, so `kafka.security_protocol` is not `PLAINTEXT`;
-#   3. TLS in front of Keycloak and Vault, so those URLs are `https://`;
+#   3. TLS in front of Keycloak and Vault, so those URLs are `https://` — `oidc.jwks_uri` included,
+#      which the stack otherwise fills with its in-network `http://keycloak:8080/…`;
 #   4. `AIRA_SECRET_KEY` from Vault — set `vault.role_id` below;
 #   5. `allowed.hosts` naming the real names, never `*`;
+#   6. `demo_mode: false`;
 #
 # and then `environment: production`, where all of it is checked. At that point you are describing
 # `integrated.example.yaml`, which is the file for it.
@@ -41,13 +46,13 @@
 
 core:
   # `local` relaxes exactly the checks a laptop needs (`ADR-0007`); anything else demands an OIDC
-  # audience, a real `secret_key`, and Kafka authentication that is not `PLAINTEXT`.
+  # audience, a real `secret_key`, `debug` off, and Kafka authentication that is not `PLAINTEXT`.
   environment: local
-  # On, because the seeded accounts are how anybody signs in before a realm of your own exists.
-  # It also waives six checks in the gateway (`WAIVED_BY_A_DEMO`) — which under `local` are
-  # waived anyway. On a machine anybody else can reach, replace the infrastructure per the
-  # header and turn this off; leaving it on for convenience is how a published password ends
-  # up in front of real traffic.
+  # On: the gateway writes the demo API key at start and accepts it. Under `local` that key is all
+  # it adds — the six checks it waives in the gateway (`WAIVED_BY_A_DEMO`), the open API
+  # documentation and `/readyz`, and `seed_demo` running at all are `local`'s already. On a machine anybody else can reach, replace the infrastructure per the header and
+  # turn this off: the key's plaintext is in this repository, and leaving it on for convenience is
+  # how a published credential ends up in front of real traffic.
   demo_mode: true
   debug: false
   # One log line per call to a system that is not ours, while you are wiring one up (`FRD-617`).
@@ -60,6 +65,9 @@ core:
   # How many items of each OTLP batch to print as OTLP/JSON on stdout. 0 is off, and off is what
   # an installation runs — this renders on the exporter's thread, on every export.
   debug_otel_payload: 0
+  # The OpenTelemetry `service.name`. One value for **both** planes: Compose hands it to the gateway
+  # and to Management alike, so their traces carry the same name. Without the line each keeps its
+  # own (`aira-gateway`, `aira-management`).
   app_name: AIRA Gateway
   # One installation, one currency. It labels every figure in the console, every CSV column and
   # the prices in the model catalog — see `docs/DEVLOG.md` for the round where three screens said
@@ -69,9 +77,10 @@ core:
   # source of a role; a realm role on the same token is not read. Management refuses to start
   # without a group for `global-admin`.
   role_groups: global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung
-  # A caller must name a use case. **Not** waived by `demo_mode`, so this is your decision
-  # either way — turn it on last, once every client sends one (`docs/INTEGRATIONS.md` §9).
-  require_use_case: false
+  # A caller must name a use case, from the start (`docs/INTEGRATIONS.md` §9). On by default, and
+  # switching it off refuses to start anywhere but `local` — `demo_mode` does not waive it — so
+  # off here would be one more thing to undo on the way out of `local`.
+  require_use_case: true
   # Whether prompts and answers are stored at all, and for how long, unless a use case says
   # otherwise (`FRD-404`).
   store_payloads: true
@@ -136,8 +145,9 @@ oidc:
   # Required outside `local`, and Keycloak does **not** put it in the token by itself: a public
   # client's `aud` is `["account"]` until an Audience mapper or a client scope says otherwise.
   audience: aira-gateway
-  # **The console's own client**, and the only setting here that no settings class declares: the
-  # SPA's entrypoint writes it into `runtime-config.js` at container start. One image, any realm.
+  # **The console's own client**, and not a setting of either plane: the console's entrypoint
+  # writes it into `runtime-config.js` at container start (as it reads `csp`, `management`,
+  # `gateway` and `dns` below). One image, any realm.
   client_id: aira-gateway
   # **Leave empty only on the bundled stack.** The issuer is what the *browser* got the token
   # from and must match `iss` exactly; the JWKS is fetched by the container, which cannot reach a
@@ -145,7 +155,8 @@ oidc:
   # when this is empty. Point at your own Keycloak and that default is somebody else's server:
   # set it explicitly, or the two halves of one address disagree in the direction nothing checks.
   jwks_uri: ''
-  # Several realms at once (`FRD-118`), `issuer|audience|jwks_uri` per entry, `;`-separated.
+  # Several realms at once (`FRD-118`), `issuer|audience|jwks_uri` per entry, `;`-separated. The
+  # gateway's alone: Management and the console read the single `issuer` above.
   issuers: ''
   # How far the issuer's clock may run ahead of this host's. At 0 a service one second behind its
   # issuer refuses **every** freshly minted token, which reads exactly like a wrong secret.
@@ -153,11 +164,6 @@ oidc:
   # How long past `exp` a token is still accepted. This is the half with a cost, so it is off.
   expiry_leeway_seconds: 0
 
-# A read-only Keycloak service account, so the console can *search* your groups and people when
-# granting access (`view-users`, `query-groups`, nothing else), and so a group is checked before a
-# role is bound to it (`FRD-614`). Without it the console offers only what it already knows — and
-# no custom role can be bound. `url` is where Management reaches Keycloak when that is not the
-# issuer's server; empty means the issuer's.
 # The privacy notice every console user acknowledges (`FRD-625`). `privacy.controller` is printed
 # as Art. 13(1)(a) DSGVO requires and **required outside `local`**; `notice_mode` is `once`,
 # `monthly` or `always` — the last for whoever is reviewing the notice, not for everyday use.
@@ -168,25 +174,32 @@ privacy:
   notice_mode: monthly
   default_language: de
 
+# A read-only Keycloak service account, so the console can *search* your groups and people when
+# granting access (`view-users`, `query-groups`, nothing else), and so a group is checked before a
+# role is bound to it (`FRD-614`). Without it the console offers only what it already knows — and
+# no custom role can be bound. `url` is where Management reaches Keycloak when that is not the
+# issuer's server; empty means the issuer's.
 directory:
   client_id: ''
   url: ''
   # client_secret: → Vault.
 
 # ---------------------------------------------------------------------------------------------
-# The console, which is a static bundle behind nginx and is configured at **deployment** time
-# (`docs/INTEGRATIONS.md` §7). None of these is a settings class: the entrypoint writes
+# The console, a static bundle behind nginx, configured when its **container starts**
+# (`docs/INTEGRATIONS.md` §7). None of these is a setting of either plane: the entrypoint writes
 # `runtime-config.js` from `oidc.issuer` and `oidc.client_id`, and templates the proxy from these.
 # ---------------------------------------------------------------------------------------------
 
 # What the console's content policy lets it call. Left empty it is derived from the issuer's
 # origin, which is the only thing the console calls cross-origin — set it only for something the
-# derivation cannot guess, a second origin or a websocket host. Getting it wrong produces a login
-# that fails **in the browser and nowhere else**.
+# derivation cannot guess, a second origin or a websocket host, and then name the issuer's origin
+# too: a value replaces the derivation. Getting it wrong produces a login that fails **in the
+# browser and nowhere else**.
 csp:
   connect_src: ''
 
-# Where nginx sends `/api` and `/gw`.
+# Where the console's nginx sends `/api` and `/gw`: the two services' names on the Compose network,
+# which is what the console's container reaches them by.
 management:
   upstream: http://management:8002
 gateway:
@@ -228,21 +241,25 @@ redis:
 # Model platforms. Configure the ones you have; an absent one is simply not offered.
 # ---------------------------------------------------------------------------------------------
 
-# Self-hosted, OpenAI-compatible (Ollama, vLLM, …). What this demo actually serves.
+# Self-hosted, OpenAI-compatible (Ollama, vLLM, …), as one server named `ollama` — what this
+# installation serves out of the box, from the stack's own Ollama container.
 ollama:
   url: http://ollama:11434
   models: qwen3:0.6b
   embedding_models: all-minilm
   # Where the machine physically is, for the residency half of the register (`FRD-608`).
   region: local
+  # The answer allowance for every OpenAI-compatible server, `openai.servers` included.
   timeout_seconds: 120
 
 # Several named OpenAI-compatible servers instead of the single endpoint above (`FRD-123`):
-# `name=url|model,model;name2=url2|model`.
+# `name=url|models|embedding_models|region`, `;`-separated, the lists `,`-separated.
 openai:
   servers: ''
 
-# Google Agent Platform (formerly Vertex AI) — Gemini and Anthropic, EU-regional.
+# Google Agent Platform (formerly Vertex AI) — Gemini and Anthropic, EU-regional. Each model is
+# `region/publisher/model`, e.g. `europe-west1/google/gemini-2.5-flash`, the region one
+# `allowed.regions` permits.
 vertex:
   project: ''
   models: ''
@@ -250,12 +267,15 @@ vertex:
   timeout_seconds: 120
   # credentials / api_key: → Vault.
 
-# Google AI Studio (the public Gemini API).
+# Google AI Studio (the public Gemini API). Its region is `global`, which `allowed.regions` would
+# have to name before a key could be used. The base URL keeps its `/v1beta`: the adapter appends
+# `/models/<model>:<method>`.
 gemini:
-  base_url: https://generativelanguage.googleapis.com
+  base_url: https://generativelanguage.googleapis.com/v1beta
   models: ''
 
-# Microsoft Foundry / Azure OpenAI.
+# Microsoft Foundry / Azure OpenAI. `deployments` is `model=deployment|region[|embed]`,
+# `;`-separated, every region one `allowed.regions` permits.
 foundry:
   endpoint: ''
   api_version: '2024-10-21'
@@ -280,6 +300,8 @@ allowed:
 otel:
   enabled: true
   endpoint: http://otel-collector:4318
+  # A quarter of the traces — and so a quarter of the delivery channel's access records, which are
+  # spans. `1.0` where a SIEM has to see every access; the audit trail is whole either way.
   sample_ratio: 0.25
   # ---- Two channels, and how to point each one somewhere -------------------------------------
   #
@@ -389,7 +411,9 @@ cors:
 # the settings exist. The renderer emits them under their own names.
 #
 # Read **once, at startup**, and never on the request path. A configured Vault that cannot be
-# reached is a *boot failure*, never a silent fall back to the environment.
+# reached is a *boot failure*, never a silent fall back to the environment. **Configured means
+# `addr` and `role_id` both** (or a `VAULT_TOKEN` in the environment): an address alone reads
+# nothing and says nothing, and every credential then comes from the environment.
 # ---------------------------------------------------------------------------------------------
 vault:
   addr: http://vault:8200
@@ -397,11 +421,11 @@ vault:
   path: aira
   # Identifies, does not authorise — safe here. The secret-id is the other half and never is.
   #
-  # **Fill this in for a standalone installation.** Outside `local`, `AIRA_SECRET_KEY` must not be
-  # the development default and this file cannot carry it, so Vault is how it arrives:
-  # `make vault-init` creates the path, the read-only policy and the AppRole, and prints the role
-  # id to put here. Left empty, the services refuse to start and say which value is missing —
-  # which is the right failure, and still a failure.
+  # **Fill this in to use Vault at all.** Left empty, the address above is inert: the services
+  # start on the development secrets in the environment, which `local` accepts. Outside `local`,
+  # `AIRA_SECRET_KEY` must not be the development default and this file cannot carry it, so Vault
+  # is how it arrives: `make vault-init` creates the path, the read-only policy and the AppRole,
+  # and prints the role id to put here. Until then Management refuses to start, naming the key.
   role_id: ''
   namespace: ''
   timeout: 10

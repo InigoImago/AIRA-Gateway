@@ -1,11 +1,14 @@
 # FRD-126 — A surface parses; the layer decides
 
 > Phase: 8 (structural) · Status: **Done** · Owner: AIRA
-> Related: `ADR-0010` (a second surface), `FRD-107`, `FRD-405`, `FRD-125`, `FRD-127`, `FRD-128`
+> Related: `ADR-0010` (a second surface), `FRD-107`, `FRD-405`, `FRD-125`, `FRD-128`, and the KIRA
+> cancelled-stream fix cited below as `FRD-127` — a label from before that number went to
+> [*Several gateway instances*](FRD-127-several-gateway-instances.md); the fix never had a document.
 
 ## 1. Summary
 
-`api/serving.py` was extracted so that two API surfaces could share everything below the wire
+`api/serving.py` (a package, `api/serving/`, since `ADR-0023`) was extracted so that two API
+surfaces could share everything below the wire
 format, and its own docstring states the rule: a surface owns *"parsing its own wire format,
 rendering its own error envelope, and its own routes"*. It shared the **steps**. It did not share
 the **order** — and both surfaces went on writing the same six calls out by hand, the KIRA one
@@ -42,6 +45,13 @@ next: *if a third surface is added, does it write those six steps a third time?*
 - **FR-1** `prepare_for_dispatch` performs, in order: empty check → weigh → rate limit and
   budget-exhausted check → pipeline → provider re-resolution after routing → declaration check →
   thinking resolution → embedding validation → reservation.
+  *As built, the sequence has more steps* (`api/serving/prepare.py`). It starts with
+  `refuse_unless_live` (an unknown or retired use case, `FRD-204` FR-8, `FRD-607`), then refuses a
+  request that can never succeed — empty, attachments out of bounds, a sampling value out of range,
+  tools the use case has not enabled — and decides whether reasoning comes back (`FRD-135`), or
+  checks an embedding batch's shape, all **before** the weigh and the rate limit. After the
+  declaration check, the request is fitted to the routed model before its thinking budget is
+  checked against the cap. The order the four guarantees of §1 rest on is unchanged.
 - **FR-2** It returns everything the caller then needs (`Prepared`), so a surface never
   reconstructs an intermediate.
 - **FR-3** A surface module calls none of the steps directly. Enforced by
@@ -114,7 +124,8 @@ this FRD fixed, one step later in the request, and it has already cost a defect:
 So the answer to *"would a third surface generalise easily?"* is: **half of it would.** The
 recommended order is
 
-1. close the KIRA streaming gap (small, standalone) — **done, `FRD-127`**,
+1. close the KIRA streaming gap (small, standalone) — **done**, under the label `FRD-127` (no
+   document; the number now belongs to *Several gateway instances*),
 2. consolidate the post-dispatch sequence the way this FRD consolidated the pre-dispatch one — **done, `FRD-128`**,
 3. and only *then* a third surface, if one were ever wanted.
 
@@ -140,7 +151,8 @@ consolidation found in the code that already exists:
 
 - four of six paths lost the audit row when a caller hung up mid-answer (`FRD-128`),
 - the KIRA surface had no rate limiting at all after one control moved (`FRD-125c`),
-- the KIRA streaming path never received the disconnect fix Gemini earned (`FRD-127`).
+- the KIRA streaming path never received the disconnect fix Gemini earned (the label `FRD-127`,
+  not the FRD of that number).
 
 None of those needed a third surface to be real. Recorded here so a future reader does not treat
 the consolidation as speculative work for a feature that was cancelled — and does not resurrect

@@ -115,7 +115,9 @@ against that table. It is cached for a few seconds — the same shape as the sus
 **Degradation is decided.** If the read-model is unreachable, the `/use-cases/<slug>` convention
 still resolves from the token alone, because it needs no lookup. A caller who was a member *only*
 by group grant is refused, not admitted: the moment a control cannot be evaluated is the worst
-moment to assume it passes (`FRD-405`, `FRD-125`).
+moment to assume it passes (`FRD-405`, `FRD-125`). *Since `FRD-204` FR-8, membership is not enough
+to be served:* the use case's own row must be in the read-model too (`refuse_unless_live`), so a
+convention member of a use case the gateway holds no row for is refused all the same.
 
 ## 5. Functional requirements
 
@@ -137,7 +139,10 @@ group grant must not remove access somebody also holds directly.
 strongest role winning, and refuses membership it cannot evaluate.
 
 **FR-7** — Every grant and revocation is an event on `aira.use-cases`, so the gateway's read-model
-converges without a poll.
+converges without a poll. *As built, the topic is `aira.memberships`* — there is no
+`aira.use-cases`: `use_case_group.granted`/`.revoked` travel beside
+`membership.upserted`/`.removed`, keyed `slug|group_path` (§8.2), because the gateway applies both
+into tables it reads together.
 
 **FR-8** — A group grant naming a group nobody is in is **not an error** — the identity provider
 may fill it tomorrow. It is shown as granted, and the console says how many known people it
@@ -245,7 +250,7 @@ trimmed before the check, so a path pasted with a trailing space is stored as th
 rather than refused. The first version refused every space and made a department with a two-word
 name impossible to grant (corrected in the refactoring, `DEVLOG`).
 
-### 8.4 The third route was specified, written down, replicated — and read by nobody
+### 8.6 The third route was specified, written down, replicated — and read by nobody
 
 Reported from the console, long after this document said **Done**: *"I want to add any group from
 Keycloak and any user as well, and give them admin or user rights — I do not want to have to make a

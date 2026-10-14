@@ -169,6 +169,12 @@ has to be able to see what it costs and what fails, and a person is always entit
 themselves used (`FRD-626`). Roles that may read every figure (`report.read_all`) are not narrowed
 at all — they are the oversight the mode leaves content to.
 
+**Not narrowed either: the request list.** In `oversight` mode a member still sees every row of the
+use case's requests (`FRD-622` FR-1c; `restricted_use_cases` in `payloads.py`), and each row names
+its caller beside its tokens, cost and latency — so the per-person split this table withholds can
+be read off the list one row at a time. Whether `oversight` should narrow the rows too is open for
+the owner; until it is decided, the mode hides per-person *figures* and content, not who called.
+
 One narrowing use case in view narrows the splits for the **whole** report, because those splits
 are keyed on a person and not on a person *and* a use case: "everybody except the people in that
 one use case" cannot be expressed in them, and folding the withheld use case's rows into an

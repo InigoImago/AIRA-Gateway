@@ -29,10 +29,10 @@
 
 core:
   # `local` relaxes exactly the checks a laptop needs (`ADR-0007`); anything else demands an OIDC
-  # audience, a real `secret_key`, and Kafka authentication that is not `PLAINTEXT`.
+  # audience, a real `secret_key`, `debug` off, and Kafka authentication that is not `PLAINTEXT`.
   environment: local
-  # Well-known accounts with a fixed password, and the one-command seeding this demo is for.
-  # **Never true outside a demonstration.**
+  # The demo API key, whose plaintext is in this repository, written at start and accepted while
+  # this is on — for the seeded demo this file describes. **Never true outside a demonstration.**
   demo_mode: true
   debug: false
   # One log line per call to a system that is not ours, while you are wiring one up (`FRD-617`).
@@ -45,6 +45,9 @@ core:
   # How many items of each OTLP batch to print as OTLP/JSON on stdout. 0 is off, and off is what
   # an installation runs — this renders on the exporter's thread, on every export.
   debug_otel_payload: 0
+  # The OpenTelemetry `service.name`. One value for **both** planes: Compose hands it to the gateway
+  # and to Management alike, so their traces carry the same name. Without the line each keeps its
+  # own (`aira-gateway`, `aira-management`).
   app_name: AIRA Gateway
   # One installation, one currency. It labels every figure in the console, every CSV column and
   # the prices in the model catalog — see `docs/DEVLOG.md` for the round where three screens said
@@ -54,9 +57,9 @@ core:
   # source of a role; a realm role on the same token is not read. Management refuses to start
   # without a group for `global-admin`.
   role_groups: global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung
-  # A caller must name a use case. Turn on **last**, once every client sends one, or traffic that
-  # used to work is refused.
-  require_use_case: false
+  # A caller must name a use case, from the start (`docs/INTEGRATIONS.md` §9). On by default — the
+  # showcase runs with it on — and switching it off refuses to start anywhere but `local`.
+  require_use_case: true
   # Whether prompts and answers are stored at all, and for how long, unless a use case says
   # otherwise (`FRD-404`).
   store_payloads: true
@@ -121,8 +124,9 @@ oidc:
   # Required outside `local`, and Keycloak does **not** put it in the token by itself: a public
   # client's `aud` is `["account"]` until an Audience mapper or a client scope says otherwise.
   audience: aira-gateway
-  # **The console's own client**, and the only setting here that no settings class declares: the
-  # SPA's entrypoint writes it into `runtime-config.js` at container start. One image, any realm.
+  # **The console's own client**, and not a setting of either plane: the console's entrypoint
+  # writes it into `runtime-config.js` at container start (as it reads `csp`, `management`,
+  # `gateway` and `dns` below). One image, any realm.
   client_id: aira-gateway
   # **Leave empty only on the bundled stack.** The issuer is what the *browser* got the token
   # from and must match `iss` exactly; the JWKS is fetched by the container, which cannot reach a
@@ -130,7 +134,8 @@ oidc:
   # when this is empty. Point at your own Keycloak and that default is somebody else's server:
   # set it explicitly, or the two halves of one address disagree in the direction nothing checks.
   jwks_uri: ''
-  # Several realms at once (`FRD-118`), `issuer|audience|jwks_uri` per entry, `;`-separated.
+  # Several realms at once (`FRD-118`), `issuer|audience|jwks_uri` per entry, `;`-separated. The
+  # gateway's alone: Management and the console read the single `issuer` above.
   issuers: ''
   # How far the issuer's clock may run ahead of this host's. At 0 a service one second behind its
   # issuer refuses **every** freshly minted token, which reads exactly like a wrong secret.
@@ -138,11 +143,6 @@ oidc:
   # How long past `exp` a token is still accepted. This is the half with a cost, so it is off.
   expiry_leeway_seconds: 0
 
-# A read-only Keycloak service account, so the console can *search* your groups and people when
-# granting access (`view-users`, `query-groups`, nothing else), and so a group is checked before a
-# role is bound to it (`FRD-614`). Without it the console offers only what it already knows — and
-# no custom role can be bound. `url` is where Management reaches Keycloak when that is not the
-# issuer's server; empty means the issuer's.
 # The privacy notice every console user acknowledges (`FRD-625`). `privacy.controller` is printed
 # as Art. 13(1)(a) DSGVO requires and **required outside `local`**; `notice_mode` is `once`,
 # `monthly` or `always` — the last for whoever is reviewing the notice, not for everyday use.
@@ -153,25 +153,32 @@ privacy:
   notice_mode: monthly
   default_language: de
 
+# A read-only Keycloak service account, so the console can *search* your groups and people when
+# granting access (`view-users`, `query-groups`, nothing else), and so a group is checked before a
+# role is bound to it (`FRD-614`). Without it the console offers only what it already knows — and
+# no custom role can be bound. `url` is where Management reaches Keycloak when that is not the
+# issuer's server; empty means the issuer's.
 directory:
   client_id: aira-directory
   url: http://keycloak:8080
   # client_secret: → Vault.
 
 # ---------------------------------------------------------------------------------------------
-# The console, which is a static bundle behind nginx and is configured at **deployment** time
-# (`docs/INTEGRATIONS.md` §7). None of these is a settings class: the entrypoint writes
+# The console, a static bundle behind nginx, configured when its **container starts**
+# (`docs/INTEGRATIONS.md` §7). None of these is a setting of either plane: the entrypoint writes
 # `runtime-config.js` from `oidc.issuer` and `oidc.client_id`, and templates the proxy from these.
 # ---------------------------------------------------------------------------------------------
 
 # What the console's content policy lets it call. Left empty it is derived from the issuer's
 # origin, which is the only thing the console calls cross-origin — set it only for something the
-# derivation cannot guess, a second origin or a websocket host. Getting it wrong produces a login
-# that fails **in the browser and nowhere else**.
+# derivation cannot guess, a second origin or a websocket host, and then name the issuer's origin
+# too: a value replaces the derivation. Getting it wrong produces a login that fails **in the
+# browser and nowhere else**.
 csp:
   connect_src: ''
 
-# Where nginx sends `/api` and `/gw`.
+# Where the console's nginx sends `/api` and `/gw`: the two services' names on the Compose network,
+# which is what the console's container reaches them by.
 management:
   upstream: http://management:8002
 gateway:
@@ -213,21 +220,25 @@ redis:
 # Model platforms. Configure the ones you have; an absent one is simply not offered.
 # ---------------------------------------------------------------------------------------------
 
-# Self-hosted, OpenAI-compatible (Ollama, vLLM, …). What this demo actually serves.
+# Self-hosted, OpenAI-compatible (Ollama, vLLM, …), as one server named `ollama`. What this demo
+# actually serves.
 ollama:
   url: http://ollama:11434
   models: qwen3:0.6b
   embedding_models: all-minilm
   # Where the machine physically is, for the residency half of the register (`FRD-608`).
   region: local
+  # The answer allowance for every OpenAI-compatible server, `openai.servers` included.
   timeout_seconds: 120
 
 # Several named OpenAI-compatible servers instead of the single endpoint above (`FRD-123`):
-# `name=url|model,model;name2=url2|model`.
+# `name=url|models|embedding_models|region`, `;`-separated, the lists `,`-separated.
 openai:
   servers: ''
 
-# Google Agent Platform (formerly Vertex AI) — Gemini and Anthropic, EU-regional.
+# Google Agent Platform (formerly Vertex AI) — Gemini and Anthropic, EU-regional. Each model is
+# `region/publisher/model`, e.g. `europe-west1/google/gemini-2.5-flash`, the region one
+# `allowed.regions` permits.
 vertex:
   project: ''
   models: ''
@@ -235,12 +246,15 @@ vertex:
   timeout_seconds: 120
   # credentials / api_key: → Vault.
 
-# Google AI Studio (the public Gemini API).
+# Google AI Studio (the public Gemini API). Its region is `global`, which `allowed.regions` would
+# have to name before a key could be used. The base URL keeps its `/v1beta`: the adapter appends
+# `/models/<model>:<method>`.
 gemini:
-  base_url: https://generativelanguage.googleapis.com
+  base_url: https://generativelanguage.googleapis.com/v1beta
   models: ''
 
-# Microsoft Foundry / Azure OpenAI.
+# Microsoft Foundry / Azure OpenAI. `deployments` is `model=deployment|region[|embed]`,
+# `;`-separated, every region one `allowed.regions` permits.
 foundry:
   endpoint: ''
   api_version: '2024-10-21'
@@ -371,7 +385,10 @@ cors:
 # the settings exist. The renderer emits them under their own names.
 #
 # Read **once, at startup**, and never on the request path. A configured Vault that cannot be
-# reached is a *boot failure*, never a silent fall back to the environment.
+# reached is a *boot failure*, never a silent fall back to the environment. **Configured means
+# `addr` and `role_id` both** (or a `VAULT_TOKEN` in the environment): an address alone reads
+# nothing and says nothing, and every credential then comes from the environment — as here,
+# where `role_id` is empty and the demo runs on the development secrets.
 # ---------------------------------------------------------------------------------------------
 vault:
   addr: http://vault:8200

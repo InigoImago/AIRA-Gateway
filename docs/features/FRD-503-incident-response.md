@@ -39,7 +39,10 @@ That was the honest interim; this is the control.
 when throttling, an **expiry**, an **author**, and a **reason**.
 
 **FR-2** — A rule that fires with a non-`alert` action creates one, lasting `action_minutes`. The
-anomaly event records `blocked` or `throttled` rather than `detected_not_enforced`.
+anomaly event records `blocked` or `throttled` rather than `detected_not_enforced`. *As built
+(`ADR-0014`, amended):* when suspensions are switched off (`AIRA_ENFORCE_SUSPENSIONS=false`), or
+the rule sets no `action_minutes`, the rule writes **no** suspension and the event records
+`detected_not_enforced` (`anomalies/service.py`).
 
 **FR-3** — `guard_before_work` — the one pre-dispatch gate every verb takes (`FRD-126`) — refuses a
 blocked caller with **429** and a `Retry-After` naming when the suspension ends. Not 403: the
@@ -60,8 +63,9 @@ refusal too**: its bucket is taken by the rate limiter, and when that bucket is 
 the refusal is the suspension's (`Throttled`), naming the rate and who set it.
 
 **FR-6** — `POST /v1beta/suspensions` creates one by hand and `DELETE /{id}` lifts; both require
-`incident.suspend` (IT Security or Global Administrator), because a hand-made suspension is a global
-rule's effect without the rule.
+`incident.suspend` (IT Security or Global Administrator by default, and any role an installation
+grants it to, `FRD-614`), because a hand-made suspension is a global rule's effect without the
+rule.
 
 **FR-6a** — `GET` lists, to three audiences (amended 2026-09-17):
 
@@ -116,7 +120,9 @@ not: it is created directly against the gateway, by a caller holding an oversigh
 An incident control that depends on the event bus fails exactly when the bus is the problem — and
 "traffic is doing something alarming" and "the pipeline between the planes is unhealthy" are not
 independent events. The gateway already knows realm roles (`ADR-0009`), so it can make the
-authorisation decision itself, and the thing being stopped is on the data plane anyway.
+authorisation decision itself, and the thing being stopped is on the data plane anyway. *(Roles
+come from groups since `ADR-0017`, and the decision asks the permission `incident.suspend` since
+`FRD-614`.)*
 
 The console reaches it through the existing `/gw` proxy, exactly as the dry-run and consumption
 views already do.
@@ -159,7 +165,8 @@ mutation harness or a green `make ci` could have seen.
 Management (correctly) refused it a global rule. PRD §154 gives that role every figure and no write
 anywhere. Reusing "may see every use case" for "may stop every use case" is `FRD-206`'s mistake one
 level down. There is now a third set, `INCIDENT_ROLES`, in `aira_common.roles`, and **both planes
-read it**.
+read it**. *(Since `FRD-614` there are no role sets: both planes ask one permission,
+`incident.suspend`, from `aira_common.permissions`.)*
 
 **2. The `payload_size` kind measured a column nothing wrote.** The middleware counted the bytes,
 the column existed, and no wire ran between them — so a whole rule kind could never fire on real

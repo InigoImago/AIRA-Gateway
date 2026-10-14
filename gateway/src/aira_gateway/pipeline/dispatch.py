@@ -14,7 +14,8 @@ as an upstream outage.
 
 **A candidate that was tried and failed is reported too** (`ADR-0032`): the row says why the model
 before the one that answered did not, which is the question somebody reading an audit trail
-actually has.
+actually has. **And when none answered**, the error the chain raises carries the same report
+(`PassedOver`): the row of a refused request is the one that most needs to say what was tried.
 
 **A candidate whose wire format cannot carry the request is skipped like any other** — a level word
 to Anthropic, a document to an OpenAI-compatible server, a thinking budget that does not fit the
@@ -94,6 +95,34 @@ class Attempted:
 
     model: str
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class PassedOver:
+    """Who a chain moved past before it gave up: what the audit row of the refusal reports
+    (`FRD-302` FR-11). Carried **on the error** the chain raises, because the refusal is recorded
+    at the surface's exception boundary, which sees the error and nothing else of the chain."""
+
+    skipped: tuple[Skipped, ...]
+    failed: tuple[Attempted, ...]
+
+
+#: The attribute an exhausted chain's error carries its :class:`PassedOver` under. An attribute
+#: rather than a field of each error class: the errors are the adapters' (`UpstreamError`,
+#: `DialectUnsupported`), and an adapter must not learn what a chain is.
+_PASSED_OVER = "aira_passed_over"
+
+
+def passed_over_by(error: BaseException) -> PassedOver | None:
+    """What the chain that raised ``error`` passed over, or ``None`` if no chain raised it."""
+    found = getattr(error, _PASSED_OVER, None)
+    return found if isinstance(found, PassedOver) else None
+
+
+def _exhausted[E: Exception](error: E, skipped: list[Skipped], failed: list[Attempted]) -> E:
+    """``error``, marked with everything the chain passed over on the way to raising it."""
+    setattr(error, _PASSED_OVER, PassedOver(tuple(skipped), tuple(failed)))
+    return error
 
 
 class NoCapableModel(Exception):
@@ -228,10 +257,11 @@ async def dispatch_with_fallback(
             return Dispatched(response, index, skipped, failed)
 
     # An upstream that was *tried* and failed is an outage, which the caller may usefully retry.
-    # Everything else is a chain that had nothing to offer.
+    # Everything else is a chain that had nothing to offer. Either way the error carries who was
+    # passed over, for the refusal's row (`PassedOver`).
     if last_error is not None:
-        raise last_error
-    raise _nothing_could_serve(skipped, unsayable)
+        raise _exhausted(last_error, skipped, failed)
+    raise _exhausted(_nothing_could_serve(skipped, unsayable), skipped, failed)
 
 
 async def stream_with_fallback(
@@ -299,8 +329,8 @@ async def stream_with_fallback(
             )
 
     if last_error is not None:
-        raise last_error
-    raise _nothing_could_serve(skipped, unsayable)
+        raise _exhausted(last_error, skipped, failed)
+    raise _exhausted(_nothing_could_serve(skipped, unsayable), skipped, failed)
 
 
 def _nothing_could_serve(

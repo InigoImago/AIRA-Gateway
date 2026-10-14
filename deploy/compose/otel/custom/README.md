@@ -1,7 +1,7 @@
 # An installation's own collector configuration
 
 Everything in this directory except this file is git-ignored. The directory is mounted read-only at
-`/etc/otelcol-contrib/custom` (ADR-0024). It holds two kinds of file:
+`/etc/otelcol-contrib/custom`. It holds two kinds of file:
 
 - **`collector.env`** holds the values for the recipes in `../recipes/`. Copy
   `../recipes/collector.env.example` to start. Compose passes this file to the collector only, and

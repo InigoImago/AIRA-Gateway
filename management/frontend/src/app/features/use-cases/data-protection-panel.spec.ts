@@ -289,7 +289,7 @@ describe('DataProtectionPanel — oversight only (`FRD-622` FR-1b)', () => {
     });
 
     expect(html().querySelector('[data-testid="content-mode-readonly"]')?.textContent).toContain(
-      'Global Administrators and IT Security only',
+      'Oversight roles only',
     );
   });
 });

@@ -26,7 +26,10 @@ authenticated user and roles. JWT verification is shared with the gateway.
   resolves/creates a Django `User` (username=`preferred_username` or `sub`, email from claims).
   Missing/invalid token → 401; unauthenticated access to protected views → 401.
 - **FR-3 Claims on request**: attach verified claims (roles, groups) to the request for FRD-201.
-- **FR-4 `me` endpoint**: returns subject, username, email, realm roles, and use-case groups.
+- **FR-4 `me` endpoint**: returns subject, username, email, realm roles, and use-case groups. *As
+  built (`apps/api/views.py`): the roles are those the token's groups confer (`ADR-0017`), with
+  their labels and the **permissions** they add up to (`FRD-614`) — the console asks those — beside
+  the use-case slugs, the key policy, the currency and `may_test`.*
 - **FR-5 Error envelope**: a DRF exception handler returns `{"error": {"code","message","details"}}`
   consistent with the gateway style.
 - **FR-6 Shared verification**: JWT/JWKS logic lives in `aira_common.oidc` (used by gateway too).

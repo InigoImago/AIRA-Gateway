@@ -120,7 +120,11 @@ months before it existed. The chain was built; its document was the companion no
 - **FR-11 A failed attempt is recorded.** A candidate that was tried and failed leaves a
   `step: dispatch`, `action: failed` decision carrying the model and the upstream's reason, beside
   the `action: skipped` rows a condition produces. Both reach the audit row's
-  `pipeline_decisions`.
+  `pipeline_decisions` — **whether a later candidate answered or none did**: the error an
+  exhausted chain raises carries both lists (`PassedOver`), and the refusal's row records them.
+  Until the documentation was read against the code, only a chain that ended in an answer did;
+  the row of a refused request carried no decisions at all
+  (`gateway/tests/test_an_exhausted_chain_says_what_it_tried.py`, mutations `DA-1`, `DA-2`).
 - **FR-12 Bounded in both planes.** The gateway re-applies Management's bounds on a step's chain
   when it parses a config (`ADR-0018`), because the read-model is also reachable by a direct write
   and by an unvalidated dry-run payload.
@@ -237,7 +241,8 @@ is looking at.
 refused after it was reserved, and a ledger that cannot take it back does not turn the caller's
 `503` into a `500`.
 
-`management/backend/tests/test_pipeline_validation.py` — every model a step's chain names is
+`management/backend/tests/test_pipelines.py` (`test_a_step_chain_of_released_models_saves`,
+`test_a_step_chain_is_bounded_where_it_is_authored`) — every model a step's chain names is
 checked against the release, and the bounds are refused where they are authored.
 
 `tools/tests/test_both_planes_find_the_same_models_in_a_pipeline.py` — Management's

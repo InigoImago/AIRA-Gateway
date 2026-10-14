@@ -4,7 +4,7 @@
 >
 > Related: `FRD-114` (the catalog as a runtime authority), `FRD-117` (diagnostics, and why a health
 > check must not wake a model), `ADR-0011` (transport × dialect × identity), `FRD-307` (the
-> approved-model catalog, still open).
+> approved-model catalog).
 
 ## 1. Problem
 
@@ -37,14 +37,19 @@ and "it is fine" are different answers and only one of them is safe to act on.
 
 **FR-2 — Never a generation.** The check asks the same cheap listing `/readyz` uses. A self-deployed
 model can be scaled to zero, and a "does this work" button must not be the thing that wakes it,
-bills for it, and takes minutes to answer.
+bills for it, and takes minutes to answer. *As built, each adapter's `ping` asks the cheapest
+question its platform has:* the model listing on Google AI Studio and on OpenAI-dialect servers;
+`:countTokens` on Vertex, which publishes no listing an API key may read; and, for Vertex's managed
+open models, an **empty conversation**, which the endpoint refuses `400` for a model it has and
+`404` for one it has not, generating nothing. Each probe is recorded as a `diagnostic` row.
 
 **FR-3 — The upstream's error text is not repeated back.** A provider's message can carry the URL it
 was called with, and that URL can carry the key. The exception *type* is diagnostic enough.
 
 **FR-4 — Bounded by role, not by use case.** It describes the *installation*, so: Global
 Administrators (who declare models) and IT Security (who investigate why a use case cannot reach
-one). Everybody else gets a 403 naming who may.
+one). Everybody else gets a 403 naming who may. *As built, the permission `operations.diagnose`
+(`FRD-614`), which those two hold by default.*
 
 ## 3. Console
 
@@ -88,7 +93,8 @@ a wrong answer that looks like a right one.
   money and time to ask.
 - **Not** continuous. `/readyz` already probes in the background per provider; this is a button
   somebody presses while looking at one model.
-- **Not** an approval gate. Which models a use case *may* use is `FRD-307`, still open.
+- **Not** an approval gate. Which models may be used is the installation's approval (`FRD-307`)
+  and the use case's release (`FRD-308`).
 
 ## 5. Testing
 

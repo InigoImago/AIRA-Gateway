@@ -12,14 +12,14 @@ def test_defaults() -> None:
     assert settings.kafka_bootstrap_servers == "localhost:29092"
 
 
-def test_kafka_host_port_parsing() -> None:
-    settings = GatewaySettings(kafka_bootstrap_servers="broker-a:9092,broker-b:9092")
-    assert settings.kafka_host_port == ("broker-a", 9092)
+def test_every_broker_is_read_not_only_the_first() -> None:
+    settings = GatewaySettings(kafka_bootstrap_servers="broker-a:9092,broker-b:9093")
+    assert settings.kafka_brokers == (("broker-a", 9092), ("broker-b", 9093))
 
 
-def test_kafka_host_port_without_port_defaults() -> None:
+def test_a_broker_without_a_port_takes_kafkas() -> None:
     settings = GatewaySettings(kafka_bootstrap_servers="justhost")
-    assert settings.kafka_host_port == ("justhost", 9092)
+    assert settings.kafka_brokers == (("justhost", 9092),)
 
 
 def test_env_prefix(monkeypatch) -> None:
@@ -72,16 +72,15 @@ def test_payload_retention_defaults_to_a_week() -> None:
 
 def test_an_ipv6_broker_is_dialled_without_its_brackets() -> None:
     """`[host]:port` is how Kafka spells an IPv6 broker; the brackets are not part of the host."""
-    assert GatewaySettings(kafka_bootstrap_servers="[::1]:9092").kafka_host_port == ("::1", 9092)
-    assert GatewaySettings(kafka_bootstrap_servers="[2001:db8::1]").kafka_host_port == (
-        "2001:db8::1",
-        9092,
+    assert GatewaySettings(kafka_bootstrap_servers="[::1]:9092").kafka_brokers == (("::1", 9092),)
+    assert GatewaySettings(kafka_bootstrap_servers="[2001:db8::1]").kafka_brokers == (
+        ("2001:db8::1", 9092),
     )
 
 
 def test_no_broker_is_no_broker_to_check() -> None:
     """A single-node install with Kafka switched off is one `security.py` accepts."""
-    assert GatewaySettings(kafka_bootstrap_servers="").kafka_host_port is None
+    assert GatewaySettings(kafka_bootstrap_servers="").kafka_brokers == ()
 
 
 @pytest.mark.parametrize(
@@ -161,9 +160,8 @@ def test_zero_keeps_the_meaning_it_is_documented_with() -> None:
 def test_a_container_s_service_name_is_a_broker_too() -> None:
     """The host-name check refuses what nothing could dial, and only that: a Compose service
     name may carry an underscore, which a strict host-name rule would refuse."""
-    assert GatewaySettings(kafka_bootstrap_servers="aira_kafka:9092").kafka_host_port == (
-        "aira_kafka",
-        9092,
+    assert GatewaySettings(kafka_bootstrap_servers="aira_kafka:9092").kafka_brokers == (
+        ("aira_kafka", 9092),
     )
 
 
@@ -177,3 +175,11 @@ def test_a_token_tolerance_out_of_bounds_refuses_to_start_with_oidc_off(
     day somebody switched OIDC on, for a setting nobody had touched since."""
     with pytest.raises(ValidationError, match=setting.upper()):
         GatewaySettings(oidc_issuer="", **{setting: value})
+
+
+def test_a_negative_proxy_count_refuses_to_start() -> None:
+    """A count of proxies; 0 when the gateway is reached directly. Management refused a negative
+    one, and the gateway read it as 0 without saying so — two planes, two answers to one setting."""
+    with pytest.raises(ValidationError, match="trusted_proxy_hops"):
+        GatewaySettings(trusted_proxy_hops=-1)
+    assert GatewaySettings(trusted_proxy_hops=0).trusted_proxy_hops == 0

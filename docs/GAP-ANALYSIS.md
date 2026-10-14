@@ -1,8 +1,8 @@
 # Gap analysis — requirements against what is built
 
 Written 2026-08-07 while documenting the system, by reading the code against
-[`PRD.md`](PRD.md) §1.1 (the owner's canonical feature list), §1.2 (findings from the code review)
-and the [ROADMAP](ROADMAP.md).
+[`PRD.md`](PRD.md) §1.1 (the owner's canonical feature list), §1.2 (findings from the code review),
+the PRD's requirements (§2, §5, §6) and the [ROADMAP](ROADMAP.md).
 
 **Nothing here is fixed.** This is a statement of where the system stands, so that a decision to
 close a gap is a decision somebody makes rather than a surprise somebody has. Items are grouped by
@@ -10,7 +10,7 @@ how much they matter, not by how hard they are.
 
 Legend: done built and verified · partly partial, with the missing half named · missing not built
 
-**Last re-read against the code: 2026-08-19.** That matters for a document of this kind: a gap
+**Last re-read against the code: 2026-10-14.** That matters for a document of this kind: a gap
 analysis is a *snapshot*, and one nobody re-reads becomes the opposite of what it is for — an
 authoritative-looking list of things that were true a fortnight ago. Row 24 was `missing · not
 scheduled` here while `FRD-118` had shipped.
@@ -21,26 +21,27 @@ scheduled` here while `FRD-118` had shipped.
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 1 | Unified provision of models | partly | Vertex (Gemini + Anthropic) done, Agent Platform's managed open models (GLM, DeepSeek) done — served only at `global`, so each is permitted by name (`ADR-0034`), OpenAI-compatible/self-hosted done, Foundry built but **hermetic only** — no Azure subscription has ever run it |
+| 1 | Unified provision of models | partly | Vertex in the EU — Gemini and Anthropic (`FRD-115`/`119`); Agent Platform's managed open models (GLM, DeepSeek), served only at `global` and so permitted by name (`ADR-0034`); Google AI Studio (`FRD-304`); any OpenAI-compatible server (`FRD-123`). Not built: Model Garden's **self-deployed** endpoints (`FRD-115` FR-2a). Foundry is built but **hermetic only** — no Azure subscription has ever run it (§3.7) |
 | 2 | Role assignment | done | `FRD-201`, `ADR-0009`, `ADR-0017`/`FRD-605` — a role is held **through a Keycloak group and nothing else**; a realm role assigned directly grants nothing. What a role may do is a permission set, and an installation defines its own roles, each bound to one checked group (`FRD-614`, `ADR-0025`) |
 | 3 | KIRA API compatibility | done | `FRD-107` Stage A+B — text, documents, thinking, structured output, batch embedding |
-| 4 | Auditability | done | `FRD-122` — refusals recorded at the exception boundary, requested vs. served model, degradation per row |
-| 5 | Storage of requests/responses: which system, when, what, with what | done | `FRD-103` + `FRD-122` — the API-key prefix distinguishes the calling system |
+| 4 | Auditability | partly | **Requests: done** (`FRD-122`, `FRD-128`) — every request attributed to a use case leaves a row, served or refused, including one whose caller hung up; requested vs. served model, pipeline decisions and degradation are on the row. A refusal *before* attribution is recorded on its span instead (§3.2). **Configuration: not built** — only role changes have a history (§3.1) |
+| 5 | Storage of requests/responses: which system, when, what, with what | done | `FRD-103` + `FRD-122` — `credential` names the calling system (an API key's prefix or an OIDC client), so five keys of one use case are five identities in the log |
 | 6 | Incident response | done | `FRD-503` — suspensions with author, expiry, reason; kill switch |
-| 7 | Blocking dangerous requests | partly | injection filter done, operator kill switch done, and `FRD-504` can now **measure** what a model refuses — but as *controls* there are still **no further categories** (jailbreak, data exfiltration, PII in the prompt, output filtering) |
+| 7 | Blocking dangerous requests | partly | injection filter, personal data replaced before the prompt is sent and stored (`pii_filter`, opt-in per use case, `FRD-309`), operator kill switch; `FRD-504` **measures** what a model refuses. Not controls: jailbreak categories beyond injection, data exfiltration, output filtering — and no filter reads an attachment or a tool result (§3.4) |
 | 8 | Model routing from the definition | done | `FRD-300`, `FRD-306` |
-| 9 | Model fallback | done | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently. **Every model access is a chain since 2026-10-11** (`FRD-302`, `ADR-0032`) — a streamed request falls back for as long as nothing has reached the caller, and each pipeline step has its own chain. Still open: nothing falls back *after* the first chunk, and nothing retries the same model |
-| 10 | Independence from Google / Microsoft | partly | proven for **three** platforms by an architecture assertion — Foundry reused the OpenAI dialect unchanged and its diff never left `upstreams/`; still unproven against a real Azure subscription |
-| 11 | Overview of all use cases | partly | list and detail done — **no governance view of the processing logic** across use cases (`FRD-600`) |
-| 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306` |
+| 9 | Model fallback | done | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently. **Every model access is a chain since 2026-10-11** (`FRD-302`, `ADR-0032`) — a streamed request falls back for as long as nothing has reached the caller, and each pipeline step has its own chain. What a chain does not do is in §3.6 |
+| 10 | Independence from Google / Microsoft | partly | proven for **three** platforms by an architecture assertion — Foundry reused the OpenAI dialect unchanged and its diff never left `upstreams/`; still unproven against a real Azure subscription (§3.7) |
+| 11 | Overview of all use cases | done | the list (`FRD-202`) and the **register** (`FRD-608`): one row per use case — purpose, processing notes, models and where they ran, storage, retention, who may read content — sortable, and exported as CSV |
+| 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306`, `FRD-309` — three step types: injection filter, PII replacement, routing |
 | 13 | Permitted models per use case | **done** | Two gates with two owners: a Global Administrator approves a model for the *installation* (`FRD-307`), an administrator of the use case releases it to *that* use case (`FRD-308`, 2026-08-11). Both are dispatch conditions at **every hop**, so neither `model_route` nor a fallback chain goes past them. Empty means **none**. The console picks from the catalog rather than taking free text, and the `allow_check` step — which checked only the name the caller sent, once, before routing — is gone |
-| 14 | Model smoke tests and jailbreak batteries | done | `FRD-504` — one flat catalogue of 100 questions, judged by a person; a standing is the **latest run**, never a sum. Since `ADR-0020` (2026-08-16) a run is put to a **use case's own pipeline** rather than to a model, so the filter, router and redactor are what is measured and a blocked question is a result; testing a model is a use case whose pipeline starts at it. Narrower than drafted: no repetition-as-a-rate, no machine-checked expectations (the two modes are now one mechanism — a filtering pipeline or a bare one) |
-| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603`, `FRD-606` — a use case's consumption is shown **with or without a limit**, and so is each **person's**, with the two credentials shown apart and counted together. A per-head allowance belongs to the person rather than to the credential (`ADR-0019`, 2026-08-15): a key and a browser session share one, where they used to be two. Since `FRD-610` (2026-08-20) spend that belongs to **no** use case — the console's model checks, break-glass keys, demo traffic — books against the installation's own budget instead of passing the gate untouched |
-| 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail |
-| 17 | Central overview of all use cases | partly | see 11 |
+| 14 | Model smoke tests and jailbreak batteries | done | `FRD-504` — one flat catalogue of 100 questions, judged by a person; a standing is the **latest run**, never a sum. Since `ADR-0020` (2026-08-16) a run is put to a **use case's own pipeline** rather than to a model, so the filter, router and redactor are what is measured and a blocked question is a result; testing a model is a use case whose pipeline starts at it. Narrower than drafted: no repetition-as-a-rate, no machine-checked expectations (§3.9) |
+| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603`, `FRD-606` — a use case's consumption is shown **with or without a limit**, and so is each **person's**, with the two credentials shown apart and counted together. A per-head allowance belongs to the person rather than to the credential (`ADR-0019`). Spend that belongs to **no** use case — the console's model checks, break-glass keys, demo traffic — books against the installation's own budget, and a model with no price cannot serve a request a cost limit binds (`FRD-610` §3.1–3.2) |
+| 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail: refusal rate, error rate, spend spike, request spike, a new source address for a credential, payload size, blocked-prompt rate. None of them looks for leaked data (§3.4) |
+| 17 | Central overview of all use cases | done | see 11 |
 
-**Score:** 11 built, 6 partial, 0 missing (re-counted 2026-08-09). The partials are all *breadth*
-rather than correctness — each does what it says for what it covers.
+**Score:** 13 built, 4 partial, 0 missing (re-counted 2026-10-14). Three of the partials are
+*breadth* — each does what it says for what it covers. Row 4 is a missing half: the control plane
+does not record who changed it.
 
 > **Why this table was wrong.** Re-checked against the code on 2026-08-09 after `FRD-603`, and six
 > rows understated what exists — smoke tests and Foundry were built and still recorded as missing.
@@ -57,175 +58,173 @@ rather than correctness — each does what it says for what it covers.
 | 18 | Document processing (PDF, images) | done `FRD-110` — 15 media types, signature checks, a model that cannot read it is **refused by name** |
 | 19 | Extensibility as a measurable property | done the assertion passes and the claim has now been tested **four** times — Vertex/Gemini, Vertex/Anthropic, Foundry, which reused the OpenAI dialect without a line of change, and Vertex's managed open models, which reused it on a second transport; the dialect gained two readings (`reasoning_content`, a `usage` with no count) that every OpenAI-compatible server benefits from |
 | 20 | Secrets from Vault | done `FRD-116` — a settings source, fail-closed |
-| 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS done; outgoing calls traced since 2026-08-31 (**FR-5 was recorded here as done from 2026-08-06 and had never been built** — see `FRD-117` §5.3); **FR-7 (a second OpenAPI 3.0 document) not built** |
-| 22 | Masking sensitive content in stored payloads | partly `FRD-406` (2026-08-08) — **credentials** are masked; PII deliberately is not |
+| 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS and traced outgoing calls done; Postgres alone decides readiness, and a Kafka outage reports *degraded* (FR-3a); **FR-7 (a second OpenAPI 3.0 document) not built** |
+| 22 | Masking sensitive content in stored payloads | partly `FRD-406` — **credentials** are masked in every stored payload; personal data is not, by decision (§6). A use case that must not send or keep it switches on `pii_filter` (`FRD-309`) |
 | 23 | Report export | done `FRD-602` — CSV as a renderer on the existing endpoint |
-| 24 | Multiple Keycloak backends / groups from UserInfo | **partly** `FRD-118` (2026-08-18) — several issuers, each with its own JWKS and audience set, selected by the token's issuer; **groups from UserInfo stays declined** (FR-3). The "need unclear" this row carried was answered by the owner and built. |
+| 24 | Multiple Keycloak backends / groups from UserInfo | **partly** `FRD-118` — the gateway accepts several issuers, each with its own keys and audience, chosen by the token's `iss` (`AIRA_OIDC_ISSUERS`); Management verifies tokens of one. **Groups from UserInfo stays declined** (FR-3) |
 
 ---
 
 ## 3. The gaps that matter, in order
 
-### 3.1 Content redaction: the credential half is done, the PII half is a decision — `FRD-406`
+### 3.1 Configuration changes leave no history — PRD FR-MG-10, NFR-7
 
-**Closed on 2026-08-08 for credentials.** `PatternRedactor` masks API keys, bearer tokens, JWTs,
-`Authorization:` values and PEM private key blocks in every stored request and response, plus any
-pattern a deployment adds. An unusable pattern stops the gateway rather than silently matching
-nothing.
+*Who changed this budget, and what was it before?* has no answer. Only **roles** keep a change log
+(`RoleChange`: who, when, before and after). A few records name their author: an API key its
+`owner` and `issued_by`, a group grant its `granted_by`, a retired use case its `deleted_by`, a
+suspension its author and whoever lifted it. Nothing records who changed, or what was there before,
+for model approvals and prices, budgets, rate limits, pipelines, anomaly rules, or a use case's own
+settings — storage, content visibility, release, retention. Each of those rows holds its latest
+value and an `updated_at`.
 
-**Still open, and deliberately so: personal data.** The redaction is narrow because names, customer
-numbers, addresses and prose are *what the payload is stored for*. A redactor that mangles them
-produces payloads nobody reads — after which the deployment switches storage off entirely, which is
-strictly worse than storing them. For data that must not be persisted at all the honest control is
-the per-use-case storage switch (`FRD-404`), which already exists.
+The outbox is not that record. An event carries no actor, and it is deleted 30 days after it was
+delivered (`KEPT_AFTER_DAYS` in `apps/outbox/models.py`). Management's request spans do not name
+the user either.
 
-So the dependency below is **partly** relieved: a stored prompt no longer leaks a credential to
-anyone who can read the table. It still contains whatever business content the caller wrote, which
-is why per-request browsing by non-members remains a decision rather than a build.
-
-**What was missing.** Prompts and responses are stored (per use case, default 7 days) and **nothing
-masked anything inside them**. `Redactor` was a no-op hook in place since Phase 1.
-
-**Why it matters more than its ROADMAP position suggests.** Three things depend on it:
-
-- The demo's `personalwesen` use case documents the absence in its own processing notes. Any real
-  use case handling personal data has the same problem and probably will not write it down.
-- **Per-request browsing** in the reporting screen is blocked on it ([`ADR-0009`](adr/ADR-0009-gateway-knows-roles.md)):
-  showing stored prompts to people who are precisely *not* members of the use case that produced
-  them is exactly what redaction exists to make safe.
-- Membership had **two answers that disagreed** — the gateway read Keycloak groups, Management read
-  its own rows. Closed by [`FRD-209`](features/FRD-209-access-by-group.md): a grant names a group or
-  a person, and both planes resolve it from the same vocabulary.
-- The **IT Security console** (`FRD-502`) would need it to show a payload; it was built to show
-  **metadata only** instead, so it is not blocked — but "what was actually in that prompt" is a
-  question the console still cannot answer, and the investigator has to ask the use case.
-
-**Mitigations that exist**: a retention period, and switching payload storage off entirely. Neither
-masks anything in a payload that *is* kept.
-
-**Was deferred by decision** (2026-08-05); the credential half landed 2026-08-08 with `ADR-0015`.
+So the request trail answers *who asked what, and what was decided*; nothing answers *who decided
+that this is what gets decided*. For a product whose claim is auditability, this is the largest
+gap.
 
 ---
 
-### 3.2 ~~The IT Security console does not exist~~ — closed by `FRD-502` (2026-08-08)
+### 3.2 The audit trail stays in the gateway's database — [`FRD-616`](features/FRD-616-the-audit-trail-as-an-event-stream.md)
 
-Phase 5 built the rules, the engine and the enforcement, and the screen was missing — the shape of
-the defect [`FRD-206`](features/FRD-206-console-truthfulness.md) fixed: a role whose console shows
-it nothing. Now built:
+What a SIEM can be given today is telemetry. The collector's delivery channel
+([`FRD-618`](features/FRD-618-any-otlp-consumer.md), `FRD-617`–`621`) forwards a span per request
+and per model call, and the logs and metrics, to any OTLP receiver. The audit records themselves —
+`request_logs`, `payload_access`, `anomaly_events`, `access_suspensions` — stay in the gateway's
+Postgres, and the console reads them over the gateway's HTTP API. A stream of those records with a
+closed vocabulary is specified in `FRD-616` and not built.
 
-| API | Screen |
-|---|---|
-| `GET /v1beta/anomalies` | **Security → Findings**, and **Warnings** per use case |
-| `GET/POST/DELETE /v1beta/suspensions` | **Security → Suspensions**, with the kill switch |
-| global anomaly rules (`/api/v1/anomaly-rules/`) | **Security → Rules** |
-| `GET /v1beta/traces` *(new)* | **Traces** per use case |
+Three consequences:
 
-All three refresh themselves; the reader can switch that off and sees how stale the view is.
-
-**What is still open here**: alert *delivery* (mail, webhook) is not built — the console is where a
-finding is seen, not where it is sent. Trace search **was** open and is not any more (2026-08-08):
-the list filters by outcome, refusals, API key prefix, subject, source address, "only my requests"
-and "only tool calls" — the address one served, and offered, only to a role that may act on an
-incident. Traces carry **metadata only**, which is a deliberate scope line rather than a gap — see
-3.1 — and now include the **tool calls** a request made: names and a count, never arguments.
-
----
-
-### 3.3 Feature 7 is narrower than it reads
-
-"Blocking dangerous requests" is implemented as **one** heuristic-or-LLM prompt-injection filter,
-plus the operator kill switch. Not implemented: jailbreak categories beyond injection, data
-exfiltration patterns, PII detection in the prompt, or output filtering of any kind.
-
-The pipeline also has a **stated blind spot**: `CanonicalMessage.text` is lossy since documents
-arrived, so a prompt injection **inside a PDF is invisible to the injection filter**
-([`FRD-110`](features/FRD-110-multimodal-content.md)). This is written down, not fixed.
-
-And measured honestly: against a 0.6B local model the LLM filter answers `INJECTION` to everything.
-The filter is exactly as good as the model behind it.
+- **The gateway publishes no events.** PRD FR-GW-12 — usage, audit and anomaly events on Kafka —
+  was never built. Kafka carries configuration from Management to the gateway and nothing back.
+- **A refusal before attribution is a span, not a row** — by design. A missing or invalid
+  credential (401), a caller who names no use case (400) or one they are not a member of (403), a
+  key used for another use case (403): none writes to `request_logs`, because a row per
+  unauthenticated request would make the audit table a denial-of-service target. The span is
+  marked `aira.outcome = unauthenticated | forbidden`, with the status, the source address, the
+  subject where known and the use case asked for (`aira.use_case.requested`), and the delivery
+  channel keeps it. Reporting and the anomaly rules read `request_logs`, so they do not see these
+  attempts; a SIEM does. The 429 that throttles repeated failures from one address is raised before
+  that mark is set, so its span carries no `aira.outcome` — the attribute the channel keeps a
+  refused attempt by. A defect before dispatch answers 500 and writes no row either (logged as
+  `unhandled_error`); one inside `accounting` writes a `500` / `internal_error` row.
+- **Sampling thins the channel.** Its records are spans, so `AIRA_OTEL_SAMPLE_RATIO` below 1
+  forwards that share of requests and refusals and no more. The installation decides the ratio; a
+  caller's `traceparent` flag does not.
 
 ---
 
-### 3.4 Microsoft Foundry has never met Azure — `FRD-120`
+### 3.3 One gateway instance is one thing that can stop — [`FRD-127`](features/FRD-127-several-gateway-instances.md)
 
-The transport, the routing axis and the dialect are built and hermetically tested. **No Azure
-subscription has ever been called.** Everything the earlier live rounds found — a model name with a
-colon, usage in an empty `choices` array, missing stream usage — was found by running against a real
-endpoint, and none of those classes of defect can be ruled out here.
+The owner's requirement: several gateway instances behind a load balancer, and a rolling update
+that replaces one at a time. Most of it already holds — no request depends on state only one
+process has, rate limits and budget reservations are counted in Redis and shared by every
+instance, shutdown drains the audit queue, the anomaly evaluator takes a lock so one instance
+evaluates per tick, and Postgres alone decides readiness. Two things do not:
 
-Feature 10 ("independence from Google/Microsoft") is therefore proven for **two** providers, not
-three.
+- **Compose cannot run two.** Every service sets a fixed `container_name`, so
+  `docker compose up --scale gateway=2` fails (`deploy/compose/docker-compose.apps.yml`).
+- **Two versions serving at once is a rule nothing enforces** (`FRD-127` §5.4). A migration that
+  drops a column the previous release still reads breaks that release while both run. The rule —
+  drop it one release after the code stopped reading it — is written down and not checked.
 
----
-
-### 3.5 The question catalogue — `FRD-504`
-
-**Built**; this section is kept because the gap it named is a good statement of why. AIRA has
-extensive evidence about **itself** — every request measured, priced, bounded — and had none about
-what comes *back*. Both halves of that are now measurable and by one mechanism: the catalogue is put
-to a use case's pipeline, so running it against a filtering pipeline measures the filter and running
-it against a bare one measures the model (`ADR-0020`). What remains open is not the mechanism but
-§5.2 of the FRD — a case runs **once**, so the result is an anecdote where the specification asked
-for a rate over repeated attempts, and a model that refuses nine times in ten still reads as a
-refusal.
+Smaller: an audit row does not say which instance served it, and without Redis each instance falls
+back to rate limits of its own, so *N* instances allow *N* times a limit — documented, bounded, and
+worth an operator knowing. Management stays a single instance by decision.
 
 ---
 
-### 3.6 Nothing is paginated
+### 3.4 Feature 7 is narrower than it reads
 
-No list endpoint or screen paginates: use cases, keys, budgets, limits, rules, anomaly events,
-suspensions. A live round produced 801 leftover use cases and the list became unusable — which was
-cleaned up rather than fixed. An installation with a few hundred use cases will hit this on the
-first screen.
+"Blocking dangerous requests" is three controls: a prompt-injection filter (heuristic or LLM,
+`FRD-300`/`306`), personal data replaced before the prompt is sent and stored (`pii_filter`,
+opt-in per use case, LLM-backed — [`FRD-309`](features/FRD-309-pii-filter.md)), and the operator's
+kill switch (`FRD-503`). Not implemented: jailbreak categories beyond injection, data-exfiltration
+patterns, an anomaly rule for leaked data (PRD FR-MG-6 — the seven kinds watch rates, spend, sizes
+and addresses, never content), or output filtering of any kind.
+
+What no filter reads, stated rather than fixed:
+
+- **An attachment.** Text inside a PDF or an image reaches the model unread by either filter
+  ([`FRD-110`](features/FRD-110-multimodal-content.md), `FRD-309` §2).
+- **A tool result.** A file the assistant read, a fetched page, a command's output: content the
+  model reads, which the injection filter cannot see. The filter's scope is `user` or
+  `system_user`; the `tool_results` scope [`FRD-131`](features/FRD-131-tool-calling.md) names is
+  not built.
+- **An earlier turn**, by default. The `user` scope reads the last user message, so an injection
+  planted earlier is not scanned again; `system_user` reads every system and user message.
+
+A filter that asks a model is exactly as good as that model. Against a 0.6B local model the LLM
+injection filter answered `INJECTION` to everything, and the PII replacer replaced one name and left
+another.
 
 ---
 
-### 3.7 A breach is a 429 and nothing else
+### 3.5 Nobody is told
 
-Budget threshold alerting is not built. Today a use case learns it is over budget when its traffic
-starts failing. There is no "80 % of your monthly budget" anywhere — no mail, no webhook, no banner.
+An anomaly finding is a row, shown in the console — **Security → Findings**, and **Warnings** on the
+use case. Nothing sends it anywhere: no mail, no webhook. Who gets told is a decision with its own
+blast radius, and `FRD-503` leaves it unmade.
 
-Two further gaps in the same area are **named and open** rather than unnoticed (`FRD-610` §3.2–3.3):
-a cost limit is blind to a model the catalogue has no price for — `unpriced_requests` is counted
-separately, which is right for reporting and means *unknown is unbounded* for enforcement — and the
-console says nothing when `AIRA_ENFORCE_BUDGETS` is off, so every figure and bar is drawn for limits
-that are not stopping anything.
-
-The same is true of anomaly findings: an event is a row, and `FRD-503` §7 says explicitly that
-**who gets told** is a separate decision with its own blast radius, not yet made.
+Budgets have the same shape. The console colours a bar from 80 %, and a caller can read its own
+allowance (`GET /v1beta/me/budget`, `FRD-139`), but nobody is told before a limit refuses. A use
+case learns it is over budget when its traffic starts failing with a 429.
 
 ---
 
-### 3.8 Membership can drift between the two sources
+### 3.6 What a fallback chain does not do — [`FRD-302`](features/FRD-302-model-fallback.md) §6
 
-Control-plane membership lives in Management; data-plane membership lives in Keycloak groups. They
-are set independently and **nothing detects a divergence**. The console now explains the difference
-where a reader would otherwise be confused, but explaining a drift is not the same as noticing one.
+- **No fallback after the first streamed chunk.** Splicing two models' text into one answer is
+  worse than the failure; stated, not deferred.
+- **No retry of the same model.** A chain of one is still a chain of one.
+- **The reservation is made against the model routing chose.** A fallback with a larger output cap
+  or a higher price is settled at what it used; a chain does not widen the reservation to its
+  costliest candidate. Under concurrency the requests in flight therefore count for less than a
+  fallback then spends.
 
-A live round found real instances of exactly this: two roles carrying stale memberships from
-declarations that no longer existed.
+---
 
-### 3.9 ~~A `pii_filter` does not reach an embedding~~ — closed by `FRD-309` FR-9 (2026-08-27)
+### 3.7 Two upstreams have never answered a request — `FRD-120`, `FRD-115` FR-2a
 
-Found and closed the same day. `prepare_for_dispatch` ran the pipeline where there was a canonical
-*generation*, so `:embedContent`, `batchEmbedContents` and the KIRA surface's `/embed` ran no steps
-at all — and a use case that had switched on redaction embedded its callers' text unredacted and
-stored it unredacted, on a control the console shows per use case and not per verb.
+**Microsoft Foundry has never met Azure.** The transport, the routing axis and the dialect are built
+and hermetically tested. **No Azure subscription has ever been called.** Everything the earlier live
+rounds found — a model name with a colon, usage in an empty `choices` array, missing stream usage —
+was found by running against a real endpoint, and none of those classes of defect can be ruled out
+here. Feature 10 ("independence from Google/Microsoft") is therefore proven against live endpoints
+for Google and for a self-hosted server, and for Microsoft only by the architecture assertion.
 
-Inherited rather than decided: `FRD-300` recorded *"Embeddings filtering"* as a non-goal when the
-pipeline was an injection filter and a router, both of which are about a prompt a model will
-answer. `pii_filter` arrived into the same branch a fortnight later and its contract is a different
-one — **where the caller's text goes and what is stored** — which is the same question for a text
-being embedded as for one being answered.
+**Model Garden's self-deployed endpoints are not built.** Models deployed onto the installation's
+own capacity — Nemotron and similar NIM containers — are addressed by endpoint id and fail
+differently, with cold starts and capacity-shaped 429s. The managed open models on the same
+transport are built; the addressing and the cold-start policy for these are not written.
 
-Now `TEXT_ONLY_STEPS`: a step about the text runs wherever text is sent, a step about the answer
-does not. Every text of a batch is offered to the redactor, one that cannot be redacted refuses the
-whole request, and the step leaves one decision and one priced row rather than one per text.
+---
 
-The fix turned up a second, older hole beside it, on **both** paths: FR-3 promises the payload is
-dropped where the substitution cannot be applied, and only the "cannot be matched" half was built.
-A redactor that simply **failed** left the caller's original in `request_logs` — on a request that
-was refused, so nobody was served and the database had it anyway.
+### 3.8 Contracts that exist only in code
+
+- **Kafka events carry no version.** An event is JSON with an `event_type` header; there is no
+  version field and no schema module. The two planes are kept in step by cross-plane tests in
+  `tools/tests` (for example `test_the_two_planes_agree_on_the_event_vocabulary.py`). The Compose
+  stack runs a `schema-registry` container that no code uses; removing it is open, because a local
+  overlay still names it.
+- **No API reference.** Management's API has no OpenAPI document — it renders JSON and nothing
+  describes it. The gateway serves `/openapi.json`, `/docs` and `/redoc` only locally or in a demo,
+  so a deployment publishes no map of its control, reporting and incident endpoints. `FRD-117`
+  FR-7, a second OpenAPI 3.0 document for clients that cannot read 3.1, is not built either.
+
+---
+
+### 3.9 The question catalogue asks each question once — [`FRD-504`](features/FRD-504-model-smoke-tests.md)
+
+**Built**: AIRA has evidence about what comes *back*, by one mechanism — the catalogue is put to a
+use case's pipeline, so running it against a filtering pipeline measures the filter and running it
+against a bare one measures the model (`ADR-0020`). What remains open is §5.2 of the FRD: a case
+runs **once**, so the result is an anecdote where the specification asked for a rate over repeated
+attempts, and a model that refuses nine times in ten still reads as a refusal. A person judges every
+answer; nothing is checked by machine.
 
 ---
 
@@ -233,19 +232,32 @@ was refused, so nobody was served and the database had it anyway.
 
 | Gap | Note |
 |---|---|
-| `FRD-117` FR-7 — a second OpenAPI 3.0 document | Not built, stated rather than implied |
-| `FRD-307` — approved model catalog with pickers | **done** (2026-08-09), with the per-use-case release in `FRD-308` (2026-08-11) |
-| `FRD-600` — governance view of processing logic | Reporting exists; the read-only "what does each use case do" view does not |
-| `FRD-625` §11 — three things the privacy notice has to admit | Per-person figures visible to every member of a use case; IP addresses in finding details; no automatic deletion outside request content. Stated in the notice, open as decisions |
-| `FRD-118` — multiple identity backends | Need unclear; not scheduled |
+| The pipeline dry run asks release and approval, not price | A step's models are checked against the use case's release (`FRD-308`) and the installation's approval (`FRD-307`) before it runs; its step calls are not asked the price condition (`FRD-610` §3.2) that a production step is |
+| `FRD-625` §11 — two decisions the privacy notice states | IP addresses in finding details (mask them or keep them); no automatic deletion outside request content — findings, suspensions, counters, accounts of people who left, and records kept forever by default |
 | `FRD-121` — document conversion for models that cannot read a type | Deliberately not built: the recommendation is to refuse rather than convert |
-| `FRD-106` — an OpenAI-compatible **surface** | **Withdrawn** 2026-08-07. The OpenAI *dialect* as an upstream is unaffected and is built |
 | Local model prices | Invented, and they say so in their display name |
-| No Git remote | Every commit is local; `.github/workflows/ci.yml` has therefore **never run** — only `make ci` locally |
 
 ---
 
-## 5. What is *not* a gap, though it might look like one
+## 5. Closed, and by what
+
+Kept so a closed gap is not reopened by somebody reading an older copy.
+
+| Was a gap | Closed by |
+|---|---|
+| No governance view of the processing logic (rows 11, 17) | [`FRD-608`](features/FRD-608-governance-overview.md) — the register, with CSV. `FRD-600`, the number this row used to name, was never written |
+| The IT Security console did not exist | `FRD-502` — findings, suspensions and the kill switch, the rules, warnings per use case |
+| Per-request browsing waited on redaction | `FRD-505`, [`ADR-0016`](adr/ADR-0016-content-is-readable-and-every-read-is-recorded.md), `FRD-622` — stored content is readable by role, and every read is recorded |
+| Nothing was paginated | `FRD-207`/`FRD-208` — the use-case list is paged at the server; findings and requests are paged by cursor |
+| Membership could drift between Keycloak groups and Management | [`FRD-209`](features/FRD-209-access-by-group.md) — a grant names a group or a person, and both planes resolve it with `aira_common.access.resolve` |
+| An unpriced model escaped a cost limit; the console did not say when budgets were off | `FRD-610` §3.2 (`AIRA_ENFORCE_PRICED_MODELS`) and §3.3 |
+| A `pii_filter` did not reach an embedding | `FRD-309` FR-9 |
+| The approved-model catalog had no pickers | `FRD-307`, with the pickers in `FRD-308` |
+| No Git remote, and CI had never run | `origin` is on GitHub; `.github/workflows/ci.yml` runs on every push, and a release is published only behind its gates (`FRD-137`) |
+
+---
+
+## 6. What is *not* a gap, though it might look like one
 
 Recorded so the same questions are not re-asked:
 
@@ -253,7 +265,28 @@ Recorded so the same questions are not re-asked:
   no workflow orchestration. This is [`ADR-0013`](adr/ADR-0013-auditable-model-access-not-agents.md),
   a decision rather than an omission. The test for any request: *does this make model access better
   governed and better evidenced, or does it make the gateway think for the use case?*
-- **No OpenAI-compatible surface.** Withdrawn by the owner.
+- **No OpenAI-compatible surface** (`FRD-106`). Withdrawn by the owner; `FRD-132` then measured a
+  coding assistant on the Gemini surface, and no new surface was needed. The OpenAI *dialect* as an
+  upstream is built.
+- **No parallel pipeline execution** (PRD FR-GW-5, FR-MG-3). The engine is an ordered walk
+  (`FRD-300`): a step can rewrite what the next one reads — `pii_filter` replaces names before a
+  router classifies the text — so the order is part of what a pipeline means.
+- **No "project"** (PRD G3, FR-GW-3). The use case is the unit of attribution, of grants, of budgets
+  and of reporting; there is no project entity.
+- **Personal data in a stored payload is not masked by default.** The PII half of `FRD-406` is
+  declined (`ADR-0016`): the sensitive content and the useful content are the same content. Stored
+  content is readable by role, and every read is recorded. A use case that must not send or keep
+  personal data replaces it with `pii_filter` or switches storage off (`FRD-404`).
+- **Groups from UserInfo** (`FRD-118` FR-3) — declined; several issuers (FR-1) is built.
+- **A group grant may name a group Keycloak does not have yet** (`FRD-209`). Grants are checked for
+  shape, not existence, so a department can be granted before its group is created. In the console
+  a grant is picked from the directory search; through the API a mistyped path is a grant that
+  reaches nobody, and the grant list says `reaches: 0`. Only a role's group is checked against
+  Keycloak, and that is refused while Keycloak cannot be asked.
+- **`usecase.manage_all` does not reach into the gateway.** Its holder administers every use case in
+  Management; calling a use case, or trying a pipeline on it, still takes a grant
+  ([`ADR-0007`](adr/ADR-0007-security-hardening-baseline.md): visibility never implies the right to
+  act inside a use case).
 - **Whole-row retention defaults to never.** Deliberate: deleting rows would truncate the spend
   history that cost reporting is made of.
 - **`alert` is the default for a new anomaly rule.** A safety property, not timidity.
@@ -263,25 +296,27 @@ Recorded so the same questions are not re-asked:
 
 ---
 
-## 6. If somebody asked "what would you do next"
+## 7. If somebody asked "what would you do next"
 
 Not a plan — the owner sets priority — but the dependencies are worth stating, because two of them
 are not obvious:
 
 ```mermaid
 graph LR
-    r["FRD-406<br/>redaction"] --> browse["per-request browsing<br/><i>ADR-0009</i>"]
-    r --> payload["payload visibility in<br/>the trace view"]
-    detect["FRD-500/501/503<br/><i>built</i>"] --> console["FRD-502 console<br/><i>built</i>"]
-    console --> deliver["FRD-505?<br/>alert delivery"]
-    smoke["FRD-504<br/>question catalogue"] --> evidence["evidence about what<br/>comes <i>back</i>, not just about us"]
+    history["configuration history<br/>FR-MG-10"] --> stream["FRD-616<br/>the audit trail as events"]
+    rows["audit rows, content reads,<br/>findings, suspensions<br/><i>built</i>"] --> stream
+    stream --> siem["a SIEM receives the records,<br/>not only spans"]
+    findings["FRD-500/501/503<br/><i>built</i>"] --> deliver["alert delivery<br/><i>no FRD</i>"]
+    budgets["FRD-401/403/610<br/><i>built</i>"] --> deliver
+    fleet["FRD-127<br/>several instances"] --> rolling["a rolling update"]
 
-    style r fill:#dc2626,color:#fff
-    style console fill:#16a34a,color:#fff
-    style detect fill:#16a34a,color:#fff
-    style smoke fill:#16a34a,color:#fff
+    style history fill:#dc2626,color:#fff
+    style rows fill:#16a34a,color:#fff
+    style findings fill:#16a34a,color:#fff
+    style budgets fill:#16a34a,color:#fff
 ```
 
-`FRD-406` is the only item that unblocks two others, and it is the only one where the product
-currently makes a promise it does not keep. `FRD-502` **is now built** — it turned work already
-done into work somebody can use. Everything else is breadth.
+The configuration history is the item something waits on: `FRD-616` can stream only what is
+recorded, and the control plane records almost nothing about who changed it. Alert delivery has
+every input it needs and waits on a decision rather than on code — who gets told. `FRD-127` needs no
+new mechanism, only the two changes named in §3.3. Everything else is breadth.

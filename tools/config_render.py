@@ -120,7 +120,7 @@ def render(document: dict[str, Any]) -> dict[str, str]:
             if name in FORBIDDEN or credential_settings.is_credential(name):
                 raise ConfigError(
                     f"'{section}.{key}' would set {name}, which is a credential. It belongs in "
-                    "HashiCorp Vault (`FRD-116`) — see the `secrets:` section of the examples."
+                    "HashiCorp Vault — see the `secrets:` section of the examples."
                 )
             out[name] = _scalar(value)
     return out
@@ -196,7 +196,7 @@ def as_env_file(values: dict[str, str], source: Path) -> str:
         f"{STAMP_SOURCE} {source}",
         f"{STAMP_DIGEST} {digest_of(source)}",
         "#",
-        "# Secrets are deliberately absent: they come from HashiCorp Vault (`FRD-116`), or — for",
+        "# Secrets are deliberately absent: they come from HashiCorp Vault, or — for",
         "# the one credential Vault cannot supply — from VAULT_SECRET_ID / VAULT_SECRET_ID_FILE.",
         "",
     ]

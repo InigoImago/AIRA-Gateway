@@ -67,13 +67,13 @@ Three things this deliberately does **not** change:
    back to a blank would put every nameless caller into **one shared pot**, which is the opposite
    failure and much worse, because it is the case nobody checks.
 
-Counters already written under a subject are **merged**, not abandoned (`0032_merge_member`). The
-mapping is observed rather than invented: `request_logs` carries `subject` and `username` side by
-side since `FRD-606`, so a subject that has called since then resolves to the name it was known by;
-one that has not is left where it is, keying nobody. Where a person has both counters for a period,
-the rows are summed — the pots merge and carry what each had spent. Without that step everybody who
-signs in appears to start the period from zero, which under-counts a budget in the one direction a
-budget must not be wrong.
+Counters already written under a subject are **merged**, not abandoned
+(`0032_merge_member_counters`). The mapping is observed rather than invented: `request_logs` carries
+`subject` and `username` side by side since `FRD-606`, so a subject that has called since then
+resolves to the name it was known by; one that has not is left where it is, keying nobody. Where a
+person has both counters for a period, the rows are summed — the pots merge and carry what each had
+spent. Without that step everybody who signs in appears to start the period from zero, which
+under-counts a budget in the one direction a budget must not be wrong.
 
 ## Consequences
 

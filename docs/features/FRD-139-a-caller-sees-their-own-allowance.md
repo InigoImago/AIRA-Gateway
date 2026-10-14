@@ -235,7 +235,7 @@ instead of by the surface's own dependency, and the amounts' currency hard-coded
 
 The plugin is JavaScript running in a third-party client, so neither `pytest` nor `ng test` reaches
 it. Its properties are asserted by `node --test` in `tools/opencode/plugin/*.test.mjs` —
-**40 of them** — and bridged into the suite that gates this repository by
+**43 of them** — and bridged into the suite that gates this repository by
 `tools/tests/test_the_opencode_plugin_holds_its_properties.py`, which also fails when the shipped
 directory grows a second file or the file grows a second export (§5.1). `node` is required rather
 than skipped: a skipped guard reports success.

@@ -31,10 +31,10 @@ NOT_FOR_A_DEPLOYMENT = {
         "an in-memory SQLite, set by the test harness. A deployment that turned it on would come "
         "up with an empty database and lose it on restart."
     ),
-    "AIRA_GIT_COMMIT": "build provenance, stamped into the image at build time",
-    "AIRA_GIT_BRANCH": "build provenance, stamped into the image at build time",
-    "AIRA_BUILD_NUMBER": "build provenance, stamped into the image at build time",
-    "AIRA_BUILD_TIME": "build provenance, stamped into the image at build time",
+    "AIRA_GIT_COMMIT": "build provenance for /version-info; nothing stamps it into an image yet",
+    "AIRA_GIT_BRANCH": "build provenance for /version-info; nothing stamps it into an image yet",
+    "AIRA_BUILD_NUMBER": "build provenance for /version-info; nothing stamps it into an image yet",
+    "AIRA_BUILD_TIME": "build provenance for /version-info; nothing stamps it into an image yet",
 }
 
 

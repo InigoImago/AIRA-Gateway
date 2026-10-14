@@ -151,7 +151,7 @@ was presented at all (`api/kira/errors.py`). Only *which* tokens reach it change
 
 ## 10. Testing & Acceptance Criteria
 
-Unit (`libs/tests/test_oidc.py`, both planes' auth tests):
+Unit (`libs/tests/test_oidc_clock_tolerance.py`, both planes' auth tests):
 - a token with `iat` 5 s in the future **verifies** at the default and **is refused** at
   `AIRA_OIDC_CLOCK_SKEW_SECONDS=0`;
 - a token 5 s past `exp` **is refused** at the default and **verifies** at

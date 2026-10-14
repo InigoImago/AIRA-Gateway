@@ -52,10 +52,15 @@ class FoundryDeployment:
 
 
 def parse_deployments(spec: str) -> list[FoundryDeployment]:
-    """Read ``model=deployment[|region][|embed]`` entries, separated by ``;``.
+    """Read ``model=deployment|region[|embed]`` entries, separated by ``;``.
 
     The same shape as `FRD-123`'s server list, and for the same reason: it is set in a `.env` and a
     shell, where a quoted JSON blob loses characters.
+
+    **The region is required.** It is what the residency check reads, so an entry without one
+    would be served unchecked — and a mistyped separator (`deployment@region`) would read as a
+    deployment of that name in no region at all. A deployment always runs somewhere; saying where
+    is the price of being served.
     """
     deployments: list[FoundryDeployment] = []
     seen: set[str] = set()
@@ -66,7 +71,7 @@ def parse_deployments(spec: str) -> list[FoundryDeployment]:
         if not separator or not model or not rest.strip():
             raise FoundrySpecInvalid(
                 f"'{entry}' is not a deployment declaration. Expected "
-                "'model=deployment[|region][|embed]'."
+                "'model=deployment|region[|embed]'."
             )
         if model in seen:
             # Two deployments for one caller-facing name would be a silent choice of which served.
@@ -74,11 +79,17 @@ def parse_deployments(spec: str) -> list[FoundryDeployment]:
         seen.add(model)
 
         fields = [field.strip() for field in rest.split("|")]
+        region = fields[1] if len(fields) > 1 else ""
+        if not fields[0] or not region:
+            raise FoundrySpecInvalid(
+                f"'{entry}' names no region. Expected 'model=deployment|region[|embed]': the "
+                "region is what the residency check reads (AIRA_ALLOWED_REGIONS)."
+            )
         deployments.append(
             FoundryDeployment(
                 model=model,
                 deployment=fields[0],
-                region=fields[1] if len(fields) > 1 else "",
+                region=region,
                 embedding=len(fields) > 2 and fields[2].lower() in ("embed", "embedding", "true"),
             )
         )
@@ -103,9 +114,8 @@ def build_foundry_upstreams(settings: GatewaySettings) -> list[Upstream]:
     declared = parse_deployments(settings.foundry_deployments)
     allowed = parse_allowed(settings.allowed_regions)
     for entry in declared:
-        if entry.region:
-            # The same allow-list every transport is measured against (`ADR-0012` §6).
-            check_region(entry.region, allowed)
+        # The same allow-list every transport is measured against (`ADR-0012` §6).
+        check_region(entry.region, allowed)
 
     client = httpx.AsyncClient(base_url=settings.foundry_endpoint.rstrip("/"), verify=True)
     transport = FoundryTransport(

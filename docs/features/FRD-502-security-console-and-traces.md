@@ -100,7 +100,8 @@ Plus `mine`, offered to every role including those that see everything — someb
 
 **FR-10b** — **`source_ip` is not an ordinary column.** It identifies a machine rather than a use
 case, so it is served only to a role that may act on an incident (the gateway's `INCIDENT_ROLES`,
-one definition, not a second list). Requesting that filter without one is **refused with a 403,
+one definition, not a second list). *(Since `FRD-614`: the permission `incident.investigate`, asked
+by both the gateway and the console.)* Requesting that filter without one is **refused with a 403,
 never quietly ignored**: a filter that silently does nothing lets a reader conclude an address made
 no requests, which is the opposite of what the screen just told them. The console withholds the
 field on the same predicate, so no reader is offered a control that refuses on use (`FRD-206`).
@@ -216,4 +217,8 @@ reload — the live refresh is not a property any lower layer can observe.
 - Alert **delivery** (mail, webhook) is still not built; the console is where a finding is seen, not
   where it is sent.
 - Trace **search** by subject or credential is not built — the filters are outcome and window.
-- `FRD-406` remains open, and remains the blocker for showing a payload anywhere.
+  *Since built:* the request list filters by subject, credential and — for `incident.investigate`
+  — source address (FR-10a/10b, `api/reporting/traces.py`).
+- `FRD-406` remains open, and remains the blocker for showing a payload anywhere. *Since resolved
+  otherwise:* `FRD-406` shipped its credential half and declined its PII half, and the payload view
+  was granted on a different condition — every read is recorded (`ADR-0016`, `FRD-505`).

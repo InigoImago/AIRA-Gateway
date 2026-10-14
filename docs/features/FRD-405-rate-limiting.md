@@ -43,7 +43,8 @@ than better: per-process counters mean N instances permit N times the configured
 - Degradation that is decided, not accidental: a Redis outage must not become a product outage.
 
 **Non-Goals**
-- Content redaction (`FRD-406`) — unrelated, deliberately deferred.
+- Content redaction (`FRD-406`) — unrelated, deliberately deferred. *(Since shipped for
+  credentials.)*
 - Per-caller *concurrency* caps (how many requests at once, as opposed to per minute). The same
   Redis primitive supports it; it is not needed yet.
 - Queueing or shaping. Over the limit means a `429`, not a delayed answer: the caller controls its
@@ -240,7 +241,9 @@ catalogue row bounded neither. So one number in one field chose which of the two
 applied to that request, and left `/readyz` reporting the counter store as the reason.
 
 `catalog.MAX_ACCOUNTABLE_TOKENS` is the ceiling, derived from `budget_usage.tokens` and
-`budgets.limit_tokens` being `Integer`: the largest figure a token budget could ever be set to. A
+`budgets.limit_tokens` being `Integer`: the largest figure a token budget could ever be set to.
+*(As built, only `budgets.limit_tokens` is `Integer`; the period totals in `budget_usage` are
+`BigInteger`, so they hold many requests of that size.)* A
 request above it is refused **by name**, at the door, on both fields. The assembled *total* — which
 also carries the model's own per-attachment estimate, written by an operator rather than by the
 caller — has nobody to refuse, so it is clamped instead: an estimate is deliberately approximate

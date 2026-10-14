@@ -27,18 +27,19 @@ export const CONTENT_MODES: readonly { value: ContentMode; label: string; explai
   },
   {
     value: 'oversight',
-    label: 'Global Administrators and IT Security only',
+    label: 'Oversight roles only',
     explains:
       'Kept for oversight and read by nobody in this use case — not by its administrators ' +
-      'either. A Global Administrator or IT Security can open a request, and every such read is ' +
-      'recorded. Rows, figures and costs stay visible here.',
+      'either. Only a role that may read any content can open a request — Global Administrators ' +
+      'and IT Security, and any role given that permission — and every such read is recorded. ' +
+      'The use case’s totals stay visible here; figures per person show each reader their own.',
   },
   {
     value: 'admins-and-own',
     label: "Administrators, and each person's own requests",
     explains:
       'Administrators of this use case read every request. Everybody else sees only the requests ' +
-      'they made themselves — not even the rows of anybody else’s.',
+      'they made themselves — not even the rows of anybody else’s — and only their own figures.',
   },
   {
     value: 'members',

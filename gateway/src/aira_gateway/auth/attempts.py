@@ -17,6 +17,7 @@ from __future__ import annotations
 from fastapi import Request
 
 from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.auth.attribution import UNAUTHENTICATED, mark_refused
 from aira_gateway.persistence.recorder import client_ip
 from aira_gateway.ratelimit.buckets import per_minute
 from aira_gateway.state import rate_limits_of, settings_of
@@ -39,6 +40,9 @@ async def record_failed_authentication(request: Request) -> None:
     )
     if decision.allowed:
         return
+    # On the span before the refusal: an address probing credentials is what a SIEM watches for,
+    # and this answer writes no audit row (`FRD-616`).
+    mark_refused(UNAUTHENTICATED, 429)
     raise GeminiHTTPError(
         429,
         "Too many failed authentication attempts from this address. Try again shortly.",

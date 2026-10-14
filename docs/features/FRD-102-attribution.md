@@ -24,7 +24,8 @@ Management (Phase 2, FRD-205).
 - Use-case *config* (pipelines, budgets, anomaly rules) — those come from Management via Kafka
   (Phase 2). This FRD only resolves + authorizes + records the use case.
 - API-key → use-case binding (Phase 2, FRD-205). API-key/demo requests are attributed to the
-  provided use case **without** the group check (their binding arrives later).
+  provided use case **without** the group check (their binding arrives later). *(Since `FRD-205`
+  a key is bound to one use case and refused for any other — FR-6.)*
 
 ## 3. User Stories
 - As a **user in several use cases**, I pick the target use case per request (base URL or header),
@@ -37,13 +38,18 @@ Management (Phase 2, FRD-205).
 - **FR-2 Header selector**: `X-AIRA-Use-Case: <slug>` takes precedence over the path slug.
 - **FR-3 Membership (OIDC)**: the OIDC validator extracts `groups`; groups under `/use-cases/` become
   the principal's accessible use-case slugs. For `method == oidc`, a requested use case must be in
-  that set, else **403 PERMISSION_DENIED**.
+  that set, else **403 PERMISSION_DENIED**. *As built (`FRD-209`), the set is the union of those
+  groups, the use cases granted to a group the token carries, and the use cases granted to the
+  caller by name — the grants read from the gateway's read-model (`auth/dependencies.py`).*
 - **FR-4 Attribution**: build `Attribution(subject, method, use_case)` and set it on `request.state`;
   add span attributes `aira.subject`, `aira.use_case`, `aira.auth_method`.
 - **FR-5 Policy**: `require_use_case` (default **true** since 2026-08-11, and refused off anywhere
   but `local`) — an authenticated request without a use case is rejected **400 INVALID_ARGUMENT**,
   the unbound break-glass key excepted (`ADR-0015`).
 - **FR-6 Non-OIDC**: API-key/demo requests attribute the provided use case as-is (no group check yet).
+  *As built:* a key issued by Management is **bound** to one use case — it needs no selector, and
+  naming another is refused 403 (`use_case_refusal`). The unbound break-glass key may name any use
+  case (`ADR-0015`), and demo mode has no identity to check.
 
 ## 5. Design & Architecture
 ```
@@ -56,6 +62,8 @@ request ─▶ UseCasePathMiddleware (strip /uc/<slug>) ─▶ require_principal
 - Membership source is **Keycloak groups** (no Management DB / Kafka needed yet) — consistent with
   "Keycloak = SSO + role/group source". Management later enriches use-case *config* via Kafka.
 - `Principal` gains `use_cases: tuple[str, ...]` (OIDC: from groups; api_key/demo: empty for now).
+- *As built:* membership also comes from Management's grants over Kafka (`FRD-209`, FR-3 above),
+  and a bound API key's `use_cases` holds the one use case it was issued for (`FRD-205`).
 
 ## 6. Data Model
 - None persisted here. Attribution is request-scoped; persistence is FRD-103.
@@ -66,7 +74,8 @@ request ─▶ UseCasePathMiddleware (strip /uc/<slug>) ─▶ require_principal
 
 ## 8. Security & Privacy
 - Authorization is least-privilege: membership strictly from signed token groups. No subject/secret
-  in logs; only subject id + use case in span attributes.
+  in logs; only subject id + use case in span attributes. *(Since `FRD-209`, also from the grants
+  Management distributes — a grant to a group in the token, or to the caller by name.)*
 
 ## 9. Observability
 - Span attributes `aira.subject`, `aira.use_case`, `aira.auth_method` and `aira.credential`; these

@@ -27,6 +27,7 @@ from aira_common.observability.providers import (
     build_resource_attributes,
     configure_observability,
     exclude_health_probes,
+    request_sampler,
 )
 from aira_common.observability.redaction import (
     ACCESS_LOGGERS,
@@ -74,6 +75,7 @@ __all__ = [
     "redact_target",
     "redact_url_credentials",
     "redact_url_query",
+    "request_sampler",
     "route_sdk_diagnostics",
     "set_payload_rendering",
     "set_span_attributes",

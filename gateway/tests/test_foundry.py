@@ -289,6 +289,24 @@ def test_an_unreadable_declaration_refuses_to_start(spec: str) -> None:
         parse_deployments(spec)
 
 
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "gpt-4o=prod-gpt4o",
+        "gpt-4o=prod-gpt4o|",
+        "gpt-4o=|westeurope",
+        # The form the configuration reference used to document: read as a deployment called
+        # `prod-gpt4o@westeurope` in no region, it started and was never checked for residency.
+        "gpt-4o=prod-gpt4o@westeurope",
+    ],
+)
+def test_a_deployment_that_names_no_region_refuses_to_start(spec: str) -> None:
+    """The region is what the residency check reads. An entry without one was served unchecked —
+    the allow-list applied to every other platform and silently not to this one."""
+    with pytest.raises(FoundrySpecInvalid, match="region"):
+        parse_deployments(spec)
+
+
 def test_nothing_configured_registers_nothing() -> None:
     assert build_foundry_upstreams(GatewaySettings()) == []
 

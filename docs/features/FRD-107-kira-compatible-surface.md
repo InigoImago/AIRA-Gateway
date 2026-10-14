@@ -67,7 +67,9 @@ changing a base URL.
 - **FR-7 Authorization levels.** Standard-user endpoints and the admin-only `/ki-usage`, mapped
   onto AIRA's roles rather than onto a group name from a YAML file (§5.4).
 - **FR-8 Deprecation is declared.** `Deprecation` and `Sunset` headers (RFC 8594) on every
-  response, and the surface is a dimension in reporting (§5.6).
+  response, and the surface is a dimension in reporting (§5.6). *As built, `Deprecation` is on every
+  response and `Sunset` only once an installation sets a date, `AIRA_KIRA_SUNSET`
+  (`api/kira/headers.py`).*
 
 ## 5. Design & Architecture
 
@@ -131,12 +133,22 @@ This is the one place a migrating client may need a change — one header — an
 identity belongs to several use cases. That trade is worth stating in the migration guide up front,
 because discovering it during a cut-over is expensive.
 
+*As built, the order differs* (`api/kira/attribution.py`): **an explicit selector comes first** —
+the `X-AIRA-Use-Case` header or a `/uc/<slug>` path prefix, the header winning if both are sent —
+and it is honoured only if `use_case_refusal` allows it. Then exactly one membership, then 403
+naming the candidates. A caller with **no** membership goes unattributed only where
+`must_name_a_use_case` allows it (demo mode, the unbound break-glass key); everyone else is
+refused. The path prefix matters for a client whose base URL is configurable and whose headers are
+not.
+
 ### 5.4 Two permission levels onto five roles
 
 The predecessor's "standard user" and "admin" come from configured group names. Ours come from
 realm roles (`ADR-0009`). The mapping: standard-user endpoints need a valid principal with a
 resolved use case (§5.3); `/ki-usage` needs a governance role — the same rule `FRD-601` already
-applies, reusing `visible_scope` rather than a second decision.
+applies, reusing `visible_scope` rather than a second decision. *As built, roles come from
+Keycloak groups (`ADR-0017`), and `/ki-usage` asks the permission `report.read_all` (`FRD-614`,
+`api/kira/info_routes.py`).*
 
 `/ki-usage` then becomes a projection of `FRD-601`'s report onto the predecessor's columns
 (`user_id`, `model_id`, `entry_count`, `token_input_sum`, `token_output_sum`), with its CSV
@@ -156,7 +168,8 @@ because it is trusted.
 
 **Added 2026-08-12, after a comparison against the predecessor's own source** (not its document).
 Ten differences; four were repaired the same day and are not listed here. These six remain, each
-because it is a decision rather than an oversight:
+because it is a decision rather than an oversight: *(the list has grown since with differences
+found later, and one entry is withdrawn and struck through)*
 
 - **`GET /ki-usage` groups by member only, reports `model_id: 0`, and does not honour
   `Accept: text/csv`.** The predecessor groups by `(user_id, model_id)` and offers a CSV download.
@@ -186,7 +199,10 @@ because it is a decision rather than an oversight:
 - **Unknown JSON fields are refused, not ignored.** `FRD-124` reversed `FRD-100` FR-7 on evidence:
   a field accepted and dropped produces a confident answer to a question nobody asked, and Google's
   own API refuses them too. A migrating client learns at migration time, which is the point of
-  running a compatibility surface rather than hoping.
+  running a compatibility surface rather than hoping. *Reversed for this surface (§10c,
+  `FRD-124` §5.6):* an unmodelled field is accepted and **named** in the
+  `X-AIRA-Unmodelled-Fields` response header, unless it is a near-miss of a modelled one
+  (`api/kira/schemas.py`); the Gemini surface keeps the strict rule.
 - **`temperature` is unbounded here.** The predecessor enforces `0 ≤ t ≤ 2`. That range is not
   universal — Anthropic's is `0–1` — so a bound in the canonical core would be a claim that is
   false for one of the vendors this gateway serves (`ADR-0011`). The provider refuses what it
@@ -208,7 +224,9 @@ because it is a decision rather than an oversight:
   problem. Either add a group-membership mapper to the client (full paths, on the access token),
   or grant the membership by name in the console, which needs no mapper at all. Walked through in
   `docs/deployment/showcase.md`, measured on a client created from that page.
-- **No tolerance for a clock difference — yet.** The predecessor allows 60 seconds of drift between
+- **No tolerance for a clock difference — yet.** *(Since `FRD-134`: up to 60 seconds for a clock
+  that is behind, and none past `exp` by default — as the rest of this bullet planned.)* The
+  predecessor allows 60 seconds of drift between
   the issuer and itself; `JwtVerifier` passes no `leeway`, so PyJWT uses `0`. Because `iat` is a
   required claim here, a gateway whose clock is even a second behind the issuer's refuses **every**
   freshly minted token as *not yet valid*, and the caller sees `401 INVALID_TOKEN` — which is
@@ -226,7 +244,8 @@ because it is a decision rather than an oversight:
 Per `ADR-0010` Option C: `Deprecation: true` and a `Sunset` date on every response from day one,
 the date in the migration guide, and **`surface` as a dimension in the request log** so reporting
 can answer "how much traffic still uses this" per use case. Retirement is then a conversation about
-a number.
+a number. *(As built, the `Sunset` header is sent once `AIRA_KIRA_SUNSET` names a date; until then
+only `Deprecation`.)*
 
 ## 6. Data Model
 
@@ -317,7 +336,8 @@ show it. Both arrive with `FRD-113`.
 
 §5.1 says the surface shares *"the pre-dispatch gate, the pipeline, the dispatch chain, the audit
 writer"*. Sharing them means **extracting** them, and that is `api/serving.py`: the controls now
-live outside any surface and both routers use them. Duplicating instead would have been the
+live outside any surface and both routers use them (a package, `api/serving/`, since `ADR-0023`).
+Duplicating instead would have been the
 `:embedContent` failure in a larger costume — a gate that lived inside one branch rather than on
 the path every branch takes, except the branch is now a whole API.
 
@@ -356,12 +376,13 @@ against Stage A keeps working and simply stops receiving `NOT_YET_SUPPORTED`.
 Two things Stage B does *not* pretend to have settled, both stated in the wire format rather than
 in a comment: a batch answers under **`vectors`** (`FRD-113` §11's open question), and `ki-usage`
 still reports per user with a model id of `0` (`FRD-601` aggregates the two dimensions separately;
-a cross-tabulation would be a fabricated figure).
+a cross-tabulation would be a fabricated figure). *The first is settled since:* a list is one
+embedding, answered as one `vector` (`FRD-113` §11); there is no `vectors` key.
 
 The refusal rule survives the change and only moves. "Not built yet" is gone; **"this model cannot"
 is not**, and it fails exactly as loudly.
 
-## 10b. What a real client changed (2026-08-18)
+## 10c. What a real client changed (2026-08-18)
 
 The risk in §11 — *"the predecessor's contract is a description, not the source"* — arrived as
 predicted, and not from the contract: a real chatbot was pointed at this surface and could not use

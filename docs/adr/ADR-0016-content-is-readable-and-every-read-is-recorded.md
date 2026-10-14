@@ -4,6 +4,11 @@
 > Amends [`ADR-0009`](ADR-0009-gateway-knows-roles.md) · Related: `FRD-406`
 > (redaction), `FRD-404` (retention), `FRD-502` (traces), `FRD-505` (this view), `ADR-0013`
 > (auditable model access)
+>
+> **Amended 2026-09-13 by [`ADR-0025`](ADR-0025-aira-defines-what-a-role-may-do.md).** Reading any
+> use case's content is now one permission, `payload.read_any`: IT Security holds it fixed, and it
+> is sensitive but grantable — to IT Steuerung or to a role an installation defines. The table's
+> "**no**" for IT Steuerung is its default, not a guarantee. Every read is still recorded.
 
 ## Context
 

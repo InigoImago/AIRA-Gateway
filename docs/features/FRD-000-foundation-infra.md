@@ -67,6 +67,8 @@ deliver business features — it delivers the ground everything stands on, runna
 ## 5. Design & Architecture
 - **Compose-first**: all infra in one network; apps read connection info from env/Vault.
 - **KRaft Kafka** to avoid ZooKeeper; single broker for local. Schema Registry for event contracts.
+  *As built, the registry container runs and no code uses it: events are JSON with an
+  `event_type` header and no registered schema (`FRD-204` §2).*
 - **Config precedence**: explicit env > Vault-provided secrets > safe defaults. Fail fast if a
   required secret is missing.
 - **App factories** so tests can build isolated app instances; no import-time side effects.

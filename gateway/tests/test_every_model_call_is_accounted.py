@@ -63,17 +63,17 @@ ACCOUNTED: dict[str, str] = {
     ),
     "pipeline/classifiers/injection.py:generate": (
         "The LLM injection classifier. It returns a `ModelCall`, which `record_pipeline_calls` "
-        "turns into a `pipeline:<step>` row booked with `requests=0` — the caller made one "
-        "request, and a second would inflate the figures and could trip a request limit for "
-        "traffic nobody sent (`FRD-125b`)."
+        "turns into a `pipeline:<step>` row, booked as a request by the owner's decision "
+        "(`book_side_call`): a step's call reaches a model and costs money. It takes no rate-limit "
+        "token — the gate is taken once, for the caller's request (`FRD-125b`)."
     ),
     "pipeline/classifiers/routing.py:generate": (
         "The LLM router, on the same terms as the injection classifier: a `ModelCall` recorded as "
-        "`pipeline:model_route` with `requests=0` (`FRD-125b`)."
+        "`pipeline:model_route`, booked as a request and taking no rate-limit token (`FRD-125b`)."
     ),
     "pipeline/classifiers/redaction.py:generate": (
         "The PII filter's redactor (`FRD-309`), on the same terms: a `ModelCall` recorded as "
-        "`pipeline:pii_filter` with `requests=0` (`FRD-125b`)."
+        "`pipeline:pii_filter`, booked as a request and taking no rate-limit token (`FRD-125b`)."
     ),
     "pipeline/dispatch.py:generate": (
         "The dispatch chain itself. Reached only from the surfaces, inside `Accounting`, with the "

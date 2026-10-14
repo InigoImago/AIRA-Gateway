@@ -1,6 +1,6 @@
 # FRD-131 — Tool calling: carried, never executed, and off until somebody turns it on
 
-> Phase: 9 · Status: **Done** · Owner: Vadim Scheibe
+> Phase: 9 · Status: **Done except FR-9 — the tool-result blind spot is documented, not filtered or surfaced** · Owner: Vadim Scheibe
 > Related: `ADR-0013` (scope), `ADR-0011` (transport × dialect), `ADR-0012` §3 (dispatch
 > conditions), `FRD-110` (ordered parts), `FRD-112` (structured output), `FRD-122` (audit),
 > `FRD-124` (nothing is silently dropped), `FRD-125` (the injection filter)
@@ -46,7 +46,8 @@ with the capability and corrects the message.
 - A caller may declare tools; the model may answer with a tool call; the caller executes and sends
   the result back as a further turn.
 - Works on **every** dialect the gateway serves, or the candidate is skipped by name.
-- Off per use case by default; enabling it is a recorded configuration change.
+- Off per use case by default; enabling it is a recorded configuration change. *(As built, only
+  the current value is kept: a use case's settings have no author and no history, `FRD-616` §1.)*
 - A tool call is on the audit row, because it is a decision the model made.
 
 **Non-Goals**
@@ -92,7 +93,9 @@ with the capability and corrects the message.
   - **Anthropic**: `tools`, `tool_use` / `tool_result` blocks. **Interacts with `FRD-119` §5.5**,
     where structured output is already implemented as a *forced tool call* — a request asking for
     both a response schema and tools cannot be served on this dialect and is refused by name rather
-    than silently losing one of them.
+    than silently losing one of them. *Superseded:* `FRD-119` §5.5 moved structured output to the
+    first-class `output_config` parameter, which travels beside `tools`, so both are sent together
+    and nothing is refused (`upstreams/vertex/anthropic_mapping/request.py`).
   - **OpenAI**: `tools`, `tool_calls`. **Streaming trap**: a tool call's arguments arrive
     fragmented across chunks and must be reassembled; a naive mapper emits several half-calls.
 - **FR-6** Streaming carries tool calls. A tool call split across chunks is emitted **once, whole**.
@@ -103,7 +106,9 @@ with the capability and corrects the message.
 - **FR-8** Tool declarations count toward the reservation. They are input tokens — a large tool
   schema is a large prompt, and `FRD-405`'s reservation must not under-count it.
 - **FR-9** The injection filter's blind spot is **documented and surfaced**, not silently accepted
-  (§8).
+  (§8). *As built:* documented — here and on `ToolResultPart` in `core/canonical.py` — and **not
+  surfaced**: the console's function-calling hint does not mention it, and §8's mitigation (1) is
+  not built. A tool result reaches the model unscanned.
 
 ## 5. Design & Architecture
 
@@ -127,6 +132,9 @@ caller ──declares tools──▶ surface (parses, bounds)
 **No new endpoint and no new surface.** This is a field on the existing request, which is what
 makes it cheap relative to its value — and what keeps `prepare_for_dispatch` (`FRD-126`) the single
 owner of the order.
+
+The pipeline step in the diagram reads text only: a tool result is not text to the injection filter
+under either scope it has, and the `tool_results` scope §8 proposes is **not built**.
 
 ## 6. Data Model
 
@@ -155,7 +163,7 @@ Refusals, each naming what to do:
 |---|---|---|
 | use case has not enabled tools | 400 `FAILED_PRECONDITION` | the use case, and that an administrator enables it |
 | no candidate declares `tools` | 400 `FAILED_PRECONDITION` | the models tried and why each was skipped |
-| tools **and** a response schema on Anthropic | 400 `FAILED_PRECONDITION` | that this dialect implements schemas *as* a tool call |
+| ~~tools **and** a response schema on Anthropic~~ | — | *not a refusal any more: both are sent, the schema as `output_config` (FR-5)* |
 
 ## 8. Security & Privacy
 
@@ -169,7 +177,10 @@ Three answers, none of them "trust it":
 
 1. The filter's `scope` gains `tool_results`, so a use case may put returned content through the
    same check as user text. Off by default, because it doubles the classifier cost on a request
-   type that already makes many calls (`FRD-125b`).
+   type that already makes many calls (`FRD-125b`). **Not built — a stated gap, not a control.**
+   `ScanScope` has `user` and `system_user` only (`aira_common/pipelines.py`), the builder offers
+   those two, and neither reads a tool result. A file the assistant read or a page it fetched
+   reaches the model unscanned.
 2. `FRD-122`'s row records the tool names, so "the model kept asking to read `/etc/shadow`" is
    answerable.
 3. The FRD says plainly that a governed *model* is not a governed *agent*: the gateway bounds what
@@ -178,7 +189,8 @@ Three answers, none of them "trust it":
 
 **Least privilege is the toggle.** Default off, per use case, enabled by a use-case administrator,
 distributed like every other config change and therefore visible in the console and in the event
-log. A gateway where every use case may declare functions is one where the blast radius of a
+log. *(As built, the console shows the current value, and the outbox event carries no actor and is
+deleted 30 days after delivery — who switched it on, and when, is not recorded; `FRD-616` §1.)* A gateway where every use case may declare functions is one where the blast radius of a
 compromised key includes function calling everywhere.
 
 ## 9. Observability
@@ -202,8 +214,9 @@ Hermetic first, and then the layer that has found what the others could not:
   reassembly (asserted on a *fragmented* stream, because a whole-chunk fixture would pass against
   the naive mapper); the per-hop capability check; the toggle.
 - **Mutation**: the toggle (default off), the per-hop check, the reassembly, the Anthropic
-  schema/tools conflict.
-- **Integration** (`FRD-129` style, against the running Ollama): a real two-turn exchange —
+  schema/tools conflict (gone with the conflict itself, FR-5).
+- **Integration** (in the style of the live test round labelled `FRD-129` — a label, not a
+  document; there is no FRD-129 file — against the running Ollama): a real two-turn exchange —
   declare a tool, receive a call, send a result, receive an answer — with the audit rows checked in
   Postgres, not in the response.
 - **e2e**: the use-case toggle in the console, and a request refused while it is off.

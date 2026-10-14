@@ -96,10 +96,10 @@ Before this, such a request ran and was counted nowhere.
 | | |
 | --- | --- |
 | **the scope** | `Scope.applying` gains one branch, in the one place a scope is added (`gateway/src/aira_gateway/scopes.py`): an `installation` row binds a request that names **no** use case, and only those. A row that named one as well would be two owners for one spend. |
-| **the counter** | its own prefix, `installation:` — deliberately not `uc:` with an empty name. A usage key is *stored*, so an empty one would be indistinguishable from a use case whose slug somehow emptied, and `_delete_usecase` sweeps counters by the `uc:{slug}` prefix, which with an empty slug is every counter there is. |
+| **the counter** | its own prefix, `installation:` — deliberately not `uc:` with an empty name. A usage key is *stored*, so an empty one would be indistinguishable from a use case whose slug somehow emptied, and `_delete_usecase` sweeps counters by the `uc:{slug}` prefix, which with an empty slug is every counter there is. *(As built, retiring a use case — `_retire_usecase`, `FRD-607` — deletes `uc:{slug}` and every `member:{slug}:` counter.)* |
 | **the gate** | `BudgetService.guard` no longer returns early for a request that names no use case. That early return was the whole hole: it was written when there was nothing such a request could be counted against, and it survived the arrival of something. |
 | **the refusal** | names the allowance that ran out — `installation`, not *use case* or *member*. Caught by its own test before anybody saw it. |
-| **who sets it** | a Global Administrator, on its own route `/api/v1/installation-budgets/`. `IT Steuerung` and `IT Security` **read** it. |
+| **who sets it** | a Global Administrator, on its own route `/api/v1/installation-budgets/`. `IT Steuerung` and `IT Security` **read** it. *As built, these are permissions (`FRD-614`): `budget.installation.write` sets it, `report.read_all` reads it; the built-in roles hold them as stated, and an installation may grant them to another role.* |
 | **where** | the reporting screen, above the report — because the figure it bounds is already there, as the `(none)` row of *By use case*, and because a control must be findable in a period that returned nothing at all. |
 
 Its own route rather than a use case's: `/use-cases/<slug>/budgets/` resolves an object from a slug
@@ -209,7 +209,7 @@ rather than merely honest.
 
 ## 4. Open questions
 
-Two of the three were answered by building §3.1:
+All three are answered — the first two by building §3.1, the third by the owner:
 
 1. ~~**Does the installation budget need periods**~~ — **yes, the same `day`/`month` as every other
    budget.** A running ceiling with no reset is a budget that can only ever be reached once, and
@@ -218,7 +218,8 @@ Two of the three were answered by building §3.1:
 2. ~~**Who may set it?**~~ — **a Global Administrator sets it; every oversight role reads it.**
    The installation's own spend is exactly the figure a governance role exists to see, and setting
    it is an act — `ADR-0007`: `IT Steuerung` oversees and acts in nothing. If that should change it
-   changes in `InstallationBudgetViewSet.get_permissions` and nowhere else.
+   changes in `InstallationBudgetViewSet.get_permissions` and nowhere else. *(Since `FRD-614` that
+   is a permission, `budget.installation.write`, which an installation may grant to a role.)*
 3. ~~**Refusing unpriced models under a cost budget will stop traffic**~~ — **behind a switch,
    defaulting to on** (the owner's decision, 2026-10-12). Defaulting to *off* for a release was the
    suggestion in this file and was rejected for the reason the whole section exists: a hole that

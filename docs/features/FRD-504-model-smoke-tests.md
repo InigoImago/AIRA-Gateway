@@ -93,7 +93,11 @@ not make the gateway think for the use case.
   battery, with changes highlighted. This is the requirement that catches drift and is the main
   value once the first run is done.
 - **FR-8 Restricted.** Authoring and running: IT Security and Global Administrator only. Results
-  visible to the same, plus IT Steuerung (§8).
+  visible to the same, plus IT Steuerung (§8). *As built (`ADR-0020`, `FRD-614`):* authoring is
+  `smoketest.author`; running a use case's catalogue needs that use case to be callable by the
+  runner **and** either its administrator grant or `smoketest.run_any`
+  (`access.may_run_tests_queryset`); runs and results are visible to whoever may run them — IT
+  Steuerung, holding neither permission by default, does not see them.
 - **FR-9 Responses are retained under their own policy**, separate from production traffic (§5.6).
 
 ## 5. Design & Architecture
@@ -228,7 +232,8 @@ Added 2026-08-16; the reasoning is `ADR-0020` and only the built shape is repeat
 
 **The catalogue is governed centrally and run by administrators.** Writing a question stays with
 Global Administrators and IT Security — it states what this installation considers an acceptable
-answer, which is the same kind of statement as a global anomaly rule.
+answer, which is the same kind of statement as a global anomaly rule. *(Since `FRD-614`, the
+permission `smoketest.author`, which those two hold by default.)*
 
 *Running* it takes two things, and both are separately necessary (`access.may_run_tests_queryset`):
 
@@ -327,7 +332,7 @@ writes, and none was needed to answer the question this feature exists for.
 - `GET /api/v1/test-cases/` — the catalogue, retired questions excluded. Readable by anyone who may
   run it — which is **not** every member of a use case (§5.8) — and **writable by Global
   Administrators and IT Security only**, because it states what this installation considers an
-  acceptable answer.
+  acceptable answer. *(Writing is `smoketest.author`, `FRD-614`.)*
 - `GET /api/v1/test-attribution/` — the use cases this caller may run the catalogue against, each
   with the **models released to it**, `may_run` and, when it cannot be run, `why_not` in words.
   `FRD-206`: the
@@ -387,6 +392,12 @@ volume are visible in reporting without a second mechanism.
 
 ## 10. Testing & Acceptance Criteria
 
+> *As built, only the bullets marked "as built" and those about the run's subject, its model and its
+> refusals describe tests that exist.* The rest are the draft's (§1–5.6): there are no expectation
+> types, no repetition rate, no two modes (`ADR-0020` made them one mechanism), no "not a safety
+> statement" text and no comparison with a previous run — §6 says what was built. A result carries a
+> person's verdict, `unrated` until rated: `pass`, `fail` or `unclear`.
+
 - **Unit** — each expectation type evaluated correctly, including a canary that *does* appear and
   one that does not; `manual_review` produces no verdict; repetition aggregates to a rate and not a
   boolean (written to fail against a first-run-wins implementation, §5.2).
@@ -437,9 +448,12 @@ volume are visible in reporting without a second mechanism.
   system's.
 - **Open** — whether to seed a starter battery. My view: yes, small and clearly marked as a
   starting point, because an empty feature is never used and a comprehensive one is never reviewed.
+  *Settled: the seed writes a catalogue of 100 questions
+  (`apps/seed/contributions/test_catalogue_data.py`).*
 
 ## 12. Rollout / Demo
 
 The mock provider answers a seeded battery deterministically — one case it "refuses" and one it
 does not — so both outcome shapes, both modes and the comparison view are demonstrable without any
-cloud call, and the acceptance tests run in CI.
+cloud call, and the acceptance tests run in CI. *(As built, there are no modes and no comparison
+view; see the note under §10.)*

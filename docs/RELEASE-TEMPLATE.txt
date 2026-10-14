@@ -2,31 +2,33 @@
 # RELEASE NOTES FOR vX.Y.Z
 #
 # This is the tag's annotation, and the tag's annotation *is* the release notes
-# (ADR-0030). Whatever is left below after you save becomes the body of the
-# GitHub Release, verbatim; the first line becomes its title.
+# (ADR-0030). The first line you leave is the subject: the GitHub Release is
+# titled with the version, a dash and that line. Everything after the first
+# line becomes the Release's body, verbatim, followed by the commits since the
+# previous release and the image references.
 #
-# Lines starting with `#` are stripped and never published, so the guidance
-# below can stay where you are reading it.
+# Every line starting with `#` is stripped (`git tag --cleanup=strip`) and never
+# published: this guidance, and any line of yours that starts with one. A
+# Markdown heading such as `## What changed` vanishes without a word, which is
+# why the headings below are plain capitals.
 #
 # WRITE IT FOR THE PERSON WHO ALREADY RUNS THE PREVIOUS VERSION. Their two
 # questions, in this order: what changed, and do I have to do anything? A
 # commit list answers neither — that is why one is appended automatically, as
 # evidence, after your words.
 #
-# FOUR RULES ARE CHECKED (tools/release_notes.py), before any image is built:
+# FIVE RULES ARE CHECKED (tools/release_notes.py), before any image is built:
 #   1. the tag is annotated — `git tag -a`, which `make release-tag` does
 #   2. there is a subject line
 #   3. the subject does not merely restate the version. `Release v0.1.0` and
 #      `AIRA Gateway v0.1.1` are refused: a reader opening a release of this
 #      repository already knows the project and the number
-#   4. there is a body after a blank line
-# and a fifth: no placeholder from this template may remain. `make release-tag`
-# deletes the tag again when any of them fails, so a rejected attempt does not
-# spend a version number.
-#
-# KEEP THE PLAIN-TEXT HEADINGS (`WHAT CHANGED`, not `## What changed`). The
-# tool appends `## Commits` and `## Images` to what you write, and the line
-# between your words and the generated evidence is worth being able to see.
+#   4. there is a body: something after the subject line. Leave a blank line
+#      between the two, as Git does; the check splits at the first line either
+#      way
+#   5. no placeholder from this template remains
+# `make release-tag` deletes the tag again when any of them fails, so a
+# rejected attempt does not spend a version number.
 #
 # Delete any section that has nothing in it. An empty heading is worse than an
 # absent one. `UPGRADING` is the exception: "Nothing to do." is an answer, and

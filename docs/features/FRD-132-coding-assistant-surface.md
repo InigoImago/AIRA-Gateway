@@ -80,9 +80,9 @@ generalisation" — and a named client that cannot be served without it is preci
 that was missing then. Reviving it is **much cheaper than it was**: `FRD-123` built the OpenAI
 dialect as an *upstream*, so the request and response mappings already exist and a surface is
 largely their inverse. `FRD-107` is the precedent for how a second surface is added without a
-second copy of the controls: `api/serving.py` owns the pre-dispatch gate, the pipeline, the
-dispatch chain and the audit writer, `prepare_for_dispatch` owns the order, and
-`test_surface_layering.py` fails a surface that calls a step directly.
+second copy of the controls: `api/serving.py` (now the package `api/serving/`) owns the
+pre-dispatch gate, the pipeline, the dispatch chain and the audit writer, `prepare_for_dispatch`
+owns the order, and `test_surface_layering.py` fails a surface that calls a step directly.
 
 **B3 — an Anthropic-compatible surface is needed.** Same structure, and the Anthropic dialect
 already exists too (`FRD-119`). Only if stage A shows the client cannot be pointed elsewhere.

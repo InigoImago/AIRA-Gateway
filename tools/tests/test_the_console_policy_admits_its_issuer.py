@@ -33,10 +33,10 @@ ENTRYPOINT = CONSOLE / "deploy" / "10-runtime-config.envsh"
 CONSOLE_ORIGIN = "https://console.example"
 
 #: Issuers the client library accepts with `requireHttps: 'remoteOnly'`: any HTTPS host, and plain
-#: HTTP on the loopback only — the development realm among them.
+#: HTTP on `localhost` only — the development realm among them. `http://127.0.0.1` is **not**
+#: exempt: the library matches the name `localhost`, not the loopback address.
 ACCEPTED_ISSUERS = (
     "http://localhost:8080/realms/aira/.well-known/openid-configuration",
-    "http://127.0.0.1:8080/realms/aira/protocol/openid-connect/token",
     "https://sso.example.org/realms/aira/protocol/openid-connect/token",
 )
 

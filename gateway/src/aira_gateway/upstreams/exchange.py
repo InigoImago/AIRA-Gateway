@@ -1,4 +1,4 @@
-"""One HTTP exchange with an upstream, judged the same way on every platform (`FRD-129`).
+"""One HTTP exchange with an upstream, judged the same way on every platform.
 
 Three transports reach three platforms — Vertex, Google AI Studio, an OpenAI-compatible server —
 and an outage, a refusal or a broken body must read the same on all three: which vendor is down

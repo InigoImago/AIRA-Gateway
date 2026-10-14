@@ -16,13 +16,11 @@
 # Two stages: the Angular bundle is compiled with Node and then served by nginx, which also
 # takes over the /api and /gw proxying that the dev server does in development.
 #
-# NOTE: the OIDC issuer and client id are **deployment** configuration, not build configuration:
-# `public/runtime-config.js` ships beside the bundle and is loaded before the app, so a deployment
-# replaces that one file (a volume mount, a ConfigMap, a `sed` in an entrypoint) and never rebuilds
-# this image. The note here used to say the opposite, describing the state before 2026-08-08 — and
-# a build instruction that names a file nobody edits any more sends the next person to rebuild an
-# image for a change that needs no build. Set `AIRA_CSP_CONNECT_SRC` to the same issuer origin, or
-# the content policy refuses the token request the console makes to it.
+# NOTE: the OIDC issuer and client id are **deployment** configuration, not build configuration.
+# `deploy/10-runtime-config.envsh` writes `runtime-config.js` at every container start from
+# `AIRA_OIDC_ISSUER` and `AIRA_OIDC_CLIENT_ID`, and derives the content policy's `connect-src` from
+# the issuer's origin unless `AIRA_CSP_CONNECT_SRC` is set — so a deployment sets two variables and
+# never rebuilds this image, and never edits the file, which the next start would overwrite.
 
 # ---- build ---------------------------------------------------------------------------------
 FROM node:26-alpine AS builder

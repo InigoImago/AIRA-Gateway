@@ -1,6 +1,8 @@
 # Collector recipes
 
-These are fragments for destinations the core variables do not cover (ADR-0024).
+The collector's core variables, the `AIRA_OTEL_BACKEND_*` and `AIRA_OTEL_FORWARD_*` families in
+[`docs/CONFIGURATION.md`](../../../../docs/CONFIGURATION.md#beyond-the-core-recipes), cover what
+nearly every destination needs. These are fragments for the destinations they do not cover.
 
 | recipe | select it in | for |
 | --- | --- | --- |
@@ -36,7 +38,7 @@ For the observability channel, change two things in the copy:
 
 ## Rules every recipe keeps
 
-`tools/tests/test_the_collector_has_a_core_and_recipes.py` checks these:
+They hold for a fragment of your own in `../custom/` too:
 
 - **Only its own pipelines.** A recipe names only its own channel's pipelines, with complete exporter
   lists, because a merged list replaces.

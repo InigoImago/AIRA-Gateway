@@ -12,8 +12,9 @@ Read this first, then `docs/PRD.md` and `docs/ROADMAP.md`.
 An AI gateway with two self-developed components + open-source infrastructure:
 - **Gateway API** (data plane) — FastAPI.
 - **Management & Monitoring** (control plane) — Angular SPA + Django REST Framework.
-- Infra: PostgreSQL, Keycloak (SSO), Apache Kafka (event bus), HashiCorp Vault (secrets),
-  OpenTelemetry Collector → SigNoz (observability). The two components communicate over **Kafka**.
+- Infra: PostgreSQL, Keycloak (SSO), Apache Kafka (event bus), Redis (shared counters), HashiCorp
+  Vault (secrets), an OpenTelemetry Collector (→ Grafana `otel-lgtm` locally). The two components
+  communicate over **Kafka**.
 
 Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 
@@ -38,14 +39,15 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 ## 3. Engineering conventions
 - **Test-first / high coverage**: near-100% unit-test coverage is a hard goal; **CI enforces the
   gates** (`.github/workflows/ci.yml`) — Python via `pytest --cov-fail-under`, Angular via
-  `coverageThresholds` in `angular.json`. `make ci` runs exactly what CI checks, locally.
+  `coverageThresholds` in `angular.json`. `make ci` runs CI's hermetic gates locally; the
+  integration and browser suites run in CI on live stacks of their own, `make mutants` does not.
   Every feature ships with tests. No feature is "done" without tests. Frontend tests assert the
   **rendered DOM and real interactions**, not just component methods.
 - **A green test proves nothing on its own.** It proves the code and the test agree, which they
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **1731 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **1745 properties** across auth, budgets,
   pipeline, retention, the management control plane, the gateway's counters and the console — a
   `.spec.ts` selection runs under Vitest, everything else under pytest; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
@@ -98,22 +100,25 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   `SOURCE_DIGEST` (`apps/privacy/edition.py`) and is described in **every** `texts/*.toml`. A new
   transmission, telemetry attribute or browser storage stores nothing the check can see — add it
   to the register and the texts by hand. Say what the system does, gaps included.
-- **API contracts**: OpenAPI for HTTP; explicit, versioned schemas for Kafka events.
+- **API contracts**: both planes' HTTP APIs and the events between them are in `docs/API.md`, held
+  to the code by tests. Events carry no version: a change to one keeps both planes' handlers and
+  the cross-plane tests in step, and an older gateway skips an event type it does not know.
 - **Config over code**: behavior driven by use-case configuration, not hard-coded branches.
 - **Async on the hot path**: persistence and event emission must not block the gateway request path.
 - **Security by default**: validate input, scope every query by role/object, redact where required.
 
 ### Reader-facing documentation
-The ADRs and FRDs record *why*; six documents record *what*, and the `README.md` is a hub linking
-them: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (C4 in Mermaid),
-[`docs/REQUEST-LIFECYCLE.md`](docs/REQUEST-LIFECYCLE.md) (one request, every control, in order),
-[`docs/SETUP.md`](docs/SETUP.md) (demo · standalone · dev · integrated),
-[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) (every `AIRA_*` variable, defaults dumped from the
-settings classes rather than remembered), [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) (what each
-connected system must provide) and [`docs/GAP-ANALYSIS.md`](docs/GAP-ANALYSIS.md) (requirements
-against reality). Licence: **Apache 2.0** (`LICENSE`, `NOTICE`). When a feature changes what a
-reader would do or expect, the relevant one of those six changes with it — a link checker and the
-settings dump make the mechanical half cheap.
+The ADRs and FRDs record *why*; these record *what*, and the `README.md` is a hub linking them:
+[`ARCHITECTURE`](docs/ARCHITECTURE.md), [`REQUEST-LIFECYCLE`](docs/REQUEST-LIFECYCLE.md) (one
+request, every control, in order), [`deployment/`](docs/deployment/README.md) (four ways to run it),
+[`CONFIGURATION`](docs/CONFIGURATION.md) (every `AIRA_*` variable, defaults dumped from the settings
+classes), [`INTEGRATIONS`](docs/INTEGRATIONS.md), [`API`](docs/API.md), [`ROLES`](docs/ROLES.md) and
+the planning map [`GAP-ANALYSIS`](docs/GAP-ANALYSIS.md). Licence: **Apache 2.0**. Except that map,
+**they describe and never cite** an FRD, an ADR, the DEVLOG, the lessons or this file: the reader
+needs the fact in the sentence (`test_reader_documents_describe_rather_than_cite.py`). When a
+feature changes what a reader would do or expect, the relevant one changes with it — and a document
+is read against the code **whole**: the older half of a page goes stale while its newest section is
+right.
 
 ## 4. Documentation discipline (IMPORTANT — keep this current)
 Always keep documentation in sync with what is actually built. On any meaningful change:
@@ -160,28 +165,26 @@ enforces is one the next round breaks.
 Rule of thumb: if a future contributor would be surprised or have to reverse-engineer a decision,
 write it down (ADR or DEVLOG). Prefer small, frequent updates over big retroactive ones.
 
-## 5. Repository layout (target)
+## 5. Repository layout
 ```
 AIRA/
-├── CLAUDE.md                  # this file
-├── README.md
-├── docs/
-│   ├── PRD.md                 # requirements
-│   ├── ROADMAP.md             # phases
-│   ├── DEVLOG.md              # running change log
-│   ├── adr/                   # architecture decision records
-│   └── features/              # FRDs (one per feature)
-├── gateway/                   # FastAPI data plane
-├── management/
-│   ├── backend/               # Django + DRF control plane
-│   └── frontend/              # Angular SPA
-└── deploy/                    # docker-compose, later helm/k8s
+├── CLAUDE.md · README.md · CONTRIBUTING.md · Makefile
+├── docs/              # PRD, ROADMAP, DEVLOG, LESSONS, the reader-facing documents,
+│                      # adr/ (decisions), features/ (FRDs), deployment/ (four ways to run it)
+├── gateway/           # FastAPI data plane
+├── management/        # backend/ (Django + DRF control plane), frontend/ (Angular console)
+├── libs/              # aira_common — what both planes must agree on
+├── config/            # one YAML per installation, rendered into a .env
+├── deploy/compose/    # infrastructure, applications, demo provisioning, overlays
+├── tools/             # scripts, and tests/ — the repository's checks of itself
+├── tests/integration/ # the live-stack suite
+└── e2e/               # the browser suite (Playwright)
 ```
-(Directories are created as phases begin; not all exist yet.)
 
 ## 6. Current status
 
-**Phases 0–5 delivered; Phase 8 (KIRA parity) delivered; Phase 6 (reporting) delivered.** What
+**Phases 0–6, 8 (KIRA parity) and 9 (agents) delivered; Phase 7 in part** (published images,
+running them, capacity measured — Helm open). What
 runs today: two API surfaces (Gemini-compatible and the KIRA compatibility layer) over a
 provider-agnostic core, four upstream families (Vertex EU with Gemini + Anthropic, Google AI
 Studio, Azure/Foundry, any OpenAI-compatible server), a Django/DRF control plane with an Angular
@@ -205,32 +208,30 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | [`docs/PRD.md`](docs/PRD.md) §1.1 | the owner's canonical feature list |
 | [`docs/GAP-ANALYSIS.md`](docs/GAP-ANALYSIS.md) | requirements against reality |
 
-**Test layers** (all four are run; totals in `docs/TESTING.md`): hermetic `make test` · live-stack
-`make test-integration` · browser `make test-e2e` · `make mutants`, which breaks a property and
-requires a test to notice.
+**Test layers** (`docs/TESTING.md`): hermetic `make test` · live-stack `make test-integration` ·
+browser `make test-e2e` · `make mutants`, which breaks a property and requires a test to notice.
 
 **Open, deliberately** — the features the index marks unfinished, plus two decisions:
 
 - `FRD-127` (**several gateway instances**) — the owner's requirement: availability, and a rolling
   update that takes one instance at a time. Management stays a single instance. Most of what it
   needs already holds; the two real gaps are named in the FRD.
-- `FRD-118` (several **Keycloak** issuers) — FR-1 is **built** (a token is routed by its own `iss`,
-  each realm with its own audience and keys, `AIRA_OIDC_ISSUERS`); FR-3, groups from UserInfo,
-  stays declined. It is **not** the multi-instance requirement above — that is `FRD-127`, and this
-  line said "requirement not confirmed" about a feature the FRD header had already recorded as
-  confirmed and shipped.
+- `FRD-118` (several **Keycloak** issuers) — FR-1 is **built** in the gateway (a token is routed by
+  its own `iss`, `AIRA_OIDC_ISSUERS`; the console reads one issuer); FR-3, groups from UserInfo,
+  stays declined. It is **not** the multi-instance requirement above — that is `FRD-127`.
+- `FRD-616` (the audit trail as an **event stream**) — the delivery channel (`FRD-618`) forwards one
+  span per request to a SIEM, refused attempts included; the audit rows themselves are not streamed.
 - `FRD-121` (document normalisation for models that cannot read documents) — specified so the
   option exists; the recommendation is not to build it first (`ADR-0012` §4, `ADR-0013`).
-- `FRD-307` — approval is delivered; candidate lists and builder pickers are not.
 - `FRD-406`'s **PII half is declined, not deferred** (`ADR-0016`): the sensitive content and the
   useful content are the same content, so stored prompts are gated by role and every read is
   recorded instead.
 - `FRD-106` (an OpenAI-compatible **surface**) stays **withdrawn** — `FRD-132` measured a real
   coding assistant against the existing Gemini surface and it worked unmodified. The OpenAI
   *dialect* as an upstream is unaffected and shipped.
-- `FRD-610` is **built**: an unpriced model cannot hide from a cost limit (§3.2,
-  `AIRA_ENFORCE_PRICED_MODELS`, a dispatch condition so a chain prefers a priced candidate), and
-  both budget screens say when enforcement is off (§3.3).
+- **Stated gaps, not oversights** (`docs/GAP-ANALYSIS.md`): FRD-131's `tool_results` filter scope
+  is not built; configuration changes are not audited except roles; Kafka events carry no schema
+  version; a refusal before attribution is on its span, not in the audit table (`FRD-122`).
 - **A model reachable only at `global` is not usable here — unless permitted by name**
   (`FRD-611`, `ADR-0012` §6, `ADR-0034`). `global` names no region and guarantees none, so it is not
   in the residency default and `gemini-3.5-flash` stays refused where its region is typed. The open

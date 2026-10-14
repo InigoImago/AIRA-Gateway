@@ -117,7 +117,8 @@ step and typed model names. That is carried into the release.
 
 A use case that never had one could call every approved model. Writing the whole approved catalog
 into it would keep it running — and would show, in a console built to record who released what, **a
-release nobody made**. `FRD-122`'s rule about the audit row is the same rule: an unverifiable claim
+release nobody made**. *(As built, the release is a plain relation: it records what is released,
+not who released it or when — `FRD-616` §1.)* `FRD-122`'s rule about the audit row is the same rule: an unverifiable claim
 is not evidence. Those use cases start empty and stop serving.
 
 That consequence was stated before the decision was taken and the owner chose it knowing it. What
@@ -211,6 +212,14 @@ another fix. Six places outside the adapters can reach a provider:
 | the injection classifier | the caller's | `pipeline:<step>`, `requests=0` |
 | the routing classifier | the caller's | `pipeline:<step>`, `requests=0` |
 | the dispatch chain | `require_attribution` | `Accounting` |
+
+*As built, the inventory has eight entries* (`ACCOUNTED` in
+`gateway/tests/test_every_model_call_is_accounted.py`): both surfaces' embeddings, the injection
+classifier, the router, the PII filter's redactor (`FRD-309`), the dispatch chain for a generation
+and for a stream (`stream_with_fallback`, through which both streaming surfaces now reach their
+upstream, `FRD-302`), and the console's *Ask the model* (`:checkThinking`), recorded as
+`diagnostic` rows (`FRD-610`). A pipeline step's call is booked against the budgets as **one
+request**, not `requests=0`, since the owner's decision recorded in `FRD-601` (`book_side_call`).
 
 `test_every_model_call_is_accounted.py` parses the source and requires each on that list with a
 written justification. It is structural because the hole it guards was never a wrong answer — every

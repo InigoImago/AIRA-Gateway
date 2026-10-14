@@ -50,7 +50,7 @@ larger half.
 | `error_rate` | share of requests that failed upstream | is a model or a region failing for one use case and nobody noticing |
 | `spend_spike` | spend in the window against the same-length window before it | did cost change shape, not merely exceed a cap |
 | `request_spike` | request count in the window against the one before it | the same question where nothing is priced |
-| `new_source_ip` | a credential used from an address not seen for it in the reference period | a leaked key is used from somewhere its owner never was |
+| `new_source_ip` | a credential used from an address not seen for it in the preceding window of the same length (FR-9) | a leaked key is used from somewhere its owner never was |
 | `payload_size` | share of requests above a byte threshold | bulk extraction, and the shape `FRD-405` cannot see because it counts requests |
 | `blocked_prompt_rate` | share of requests the pipeline blocked | the injection filter earning its keep, or a use case under attack |
 
@@ -75,7 +75,9 @@ per-use-case form under `/use-cases/{slug}/anomaly-rules/`) and distributed over
 
 **FR-8** — **Who may author what**: a use-case administrator may author rules scoped to a use case
 they administer. Only IT Security and Global Administrator may author a **global** rule, because a
-global rule can block traffic for use cases its author cannot see.
+global rule can block traffic for use cases its author cannot see. *As built, a global rule needs
+the permission `anomaly.rule.global.write` (`FRD-614`), which those two hold and an installation
+may grant to another role.*
 
 **FR-9** — Validation happens where the rule is written, not where it runs: a threshold outside its
 kind's range, a window outside the bounds, or a `block` with no duration are all refused with a
@@ -126,7 +128,8 @@ like until somebody has watched it be right.
 A rule scoped to a use case is that use case's business. A global one — "any credential used from a
 new country" — crosses every boundary the console otherwise enforces, and its effects land on use
 cases the author may not be able to see. That is IT Security's job description (PRD §154), so it is
-IT Security's to author, and the API says so rather than the UI.
+IT Security's to author, and the API says so rather than the UI. *(Since `FRD-614` the API asks
+`anomaly.rule.global.write`.)*
 
 ## 5. Testing
 
@@ -137,7 +140,9 @@ IT Security's to author, and the API says so rather than the UI.
   the answer the object reports matches what the request does (`FRD-206`'s agreement test, applied
   to a second surface).
 - Deleting a use case removes its rules and tombstones them in the read-model — the mistake
-  `FRD-205` made once with keys.
+  `FRD-205` made once with keys. *As built, deleting is retiring (`FRD-607`): Management keeps the
+  rules as part of the use case's record, and the gateway deletes its copies outright, with no
+  tombstone (`_retire_usecase` in `consumer/apply.py`).*
 - Mutation entries for: the default action being `alert`, the minimum-sample guard, and the global
   authorisation.
 

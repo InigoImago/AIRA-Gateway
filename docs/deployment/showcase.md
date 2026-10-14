@@ -1,8 +1,10 @@
 # Deployment 1 of 4: Showcase
 
 **For:** seeing the whole product work, with real traffic, in about fifteen minutes.
-**You need:** Docker, roughly 8 GB of free disk, and no accounts anywhere.
-**You do not need:** a cloud provider, an API key, Python, Node, or a Keycloak of your own.
+**You need:** Docker with Compose, `make`, `python3`, [`uv`](https://docs.astral.sh/uv/) (it
+fetches the Python 3.14 the helper scripts run on) and `curl`; about 20 GB of free disk; no
+accounts anywhere.
+**You do not need:** a cloud provider, an API key, Node, or a Keycloak of your own.
 
 This is the only setup that pulls a real model and sends real requests through it. Everything else
 on this page is a consequence of that: the figures you see afterwards are measurements, not
@@ -13,34 +15,49 @@ fixtures.
 ## What you will have when this finishes
 
 - The whole stack in containers: gateway, control plane, console, Postgres, Keycloak, Kafka, Redis,
-  Vault, an OpenTelemetry collector and Grafana.
-- A small language model (`qwen2.5:3b`, about 2 GB) running locally in Ollama.
-- Three use cases with budgets, rate limits, pipelines, anomaly rules and one API key each.
-- Five users, one per role.
+  Vault, an OpenTelemetry collector and Grafana — and a schema registry that nothing uses.
+- Two small models running locally in Ollama: `qwen3:0.6b` for chat and `all-minilm` for
+  embeddings, about 600 MB together.
+- Four use cases — `kundenservice`, `entwicklung`, `coding-assistant` (the one with tool calling
+  on) and `personalwesen` — with budgets, anomaly rules, rate limits on `entwicklung` and
+  `coding-assistant`, an injection filter on `kundenservice`, and an API key for each member: six
+  keys. Beside them, `smoke-test`, IT Security's use case for putting the question catalogue to a
+  model.
+- Six accounts in the development realm: the five in Step 3, and `demo-user`.
 - Real traffic already through the gateway, **including a prompt injection the filter refused** —
-  so the security console has something true in it rather than rows somebody inserted.
+  so the security console has something true in it rather than rows somebody inserted — and a
+  month of history behind it, so the usage chart has a shape.
+- An OpenCode configuration for the coding assistant, `opencode.showcase.json`, in the repository
+  root.
 - Somewhere to point a client you already have, over either API surface and with either an API key
   or its own Keycloak identity (Step 5).
 
 ---
 
-## Step 1: check Docker
+## Step 1: check the tools
 
 ```bash
 docker version
 docker compose version
+python3 --version
+uv --version
+curl --version
+command -v make
 ```
 
-Both must print a version. If `docker version` says it cannot connect to the daemon, start Docker
-Desktop (macOS, Windows) or `sudo systemctl start docker` (Linux) and try again.
+Each must print a version, and the last a path. If `docker version` says it cannot connect to the
+daemon, start Docker Desktop (macOS, Windows) or `sudo systemctl start docker` (Linux) and try
+again. `make` asks `python3` for every address the stack answers on, and the steps that wait for
+the demo run under `uv`, so none of them is optional.
 
-Check the disk, because a failed model pull halfway through is the most common way this goes wrong:
+Check the disk, because a failed download halfway through is the most common way this goes wrong:
 
 ```bash
 df -h .
 ```
 
-You want at least 8 GB free.
+You want about 20 GB free: the images come to roughly 18 GB — Ollama, the schema registry and
+Grafana's bundle are most of it — and the two models to 600 MB.
 
 ---
 
@@ -52,16 +69,32 @@ make showcase
 
 This runs for a while and prints what it is doing. In order:
 
-1. **Creates `deploy/compose/.env`** from the example, if it does not exist.
-2. **Starts the infrastructure** and waits for each container to report healthy.
-3. **Pulls the model.** This is the slow part — a few minutes on a normal connection. It is a
-   separate step on purpose, so that the container's health check does not report "ready" while a
-   2 GB download is still running.
-4. **Applies database migrations** for both planes.
-5. **Seeds** the roles, users, use cases, budgets, limits, pipelines, rules and keys.
-6. **Drives traffic** through the gateway with those keys.
+1. **Creates `deploy/compose/.env`** from `deploy/compose/.env.example`, if it does not exist.
+2. **Builds the three application images and starts everything** — infrastructure, both planes,
+   the console, Ollama and the model download — with the demo provisioning: the realm repair, the
+   development Vault's secrets, the migrations, the Kafka topics and the seed (roles, users, use
+   cases, budgets, limits, rules, the pipeline, keys and the local models' catalogue entries).
+3. **Waits until the console, the gateway, Management and Keycloak answer** (`make wait-healthy`).
+4. **Waits for the models** (`make demo-ready`): until the download has finished, then seeds once
+   more against what was actually downloaded, then until the gateway accepts every demo key and
+   serves every demo model. The download is a separate container on purpose, so that the model
+   server's health check does not report "ready" while it is still running.
+5. **Builds a month of history** — real requests whose timestamps are then moved into the past.
+   Allowed to fail; the demo does not depend on it.
+6. **Clears what earlier runs consumed**, so this run's figures are its own. Allowed to fail too.
+7. **Drives traffic** through the gateway with the demo keys, and fails the whole command when
+   nothing is served, when the injection is not refused by the filter, or when the embedding batch
+   is not served — the requests the demo exists to show.
+8. **Prints where to sign in**, writes `opencode.showcase.json`, and prints a request you can paste
+   straight away.
+
+`make showcase RELEASE=vX.Y.Z` does the same with the published images instead of building them;
+`make current-version` prints the newest.
 
 If it stops with an error, read the last twenty lines: every step names what it was doing.
+`make showcase-doctor` walks the chain — the realm and its accounts, Management, the gateway's
+read-model, the browser's login — and names the first link that is broken; it reads and changes
+nothing.
 
 ---
 
@@ -71,14 +104,18 @@ Open <http://localhost:4200>.
 
 | Sign in as | Password | Shows you |
 |---|---|---|
-| `admin` | `demo-password` | everything, including model prices and approval |
+| `admin` | `demo-password` | everything, including model prices and approval; the only one who may create a use case |
 | `itsec` | `demo-password` | security oversight across every use case, and the content of requests |
 | `itgov` | `demo-password` | every figure, no write anywhere, no content |
-| `ucadmin` | `demo-password` | administering two of the three use cases — the third is deliberately not theirs |
-| `ucuser` | `demo-password` | a member's view |
+| `ucadmin` | `demo-password` | administering three of the four use cases — `personalwesen` is deliberately not theirs |
+| `ucuser` | `demo-password` | a member of `kundenservice` and `coding-assistant` |
 
-The roles differ on purpose, and the differences are the point. See [`../ROLES.md`](../ROLES.md) for
+The first three hold a role through their Keycloak group; `ucadmin` and `ucuser` hold none and
+reach use cases through grants. The differences are the point. See [`../ROLES.md`](../ROLES.md) for
 what each may do and why.
+
+Keycloak's own admin console, at <http://localhost:8080> with `admin` / `admin`, is a different
+account in a different realm (`master`); the demo lives in the realm `aira`.
 
 ---
 
@@ -88,18 +125,22 @@ what each may do and why.
 left, and the prompt and the answer are one click away. The panel tells you the read was recorded,
 because it was.
 
-**Reporting** (as `itgov`) — spend and usage. The figures come from the traffic step 2 sent; nothing
+**Reporting** (as `itgov`) — spend and usage. The figures come from the traffic Step 2 sent; nothing
 here is seeded.
 
 **Security** (as `itsec`) — findings, what is stopped, and the rules behind them. One rule throttles
 rather than alerts, so you can see the difference.
 
-**Use cases → Pipeline** (as `ucadmin`) — the filter that refused the injection. Use the test panel
-to send the same prompt again and watch it be refused.
+**Use cases → kundenservice → Edit pipeline** (as `ucadmin`) — the filter that refused the
+injection. Use the test panel to send the same prompt again and watch it be refused.
 
 **Models & prices** (as `admin`) — the catalog. Open a row for everything on file about a model, and
 press **Check reachability**: the local model answers, and a model this installation has no
 credential for reports that it is declared and nothing serves it.
+
+**The coding assistant** — `opencode.showcase.json` points OpenCode at the gateway with
+`coding-assistant`'s key and the models it may call; [`tools/opencode/README.md`](../../tools/opencode/README.md)
+has the rest. `make showcase-agent` writes the file again.
 
 ---
 
@@ -114,15 +155,15 @@ own proxy at `http://localhost:4200/gw/…` if that is easier to reach from wher
 
 | Surface | Base URL | Verbs |
 |---|---|---|
-| KIRA compatibility | `http://localhost:8001/kira/api/external` | `POST /chat`, `POST /streaming-chat`, `POST /embed`, `GET /models`, `GET /health` |
-| Gemini dialect | `http://localhost:8001/v1beta` | `POST /models/{model}:generateContent`, `:streamGenerateContent`, `:embedContent` |
+| KIRA compatibility | `http://localhost:8001/kira/api/external` | `POST /chat`, `POST /streaming-chat`, `POST /embed`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage` |
+| Gemini dialect | `http://localhost:8001/v1beta` | `GET /models`, `POST /models/{model}:generateContent`, `:streamGenerateContent`, `:embedContent`, `:batchEmbedContents` |
 
 ### With an API key — the quickest test
 
-`make showcase` prints one key per use case, and the console shows the same thing on a use case's
-**Overview** tab — base URL, the models it may call, and a ready-made example per surface. Credentials are read in one order:
-`Authorization: Bearer <token>` → `x-goog-api-key` → `?key=`, so a client that can set *either*
-header works unchanged.
+`make showcase` prints a ready-made request with `kundenservice`'s key, and the console shows the
+same thing on a use case's **Overview** tab — base URL, the models it may call, and a ready-made
+example per surface. Credentials are read in one order: `Authorization: Bearer <token>` →
+`x-goog-api-key` → `?key=`, so a client that can set *either* header works unchanged.
 
 ```bash
 curl -s http://localhost:8001/kira/api/external/models \
@@ -137,24 +178,23 @@ limit and audit row all follow from the key.
 Reusing `kundenservice` works and is the quickest thing, but a use case you create yourself is the
 better test — it exercises the console, and it shows that **membership added in the console is
 enough**: the gateway resolves a person by name from the read-model, so nobody has to be put into a
-Keycloak group named after the use case (`FRD-209` §2.1).
+Keycloak group named after the use case.
 
-As `admin` or `ucadmin`:
+As `admin` — creating a use case is the Global Administrator's — then as its administrator:
 
-1. **Use cases → New use case.** A slug and a name; the slug is what appears in `/uc/<slug>`.
+1. **Use cases → + New use case.** A slug and a name; the slug is what appears in `/uc/<slug>`.
 2. **Overview → Models this use case may call.** Release at least one — `qwen3:0.6b` is the local
    model the showcase pulled. A use case with nothing released refuses every request by name, which
    is the rule rather than a bug.
-3. **Members.** Add `ucadmin` as an administrator and `ucuser` as a user. If your client
-   authenticates as a machine (below), add its service-account user here too — the username is
-   `service-account-<clientId>`.
-4. **Keys**, if the client will use an API key: issue one and copy it. Shown once.
+3. **Members.** Add `ucadmin` as an administrator and `ucuser` as a user.
+4. **API keys**, if the client will use an API key: issue one and copy it. Shown once.
 5. Optionally give it a **Budget** and a **Rate limit** small enough to watch them bite, and a
-   **Pipeline** with an injection filter — that is what makes the traffic interesting afterwards.
+   **pipeline** with an injection filter — that is what makes the traffic interesting afterwards.
 
-Nothing else is needed. Members reach the new use case immediately (the membership travels to the
-gateway over Kafka, which takes a moment on a busy machine — a first call that says *"not a member"*
-is worth retrying once).
+Nothing else is needed. The use case, its releases and its members travel to the gateway over
+Kafka, and the relay here runs every ten seconds: until the use case has arrived, a request for it
+is refused `403` *"not known to this gateway"*, and a member added a moment ago may still read
+*"not a member"*. Wait a few seconds and send it again.
 
 ### With its existing Keycloak identity
 
@@ -176,8 +216,8 @@ is the commonest way to spend twenty minutes on a client that AIRA will never se
    - **Authentication flow**: tick **Service accounts roles** for a bot with nobody at the keyboard
      (that is the client-credentials grant). Tick **Standard flow** instead for a client with a
      human in front of it. **Direct access grants** is the username-and-password flow and is
-     **switched off in this realm on purpose** (`ADR-0007`) — a client that only knows that flow
-     cannot be used here.
+     **switched off in this realm on purpose** — a client that only knows that flow cannot be used
+     here.
    - → **Next**
 3. *Login settings*: a service-account client needs none of it — leave the redirect URIs empty. A
    standard-flow client needs **Valid redirect URIs** and **Web origins** matching where it runs.
@@ -186,21 +226,19 @@ is the commonest way to spend twenty minutes on a client that AIRA will never se
 **The secret: Credentials tab → Client Secret → copy.** The tab only exists when client
 authentication is on. *Regenerate* replaces it and invalidates the old one immediately.
 
-**The use case — the step people miss.** A machine client's groups and memberships belong to its
-**service-account user**, not to the client. Putting the *client* somewhere does nothing.
+**The use case — the step people miss.** A machine client's groups belong to its **service-account
+user**, not to the client. Putting the *client* somewhere does nothing.
 
 - In Keycloak: **Service accounts roles** tab → the link to the service account user → **Groups** →
   **Join Group** → `/use-cases/<slug>`, or any group you have granted to a use case in the console.
-  **This alone is not enough — see the mapper below.**
-- Adding **`service-account-<clientId>`** as a member in the AIRA console — the route that needs no
-  mapper and no group, because the gateway resolves grants by `preferred_username` as well as by
-  group path — **works only once that account has authenticated against the console at least
-  once.** Membership points at a user row, and a user row appears on first sign-in; a service
-  account never signs in. Measured: `Unknown user 'service-account-my-chatbot'`. For a person this
-  route is the easy one and for a machine client it is not available, so a machine client needs the
-  mapper below.
+  **This alone is not enough — see the mappers below.**
+- Adding **`service-account-<clientId>`** as a member in the AIRA console works only if
+  Management's directory search finds that account: a name is accepted when the directory confirms
+  it, and refused with *"The directory knows no user …"* when it does not. Whether Keycloak's user
+  search returns a client's service account has not been checked here, so the group and the two
+  mappers are the route to rely on.
 
-#### The mapper a new client does not have
+#### The mappers a new client does not have
 
 **A group you joined is not a group in the token.** Keycloak puts group membership into a token
 only when the client has a *group membership mapper*, and a client you create today has none. The
@@ -226,9 +264,10 @@ permission problem and is a mapper problem.
    token*: On. Full paths matter: the gateway reads `/use-cases/<slug>`, and a bare `entwicklung`
    resolves to nothing.
 2. **Audience** — *Included Client Audience* `aira-gateway`, *Add to access token*: On. Needed as
-   soon as `AIRA_OIDC_AUDIENCE` is set, which any deployment outside `local` is forced to do: the
-   gateway refuses to start otherwise, because without an audience *any* token this realm minted
-   would be accepted here, including one issued to an unrelated client.
+   soon as `AIRA_OIDC_AUDIENCE` is set, which a deployment outside `local` must do: both planes
+   refuse to start without one — the gateway unless it declares itself a demo
+   (`AIRA_DEMO_MODE`) — because without an audience *any* token this realm minted would be accepted
+   here, including one issued to an unrelated client.
 
 The same client, after both mappers:
 
@@ -240,10 +279,12 @@ groups             : ['/use-cases/entwicklung']
 Which is what the gateway reads: `usecases_from_group_paths(['/use-cases/entwicklung'])` →
 `('entwicklung',)`.
 
-**Roles come from group paths too** (`ADR-0017`), through `AIRA_ROLE_GROUPS` — semicolon-separated,
-full paths, e.g. `it-security=/aira/it-security`. A caller in `/use-cases/entwicklung` and nothing
-else holds no role, which is correct: use-case membership is not oversight. Without the groups
-mapper there are no roles at all, so `GET /ki-usage` refuses even a member of the right group.
+**Roles come from group paths too**: the three built-in roles through
+`AIRA_ROLE_GROUPS` — semicolon-separated, full paths, e.g. `it-security=/aira/it-security` — and a
+role an installation defines through the group bound to it in the console. A caller in
+`/use-cases/entwicklung` and nothing else holds no role, which is correct: use-case membership is
+not oversight. Without the groups mapper there are no roles at all, so `GET /ki-usage`, which needs
+`report.read_all`, refuses even a caller in a group that confers it.
 
 #### Getting a token and calling with it
 
@@ -273,6 +314,7 @@ The message names the control, and each of these means something different:
 |---|---|
 | `401 INVALID_TOKEN` | the token is not valid *for this gateway* — usually the issuer above, or an expired token |
 | `403 STANDARD_USER_PERMISSION_REQUIRED`, *"cannot be attributed to a use case"* | authenticated fine; you named no use case. Use `/uc/<slug>` or the `X-AIRA-Use-Case` header |
+| `403 … not known to this gateway` | the use case's configuration has not reached the gateway yet — a new one, a few seconds after it was created — or Management has no such use case |
 | `403 Not a member of use case …` | the use case is named but this caller does not reach it — the group or membership step above |
 | `429` / over budget | it worked, and the demo's deliberately small limits did their job |
 
@@ -309,10 +351,10 @@ than it looks. Both were measured against the running stack rather than reasoned
 |---|---|---|
 | Attribution | the row carries `use_case`, `auth_method=demo`, `subject=demo` | `use_case` is `NULL` |
 | Client IP | recorded in `source_ip` either way | recorded either way |
-| Model release (`FRD-308`) | **still enforced** — a model not released to that use case is refused by name | not consulted |
+| Model release | **still enforced** — a model not released to that use case is refused by name | not consulted |
 | Budgets, rate limits, pipeline | apply; they are keyed on the use case, which is present | nothing to key on |
 | Per-person budgets and limits | meaningless — every caller is the same `demo` subject | meaningless |
-| Model approval (`FRD-307`) and residency (`FRD-115`) | **always enforced** — properties of the installation, checked at every dispatch | **always enforced** |
+| Model approval and residency | **always enforced** — properties of the installation, checked at every dispatch | **always enforced** |
 
 So `auth_required=false` plus `/uc/<slug>` is closer to "anonymous access to a use case" than it
 first appears: the use case's own governance is intact, and only the *person* is missing.
@@ -343,7 +385,8 @@ Yes, and three things have to line up. Two of them are refusals on purpose, so i
 which one you are looking at.
 
 1. **A key, in the right file.** `AIRA_GOOGLE_API_KEY=…` in `deploy/compose/.env`. The adapter is
-   registered only when a key is present.
+   registered only when a key is present. This stack's Vault is a development one that is refilled
+   from that same file on every start, so here the key lives in the file either way.
 2. **Residency has to be widened, or the gateway will not start.** Google AI Studio's endpoint
    names no region and guarantees none, so it is treated as `global` — and `AIRA_ALLOWED_REGIONS`
    defaults to the EU regions of every supported cloud, on the principle that a residency
@@ -352,24 +395,25 @@ which one you are looking at.
    (`AIRA_VERTEX_PROJECT` + credentials), which needs no widening and is the reason the two
    adapters exist separately.
 3. **The model must be catalogued and approved.** Approval is an installation property and is
-   checked at **every** dispatch — it still applies with authentication off. `AIRA_GEMINI_MODELS`
-   is empty by default, deliberately: it used to name two models a key issued today cannot use, and
-   a default naming something unusable produces a 404 that reads as our fault. Use the catalog
-   screen's discovery to list what your key actually serves, then approve what you want.
+   checked at **every** dispatch — it still applies with authentication off. Catalogued under the
+   provider `generative-language`, a model is served by AI Studio without being named in
+   `AIRA_GEMINI_MODELS`, which is empty by default: the endpoint lists models a key
+   issued today cannot use, and a default naming something unusable produces a 404 that reads as our
+   fault. Use the catalog screen's discovery to list what your key actually serves, then approve
+   what you want.
 
-#### The whole thing, once, as it was actually run
+#### The whole thing, once
 
-Walked end to end against a live key rather than described. Four steps, and the two surprises are
-worth more than the happy path.
+Four steps:
 
 ```bash
-# 1. the gateway: a key, a widened residency, a model list, auth off
+# 1. the gateway: a key, a widened residency, auth off
 AIRA_GOOGLE_API_KEY=…  AIRA_ALLOWED_REGIONS=global,eu,europe-west1,…  \
-AIRA_GEMINI_MODELS=gemini-flash-latest  AIRA_AUTH_REQUIRED=false      make up-full
+AIRA_AUTH_REQUIRED=false  make up-full
 
-# 2. catalogue and approve it, with the integer alias a KIRA client sends
-POST /api/v1/models/  {"name": "gemini-flash-latest", "provider": "google",
-                       "region": "global", "numeric_id": 9102, "approved": true}
+# 2. catalogue and approve it, under AI Studio's provider name, with the integer a KIRA client sends
+POST /api/v1/models/  {"name": "gemini-flash-latest", "provider": "generative-language",
+                       "numeric_id": 9102, "approved": true}
 
 # 3. a use case, with that model released to it
 POST  /api/v1/use-cases/          {"slug": "anon-demo", "name": "Anonymous demo"}
@@ -385,7 +429,7 @@ curl -X POST http://localhost:8001/uc/anon-demo/kira/api/external/chat \
 {"parts":[{"text":"anonymous gemini works"}],"usage_data":{"token_input":9,"token_output":4}}
 ```
 
-and the row it wrote:
+and the row it writes:
 
 ```
 subject=demo  username=  auth_method=demo  use_case=anon-demo
@@ -403,28 +447,24 @@ ids to use. It is unique across the catalog: two entries claiming one id make th
 so a model catalogued without a thought about KIRA is still reachable there. Set it when clients
 already send a particular number — that is what keeps an installation migrating from the
 predecessor working unchanged. The console's *Models* screen offers the same field, labelled **KIRA
-id**; before it did, every model added from the console got none and was invisible to this surface.
+id**.
 
-**Two things went wrong on the way, and both were the product being right.**
+**Three things that look like failures and are the product being right.**
 
-*The model in the listing could not be called.* `gemini-2.5-flash` is in Google's own `/models`
-response and answers `404 — no longer available to new users` on the first generate. That is
-exactly why `AIRA_GEMINI_MODELS` ships empty: it once named two models a key issued today cannot
-use, and a default that names something unusable produces a 404 that reads as AIRA's fault. Ask the
-endpoint what your key actually serves.
+*The model in the listing may not be callable.* `gemini-2.5-flash` has been in Google's own
+`/models` response while answering `404 — no longer available to new users` on the first generate.
+Ask the endpoint what your key actually serves.
 
-*Cataloguing a model does not make the gateway serve it.* Those are two facts with two owners — the
-catalog is the installation's declaration, `AIRA_GEMINI_MODELS` is which models the adapter offers.
-With the model catalogued but not in the adapter's list, the surface answered
-`MODEL_NOT_FOUND: Model 'gemini-flash-latest' not found.`
+*The provider name decides who serves it.* Catalogued under a provider no adapter owns, nothing
+claims the model, and every request for it is refused as not found.
 
-And the release check is real even here: asking `anon-demo` for a model it has not been released
+*The release check is real even here.* Asking `anon-demo` for a model it has not been released
 answers *"'qwen3:0.6b' has not been released to use case 'anon-demo'. An administrator of the use
 case can add it; it currently has 1 model(s)."*
 
 `cost_nanos` is empty above because the catalog entry carries no price — unpriced traffic is
-counted apart rather than as zero (`FRD-403`). Set the prices if you want the money figures to mean
-something.
+counted apart rather than as zero, and by default an unpriced model is refused outright under a
+cost budget. Set the prices if you want the money figures to mean something.
 
 Before doing any of this where others can reach it: an open port, one shared `demo` identity, and a
 real bill.
@@ -434,9 +474,9 @@ real bill.
 The interesting part is not that it answered. Open the console and find the client's own traffic:
 **Requests** shows which credential and which identity, the use case's **Overview** shows what it
 spent under Consumption, and if the client sent something the injection filter dislikes, the
-**Security** console has it as a refusal with the prompt attached. A client connected this way is subject to every control
-on this page — the same budget, the same rate limit, the same pipeline — which is the thing worth
-demonstrating.
+**Security** console has it as a refusal with the prompt attached. A client connected this way is
+subject to every control on this page — the same budget, the same rate limit, the same pipeline —
+which is the thing worth demonstrating.
 
 If it is refused, the message says which control did it. `Not a member of use case …` is the group
 question above; `over budget` and `rate limit exceeded` mean the demo's deliberately small limits
@@ -456,24 +496,32 @@ make destroy             # stop everything and delete the data
 `showcase-history` is the one target in this walkthrough that **moves a timestamp**. It drives real
 requests — real tokens, real price, a real audit row — and then backdates the rows it just created,
 so the usage chart has a month of columns instead of one. `make showcase` runs it once; this is how
-to ask for a longer or busier history. What is real and what is not is stated in the script's own
-output and in [`FRD-626`](../features/FRD-626-usage-over-time.md) §12.
+to ask for a longer or busier history. What is real is every request and every figure on it — token
+counts, latency, money; what is not is *when* each one happened, and how many fell on which day. It
+moves only rows this run created for the demo's own use cases, and its output says what it did.
+
+**`make destroy` deletes every volume** — the audit trail, the configuration, the realm and the
+downloaded models — so the next `make showcase` starts from nothing.
 
 ---
 
 ## What is configurable here
 
-The showcase runs on `deploy/compose/.env`, which `make up-full` copies from
+The showcase runs on `deploy/compose/.env`, which `make showcase` copies from
 `deploy/compose/.env.example` on first start. Everything this walkthrough shows can be changed
 there — but the **file an integrator is meant to edit** is
 [`config/showcase.example.yaml`](../../config/showcase.example.yaml): one YAML with every setting
-under a section, comments explaining what each one refuses, and secrets deliberately absent.
+under a section, comments explaining what each one refuses, and secrets deliberately absent. Its
+values are not all the ones `.env.example` gives the demo — the largest request body, the longest
+key lifetime and how long request rows are kept differ, among others — so rendering it changes the
+demo.
 
 Editing that file changes nothing on its own. It is **rendered** into the environment both planes
-already read:
+already read — copy it first, so the tracked example stays as it is:
 
 ```bash
-uv run python tools/config_render.py config/showcase.example.yaml -o deploy/compose/.env
+cp config/showcase.example.yaml config/my-showcase.yaml
+uv run python tools/config_render.py config/my-showcase.yaml -o deploy/compose/.env
 make up-full            # or `make showcase`, to redo the walkthrough
 ```
 
@@ -489,18 +537,18 @@ way — the stack runs on something nobody chose, and nothing says so.
 
 ### What the file does not carry
 
-Rendering emits the `AIRA_*` contract and nothing else. Two kinds of value are therefore absent,
-and the difference between them matters:
+Rendering emits the `AIRA_*` contract and the `VAULT_*` addresses, and nothing else. Two kinds of
+value are therefore absent, and the difference between them matters:
 
 - **Credentials, refused on purpose.** `config_render.py` raises rather than emitting a password or
-  an API key: those belong in HashiCorp Vault (`FRD-116`), which is what the `secrets:` section of
-  the example points at.
+  an API key: those belong in HashiCorp Vault, which is what the `secrets:` section of the example
+  points at.
 - **The infrastructure containers' own settings**, which are not AIRA settings at all —
   `POSTGRES_PASSWORD`, `KEYCLOAK_ADMIN`, `KC_DB_PASSWORD`, `VAULT_DEV_ROOT_TOKEN_ID`,
   `AIRA_BIND_HOST`, the `AIRA_PUBLISH_*` ports. Compose fills these from the defaults written into
   `docker-compose.yml` — `aira-local`, `admin`, `127.0.0.1` — which are **development values**, and
-  which is exactly right for this walkthrough and exactly wrong anywhere else. `ADR-0015` is why
-  the gateway refuses to start on any of them outside a `local` environment.
+  which is exactly right for this walkthrough and exactly wrong anywhere else. Note that both
+  planes' database password comes from `POSTGRES_PASSWORD` here, not from a variable of its own.
 
 ### Telemetry, as an example of what this buys
 
@@ -514,14 +562,18 @@ otel:
 
 `enabled` is the switch that decides whether the applications export at all — with it off, the
 collector and Grafana run, receive nothing, and show an empty screen that looks exactly like a
-broken one. `endpoint` is where the **applications** send, which is the collector; where the
-collector sends *onward* is `deploy/compose/otel/collector-config.yaml` and is deliberately not an
-AIRA setting, so it is not in this file. `FRD-615` §6 records what that costs.
+broken one. `deploy/compose/.env.example` leaves it off. `endpoint` is where the **applications**
+send, which is the collector. Where the collector sends *onward* is in the same section, commented
+out until you want it: `backend_*` keys for the observability channel and `forward_*` keys for the
+delivery channel — one record per request, for a SIEM — rendered as `AIRA_OTEL_BACKEND_*` and
+`AIRA_OTEL_FORWARD_*`, which Compose hands to the collector rather than to the applications
+([`CONFIGURATION.md` §5a](../CONFIGURATION.md)). A `sample_ratio` below 1 thins both channels: the
+delivery channel's records are spans.
 
-**Plain JSON to a second destination.** The delivery channel — one record per request, for a SIEM
-— is configured by Compose variables in `.env`, not by this file. It sends OTLP/JSON by default,
+**Plain JSON to a second destination.** The delivery channel sends OTLP/JSON by default,
 gzip-compressed. For a receiver that wants the JSON as it is, readable in a proxy log and parseable
-without unwrapping, turn the compression off:
+without unwrapping, turn the compression off — in the file as `forward_config`, `forward_endpoint`,
+`forward_encoding` and `forward_compression`, or directly in `.env`:
 
 ```bash
 AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
@@ -542,8 +594,15 @@ byte for byte, before a real receiver exists.
 
 ## When something goes wrong
 
-**The model pull fails or hangs.** The registry may be unreachable from your network. Everything
-except the real-model parts still works — the mock upstream serves `mock-1`.
+**First, ask the demo which link is broken.** `make showcase-doctor` reads the realm and its
+accounts, Management, the gateway's read-model and the browser's login chain, names the first thing
+that is wrong and what to do about it, and changes nothing. It runs on the host's `python3`, which
+must be 3.14 for this one.
+
+**The model download fails or hangs.** The registry may be unreachable from your network. The
+download is retried three times; after that `make showcase` waits in `make demo-ready` for up to
+fifteen minutes (`AIRA_DEMO_WAIT_SECONDS`, 900 by default) and then stops with an error, before any
+traffic is sent. The stack itself stays up.
 
 ```bash
 docker compose -f deploy/compose/docker-compose.yml --profile demo logs ollama-pull
@@ -552,30 +611,50 @@ docker compose -f deploy/compose/docker-compose.yml --profile demo logs ollama-p
 **A container never becomes healthy.** Ask it why:
 
 ```bash
-docker compose -f deploy/compose/docker-compose.yml ps
+make ps
 docker logs aira-gateway --tail 50
 ```
 
-**Port already in use.** The stack uses 4200 (console), 8001 (gateway), 8002 (control plane), 8080
-(Keycloak), 5432 (Postgres), 6379 (Redis), 8200 (Vault), 3000 (Grafana). Stop whatever holds the
-port, or change the mapping in `deploy/compose/docker-compose.yml`.
+**Port already in use.** The stack publishes 4200 (console), 8001 (gateway), 8002 (control plane),
+8080 and 9000 (Keycloak and its health port), 5432 (Postgres), 6379 (Redis), 29092 (Kafka), 8081
+(schema registry), 8200 (Vault), 4317, 4318 and 8889 (the collector), 3000 (Grafana) and 11434
+(Ollama), all on `127.0.0.1`. Every one moves with a variable in `deploy/compose/.env` —
+`AIRA_PUBLISH_FRONTEND_PORT`, `AIRA_PUBLISH_GATEWAY_PORT`, `AIRA_PUBLISH_MANAGEMENT_PORT`,
+`AIRA_PUBLISH_KEYCLOAK_PORT`, `AIRA_PUBLISH_KEYCLOAK_HEALTH_PORT`, `AIRA_PUBLISH_POSTGRES_PORT`,
+`AIRA_PUBLISH_REDIS_PORT`, `AIRA_PUBLISH_KAFKA_PORT`, `AIRA_PUBLISH_SCHEMA_REGISTRY_PORT`,
+`AIRA_PUBLISH_VAULT_PORT`, `AIRA_PUBLISH_OTLP_GRPC_PORT`, `AIRA_PUBLISH_OTLP_HTTP_PORT`,
+`AIRA_PUBLISH_OTLP_METRICS_PORT`, `AIRA_PUBLISH_GRAFANA_PORT`, `AIRA_PUBLISH_OLLAMA_PORT` — and the
+Makefile and the tools follow it. A forwarder in front that shows the console on another port
+(`sbx ports`, a VM, an SSH tunnel) is named with `AIRA_CONSOLE_PORT`, and reaching the stack from
+another machine needs `AIRA_BIND_HOST=0.0.0.0` (and `AIRA_BIND_HOST6=::` for IPv6) — which puts a
+stack whose passwords and Vault token are in this repository on the network, so only on one you
+trust.
 
-**Signing in fails with a CORS error naming no setting.** Keycloak imports a realm only if it does
-not already exist. If you edited the realm file after first start, recreate it:
+**Signing in fails after moving the console's port, or after editing the realm file.** Keycloak
+imports `aira-realm.json` only when the realm does not exist, and fills in the console's port at
+that import. `keycloak-init`, which `make showcase` and `make up-full` run on every start, imports
+it again when a user, group, membership or client the file names is missing — and only then. For
+any other change, a moved port included, delete the realm `aira` in Keycloak's admin console
+(<http://localhost:8080>, `admin` / `admin`, *Realm settings → Action → Delete*) and run
+`make up-full`; `keycloak-init` imports it from the file. Do not delete a volume for this: the realm
+lives in the `keycloak` database, in the same Postgres volume as the audit trail and every
+configuration.
 
-```bash
-docker compose -f deploy/compose/docker-compose.yml rm -sf keycloak
-docker volume rm compose_keycloak-data
-make up
-```
+**The demo's keys are refused after a use case was deleted and recreated.** Revocation is final at
+the gateway. `make showcase-reset-keys` removes the demo keys of the four showcase use cases from
+the gateway's read-model and seeds them again — demo only.
 
 ---
 
 ## What this setup is not
 
-It is **not** a deployment. It uses a development Keycloak realm with fixed passwords, a published
-Postgres password, and Vault's dev-mode root token. The gateway refuses to start with any of those
-outside a `local` environment, on purpose (`ADR-0015`).
+It is **not** a deployment. It runs with `AIRA_ENVIRONMENT=local`, which switches every start-up
+check off; its realm has fixed passwords, its Postgres password is published, and its Vault runs in
+dev mode with the root token `root`. Outside `local` the gateway refuses the published Postgres
+password, a missing audience, `PLAINTEXT` Kafka and plain-HTTP identity and Vault addresses — unless
+`AIRA_DEMO_MODE` is on, which waives exactly those — and Management refuses its own development
+defaults with no waiver at all. Neither plane can see the realm's passwords or Vault's
+root token: those belong to the infrastructure, and nothing checks them.
 
 For something you can actually put in front of people, read
 [`integrated.md`](integrated.md).

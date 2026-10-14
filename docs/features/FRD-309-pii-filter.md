@@ -78,7 +78,7 @@ trusts.
 - **FR-7 The notice is prepended to plain-text answers only**, and its absence on a structured or
   tool-call answer is recorded (`action: withheld`) rather than passed over.
 - **FR-8** The step's model call is audited and billed as `pipeline:pii_filter` with `requests=0`
-  (`FRD-125b`).
+  (`FRD-125b`). *(As built, it books one request as well, by `FRD-125` FR-9b.)*
 - **FR-9 It reaches an embedding too** (2026-08-27). `:embedContent`, `batchEmbedContents` and the
   KIRA surface's `/embed` run the steps that are about the **text itself**; a step about the
   *answer* still does not, and that distinction is `TEXT_ONLY_STEPS`. A router chooses a model to

@@ -19,7 +19,7 @@ Read against the code on 2026-08-19:
 
 | | state |
 | --- | --- |
-| **Does IT Steuerung have access?** | **Yes.** `OVERSIGHT_ROLES` includes it, so it sees every use case; `GOVERNANCE_ROLES` includes it, so it sees every figure in reporting. Read-only by design (`ADR-0007`) — it may act inside none. |
+| **Does IT Steuerung have access?** | **Yes.** `OVERSIGHT_ROLES` includes it, so it sees every use case; `GOVERNANCE_ROLES` includes it, so it sees every figure in reporting. Read-only by design (`ADR-0007`) — it may act inside none. *(Since `FRD-614` these are the permissions `usecase.read_all` and `report.read_all`, which IT Steuerung holds by default.)* |
 | **Do the fields exist?** | **Yes, all of them.** A use case carries `description`, `processing_notes`, `store_payloads`, `retention_days`, `allowed_models`, `tools_enabled`, `prompt_caching_enabled`, `include_reasoning`, `prompt_cache_ttl`, `payload_visibility`. |
 | **Is there a view?** | **No.** `use-case-list.html` renders **two columns** — name and technical id. Everything else is one click deeper, one use case at a time. |
 
@@ -108,7 +108,7 @@ its counts costs a table and a query.
 
 - **A second permission model.** IT Steuerung already sees everything; adding a governance-only
   scope would be a second answer to a question `OVERSIGHT_ROLES` already answers, and two answers
-  drift.
+  drift. *(Since `FRD-614` that question is the permission `usecase.read_all`.)*
 - **Editing anything from this screen.** `ADR-0007` makes governance read-only deliberately. A
   register that can change what it registers is not a register.
 - **A PDF.** CSV goes into whatever the compliance function already uses; a PDF is a layout
@@ -126,10 +126,11 @@ should compare them — models, use cases, and the counts — and say when they 
 
 `/v1beta/register` on the **gateway**, JSON and CSV by `Accept`, and a `Register` screen in the
 console offered to an oversight role. One module assembles it (`reporting/register.py`), one renders
-it (`reporting/register_csv.py`), and the route sits behind `api/reporting.py`'s heading — because
-it is scoped by the very same `visible_scope` the report and the trace list use, and *two endpoints
-that are safe the same way should share a file* (the same argument that moved the suspension
-endpoints **out**, read the other way).
+it (`reporting/register_csv.py`), and the route sits behind `api/reporting.py`'s heading (now
+`api/reporting/spend.py`, beside the report) — because it is scoped by the very same
+`visible_scope` the report and the trace list use, and *two endpoints that are safe the same way
+should share a file* (the same argument that moved the suspension endpoints **out**, read the other
+way).
 
 **Served by the gateway although Management authors every configuration field in it.** The gateway
 is where the two halves meet: `UseCaseRead` already carried every field §2.1 asks for, and the audit

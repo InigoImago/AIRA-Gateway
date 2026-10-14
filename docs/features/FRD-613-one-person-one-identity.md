@@ -146,7 +146,7 @@ including the use-case slug, which is a **primary key on the other plane**.
 
 - `api_pendingidentity` — one row per invited account (`user`, `invited_by`, `created_at`).
 - `usecases.0014` — the slug validator's anchor, recorded so the model state matches the field.
-- `payload_accesses.username` — the reader's name beside their subject, indexed, NULL before this.
+- `payload_access.username` — the reader's name beside their subject, indexed, NULL before this.
 
 ## 7. Interface changes
 

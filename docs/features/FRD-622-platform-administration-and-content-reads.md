@@ -26,7 +26,7 @@ only* — and a boolean cannot carry it, so the second switch became a three-val
 | mode | `store_payloads` | `payload_visibility` | who reads content |
 | --- | --- | --- | --- |
 | **Not stored** | off | — | nobody; there is nothing |
-| **Global Administrators and IT Security only** | on | `oversight` | the two installation roles that may read any content |
+| **Oversight roles only** | on | `oversight` | the roles that may read any content (`payload.read_any`: Global Administrator and IT Security, and any role given it) |
 | **Administrators, and each person's own** | on | `own` | those two · the use case's administrators · a member for their own requests |
 | **Every member of the use case** | on | `members` | those two · everybody in the use case |
 
@@ -69,8 +69,9 @@ has kept since August. Until now nobody could see that record.
   and retention reads `store_payloads` as a period of zero — which is a fact about storage, not
   about reading.
 - **FR-1b — `oversight`: nobody inside the use case.** Not its members, not its administrators.
-  Only the roles holding `payload.read_any` — Global Administrator and IT Security — and every one
-  of their reads is recorded (FR-3), which is the bargain `ADR-0016` makes. The refusal says who
+  Only the roles holding `payload.read_any` — Global Administrator and IT Security, and any role an
+  installation grants it to (it is sensitive but grantable, `FRD-614`) — and every one of their
+  reads is recorded (FR-3), which is the bargain `ADR-0016` makes. The refusal says who
   *can* read it, that such a read is recorded, and that the use case's administrator chose this
   and can change it: somebody who needs that prompt for a complaint or an incident has to learn
   from the refusal who to ask. The use case's administrator may set this mode and may leave it
@@ -109,11 +110,14 @@ has kept since August. Until now nobody could see that record.
   paging and filters by use case and by reader. The platform roles may call it (Global
   Administrator, IT Security, IT Steuerung); everyone else gets `403`. It returns metadata only, so
   IT Steuerung, which reads no content, may read the log. A read recorded before FR-3 carries
-  `roles: null`, not an empty list.
+  `roles: null`, not an empty list. *As built, the check is the permission `content_read.read`
+  (`FRD-614`), which those three hold by default and an installation may grant to another role; IT
+  Steuerung reads no content unless an installation grants it `payload.read_any`.*
 - **FR-5 — Platform administration in the header.** Its own control at the far right of the header,
   after Logout and set apart by a divider, shown to the three platform roles, opens `/platform`.
   The area has a left menu and shows the selected page on the right. It has one entry for now:
-  **Content reads**.
+  **Content reads**. *As built, the control is shown to whoever holds `content_read.read` or
+  `role.read`, and the menu has a second entry, **Roles** (`FRD-614`).*
 - **FR-6 — The content-read page.** A table with:
   - when (`dd.MM.yyyy HH:mm`);
   - who read it (the name, and the subject when there is no name);

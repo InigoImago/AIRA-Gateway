@@ -13,12 +13,18 @@ from typing import Any
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import Request
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from aira_common.observability import request_sampler
+from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.api.kira.attribution import resolve as kira_attribution
+from aira_gateway.api.kira.errors import KiraError
 from aira_gateway.app import create_app
-from aira_gateway.auth.dependencies import use_case_refusal
+from aira_gateway.auth.dependencies import require_attribution, use_case_refusal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 
@@ -130,3 +136,155 @@ def test_a_malformed_use_case_is_not_written_to_the_span(
     attributes = _span(exporter)
     assert attributes["aira.outcome"] == "forbidden"
     assert "aira.use_case.requested" not in attributes
+
+
+async def test_a_refused_attempt_is_on_its_span_whatever_the_caller_asked_for() -> None:
+    """The span above is the attempt's only record, so the caller must not be able to switch it
+    off. A `traceparent` whose sampled flag is unset used to do exactly that: the server span
+    followed the caller's flag, nothing was exported, and a SIEM fed from the delivery channel
+    never saw the attempt (`request_sampler`). The caller's trace id is still continued."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(sampler=request_sampler(1.0))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    app = create_app(GatewaySettings(auth_required=True, environment="local", log_queue_size=0))
+    FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+    trace_id = "0af7651916cd43dd8448eb211c80319c"
+    try:
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/v1beta/models/mock-1:generateContent",
+                    json={"contents": [{"parts": [{"text": "x"}]}]},
+                    headers={"traceparent": f"00-{trace_id}-00f067aa0ba902b7-00"},
+                )
+    finally:
+        FastAPIInstrumentor.uninstrument_app(app)
+
+    assert response.status_code == 401
+    refused = [
+        span
+        for span in exporter.get_finished_spans()
+        if (span.attributes or {}).get("aira.outcome") == "unauthenticated"
+    ]
+    assert refused, "the caller's not-sampled flag removed the only record of a refused attempt"
+    assert f"{refused[0].context.trace_id:032x}" == trace_id
+
+
+# == a known caller whose request no use case could be attributed to =============================
+
+
+def _request(app: Any, headers: dict[str, str] | None = None) -> Request:
+    """A request as the dependency sees it: the app's settings, the caller's headers."""
+    raw = [(name.lower().encode(), value.encode()) for name, value in (headers or {}).items()]
+    return Request(
+        {
+            "type": "http",
+            "app": app,
+            "method": "POST",
+            "path": "/v1beta/models/mock-1:generateContent",
+            "headers": raw,
+            "query_string": b"",
+        }
+    )
+
+
+async def test_a_request_that_names_no_use_case_is_on_its_span(
+    tracing: tuple[InMemorySpanExporter, TracerProvider],
+) -> None:
+    """The Gemini surface's `400`: the caller is known, and the request belongs to no use case.
+    It writes no audit row, and without a mark its span carried nothing the delivery channel keeps
+    a request by — the attempt never reached a SIEM."""
+    exporter, provider = tracing
+    app = create_app(GatewaySettings(log_queue_size=0))
+    caller = Principal(subject="alice", method="oidc", use_cases=("a", "b"))
+    with (
+        provider.get_tracer("test").start_as_current_span("POST"),
+        pytest.raises(GeminiHTTPError) as refused,
+    ):
+        await require_attribution(_request(app), caller)
+
+    assert refused.value.code == 400
+    attributes = _span(exporter)
+    assert attributes["aira.outcome"] == "unattributed"
+    assert attributes["aira.status"] == 400
+    assert attributes["aira.subject"] == "alice"
+    assert "aira.use_case" not in attributes
+
+
+async def test_a_malformed_selector_is_on_its_span_without_the_selector(
+    tracing: tuple[InMemorySpanExporter, TracerProvider],
+) -> None:
+    exporter, provider = tracing
+    app = create_app(GatewaySettings(log_queue_size=0))
+    caller = Principal(subject="alice", method="oidc", use_cases=("a",))
+    with (
+        provider.get_tracer("test").start_as_current_span("POST"),
+        pytest.raises(GeminiHTTPError),
+    ):
+        await require_attribution(_request(app, {"X-AIRA-Use-Case": "Not A Slug"}), caller)
+
+    attributes = _span(exporter)
+    assert attributes["aira.outcome"] == "unattributed"
+    assert attributes["aira.status"] == 400
+    assert "aira.use_case.requested" not in attributes
+
+
+@pytest.mark.parametrize(
+    ("memberships", "selector"),
+    [(("a", "b"), None), ((), None), (("a",), "Not A Slug")],
+    ids=["several", "none", "malformed"],
+)
+async def test_the_kira_surface_marks_what_it_cannot_attribute(
+    tracing: tuple[InMemorySpanExporter, TracerProvider],
+    memberships: tuple[str, ...],
+    selector: str | None,
+) -> None:
+    """KIRA attributes a caller of exactly one use case by itself; several, none, or a malformed
+    name is refused — and is on its span like the Gemini surface's refusals."""
+    exporter, provider = tracing
+    app = create_app(GatewaySettings(log_queue_size=0))
+    caller = Principal(subject="alice", method="oidc", use_cases=memberships)
+    headers = {"X-AIRA-Use-Case": selector} if selector else {}
+    with provider.get_tracer("test").start_as_current_span("POST"), pytest.raises(KiraError):
+        kira_attribution(_request(app, headers), caller)
+
+    attributes = _span(exporter)
+    assert attributes["aira.outcome"] == "unattributed"
+    assert attributes["aira.status"] in (400, 403)
+    assert attributes["aira.subject"] == "alice"
+
+
+async def test_an_address_asked_to_wait_is_on_its_span(
+    tracing: tuple[InMemorySpanExporter, TracerProvider],
+) -> None:
+    """The `429` for too many failed attempts from one address: a credential prober is the thing a
+    SIEM watches for, and this refusal writes no audit row either."""
+    exporter, provider = tracing
+    app = create_app(
+        GatewaySettings(
+            auth_required=True,
+            environment="local",
+            log_queue_size=0,
+            redis_url="",
+            max_auth_failures_per_minute=1,
+        )
+    )
+    statuses: list[int] = []
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            for _ in range(3):
+                exporter.clear()
+                with provider.get_tracer("test").start_as_current_span("POST"):
+                    response = await client.post(
+                        "/v1beta/models/mock-1:generateContent",
+                        json={"contents": [{"parts": [{"text": "x"}]}]},
+                        headers={"x-goog-api-key": "aira_x_y"},
+                    )
+                statuses.append(response.status_code)
+
+    assert statuses[-1] == 429, statuses
+    attributes = _span(exporter)
+    assert attributes["aira.outcome"] == "unauthenticated"
+    assert attributes["aira.status"] == 429

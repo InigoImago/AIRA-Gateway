@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from aira_common.config import BaseAiraSettings
 
 
@@ -68,3 +71,20 @@ def test_a_real_value_is_still_read(monkeypatch) -> None:
     monkeypatch.setenv("AIRA_VERTEX_TIMEOUT_SECONDS", "45")
 
     assert GatewaySettings().vertex_timeout_seconds == 45.0
+
+
+# ---- the retention period for traffic without a use case --------------------------------------
+
+
+@pytest.mark.parametrize("days", [0, -1, 3651])
+def test_a_default_retention_outside_a_real_period_refuses_to_start(days: int) -> None:
+    """Below one day the sweep kept payloads for a day anyway, while the privacy notice — which
+    prints this value — told people they were kept without limit. Neither plane may start on a
+    value the two would read differently."""
+    with pytest.raises(ValidationError, match="default_retention_days"):
+        BaseAiraSettings(default_retention_days=days)
+
+
+@pytest.mark.parametrize("days", [1, 7, 3650])
+def test_a_default_retention_within_a_use_cases_bounds_is_read(days: int) -> None:
+    assert BaseAiraSettings(default_retention_days=days).default_retention_days == days

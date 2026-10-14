@@ -86,6 +86,12 @@ Gemini has the feature directly: `generationConfig.responseMimeType = "applicati
 `input_schema` is the caller's schema, `tool_choice` pinned to it, and the model's tool input read
 back as the document (`FRD-119` §5.5).
 
+> *Superseded by `FRD-119` §5.5.* Anthropic gained a first-class parameter, and the adapter sends
+> the schema as `output_config.format` (`json_schema`); the document comes back as a text block. The
+> forced tool is gone, and with it the conflict with caller-declared tools (`FRD-131` FR-5): both
+> travel in one request. The two bullets below still hold — a field with no faithful translation is
+> refused, and an answer that did not finish normally fails FR-6.
+
 Azure OpenAI has a third: `response_format: {type: "json_schema", json_schema: {…, strict: true}}`
 (`FRD-120` §5.4), where `strict` mode further restricts what is expressible.
 
@@ -215,6 +221,7 @@ Two mechanisms behind one flag, as §5.2 requires: Gemini gets `responseMimeType
 prose to a caller expecting a document, produced by our own request body); Anthropic gets a forced
 tool call whose `input_schema` is the caller's schema translated to JSON Schema. Only
 `propertyOrdering` and `example` are dropped in that translation and neither constrains a value.
+*(Since `FRD-119` §5.5 the translated schema travels as `output_config.format`, not as a tool.)*
 
 **§5.3 is the design this feature turns on**, and its test is written to fail against the naive
 version: a chain whose primary declares the capability and whose fallback does not would, under a

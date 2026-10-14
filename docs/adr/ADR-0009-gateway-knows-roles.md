@@ -1,8 +1,15 @@
 # ADR-0009 — The gateway learns realm roles, from one shared definition
 
-- **Status:** Accepted
+- **Status:** Accepted · amended by `ADR-0017` and `ADR-0025`
 - **Date:** 2026-08-06
 - **Deciders:** Vadim Scheibe
+- **Amended 2026-08-09 by [`ADR-0017`](ADR-0017-a-role-is-held-through-a-group.md):** a role is held
+  through a Keycloak group and resolved from the `groups` claim; `realm_access.roles` is read by
+  neither plane. **Amended 2026-09-13 by
+  [`ADR-0025`](ADR-0025-aira-defines-what-a-role-may-do.md):** what a role may do is a set of
+  permissions Management stores and distributes to the gateway (`aira.roles`), so "neither service
+  stores a role decision" now holds for *who* holds a role, not for what it may do. One shared
+  definition, `aira_common.roles`, stands.
 
 ## Context
 

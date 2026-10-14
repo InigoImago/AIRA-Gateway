@@ -72,7 +72,7 @@ class Scope:
         would read as unspent.
         """
         if not self.use_case and self.member is None:
-            # Its own prefix, not `uc:` with an empty name: `_delete_usecase` sweeps counters by
+            # Its own prefix, not `uc:` with an empty name: `_retire_usecase` sweeps counters by
             # `uc:{slug}` prefix, which with an empty slug is every counter there is.
             return "installation:"
         if self.member is None:

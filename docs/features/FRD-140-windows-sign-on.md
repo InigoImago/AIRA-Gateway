@@ -156,7 +156,9 @@ Measured first against a throwaway Keycloak and then against the development rea
 | *No cache* | refused at once | without the group at once |
 
 The default has no bound at all; a bounded lifespan makes the delay a number: access ends at most
-*lifespan + one access-token lifetime* after the change in AD (5 + 5 minutes by default). The
+*lifespan + one access-token lifetime* after the change in AD — 5 + 5 minutes with the lifespan
+`tools/windows_sso.py` sets and the realm's access-token lifetime; Keycloak's own default lifespan
+is unbounded. The
 gateway accepts a token until it expires — a refused renewal is what ends a session. This is a
 property of the federation, not of Kerberos: a password sign-on through it behaves the same, which
 is why the guide states it for every installation that federates AD.

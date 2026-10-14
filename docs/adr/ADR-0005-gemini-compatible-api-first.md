@@ -1,8 +1,11 @@
 # ADR-0005 — Gemini-compatible API surface first (OpenAI later)
 
-- **Status:** Accepted
+- **Status:** Accepted · **its OpenAI half is withdrawn** (2026-08-07)
 - **Date:** 2026-08-04
 - **Deciders:** Vadim Scheibe
+- **Amended 2026-08-07:** the OpenAI-compatible *surface* (`FRD-106`) was withdrawn, not deferred,
+  and `FRD-132` (B1) then measured a coding assistant working on the Gemini surface unmodified. The
+  Gemini-first decision stands; the OpenAI *dialect* exists as an upstream (`ADR-0011`).
 
 ## Context
 AIRA exposes a unified, provider-agnostic API. The PRD originally implied an OpenAI-compatible

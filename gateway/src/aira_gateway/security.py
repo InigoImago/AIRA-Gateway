@@ -68,6 +68,11 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
         return []
     waived = WAIVED_BY_A_DEMO if settings.demo_mode else frozenset[str]()
     problems: list[str] = []
+    if settings.test_database:
+        problems.append(
+            "AIRA_TEST_DATABASE is on — this gateway would run on an in-memory database and lose "
+            "its audit trail, its budgets and its read-model on every restart."
+        )
     if not settings.auth_required:
         problems.append(
             "AIRA_AUTH_REQUIRED is off — every route is served to anyone who can reach the port. "
@@ -115,7 +120,8 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
             "AIRA_KAFKA_SECURITY_PROTOCOL is PLAINTEXT — the config topics are applied straight "
             "into the read-model this gateway's authorization is derived from, so anyone who can "
             "reach the broker can grant themselves access to any use case, with no credential and "
-            "no audit row. Use SASL_SSL (or SSL) and give this service a broker identity."
+            "no audit row. Use SASL_SSL with a broker identity of this service's own (SSL alone "
+            "carries none)."
         )
     # The JWKS is where signing keys come from: over plaintext, anyone on the path substitutes a
     # key set and mints tokens that verify. Checked here rather than in the verifier so a laptop

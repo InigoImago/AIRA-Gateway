@@ -14,13 +14,14 @@ experienced on the request path — the two can disagree in either direction.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from aira_common.counters import CountersUnavailable
-from aira_common.health import check_tcp
+from aira_common.health import any_reachable, check_tcp
 from aira_common.permissions import Permission
 from aira_common.secrets import secrets_state
 from aira_gateway.api.gemini.errors import GeminiHTTPError
@@ -112,18 +113,29 @@ async def may_see_diagnosis(request: Request) -> bool:
 
 @router.get("/readyz")
 async def readyz(request: Request) -> JSONResponse:
-    """Readiness probe: dependencies are reachable."""
-    settings = settings_of(request)
-    kafka = settings.kafka_host_port
+    """Readiness probe: the one dependency serving needs is reachable, and how the rest are.
 
-    results = [await check_tcp("postgres", settings.postgres_host, settings.postgres_port)]
-    if kafka is not None:
-        results.append(await check_tcp("kafka", *kafka))
-    ready = all(r.ok for r in results)
-    checks: dict[str, object] = {r.name: {"ok": r.ok, "detail": r.detail} for r in results}
-    if kafka is None:
+    **Only Postgres decides readiness.** The read-model every request is checked against lives
+    there. Kafka carries configuration *changes*: while it is down the gateway serves on what it
+    already holds, so an outage of the bus costs changes, not traffic — reported as degraded,
+    like Redis and the upstreams. Reporting it as not ready took every instance out of rotation
+    at once, over a dependency the request path does not use.
+    """
+    settings = settings_of(request)
+    brokers = settings.kafka_brokers
+
+    database = await check_tcp("postgres", settings.postgres_host, settings.postgres_port)
+    ready = database.ok
+    checks: dict[str, object] = {"postgres": {"ok": database.ok, "detail": database.detail}}
+    if brokers:
+        members = await asyncio.gather(*(check_tcp("kafka", host, port) for host, port in brokers))
+        kafka = any_reachable("kafka", members)
+        checks["kafka"] = {"ok": kafka.ok, "detail": kafka.detail, "required": False}
+        kafka_ok = kafka.ok
+    else:
         # No broker configured is a deployment `security.py` accepts, not one that is unreachable.
         checks["kafka"] = {"ok": True, "detail": "not configured", "required": False}
+        kafka_ok = True
 
     counters_ok, counters_detail = await _counters_state(request)
     checks["counters"] = {"ok": counters_ok, "detail": counters_detail, "required": False}
@@ -136,7 +148,7 @@ async def readyz(request: Request) -> JSONResponse:
     probe: UpstreamProbe | None = getattr(request.app.state, "upstream_probe", None)
     upstreams = probe.snapshot() if probe is not None else {}
 
-    degraded = not counters_ok or bool(fallbacks) or bool(probe and probe.degraded)
+    degraded = not counters_ok or not kafka_ok or bool(fallbacks) or bool(probe and probe.degraded)
     if not await may_see_diagnosis(request):
         # `degraded` stays: it is the answer, not a detail describing the deployment.
         return JSONResponse(

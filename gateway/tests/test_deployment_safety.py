@@ -315,3 +315,12 @@ def test_a_deployment_with_no_broker_at_all_is_not_asked_for_one() -> None:
     )
 
     assert not any("KAFKA" in problem for problem in problems)
+
+
+def test_a_test_database_outside_local_refuses_to_start() -> None:
+    """An in-memory database loses the audit trail, the budgets and the read-model on every
+    restart. Management refused it outside `local`; the gateway — the half that writes the audit
+    trail — did not."""
+    problems = unsafe_settings(_production(test_database=True))
+    assert any("AIRA_TEST_DATABASE" in problem for problem in problems), problems
+    assert not any("AIRA_TEST_DATABASE" in p for p in unsafe_settings(_production()))

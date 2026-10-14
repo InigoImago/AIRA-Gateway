@@ -20,7 +20,7 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.sdk.trace.sampling import ParentBased, Sampler, TraceIdRatioBased
 from opentelemetry.util.types import Attributes
 
 from aira_common.observability.diagnostics import route_sdk_diagnostics
@@ -51,6 +51,26 @@ def exclude_health_probes(paths: str = HEALTH_PATHS) -> str:
     Returns what is in force.
     """
     return os.environ.setdefault(EXCLUDED_URLS_ENV, paths)
+
+
+def request_sampler(ratio: float) -> Sampler:
+    """Which spans are kept — decided by this installation, never by whoever sent the request.
+
+    The SDK's `ParentBased` follows a **remote** parent's sampled flag, and the remote parent of a
+    request is the caller's `traceparent`. A caller who sent `…-00` then left no exported span. For
+    a request refused before attribution the span is its only record (`FRD-616`), and the delivery
+    channel forwards one record per span to a SIEM (`FRD-618`), so the caller could take its own
+    attempts out of the security feed.
+
+    A remote parent is therefore sampled by the same ratio as a root. The caller's trace id is still
+    continued, only the decision is ours. `TraceIdRatioBased` decides by trace id and every process
+    of an installation is given the same ratio, so a trace that crosses the bus (`FRD-615`) is kept
+    or dropped whole. A **local** parent is still followed, so a child of a kept span is kept.
+    """
+    by_ratio = TraceIdRatioBased(ratio)
+    return ParentBased(
+        root=by_ratio, remote_parent_sampled=by_ratio, remote_parent_not_sampled=by_ratio
+    )
 
 
 def configure_observability(
@@ -94,9 +114,7 @@ def configure_observability(
     metrics_endpoint = f"{base}/v1/metrics"
     logs = f"{base}/v1/logs"
 
-    tracer_provider = TracerProvider(
-        resource=resource, sampler=ParentBased(TraceIdRatioBased(sample_ratio))
-    )
+    tracer_provider = TracerProvider(resource=resource, sampler=request_sampler(sample_ratio))
     tracer_provider.add_span_processor(
         BatchSpanProcessor(watched_export(OTLPSpanExporter(endpoint=traces), "traces", traces))
     )

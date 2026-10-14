@@ -55,11 +55,15 @@ API-key store), which FRD-103 (persistence) will build on.
   as an API key; otherwise as a JWT.
 - **FR-7 Auth dependency**: guards all Gemini routes; returns Gemini-shaped 401 on failure. Since
   ADR-0007 it also guards the pipeline dry-run and the usage endpoint. Only the health endpoints
-  (`/healthz`, `/readyz`) remain unauthenticated.
+  (`/healthz`, `/readyz`) remain unauthenticated. *As built, also `/version-info` (`FRD-117`) and
+  the KIRA surface's `/health` and `/version-info` (`FRD-107`), and — locally or in demo mode
+  only — `/docs`, `/redoc` and `/openapi.json`. `/readyz` gives an unauthenticated caller its
+  verdict and nothing more (`ADR-0015`).*
 - **FR-8 Demo/open toggle**: `auth_required` (default **true**). When false (pure demo) routes are
   open and a synthetic `demo` principal is used. Demo mode also **seeds a deterministic demo key**.
 - **FR-9 CLI**: `python -m aira_gateway.cli api-key create --subject … [--label …]` prints the new
-  key once; `… api-key revoke --prefix …`.
+  key once; `… api-key revoke --prefix …`. *As built, `create` also takes `--days`: a CLI key
+  expires like every key Management issues, within `AIRA_API_KEY_MAX_DAYS` (`cli.py`).*
 - **FR-10 Gateway DB layer**: async SQLAlchemy engine/session from settings (Postgres `aira_gateway`);
   `create_all` for Phase 1; test suite uses in-memory SQLite (hermetic).
 

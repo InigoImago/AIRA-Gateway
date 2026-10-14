@@ -28,6 +28,7 @@ from aira_gateway.audit import AuditTrail, Outcome, UsageBasis, decision_summary
 from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
 from aira_gateway.embedding import describe_vectors
 from aira_gateway.persistence.recorder import record_request
+from aira_gateway.pipeline.dispatch import passed_over_by
 from aira_gateway.shielding import uninterrupted
 from aira_gateway.state import budgets_of, pricing_of, settings_of
 
@@ -376,6 +377,11 @@ async def _write_refusal(
     # and `accounting` has settled it; the row says what it cost. Before that, nothing was spent.
     accounted: Accounting | None = getattr(request.state, "accounted", None)
     spent = accounted if accounted is not None and accounted.produced else None
+    # A chain that ran out of candidates says whom it tried and skipped, and why (`FRD-302` FR-11):
+    # on a refused request that is the whole explanation, and the response's message is not kept.
+    chain = passed_over_by(exc)
+    if chain is not None:
+        trail.passed_over(list(chain.skipped), list(chain.failed))
     await record_request(
         request,
         operation=trail.operation,

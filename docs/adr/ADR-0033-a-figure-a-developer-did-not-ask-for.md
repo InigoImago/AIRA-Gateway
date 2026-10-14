@@ -3,6 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-10-11
 - **Deciders:** Vadim Scheibe
+- **Note (2026-10-11):** the follow-up below about the console is done — both budget screens say
+  when `AIRA_ENFORCE_BUDGETS` is off (`FRD-610` §3.3).
 
 ## Context
 

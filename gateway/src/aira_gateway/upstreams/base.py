@@ -107,8 +107,8 @@ def upstream_reason(response: Any) -> str:
     """The provider's stated reason for refusing, if it gave one, bounded and content-free.
 
     Callers apply this to a `400` alone: it names a fault in the body *we* built and is the most
-    actionable thing anybody gets (`FRD-129`). A `401`/`403` is about our credentials and may name
-    one; a `5xx` is the provider's internal noise. Only `error.message`, capped — the body can quote
+    actionable thing anybody gets. A `401`/`403` is about our credentials and may name one; a `5xx`
+    is the provider's internal noise. Only `error.message`, capped — the body can quote
     the request, and an upstream is not a trusted source of long strings for our error envelope and
     audit log. An unreadable body (including an unread stream) has no reason.
 
@@ -126,7 +126,7 @@ def upstream_reason(response: Any) -> str:
 
 
 def stream_failure(error: Any) -> UpstreamError:
-    """An error the provider sent **inside** a stream that began with a 200 (`FRD-129`).
+    """An error the provider sent **inside** a stream that began with a 200.
 
     Every vendor does it — Anthropic's `event: error` (`overloaded_error` is the common one),
     Google's and the OpenAI dialect's `{"error": {…}}` payload — and every vendor's own SDK raises

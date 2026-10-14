@@ -38,7 +38,9 @@ the system does rather than what its FRDs intend:
 - a `new_source_ip` finding writes IP addresses into its `detail`, visible to whoever reads
   findings;
 - no table besides request content has an automatic deletion — accounts, findings, suspensions,
-  content-read records, API keys and counters are kept until somebody deletes them.
+  content-read records, API keys and counters are kept until somebody deletes them. *(Since then,
+  Management's outbox also deletes an event 30 days after it was delivered or set aside —
+  `KEPT_AFTER_DAYS` — and the notice states that period.)*
 
 The notice states all three plainly. Whether to change the behaviour is a separate decision (§11).
 

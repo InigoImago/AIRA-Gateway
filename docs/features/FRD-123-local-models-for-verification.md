@@ -59,7 +59,8 @@ agree, but they agree about a payload the mock also produced.
 
 - **FR-1 An OpenAI-dialect upstream.** `upstreams/openai/` — request/response/stream mapping for
   `/v1/chat/completions` and `/v1/embeddings`, pure functions, no I/O, in the same shape as
-  `gemini_mapping.py` and `anthropic_mapping.py`.
+  `gemini_mapping.py` and `anthropic_mapping.py` (now a package,
+  `upstreams/vertex/anthropic_mapping/`).
 - **FR-2 An Ollama transport.** Base URL, no credential, no region by default. Registered only
   when `AIRA_OLLAMA_URL` is set, exactly as the Vertex and Gemini adapters are.
 - **FR-3 Declared like any other model.** Capabilities, prices, output caps and (where the dialect
@@ -136,8 +137,8 @@ in the KIRA `/models` list, like any other.
 
 - No credential to leak, which removes the largest risk the other adapters carry.
 - **It must not become a way to bypass anything.** It goes through the same pre-dispatch gate,
-  pipeline, dispatch chain and audit writer as everything else; `api/serving.py` is what makes that
-  structural rather than a promise.
+  pipeline, dispatch chain and audit writer as everything else; `api/serving.py` (now the package
+  `api/serving/`) is what makes that structural rather than a promise.
 - The endpoint is unauthenticated by design, so it must not be exposed outside the Compose network.
   Documented in `DEPLOYMENT.md`, and it is a development/verification setting.
 

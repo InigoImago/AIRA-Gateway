@@ -1,8 +1,9 @@
 # Measurements
 
-Raw output from load runs (`make loadtest`, [`FRD-136`](../features/FRD-136-capacity-the-gateway-is-not-the-bottleneck.md)).
-What the numbers mean and what follows from them is in that FRD's §13 and, for a reader sizing a
-deployment, in [`DEPLOYMENT.md`](../DEPLOYMENT.md) §1a.
+Raw output from load runs (`make loadtest`). How a run is taken, and why its figures are the
+gateway's own cost rather than the model's, is in
+[`tools/loadtest`](../../tools/loadtest/README.md); what the numbers mean for a deployment, and what
+follows from them, is in [`DEPLOYMENT.md`](../DEPLOYMENT.md) §1a.
 
 These files are kept because a capacity claim with no run behind it is an opinion. They are **not**
 a baseline anything asserts against: they were taken on one eight-core machine that was also
@@ -20,7 +21,12 @@ CPU from the cgroups, the memory, the gateway's warnings and the database's conn
 To take a fresh set:
 
 ```bash
-make loadtest-up
+make loadtest-up                                   # AIRA_GATEWAY_WORKERS=4 make loadtest-up for four
 make loadtest SCENARIO=capacity MEASUREMENTS=docs/measurements
 make loadtest-clean && make loadtest-down
 ```
+
+A run writes `report.md` — rewritten after every step — and **appends** one line per step to
+`results.jsonl`, both in the `MEASUREMENTS` directory (`docs/measurements` by default). Rename the
+pair to the dated form above before the next run, or the next run's steps join this one's in the
+same `.jsonl`.

@@ -141,7 +141,8 @@ def unsafe_settings(settings: ManagementSettings) -> list[str]:
         problems.append(
             "AIRA_KAFKA_SECURITY_PROTOCOL is PLAINTEXT — every configuration change this service "
             "publishes crosses the broker in the clear and anyone who can reach it can publish "
-            "their own. Use SASL_SSL (or SSL) and give this service a broker identity."
+            "their own. Use SASL_SSL with a broker identity of this service's own (SSL alone "
+            "carries none)."
         )
     problems.extend(
         plaintext_problems(

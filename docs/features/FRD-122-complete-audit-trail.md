@@ -79,11 +79,28 @@ way. A request budgeted without the atomic guarantee is indistinguishable from o
 ## 4. Functional Requirements
 
 - **FR-1 Refusals are recorded.** Rate-limited, over budget, unknown model, failed validation,
-  blocked by the pipeline — each produces a row with its status and an **outcome reason**.
+  blocked by the pipeline — each produces a row with its status and an **outcome reason**. *As
+  built, precisely:* every request **attributed to a use case** is recorded, served or refused,
+  including one whose caller hung up (`client_gone`, `FRD-128`). A request refused **before** it is
+  attributed writes **no** `request_logs` row: no or an invalid credential (401), too many failed
+  attempts from one address (429), not a member of the use case named or a key bound to another
+  (403), no valid use case named (400; on the KIRA surface a 403 when the caller belongs to several
+  use cases or none and names none). Each is marked on the request's span instead, which the
+  delivery channel carries to a SIEM (`FRD-616`, `FRD-618`): `aira.outcome` is `unauthenticated` for
+  the 401 and the 429, `forbidden` for a use case the credential may not act on — with the use case
+  asked for as `aira.use_case.requested` — and `unattributed` for a known caller whose request no
+  use case could be attributed to; with the status, the source address and, where the caller is
+  known, the subject. An oversized body (413) is the exception the other way: refused before any
+  route, it is recorded without attribution — source address and size, no identity
+  (`record_oversized` in `middleware.py`). A defect before dispatch (an unhandled exception) answers
+  500 and writes no row either — it is logged as `unhandled_error`; one inside the post-dispatch
+  sequence writes a `500`/`internal_error` row (`api/serving/accounting.py`).
 - **FR-2 Outcome reason is a small closed vocabulary**, not free text: `served`, `rate_limited`,
   `budget_exceeded`, `blocked_by_pipeline`, `model_not_found`, `invalid_request`,
   `upstream_error`, `no_capable_model` (`ADR-0012` §3). A closed set is what makes it groupable in
-  reporting; free text would be greppable and nothing more.
+  reporting; free text would be greppable and nothing more. *As built, it has grown to thirteen*
+  (`Outcome` in `audit.py`): also `internal_error`, `request_too_large`, `client_gone`
+  (`FRD-128`), `suspended` (`FRD-503`) and `diagnostic` (`FRD-610`).
 - **FR-3 Asked, decided, served.** `requested_model` (what the caller named), `model` (what
   answered), and — where they differ — why: routing decision or fallback position.
 - **FR-4 Pipeline decisions on the row.** Which steps ran, and each one's verdict, in a compact
@@ -290,6 +307,10 @@ that never presented a valid credential is a *security* event, and it belongs wi
 and incident response (`FRD-500`/`FRD-501`/`FRD-503`) rather than in the usage log, where it would
 appear in spend reports as a refusal attributed to nobody. Recorded here so that whoever builds
 those features finds the question already asked.
+
+The same holds for every refusal **before attribution** — a 403 for a use case the caller may not
+use, a 400 that names none, a 429 for repeated failed attempts (FR-1's as-built note). Each is on
+the request's span, which the delivery channel carries to a SIEM (`FRD-616`).
 
 Mutations `Y9`–`Y11`.
 

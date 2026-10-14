@@ -40,8 +40,10 @@ KNOWN_SECRETS = tuple(sorted(credential_settings.credentials()))
 POLICY_NAME = "aira"
 ROLE_NAME = "aira"
 
-#: Where the secret-id goes unless told otherwise: inside the checkout, so the compose files can
-#: mount it, and in a directory `.gitignore` excludes, so no commit can carry it.
+#: Where the secret-id goes unless told otherwise: inside the checkout, where a Compose override
+#: of the installation's own can mount it (no shipped Compose file does —
+#: `docs/deployment/integrated.md` §4), and in a directory `.gitignore` excludes, so no commit
+#: can carry it.
 DEFAULT_SECRET_ID_FILE = ROOT / "deploy" / "compose" / "secrets" / "vault-secret-id"
 
 #: How long a secret-id this script mints stays valid. **Bounded**, because a secret-id that never

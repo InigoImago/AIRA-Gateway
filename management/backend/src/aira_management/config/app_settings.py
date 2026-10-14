@@ -210,8 +210,7 @@ class ManagementSettings(BaseAiraSettings):
         return [h.strip() for h in self.allowed_hosts.split(",") if h.strip()]
 
     @property
-    def kafka_host_port(self) -> tuple[str, int] | None:
-        """The first broker's ``(host, port)`` for the readiness check, read as a Kafka client
-        dials it (an IPv6 broker without its brackets); ``None`` when no broker is configured."""
-        brokers = parse_bootstrap_servers(self.kafka_bootstrap_servers)
-        return brokers[0] if brokers else None
+    def kafka_brokers(self) -> tuple[tuple[str, int], ...]:
+        """Every broker's ``(host, port)`` for the readiness report, read as a Kafka client dials
+        it (an IPv6 broker without its brackets); empty when no broker is configured."""
+        return parse_bootstrap_servers(self.kafka_bootstrap_servers)

@@ -12,7 +12,8 @@ and the first real screens — a use-case list/detail with membership management
 **Goals**
 - OIDC (`angular-oauth2-oidc`) code-flow + PKCE against the `aira` realm; token stored, refreshed.
 - HTTP interceptor attaching `Authorization: Bearer <token>` to `/api/v1` calls; 401 → re-login.
-- Role-aware navigation (from `me`): show Security/Governance/Admin sections per role.
+- Role-aware navigation (from `me`): show Security/Governance/Admin sections per role. *As built,
+  per permission (`FRD-614`): the console asks `may(permission)`, never a role name.*
 - Use-case list + detail (create/edit, manage members) wired to FRD-202 endpoints.
 
 **Non-Goals**
@@ -24,7 +25,8 @@ and the first real screens — a use-case list/detail with membership management
   unauthenticated → login, coming back to the route that was being entered.
 - **FR-2 API client**: typed services for `me` and `use-cases`; bearer interceptor; error handling
   surfacing the backend error envelope.
-- **FR-3 Nav**: sidebar/menu items shown by role (from `me` roles).
+- **FR-3 Nav**: sidebar/menu items shown by role (from `me` roles). *As built: by permission
+  (`me` carries them, `FRD-614`).*
 - **FR-4 Use-case screens**: list (scoped), detail, create/edit form, member add/remove.
 - **FR-5 UX**: loading/empty/error states; forms validate against backend rules.
   *Delivered in full on 2026-08-05* (see DEVLOG): every load and mutation reports its outcome via

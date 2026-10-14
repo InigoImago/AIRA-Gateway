@@ -43,8 +43,8 @@ difference. `FRD-603` needed no new query. This one does.
   the picture, not about the data.
 - One query, inside the report that is already scoped — so the chart's legend and the table under it
   cannot disagree about one month.
-- On the **reporting screen** and on a **use case's own overview**, where the consumption card
-  already is.
+- ~~On the **reporting screen** and~~ On a **use case's own overview**, where the consumption card
+  already is — only there (FR-14; the reporting screen is a non-goal below).
 - The figures are reachable as text, because colour is not a channel every reader has.
 - Nothing says zero that nobody measured.
 

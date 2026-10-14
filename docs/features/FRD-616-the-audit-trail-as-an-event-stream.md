@@ -1,6 +1,6 @@
 # FRD-616 — The audit trail as an event stream
 
-> Phase: 7 · Status: **Draft** · Owner: Vadim Scheibe
+> Phase: 7 · Status: **Draft — the record stream of §3 is not built; FRD-618's delivery channel carries a span per request** · Owner: Vadim Scheibe
 >
 > Origin: asking what it would take to feed a SIEM over OTLP by changing a URL. The transport is a
 > configuration change; the **content** is this document.
@@ -12,7 +12,23 @@
 > [`FRD-608`](FRD-608-governance-overview.md) (the register), [`FRD-615`](FRD-615-a-trace-crosses-the-bus.md)
 > (what telemetry carries), `ADR-0016`.
 
-**Nothing here is built.**
+**The record stream of §3 is not built**: no gateway outbox, no topic, no `request.recorded`.
+
+**Transport (b) is built, and carries spans, not these records.** The delivery channel
+([`FRD-618`](FRD-618-any-otlp-consumer.md)) forwards a `traces/siem` pipeline whose filter keeps one
+span per request — a span with `aira.use_case` or `aira.outcome` — and the model calls made inside
+one ([`FRD-619`](FRD-619-a-model-access-says-who.md)). A request span carries subject, use case,
+credential, model, outcome, status, source address, tokens and cost. A request refused **before it
+is attributed** writes no audit row, so its span is its only record, marked with `aira.outcome`:
+`unauthenticated` for a `401` and for the `429` an address gets after too many failed attempts,
+`forbidden` for a use case the credential may not act on — the use case asked for is
+`aira.use_case.requested`, never `aira.use_case` — and `unattributed` for a known caller whose
+request no use case could be attributed to (none named where one is required, a malformed name, or
+on the KIRA surface several to choose from). Each carries the status, the source address and, where
+the caller is known, the subject (FRD-122 FR-1). Spans are sampled: `AIRA_OTEL_SAMPLE_RATIO` below 1
+thins this channel too, and a caller's `traceparent` flag decides nothing (`FRD-001` FR-7). The
+encoding and the Splunk recipe are [`FRD-620`](FRD-620-both-channels-configured-the-same-way.md) and
+[`FRD-621`](FRD-621-splunk-hec-as-a-recipe.md). What follows is the content a span does not carry.
 
 ## 1. Why the obvious answer does not work
 
@@ -24,11 +40,21 @@ delivers the wrong thing. A SIEM asks four questions of a system like this:
 | Who called which model, and how did it end? | `request_logs`, in the gateway's Postgres |
 | Who read somebody's stored prompt? | `payload_access`, same database |
 | Who was stopped, by whom, and why? | `access_suspensions` and `anomaly_events`, same database |
-| Who changed access, keys or limits? | Management's outbox → Kafka |
+| Who changed access, keys or limits? | Mostly nowhere — see below |
 
-**Telemetry answers none of them.** `FRD-615` established what actually travels: spans carrying
-attribution, model, outcome, tokens and cost — good for *"why is this slow"* and useless for
-*"who read Frau Müller's prompt on Tuesday"*.
+**The fourth answer is a gap, not a pointer.** Only a role change has a history with an author
+(`RoleChange`, before and after, `FRD-614`). A row keeps who made it for an API key (`owner`,
+`issued_by`), a group grant (`granted_by`), a retired use case (`deleted_by`) and a suspension. A
+model approval or price, a budget, a rate limit, a pipeline, an anomaly rule and a use case's
+settings keep neither an author nor a history. Management's outbox events carry the new state and no
+actor — `api_key.created` names who issued the key, nothing names who revoked it — and are deleted
+30 days after delivery.
+
+**Telemetry answers the first question in part, and none of the others.** `FRD-615` established
+what actually travels: spans carrying attribution, model, outcome, tokens and cost — good for *"why
+is this slow"* and useless for *"who read Frau Müller's prompt on Tuesday"*. Since `FRD-618` the
+delivery channel forwards one such span per request, which is a usable *"who called which model,
+and how did it end"* — sampled, and not the row.
 
 > **Half of this paragraph has since stopped being true, and the half that changed is the
 > interesting one.** It read: *"AIRA's own security lines go to stdout past the standard library,
@@ -52,7 +78,8 @@ attribution, model, outcome, tokens and cost — good for *"why is this slow"* a
 `api_key.created` / `.revoked`, `budget.*`, `ratelimit.*`, `anomaly_rule.*`, `model.*` — written
 through a transactional outbox, published to Kafka, at-least-once, ordered per key. A SIEM can
 consume those **today**, with no change to Management at all: it is a second consumer group on
-topics the gateway already reads.
+topics the gateway already reads. What it receives is the state after each change, not who made it
+(§1), on compacted topics that keep only the latest record per key.
 
 That is worth saying first, because it means this feature is not *"build an event stream"*. It is
 **"give the data plane the half Management has had since `FRD-204`"** — the acts that happen inside

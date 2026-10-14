@@ -38,11 +38,13 @@ Budgets could only cap **tokens** and **request counts**. Neither is a cost cont
 - **FR-1 Price catalog**: a Management `Model` record per model — `name`, `display_name`,
   `provider`, `input_price_per_million`, `output_price_per_million`. Read by any authenticated
   user; written by a **Global Administrator only**, because a price is a fact about the provider
-  contract, not a per-use-case setting.
+  contract, not a per-use-case setting. *As built: the permission `catalog.write` (`FRD-614`),
+  which the Global Administrator holds and an installation may grant to another role.*
 - **FR-2 Half prices refused**: a model is priced in both directions or in neither. One-sided
   pricing would produce a figure that looks complete and silently omits half the cost.
 - **FR-3 Distribution**: `model.upserted` / `model.deleted` over the compacted Kafka topic
-  `aira.models` → gateway `model_prices` read-model (FRD-204 mechanics).
+  `aira.models` → gateway `model_prices` read-model (FRD-204 mechanics). *As built, the
+  read-model is `model_catalog`, which carries the prices beside the declaration.*
 - **FR-4 Cost limit**: `Budget.limit_cost` alongside the existing token and request limits. At
   least one limit of any kind is still required.
 - **FR-5 Pricing**: the gateway computes each request's cost from the prompt/completion token
@@ -54,7 +56,11 @@ Budgets could only cap **tokens** and **request counts**. Neither is a cost cont
   `429 RESOURCE_EXHAUSTED`, exactly like the count limits.
 - **FR-7 Unpriced traffic**: a request whose model has no price is counted under
   `unpriced_requests`, **not** as costing zero, and does not consume the cost budget. The UI names
-  the gap.
+  the gap. *Superseded where a cost limit applies (`FRD-610` §3.2):* an unpriced model may not
+  serve a request a cost limit binds — it is skipped in a chain with its reason, and refused when
+  it is the only candidate (`PricedWhereCostIsLimited`, on by default with
+  `AIRA_ENFORCE_PRICED_MODELS`). Where no cost limit applies, or with that setting off, this
+  requirement holds as written.
 - **FR-8 Reporting**: `request_logs.cost_nanos` per request (NULL when unpriced); the usage
   endpoint reports consumed spend per budget.
 - **FR-9 Display**: an amount is never rendered as `0.00` when it is not zero — the display
@@ -115,7 +121,8 @@ budget tab and in the catalog.
   amount as zero.
 - **Gateway**: pricing by direction, unpriced → `None` (not `0`), cost limits blocking at the
   threshold, unpriced traffic counted apart and not consuming the cost budget, cost and count
-  limits coexisting, prices and limits arriving through the consumer as exact decimals.
+  limits coexisting, prices and limits arriving through the consumer as exact decimals. (Unpriced
+  traffic under a cost limit is refused since `FRD-610` §3.2; see FR-7.)
 - **Management**: only a Global Administrator writes prices; half-priced models refused; prices
   published as strings; cost limits accepted and published.
 - **Frontend**: spend limit validation (including a comma as decimal separator), the bar computed
@@ -135,4 +142,6 @@ budget tab and in the catalog.
 - **Follow-ups**: seed prices for the catalogued models as part of the demo data; report spend
   over time (the data is now in `request_logs`, no view exists yet); the rest of FRD-307
   (approval and model pickers) on the same `Model` record; alerting when a budget approaches its
-  limit.
+  limit. *Since done:* spend over time is `FRD-626`, approval and the pickers are `FRD-307` and
+  `FRD-308`, and the demo's local models are seeded with prices
+  (`apps/seed/contributions/local_models.py`). Alerting before a budget is reached is not built.

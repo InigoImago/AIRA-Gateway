@@ -188,7 +188,7 @@ services:
   #
   # noeviction, not an LRU policy: an evicted budget counter would silently reset and quietly
   # forgive spend. Refusing the write instead surfaces as "Redis unavailable" and takes the
-  # decided degradation path (fail open for limits, Postgres fallback for budgets).
+  # decided degradation path (per-instance buckets for limits, Postgres fallback for budgets).
   redis:
     image: redis:7.4-alpine
     container_name: ${AIRA_STACK:-aira}-redis

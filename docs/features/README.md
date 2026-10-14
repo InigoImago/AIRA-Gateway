@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**94 of 99 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**95 of 99 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -26,7 +26,7 @@ status that goes stale in the copy nobody opens.
 | [112](FRD-112-structured-output.md) | Structured output (`responseSchema`) | 8 (KIRA parity) | ✅ Done |
 | [113](FRD-113-embedding-options.md) | Embedding: task types, batches and dimensions | 8 (KIRA parity) | ✅ Done |
 | [114](FRD-114-model-capability-metadata.md) | What a model can do, and where its limits are | 8 (KIRA parity) | ✅ Done |
-| [115](FRD-115-vertex-ai-upstream.md) | Reaching the models: Vertex AI / Model Garden in the EU | 8 (KIRA parity) | ✅ Done |
+| [115](FRD-115-vertex-ai-upstream.md) | Reaching the models: Vertex AI / Model Garden in the EU | 8 (KIRA parity) | ✅ Done except FR-2a's self-deployed endpoints |
 | [116](FRD-116-vault-secrets.md) | Secrets actually read from Vault | 8 (KIRA parity) | ✅ Done |
 | [117](FRD-117-diagnostics-and-compatibility.md) | Diagnostics and client compatibility | 8 (KIRA parity) | ✅ Done except FR-7 |
 | [118](FRD-118-federated-identity.md) | Several Keycloak backends, and groups from UserInfo | 8 (KIRA parity) | ○ FR-1 done; FR-2 folded into it; FR-3 declined |
@@ -38,15 +38,15 @@ status that goes stale in the copy nobody opens.
 | [124](FRD-124-no-silently-dropped-fields.md) | Nothing a request asks for is silently dropped | 8 | ✅ Done |
 | [125](FRD-125-pipeline-verdicts.md) | The pipeline's own model calls are first class | 3 (correction) | ✅ Done |
 | [126](FRD-126-one-pre-dispatch-sequence.md) | A surface parses; the layer decides | 8 (structural) | ✅ Done |
-| [127](FRD-127-several-gateway-instances.md) | Several gateway instances | 9 (operability) | ○ Draft — the evaluator defect is fixed; the rest is a gap |
+| [127](FRD-127-several-gateway-instances.md) | Several gateway instances | 7 (hardening) | ○ Draft — the evaluator defect is fixed; the rest is a gap |
 | [128](FRD-128-one-post-dispatch-sequence.md) | A request the caller abandoned is still a request that happened | 8 (structural) | ✅ Done |
 | [130](FRD-130-demo-showcase.md) | A demo somebody can walk through | 0 (extension) | ✅ Done |
-| [131](FRD-131-tool-calling.md) | Tool calling: carried, never executed, and off until somebody turns it on | 9 | ✅ Done |
+| [131](FRD-131-tool-calling.md) | Tool calling: carried, never executed, and off until somebody turns it on | 9 | ✅ Done except FR-9 — the tool-result blind spot is documented, not filtered or surfaced |
 | [132](FRD-132-coding-assistant-surface.md) | Which surface a coding assistant needs, measured rather than assumed | 9 | ✅ Stage A done — B1: no new surface needed |
 | [133](FRD-133-prompt-caching.md) | Prompt caching: written down now, built after the agent work | 9 | ✅ Built |
 | [134](FRD-134-clock-skew-in-token-validation.md) | Clock skew in token validation | 1 (platform) | ✅ Done |
 | [135](FRD-135-a-models-reasoning.md) | A model's reasoning: counted always, shown when a use case says so | 8 | ✅ Done |
-| [136](FRD-136-capacity-the-gateway-is-not-the-bottleneck.md) | Capacity: the gateway is not the bottleneck | 9 (operability) | ✅ Done — measured |
+| [136](FRD-136-capacity-the-gateway-is-not-the-bottleneck.md) | Capacity: the gateway is not the bottleneck | 7 (hardening) | ✅ Done — measured |
 | [137](FRD-137-publishing-versioned-images.md) | Publishing versioned images | 7 | ✅ Built |
 | [138](FRD-138-running-a-published-release.md) | Running a published release | 7 | ✅ Built |
 | [139](FRD-139-a-caller-sees-their-own-allowance.md) | A caller sees their own allowance | 1 | ✅ Built |
@@ -55,7 +55,7 @@ status that goes stale in the copy nobody opens.
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |
 | [203](FRD-203-angular-shell.md) | Angular shell: OIDC login, role-aware nav, use-case views | 2 | ✅ Done (Phase 2) |
-| [204](FRD-204-config-distribution-kafka.md) | Config distribution over Kafka (Management → Gateway read-model) | 2 | ✅ Done (Phase 2) |
+| [204](FRD-204-config-distribution-kafka.md) | Config distribution over Kafka (Management → Gateway read-model) | 2 | ✅ Done (Phase 2) except FR-1's schema versions and FR-5's metrics |
 | [205](FRD-205-api-key-issuance.md) | Self-service API-key issuance (Management → Gateway) | 2 | ✅ Done (Phase 2) |
 | [206](FRD-206-console-truthfulness.md) | The console offers only what the server would allow | 2 (correction) | ✅ Done |
 | [207](FRD-207-console-legibility.md) | The console holds still, explains itself, and stays usable as it grows | 2/5 | ✅ Done |
@@ -66,7 +66,7 @@ status that goes stale in the copy nobody opens.
 | [303](FRD-303-pipeline-builder-ui.md) | Pipeline builder UI (clickable graph) | 3 | ✅ Done |
 | [304](FRD-304-upstream-adapters.md) | Real upstream adapter: Google Gemini | 3 | ✅ Done |
 | [306](FRD-306-pipeline-usability.md) | Pipeline rework: LLM routing, explainable filter, dry-run | 3 | ✅ Done |
-| [307](FRD-307-model-catalog.md) | Approved-model catalog + model pickers | 3 | ○ Approval delivered; candidate lists and builder pickers still open |
+| [307](FRD-307-model-catalog.md) | Approved-model catalog + model pickers | 3 | ✅ Done — approval here; the pickers in FRD-308, the candidate list in FRD-507 |
 | [308](FRD-308-use-case-model-release.md) | Which models a use case may call | 3 | ✅ Built |
 | [309](FRD-309-pii-filter.md) | Replacing personal data before the prompt reaches the model | 3 (pipeline) | ✅ Built |
 | [400](FRD-400-budget-model.md) | Budget model & distribution | 4 | ✅ Done |
@@ -99,7 +99,7 @@ status that goes stale in the copy nobody opens.
 | [613](FRD-613-one-person-one-identity.md) | One person, one identity, from the door to the audit row | 6 (governance) | ✅ Built |
 | [614](FRD-614-a-permission-is-a-row.md) | A permission is a row, not a predicate | 7 | ✅ Built |
 | [615](FRD-615-a-trace-crosses-the-bus.md) | A trace crosses the bus | 1 (observability) | ✅ Built |
-| [616](FRD-616-the-audit-trail-as-an-event-stream.md) | The audit trail as an event stream | 7 | ○ Draft |
+| [616](FRD-616-the-audit-trail-as-an-event-stream.md) | The audit trail as an event stream | 7 | ○ Draft — the record stream of §3 is not built; FRD-618's delivery channel carries a span per request |
 | [617](FRD-617-watching-the-wire-to-another-system.md) | Watching the wire to another system | 1 (observability) | ✅ Built |
 | [618](FRD-618-any-otlp-consumer.md) | Any OTLP consumer, not one of them | 1 (observability) | ✅ Built |
 | [619](FRD-619-a-model-access-says-who.md) | A model access that says who it was for | 1 (observability) | ✅ Built |

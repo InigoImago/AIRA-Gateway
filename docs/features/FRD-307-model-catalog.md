@@ -1,10 +1,16 @@
 # FRD-307 — Approved-model catalog + model pickers
 
-> **Partially delivered by [FRD-403](FRD-403-cost-budgets.md)**: the Management
-> `Model` record and its Kafka distribution exist now, carrying prices. Approval, the candidate
-> list and the builder pickers described below are still open and build on the same row.
+> **As built.** The `Model` record and its Kafka distribution came first, carrying prices
+> ([FRD-403](FRD-403-cost-budgets.md)); approval is a state on that row (below). The pickers are
+> [FRD-308](FRD-308-use-case-model-release.md)'s §4.5–4.6: every model field of the pipeline builder
+> is a dropdown or multi-select over the use case's release, a stored model outside it shows as
+> *(not released)*, and the release offers only approved models. The candidate list is
+> [FRD-507](FRD-507-catalog-import.md)'s served-models list, which the console asks of the gateway's
+> `GET /v1beta/models` — there is no `GET /api/v1/models/candidates`. Writing the catalog is the
+> `catalog.write` permission ([FRD-614](FRD-614-a-permission-is-a-row.md)), not a role check. The
+> "allow-list" of §2 became the use case's release, and the `allow_check` step is gone.
 
-> Phase: 3 · Status: **Approval delivered; candidate lists and builder pickers still open** · Owner: Vadim Scheibe
+> Phase: 3 · Status: **Done — approval here; the pickers in FRD-308, the candidate list in FRD-507** · Owner: Vadim Scheibe
 > Origin: user feature request — "an overview of all models, and pick them in the injection filter /
 > allowed-model config." Refined: **model availability is governed — only models a Global
 > Administrator has approved are usable; the raw gateway model list is not the same as the usable set.**
@@ -139,7 +145,7 @@ invented model with no catalog row. Marking the stub providers as the doubles th
 zero, which is the honest fix — the alternative, cataloguing invented models in fifty test files,
 would have taught the suite to lie about what the policy is.
 
-### Still open from the original FRD
+### The rest of the original FRD, as built
 
-The candidate lists and builder pickers: a use case's allow-list and the pipeline builder still
-take a typed model name rather than choosing from the approved set.
+Nothing is open. The builder pickers and the release picker are `FRD-308` §4.5–4.6, and the
+candidate list is `FRD-507`'s served-models list; see the note at the top.

@@ -8,6 +8,10 @@
   changes is that the **three roles are no longer the whole vocabulary**: an installation may define
   further roles, each bound to one Keycloak group, and may change what `IT Steuerung` may do.
 - **Realised by:** [FRD-614](../features/FRD-614-a-permission-is-a-row.md).
+- **Note (2026-10-14):** "acting inside every use case" (decision 2) means in Management:
+  `usecase.manage_all` administers every use case in the console and the control plane, and grants
+  no access in the gateway — calling a use case or seeing its requests there still needs a grant on
+  it (`FRD-614` §4).
 
 ## Context
 

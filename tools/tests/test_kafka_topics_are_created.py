@@ -5,10 +5,10 @@ without adding it to the topic-creation step; `FRD-500` shipped `aira.anomaly-ru
 and a live round found it only because a rule authored through Management never arrived at the
 gateway.
 
-The failure is **silent by construction**: Management writes its outbox, the relay publishes, and
-the broker (with auto-creation off) drops it. Nothing returns an error to anybody. The only trace is
-a line in a consumer log — `Topic ... not found in cluster metadata` — repeated forever in a
-container nobody is watching.
+The failure was **silent by construction**: Management wrote its outbox, the relay published, and
+the broker (with auto-creation off) dropped it, with a line in a consumer log nobody watched. The
+relay now stops at that event and names it and its topic — but it stops every later event on
+every topic with it, so a missing topic is an outage of configuration, not of one feature.
 
 The topic names have a single source of truth in `aira_common.kafka`. They are also written out by
 hand in three other places, and a fourth copy is not the fix — a check that the copies agree is.

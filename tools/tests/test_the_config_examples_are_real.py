@@ -124,7 +124,8 @@ NOT_IN_A_CONFIG_FILE = {
     # Secrets. The renderer refuses them; they come from Vault (`FRD-116`). Which settings those
     # are is `credential_settings`' answer, read off the settings classes rather than listed here.
     *credential_settings.credentials(),
-    # Stamped by the build, not chosen by an installation.
+    # Build provenance, not chosen by an installation. Nothing stamps it yet (no build argument in
+    # the Dockerfiles or CI), so a published image reports nulls on `/version-info`.
     "AIRA_BUILD_NUMBER",
     "AIRA_BUILD_TIME",
     "AIRA_GIT_COMMIT",

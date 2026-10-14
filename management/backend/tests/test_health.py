@@ -78,3 +78,43 @@ def test_readyz_dials_an_ipv6_broker_by_its_address(monkeypatch) -> None:
 
     assert Client().get("/readyz").status_code == 200
     assert ("::1", 9093) in dialled
+
+
+def test_a_kafka_outage_degrades_the_service_and_keeps_it_in_rotation(monkeypatch) -> None:
+    """Every change is written to the outbox in Postgres and published later; while the bus is
+    down the console keeps working. Reporting `not_ready` took the service out of rotation over a
+    dependency its requests do not use."""
+
+    async def only_the_database(
+        name: str, host: str, port: int, *, timeout: float = 1.0
+    ) -> CheckResult:
+        return CheckResult(name=name, ok=name == "postgres", detail=None)
+
+    monkeypatch.setattr(health_views, "check_tcp", only_the_database)
+
+    resp = Client().get("/readyz")
+
+    assert resp.status_code == 200, "a Kafka outage took the service out of rotation"
+    body = resp.json()
+    assert body["status"] == "ready"
+    assert body["degraded"] is True
+    assert body["checks"]["kafka"] == {"ok": False, "detail": "unreachable", "required": False}
+
+
+def test_the_cluster_is_reachable_while_any_broker_is(monkeypatch) -> None:
+    """A Kafka client is handed the whole list and needs one broker. The first broker alone was
+    asked, and its outage read as the cluster's."""
+    from aira_management.config.runtime import get_settings
+
+    async def first_down(name: str, host: str, port: int, *, timeout: float = 1.0) -> CheckResult:
+        return CheckResult(name=name, ok=host != "first")
+
+    two = get_settings().model_copy(update={"kafka_bootstrap_servers": "first:9092,second:9092"})
+    monkeypatch.setattr(health_views, "get_settings", lambda: two)
+    monkeypatch.setattr(health_views, "check_tcp", first_down)
+
+    body = Client().get("/readyz").json()
+
+    assert body["degraded"] is False
+    assert body["checks"]["kafka"]["ok"] is True
+    assert body["checks"]["kafka"]["detail"] == "1 of 2 reachable"

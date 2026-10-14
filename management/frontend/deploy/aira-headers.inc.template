@@ -37,12 +37,12 @@ add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment
 #                               console's rendering entirely.
 #   img/font   data:            inline SVG marks and the icon font.
 #
-# `connect-src` is the one a deployment has to set. The SPA calls its own origin for `/api` and
-# `/gw`, and Keycloak's token endpoint cross-origin — and the issuer is deployment configuration
-# (`public/runtime-config.js`), so it cannot be baked in here. `AIRA_CSP_CONNECT_SRC` defaults to
-# the local Compose stack's Keycloak, exactly as `runtime-config.js` does, so a laptop needs no
-# configuration and a deployment sets the two together. This header is the only place the issuer is
-# named: the policy compiled into `index.html` leaves connections open, and a browser enforces both.
+# `connect-src` follows the issuer. The SPA calls its own origin for `/api` and `/gw`, and
+# Keycloak's token endpoint cross-origin — and the issuer is deployment configuration, so it cannot
+# be baked in here. `10-runtime-config.envsh` derives `AIRA_CSP_CONNECT_SRC` from `AIRA_OIDC_ISSUER`
+# at container start unless it is set explicitly, so a deployment sets the issuer and nothing else.
+# This header is the only place the issuer is named: the policy compiled into `index.html` leaves
+# connections open, and a browser enforces both.
 #
 # `frame-src 'none'`: the console frames nothing. It renews a session with the refresh token the
 # code flow returns (`auth.config.ts`), so no hidden iframe has to load the issuer.

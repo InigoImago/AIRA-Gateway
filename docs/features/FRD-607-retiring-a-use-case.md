@@ -50,10 +50,13 @@ budgets, rate limits, anomaly rules, pipeline and usage counters deleted in the 
 **FR-3 The request path refuses a retired use case by name**, before anything is spent.
 
 **FR-4 The record survives**, and is visible to governance roles at `GET /use-cases/retired/`.
+*As built, to the permission `usecase.read_retired` (`FRD-614`): the Global Administrator and IT
+Steuerung by default.*
 
 **FR-5 Purging is a second decision.** `DELETE /use-cases/<slug>/purge/`, **Global Administrator
 only**, only for a use case already retired, and only after `PURGE_AFTER_DAYS` (30). It emits
-`usecase.purged`, and the gateway then drops its row.
+`usecase.purged`, and the gateway then drops its row. *As built, the permission `usecase.purge`
+(`FRD-614`): sensitive, held by the Global Administrator, grantable to another role.*
 
 **FR-6 The slug stays taken** until a purge.
 
@@ -145,6 +148,7 @@ is the first thing an investigation asks.
 Twelve cases in `management/backend/tests/test_soft_delete.py`, five in
 `gateway/tests/test_a_retired_use_case_serves_nothing.py`, four in `test_retention.py`, two in
 `test_consumer_apply.py`, and four existing tests rewritten where the property genuinely changed.
+*(As the files stand: sixteen and eight.)*
 
 The ones worth naming because they are not obvious:
 
@@ -173,4 +177,6 @@ in depth, and one copy was deleted.
 - **Storage grows.** A retired use case's row, memberships and grants are small and finite; the
   payloads, which are not, are unaffected.
 - **The console has no surface for either action yet.** Deletion has always been API-only, and the
-  retired list is proposed as part of the governance overview rather than assumed here.
+  retired list is proposed as part of the governance overview rather than assumed here. *As built:*
+  the register of the governance overview (`FRD-608`) lists retired use cases, marked *retired*;
+  retiring and purging are still API-only.

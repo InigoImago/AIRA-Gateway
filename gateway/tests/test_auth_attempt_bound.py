@@ -22,8 +22,10 @@ PATH = "/v1beta/models/mock-1:generateContent"
 
 def _client(**overrides: object) -> TestClient:
     # No shared counter store: the bound must be a property of *this* app, not of whatever a
-    # previous run left in a Redis that happens to be up on this machine.
-    values: dict[str, object] = {"auth_required": True, "test_database": True, "redis_url": ""}
+    # previous run left in a Redis that happens to be up on this machine. No `test_database`
+    # either: under pytest the gateway is on SQLite regardless, and outside `local` the setting is
+    # refused at startup, which the deployed cases below would trip over.
+    values: dict[str, object] = {"auth_required": True, "redis_url": ""}
     values.update(overrides)
     return TestClient(create_app(GatewaySettings(**values)))  # type: ignore[arg-type]
 

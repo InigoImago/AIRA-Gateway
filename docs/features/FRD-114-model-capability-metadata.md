@@ -140,7 +140,8 @@ usable, and `FRD-113` cannot tell a supported task type from a typo.
 and the SPA screen. This FRD adds fields to all four and introduces no new machinery.
 
 Metadata is authored where prices are: **Global Administrator only**, on the Models & prices
-screen. That restriction is not incidental — §5.4.
+screen. That restriction is not incidental — §5.4. *(As built, the permission `catalog.write`,
+`FRD-614`: held by the Global Administrator, grantable to another role, marked sensitive.)*
 
 ### 5.2 The gateway registry stays what it is
 
@@ -170,7 +171,9 @@ incomplete rather than something absent.
 `max_output_tokens`, the thinking maximum and the batch bound are all **cost ceilings**. Someone
 who can raise the thinking maximum to a million can make one request cost as much as a month.
 That is why authorship is Global-Admin-only and why every change is audited — the same argument
-that already applies to prices, with more direct leverage.
+that already applies to prices, with more direct leverage. *(As built, authorship is the
+permission `catalog.write`, and changes are **not** audited: a catalogue row keeps its current
+declaration and `updated_at`, with no author and no history — `FRD-616` §1.)*
 
 ### 5.5 The pickers get better for free
 

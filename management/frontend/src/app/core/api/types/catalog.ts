@@ -174,9 +174,9 @@ export interface ThinkingLevelCheck {
  *
  * - `canEnumerate` — whether this platform can be **asked** what it offers. One that cannot is not
  *   broken, and must not be reported as a fault.
- * - `cataloguedIsEnough` — whether declaring a model here is sufficient to reach it, or whether it
- *   must also be named in the gateway's configuration. True exactly where the model name is the
- *   whole addressing.
+ * - `cataloguedIsEnough` — whether the model name alone reaches the model, or whether it needs more:
+ *   Azure a deployment named in the gateway's configuration, Vertex a region on the catalogue
+ *   entry. True exactly where the model name is the whole addressing.
  */
 export interface GatewayProvider {
   /** An identifier — written into the catalog, onto every audit row and into routing. */

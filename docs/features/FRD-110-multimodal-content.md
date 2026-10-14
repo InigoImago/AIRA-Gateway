@@ -4,7 +4,8 @@
 > Origin: the predecessor's contract (`RequestContent`, `DocumentMimeTypeEnum`), programme: `ADR-0010`.
 > Multi-vendor consequences governed by **`ADR-0012`** (documents are not uniformly supported).
 > Touches: `FRD-100` (Gemini surface), `FRD-103` (persistence), `FRD-300` (pipeline),
-> `FRD-401`/`FRD-405` (budgets), `FRD-404` (retention), `FRD-406` (redaction, deferred).
+> `FRD-401`/`FRD-405` (budgets), `FRD-404` (retention), `FRD-406` (redaction — its credential
+> half shipped, its PII half was declined).
 
 ## 1. Problem
 
@@ -50,7 +51,8 @@ question is about.
   credentials. Everything downstream that wants to read inside a document (see FR-9) is out of scope
   here, and the opt-in conversion path (`FRD-121`) keeps the parser out of this process too.
 - **Audio and video.** Not in the predecessor's list; the allow-list is easy to extend later.
-- **Multimodal *output*.** Models answer with text.
+- **Multimodal *output*.** Models answer with text. *(Since `FRD-624`, the Gemini surface also
+  serves speech output.)*
 
 ## 3. User Stories
 - As an **application developer**, I want to send a PDF with my question so that the model can
@@ -75,7 +77,11 @@ question is about.
   and a refusal names which of the two refused — "AIRA does not accept HEIC" and "this model does
   not accept HEIC" call for different actions. Checked against the model actually dispatched to,
   for the same reason `FRD-112` §5.3 checks its capability after routing: with a fallback chain,
-  the model that answers is not the model that was asked for.
+  the model that answers is not the model that was asked for. *As built, AIRA's list has fifteen
+  entries* (`DEFAULT_MEDIA_TYPES` in `attachments.py`): `application/pdf`,
+  `application/x-javascript`, `text/javascript`, `text/plain`, `text/html`, `text/md`, `text/csv`,
+  `text/xml`, `text/rtf`, `image/png`, `image/jpg`, `image/jpeg`, `image/webp`, `image/heic` and
+  `image/heif`. No setting changes it; a model's declaration narrows it.
 - **FR-4 The declared type is verified, not trusted.** A part claiming `application/pdf` whose
   bytes do not begin with a PDF signature is refused. The check is a magic-byte sniff, not a full
   parse: it is there to catch a mislabelled upload and a trivially disguised payload, and it is
@@ -88,7 +94,9 @@ question is about.
 - **FR-7 Persistence stores a description, not the bytes.** See §5.4.
 - **FR-8 Every verb behaves the same.** `generateContent`, `streamGenerateContent` and the
   pipeline's dry-run all accept the same parts. `embedContent` does not — embedding a document is
-  a different operation and is not in scope (`FRD-113`).
+  a different operation and is not in scope (`FRD-113`). *As built, the dry run does not:*
+  `DryRunRequest` takes a `system` and a `user` string and nothing else (`api/pipeline.py`), so an
+  attachment cannot be tried there.
 - **FR-8a A chain may not degrade a document request silently** (`ADR-0012` §3). A fallback
   candidate that cannot read the attachment is **skipped**, never used with the attachment dropped;
   if no candidate qualifies, the request **fails**. Falling back to a text-only model produces a
@@ -98,7 +106,11 @@ question is about.
 - **FR-9 The text-only controls declare their blind spot.** The injection filter and the routing
   classifier read text. A prompt injection inside a PDF is invisible to them. The gateway does not
   pretend otherwise: the limitation is documented in the pipeline builder's inline help, and the
-  request log records that a request carried attachments so an audit can find them.
+  request log records that a request carried attachments so an audit can find them. *As built:*
+  the builder's help does not mention attachments; the blind spot is stated in
+  [`docs/REQUEST-LIFECYCLE.md`](../REQUEST-LIFECYCLE.md) §4 and here. A stored payload describes
+  each attachment — media type, size, digest — in place of its bytes (FR-7), so the record exists
+  only where the use case stores payloads.
 
 ## 5. Design & Architecture
 
@@ -277,7 +289,7 @@ carries documents"* from an existence check into a comparison.
 - **Integration** — a document-carrying request round-trips through the live stack; the audit row
   holds the description; the row size stays bounded.
 - **e2e** — the pipeline builder's dry-run accepts an attachment and states that the text-only
-  steps did not read it.
+  steps did not read it. *Not built: the dry run takes no attachment (FR-8).*
 - **Mutation** — at least: the allow-list actually restricts (not merely present); the magic-byte
   check actually compares; the attachment estimate is non-zero; the payload writer strips bytes.
   Each entry added to `tools/mutation_check.py` and verified to be caught.
@@ -344,7 +356,8 @@ makes one is worse than no harness. The guard lives in the integration suite and
   direction that is corrected within milliseconds. The alternative (no estimate) is the one that
   loses money.
 - **Open** — whether any consumer needs a media type outside the fourteen. The allow-list is
-  configurable, so this is not blocking.
+  configurable, so this is not blocking. *As built, it is not configurable: widening it is a change
+  to `DEFAULT_MEDIA_TYPES`; a deployment can only narrow it, per model (`FRD-114`).*
 
 ## 12. Rollout / Demo
 

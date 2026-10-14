@@ -16,7 +16,8 @@ from collections.abc import Iterable
 from enum import StrEnum
 
 #: The group-path prefix that grants a use case by naming it (`FRD-102`). Kept because the dev
-#: realm and the demo use it, and it needs no grant and no read-model lookup.
+#: realm and the demo use it, and it needs no grant. Serving still needs the use case's record
+#: in the gateway's read-model (`refuse_unless_live`, `FRD-204` FR-8).
 USE_CASE_GROUP_PREFIX = "/use-cases/"
 
 

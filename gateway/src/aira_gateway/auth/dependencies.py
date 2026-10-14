@@ -19,6 +19,7 @@ from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.attempts import record_failed_authentication
 from aira_gateway.auth.attribution import (
     FORBIDDEN,
+    UNATTRIBUTED,
     UNAUTHENTICATED,
     USE_CASE_HEADER_NAME,
     USE_CASE_PATH_FORM,
@@ -178,6 +179,17 @@ def use_case_refusal(principal: Principal, use_case: str) -> str | None:
     return reason
 
 
+def _mark_unattributed(principal: Principal, status: int) -> None:
+    """A known caller whose request no use case could be attributed to, on its span (`FRD-616`)."""
+    mark_refused(
+        UNATTRIBUTED,
+        status,
+        subject=principal.subject,
+        method=principal.method,
+        credential=principal.credential,
+    )
+
+
 def authorize_use_case(principal: Principal, use_case: str) -> None:
     """Raise a Gemini-shaped 403 unless ``principal`` may act on ``use_case``."""
     reason = use_case_refusal(principal, use_case)
@@ -222,6 +234,8 @@ async def require_attribution(
     """Resolve + authorize the use case and attach an Attribution to ``request.state``."""
     use_case = resolve_use_case(request)
     if use_case is not None:
+        if not is_valid_use_case(use_case):
+            _mark_unattributed(principal, 400)
         require_valid_use_case(use_case)
 
     # An API key issued by Management is bound to exactly one use case (`FRD-205`) and needs no
@@ -231,6 +245,7 @@ async def require_attribution(
 
     if use_case is None:
         if must_name_a_use_case(request, principal):
+            _mark_unattributed(principal, 400)
             raise GeminiHTTPError(
                 400,
                 f"Missing use case ({USE_CASE_HEADER_NAME} header or {USE_CASE_PATH_FORM} path).",

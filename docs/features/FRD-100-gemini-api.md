@@ -9,6 +9,8 @@ projects already built against Gemini work against AIRA as a drop-in. Incoming r
 to a **canonical internal schema**, dispatched to an upstream provider (the deterministic mock in
 Phase 1), and the canonical response is mapped back to the Gemini wire format. This canonical core is
 what lets an OpenAI-compatible surface (FRD-106) be added later without touching upstreams.
+*(`FRD-106` was withdrawn, not deferred: `FRD-132` measured a coding assistant working on this
+surface unmodified. The OpenAI dialect exists as an upstream, `FRD-123`/`FRD-120`.)*
 
 ## 2. Goals & Non-Goals
 **Goals**
@@ -21,7 +23,7 @@ what lets an OpenAI-compatible surface (FRD-106) be added later without touching
 **Non-Goals**
 - **Auth** (FRD-101), **attribution** (FRD-102), **persistence** (FRD-103), **full mock fidelity**
   (FRD-104), **tracing/IP capture** (FRD-105) — layered on later. FRD-100 endpoints are open in demo.
-- Real Gemini/Foundry upstreams (Phase 3). OpenAI surface (FRD-106).
+- Real Gemini/Foundry upstreams (Phase 3). OpenAI surface (FRD-106 — since withdrawn).
 - Tools/function-calling, multimodal parts beyond text (later; schema is designed to extend).
 
 **Deferred (compatibility backlog — tracked here so it is not lost):**
@@ -31,6 +33,13 @@ what lets an OpenAI-compatible surface (FRD-106) be added later without touching
 - Preserving/forwarding advanced fields (`safetySettings`, `tools`, `thinkingConfig`,
   `responseSchema`) through the canonical schema; multimodal `inlineData`/`fileData` parts.
 - Wire-accepted today (`extra="ignore"`) so clients don't break, but not yet processed.
+
+> *As built, this backlog is closed.* `?alt=sse` streams SSE, and a stream without it is a JSON
+> array as Gemini's REST API sends it (`api/gemini/routes.py`). `batchEmbedContents` and
+> `outputDimensionality` are served (`FRD-113`). `tools` is `FRD-131`, `thinkingConfig` `FRD-111`,
+> `responseSchema` `FRD-112`, and `inlineData`/`fileData` `FRD-110`. `safetySettings` and
+> `cachedContent` are refused by name, with the reason. The request models are `extra="forbid"`
+> (`api/gemini/schemas.py`): an unknown field is refused, never ignored (`FRD-124`).
 
 ## 3. User Stories
 - As a **developer with a Gemini project**, I want to point my client's base URL at AIRA and have
@@ -66,7 +75,8 @@ Gemini response ◀── gemini schema ◀── map ◀── CanonicalRespons
   - `api/gemini/mapping.py` — Gemini ⇄ canonical mappers.
   - `core/canonical.py` — canonical request/response/usage models.
   - `upstreams/` — providers implement a small `Upstream` protocol (`complete`, `embed`); the mock
-    from FRD-002 is adapted to it.
+    from FRD-002 is adapted to it. *(As built: `generate`, `stream_generate` and `embed`,
+    `upstreams/base.py`.)*
 - **Routing note**: FastAPI path `{model}:generateContent` — the `:method` suffix is parsed from the
   path segment (custom route handling), matching Gemini's colon-verb convention.
 - **Streaming**: FastAPI `StreamingResponse`; the mock yields a few deterministic chunks.
@@ -117,9 +127,12 @@ Response:
 
 ## 11. Dependencies & Risks
 - Depends on FRD-000/002 (gateway skeleton, mock upstream). Feeds FRD-101/102/103/105 (which wrap
-  auth/attribution/persistence/tracing around these routes) and FRD-106 (OpenAI on the same core).
+  auth/attribution/persistence/tracing around these routes) and FRD-106 (OpenAI on the same core —
+  withdrawn).
 - Risk: exact Gemini schema nuances (field names, enums) → follow the public v1beta shapes; keep
-  models permissive (ignore unknown fields) to avoid breaking real clients.
+  models permissive (ignore unknown fields) to avoid breaking real clients. *Reversed by `FRD-124`:
+  a field the gateway does not serve is refused by name, because ignoring it answers a request the
+  caller did not send.*
 - Risk: colon-verb routing in FastAPI → handle via explicit path handling; covered by tests.
 
 ## 12. Rollout / Demo

@@ -9,19 +9,28 @@
 
 ## 1. Summary
 The gateway accounts usage per scope+period and **rejects requests that would exceed a budget**,
-before dispatch, with a shaped `429 RESOURCE_EXHAUSTED`.
+before dispatch, with a shaped `429 RESOURCE_EXHAUSTED`. *As built, what refuses is a counter
+already at its limit* (`budgets/ledger.py`), spent plus reserved: a request larger than what is
+left is admitted and settled at what it cost, so a remainder can go negative (`FRD-610` §3.4,
+`FRD-139` FR-4).
 
 ## 2. Design
 - **Usage accounting**: a gateway table `budget_usage` keyed by `(scope_key, period_key)` holding
   running `tokens` + `requests`. `scope_key` = `uc:<slug>` or `member:<slug>:<subject>`; `period_key`
   = `YYYY-MM` (month) or `YYYY-MM-DD` (day). Incremented after each dispatch (async, off the hot path
-  where possible).
+  where possible). *As built:* a third key, `installation:`, for requests that name no use case
+  (`FRD-610` §3.1); the member key is the **person** — the username where the credential carries
+  one, the subject otherwise (`ADR-0019`); and the row carries `cost_nanos` and
+  `unpriced_requests` beside `tokens` and `requests` (`FRD-403`).
 - **Check (pre-dispatch)**: resolve the applicable budgets for the request's use case + subject; for
   each, read the current period's usage; if a limit is already met, reject with `429` (message names
   the scope + period). Request-count limits block the request itself; token limits block when usage ≥
   limit (tokens are only known after the call, so token budgets are enforced as "stop once exceeded").
 - **Reset**: implicit via `period_key` — a new period starts a fresh counter row.
-- Decisions traced (`aira.budget.*`). Enforcement toggle (`enforce_budgets`), default on.
+- Decisions traced (`aira.budget.*`). Enforcement toggle (`enforce_budgets`), default on. *As
+  built, no `aira.budget.*` span attribute exists: a refusal is on the audit row as
+  `budget_exceeded` (`FRD-122`), and its message names the scope, the period and the limit that
+  ran out (`budgets/keys.py`).*
 - **A lifted budget counts.** A budget switched off (`enabled` false) refuses nothing and is not
   reserved against, and every request is still booked into its counter — in Postgres and in the
   shared counter, which outlives the switch. So it behaves like the installation's own toggle:

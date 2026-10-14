@@ -1584,6 +1584,17 @@ reading code.
   after it cost three days. Nine more settings were missing, five of them the Kafka SASL/TLS family
   a production deployment cannot do without. A reference is the copy nobody opens *until it
   matters*; compare it to the settings classes in both directions, as with every other pair.
+  **It is configuration when it shows a value, too.** `AIRA_FOUNDRY_DEPLOYMENTS` was documented
+  as `model=deployment@region`; the parser splits on `|`, so it read a deployment of that name in
+  no region, served without the residency check every other platform is held to. Examples of
+  list-shaped settings now go through the parsers the gateway starts with
+  (`test_a_documented_example_is_one_the_parser_reads.py`).
+  **And a page is read against the code whole, or its older half rots under a correct newest
+  section.** `docs/DEPLOYMENT.md`'s runbook and release sections were current while its middle still
+  described an older product: Kafka "without TLS", Vault "not used by any code", a "minimal
+  production environment" neither plane would start on, `up-apps` without the development realm
+  it does start. The README's feature list and its gaps were as old as the day they were written.
+  A round that edits one section of a page has read one section of it.
 - **A rule is not its mechanism, and refusing is not the only way to keep one.** *No silent drop*
   was implemented as `extra="forbid"`, which made the compatibility surface refuse the traffic it
   exists to accept: a real chatbot got `422` on every call, over fields that change no answer. The

@@ -54,7 +54,8 @@ class GatewaySettings(BaseAiraSettings):
     auth_required: bool = True
 
     # Require an explicit use case on authenticated requests (FRD-102). Off, a caller in no use
-    # case is served outside every budget, limit and release; refused outside local/demo (ADR-0015).
+    # case is served outside every budget, limit and release; refused outside local, a demo
+    # included (ADR-0015).
     require_use_case: bool = True
 
     # Extra redaction patterns for stored payloads (`FRD-406`), ';'- or newline-separated regexes.
@@ -192,8 +193,9 @@ class GatewaySettings(BaseAiraSettings):
 
     # How many reverse proxies append to ``X-Forwarded-For``; the address is read that many entries
     # from the **right**, because the left end is whatever the caller sent. 1 is the shipped nginx;
-    # a shorter chain did not come through them and falls back to the socket peer.
-    trusted_proxy_hops: int = 1
+    # a shorter chain did not come through them and falls back to the socket peer. A negative
+    # count names no deployment and refuses to start, as Management refuses it.
+    trusted_proxy_hops: int = Field(default=1, ge=0)
 
     # Hard ceiling on an accepted request body; larger bodies are rejected with 413 before
     # they are buffered (ADR-0007). Sizes, counts and intervals that no request could pass are
@@ -274,10 +276,10 @@ class GatewaySettings(BaseAiraSettings):
     cors_origins: str = ""
     cors_allow_credentials: bool = False
 
-    # Microsoft Foundry / Azure OpenAI (FRD-120). Registered only when the endpoint, a credential
-    # and a deployment are all present. Deployment names say nothing reliable about the model, so
-    # the mapping is declared (`ADR-0011` rule 2):
-    #   model=deployment[|region][|embed], entries separated by ';'
+    # Microsoft Foundry / Azure OpenAI (FRD-120). Registered when the endpoint and a deployment
+    # are set; an endpoint without a key refuses to start. Deployment names say nothing reliable
+    # about the model, so the mapping is declared (`ADR-0011` rule 2), the region required:
+    #   model=deployment|region[|embed], entries separated by ';'
     foundry_endpoint: str = ""
     foundry_api_key: str = ""
     foundry_deployments: str = ""
@@ -387,11 +389,11 @@ class GatewaySettings(BaseAiraSettings):
         ).render_as_string(hide_password=False)
 
     @property
-    def kafka_host_port(self) -> tuple[str, int] | None:
-        """The first broker's ``(host, port)`` for the readiness check; ``None`` when no broker is
-        configured — a single-node install with Kafka switched off, which `security.py` accepts."""
-        brokers = parse_bootstrap_servers(self.kafka_bootstrap_servers)
-        return brokers[0] if brokers else None
+    def kafka_brokers(self) -> tuple[tuple[str, int], ...]:
+        """Every broker's ``(host, port)``, for the readiness report: the cluster is reachable
+        while **any** of them is. Empty when no broker is configured — a single-node install with
+        Kafka switched off, which `security.py` accepts."""
+        return parse_bootstrap_servers(self.kafka_bootstrap_servers)
 
 
 def configure_process(settings: GatewaySettings) -> bool:

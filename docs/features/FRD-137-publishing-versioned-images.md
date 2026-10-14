@@ -191,7 +191,9 @@ cheap to fix, and only while nobody is waiting yet.
   cannot be retried as `v0.1.1` unless the tag is deleted on the remote; the ordinary recovery is to
   tag `v0.1.2`. `ADR-0029` named this as the cost of a tag trigger and `ADR-0030` accepted it — a
   patch number is the cheapest thing this project has, and the failure is visible (a tag with no
-  Release) rather than silent.
+  Release) rather than silent. The other recovery has been used too: `v0.1.2` itself failed its
+  gates, its tag was deleted on the remote and cut again on the fix commit, and that run published
+  it — the number was reused, not spent.
 - **A description cannot be corrected after the fact.** Editing the GitHub Release makes it disagree
   with the tag it came from. A real wart; the alternative is notes in a file, which is a second
   source of truth and is what `ADR-0029` refused.

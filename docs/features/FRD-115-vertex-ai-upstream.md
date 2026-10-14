@@ -1,6 +1,6 @@
 # FRD-115 — Reaching the models: Vertex AI / Model Garden in the EU
 
-> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Phase: 8 (KIRA parity) · Status: **Done except FR-2a's self-deployed endpoints** · Owner: Vadim Scheibe
 > Origin: the predecessor's contract; **confirmed: EU residency applies, and access is via
 > the Gemini Enterprise platform's Model Garden, serving Gemini *and Anthropic* models.**
 > Programme: `ADR-0010`. Architecture: **`ADR-0011`** (platform × dialect × identity).
@@ -86,7 +86,8 @@ either dialect exists, and keeps the dialect work free of authentication concern
   - **Self-deployed endpoints — not built.** Models deployed from Model Garden onto our own
     capacity (Nemotron and similar NIM containers) are addressed by **endpoint id** and fail
     differently (§5.3a). The adapter above is the dialect half of that; the addressing and the
-    cold-start policy are not written. This status said *Done* over both until 2026-10-13.
+    cold-start policy are not written. The status header names this exception; it said *Done*
+    over both until 2026-10-13.
 - **FR-3 Service-account auth.** RS256-signed JWT assertion exchanged for an access token; cached
   and refreshed **before** expiry, not on failure. One credential for both publishers.
 - **FR-3a A second credential: an API key.** The same adapter, the same hosts, the same paths —
@@ -358,7 +359,8 @@ project before any of it was written, at a cost well under a cent:
   leaves early is booked as unreported rather than as zero (`FRD-128` FR-6). No count endpoint
   exists for these models (`:countTokens` answers `404`), so they are not counted after the fact.
 - **Errors.** An error object arrives wrapped in a one-element list, which used to lose every
-  `400`'s reason (`FRD-129`); `upstream_reason` reads both shapes.
+  `400`'s reason; `upstream_reason` reads both shapes. (The shared exchange that reads it,
+  `upstreams/exchange.py`, cites `FRD-129`: the label of a live test round, not a document.)
 - **Tools, schemas, sampling.** Tool calls and their streamed fragments, `json_schema` (decoding is
   constrained by it, constraints included), `seed`, `top_p`, the penalties and `stop` are accepted.
 - **The probe.** Nothing here is free to ask, but an **empty conversation** is: the endpoint looks
@@ -394,3 +396,8 @@ project before any of it was written, at a cost well under a cent:
 Demo mode unaffected: the mock stays the default and Vertex registers only when configured.
 `deploy/compose/README.md` gains the configuration, the region allow-list, and a note that a
 service-account key in an environment variable is interim until `FRD-116`.
+
+*As built:* the compose README never gained it. The settings are in
+[`docs/CONFIGURATION.md`](../CONFIGURATION.md) and what a platform must provide is in
+[`docs/INTEGRATIONS.md`](../INTEGRATIONS.md) §5. The service-account key is read from the
+environment or from Vault (`FRD-116`).

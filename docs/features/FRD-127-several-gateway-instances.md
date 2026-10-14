@@ -1,6 +1,6 @@
 # FRD-127 — Several gateway instances
 
-> Phase: 9 (operability) · Status: **Draft — the evaluator defect is fixed; the rest is a gap** · Owner: Vadim Scheibe
+> Phase: 7 (hardening) · Status: **Draft — the evaluator defect is fixed; the rest is a gap** · Owner: Vadim Scheibe
 >
 > Origin: the owner. Related: `FRD-405` (rate limits), `FRD-401` (budgets),
 > `FRD-204` (read-model), `FRD-500`/`501` (anomaly detection), `ADR-0007` (deployment safety),
@@ -10,6 +10,10 @@
 > predecessor's code. This one is the owner's actual requirement, and it was recorded under the
 > wrong name in `CLAUDE.md` §6 — which is the failure mode that section exists to prevent, since a
 > planner reads it before anything else.
+>
+> **Nor is it the earlier `FRD-127`.** Before this document took the number, it labelled the fix
+> for a cancelled KIRA stream, which never had a document of its own. `FRD-126`, `FRD-128` and the
+> DEVLOG cite that label; it is not this feature.
 
 ## 1. Problem
 
@@ -72,10 +76,19 @@ would buy nothing. Only the gateway is scaled.
 Worth stating precisely, because the honest answer is *most of it* and an FRD that implied
 otherwise would send somebody to rebuild working code.
 
-- **No in-process caches on the request path.** Every decision reads Postgres or Redis per request.
-  The one memo that exists, `ModelCatalog.per_request()`, is scoped to a single request on purpose:
-  a catalog cached for the application's lifetime would keep answering an old declaration after
-  somebody replaced it, which is `FRD-307` inverted.
+- **Four short caches on the request path, and one memo.** *Corrected:* this said "no in-process
+  caches on the request path". Four sit on it, each keeping what it read from the read-model for **5
+  seconds**: a use case's rate limits (`ratelimit/service.py`), the active suspensions
+  (`anomalies/suspensions.py`), the group and member grants (`auth/grants.py`) and the stored role
+  definitions (`auth/role_definitions.py`). Each is a copy of rows every instance reads, so no
+  request depends on state only one process holds and FR-1 stands; what *N* changes is when a change
+  binds. A limit, a grant or a role arrives over Kafka and binds on every instance within 5 seconds
+  of reaching the read-model, at *N* = 1 as well. A suspension or a lift is written by one gateway
+  instance — the evaluator that won the tick, or the incident API — which drops its own cache: it
+  binds there at once and on every **other** instance within 5 seconds. The memo,
+  `ModelCatalog.per_request()`, is scoped to a single request on purpose: a catalog cached for the
+  application's lifetime would keep answering an old declaration after somebody replaced it, which
+  is `FRD-307` inverted.
 - **Rate limits and budgets are already shared.** `RedisTokenBucket` and the Lua reservation scripts
   count in Redis, and `test_two_gateway_instances_enforce_one_limit_not_one_each` builds two
   services with separate caches and asserts the burst is **shared, not granted to each** — the
@@ -99,9 +112,22 @@ make it hard to get wrong:
 | Process | Count | Why |
 |---|---|---|
 | `gateway` | **N** | the request path; the subject of this FRD |
-| `gateway-consumer` | 1 | applies `pipeline.upserted` and friends; two would apply each event twice |
-| `gateway-retention` | 1 | deletes expired payloads; two would race over the same rows |
+| `gateway-consumer` | 1 | applies `pipeline.upserted` and friends; one is enough, and a second gains nothing |
+| `gateway-retention` | 1 | clears expired payloads; a second would leave a second record of each sweep |
 | `management`, `management-relay` | 1 | owner's decision (§1) |
+
+*Corrected:* the two background rows said a second consumer "would apply each event twice" and a
+second pruner "would race over the same rows". Neither holds, and the count of one stands for
+weaker reasons:
+
+- **A second consumer joins the same group** (`aira-gateway`, staged like the topics) and Kafka
+  splits the topics between the two. Each configuration topic has one partition, so no event is
+  applied twice and none arrives sooner; and an event delivered again after a rebalance is an
+  upsert or a delete keyed by its subject, so the read-model converges on the same rows.
+- **The pruner takes no lock**, and does not need one for the rows: it clears only rows that still
+  hold a payload, so a second pass running the same statements finds nothing left to clear. What
+  doubles is the record — each pass writes its own `retention_runs` row, so an interval would show
+  two sweeps with the counts split between them.
 
 ### 5.3 The anomaly evaluator — **fixed**
 
@@ -174,10 +200,10 @@ question does not arise.
 
 ### 5.6 What a load balancer needs from us
 
-Nothing new, and worth confirming rather than assuming: `/readyz` already reports Postgres, Kafka and
-the counters, and distinguishes *degraded* from *not ready* so that a Redis outage takes the fleet to
-a documented fallback rather than out of rotation. Sticky sessions are not required — there is no
-session.
+Nothing new, and worth confirming rather than assuming: `/readyz` already reports Postgres, Kafka
+and the counters, and distinguishes *degraded* from *not ready* so that a Redis or a Kafka outage
+takes the fleet to a documented fallback rather than out of rotation — only Postgres decides
+readiness (`FRD-117` FR-3a). Sticky sessions are not required — there is no session.
 
 ## 6. Data Model
 
@@ -185,8 +211,8 @@ None of its own. The change in §5.3 moves where a background task runs; it does
 
 ## 7. API / Interface Contract
 
-No API change. Configuration only: the instance count, and — if §5.3 option (1) is taken — one more
-container in the compose file and the Helm chart.
+No API change. Configuration only: the instance count. The evaluator stays in the gateway process
+behind a lock (§5.3), so the container of its own the first draft recommended is not needed.
 
 ## 8. Security & Privacy
 

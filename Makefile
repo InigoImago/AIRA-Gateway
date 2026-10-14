@@ -477,7 +477,7 @@ showcase-reset-keys: ## Let the demo's API keys be reissued after their use case
 	@python3 tools/showcase_doctor.py
 
 showcase-doctor: ## Report which link of the demo is broken (reads only, changes nothing)
-	@python3 tools/showcase_doctor.py
+	@uv run python tools/showcase_doctor.py
 
 showcase-agent: ## Write an OpenCode config for the showcase's coding-assistant use case
 	@uv run python tools/showcase_agent.py

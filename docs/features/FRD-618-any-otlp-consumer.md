@@ -24,7 +24,9 @@
 > request is attributed, so its span has no `aira.use_case`, and the filter dropped it. The gateway
 > now marks such a span with `aira.outcome` (`unauthenticated` or `forbidden`), `aira.status` and
 > `aira.source_ip`. A 403 also carries the caller's identity and `aira.use_case.requested`. The
-> filter keeps a span that carries either attribute.
+> filter keeps a span that carries either attribute. *As built, every refusal before attribution
+> is marked:* the `429` for repeated failed attempts as `unauthenticated` too, and a known caller
+> whose request no use case could be attributed to as `unattributed` (`FRD-122` FR-1, `FRD-616`).
 
 ## 1. Problem
 

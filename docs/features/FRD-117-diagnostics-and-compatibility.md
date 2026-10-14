@@ -57,6 +57,14 @@ ask us about.
   200 with `degraded: true` when an upstream is unreachable but the gateway is otherwise serving.
   A gateway that can still refuse requests correctly, enforce budgets and serve reporting is not
   down, and taking it out of the load balancer would help nobody.
+- **FR-3a Kafka is degraded, not down — on both planes.** Postgres alone decides readiness. Kafka
+  carries configuration *changes*: the gateway serves on the read-model it already holds, and
+  Management's changes wait in its outbox. So an unreachable bus answers `200` with
+  `degraded: true` and `checks.kafka.required: false`. The cluster counts as reachable while **any**
+  broker answers; the detail counts the brokers that did and never names them. Until the
+  documentation was read against the code, only the first broker was asked, and its outage
+  answered `503`. Every instance of both services then left rotation at once, over a dependency
+  the request path does not use (mutations `DA-4`–`DA-7`).
 - **FR-4 `x-trace-id` on every response**, including error responses.
 - **FR-5 Outgoing calls are traced.** HTTPX and SQLAlchemy instrumented, so an upstream call and a
   query are spans with durations — and no credential of ours reaches one (§5.3). *Recorded as built
@@ -164,6 +172,11 @@ None.
   camelCase as the predecessor has it. Any field may be null.
 - `GET /readyz` → the existing envelope plus
   `checks.upstreams: {<provider>: {ok, detail, checked_at, required: false}}`.
+  *As built (`routes/health.py`, `diagnostics.py`):* `upstreams` is a **top-level** key,
+  `{<provider>: {ok, took_seconds, probed, detail, age_seconds, stale}}`, beside `status`,
+  `degraded`, `fallbacks`, `checks` (`postgres`, `kafka`, `counters`) and `secrets`. That full body
+  goes only to an operator — a holder of `operations.diagnose` or the unbound break-glass key — or
+  to everyone locally and in demo mode; anyone else gets `status` and `degraded` alone.
 - `GET /openapi-3.0.json` alongside `/openapi.json`.
 - Every response: `x-trace-id`.
 

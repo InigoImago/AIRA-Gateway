@@ -5,6 +5,12 @@
 - **Deciders:** AIRA (product owner + engineering)
 - **Related:** `ADR-0008` (Redis as the shared counter store), `ADR-0013` (auditable model access),
   `FRD-122` (complete audit trail), `FRD-405` (rate limiting), `FRD-500`–`FRD-504`
+- **Amended 2026-08-16 (`FRD-127` §5.3):** detection reads `request_logs` itself, on a timer
+  (`AIRA_ANOMALY_INTERVAL_SECONDS`, 60 by default) from a watermark, inside the gateway process
+  with one instance evaluating per tick — not from the `RequestLogWriter` queue §1 names, which
+  saw only its own instance's traffic. §1's rule stands: the audit trail and nothing else, off the
+  request path. **As built, §5:** a suspension stops a subject, a credential or a use case; a model
+  is stopped by withdrawing its approval or its release (`FRD-307`, `FRD-308`).
 
 ## Context
 

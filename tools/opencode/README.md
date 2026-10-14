@@ -1,32 +1,40 @@
-# Pointing OpenCode at AIRA (`FRD-132` stage A)
+# OpenCode and AIRA
 
-This is a **measurement harness**, not a supported integration. The question it exists to answer:
-*can a real coding assistant be served by the surface AIRA already has, or does it need a new one?*
-Choosing that from documentation is how a contract gets built on a guess and maintained forever —
-so the answer comes from a client that actually sends requests.
+Two things live here, and they have different standing:
+
+- **The budget plugin and the `/budget` command** (§3 and §4 below) are how a developer sees their
+  allowance inside OpenCode — the figure `GET /v1beta/me/budget` answers. The plugin is the main
+  route, because it shows that figure without being asked. The console hands out the same plugin
+  beside a key it issues.
+- **`opencode.json` is a measurement harness.** The question it was built to answer: *can a real
+  coding assistant be served by the surface AIRA already has, or does it need a new one?* Choosing
+  that from documentation is how a contract gets built on a guess and maintained forever — so the
+  answer came from a client that actually sends requests. It could: no new surface is needed.
 
 ## Why the Gemini surface, and why `@ai-sdk/google`
 
 AIRA serves `/v1beta/models/{model}:generateContent`, which is Google's shape. OpenCode's providers
 are AI SDK packages with an overridable `baseURL`, so `@ai-sdk/google` pointed at the gateway is the
-cheapest thing that could possibly work. If it does, no new surface is needed at all (`FRD-132` B1).
-If it does not, what breaks — and exactly where — is the evidence that decides between an
-OpenAI-compatible surface (B2, reviving the withdrawn `FRD-106`) and an Anthropic-shaped one (B3).
+cheapest thing that could possibly work. If it does, no new surface is needed at all. If it does
+not, what breaks — and exactly where — is the evidence that decides between an OpenAI-compatible
+surface, which AIRA once planned and withdrew, and an Anthropic-shaped one.
 
-## The console generates this file now (2026-08-08)
+## A working configuration is generated for you
 
-Since `FRD-132` §10, the API-keys panel offers **Copy OpenCode config** and **Download
-opencode.json** on a key it has just issued — built at that moment because the plaintext exists for
-exactly that moment, and naming only models whose catalog entry **declares** `tools`.
+The console's API-keys panel offers **Copy OpenCode config** and **Download opencode.json** on a key
+it has just issued — built at that moment because the plaintext exists for exactly
+that moment, and naming only the models released to the use case whose catalog entry **declares**
+`tools`. On the showcase, `make showcase` — or `make showcase-agent` alone — writes the same kind of
+file, `opencode.showcase.json`, for its `coding-assistant` use case.
 
-Use that if you want a working assistant. This directory stays as the **harness**: it is what
-re-runs the `FRD-132` measurement against a changed gateway, and it is hand-editable in ways a
+Use one of those if you want a working assistant. `opencode.json` here stays as the **harness**: it
+is what re-runs that measurement against a changed gateway, and it is hand-editable in ways a
 generated file deliberately is not.
 
 ## Running it
 
 ```bash
-# 1. A use case and a key. Keys are always bounded (ADR-0015); 30 days is the default.
+# 1. A use case and a key. Keys are always bounded; 30 days is the default.
 #    Issue one in the console, or:
 curl -sX POST http://localhost:8002/api/v1/use-cases/coding-assistant/api-keys/ \
      -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
@@ -39,25 +47,30 @@ cd <a scratch project>
 OPENCODE_CONFIG=/path/to/AIRA/tools/opencode/opencode.json opencode run "list the files here"
 ```
 
-The key is read from the environment on purpose — a credential in a file that lives in the
-repository is the thing `FRD-406` masks out of stored payloads, and it should not be here either.
+**First set `"model"` in that file to a model the use case may call.** Its default, `qwen2.5:3b`,
+has no catalog entry in the showcase (see §1 below), so the gateway refuses it; the showcase's
+`coding-assistant` may call `qwen3:0.6b`, whose entry declares `tools`.
+
+The key is read from the environment on purpose — a credential is what the gateway masks out of the
+payloads it stores, and it should not be in a file that lives in the repository either.
 
 ## What to write down
 
-Per `FRD-132` §3, and **the output rather than a summary of it**: which request shape the client
-sends, which auth header, where the first failure lands and what it says, how many requests one
-instruction produces, and how many tokens. The last two calibrate `FRD-405` limits and `FRD-400`
-budgets for a use-case shape that makes many model calls per human instruction.
+**The output rather than a summary of it**: which request shape the client sends, which auth
+header, where the first failure lands and what it says, how many requests one instruction produces,
+and how many tokens. The last two calibrate rate limits and budgets for a use-case shape that makes
+many model calls per human instruction.
 
-## What is expected to fail, today
+## Tool calling
 
-Tool calling. `tools` is refused with **400** at the surface (`FRD-131` builds it, per use case and
-off by default). Reaching that refusal is a successful stage-A run: it means the path, the auth and
-the streaming all worked, and the one missing capability is the one already written up.
+Tools are carried — never executed — where the use case has `tools_enabled` on and the model's
+catalog entry declares `tools`; the showcase's `coding-assistant` is such a use case.
+Without the switch, `tools` is refused with a **400** naming it. A model that does not declare tool
+calling is skipped by a fallback chain, and refused when it is the only candidate.
 
-## Showing a developer what they are spending (`FRD-139`, `FRD-132` §11.7)
+## Showing a developer what they are spending
 
-Two different figures with two different owners, and both were broken in their own way:
+Two different figures with two different owners:
 
 | Question | Who knows the answer | Where it comes from |
 | --- | --- | --- |
@@ -79,16 +92,16 @@ because the two disagree:
 | what a plugin may export | **one function, and nothing else** — every export is called as a plugin factory, and a string `id` makes the loader refuse the file |
 | `tui` plugins from that directory | **no** — the server loader takes the file anyway and the session hangs; the way in is `client.tui.showToast` |
 
-The status-line row is why there is no one-liner that paints a budget into the chrome: it was
-assumed to exist, and the assumption is what made this section wrong before. The two plugin rows
-are why §3's file looks the way it does — both were found by watching the client refuse to work.
+The status-line row is why there is no one-liner that paints a budget into the chrome. The two
+plugin rows are why §3's file looks the way it does: a plugin file that breaks either of them stops
+the client from working.
 
 ### 1. The session cost: prices in the configuration
 
 Without a `cost` block OpenCode prints **`$0.00` forever**, whatever was spent. The console's
-generated configuration now always writes the catalog's prices and puts the currency in the model's
+generated configuration always writes the catalog's prices and puts the currency in the model's
 **name** (`qwen3:0.6b via AIRA (EUR)`), since the name is the one field it controls. Nothing is
-converted — an exchange rate needs a date per booking (`FRD-403`).
+converted — an exchange rate needs a date per booking.
 
 The harness config here carries the same block for the one model this installation catalogues, so
 a run reproduces the figure:
@@ -117,9 +130,11 @@ curl -s http://localhost:8001/v1beta/me/budget -H "x-goog-api-key: $AIRA_API_KEY
   // "spent \(.this_period.cost) this month"'
 ```
 
-Against the live stack that prints `5.00 of 5.00 left (resets 2026-11-01)`. Put it in a shell
-prompt, a tmux `status-right`, or an alias beside the editor. It lives *next to* OpenCode, which is
-why it needs nothing from OpenCode.
+Under a cost budget that prints `<remaining> of <limit> left (resets <date>)`. The showcase's
+`coding-assistant` has a budget of requests, not of money, so there it prints the second line,
+`spent <cost> this month`; the plugin below shows whichever dimension binds. Put the command in a
+shell prompt, a tmux `status-right`, or an alias beside the editor. It lives *next to* OpenCode,
+which is why it needs nothing from OpenCode.
 
 Three things the answer says that a tally cannot:
 
@@ -131,9 +146,8 @@ Three things the answer says that a tally cannot:
 
 ### 3. Inside the session, unasked: the budget plugin
 
-[`plugin/aira-budget.js`](plugin/aira-budget.js) is **the route this feature is delivered by**
-(`ADR-0033`). Everything above still has to be *asked for*, and a figure nobody asks for is a
-figure nobody sees:
+[`plugin/aira-budget.js`](plugin/aira-budget.js) is **the route this feature is delivered by**.
+Everything above still has to be *asked for*, and a figure nobody asks for is a figure nobody sees:
 
 ```bash
 mkdir -p .opencode/plugin
@@ -176,6 +190,10 @@ too, because the next person to tidy it will not have measured them:
 3. **Loading may not block.** Awaiting the first reading waits on the gateway *and* on the TUI's
    own server, which is not serving yet; the interface drew nothing at all until it was killed.
 
+**After editing the plugin**, run `uv run python tools/opencode_plugin_asset.py --write`. The
+console hands out a generated copy of this file, and
+`tools/tests/test_the_console_hands_out_the_plugin_it_ships.py` fails while the two differ.
+
 ### 4. Inside the session, on request: the `/budget` command
 
 [`command/budget.md`](command/budget.md) is a **prompt template**, not code. Copy it next to a
@@ -199,7 +217,7 @@ repository — that is the one way a shipped recipe leaks a credential into vers
 measured rather than assumed: `qwen3:0.6b` never attempted it, and `qwen3:4b` — a model this
 catalogue records as one that *does* emit tool calls — declared ten tools and called none, twice,
 taking 90 seconds each time. The smaller model's first answer *invented* a budget that contradicted
-the live stack, in the template's own bullet shape, which is why the template now orders
+the live stack, in the template's own bullet shape, which is why the template orders
 `I could not read the budget.` instead of a guess.
 
 A transparency feature whose reliability depends on a model's mood is not one. The plugin in §3

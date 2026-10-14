@@ -3,6 +3,10 @@
 - **Status:** Accepted
 - **Date:** 2026-10-13
 - **Deciders:** Vadim Scheibe
+- **Note (2026-10-14):** "four fields on the federation" below undercounts what the guide lists —
+  six fields on the federation, plus the bounded cache policy and the *MSAD account controls*
+  mapper, the last two needed by every federation of AD (`docs/INTEGRATIONS.md` §2). The decision
+  is unchanged.
 
 ## Context
 

@@ -3,6 +3,16 @@
 * **Status**: Accepted
 * **Date**: 2026-08-08
 * **Supersedes / amends**: extends `ADR-0007` (hardening) to the data plane
+* **Amended 2026-08-16**: decision 4's diagnosis is served to an **operator**, not to any
+  authenticated caller — a holder of `operations.diagnose` (`FRD-614`; the incident roles before
+  it) or the unbound break-glass key — and to everyone locally or in demo mode. A key bound to a use
+  case gets the verdict only (`routes/health.py`).
+* **Amended 2026-10-14**: decision 2 said `AIRA_DEMO_MODE` exempts a deployment *outright*. It
+  waives a list (`WAIVED_BY_A_DEMO` in `aira_gateway/security.py`): the published Postgres
+  password, an unset audience, plaintext Kafka, and a plaintext issuer, JWKS or Vault address. A
+  demo is refused like any other deployment for authentication off, attribution not required, the
+  in-memory test database, and OIDC switched on with no issuer — the shipped demo needs none of
+  those, and waiving the first two made one variable an open port serving models to anybody.
 
 ## Context
 

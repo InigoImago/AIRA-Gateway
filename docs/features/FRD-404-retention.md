@@ -26,6 +26,8 @@ sold to a governance function in Germany, that is the single least defensible pr
 **Non-Goals**
 - Content-level redaction (masking a card number inside a kept payload). That is the
   `Redactor` hook and remains a no-op; retention is about *when it goes*, not *what is masked*.
+  *(Since `FRD-406`, the default redactor masks credentials — `PatternRedactor`; personal data
+  stays unmasked by decision.)*
 - Legal-hold or per-request exemptions.
 - Retention for the Kafka topics or the management database.
 
@@ -101,7 +103,9 @@ nothing is deleted** — the period configured in the UI is a promise that only 
 - **Storage switch**: declined storage writes no payload but still accounts the request; the
   installation kill switch overrides a use case that wants storage; requests without a use case
   follow the installation setting; an unknown use case keeps the previous behaviour; switching
-  off removes what was already stored even though the period has not passed.
+  off removes what was already stored even though the period has not passed. *As built, a use case
+  the gateway has not heard of stores nothing (`_may_store_payloads` in `persistence/writer.py`),
+  and since `FRD-204` FR-8 a request naming one is refused before it is served.*
 - **Acceptance** (verified on the live stack): with storage off for `demo-uc`, a request
   containing a personnel number returned 200, its tokens and cost were recorded, and the number
   appeared **nowhere** in `request_logs`. Separately: two rows aged 10 and 2 days on a use case with the
@@ -118,7 +122,8 @@ nothing is deleted** — the period configured in the UI is a promise that only 
 - Switching storage off does not affect requests already in flight, and the purge happens on the
   next pruner run rather than immediately.
 - **Follow-ups**: content redaction (the `Redactor` hook is still a no-op) — tracked as `FRD-406`
-  in the ROADMAP backlog and **deliberately deferred** until after rate limiting; a retention period for
+  in the ROADMAP backlog and **deliberately deferred** until after rate limiting *(since shipped for
+  credentials, `PatternRedactor`; declined for personal data)*; a retention period for
   the management database's own records; exporting or archiving before deletion for use cases
   with a statutory retention duty; surfacing "payload removed" distinctly from "never stored" in
   a future request-log viewer.
@@ -137,6 +142,9 @@ That is not an edge case. It is exactly what deleting a use case produces: `_del
 `request_logs` on purpose — the audit trail and the spend history outlive the use case (§4.1) — and
 its comment states *"their payloads still expire on the retention clock."* They did not. Deleting a
 use case is the moment its stored prompts should go, and it was the one moment they could not.
+*(As built, deleting is retiring — `_retire_usecase`, `FRD-607` — and the row stays as a tombstone
+that keeps the use case's own retention period; only a purge leaves the slug unknown, and its rows
+then follow the installation default as described below.)*
 
 Measured on a running stack before the fix: **1509 rows** carrying stored prompts for use cases
 that no longer existed. After it, one pass cleared all 1509 and left the metadata standing.

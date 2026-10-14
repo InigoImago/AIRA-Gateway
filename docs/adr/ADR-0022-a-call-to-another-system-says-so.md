@@ -4,6 +4,10 @@
 > Supersedes: none · Related: [`ADR-0004`](ADR-0004-observability-grafana-otel-lgtm.md),
 > [`ADR-0007`](ADR-0007-security-hardening-baseline.md),
 > [`FRD-617`](../features/FRD-617-watching-the-wire-to-another-system.md)
+>
+> **Note (2026-09-02):** `tools/lab_status.py`, cited below, was removed with the lab collector
+> configuration; what it did is part of `tools/otel_status.py` (`make otel-status`). The decision
+> is unaffected.
 
 ## Context
 

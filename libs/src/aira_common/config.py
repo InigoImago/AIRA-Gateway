@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -157,9 +157,11 @@ class BaseAiraSettings(BaseSettings):
     what it is set to — one definition, so the notice cannot describe a different installation.
     """
 
-    default_retention_days: int = 7
+    default_retention_days: int = Field(default=7, ge=1, le=3650)
     """Payload retention in days for requests carrying no use case (FRD-404); use-case traffic
-    follows its use case's period. Shared for the same reason as ``store_payloads``."""
+    follows its use case's period. Shared for the same reason as ``store_payloads``. Within the
+    bounds a use case's own period has: below one day the sweep would keep payloads a day anyway
+    while the privacy notice, which prints this value, said they were kept without limit."""
 
     log_retention_days: int = 0
     """Delete whole request_log rows older than this many days. 0 keeps them forever, which is
@@ -172,7 +174,9 @@ class BaseAiraSettings(BaseSettings):
     """OTLP/HTTP endpoint of the OpenTelemetry Collector."""
 
     otel_sample_ratio: float = 1.0
-    """Trace sampling ratio (parent-based); 1.0 = sample everything."""
+    """Trace sampling ratio, decided by trace id in every process and never by a caller's
+    `traceparent` flag (`request_sampler`); 1.0 = every trace. Below 1 it thins the delivery
+    channel too, whose records are spans."""
 
     debug_integrations: str = ""
     """Which external systems to report one line per call for (`FRD-617`).

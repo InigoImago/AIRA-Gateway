@@ -33,8 +33,9 @@ class ApiKey(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    #: When the key stops working on its own. **NULL means never** — older keys and the break-glass
-    #: key carry it, and an expiry that cannot be omitted is one an operator sets to the year 3000.
+    #: When the key stops working on its own. **NULL means never** — keys issued before expiry
+    #: existed, and the demo key, whose safety is `AIRA_DEMO_MODE` rather than a date. The
+    #: break-glass CLI always sets one, bounded like every key Management issues.
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

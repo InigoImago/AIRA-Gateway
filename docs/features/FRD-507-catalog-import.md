@@ -207,7 +207,7 @@ needs a configuration entry and the reachability check is exactly what says so.
 | Google AI Studio             | yes   | yes                   | paged `ListModels`; the id is the model name |
 | OpenAI-compatible (Ollama, …)| yes   | yes                   | `/v1/models`; ids are names, and nothing else |
 | Microsoft Foundry (Azure)    | no    | no                    | the listing names models needing a **deployment** first |
-| Vertex (Gemini + Anthropic)  | no    | no                    | two adapters under one provider name |
+| Vertex (Gemini + Anthropic)  | no    | no                    | two adapters under one provider name; the entry names a region |
 | Mock (local only)            | yes   | yes                   | so the flow is demonstrable without a credential |
 
 Azure is what the distinction was written for. `/openai/models` answers "which models could this
@@ -216,6 +216,12 @@ name is the addressing. An import from there is catalogued, priced, approved —
 its first request, with the catalog vouching for it. So `names_models()` lives on the **routing
 axis** rather than in the dialect, and Foundry, which builds the very same adapter class, claims no
 provider name and offers no listing.
+
+*Corrected:* this table and `cataloguedIsEnough`'s description said a Vertex model must also be
+named in the gateway's configuration. It need not be: a catalogue entry that names a region is
+served from it, regions tried in the order listed, and one that names none is refused by name
+(`upstreams/vertex/regions.py`). The flag stays false for Vertex because the name alone is still
+not the address, so an import there is checked for reachability like one from Azure.
 
 ## 5. Testing
 

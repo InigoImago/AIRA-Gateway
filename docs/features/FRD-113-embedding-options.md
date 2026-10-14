@@ -174,7 +174,9 @@ caller named neither — an unset option is not the same fact as a default one, 
 
 **Acceptance**
 - *Given* a use-case rate limit of 10 per minute, *when* a caller submits a batch of 50, *then* it
-  is refused with 429 and `Retry-After`, and no upstream call was made.
+  is refused with 429 and `Retry-After`, and no upstream call was made. *As built (§10a): refused
+  `400 FAILED_PRECONDITION`, naming the allowance it cannot fit, with no `Retry-After` — no wait
+  admits it — and no upstream call is made.*
 - *Given* a model declaring 768 and 3072, *when* a caller requests 768, *then* the returned vectors
   have 768 components.
 
@@ -206,7 +208,9 @@ none is not.
 §11's open question is unresolved and is now **visible in the wire format**: a list answers under
 `vectors` on the KIRA surface, since the documented singular `vector` cannot express n of them.
 Returning only the first would be silent data loss; a distinct key makes the assumption checkable
-by whoever confirms it against the running predecessor.
+by whoever confirms it against the running predecessor. *Since settled the other way (§11):* a
+list is **one** embedding — its texts are joined and answered as one `vector`, the documented
+shape; there is no `vectors` key (`api/kira/mapping.py`, `api/kira/schemas.py`).
 
 Mutations **E1–E8**.
 
@@ -219,7 +223,10 @@ Mutations **E1–E8**.
   combined into a single vector. This FRD assumes the first, which is what the provider API offers
   and what consumers of a chunk-indexing flow need. **Confirm against the running predecessor
   before `FRD-107` maps this surface** — if it is really the second, that is a gateway-side
-  reduction and a separate, small requirement.
+  reduction and a separate, small requirement. **Settled: the second.** On the KIRA surface a list
+  is one embedding — the texts joined with nothing between them, one `vector` back — and a blank
+  entry is refused with `EMPTY_EMBEDDING_INPUT`. Batching one vector per text remains the Gemini
+  surface's (`batchEmbedContents`).
 - **Risk** — FR-5's bound and the configured rate limits interact (§5.3). Choosing a batch bound
   larger than any bucket makes large batches permanently fail; the default must be chosen with the
   default limits in view, and the failure message must say which of the two refused.

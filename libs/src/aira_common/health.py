@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from aira_common.logging import get_logger
@@ -45,3 +46,18 @@ async def check_tcp(name: str, host: str, port: int, *, timeout: float = 1.0) ->
         "dependency_unreachable", dependency=name, host=host, port=port
     )
     return CheckResult(name=name, ok=False, detail="unreachable")
+
+
+def any_reachable(name: str, members: Sequence[CheckResult]) -> CheckResult:
+    """One verdict for a cluster from the checks of its members: reachable while **any** member is.
+
+    A Kafka client is given the whole broker list and needs one broker to answer. A readiness
+    check of the first broker alone reported the cluster unreachable whenever that one broker was
+    down. The detail counts the members that answered and never names them (`ADR-0007`).
+    """
+    answered = sum(1 for member in members if member.ok)
+    if answered == 0:
+        return CheckResult(name=name, ok=False, detail="unreachable")
+    if answered == len(members):
+        return CheckResult(name=name, ok=True, detail=None)
+    return CheckResult(name=name, ok=True, detail=f"{answered} of {len(members)} reachable")

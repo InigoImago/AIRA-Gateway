@@ -29,9 +29,13 @@ USE_CASE_PATH_FORM = "/uc/<use-case>"
 USE_CASE_PATH_KEY = "aira_use_case_path"
 
 #: How a request refused before attribution is marked on its span. Not audit outcomes: such a
-#: request writes no audit row, so its span is its only record (`FRD-616`).
+#: request writes no audit row, so its span is its only record (`FRD-616`). No credential, a bad
+#: one, or too many bad ones from one address; a use case the credential may not act on; and a
+#: caller who is known but whose request no use case could be attributed to — none named where one
+#: is required, one that is malformed, or several to choose from.
 UNAUTHENTICATED = "unauthenticated"
 FORBIDDEN = "forbidden"
+UNATTRIBUTED = "unattributed"
 
 #: A client-supplied selector must look like a Management use-case slug, keeping unvalidated input
 #: out of the audit log, the read-model lookups and the trace attributes (`ADR-0007`). **`\Z`, not

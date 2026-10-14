@@ -1,8 +1,8 @@
 # FRD-306 — Pipeline rework: LLM routing, explainable filter, dry-run
 
 > Phase: 3 · Status: **Done** · Owner: Vadim Scheibe
-> Supersedes the length-based routing in FRD-300/301. Driven by user feedback that the builder was
-> opaque and routing was too simplistic.
+> Supersedes the length-based routing in FRD-300/301 (`FRD-301` was never written; routing is in
+> `FRD-300`). Driven by user feedback that the builder was opaque and routing was too simplistic.
 
 ## 1. Problem
 - Routing decided only on `if_under_chars` (last user message length) — ignored the system prompt and
@@ -22,7 +22,9 @@
 - `engine.dry_run()` → full per-step **trace** (passed/flagged/blocked/allowed/rejected/rerouted/
   unchanged) without dispatching.
 - `POST /v1beta/pipeline:dryRun` — builder utility that evaluates an inline pipeline against a
-  sample system+user prompt (runs real steps incl. LLM; no generation, no stored data).
+  sample system+user prompt (runs real steps incl. LLM; no generation, no stored data). *As built,
+  each model call a step makes leaves a priced audit row, `pipeline:<step>`, with no payload
+  (`record_pipeline_calls`, `FRD-125`); no prompt or answer is stored.*
   **Authenticated** since ADR-0007 (it reaches the configured providers with caller-supplied
   prompts) and bounded: 8 000 chars per sample field, 32 steps.
 - **Governed like a request since 2026-08-11** (`FRD-308`). Those bounds were described here as
@@ -57,7 +59,9 @@
 ## 4. Later / hardening
 Authenticated dry-run — **done** in ADR-0007 (the SPA sends its Keycloak bearer to `/gw`, so the
 gateway needs `AIRA_OIDC_ENABLED` pointed at the same realm). Remaining: parallel branches;
-category routing cache; richer live simulation (model-aware allow-check preview).
+category routing cache; richer live simulation (model-aware allow-check preview). *Since then:*
+the `allow_check` step is gone (`FRD-308`), so there is nothing for that preview to show, and
+parallel branches are a non-goal — the engine runs its steps in order (`FRD-300`).
 
 
 ## The dry run had the permission controls and not the spending ones
@@ -86,6 +90,11 @@ module under `api/` and fails any that reaches a provider without taking the gat
 category rather than over the file that was wrong, with three exemptions named and reasoned
 (`serving.py` **is** the layer; `providers.py` reads an in-process property; `incidents.py` is
 `FRD-506`'s reachability check, which is never a generation and has no use case to charge).
+*As built, there are four, and one is a generation:* `serving/` (the layer, now a package),
+`providers.py`, `kira/info_routes.py` (the KIRA `/models`, for the same reason as `providers.py`)
+and `incidents/diagnostics.py`. In the last, the reachability check (`:check`, `FRD-506`) never
+generates, but *Ask the model* (`:checkThinking`) makes real one-token generations — recorded as
+`diagnostic` rows, capped by no budget (`FRD-610` §3 names the gap).
 
 What the audit did **not** find, checked in the same pass: budgets and rate limits carry the same
 fields on both planes; `upserted` and `deleted` are emitted, routed and applied for both, in both

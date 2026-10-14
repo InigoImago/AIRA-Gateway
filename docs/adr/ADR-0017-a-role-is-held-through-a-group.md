@@ -6,6 +6,11 @@
 - **Amends:** [ADR-0009](ADR-0009-gateway-knows-roles.md) — its shared role *definition*
   stands unchanged; where it says both services read `realm_access.roles`, they now read the
   configured group mapping. **Supersedes nothing else.**
+- **Amended 2026-09-13 by [ADR-0025](ADR-0025-aira-defines-what-a-role-may-do.md):** a role is
+  still held through a group and only through a group, but the three below are no longer the whole
+  vocabulary — an installation may define further roles, each bound to one Keycloak group, and may
+  change what IT Steuerung may do. What stays closed is the set of built-in role names in
+  `AIRA_ROLE_GROUPS`.
 
 ## Context
 

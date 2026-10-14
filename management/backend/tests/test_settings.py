@@ -24,14 +24,14 @@ def test_jwks_uri_explicit_override() -> None:
     assert ManagementSettings(oidc_jwks_uri="https://x/certs").jwks_uri() == "https://x/certs"
 
 
-def test_kafka_host_port() -> None:
-    settings = ManagementSettings(kafka_bootstrap_servers="broker:9092,other:9092")
-    assert settings.kafka_host_port == ("broker", 9092)
+def test_every_broker_is_read_not_only_the_first() -> None:
+    settings = ManagementSettings(kafka_bootstrap_servers="broker:9092,other:9093")
+    assert settings.kafka_brokers == (("broker", 9092), ("other", 9093))
 
 
-def test_kafka_host_port_without_port() -> None:
+def test_a_broker_without_a_port_takes_kafkas() -> None:
     settings = ManagementSettings(kafka_bootstrap_servers="hostonly")
-    assert settings.kafka_host_port == ("hostonly", 9092)
+    assert settings.kafka_brokers == (("hostonly", 9092),)
 
 
 def test_env_override(monkeypatch) -> None:
@@ -53,13 +53,13 @@ def test_an_ipv6_broker_is_dialled_without_its_brackets() -> None:
     """`[::1]:9092` is how Kafka spells an IPv6 broker; the brackets are not part of the host, and
     a probe of `[::1]` can never connect."""
     settings = ManagementSettings(kafka_bootstrap_servers="[::1]:9093,other:9092")
-    assert settings.kafka_host_port == ("::1", 9093)
+    assert settings.kafka_brokers[0] == ("::1", 9093)
 
 
 def test_no_broker_is_no_broker_rather_than_localhost() -> None:
     """An empty list used to become `localhost:9092`, a broker an installation without Kafka never
     has — and readiness then said `not_ready` for good."""
-    assert ManagementSettings(kafka_bootstrap_servers="").kafka_host_port is None
+    assert ManagementSettings(kafka_bootstrap_servers="").kafka_brokers == ()
 
 
 @pytest.mark.parametrize("value", ["kafka:9092x", "kafka:0", "[::1", "::1:9092", ":9092"])

@@ -1,6 +1,6 @@
 # FRD-136 — Capacity: the gateway is not the bottleneck
 
-> Phase: 9 (operability) · Status: **Done — measured** · Owner: Vadim Scheibe
+> Phase: 7 (hardening) · Status: **Done — measured** · Owner: Vadim Scheibe
 >
 > Origin: the owner. Related: `FRD-127` (several gateway instances), `FRD-405` (rate limits and the
 > budget reservation), `FRD-122` (the audit trail that every request writes), `FRD-113` (embedding
@@ -246,11 +246,11 @@ compressor.
 ### 13.5 Two things found that are not capacity
 
 - **A rate limit counts weight, so its unit is items and not calls.** A batch weighs its own size
-  (`FRD-405` §4.2), so an embedding use case allowed 4 800 requests a minute gets 4.7 batches of
+  (`FRD-405` §4.2), so an embedding use case allowed 600 requests a minute gets 4.7 batches of
   128, and a burst below the batch size refuses that request outright however long the caller
-  waits. 99.2% of a nightly-batch step came back `RESOURCE_EXHAUSTED` with a per-minute figure that
-  looked generous. The refusal says which of the two it is, which is the only reason this took
-  minutes to diagnose.
+  waits. The measured step had the second problem: 4 800 a minute and a burst of 80, so 99.2% of a
+  nightly-batch step came back `RESOURCE_EXHAUSTED` with a per-minute figure that looked generous.
+  The refusal says which of the two it is, which is the only reason this took minutes to diagnose.
 - **The `budgets` and `rate_limits` identity sequences sit behind their rows**, because the Kafka
   consumer writes both with explicit ids. Any insert that lets the sequence choose collides, and
   the message names a primary key rather than the cause. `tools/loadtest/seed.py` realigns them;

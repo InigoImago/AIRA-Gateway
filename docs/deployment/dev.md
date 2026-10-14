@@ -1,22 +1,22 @@
 # Deployment 2 of 4: Development
 
 **For:** changing the code and seeing the change immediately.
-**You need:** Docker, Python 3.14 with [uv](https://docs.astral.sh/uv/), Node 26.
-**Shape:** infrastructure in containers, the six application processes from source with
+**You need:** Docker, `make`, Python 3.14 with [uv](https://docs.astral.sh/uv/), Node 26.
+**Shape:** infrastructure in containers, the application processes from source with
 reload-on-save.
 
 If you only want to *run* AIRA rather than change it, use [Standalone](standalone.md) instead — it
-needs nothing but Docker.
+runs everything in containers.
 
 ---
 
 ## Step 1: the toolchain
 
 The versions are pinned, and they are pinned because a mismatch produces failures that look like
-code defects (`ADR-0003`).
+code defects.
 
 ```bash
-python --version   # 3.14.x
+python3 --version  # 3.14.x
 node --version     # 26.x
 uv --version
 docker version
@@ -28,7 +28,7 @@ Missing something:
 |---|---|
 | Python 3.14 | `uv python install 3.14` |
 | uv | <https://docs.astral.sh/uv/getting-started/installation/> |
-| Node 26 | `nvm install` (the repository has an `.nvmrc`) |
+| Node 26 | `cd management/frontend && nvm install` (the `.nvmrc` is there) |
 
 ---
 
@@ -39,7 +39,9 @@ make sync
 ```
 
 This installs the Python workspace (three packages: `aira_common`, `aira_gateway`,
-`aira_management`) and the frontend's npm dependencies. It is safe to re-run.
+`aira_management`) and the console's npm dependencies. It is safe to re-run. The browser suite
+under `e2e/` has dependencies of its own: `make test-e2e` installs them when it runs, and
+`make lint`, which type-checks that suite, needs them there already — `cd e2e && npm ci` once.
 
 ---
 
@@ -49,8 +51,9 @@ This installs the Python workspace (three packages: `aira_common`, `aira_gateway
 make up
 ```
 
-Starts Postgres, Keycloak, Kafka, the schema registry, Redis, Vault, the OpenTelemetry collector and
-Grafana — and **not** the application containers, because you are about to run those from source.
+Starts Postgres, Keycloak (which imports the development realm on its first start), Kafka, the
+schema registry, Redis, Vault in development mode, the OpenTelemetry collector and Grafana — and
+**not** the application containers, because you are about to run those from source.
 
 Wait until everything is healthy:
 
@@ -62,21 +65,42 @@ make ps
 
 ## Step 4: prepare the two databases
 
-Both planes have their own database and their own migration tool. Run all four; each is idempotent.
+Both planes have their own database and their own migration tool. Run all three; each is
+idempotent.
 
 ```bash
-make seed              # control plane: migrate, then create the role groups and demo users
+make seed              # control plane: migrate, then seed the demo
 make migrate-gateway   # gateway: Alembic migrations
-make kafka-topics      # the compacted config topics
+make kafka-topics      # the nine compacted config topics, in this stack's broker
 ```
 
-**`make kafka-topics` is not optional.** Auto-creation is switched off, and a missing topic produces
-no error anywhere — the events are simply never delivered. This repository has found that failure
-three times; the fourth is prevented by a test, not by memory.
+`make seed` creates the role groups and the demo accounts, the four showcase use cases with their
+members, budgets, limits, rules, pipeline and keys, and the question catalogue's use case. All of
+it reaches the gateway as outbox events, so it arrives once the consumer runs and `make relay` has
+published it (Step 5).
+
+**`make kafka-topics` is not optional.** Auto-creation is switched off, and the relay publishes the
+outbox in order: the first event for a topic that does not exist stops the run, and every later
+event waits behind it ([`DEPLOYMENT.md` §3.3](../DEPLOYMENT.md#33-kafka)).
 
 ---
 
 ## Step 5: run the processes
+
+The settings both planes read have two defaults the Make targets do not override, and Compose sets
+them only for its own containers. In the gateway's and Management's terminals:
+
+```bash
+export AIRA_ROLE_GROUPS='global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung'
+export AIRA_OIDC_ISSUER=http://localhost:8080/realms/aira    # the Keycloak port, if you moved it
+```
+
+Without `AIRA_ROLE_GROUPS` nobody holds a role — `admin` included — because a role comes only from
+the group the mapping names. Without `AIRA_OIDC_ISSUER`, Management can verify no
+token, and the console signs nobody in. (`make run-gateway-oidc` sets the gateway's issuer itself.)
+For the console's directory search, and for binding a role to a group, give Management the
+development realm's read-only directory client as well: `AIRA_DIRECTORY_CLIENT_ID=aira-directory`,
+`AIRA_DIRECTORY_CLIENT_SECRET=aira-directory-dev-secret`, `AIRA_DIRECTORY_URL=http://localhost:8080`.
 
 The first four in their own terminal; the last two publish or delete what is pending and exit, so
 run them when you need them.
@@ -90,7 +114,8 @@ make relay              # outbox to Kafka            (publishes what is pending,
 make prune              # payload retention          (optional; hourly in production)
 ```
 
-Open <http://localhost:4200> and sign in as `admin` / `demo-password`.
+Run `make relay` once now, to carry what `make seed` wrote. Then open <http://localhost:4200> and
+sign in as `admin` / `demo-password`.
 
 ---
 
@@ -98,15 +123,18 @@ Open <http://localhost:4200> and sign in as `admin` / `demo-password`.
 
 ### 1. Use `run-gateway-oidc`, not `run-gateway`
 
-The console's dry-run, reporting and request views send the browser's bearer token to the *gateway*,
-which needs OIDC enabled to validate it. Without it those views degrade — visibly, but you will
+The console sends the browser's bearer token to the *gateway* for every view whose data the gateway
+holds — requests and their content, reporting and the register, security findings and suspensions,
+consumption, the model lists and checks, pipeline tests and the question catalogue's runs. The
+gateway needs OIDC enabled to validate that token; without it those views are refused, and you will
 spend ten minutes wondering why.
 
 ### 2. The relay carries configuration; nothing happens without it
 
 Changing members, keys, pipelines, budgets, limits or rules in the console writes to Management's
 outbox. The **relay** moves it to Kafka and the **consumer** applies it to the gateway's read-model.
-If either is not running, the console shows your change and the gateway never learns about it.
+If either is not running, the console shows your change and the gateway never learns about it — and
+a use case the gateway has not heard of answers `403` *"not known to this gateway"*.
 
 The relay is not a daemon — it publishes whatever is pending and exits — so you do not have to keep
 a terminal on it. Run it after a change and the consumer picks it up:
@@ -125,18 +153,22 @@ always a missing `make migrate-gateway`.
 
 ## Running the tests
 
-Four layers, each seeing what the layer below structurally cannot.
+Each layer sees what the one below structurally cannot.
 
 ```bash
-make test              # hermetic: Python + frontend, with the coverage gates CI enforces
-make ci                # exactly what CI runs, locally
+make test              # hermetic: Python + console, with the coverage gates CI enforces
+make ci                # lint, types and unit tests — the hermetic half of CI
 make mutants           # break each guarded property in turn and require a test to notice
-make test-integration  # against the running stack (needs `make up-full` or the app processes)
+make test-integration  # against the containerised stack
 make test-e2e          # a real browser against the running console
 ```
 
-`make ci` is the one to run before pushing. It is a thin wrapper around the same targets CI uses, so
-the two cannot drift.
+`make ci` is the one to run before pushing. CI runs the same commands, written out in its own jobs
+and held to these targets by a test, and runs the integration and browser suites as well, each on
+a stack of its own. The live suites need the containerised stack, not the processes above:
+`make up-full`, `make wait-healthy` and `make demo-ready` first. **`make test-integration` calls a
+paid cloud model when the stack has Vertex credentials** — [`TESTING.md`](../TESTING.md) says which,
+and what each layer needs.
 
 **Never lower a coverage gate to make a test pass.** If coverage drops, the missing tests are the
 work.
@@ -146,33 +178,41 @@ work.
 ## Useful while developing
 
 ```bash
-make fmt            # ruff format + ruff --fix + prettier --write
-make lint           # ruff check, ruff format --check, mypy, prettier --check, ng build
+make fmt            # ruff format + ruff check --fix + Prettier --write, console and browser suite
+make lint           # ruff check, ruff format --check, mypy, Prettier, the production build,
+                    # and Prettier + tsc --noEmit on the browser suite
 make ps             # what is running and whether it is healthy
-make logs-apps      # tail only the application containers
+make logs           # follow the containers — here, the infrastructure
 make vault-status   # where the gateway says its secrets came from
 curl -s localhost:8001/readyz | jq
 ```
 
-`readyz` answering `status: ready` with `degraded: false` means Postgres, Kafka and the counter store
-all answered. **`degraded: true` with a 200 is a deliberate state**, not a failure: the gateway still
-serves, with a named control on a fallback.
+`make logs-apps` follows the application *containers*, and in this setup the applications are your
+terminals, so it shows nothing.
+
+`readyz` answering `status: ready` means Postgres answered; `degraded: false` means Kafka, the
+counter store and every configured upstream did too. **`degraded: true` with a 200 is a deliberate
+state**, not a failure: the gateway still serves, with a named control on a fallback. Locally the
+whole body is shown, and the gateway's API documentation is at <http://localhost:8001/docs>.
 
 ---
 
 ## Starting over
 
 ```bash
-make down-full          # stop, keep the data
-make destroy            # stop and delete the volumes
+make seed-reset         # seed the demo again from scratch (seed_demo --fresh), then `make relay`
+make down               # stop, keep the data
+make destroy            # stop and delete the volumes — the audit trail, the configuration, the realm
 ```
 
 ---
 
 ## Sending telemetry somewhere else as well
 
-A second destination beside Grafana — your SIEM, a datalake, another collector — is two variables
-in `deploy/compose/.env` and no extra Compose file:
+The run targets export to the collector (`AIRA_OTEL_ENABLED=true`), and Grafana at
+<http://localhost:3000> carries a provisioned dashboard, *AIRA — what went through, and what it
+did*. A second destination beside Grafana — your SIEM, a datalake, another collector — is two
+variables in `deploy/compose/.env` and no extra Compose file:
 
 ```bash
 AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
@@ -187,7 +227,7 @@ what that shape actually is before you plan a parser around it.
 **And you can look at it without having a receiver.** `make otlp-inspector` starts one in the
 `debug` profile — set `AIRA_OTEL_FORWARD_ENDPOINT=http://otlp-inspector:4318` and the page shows
 every batch that leaves: the spans with their `aira.*` attributes, the content type, and whether a
-credential was on the request (`FRD-618`). `make otlp-inspector-down` when you are done.
+credential was on the request. `make otlp-inspector-down` when you are done.
 
 **A destination that is not a plain OTLP receiver** varies on seven axes. Five are variables:
 - the transport (HTTP or gRPC);
@@ -196,7 +236,7 @@ credential was on the request (`FRD-618`). `make otlp-inspector-down` when you a
 - a client certificate;
 - compression.
 
-The other two are recipes in `deploy/compose/otel/recipes/` (`ADR-0024`):
+The other two are recipes in `deploy/compose/otel/recipes/`:
 - a path for each signal;
 - a credential other than a header.
 
@@ -205,12 +245,6 @@ table and the worked shapes.
 
 **Sending telemetry *to* this stack needs nothing at all.** The collector takes OTLP on 4317 (gRPC)
 and 4318 (HTTP), protobuf or JSON — any conformant producer can point at it.
-
-This used to be a fourth Compose file called the *laboratory overlay*, on the argument that the
-Collector merges nothing so a second destination needed a whole second configuration. Measured
-against collector-contrib 0.157 on 2026-09-02, that is no longer true: repeated `--config` flags
-merge deeply enough to keep each pipeline's receivers and processors. The copy went, and with it
-the two configurations drifting apart.
 
 ### Did it arrive?
 
@@ -221,8 +255,8 @@ make otel-arrivals   # follow what the collector receives
 
 **"No errors" and "it arrived" are different statements**, and only one of them can be read off a
 log: the collector logs a delivery failure and says nothing at all about a success, at any level.
-`otel-status` therefore reads its own counters and prints the reason underneath. Measured against
-a name that does not resolve:
+`otel-status` therefore reads its own counters and prints the reason underneath. Against a name
+that does not resolve:
 
 ```
 Why, in the collector's own words:
@@ -250,8 +284,10 @@ Three things worth knowing, all of them measured rather than assumed:
   a line in a log nobody reads. `make otel-status` is how you find out.
 
 What the telemetry actually contains — and why a SIEM wants something else — is
-[`FRD-615`](../features/FRD-615-a-trace-crosses-the-bus.md) §9 and
-[`FRD-616`](../features/FRD-616-the-audit-trail-as-an-event-stream.md).
+[`INTEGRATIONS.md` §6](../INTEGRATIONS.md#6-observability). In short: the delivery channel carries a
+span per request and per model call, sampled like every other span, while the audit trail itself —
+the request rows, the record of every content read, the findings and the suspensions — stays in the
+gateway's database and is sent nowhere as events.
 
 ---
 

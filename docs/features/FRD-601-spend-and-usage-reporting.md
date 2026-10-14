@@ -33,9 +33,11 @@ of oversight and which today has a read-only list of use cases and nothing else.
 - **Browsing individual requests and their prompts.** Aggregates need no payloads; a request
   viewer would show stored prompts to people who are deliberately *not* members of the use case
   that produced them. That is what content redaction (`FRD-406`, deferred) exists to make safe,
-  and this view waits for it — see ADR-0009's follow-up.
+  and this view waits for it — see ADR-0009's follow-up. *Since built on another condition:* every
+  read of stored content is recorded (`ADR-0016`, `FRD-505`).
 - Charts. The first cut is figures and bars; a chart is worth adding once someone has said which
-  comparison they actually make.
+  comparison they actually make. *Since built:* usage over time, by model, on a use case's page
+  (`FRD-626`).
 - Export, scheduled reports, alerting. Budget threshold alerting is its own backlog item.
 - Retention of the reporting itself: it reads `request_logs`, whose horizon is
   `AIRA_LOG_RETENTION_DAYS` (off by default).
@@ -49,7 +51,9 @@ of oversight and which today has a read-only list of use cases and nothing else.
   see §4.2 for why not a percentile).
 - **FR-3 Visibility**: a caller holding a governance role sees every use case; anyone else sees
   only the use cases they are a member of. A caller with no memberships and no governance role
-  gets an empty report, not an error — having nothing to see is not a failure.
+  gets an empty report, not an error — having nothing to see is not a failure. *As built, "a
+  governance role" is the permission `report.read_all` (`FRD-614`): all three built-in roles hold
+  it by default.*
 - **FR-4 Unpriced traffic**: requests on a model with no price are counted and reported
   **separately**, never summed into spend as zero.
 - **FR-5 Money**: spend crosses the API as an exact decimal string and as integer nano-units,
@@ -162,7 +166,8 @@ frontend specs under `features/reporting/`, `e2e/tests/reporting.spec.ts`):
   `AIRA_LOG_RETENTION_DAYS` on shortens its own reporting horizon; that trade is already
   documented in `FRD-404` and is worth repeating where the horizon becomes visible.
 - **Follow-ups**: charts once the comparison people actually make is known; per-request browsing
-  after `FRD-406`; export; threshold alerting.
+  after `FRD-406`; export; threshold alerting. *Since done:* charts (`FRD-626`), per-request
+  browsing (`FRD-505`, `ADR-0016`) and export (`FRD-602`). Threshold alerting is not built.
 
 
 ## A classifier and the request count: both answers, in order
@@ -181,7 +186,9 @@ caller's own requests, and both sides agreed again.
 they count. A use case running two steps per request is doing three times the work its request
 budget was sized for, and a budget that cannot see that is sized against something that is not
 happening. `FRD-125` FR-9 is superseded by FR-9b; `book_side_call` books one request; and this
-report counts every row again.
+report counts every row again. *(As built, every row except a `diagnostic` one — an
+administrator's model check is no request — whose spend is still summed; `reporting/service.py`,
+`FRD-610` §2.)*
 
 What did **not** change is the rate limit. A bucket measures how fast requests *arrive*, the gate
 is taken once before the pipeline on the one request that arrived, and refusing a caller for calls

@@ -105,7 +105,8 @@ wrong thing.
 `scope_queryset` used `GOVERNANCE_ROLES` for both "sees every use case" and "sees every figure".
 PRD §154 gives IT Security the first and not the second. Folded together, the role saw nothing at
 all. Split into `OVERSIGHT_ROLES` ⊃ `GOVERNANCE_ROLES`: oversight decides *visibility*, governance
-decides *spend*. Two tests hold both halves.
+decides *spend*. Two tests hold both halves. *(Since `FRD-614` the two are the permissions
+`usecase.read_all` and `report.read_all`; IT Security holds both.)*
 
 ### 4.3 Read-only through a disabled fieldset
 

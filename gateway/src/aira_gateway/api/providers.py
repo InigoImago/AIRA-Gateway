@@ -107,8 +107,8 @@ def _entry(name: str, upstreams: list[Upstream], registry: ProviderRegistry) -> 
     - ``canEnumerate`` is stated rather than discovered by trying, so a missing listing reads as a
       capability gap rather than a fault. Only a single adapter can answer for a name.
     - ``cataloguedIsEnough``: whether a model name is the whole addressing, i.e. an adapter owns the
-      provider name (`FRD-507` stage B). Elsewhere — Vertex, Azure — the model must also be named
-      in the gateway's configuration.
+      provider name (`FRD-507` stage B). Elsewhere the name needs more: Azure a deployment named in
+      the gateway's configuration, Vertex a region on the catalogue entry.
     """
     single = upstreams[0] if len(upstreams) == 1 else None
     publisher, region = _provenance(upstreams)

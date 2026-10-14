@@ -32,7 +32,8 @@ truth**, and individual memberships are set in Keycloak or by an external system
 The gateway's whole role vocabulary is `is_governance`, `is_oversight` and
 `may_act_on_incidents` — all three organisation-wide. It never read the two use-case roles, so its
 change is **one call**: `realm_roles(claims)` became `roles_from_groups(groups, mapping)`. Nothing
-else in the data plane moved.
+else in the data plane moved. *(Those three predicates are gone since `FRD-614`: every check in
+both planes asks one permission.)*
 
 Management needed `sync_user_roles` and three call sites. `may_admin`, `may_manage`, `is_member`
 and `scope_queryset` needed **nothing** — they had already been asking the object grants since

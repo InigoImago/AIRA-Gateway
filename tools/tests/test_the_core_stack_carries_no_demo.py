@@ -215,12 +215,13 @@ def test_nothing_addresses_a_container_by_a_name_aira_stack_could_move() -> None
 # The applications file carries no demo. The **infrastructure** file does carry development
 # provisioning — its Keycloak imports the development realm, six accounts with published passwords
 # and client secrets that are in this repository, and its Vault runs in `-dev` mode — and both
-# `docs/SETUP.md` and `make help` said `make up-apps` started "no demo provisioning". An operator
+# the setup guide and `make help` said `make up-apps` started "no demo provisioning". An operator
 # who believed them and bound the stack beyond loopback published a global administrator's
-# password. The documents follow the file, checked rather than remembered.
+# password. The documents follow the file, checked rather than remembered — in the runbook that
+# tells an operator what to start, `docs/DEPLOYMENT.md` §0.
 
 MAKEFILE = ROOT / "Makefile"
-SETUP = ROOT / "docs" / "SETUP.md"
+RUNBOOK = ROOT / "docs" / "DEPLOYMENT.md"
 
 
 def _development_infrastructure() -> list[str]:
@@ -246,15 +247,15 @@ def test_what_the_core_stack_carries_for_development_is_said_where_it_is_started
     help_line = next(
         line for line in MAKEFILE.read_text().splitlines() if line.startswith("up-apps:")
     )
-    setup = SETUP.read_text()
+    runbook = RUNBOOK.read_text()
 
     assert "no demo provisioning" not in help_line and "development" in help_line, (
         f"`make help` describes up-apps as {help_line!r}, and {facts}"
     )
-    assert "imports the development realm" in setup and "`-dev` mode" in setup, (
-        f"docs/SETUP.md does not say what `make up-apps` starts: {facts}"
+    assert "imports the development realm" in runbook and "`-dev` mode" in runbook, (
+        f"docs/DEPLOYMENT.md does not say what `make up-apps` starts: {facts}"
     )
-    assert "are all in `docker-compose.showcase.yml`" not in setup, (
-        "docs/SETUP.md places the development realm and Vault in the showcase file; "
+    assert "which you do\nnot deploy" not in runbook, (
+        "docs/DEPLOYMENT.md places the development realm and Vault in the showcase file; "
         f"the infrastructure file carries them: {facts}"
     )

@@ -13,6 +13,9 @@ of FRD-200's authentication.
 **Goals**
 - Sync Keycloak roles → Django groups on login. **Amended by `ADR-0017` (2026-08-09):** the roles are three, and they are resolved from the token's `groups` claim through `AIRA_ROLE_GROUPS` — `realm_access.roles` is not read by either plane. Every sentence below that says *realm role* means *the role a group confers*.
 - DRF permission classes for role checks (e.g. `IsGlobalAdmin`, `IsITSecurity`, `IsUseCaseAdmin`).
+  *Superseded by `FRD-614`:* every installation-wide check asks one permission
+  (`requires(Permission.…)`), never a role, and these classes are gone; inside a use case the
+  check is the grant on it (`FRD-209`).
 - Object-level use-case permissions via `django-guardian`: membership grants `view`; use-case admin
   grants `change`/`manage`.
 - Queryset scoping helpers so list endpoints return only objects the caller may see.

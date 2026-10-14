@@ -2,7 +2,9 @@
 
 > Phase: 8 (structural) · Status: **Done** · Owner: AIRA
 > Related: `FRD-126` (the half before dispatch), `FRD-122` (audit), `FRD-405` (reservations),
-> `FRD-110` (the shield), `FRD-127`
+> `FRD-110` (the shield), and the KIRA cancelled-stream fix cited below as `FRD-127` — a label from
+> before that number went to [*Several gateway instances*](FRD-127-several-gateway-instances.md);
+> the fix never had a document.
 
 ## 1. Summary
 
@@ -10,10 +12,10 @@
 one question: *have all the paths been tested with a dropped connection?*
 
 The answer was no. Streaming had been — Gemini's by closing the iterator and by a live client
-walking away, KIRA's by cancellation during dispatch (`FRD-127`). **Every non-streaming path had
-not, and all four of them lost the audit row.** A caller who went away while the model was still
-answering made a request that reached the upstream, spent tokens and spent money disappear from the
-record entirely.
+walking away, KIRA's by cancellation during dispatch (the label `FRD-127`). **Every non-streaming
+path had not, and all four of them lost the audit row.** A caller who went away while the model was
+still answering made a request that reached the upstream, spent tokens and spent money disappear
+from the record entirely.
 
 Six paths — three verbs on each of two surfaces — each with its own hand-written copy of
 

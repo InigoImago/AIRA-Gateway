@@ -68,6 +68,9 @@ does — items 1 and 3 have no effect on what a caller can do.
   the right one: authentication succeeded, so the caller is who they say; they simply have no
   memberships and will be refused by authorization with a message that says so.
 - **FR-5 One implementation.** Gateway and Management share `aira_common.oidc`, as they do today.
+  *As built, the verifier is shared and the routing is not:* selecting an issuer by the token's
+  `iss` is the gateway's (`auth/oidc.py`, `AIRA_OIDC_ISSUERS`). Management verifies against one
+  issuer (`AIRA_OIDC_ISSUER`), so the console signs in through one realm.
 
 ## 5. Design & Architecture
 
@@ -149,7 +152,9 @@ felt.
   to fail first against an implementation that skips the check); a failure yields no groups and
   still authenticates; the cache serves a second call without a second fetch; concurrent misses
   produce one fetch; a failure after a hit serves stale rather than dropping groups.
-- **Integration** — two realms in the dev Keycloak, a token from each, both accepted.
+- **Integration** — two realms in the dev Keycloak, a token from each, both accepted. *Not built:*
+  the dev Keycloak has one realm (`aira-realm.json`), and FR-1 is tested hermetically
+  (`gateway/tests/test_several_issuers.py`).
 - **Mutation** — the `sub` cross-check actually compares; the audience set actually restricts.
 
 **Acceptance**
@@ -182,4 +187,4 @@ where copying the predecessor makes the system measurably worse.
 
 If built: a second dev realm in Compose and a documented two-realm login. If FR-3 is built, the
 demo must include a Keycloak-down scenario, because that is the behaviour people will need to
-recognise.
+recognise. *As built, neither: FR-1 shipped without a second dev realm, and FR-3 is declined.*

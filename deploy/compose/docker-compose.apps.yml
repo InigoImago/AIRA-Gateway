@@ -3,8 +3,11 @@
 #   docker compose -f docker-compose.yml -f docker-compose.apps.yml up -d --build
 #   # or, from the repo root:  make up-apps
 #
-# Nothing in this file exists for the demo: the development Keycloak realm, the `-dev` Vault and
-# the seeded accounts are in `docker-compose.showcase.yml`, layered on by `make up-full`.
+# Nothing in this file exists for the demo: the seeded accounts and keys are in
+# `docker-compose.showcase.yml`, layered on by `make up-full`. The infrastructure file it overlays
+# is a development one — its Keycloak imports the development realm (published passwords) and its
+# Vault runs in `-dev` mode — so a deployment runs this file on its own infrastructure:
+# `make up-integrated` (docs/deployment/integrated.md).
 #
 # Every value is `${AIRA_…:-default}` and the default is the settings class's own, so an empty
 # environment gives you the documented behaviour. Set them in `deploy/compose/.env`, or generate
@@ -34,8 +37,8 @@ services:
     working_dir: /app/gateway
     command: ["alembic", "upgrade", "head"]
     environment: &gateway-env
-      # Outside `AIRA_ENVIRONMENT=local` the services refuse to start unless six hardening
-      # conditions hold. `AIRA_DEMO_MODE=true` waives exactly those six and nothing else — the
+      # Outside `AIRA_ENVIRONMENT=local` the services refuse to start unless their hardening
+      # conditions hold. `AIRA_DEMO_MODE=true` waives six of the gateway's and nothing else — the
       # list is `WAIVED_BY_A_DEMO` in `gateway/security.py`. Leave it `false` for a real
       # deployment; it is what lets a showcase run with a published password and no audience.
       AIRA_DEMO_MODE: ${AIRA_DEMO_MODE:-false}
@@ -81,7 +84,8 @@ services:
       # ── Secrets from Vault ────────────────────────────────────────────────────────────────
       #
       # With no `VAULT_ADDR` the loader is inert and every credential comes from the environment
-      # instead — silently. Set the address to turn Vault on.
+      # instead — silently. The address alone is not enough either: Vault is used once a role id
+      # (AppRole) or a token is set beside it.
       #
       # An address and a role id **identify** and are not secrets, so they belong here. The
       # secret-id is the one value that authorises: point `VAULT_SECRET_ID_FILE` at a mounted
@@ -201,8 +205,8 @@ services:
     container_name: ${AIRA_STACK:-aira}-management-migrate
     command: ["python", "manage.py", "migrate", "--noinput"]
     environment: &management-env
-      # Outside `AIRA_ENVIRONMENT=local` the services refuse to start unless six hardening
-      # conditions hold. `AIRA_DEMO_MODE=true` waives exactly those six and nothing else — the
+      # Outside `AIRA_ENVIRONMENT=local` the services refuse to start unless their hardening
+      # conditions hold. `AIRA_DEMO_MODE=true` waives six of the gateway's and nothing else — the
       # list is `WAIVED_BY_A_DEMO` in `gateway/security.py`. Leave it `false` for a real
       # deployment; it is what lets a showcase run with a published password and no audience.
       AIRA_DEMO_MODE: ${AIRA_DEMO_MODE:-false}

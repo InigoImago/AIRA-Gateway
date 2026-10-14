@@ -104,6 +104,14 @@ Two things stay outside the catalogue on purpose:
 - **The unbound API key and demo mode.** Both are ways of running without an identity, not roles.
   They keep today's behaviour, and the engine does not model them.
 
+**`usecase.manage_all` is a Management permission.** "As if it were its administrator" holds in
+the console and the control plane: its holder sees and administers every use case there
+(`apps/usecases/access.py`). It grants **no** access in the gateway: calling a use case, or seeing
+its requests there, still needs a grant on it, because the gateway admits a caller to a use case
+only through a grant (`use_case_refusal`) and read visibility never implies the right to act
+(`ADR-0007`). The one place the gateway asks it is the dry run, where it lets a caller the use case
+already admits try an unsaved pipeline (`api/pipeline.py`, `FRD-306`).
+
 ## 5. Requirements
 
 - **FR-1 — One decision point.** Every installation-wide decision in the gateway, Management and the

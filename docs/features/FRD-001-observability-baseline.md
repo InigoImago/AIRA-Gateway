@@ -47,7 +47,10 @@ feature is observable by default.
   message headers (producer injects, consumer extracts) so async flows stay linked.
 - **FR-6 Correlation in logs**: structured logs carry `trace_id`/`span_id`; logs shipped via OTLP.
   *Half of this was true for a year* — see §5a.
-- **FR-7 Sampling**: parent-based, ratio sampler; ratio configurable (default 1.0 locally).
+- **FR-7 Sampling**: a ratio sampler by trace id (default 1.0). A local parent is followed; a
+  **remote** parent — a caller's `traceparent`, or a producer's across Kafka — is decided like a
+  root, so a caller cannot switch its own request's span off, and every process given the same
+  ratio keeps a trace whole (`request_sampler`).
 - **FR-8 Metrics baseline**: request latency/count/error metrics auto-exported for both services.
 - **FR-9 Toggle**: observability is enabled via `otel_enabled`; when off (or endpoint empty) the SDK
   setup is a no-op so tests and low-resource machines are unaffected.

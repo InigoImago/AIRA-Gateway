@@ -21,7 +21,7 @@ absorbed by a conditional; the third is where a wrong abstraction becomes a rewr
 Foundry brings three things the first two did not:
 
 - **The OpenAI Chat Completions wire format** — a third dialect, and the same format the deferred
-  OpenAI *surface* (`FRD-106`) would need. The mapper arrives either way.
+  OpenAI *surface* (`FRD-106`, since withdrawn) would have needed. The mapper arrives either way.
 - **Entra ID authentication** (or managed identity in Azure) — a third credential mechanism.
 - **Deployments instead of models.** Azure addresses a customer-named deployment in a resource in a
   region. The name a caller uses and the name Azure uses are different strings, and the same
@@ -39,9 +39,9 @@ Foundry brings three things the first two did not:
 - The vendor stays invisible above `upstreams/`.
 
 **Non-Goals**
-- **The OpenAI-compatible inbound surface** (`FRD-106`). Still deferred. This FRD builds the dialect
-  in the *upstream* direction only; that it makes the surface cheaper later is a consequence, not a
-  scope change.
+- **The OpenAI-compatible inbound surface** (`FRD-106`). Withdrawn, not deferred: `FRD-132` (B1)
+  measured a coding assistant working on the Gemini surface unmodified. This FRD builds the dialect
+  in the *upstream* direction only.
 - Foundry's agent, evaluation and fine-tuning surfaces. We consume model inference.
 - Calling OpenAI directly. Under `ADR-0011` that would be a transport reusing this dialect — a
   small piece of work, and a separate residency and contract decision.
@@ -68,7 +68,11 @@ Foundry brings three things the first two did not:
   A pipeline configuration never contains a deployment name.
 - **FR-4 Region allow-list**, using the shared policy unchanged — `AIRA_ALLOWED_REGIONS`
   already carries Azure's EU regions, so a Foundry model in `westeurope` is permitted by the
-  default and one outside the EU refuses to start, with no new setting.
+  default and one outside the EU refuses to start, with no new setting. **Every deployment names
+  its region** (`model=deployment|region[|embed]`): an entry without one refuses to start. It
+  had been optional, and an entry without a region was served without the check; the
+  configuration reference documented `model=deployment@region`, which read as a deployment of
+  that name in no region (mutation `DA-8`).
 - **FR-5 Reasoning maps to effort levels.** §5.3.
 - **FR-6 Structured output via `response_format: json_schema` with `strict`.** A schema field with
   no faithful equivalent is a refusal, not a silent drop — the rule `FRD-119` §5.5 established.
@@ -150,6 +154,9 @@ and keeps serving it. Per platform rather than per model, until a catalogue fiel
 Once canonical ⇄ OpenAI exists for the upstream direction, the deferred OpenAI *inbound* surface is
 largely the same mapping reversed plus a router. The decision to defer it stands; the estimate
 behind that decision does not survive this FRD, and should be revisited when it is next discussed.
+
+*Since revisited:* `FRD-106` was withdrawn, and `FRD-132` B1 found no new surface needed. The cost
+estimate no longer decides anything.
 
 ## 6. Data Model
 
