@@ -13,10 +13,13 @@ class RateLimited(Exception):
     loop against the thing it is meant to protect.
     """
 
-    def __init__(self, message: str, retry_after: str) -> None:
+    def __init__(self, message: str, retry_after: str, bucket: str | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.retry_after = retry_after
+        #: The key of the bucket that refused, so a caller that added one of its own — a
+        #: suspension's throttle (`FRD-503`) — can tell its refusal from a configured limit's.
+        self.bucket = bucket
 
 
 class TooHeavyForTheLimit(GeminiHTTPError):

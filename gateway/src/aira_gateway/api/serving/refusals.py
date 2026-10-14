@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
-from aira_gateway.api.serving.controls import UseCaseRetired
+from aira_gateway.api.serving.controls import UseCaseRetired, UseCaseUnknown
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import Outcome
 from aira_gateway.budgets.errors import BudgetExceeded
@@ -103,10 +103,10 @@ def refusal_outcome(exc: Exception) -> Outcome:
     # Before `RateLimited`: "stopped on purpose" and "going too fast" are different answers.
     if isinstance(exc, Suspended):
         return Outcome.SUSPENDED
-    if isinstance(exc, UseCaseRetired):
+    if isinstance(exc, UseCaseRetired | UseCaseUnknown):
         # Not a pipeline block: the pipeline never ran, and `blocked_by_pipeline` feeds the
-        # blocked-prompt anomaly rule. The closed vocabulary has no word for retirement, and the
-        # request names a use case that no longer serves — the caller's to correct.
+        # blocked-prompt anomaly rule. The closed vocabulary has no word for either, and the
+        # request names a use case that does not serve here — the caller's to correct.
         return Outcome.INVALID_REQUEST
     if isinstance(exc, AttachmentRejected | ThinkingRejected | SchemaRejected | EmbeddingRejected):
         return Outcome.INVALID_REQUEST

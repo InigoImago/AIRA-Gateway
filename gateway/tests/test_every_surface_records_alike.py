@@ -245,7 +245,7 @@ async def _streamed_once(surface: str, provider: object) -> tuple[tuple, list[tu
 
     from aira_gateway.app import create_app
     from aira_gateway.config import GatewaySettings
-    from aira_gateway.db.models import BudgetRead, BudgetUsage, ModelRead, RequestLog
+    from aira_gateway.db.models import BudgetRead, BudgetUsage, ModelRead, RequestLog, UseCaseRead
     from aira_gateway.upstreams.base import ProviderRegistry
 
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
@@ -254,6 +254,8 @@ async def _streamed_once(surface: str, provider: object) -> tuple[tuple, list[tu
     with TestClient(app) as client:
         async with app.state.db_sessionmaker() as session:
             session.add(ModelRead(model="mock-9", numeric_id=9, capabilities=["generate"]))
+            # Known to the gateway: a use case it has never heard of serves nothing.
+            session.add(UseCaseRead(slug="demo", name="demo"))
             session.add(
                 BudgetRead(
                     id=1,

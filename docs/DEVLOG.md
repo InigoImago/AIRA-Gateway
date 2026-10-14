@@ -5,6 +5,227 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## CI: two stacks instead of one, and two browser tests that raced their own page (2026-10-14)
+
+The last run on `main` (`bdd94554`) was cancelled, not failed: the stack job reached its 40-minute
+limit at 40.1 minutes with every step green. The run before passed in 38.8. The integration suite
+took 22 to 24 minutes of that, the browser suite 10.6, starting the stack about 3, and the Windows
+sign-on (`FRD-140`), added the day before, the last 1.9.
+
+**Two jobs, two stacks** (`ci.yml`). `stack` runs the integration suite; `browser` runs the browser
+suite and then the Windows sign-on. Each starts a stack of its own and they run side by side, so
+the longer one sets the time: by the last run's steps, about 28 minutes for the integration job
+within its 40, and about 17 for the browser job within 30. The browser suite needs nothing the integration suite leaves behind
+since it was made to hold on a fresh stack (the entry of 2026-10-13). Both jobs wait through
+`demo-ready`, which `test_showcase_is_repeatable.py` now asks of each job (`CS17`, `CS17b`). The
+release waits for both: `test_a_release_is_published_only_behind_the_gates.py` reads the check jobs
+from the workflow instead of listing four, so a check job added later gates the release without
+anybody remembering it should (`PB30`, `PB31`).
+
+**The actions every push runs** moved to their first majors on Node 24 (checkout v5, setup-node v5,
+upload-artifact v6, setup-uv v7), after the runners' warning that Node 20 is deprecated. The three
+Docker actions only a release tag runs (setup-buildx v3, login v3, build-push v6) still target Node
+20 and are left for a release somebody watches: a release is the only run that would show a change
+in them.
+
+**A wait that switched off what it waited for** (`content-visibility.spec.ts`, flaky in both of the
+last two runs). `openContent` switched the trace tab's live refresh off, then waited a minute for
+the row the test's own request had caused. A row is written after the answer, so the tab's first
+load can come back without it, and with refresh off nothing loads it again: the wait ran out on a
+row that existed, and the suite's 45 seconds ran out before it. The helper now waits for the row
+with refresh on and switches it off before the click, which is the moment a refresh would close
+the panel again. Reproduced on purpose first: with the tab open before the request and refresh off,
+the row never appeared; in the new order it did. The two tests that read their own traffic take
+`test.slow()`, since three waits of up to a minute each do not fit in 45 seconds.
+
+**A height read before the window opened** (`rating-window.spec.ts`, flaky once). The test read the
+page's height when the run list appeared and again with the rating window open, and failed on a
+page 11 px taller (768 → 779). The window is `position: fixed` and adds nothing to the page; the
+page behind it loads the runs, the statistics and who may start a run side by side and shows the
+list when the runs arrive, so the first height could belong to a page that was still growing. The
+window's share is now read in one evaluation, with the window and with it hidden. A window put in
+the page's flow on purpose (`position: absolute`, no height cap) is reported as making the page 55
+px taller.
+
+LESSONS: both merged into the lessons they repeat — two samples are two moments, and a helper that
+drops something leaves its caller waiting for it.
+
+## Settings combinations, the rest: a withdrawn step model, a lifted budget, suspensions and their switches (2026-10-14)
+
+The rest of the same run's findings (the entry below has the first). Two are left to the owner.
+
+**A pipeline step kept calling a model that was withdrawn** (F8). A step's models are checked when
+the pipeline is saved, and its own call applied no condition after that (`ADR-0032`: "the reason a
+step's own model call applies no dispatch condition"). Management accepts withdrawing a release
+that a saved pipeline names, and a Global Administrator revoking an approval — as it should, a
+security decision must not wait for a configuration — and the step went on: a router asked its
+classifier, and a `pii_filter` sent the caller's text to the model the installation had withdrawn.
+A step now asks, before each call, what the dispatch chain asks of every candidate — residency,
+approval, release, a price where spend is capped — from one place both use
+(`api/serving/conditions.installation_requirements`), and passes over a model it may not call
+**with the reason**, degrading as before: the redactor blocks, the filter falls back to its
+patterns, the router to its default. `ADR-0032` amended; `FRD-302` FR-10, `FRD-308` §4.6.
+
+**A lifted budget stopped counting** (F4). `applicable` read enabled budgets only, so a budget
+switched off booked nothing — and switched back on, it handed out a fresh allowance for the rest of
+the period, while the installation's own switch keeps every figure true. A lifted budget is now
+found, never reserved against and never refusing, and booked at settle in Postgres and in the
+shared counter, which can outlive the lift (`FRD-401`, `FRD-610` §3.2).
+
+**Suspensions and their switches** (A1, A2, A3, R6). A throttle is a suspension taken as a rate
+limiter's bucket, and two things followed it there: `AIRA_ENFORCE_RATE_LIMITS=false` returned
+before the bucket, so a throttled caller ran at any rate, and its refusal was `rate_limited` —
+the folding `FRD-503` FR-5 rules out. The limiter now skips only the configured limits, and a
+refusal by a throttle's bucket is raised as the suspension's (`Throttled`). With
+`AIRA_ENFORCE_SUSPENSIONS=false`, rules went on writing live suspensions that stopped their
+targets the moment enforcement came on; they record `detected_not_enforced` and write nothing
+(`ADR-0014` amended). And of several blocks, `Retry-After` named whichever the query returned
+first; it names the one that ends last.
+
+**What an anomaly rule measures** (R1, R3) — the callers' requests: a pipeline step's own call
+counted among them halved every share a step-running use case could reach (a filter blocking all
+measured 50 %), and counts now as spend only; a row with no caller — refused for its size before
+sign-in — made the empty string a target, and a block on `''` was listed as in force. **Authoring**
+(R2): a rule posted to the global endpoint naming a use case was created global, the field being
+read-only and so ignored; it is refused by name. **Input** (R4, R5): a NUL in a suspension's or a
+finding's query parameter was Postgres's 500 and is the caller's 400 (a NUL in a lifted id stays a
+404 — SQLite cannot tell the two, so that one was checked on PostgreSQL rather than mutated); a
+block carrying a `throttle_rpm` is refused as Management refuses it on a rule.
+
+**The low ones.** A model check counted as a request in the installation's report (F5) and counts
+as spend only. The model list offered a configured model the catalogue holds unapproved (F9); one
+the catalogue does not know stays listed, marked `airaDeclared: false`, because that list is where
+the console discovers what to catalogue (`FRD-507`) — the finding's example is of that kind and is
+answered in the list's own description. A redactor's preamble and opening marker reached the model
+when its reply was cut before the closing one (F10). An expiry leeway wider than the clock skew
+narrowed nothing and widened nothing (A4), and a tolerance out of bounds started a plane without
+OIDC (A5) — both planes now refuse it at startup (`FRD-134`). A response schema was measured with
+spaces and ASCII escapes (A6). A broker named by a host with a space started (A7), and the gateway's
+copy of the broker parser, which the fix had not reached, is gone — it reads the shared one.
+`AIRA_TRUSTED_PROXY_HOPS=0` read the caller's own last forwarded-for entry as the client address
+(Q1); at zero, the header is ignored.
+
+**The documents** that said otherwise than the code: the path middleware's 400 (D1) and the
+pipeline block's 403 (D2) in `REQUEST-LIFECYCLE.md`; `AIRA_REQUIRE_USE_CASE` "off outside
+local/demo", "default false", "turn it on last" (C1, C5) across `CONFIGURATION.md`, `DEPLOYMENT.md`,
+`INTEGRATIONS.md` and `FRD-102`; the reservation "refusing a request that cannot fit" (C3); stale
+defaults (C4); the break-glass key "naming a use case on every call" (C6); the CORS refusal listed
+as local-waivable and three startup refusals missing (C7, C8); a validation of a reference period
+no rule has (C-D2); an in-memory touched set and cooldown the engine reads from the database
+(C-D3); and who sees a global finding about a person (R7: oversight only — the stop it caused is
+visible to the person, through the suspension list).
+
+**Left open, for the owner.** F1: a `403` for a caller who is not a member, and a `400` naming no
+use case, write no audit row — `FRD-122` and the lifecycle table say they do, the code says the
+span is the only record. Either the code writes the row or the documents change; that is a decision
+about what the audit trail is for. H1: `usecase.manage_all` administers every use case in
+Management and sees none of them in the gateway without a grant, which `ADR-0007` intends and
+`ROLES.md`'s "as if it were its administrator" overstates.
+
+**Tests and proof.** `test_a_step_calls_only_what_the_request_may_reach.py` (8),
+`test_a_lifted_budget_still_counts.py` (8), and additions to `test_suspensions.py`,
+`test_anomaly_engine.py`, `test_anomaly_rules.py` (Management), `test_reporting.py`,
+`test_the_model_list_says_what_is_served.py`, `test_pipeline_classifiers.py`,
+`test_oidc_clock_tolerance.py`, `test_config.py`, `test_response_schema.py`,
+`test_persistence_recorder.py`, a Management settings test, and the broker list's cross-plane guard.
+Mutations `GS-11`–`GS-43` (`GS-16` became `B7`, which carried the same property); re-anchored
+and caught: `B7`, `M3`, `M15`, `E1`, `N12`, `IB4`, `UP3`, `FX-G4-28`, `G5-6`, `PD1`, `PD6`, `UP5`,
+`C21`, `C22`, `FX-G1-11`, `FX-G1-11b`. `CLAUDE.md`: 1728 properties.
+
+**Live, on the local stack** (gateway and Management rebuilt from this change; mock-served
+catalogue entries and the local models only — nothing paid was called). The settings run's
+evidence for F8, A2 (the throttle recorded as `suspended`), F4 and F5 passes, beside F2, F3, F6 and
+F7 above; of the anomaly suite's 83 cases that had failed, 80 pass. The three that do not assert the
+documentation this entry changed — a reference period no rule has, a pipeline block answered `403`,
+and a global finding visible to the person it is about — and keep their old expectation. A NUL in a
+suspension's id and in the lists' parameters is answered by name on PostgreSQL, where the hermetic
+suite cannot see it. The redactor reproduction now hands the routed model the caller's text alone,
+where it had received `<<<TEXT …>>>` and the redactor's own first words.
+
+The privacy notice does not change: the same columns, the same purposes. The address recorded at
+`AIRA_TRUSTED_PROXY_HOPS=0` is now the one the connection came from, which is what the notice says
+it is, and a lifted budget's counting is the "budget control" it already names.
+
+## Settings combinations: a use case the gateway never received, and a chain that sent the primary's defaults (2026-10-14)
+
+The owner had the gateway's settings exercised in combination — saved through Management, waited
+for until they took effect, then requested against: about 10 250 cases, kept outside the repository,
+with every defect noted and nothing fixed. Of what they found, the two marked high come first,
+with the two that share the second one's cause.
+
+**A use case with a long description never reached the gateway, and served without its controls.**
+Management accepts 20 000 characters of `description` and `processing_notes` (`MAX_PROSE_LENGTH`);
+the read-model's columns held 2000. PostgreSQL refused the whole `usecase.upserted` event, the
+consumer logged `config_event_failed` and moved on, and every later event of that use case carried
+the same text and failed the same way, its retirement among them. Measured live on such a use case:
+a model it had not released answered, its prompts were stored with storage switched off, and its
+members were served after it was retired — because every control on the missing row read its
+permissive value. Two fixes, for the two halves:
+
+- **The columns hold what Management accepts** (`FRD-204` FR-7): unbounded, migration `0050`, the
+  bound left to Management. SQLite enforces no length, which is how the two declarations drifted
+  apart unseen, so they are now compared across the planes:
+  `tools/tests/test_what_management_accepts_fits_the_gateway.py` reads every bounded column of every
+  table an event fills, names the Management field it mirrors, and fails where the column is the
+  narrower — or where a new table or column names no source.
+- **A use case the gateway holds no record of serves nothing** (`FRD-204` FR-8,
+  `refuse_unless_live`): the first step of `prepare_for_dispatch`, and of the dry run, which calls
+  models on a use case's behalf as well and had not asked about retirement either. `403` *"not
+  known to this gateway"*, recorded as `invalid_request`, and no payload stored
+  (`_may_store_payloads` had stored one for a use case not yet heard of). This reverses a
+  recorded decision: `FRD-607` §4.1 kept absence unrefused, because Kafka orders nothing and a use
+  case created a second ago looks like one that was deleted. That held for a row a second late and
+  not for one that never arrives, and the permissive reading was what made the second dangerous.
+  The cost is a new use case refused until its event has arrived — the seconds a new membership
+  already takes. A Keycloak group `/use-cases/<slug>` naming a slug Management never had, which
+  resolved from the token alone into a use case with no controls at all, is refused with it.
+  `LESSONS.md`'s tombstone entry gained its other half: absence is not permission.
+
+**A fallback was sent the primary's defaults.** `prepare_for_dispatch` fitted the request to the
+model routing chose — its default output cap, its default thinking, its cache marker — and the chain
+changed a candidate's name and addressing and nothing else. So a primary declaring a default cap of
+5 tokens cut the fallback's answer at 5 (`MAX_TOKENS`, `200`; a `502` for a structured answer, after
+the vendor was paid); a primary's default thinking became a condition the fallback failed, and a
+request that asked for no thinking was refused; a cache marker went to a model that caches nothing.
+And a cap the caller *had* set was checked against the routed model only, so a fallback declaring a
+lower maximum was called anyway. Now the chain starts from the request as the caller made it
+(`Prepared.asked`) and fits it to each candidate the way the routed model is fitted
+(`prepare.fitting`, `FRD-302` FR-5a); the conditions ask about what was asked for; a candidate the
+fit cannot take — a budget that does not fit its own default cap — is passed over by name; and the
+caller's cap is a condition per hop (`OutputCapAccepted`, FR-5b). `FRD-111` §11 had stated the
+thinking half as open since 2026-08-20 — an explicit off carried to a fallback that has no such
+field — and named per-hop resolution as the fix; it is closed. What a chain still does not do is
+widen the **reservation** to its largest candidate (`FRD-302` §6).
+
+**Tests.** `test_an_unknown_use_case_serves_nothing.py` (14: every verb on both surfaces, refused
+and then served once the event arrives, before the rate limit, recorded without its prompt, the dry
+run, unattributed traffic untouched); `test_every_candidate_is_sent_its_own_defaults.py` (29, both
+surfaces and both forms of the chain); the cross-plane guard (3); a structural one in
+`test_surface_layering.py` that every chain a surface opens is handed `permits`, `routing_of` and
+`fit`; and `test_config_distribution.py` sends the longest prose Management accepts through the
+outbox, the relay and Kafka into PostgreSQL. Thirteen test files that named a use case the gateway
+had never heard of now put it on record first — the hermetic suite had relied on the permissive
+reading without asking for it; two tests that pinned that reading were turned round, and the
+integration test of the api-keys topic now sends the use case its key is bound to.
+
+**Proved able to fail.** `GS-1`–`GS-10`, all caught; `SD7`, `SD8`, `M20`, `FXG2-18a`, `K6`, `Z15`,
+`QA2` and `OC1` re-anchored onto the code that carries their properties now, and caught.
+`CLAUDE.md`: 1696 properties.
+
+**Live, on the local stack** (the gateway image rebuilt from this change, migration `0050` applied,
+mock-served catalogue entries only — nothing paid was called). A use case with 2001 and with 20 000
+characters of both texts reached the gateway (after 7.6 s and 11.1 s — the relay's own pace), its
+released model answered without storing the prompt, the unreleased one was refused, and a member was
+refused once it was retired. A Keycloak group naming a slug nobody created: `403` *not known*,
+recorded as `invalid_request`, its prompt not stored, its dry run refused. The settings run's
+evidence for F2, F3 and F7 now passes, and its dispatch matrix — every chain shape against every
+request feature, 3080 cases — passes whole, where two had failed. The integration suites around
+the change (`test_config_distribution.py`, `test_selector_bypass.py`, `test_edge_cases.py`) pass
+against the rebuilt gateway.
+
+The privacy notice does not change. It says each use case decides whether content is stored; for a
+use case whose record had not arrived that was not true, and now is.
+
 ## Windows sign-on, proven for the console and the gateway (2026-10-13)
 
 The owner asked whether people could sign in with their Windows identity rather than a username

@@ -22,6 +22,7 @@ from aira_gateway.catalog import MAX_ACCOUNTABLE_TOKENS, ModelDeclaration
 from aira_gateway.core.canonical import CanonicalRequest, TextPart, ToolCallPart, ToolResultPart
 from aira_gateway.pricing import Price
 from aira_gateway.ratelimit.buckets import per_minute
+from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.state import (
     budgets_of,
     pricing_of,
@@ -65,17 +66,39 @@ class UseCaseRetired(GeminiHTTPError):
     """
 
 
-async def refuse_if_retired(request: Request) -> None:
-    """Refuse a request to a retired use case (`FRD-607`).
+class UseCaseUnknown(GeminiHTTPError):
+    """A request to a use case this gateway holds no record of (`FRD-204`). Its own type for the
+    same reason as `UseCaseRetired`."""
 
-    Only safe because retirement leaves a tombstone row: a tombstone is positive knowledge, while
-    absence may just be a use case whose event has not arrived yet. Needed because OIDC membership
-    resolves from the token alone, so members of a retired use case could otherwise keep calling
-    it after its budget, rate limit and pipeline were gone.
+
+async def refuse_unless_live(request: Request, slug: str | None) -> None:
+    """Serve a use case only while this gateway holds its record and the record is not retired.
+
+    **Absence refuses.** Every control a use case carries — the models released to it, whether its
+    content is stored, its retirement — lives on its row, and each reads its permissive value when
+    there is none: every model, every prompt stored, never retired. So a request to a use case
+    without a row is refused, not served with those defaults. One created a moment ago is refused
+    until its event has arrived; a Keycloak group `/use-cases/<slug>` naming a use case Management
+    does not have is refused for good.
+
+    **A tombstone refuses too** (`FRD-607`): OIDC membership resolves from the token alone, so the
+    members of a retired use case could otherwise keep calling it after its budget, rate limit and
+    pipeline were gone. A request naming no use case is not this rule's to refuse.
     """
-    slug = getattr(attribution_of(request), "use_case", None)
+    if not slug:
+        return
     record = await use_case_record(request, slug)
-    if record is not None and record.deleted_at is not None:
+    if record is None:
+        # 403 like retirement: the credential and the membership are real, and nothing the caller
+        # sends differently would be served.
+        raise UseCaseUnknown(
+            403,
+            f"Use case '{slug}' is not known to this gateway: its configuration has not arrived "
+            "from Management. A use case created moments ago serves once it has; otherwise ask "
+            "an administrator of the use case.",
+            "PERMISSION_DENIED",
+        )
+    if record.deleted_at is not None:
         # 403, not 404: the credential and the membership are real; "wrong slug" would mislead.
         raise UseCaseRetired(
             403,
@@ -194,12 +217,19 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
     rate_limits = rate_limits_of(request)
     budgets = budgets_of(request)
     throttles = await suspensions.check(use_case, subject, credential, caller)
-    await rate_limits.check(
-        use_case,
-        caller,
-        units,
-        extra=[per_minute(t.key, t.limit_rpm, label=t.label) for t in throttles],
-    )
+    try:
+        await rate_limits.check(
+            use_case,
+            caller,
+            units,
+            extra=[per_minute(t.key, t.limit_rpm, label=t.label) for t in throttles],
+        )
+    except RateLimited as exc:
+        throttle = next((t for t in throttles if t.key == exc.bucket), None)
+        if throttle is None:
+            raise
+        # Stopped on purpose, not going too fast: a throttle's refusal is a suspension's.
+        raise throttle.refusal(exc.retry_after) from exc
     await budgets.refuse_if_exhausted(use_case, caller)
     request.state.early_gate_taken = True
 

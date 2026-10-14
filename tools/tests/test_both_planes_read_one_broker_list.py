@@ -1,9 +1,11 @@
 """Both planes read `AIRA_KAFKA_BOOTSTRAP_SERVERS` alike — what their readiness probes dial and
 what their settings refuse at startup (`G1-11` on the gateway, its twin on Management).
 
-The rule lives in `aira_common.kafka.parse_bootstrap_servers`, which Management reads; the gateway
-still carries its own copy in `aira_gateway.config`. Until it imports the shared one, the two are
-held equal here on the shapes an operator writes — including the ones each must refuse.
+The rule lives in `aira_common.kafka.parse_bootstrap_servers`, which both planes import. The
+gateway carried a copy of it in `aira_gateway.config`, and a fix made to the shared one — refusing
+a host with a space in it — reached Management and not the gateway. The copy is gone; these hold
+the two equal on the shapes an operator writes, including the ones each must refuse, and fail if a
+copy comes back and drifts.
 """
 
 from __future__ import annotations
@@ -22,7 +24,17 @@ from aira_common.kafka import parse_bootstrap_servers as shared_parse  # noqa: E
 from aira_gateway.config import parse_bootstrap_servers as gateway_parse  # noqa: E402
 
 ACCEPTED = ["", "kafka:9092", "kafka", " a:1 , b:2 ,", "[::1]:9093", "[2001:db8::1]", "x:65535"]
-REFUSED = ["kafka:9092x", "kafka:0", "kafka:65536", "[::1", "::1:9092", ":9092", "[::1]x"]
+REFUSED = [
+    "kafka:9092x",
+    "kafka:0",
+    "kafka:65536",
+    "[::1",
+    "::1:9092",
+    ":9092",
+    "[::1]x",
+    "bro ker:9092",
+    "[not-an-address]:9092",
+]
 
 
 @pytest.mark.parametrize("value", ACCEPTED)

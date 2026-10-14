@@ -299,5 +299,6 @@ class RequestLogWriter:
         if use_case is None:
             return True
         record = await session.get(UseCaseRead, use_case)
-        # A use case not yet heard of: store; the retention pruner applies the default period.
-        return True if record is None else bool(record.store_payloads)
+        # A use case not yet heard of has said nothing about its content, and a use case that
+        # switched storage off says it in the same row that has not arrived: nothing is written.
+        return False if record is None else bool(record.store_payloads)

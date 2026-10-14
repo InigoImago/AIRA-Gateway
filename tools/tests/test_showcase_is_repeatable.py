@@ -262,7 +262,7 @@ def test_nothing_a_real_deployment_runs_can_be_stopped_by_the_demo_helpers() -> 
     assert "did not answer" in " ".join(vault_init["command"])
 
 
-def test_the_integration_job_waits_for_the_catalogue_and_not_only_the_endpoints() -> None:
+def test_every_job_that_calls_models_waits_for_the_catalogue_and_not_only_the_endpoints() -> None:
     """`wait-healthy` answers "do four endpoints respond?"; the suite asks whether the models it
     calls are catalogued. CI used the first as if it were the second.
 
@@ -272,18 +272,26 @@ def test_the_integration_job_waits_for_the_catalogue_and_not_only_the_endpoints(
     does not run. So the integration job raced the download and lost often enough to look flaky:
     six green and eight red over twenty runs, every red one blaming a model instead of a download.
 
+    Asked of each job that runs a suite against a stack: the integration suite and the browser
+    suite start a stack each, and a wait in one job is no wait in the other.
+
     Two properties, because fixing only the first invites the copy back: CI waits through
     `demo-ready`, and `demo-ready` is the **only** place that sequence is written.
     """
     body = MAKEFILE.read_text()
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
 
-    assert "make demo-ready" in workflow, (
-        "the integration job starts the stack and runs the suite without waiting for the catalogue"
-    )
-    assert workflow.index("make demo-ready") < workflow.index("pytest -m integration"), (
-        "the wait runs after the suite it exists to protect"
-    )
+    for job, suite in {"stack": "pytest -m integration", "browser": "npx playwright test"}.items():
+        runs = [str(step.get("run", "")) for step in jobs[job]["steps"]]
+        waits = [at for at, run in enumerate(runs) if "make demo-ready" in run]
+        suites = [at for at, run in enumerate(runs) if suite in run]
+        assert suites, f"the {job} job no longer runs {suite!r}, so this asks about nothing"
+        assert waits, (
+            f"the {job} job starts the stack and runs its suite without waiting for the catalogue"
+        )
+        assert waits[0] < suites[0], (
+            f"the {job} job waits after the suite the wait exists to protect"
+        )
     assert "\ndemo-ready:" in body, "the workflow waits on a target the Makefile does not define"
     # **Once.** Spelled against the pull-wait's own distinguishing call rather than against a
     # comment, so a second copy of the loop in another target fails here however it is worded.

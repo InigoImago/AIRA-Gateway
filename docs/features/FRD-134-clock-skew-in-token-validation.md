@@ -66,6 +66,9 @@ different things.
 - **FR-3 Bounded.** Both values are non-negative and refused above **300 seconds**. A tolerance
   larger than Keycloak's own access-token lifespan (300 s in this realm) means a token could be
   accepted for longer than it was ever valid, which is not skew tolerance, it is a second lifetime.
+  Refused **at startup on both planes, whether or not OIDC is configured**: checked only where a
+  verifier is built, a value out of bounds started a plane without OIDC and refused to start it the
+  day somebody switched OIDC on.
 - **FR-4 Named in the refusal.** When a token is rejected for a time claim, the log entry says
   which claim and by how much, e.g. `iat 4s ahead of this host, tolerance 60s`. The *caller* still
   gets `401 INVALID_TOKEN` and nothing more — a refusal that reports our clock to an unauthenticated
@@ -90,18 +93,23 @@ and the costly one off.
 
 ### 5.2 Implementation
 
-`jwt.decode` is given `leeway=clock_skew`, which covers `iat` and `nbf`. `exp` is then re-checked
-against `expiry_leeway`:
+`jwt.decode` takes one `leeway`, so it is given the **wider** of the two, and each claim is then
+narrowed to its own tolerance:
 
 ```python
-claims = jwt.decode(..., leeway=self._clock_skew, options={...})
-if float(claims["exp"]) + self._expiry_leeway < time.time() - self._clock_skew:
+claims = jwt.decode(..., leeway=max(self._clock_skew, self._expiry_leeway), options={...})
+if time.time() - float(claims["exp"]) > self._expiry_leeway:
     return None   # accepted by decode's leeway, refused by ours
+if claims["iat"] (or "nbf") is more than clock_skew ahead of this host:
+    return None
 ```
 
-The re-check is subtractive only: it can refuse what `decode` accepted, never accept what `decode`
-refused, so no verification is reimplemented and `exp` stays required. With both settings at their
-defaults the behaviour is *exactly* today's for `exp` and 60 seconds more forgiving for `iat`.
+The re-checks are subtractive only: they can refuse what `decode` accepted, never accept what
+`decode` refused, so no verification is reimplemented and `exp` stays required. `decode` was once
+given the skew alone, which made an expiry leeway wider than the skew narrow nothing and widen
+nothing — 120 seconds of leeway beside the default 60 of skew refused a token 90 seconds past its
+expiry. With both settings at their defaults the behaviour is *exactly* the original for `exp` and
+60 seconds more forgiving for `iat`.
 
 ### 5.3 Where the number 60 comes from
 

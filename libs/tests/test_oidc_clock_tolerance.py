@@ -106,6 +106,27 @@ def test_the_two_settings_are_separate(keys: tuple[Any, Any]) -> None:
     assert _verifier(public, clock_skew_seconds=60, expiry_leeway_seconds=60).verify(expired)
 
 
+def test_an_expiry_leeway_wider_than_the_skew_is_honoured(keys: tuple[Any, Any]) -> None:
+    """FR-1's other direction. `decode` took the skew for `exp` as well, so an expiry leeway wider
+    than the skew could only narrow: 120 seconds of leeway with the default 60 of skew refused a
+    token 90 seconds past its expiry — the setting did not do what it says."""
+    private, public = keys
+    overdue = _token(private, iat_offset=-180, lifetime=90)  # 90 seconds past `exp`
+
+    assert _verifier(public, clock_skew_seconds=60, expiry_leeway_seconds=120).verify(overdue)
+
+
+def test_widening_the_expiry_leeway_does_not_widen_the_skew(keys: tuple[Any, Any]) -> None:
+    """`decode` is now given the wider of the two, and `iat` is narrowed back to the skew: a token
+    stamped 90 seconds ahead of this host is still refused at a 60-second skew, whatever the expiry
+    leeway — the two settings stay two."""
+    private, public = keys
+    ahead = _token(private, iat_offset=90)
+
+    assert _verifier(public, clock_skew_seconds=60, expiry_leeway_seconds=120).verify(ahead) is None
+    assert _verifier(public, clock_skew_seconds=120, expiry_leeway_seconds=0).verify(ahead)
+
+
 def test_a_tolerance_beyond_a_token_lifetime_is_refused_at_construction() -> None:
     """Startup, not per request: a service that answers with a second lifetime for every token is
     up, healthy, and wrong."""

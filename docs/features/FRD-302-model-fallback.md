@@ -72,6 +72,20 @@ months before it existed. The chain was built; its document was the companion no
   the upstream's own error, which a caller may usefully retry.
 - **FR-5 Addressing moves with the model.** A hop re-reads the catalogue, so a candidate is sent
   to its own platform, publisher and region, never the primary's (`ADR-0011`, `FRD-507`).
+  - **FR-5a And so do the defaults.** The chain starts from the request **as the caller made it**
+    (`Prepared.asked`) and fits it to each candidate the way the model routing chose is fitted
+    (`prepare.fitting`): the output cap that candidate declares as its default when the caller set
+    none (`FRD-114` FR-2), its own default thinking (`FRD-111`), and a cache marker only if it
+    declares prompt caching (`FRD-133`). A fallback once received the primary's — a primary
+    declaring a default cap of 5 tokens cut the fallback's answer at 5 with a `200`, its default
+    thinking became a condition the fallback failed, and its cache marker went to a model that
+    caches nothing. The conditions of FR-2 ask about what the caller asked for; a candidate the
+    fit cannot take — a thinking budget that does not fit inside its own default cap — is skipped
+    with that reason.
+  - **FR-5b The caller's cap is a condition per hop** (`OutputCapAccepted`). A cap the caller set is
+    checked against the model routing chose before dispatch, as the caller's `400`; a fallback
+    declaring a lower maximum is skipped by name rather than called, where its vendor would refuse
+    it after the call or answer with less than was asked for.
 - **FR-6 A stream uses the chain** (`ADR-0032`). For each candidate in turn: conditions, open the
   upstream stream, and pull its first chunk — the `__anext__` that issues the HTTP request. A
   candidate that fails before producing that chunk is passed over, and its iterator is closed. The
@@ -99,8 +113,10 @@ months before it existed. The chain was built; its document was the companion no
 - **FR-10 Every named model is released.** Management validates **every** model a pipeline names —
   each step's model, each category's target, each `default_model`, the dispatch chain and now each
   step's own chain — against the use case's release (`FRD-308`), and the gateway's dry-run surface
-  applies the same list. A step's model call applies no dispatch condition *because* this check
-  exists; a name it did not see would be a hole.
+  applies the same list. A name it did not see would be a hole. And because a release withdrawn or
+  an approval revoked after the save leaves the saved pipeline as it was, a step also asks the
+  installation's conditions of each model **before calling it** (`installation_requirements`),
+  passing over one it may not call with the reason (`ADR-0032`, amended).
 - **FR-11 A failed attempt is recorded.** A candidate that was tried and failed leaves a
   `step: dispatch`, `action: failed` decision carrying the model and the upstream's reason, beside
   the `action: skipped` rows a condition produces. Both reach the audit row's
@@ -164,6 +180,10 @@ from an absent `ModelCall` — the heuristic classifier also has no call, and re
   engine does not reorder by price or latency.
 - **The two `fallback_models` look alike in the JSON.** One is the use case's, one is a step's.
   The console labels them; the payload does not.
+- **The reservation is made against the model routing chose** (`FRD-405`). A fallback that is sent
+  a larger cap of its own (FR-5a), or costs more per token, is settled at what it used — the
+  reservation is an estimate, and a chain does not widen it to its largest candidate. Under
+  concurrency that lets requests in flight count for less than a fallback then spends.
 
 ## 7. Testing & Acceptance Criteria
 
@@ -182,6 +202,13 @@ raises not costing the caller their answer — and what the caller leaves behind
 stops closes the stream that answered them**. Through the surfaces: a withheld model replaced by
 the chain with both halves on the row, the cost priced as the model that answered, a step's notice
 still leading the fallback's stream, and the same chain on the predecessor's SSE contract.
+
+`gateway/tests/test_every_candidate_is_sent_its_own_defaults.py` — FR-5a and FR-5b on both surfaces
+and both forms of the chain: a fallback is sent no cap where it declares none and its own where it
+does, the caller's cap reaches every hop, a fallback that cannot give that cap is passed over by
+name, a primary's default thinking is no condition on its fallback while thinking the caller asked
+for still is, a budget that does not fit a fallback's own cap passes it over, and the cache marker
+goes only where caching is declared.
 
 `gateway/tests/test_both_chains_choose_the_same_candidate.py` — **the comparison**, which is the
 test `LESSONS.md` §7 asks for when two things are meant to be alike: twelve cases — an outage, a

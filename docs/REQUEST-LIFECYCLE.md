@@ -55,7 +55,7 @@ Up to five things run outside the application, in this order (outermost first):
 | `TraceIdMiddleware`         | puts `x-trace-id` on **every** traced response         | —                          |
 | `SecurityHeadersMiddleware` | `nosniff` · `no-referrer` · `DENY` · `no-store`        | —                          |
 | `CORSMiddleware`            | the cross-origin headers, with `AIRA_CORS_ORIGINS` set | —                          |
-| `UseCasePathMiddleware`     | reads `/uc/<slug>` from the path                       | 400 on an invalid slug     |
+| `UseCasePathMiddleware`     | reads `/uc/<slug>` from the path                       | — (the route checks the slug after authentication: a bad credential is a 401 first, then an invalid slug a 400) |
 | body-size ceiling           | counts bytes, enforces `AIRA_MAX_REQUEST_BYTES`        | **413**, and records a row |
 
 **The order is what decides which responses carry the headers.** The ceiling is enforced by
@@ -114,6 +114,13 @@ graph LR
 - The **credential identity** (an API key's prefix, or the OIDC client id) travels onto the audit
   row separately from the subject. Without it, five keys issued for one use case by one person are
   one identity in the log, and a leaked key can be revoked but its blast radius cannot be assessed.
+- A use case is served only while this gateway **holds its record, live** — the first thing
+  `prepare_for_dispatch` asks (`refuse_unless_live`). Every control a use case carries lives on its
+  read-model row: its release, whether its content is stored, its retirement. A slug without a row
+  is a **403** ("not known to this gateway") rather than a request served with each control's
+  permissive default, and a use case created a moment ago serves once its event has arrived
+  ([`FRD-204`](features/FRD-204-config-distribution-kafka.md) FR-8). A retired one is a 403 too
+  ([`FRD-607`](features/FRD-607-retiring-a-use-case.md)).
 
 A **401 leaves no audit row**, and that is a decision: an unauthenticated request is a security
 event, not a usage row attributed to nobody.
@@ -233,9 +240,16 @@ administrators; a member may test the saved pipeline and sees what each step dec
 model wrote. A malformed `pipeline` is a `400` naming the field.
 
 **A step reaches only the models written in its own configuration.** One that names none used to
-borrow the first model in the registry — a model nobody chose, which no gate covers, since none of
-these conditions sits on a step's *own* call. It degrades instead: the redactor blocks, the LLM
-filter falls back to the heuristic, the router uses its `default_model`.
+borrow the first model in the registry — a model nobody chose. It degrades instead: the redactor
+blocks, the LLM filter falls back to the heuristic, the router uses its `default_model`.
+
+**And only those this request may reach.** The names were checked when the pipeline was saved, but
+a release withdrawn or an approval revoked since does not change a saved pipeline — Management
+accepts both, as it should, and the step went on calling the model: a redactor sent the caller's
+text to a model the installation had withdrawn. So a step asks of each model, before calling it,
+what the dispatch chain asks of every candidate — residency, approval, release, and a price where
+spend is capped (`installation_requirements`). A model it may not call is passed over **with its
+reason**, and the step degrades as above, saying why.
 
 Since 2026-10-11 a step may name **more than one**: its own `fallback_models` chain
 ([`FRD-302`](features/FRD-302-model-fallback.md) FR-7), tried in order where the model before it
@@ -243,7 +257,7 @@ could not be *reached*. Reached, not agreeable — a model that answered `UNDETE
 a rewrite too short to trust, has answered and the chain stops, because a filter that kept asking
 until some model agreed would get weaker exactly when things get worse. What a chain adds is a
 candidate; what it never removes is the safe direction above. Every name in it is checked against
-the release like every other, which is what lets a step's own call apply no dispatch condition.
+the release when saved and against the installation's conditions when called, like every other.
 
 Then a `fallback_models` chain. **A pipeline model call is a first-class request**: it leaves its own
 audit row named `pipeline:<step>`, priced, and booked against the budget **as a request** — it
@@ -265,6 +279,13 @@ information is not permission.
 
 Checked **after routing and at every hop of the fallback chain**, because a chain that quietly
 answers with less than was asked for returns a 200.
+
+**And fitted per hop.** What the caller left to the model — the output cap when none was set, the
+thinking, the cache marker — is filled in by the model being tried, never by the model in front of
+it: the chain starts from the request as the caller made it and fits it to each candidate the way
+the routed model was fitted (`fitting`, [`FRD-302`](features/FRD-302-model-fallback.md) FR-5a). A
+cap the caller *did* set is a condition on every candidate, so a fallback declaring a lower maximum
+is passed over by name rather than called (FR-5b).
 
 **One capability is deliberately not a condition**: `prompt_caching`
 ([`FRD-133`](features/FRD-133-prompt-caching.md)). Every other flag guards the _answer_ — a
@@ -293,7 +314,7 @@ output alone let a dozen agentic requests, each carrying a 100 000-token context
 ```mermaid
 graph LR
     chain["Fallback chain"] --> c1{"candidate 1<br/>conditions?"}
-    c1 -->|"residency · media types ·<br/>schema · sampling · thinking"| ok1["dispatch"]
+    c1 -->|"residency · media types ·<br/>schema · sampling · thinking · cap"| ok1["dispatch"]
     c1 -->|"fails"| skip1["skip, keep the reason"]
     skip1 --> c2{"candidate 2"}
     c2 --> ok2["dispatch<br/><i>streamed: first chunk proves it</i>"]
@@ -319,10 +340,12 @@ something, so a streamed request nothing can serve is a **status** rather than a
 is an empty array; and once a chunk is on the wire the stream is **committed**, because text from
 two models spliced into one answer would be worse than the failure it hid.
 
-Five conditions share this mechanism rather than each inventing one: **residency**
-(one policy for every cloud), **media types**, the **schema** capability, **thinking**, and
-**sampling expressibility** — the last is a property of the _dialect_, since no catalog entry can
-say whether `top_k` exists.
+Six conditions share this mechanism rather than each inventing one: **residency**
+(one policy for every cloud), **media types**, the **schema** capability, **thinking**, the
+**output cap** the caller set, and **sampling expressibility** — the last is a property of the
+_dialect_, since no catalog entry can say whether `top_k` exists. Each asks about what the caller
+asked for: a default the model in front of a candidate declares is that model's, not a condition
+on the next.
 
 A candidate whose **wire format cannot carry** the request — found while its body is built, one
 step after the conditions: a thinking budget that does not fit Anthropic's output cap, thinking on a
@@ -425,7 +448,8 @@ period has passed (default 7 days). It must be scheduled or nothing is deleted.
 | Over the rate limit               | 429 + `Retry-After`                            | `rate_limited`              |
 | Over budget                       | 429                                            | `budget_exceeded`           |
 | Use case retired                  | 403                                            | `invalid_request`           |
-| Blocked by the pipeline           | 403                                            | `blocked_by_pipeline`       |
+| Use case not known to this gateway | 403                                           | `invalid_request`           |
+| Blocked by the pipeline           | 400 (`INVALID_ARGUMENT`; KIRA `VALIDATION_ERROR`) | `blocked_by_pipeline`       |
 | No candidate could serve it       | 400 `FAILED_PRECONDITION`                      | `no_capable_model`          |
 | Unknown model                     | 404                                            | `model_not_found`           |
 | Field this gateway does not serve | 400, **naming the field**                      | `invalid_request`           |

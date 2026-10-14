@@ -416,15 +416,15 @@ MUTATIONS = [
         "SD7",
         "a retired use case serves nothing, even to a token whose group still names it",
         "gateway/src/aira_gateway/api/serving/controls.py",
-        "    if record is not None and record.deleted_at is not None:",
+        "    if record.deleted_at is not None:",
         "    if False:",
         "gateway/tests/test_a_retired_use_case_serves_nothing.py",
     ),
     Mutation(
         "SD8",
-        "the retirement refusal runs before anything is spent",
+        "the refusal of a use case unknown here or retired runs before anything is spent",
         "gateway/src/aira_gateway/api/serving/prepare.py",
-        "    await refuse_if_retired(request)\n    if canonical is not None:",
+        "    await refuse_unless_live(request, use_case_of(request))\n    if canonical is not None:",
         "    if canonical is not None:",
         "gateway/tests/test_a_retired_use_case_serves_nothing.py",
     ),
@@ -996,12 +996,14 @@ MUTATIONS = [
     Mutation(
         "B7",
         "a disabled budget does not bind",
-        "gateway/src/aira_gateway/budgets/store.py",
+        "gateway/src/aira_gateway/budgets/service.py",
         # Re-anchored with `FRD-610`: the query now reads `use_case or ""`, so that a request
-        # naming none finds the installation's rows. The property is unchanged and is this clause.
-        '            BudgetRead.use_case == (use_case or ""), BudgetRead.enabled.is_(True)',
-        '            BudgetRead.use_case == (use_case or ""),',
-        "gateway/tests/test_budget_service.py",
+        # naming none finds the installation's rows. Re-anchored again when a lifted budget came
+        # to be **found and counted** (`store.applicable`): what keeps it from binding is now the
+        # guard's split, so the property moved there with its clause.
+        "            budgets = [budget for budget in binding if budget.enabled]",
+        "            budgets = binding",
+        "gateway/tests/test_budget_service.py gateway/tests/test_a_lifted_budget_still_counts.py",
     ),
     Mutation(
         "B8",
@@ -1165,8 +1167,8 @@ MUTATIONS = [
         "M3",
         "a configured limit is actually enforced",
         "gateway/src/aira_gateway/ratelimit/service.py",
-        "        if not self._enforce:\n            return",
-        "        if True:\n            return",
+        "            if use_case and self._enforce\n",
+        "            if False\n",
         f"{RATELIMIT} {RATELIMIT_ROUTES}",
     ),
     Mutation(
@@ -1278,8 +1280,8 @@ MUTATIONS = [
         "M15",
         "budgets are still enforced when Redis is unreachable",
         "gateway/src/aira_gateway/budgets/service.py",
-        "            await self._check_only(session, budgets, now, subject)\n        return Reservation(budgets=budgets, subject=subject, period_keys=periods, atomic=False)",
-        "        return Reservation(budgets=budgets, subject=subject, period_keys=periods, atomic=False)",
+        "            await self._check_only(session, budgets, now, subject)\n        return Reservation(\n",
+        "        return Reservation(\n",
         "gateway/tests/test_budget_reservation.py gateway/tests/test_budget_service.py",
     ),
     Mutation(
@@ -1349,7 +1351,7 @@ MUTATIONS = [
         "M20",
         "a use case that declined storage gets none",
         "gateway/src/aira_gateway/persistence/writer.py",
-        "        return True if record is None else bool(record.store_payloads)",
+        "        return False if record is None else bool(record.store_payloads)",
         "        return True",
         f"{LOG_WRITER} gateway/tests/test_store_payloads.py",
     ),
@@ -1569,8 +1571,8 @@ MUTATIONS = [
         # change's whole claim, so the mutation now tests the claim instead of one copy of it.
         # Re-anchored again (2026-08-14) when `Prepared` gained the notices a step owes the
         # caller (`FRD-309`). The property is unchanged: one sequence, both surfaces.
-        "    return Prepared(canonical, embed, fallbacks, declaration, reservation, notices)",
-        "    return Prepared(canonical, embed, fallbacks, declaration, Reservation(), notices)",
+        "    return Prepared(canonical, embed, fallbacks, declaration, reservation, notices, asked)",
+        "    return Prepared(canonical, embed, fallbacks, declaration, Reservation(), notices, asked)",
         # The selection widened with the anchor. This was one surface's property and is now every
         # surface's, so testing it with one surface's tests would check a third of the claim —
         # which is exactly how it survived the first run after the move.
@@ -1990,15 +1992,15 @@ MUTATIONS = [
         "C21",
         "the expiry tolerance is its own decision, not the clock's",
         "libs/src/aira_common/oidc.py",
-        '        overdue = time.time() - float(claims["exp"])\n        if overdue > self._expiry_leeway:',
-        '        overdue = time.time() - float(claims["exp"])\n        if False:',
+        '        overdue = now - float(claims["exp"])\n        if overdue > self._expiry_leeway:',
+        '        overdue = now - float(claims["exp"])\n        if False:',
         "libs/tests/test_oidc_clock_tolerance.py",
     ),
     Mutation(
         "C22",
         "a clock behind the issuer's does not refuse every fresh token",
         "libs/src/aira_common/oidc.py",
-        "                leeway=self._clock_skew,",
+        "                leeway=max(self._clock_skew, self._expiry_leeway),",
         "                leeway=0,",
         "libs/tests/test_oidc_clock_tolerance.py",
     ),
@@ -2404,8 +2406,8 @@ MUTATIONS = [
         # became the typed accessor, and again when the second argument became the **person**
         # rather than the subject (`ADR-0019`). `units` is still the whole property, and it is
         # still the argument this replaces.
-        "    await rate_limits.check(\n        use_case,\n        caller,\n        units,",
-        "    await rate_limits.check(\n        use_case,\n        caller,\n        1,",
+        "        await rate_limits.check(\n            use_case,\n            caller,\n            units,",
+        "        await rate_limits.check(\n            use_case,\n            caller,\n            1,",
         EMBEDDING,
     ),
     Mutation(
@@ -3040,9 +3042,10 @@ MUTATIONS = [
         "Z15",
         "the shared sequence resolves thinking after routing, not against the model the caller named",
         "gateway/src/aira_gateway/api/serving/prepare.py",
-        '                "thinking": resolve_thinking(canonical.thinking, declaration),',
-        '                "thinking": canonical.thinking,',
-        "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py",
+        '            "thinking": resolve_thinking(asked.thinking, declaration),',
+        '            "thinking": asked.thinking,',
+        "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py "
+        "gateway/tests/test_every_candidate_is_sent_its_own_defaults.py",
     ),
     Mutation(
         "Z16",
@@ -3262,7 +3265,7 @@ MUTATIONS = [
         "N12",
         "an action this stage cannot take is recorded as not taken",
         "gateway/src/aira_gateway/anomalies/service.py",
-        "        if self.suspensions is None or not rule.action_minutes:",
+        "        if self.suspensions is None or not self.suspensions.enforcing or not rule.action_minutes:",
         "        if False:",
         ANOMALY_ENGINE,
     ),
@@ -4584,8 +4587,8 @@ MUTATIONS = [
         "QA2",
         "a streamed request is answered by the model routing chose, not the one it named",
         "gateway/src/aira_gateway/api/gemini/routes.py",
-        "    return await _stream_response(\n        request,\n        prepared.canonical,",
-        '    return await _stream_response(\n        request,\n        prepared.canonical.model_copy(update={"model": model}),',
+        "    return await _stream_response(\n        request,\n        asked,",
+        '    return await _stream_response(\n        request,\n        asked.model_copy(update={"model": model}),',
         STREAM_CONDITIONS,
     ),
     Mutation(
@@ -5268,8 +5271,8 @@ MUTATIONS = [
         "IB4",
         "spend that names no use case is reserved rather than waved through",
         "gateway/src/aira_gateway/budgets/service.py",
-        "            if not self._enforce:\n                return Reservation(budgets=budgets, subject=subject, period_keys=periods)",
-        "            if not self._enforce or not use_case:\n                return Reservation(budgets=budgets, subject=subject, period_keys=periods)",
+        "            if not self._enforce:\n                return Reservation(\n",
+        "            if not self._enforce or not use_case:\n                return Reservation(\n",
         "gateway/tests/test_installation_budget.py",
     ),
     # Anchored in the **migration**, not in `models.py`: the test database is built from
@@ -5942,8 +5945,16 @@ MUTATIONS = [
         "CS17",
         "the integration job waits for the catalogue and not only for four endpoints",
         ".github/workflows/ci.yml",
-        "run: make demo-ready",
-        "run: make wait-healthy",
+        "        run: make demo-ready\n\n      - name: Integration tests",
+        "        run: make wait-healthy\n\n      - name: Integration tests",
+        "tools/tests/test_showcase_is_repeatable.py",
+    ),
+    Mutation(
+        "CS17b",
+        "the browser job waits for the catalogue too: it starts a stack of its own",
+        ".github/workflows/ci.yml",
+        "        run: make demo-ready\n\n      - name: Install Playwright browser",
+        "        run: make wait-healthy\n\n      - name: Install Playwright browser",
         "tools/tests/test_showcase_is_repeatable.py",
     ),
     Mutation(
@@ -6210,11 +6221,14 @@ MUTATIONS = [
         "PD1",
         "a redactor that names no model blocks rather than borrowing the first in the registry",
         "gateway/src/aira_gateway/pipeline/engine/steps.py",
-        "        candidates = await self._models_for(config, declaration_of)\n        if not candidates:",
-        "        candidates = await self._models_for(config, declaration_of) or [\n"
-        "            (self._registry.models()[0].name, self._registry.provider_for(self._registry.models()[0].name))\n"
-        "        ]\n"
-        "        if not candidates:",
+        "        candidates = await self._models_for(config, declaration_of, permits)\n"
+        "        if not candidates.found:\n            why = candidates.why_none(",
+        "        candidates = await self._models_for(config, declaration_of, permits)\n"
+        "        if not candidates.found:\n"
+        "            candidates.found.append(\n"
+        "                (self._registry.models()[0].name, self._registry.provider_for(self._registry.models()[0].name))\n"
+        "            )\n"
+        "        if not candidates.found:\n            why = candidates.why_none(",
         PII,
     ),
     Mutation(
@@ -6231,10 +6245,11 @@ MUTATIONS = [
         "PD6",
         "a router that names no classifier is not asked, rather than asking any model at hand",
         "gateway/src/aira_gateway/pipeline/engine/steps.py",
-        "        answered = await self._asked(await self._models_for(config, declaration_of), ask)\n        if answered is None:",
+        "        candidates = await self._models_for(config, declaration_of, permits)\n"
+        "        answered = await self._asked(candidates.found, ask)\n        if answered is None:",
         '        config = {**config, "model": config.get("model") or self._registry.models()[0].name}\n'
-        "        answered = await self._asked(await self._models_for(config, declaration_of), ask)\n"
-        "        if answered is None:",
+        "        candidates = await self._models_for(config, declaration_of, permits)\n"
+        "        answered = await self._asked(candidates.found, ask)\n        if answered is None:",
         PIPELINE,
     ),
     Mutation(
@@ -7159,9 +7174,10 @@ MUTATIONS = [
         "OC1",
         "the model's declared default output cap is sent when the caller sets none",
         "gateway/src/aira_gateway/api/serving/prepare.py",
-        '                "max_output_tokens": declaration.output_cap(canonical.max_output_tokens),',
-        '                "max_output_tokens": canonical.max_output_tokens,',
-        "gateway/tests/test_model_catalog.py",
+        '            "max_output_tokens": declaration.output_cap(asked.max_output_tokens),',
+        '            "max_output_tokens": asked.max_output_tokens,',
+        "gateway/tests/test_model_catalog.py "
+        "gateway/tests/test_every_candidate_is_sent_its_own_defaults.py",
     ),
     Mutation(
         "RO1",
@@ -8171,16 +8187,33 @@ MUTATIONS = [
         "PB7",
         "nothing is published that the live-stack job did not pass",
         ".github/workflows/ci.yml",
-        "    needs: [python, frontend, stack, described]",
-        "    needs: [python, frontend, described]",
+        "    needs: [python, frontend, stack, browser, described]",
+        "    needs: [python, frontend, browser, described]",
         "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
     ),
     Mutation(
         "PB8",
         "nothing is published that has not been shown to carry a description",
         ".github/workflows/ci.yml",
+        "    needs: [python, frontend, stack, browser, described]",
+        "    needs: [python, frontend, stack, browser]",
+        "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
+    ),
+    Mutation(
+        "PB30",
+        "nothing is published that the browser suite did not pass",
+        ".github/workflows/ci.yml",
+        "    needs: [python, frontend, stack, browser, described]",
         "    needs: [python, frontend, stack, described]",
-        "    needs: [python, frontend, stack]",
+        "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
+    ),
+    Mutation(
+        "PB31",
+        "a check job added later gates the release, though nobody listed it",
+        ".github/workflows/ci.yml",
+        "  browser:\n    name: Stack — browser end-to-end\n",
+        "  later:\n    runs-on: ubuntu-latest\n    steps:\n      - run: exit 1\n\n"
+        "  browser:\n    name: Stack — browser end-to-end\n",
         "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
     ),
     Mutation(
@@ -8211,8 +8244,8 @@ MUTATIONS = [
         "PB12",
         "the release jobs see the tags and the history the notes are built from",
         ".github/workflows/ci.yml",
-        "      # Full history and tags: the notes quote the commits since the previous release, and\n      # `--depth 1` would make every release look like the first one.\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0",
-        "      # Full history and tags: the notes quote the commits since the previous release, and\n      # `--depth 1` would make every release look like the first one.\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 1",
+        "      # Full history and tags: the notes quote the commits since the previous release, and\n      # `--depth 1` would make every release look like the first one.\n      - uses: actions/checkout@v5\n        with:\n          fetch-depth: 0",
+        "      # Full history and tags: the notes quote the commits since the previous release, and\n      # `--depth 1` would make every release look like the first one.\n      - uses: actions/checkout@v5\n        with:\n          fetch-depth: 1",
         "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
     ),
     Mutation(
@@ -8987,8 +9020,8 @@ MUTATIONS = [
         "UP3",
         "a *cost* limit binds it, not any limit — tokens and requests count unpriced traffic",
         "gateway/src/aira_gateway/budgets/service.py",
-        "        return any(budget.limit_cost_nanos is not None for budget in budgets)",
-        "        return bool(budgets)",
+        "        return any(budget.enabled and budget.limit_cost_nanos is not None for budget in budgets)",
+        "        return any(budget.enabled for budget in budgets)",
         "gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
     ),
     Mutation(
@@ -9002,7 +9035,7 @@ MUTATIONS = [
     Mutation(
         "UP5",
         "the switch lets an installation accept the gap knowingly",
-        "gateway/src/aira_gateway/api/serving/prepare.py",
+        "gateway/src/aira_gateway/api/serving/conditions.py",
         "    if settings.enforce_priced_models:",
         "    if True:",
         "gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
@@ -11128,13 +11161,14 @@ MUTATIONS = [
         "a gateway without Kafka is ready on Postgres alone",
         "gateway/src/aira_gateway/config.py",
         "        return brokers[0] if brokers else None",
-        '        return brokers[0] if brokers else ("localhost", DEFAULT_KAFKA_PORT)',
+        '        return brokers[0] if brokers else ("localhost", 9092)',
         "gateway/tests/test_health.py",
     ),
     Mutation(
         "FX-G1-11b",
         "an IPv6 broker is dialled without its brackets",
-        "gateway/src/aira_gateway/config.py",
+        # The gateway's copy of the parser is gone; the property lives in the one both planes read.
+        "libs/src/aira_common/kafka.py",
         '        host, closed, rest = entry[1:].partition("]")',
         '        host, closed, rest = entry.partition("]")',
         "gateway/tests/test_health.py gateway/tests/test_config.py",
@@ -11943,7 +11977,9 @@ MUTATIONS = [
         "FX-G4-28",
         "with enforcement off a request is still counted",
         "gateway/src/aira_gateway/budgets/service.py",
-        "            if not self._enforce:\n                return Reservation(budgets=budgets, subject=subject, period_keys=periods)",
+        "            if not self._enforce:\n                return Reservation(\n"
+        "                    budgets=budgets, lifted=lifted, subject=subject, period_keys=periods\n"
+        "                )",
         "            if not self._enforce:\n                return Reservation()",
         "gateway/tests/test_budget_service.py gateway/tests/test_installation_budget.py",
     ),
@@ -12429,11 +12465,12 @@ MUTATIONS = [
     ),
     Mutation(
         "FXG2-18a",
-        "a retired use case is not recorded as a pipeline block",
+        "a retired or unknown use case is not recorded as a pipeline block",
         "gateway/src/aira_gateway/api/serving/refusals.py",
-        "        # request names a use case that no longer serves — the caller's to correct.\n        return Outcome.INVALID_REQUEST",
-        "        # request names a use case that no longer serves — the caller's to correct.\n        return Outcome.BLOCKED_BY_PIPELINE",
-        "gateway/tests/test_a_retired_use_case_serves_nothing.py",
+        "        # request names a use case that does not serve here — the caller's to correct.\n        return Outcome.INVALID_REQUEST",
+        "        # request names a use case that does not serve here — the caller's to correct.\n        return Outcome.BLOCKED_BY_PIPELINE",
+        "gateway/tests/test_a_retired_use_case_serves_nothing.py "
+        "gateway/tests/test_an_unknown_use_case_serves_nothing.py",
     ),
     Mutation(
         "FXG2-18b",
@@ -13943,8 +13980,8 @@ MUTATIONS = [
         "G5-6",
         "a model check is no detector rule's traffic",
         "gateway/src/aira_gateway/anomalies/evaluator.py",
-        "    return stmt.where(group.is_not(None), traffic)",
-        "    return stmt.where(group.is_not(None))",
+        '    stmt = stmt.where(group.is_not(None), group != "", traffic)',
+        '    stmt = stmt.where(group.is_not(None), group != "")',
         "gateway/tests/test_anomaly_engine.py",
     ),
     Mutation(
@@ -14500,6 +14537,363 @@ MUTATIONS = [
         '        \'umask 077 && cat > "$1.new" && mv "$1.new" "$1"\',',
         '        \'cat > "$1.new" && mv "$1.new" "$1"\',',
         "tools/tests/test_windows_sso.py",
+    ),
+    # == the settings-combinations findings: a use case the gateway does not hold ==============
+    Mutation(
+        "GS-1",
+        "a use case the gateway holds no record of is refused, not served with permissive defaults",
+        "gateway/src/aira_gateway/api/serving/controls.py",
+        "    if record is None:\n        # 403 like retirement",
+        "    if record is None:\n        return\n    if record is None:\n        # 403 like retirement",
+        "gateway/tests/test_an_unknown_use_case_serves_nothing.py "
+        "gateway/tests/test_store_payloads.py gateway/tests/test_tool_calling.py",
+    ),
+    Mutation(
+        "GS-2",
+        "the content of a use case the gateway has not heard of is not stored",
+        "gateway/src/aira_gateway/persistence/writer.py",
+        "        return False if record is None else bool(record.store_payloads)",
+        "        return True if record is None else bool(record.store_payloads)",
+        "gateway/tests/test_store_payloads.py",
+    ),
+    Mutation(
+        "GS-3",
+        "a dry run meets the rule a request meets: an unknown use case dry-runs nothing",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        "        await refuse_unless_live(request, payload.use_case)\n",
+        "        pass\n",
+        "gateway/tests/test_an_unknown_use_case_serves_nothing.py",
+    ),
+    Mutation(
+        "GS-4",
+        "a use case's description fits the gateway column whatever length Management accepted",
+        "gateway/src/aira_gateway/db/models/read_models.py",
+        '    description: Mapped[str] = mapped_column(Text, default="")',
+        '    description: Mapped[str] = mapped_column(String(2000), default="")',
+        "tools/tests/test_what_management_accepts_fits_the_gateway.py",
+    ),
+    # == the settings-combinations findings: each candidate of a chain is fitted on its own ======
+    Mutation(
+        "GS-5",
+        "each candidate of a chain is sent the caller's request with its own defaults",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "        if fit is not None:\n            fitted = await fit(addressed)",
+        "        if False:\n            fitted = await fit(addressed)",
+        "gateway/tests/test_every_candidate_is_sent_its_own_defaults.py",
+    ),
+    Mutation(
+        "GS-6",
+        "a thinking budget that does not fit a fallback's own cap passes the fallback over",
+        "gateway/src/aira_gateway/api/serving/prepare.py",
+        "            check_budget_fits(candidate.thinking, candidate.max_output_tokens)\n",
+        "            pass\n",
+        "gateway/tests/test_every_candidate_is_sent_its_own_defaults.py",
+    ),
+    Mutation(
+        "GS-7",
+        "a cap the caller set is a condition on every candidate, not only on the routed model",
+        "gateway/src/aira_gateway/api/serving/prepare.py",
+        "    if canonical is not None and canonical.max_output_tokens is not None:\n"
+        "        checks.append(OutputCapAccepted(",
+        "    if False:\n        checks.append(OutputCapAccepted(",
+        "gateway/tests/test_every_candidate_is_sent_its_own_defaults.py",
+    ),
+    Mutation(
+        "GS-8",
+        "a Gemini chain is conditioned on what the caller asked, not on the primary's defaults",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "            permits=await requirements_for(request, asked),",
+        "            permits=await requirements_for(request, canonical),",
+        "gateway/tests/test_every_candidate_is_sent_its_own_defaults.py",
+    ),
+    Mutation(
+        "GS-9",
+        "a KIRA chain is conditioned on what the caller asked, not on the primary's defaults",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "                permits=await requirements_for(request, asked),",
+        "                permits=await requirements_for(request, canonical),",
+        "gateway/tests/test_every_candidate_is_sent_its_own_defaults.py",
+    ),
+    Mutation(
+        "GS-10",
+        "every chain a surface opens is handed the fit, the KIRA stream's included",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "            fit=fitting(request),\n        )\n    except KIRA_REFUSALS as exc:",
+        "        )\n    except KIRA_REFUSALS as exc:",
+        "gateway/tests/test_surface_layering.py "
+        "gateway/tests/test_every_candidate_is_sent_its_own_defaults.py",
+    ),
+    # == the settings-combinations findings: a step calls only what the request may reach =======
+    Mutation(
+        "GS-11",
+        "a pipeline step asks the request's conditions of a model before calling it",
+        "gateway/src/aira_gateway/pipeline/engine/steps.py",
+        "            refusal = await permits(model) if permits is not None else None\n",
+        "            refusal = None\n",
+        "gateway/tests/test_a_step_calls_only_what_the_request_may_reach.py",
+    ),
+    Mutation(
+        "GS-12",
+        "a step that may not call its model says why, rather than reading as a typo",
+        "gateway/src/aira_gateway/pipeline/engine/steps.py",
+        '                withheld.append(f"{model}: {refusal}")\n',
+        "                pass\n",
+        "gateway/tests/test_a_step_calls_only_what_the_request_may_reach.py",
+    ),
+    Mutation(
+        "GS-13",
+        "the request path hands the installation's conditions to the pipeline",
+        "gateway/src/aira_gateway/api/serving/pipeline_run.py",
+        "            # And only one this request may reach: release, approval, residency, price.\n"
+        "            permits=permits(await installation_requirements(request)),\n",
+        "",
+        "gateway/tests/test_a_step_calls_only_what_the_request_may_reach.py",
+    ),
+    Mutation(
+        "GS-14",
+        "the embedding path hands the installation's conditions to its redactor too",
+        "gateway/src/aira_gateway/api/serving/pipeline_run.py",
+        "            declaration_of=await declared_model(request),\n"
+        "            permits=permits(await installation_requirements(request)),\n",
+        "            declaration_of=await declared_model(request),\n",
+        "gateway/tests/test_a_step_calls_only_what_the_request_may_reach.py",
+    ),
+    # == the settings-combinations findings: a lifted budget still counts ======================
+    Mutation(
+        "GS-15",
+        "a lifted budget is found, so that it can be counted",
+        "gateway/src/aira_gateway/budgets/store.py",
+        '        select(BudgetRead).where(BudgetRead.use_case == (use_case or ""))',
+        "        select(BudgetRead).where(\n"
+        '            BudgetRead.use_case == (use_case or ""), BudgetRead.enabled.is_(True)\n'
+        "        )",
+        "gateway/tests/test_a_lifted_budget_still_counts.py gateway/tests/test_budget_service.py",
+    ),
+    Mutation(
+        "GS-17",
+        "a settled request is booked against its lifted budgets too",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "            [*reservation.budgets, *reservation.lifted],",
+        "            reservation.budgets,",
+        "gateway/tests/test_a_lifted_budget_still_counts.py",
+    ),
+    Mutation(
+        "GS-18",
+        "a lifted budget's shared counter takes what was spent, so putting it back sees it",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "        await self._add_to_counters(\n            reservation.lifted,",
+        "        await self._add_to_counters(\n            [],",
+        "gateway/tests/test_a_lifted_budget_still_counts.py",
+    ),
+    Mutation(
+        "GS-19",
+        "the early check does not refuse on a lifted budget",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "            budgets = [b for b in await applicable(session, use_case, subject) if b.enabled]",
+        "            budgets = await applicable(session, use_case, subject)",
+        "gateway/tests/test_a_lifted_budget_still_counts.py",
+    ),
+    Mutation(
+        "GS-20",
+        "a lifted cost budget binds no model to a price",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "budget.enabled and budget.limit_cost_nanos is not None for budget in budgets",
+        "budget.limit_cost_nanos is not None for budget in budgets",
+        "gateway/tests/test_a_lifted_budget_still_counts.py gateway/tests/test_an_unpriced_model_under_a_cost_limit.py",
+    ),
+    # == the settings-combinations findings: suspensions and their switches ===================
+    Mutation(
+        "GS-21",
+        "a throttle holds with the configured rate limits switched off",
+        "gateway/src/aira_gateway/ratelimit/service.py",
+        "        configured = (\n"
+        "            self._applicable(await self._config(use_case), use_case, subject)\n"
+        "            if use_case and self._enforce",
+        "        if not self._enforce:\n"
+        "            return\n"
+        "        configured = (\n"
+        "            self._applicable(await self._config(use_case), use_case, subject)\n"
+        "            if use_case and self._enforce",
+        "gateway/tests/test_suspensions.py gateway/tests/test_ratelimit.py",
+    ),
+    Mutation(
+        "GS-22",
+        "a throttle's refusal is recorded as a suspension, not as a rate limit",
+        "gateway/src/aira_gateway/api/serving/controls.py",
+        "        raise throttle.refusal(exc.retry_after) from exc",
+        "        raise",
+        "gateway/tests/test_suspensions.py gateway/tests/test_throttle_reaches_the_limiter.py",
+    ),
+    Mutation(
+        "GS-23",
+        "of several blocks, the one that ends last says when to come back",
+        "gateway/src/aira_gateway/anomalies/suspensions.py",
+        "            row = max(blocks, key=lambda block: int(_retry_after(block)))",
+        "            row = blocks[0]",
+        "gateway/tests/test_suspensions.py",
+    ),
+    Mutation(
+        "GS-24",
+        "while suspensions are off, a rule records its finding and writes no decision",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        "        if self.suspensions is None or not self.suspensions.enforcing or not rule.action_minutes:",
+        "        if self.suspensions is None or not rule.action_minutes:",
+        "gateway/tests/test_suspensions.py",
+    ),
+    # == the settings-combinations findings: what an anomaly rule measures =====================
+    Mutation(
+        "GS-25",
+        "a pipeline step's own call is not counted among a rule's requests",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        "    if not spend:\n        stmt = stmt.where(",
+        "    if False:\n        stmt = stmt.where(",
+        "gateway/tests/test_anomaly_engine.py",
+    ),
+    Mutation(
+        "GS-26",
+        "a pipeline step's own call is counted as spend",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        "spend=kind is RuleKind.SPEND_SPIKE",
+        "spend=False",
+        "gateway/tests/test_anomaly_engine.py",
+    ),
+    Mutation(
+        "GS-27",
+        "a row with no caller is no rule's target",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        '    stmt = stmt.where(group.is_not(None), group != "", traffic)',
+        "    stmt = stmt.where(group.is_not(None), traffic)",
+        "gateway/tests/test_anomaly_engine.py",
+    ),
+    Mutation(
+        "GS-28",
+        "a rule naming a use case other than its route's is refused, not created global",
+        "management/backend/src/aira_management/apps/anomalies/serializers.py",
+        "        self._names_its_own_use_case()\n",
+        "",
+        "management/backend/tests/test_anomaly_rules.py",
+    ),
+    Mutation(
+        "GS-29",
+        "a block carries no rate",
+        "gateway/src/aira_gateway/api/incidents/suspensions.py",
+        "    if action == RuleAction.BLOCK.value and throttle_rpm is not None:",
+        "    if False:",
+        "gateway/tests/test_suspensions.py",
+    ),
+    Mutation(
+        "GS-30",
+        "a cursor naming a row id with a control character is refused, not handed to Postgres",
+        "gateway/src/aira_gateway/api/reporting/common.py",
+        "    if not row_id or printable(row_id) != row_id:",
+        "    if not row_id:",
+        "gateway/tests/test_suspensions.py",
+    ),
+    Mutation(
+        "GS-31",
+        "the suspension list refuses a use case outside the slug charset by name",
+        "gateway/src/aira_gateway/api/incidents/suspensions.py",
+        "    if use_case and not is_valid_use_case(use_case):\n"
+        "        # The charset every caller-supplied slug meets",
+        "    if False:\n        # The charset every caller-supplied slug meets",
+        "gateway/tests/test_suspensions.py",
+    ),
+    Mutation(
+        "GS-32",
+        "the findings list refuses a use case outside the slug charset by name",
+        "gateway/src/aira_gateway/api/reporting/anomalies.py",
+        "    if use_case and not is_valid_use_case(use_case):",
+        "    if False:",
+        "gateway/tests/test_suspensions.py",
+    ),
+    # == the settings-combinations findings: the low ones ======================================
+    Mutation(
+        "GS-33",
+        "a model check is no request in a report, and its spend still counts",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "            func.sum(case((RequestLog.outcome == Outcome.DIAGNOSTIC.value, 0), else_=1)), 0",
+        "            func.count(), 0",
+        "gateway/tests/test_reporting.py",
+    ),
+    Mutation(
+        "GS-34",
+        "the model list leaves out a model the catalogue knows and has not approved",
+        "gateway/src/aira_gateway/api/serving/context.py",
+        "        if not await _withheld(catalog, registry, model.name)\n",
+        "",
+        "gateway/tests/test_the_model_list_says_what_is_served.py",
+    ),
+    Mutation(
+        "GS-35",
+        "a redactor's preamble is dropped even when its reply never echoed the closing marker",
+        "gateway/src/aira_gateway/pipeline/classifiers/prompts.py",
+        "        if start >= 0:\n",
+        "        if start == 0:\n",
+        "gateway/tests/test_pipeline_classifiers.py",
+    ),
+    Mutation(
+        "GS-36",
+        "an expiry leeway wider than the clock skew is honoured",
+        "libs/src/aira_common/oidc.py",
+        "                leeway=max(self._clock_skew, self._expiry_leeway),",
+        "                leeway=self._clock_skew,",
+        "libs/tests/test_oidc_clock_tolerance.py",
+    ),
+    Mutation(
+        "GS-37",
+        "a wider expiry leeway does not widen the clock skew for iat and nbf",
+        "libs/src/aira_common/oidc.py",
+        "            if ahead > self._clock_skew:",
+        "            if False:",
+        "libs/tests/test_oidc_clock_tolerance.py",
+    ),
+    Mutation(
+        "GS-38",
+        "the gateway refuses a token tolerance out of bounds at startup, OIDC on or off",
+        "gateway/src/aira_gateway/config.py",
+        '        return check_tolerance(value, f"AIRA_{str(info.field_name).upper()}")',
+        "        return value",
+        "gateway/tests/test_config.py",
+    ),
+    Mutation(
+        "GS-39",
+        "the console's backend refuses a token tolerance out of bounds at startup, OIDC on or off",
+        "management/backend/src/aira_management/config/app_settings.py",
+        '        return check_tolerance(value, f"AIRA_{str(info.field_name).upper()}")',
+        "        return value",
+        "management/backend/tests/test_a_token_tolerance_is_bounded_at_startup.py",
+    ),
+    Mutation(
+        "GS-40",
+        "a response schema is measured as written, compact and in UTF-8",
+        "gateway/src/aira_gateway/core/schema.py",
+        'json.dumps(raw, separators=(",", ":"), ensure_ascii=False)',
+        "json.dumps(raw)",
+        "gateway/tests/test_response_schema.py",
+    ),
+    Mutation(
+        "GS-41",
+        "a broker named by a host nothing could dial refuses to start",
+        "libs/src/aira_common/kafka.py",
+        '    if not entry.startswith("[") and not _HOST_NAME.match(host):',
+        "    if False:",
+        "gateway/tests/test_config.py tools/tests/test_both_planes_read_one_broker_list.py",
+    ),
+    Mutation(
+        "GS-42",
+        "a bracketed broker must be an IPv6 address",
+        "libs/src/aira_common/kafka.py",
+        "            ipaddress.IPv6Address(host)\n",
+        "            pass\n",
+        "gateway/tests/test_config.py tools/tests/test_both_planes_read_one_broker_list.py",
+    ),
+    Mutation(
+        "GS-43",
+        "with no proxy in front, the forwarded-for header is the caller's and is ignored",
+        "gateway/src/aira_gateway/persistence/recorder.py",
+        "            if 0 < hops <= len(chain):",
+        "            if max(1, hops) <= len(chain):\n                hops = max(1, hops)",
+        "gateway/tests/test_persistence_recorder.py",
     ),
 ]
 

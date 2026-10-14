@@ -40,7 +40,13 @@ class _StoppedCaller:
         self, use_case: Any, subject: Any, credential: Any, person: Any = None
     ) -> list[Throttle]:
         return [
-            Throttle(label="suspension subject:ada", key="suspension:1", limit_rpm=self._limit_rpm)
+            Throttle(
+                label="suspension subject:ada",
+                key="suspension:1",
+                limit_rpm=self._limit_rpm,
+                target="subject",
+                author="rule:too-fast",
+            )
         ]
 
 
@@ -86,12 +92,14 @@ async def test_a_throttled_caller_is_refused_rather_than_crashing() -> None:
 
     await guard_before_work(request)  # type: ignore[arg-type]
 
-    from aira_gateway.ratelimit.errors import RateLimited
+    from aira_gateway.anomalies.suspensions import Throttled
 
-    with pytest.raises(RateLimited) as refusal:
+    with pytest.raises(Throttled) as refusal:
         await guard_before_work(request)  # type: ignore[arg-type]
-    # Named, so the caller learns which decision is holding them rather than only that something is.
-    assert "suspension subject:ada" in str(refusal.value)
+    # Named, so the caller learns which decision is holding them rather than only that something is
+    # — and a suspension's, so it is recorded as one rather than as a rate limit (`FRD-503` FR-5).
+    assert "throttled to 1 request(s) a minute (rule:too-fast)" in str(refusal.value)
+    assert refusal.value.retry_after
 
 
 async def test_the_throttle_is_the_rate_it_says_it_is() -> None:

@@ -50,6 +50,9 @@ migrate.
   `minProperties`/`maxProperties`, `anyOf`. Types: `STRING`, `INTEGER`, `NUMBER`, `BOOLEAN`,
   `ARRAY`, `OBJECT`. An unknown field is a 400 that names it.
 - **FR-3 Bounds.** Maximum serialized size, maximum nesting depth, maximum total property count.
+  The size is the document's as a client writes it at its smallest — compact, in UTF-8 — so a
+  schema of exactly the bound is accepted and a non-ASCII character counts its own bytes, not the
+  six of an escape.
   Each configurable, each with a conservative default, each refused with a message naming the
   bound. A schema is caller-supplied structure and recursion is caller-controlled.
 - **FR-4 Capability-checked after routing.** A model must declare `structured_output` (`FRD-114`).

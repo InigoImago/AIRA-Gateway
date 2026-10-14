@@ -59,11 +59,15 @@ class RateLimitService:
         ``units`` is what the request weighs — one, or one per text of an embedding batch
         (`FRD-113` FR-6). ``extra`` carries a `FRD-503` throttle: an added bucket, not a
         replacement, taken together with the configured ones so the decision stays all-or-nothing.
+
+        **The switch is the configured limits', not the throttle's.** With rate limits off
+        (`AIRA_ENFORCE_RATE_LIMITS=false`) no configured limit is taken and a throttle still is: it
+        is a suspension, and `AIRA_ENFORCE_SUSPENSIONS` is the switch that turns those off.
         """
-        if not self._enforce:
-            return
         configured = (
-            self._applicable(await self._config(use_case), use_case, subject) if use_case else []
+            self._applicable(await self._config(use_case), use_case, subject)
+            if use_case and self._enforce
+            else []
         )
         buckets = [*configured, *extra]
         if not buckets:
@@ -95,6 +99,7 @@ class RateLimitService:
         raise RateLimited(
             f"Request rate limit exceeded for {label}.",
             retry_after=decision.retry_after_header,
+            bucket=decision.refused.key if decision.refused else None,
         )
 
     def _applicable(

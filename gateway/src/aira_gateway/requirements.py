@@ -306,10 +306,30 @@ class StructuredOutputSupported:
         return f"{missing}, so it cannot return a document matching the schema this request sent"
 
 
-class ThinkingHonoured:
-    """The model must offer the thinking this request resolved to (`FRD-111`).
+class OutputCapAccepted:
+    """The model must accept the output cap the caller asked for (`FRD-114`).
 
-    A candidate that cannot think as much as was asked answers *less well*, with a 200.
+    The model routing chose is held to it before dispatch, as the caller's `400`
+    (`check_declaration`); this asks every other candidate. One that declares a lower maximum is
+    refused by its vendor after being called, or answers with less than was asked for.
+    """
+
+    def __init__(self, catalog: ModelCatalog, requested: int) -> None:
+        self._catalog = catalog
+        self._requested = requested
+
+    async def refusal(self, model: str) -> str | None:
+        cap = (await self._catalog.declaration(model)).max_output_tokens
+        if cap is None or self._requested <= cap:
+            return None
+        return f"accepts at most {cap} output tokens, and this request asks for {self._requested}"
+
+
+class ThinkingHonoured:
+    """The model must offer the thinking the caller asked for (`FRD-111`).
+
+    A candidate that cannot think as much as was asked answers *less well*, with a 200. A model's
+    *default* thinking is not asked for: every candidate is sent its own (`prepare.fitting`).
     """
 
     def __init__(self, catalog: ModelCatalog, setting: Thinking | None) -> None:

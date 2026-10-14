@@ -81,6 +81,33 @@ def test_a_surface_that_dispatches_prepares_through_the_shared_sequence(surface:
     assert "prepare_for_dispatch" in called
 
 
+#: What every chain a surface opens is handed, and what it does without each: `permits` refuses a
+#: candidate the request may not reach, `routing_of` sends it to its own region, and `fit` sends it
+#: the caller's request with its own defaults rather than the primary's (`FRD-302` FR-5a).
+CHAIN_ARGUMENTS = frozenset({"permits", "routing_of", "fit"})
+
+
+@pytest.mark.parametrize("surface", SURFACES, ids=lambda p: p.parent.name)
+def test_every_chain_a_surface_opens_is_conditioned_and_fitted(surface: Path) -> None:
+    """Asserted on the call, because each call site has to remember all three, and the defaults are
+    none: a chain called without `fit` is valid code that sends a fallback the primary's cap."""
+    lacking: list[str] = []
+    opened = 0
+    for node in ast.walk(ast.parse(surface.read_text())):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+        if name not in {"dispatch_with_fallback", "stream_with_fallback"}:
+            continue
+        opened += 1
+        missing = CHAIN_ARGUMENTS - {keyword.arg for keyword in node.keywords}
+        if missing:
+            lacking.append(f"line {node.lineno}: {name} without {sorted(missing)}")
+    if not opened:
+        pytest.skip(f"{surface.parent.name} opens no chain")
+    assert not lacking, f"{surface.parent.name}: " + "; ".join(lacking)
+
+
 # == and a surface never loses evidence quietly ==================================================
 
 

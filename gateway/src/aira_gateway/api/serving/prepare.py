@@ -15,18 +15,16 @@ conditions (`test_every_dispatch_applies_the_conditions.py`).
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from fastapi import Request
 
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.api.serving.conditions import installation_requirements
 from aira_gateway.api.serving.context import (
-    attribution_of,
     catalog_of,
     embedding_bounds,
-    released_models,
     use_case_of,
 )
 from aira_gateway.api.serving.controls import (
@@ -40,7 +38,7 @@ from aira_gateway.api.serving.controls import (
     enforce_pre_dispatch,
     guard_before_work,
     prompt_texts,
-    refuse_if_retired,
+    refuse_unless_live,
     resolve_reasoning,
 )
 from aira_gateway.api.serving.pipeline_run import run_pipeline, run_pipeline_over_texts
@@ -50,14 +48,10 @@ from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
 from aira_gateway.embedding import check_shape as check_embedding_shape
 from aira_gateway.embedding import validate as validate_embedding
-from aira_gateway.pipeline.dispatch import NoCapableModel, Permits, Skipped
+from aira_gateway.pipeline.dispatch import Fit, NoCapableModel, Permits, Skipped
 from aira_gateway.requirements import (
     MediaTypesSupported,
-    ModelApproved,
-    ModelReleasedForUseCase,
-    PricedWhereCostIsLimited,
-    RegionAllowed,
-    Requirement,
+    OutputCapAccepted,
     SamplingExpressible,
     SchemaExpressible,
     SpeechSupported,
@@ -66,9 +60,8 @@ from aira_gateway.requirements import (
     ToolsSupported,
     permits,
 )
-from aira_gateway.residency import parse_allowed, parse_model_regions
-from aira_gateway.state import budgets_of, pricing_of, providers_of, settings_of
-from aira_gateway.thinking import check_budget_fits, reserved_tokens
+from aira_gateway.state import providers_of
+from aira_gateway.thinking import ThinkingRejected, check_budget_fits, reserved_tokens
 from aira_gateway.thinking import resolve as resolve_thinking
 from aira_gateway.upstreams.base import Upstream
 
@@ -85,6 +78,10 @@ class Prepared:
     #: What the caller is told about their request having been changed (`FRD-309`). Carried here
     #: because the pipeline runs before there is an answer; applied once, by `answers.annotate`.
     notices: tuple[str, ...] = ()
+    #: The request as the caller made it — after the pipeline, before any model's defaults. What a
+    #: chain starts from and its conditions ask about; ``canonical`` is this fitted to the model
+    #: routing chose, and every other candidate is fitted the same way (`fitting`).
+    asked: CanonicalRequest | None = None
 
     @property
     def model(self) -> str:
@@ -107,8 +104,9 @@ async def prepare_for_dispatch(
     default_task_type: str | None = None,
 ) -> Prepared:
     """Run the whole pre-dispatch sequence, in order (see the module docstring)."""
-    # First: a retired use case must not spend an allowance or reach a classifier.
-    await refuse_if_retired(request)
+    # First: a use case that is unknown here or retired must not spend an allowance or reach a
+    # classifier.
+    await refuse_unless_live(request, use_case_of(request))
     if canonical is not None:
         # Recorded before anything can refuse, so a refused request still shows it offered tools.
         trail.tools_declared = len(canonical.tools)
@@ -151,18 +149,9 @@ async def prepare_for_dispatch(
         speech=canonical is not None and canonical.speech is not None,
     )
 
+    asked = canonical
     if canonical is not None:
-        canonical = canonical.model_copy(
-            update={
-                "thinking": resolve_thinking(canonical.thinking, declaration),
-                "cache_prefix": await cache_prefix_wanted(request, declaration),
-                "cache_ttl": await cache_ttl_for(request),
-                "addressing": declaration.addressing,
-                # The model's default when the caller set none (`FRD-114` FR-2), so the cap that
-                # applies is the one this installation declared, not the vendor's.
-                "max_output_tokens": declaration.output_cap(canonical.max_output_tokens),
-            }
-        )
+        canonical = await fitted(request, canonical, declaration)
         # The resolved budget against the cap that will be sent: a budget that fills the
         # allowance it is drawn from is the caller's `400`, not the provider's refusal.
         check_budget_fits(canonical.thinking, canonical.max_output_tokens)
@@ -187,36 +176,68 @@ async def prepare_for_dispatch(
     )
     # Last, so the span describes what will actually be dispatched, not what the caller sent.
     describe_on_the_span(canonical, embed)
-    return Prepared(canonical, embed, fallbacks, declaration, reservation, notices)
+    return Prepared(canonical, embed, fallbacks, declaration, reservation, notices, asked)
+
+
+async def fitted(
+    request: Request, asked: CanonicalRequest, declaration: ModelDeclaration
+) -> CanonicalRequest:
+    """``asked``, as it is sent to the model ``declaration`` describes.
+
+    The caller's own settings stay the caller's. What the caller left to the model is that model's:
+    the output cap it declares as its default (`FRD-114` FR-2), its default thinking (`FRD-111`),
+    the cache marker it can honour (`FRD-133`) — and its addressing. Asked of the model routing
+    chose by `prepare_for_dispatch` and of every other candidate by `fitting`, so a fallback is
+    never sent the defaults of the model in front of it.
+    """
+    return asked.model_copy(
+        update={
+            "thinking": resolve_thinking(asked.thinking, declaration),
+            "cache_prefix": await cache_prefix_wanted(request, declaration),
+            "cache_ttl": await cache_ttl_for(request),
+            "addressing": declaration.addressing,
+            # The model's default when the caller set none, so the cap that applies is the one
+            # this installation declared, not the vendor's.
+            "max_output_tokens": declaration.output_cap(asked.max_output_tokens),
+        }
+    )
+
+
+def fitting(request: Request) -> Fit:
+    """`fitted` for each candidate of a chain, or why the candidate cannot be sent the request.
+
+    What is the caller's `400` for the model routing chose — a thinking setting it does not offer,
+    a budget that does not fit inside its output cap — is a reason to pass over any other
+    candidate: the request was valid where it was addressed, and another candidate may take it.
+    """
+    catalog = catalog_of(request)
+
+    async def fit(addressed: CanonicalRequest) -> CanonicalRequest | str:
+        declaration = await catalog.declaration(addressed.model)
+        try:
+            candidate = await fitted(request, addressed, declaration)
+            check_budget_fits(candidate.thinking, candidate.max_output_tokens)
+        except ThinkingRejected as exc:
+            return exc.message
+        return candidate
+
+    return fit
 
 
 async def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Permits:
     """What a candidate must satisfy to serve this request (`ADR-0012` §3).
 
-    Residency, approval (`FRD-307`) and the use case's release (`FRD-308`) always apply — they are
-    properties of the installation. The rest only when the request asks for that feature. The
-    release is read once here and asked per hop, so a long chain costs one query.
+    Residency, approval (`FRD-307`), the use case's release (`FRD-308`) and a price where spend is
+    capped always apply — they are properties of the installation, and a pipeline step asks them
+    too (`conditions.installation_requirements`). The rest only when the request asks for that
+    feature.
+
+    ``canonical`` is the request **as the caller made it** (`Prepared.asked`): a condition is about
+    what was asked for, and a default the model in front of a candidate declares was not.
     """
     registry = providers_of(request)
     catalog = catalog_of(request)
-    settings = settings_of(request)
-    checks: list[Requirement] = [
-        RegionAllowed(
-            registry,
-            parse_allowed(settings.allowed_regions),
-            parse_model_regions(settings.allowed_model_regions),
-        ),
-        ModelApproved(catalog, registry),
-        ModelReleasedForUseCase(await released_models(request), use_case_of(request), registry),
-    ]
-    if settings.enforce_priced_models:
-        # An installation-level check like the three above, and asked on every verb: an embedding
-        # books against the same budgets as a chat request (`FRD-610` §3.2). The budget question is
-        # passed as a callable, resolved at most once per request and only when a candidate turns
-        # out to have no price — so the ordinary request pays for no extra query.
-        checks.append(
-            PricedWhereCostIsLimited(pricing_of(request), _cost_limited_once(request), registry)
-        )
+    checks = await installation_requirements(request)
     if canonical is not None and canonical.media_types:
         checks.append(MediaTypesSupported(catalog, canonical.media_types))
     if canonical is not None and canonical.response_schema is not None:
@@ -226,6 +247,8 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
         checks.append(SchemaExpressible(registry, canonical.response_schema, catalog))
     if canonical is not None and canonical.thinking is not None:
         checks.append(ThinkingHonoured(catalog, canonical.thinking))
+    if canonical is not None and canonical.max_output_tokens is not None:
+        checks.append(OutputCapAccepted(catalog, canonical.max_output_tokens))
     if canonical is not None and canonical.sampling_requested:
         checks.append(SamplingExpressible(registry, canonical.sampling_requested, catalog))
     if canonical is not None and canonical.tools:
@@ -233,30 +256,6 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     if canonical is not None and canonical.speech is not None:
         checks.append(SpeechSupported(registry, catalog))
     return permits(checks)
-
-
-def _cost_limited_once(request: Request) -> Callable[[], Awaitable[bool]]:
-    """*Is spend capped for this caller?* — asked at most once per request, however long the chain.
-
-    Memoised on the request rather than in the requirement, because a chain builds its conditions
-    once and asks them per hop, and two hops must not be two queries about a fact that cannot
-    change inside one request.
-    """
-
-    async def answer() -> bool:
-        cached = getattr(request.state, "cost_limited", None)
-        if cached is None:
-            # The **same pot** the reservation books against: `attribution` is where the use case
-            # and the person come from on this path (`enforce_pre_dispatch`), and resolving either
-            # of them a second way is how one request gets asked about two different budgets.
-            attribution = attribution_of(request)
-            cached = await budgets_of(request).cost_limited(
-                getattr(attribution, "use_case", None), getattr(attribution, "person", None)
-            )
-            request.state.cost_limited = cached
-        return bool(cached)
-
-    return answer
 
 
 async def resolve_direct_target(

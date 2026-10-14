@@ -100,12 +100,18 @@ async def test_requests_without_a_use_case_follow_the_installation_setting() -> 
         assert (await _logs(off))[0].request_payload is None
 
 
-async def test_an_unknown_use_case_keeps_the_previous_behaviour() -> None:
-    # The read-model may lag behind Management; that must not silently drop the audit payload.
+async def test_an_unknown_use_case_stores_nothing() -> None:
+    """A use case whose row has not arrived has said nothing about its content — and one that
+    switched storage off says so in exactly that row. So nothing is written: the request is
+    refused and recorded (`refuse_unless_live`), and its prompt is not."""
     app = _app()
     with TestClient(app) as client:
-        _post(client, "not-yet-distributed")
-        assert (await _logs(app))[0].request_payload is not None
+        response = client.post(URL, json=BODY, headers={"x-aira-use-case": "not-yet-distributed"})
+        assert response.status_code == 403
+
+        (row,) = await _logs(app)
+        assert row.use_case == "not-yet-distributed", "the refusal is accounted for"
+        assert row.request_payload is None
 
 
 # ---- switching it off purges what is already there ------------------------------------------

@@ -78,8 +78,12 @@ they administer. Only IT Security and Global Administrator may author a **global
 global rule can block traffic for use cases its author cannot see.
 
 **FR-9** — Validation happens where the rule is written, not where it runs: a threshold outside its
-kind's range, a window outside the bounds, a ratio kind with a reference period shorter than its
-window, or a `block` with no duration are all refused with a message naming the field.
+kind's range, a window outside the bounds, or a `block` with no duration are all refused with a
+message naming the field. (There is no reference period to bound: a ratio and `new_source_ip`
+compare a window with the one before it, of the same length.) So is a
+`use_case` in the body that is not the route's: the route decides a rule's scope, and the field
+read-only on input was once ignored instead — a rule posted to the global endpoint for one use case
+was created **global**, and with `block` it stopped traffic in every use case.
 
 ## 4. Behaviour and decisions
 
@@ -142,7 +146,7 @@ IT Security's to author, and the API says so rather than the UI.
 - Alert *delivery* (mail, webhook, Kafka topic for an external system) is `FRD-503`, not here. A
   rule that fires records an event; who gets told is a separate decision with a separate blast
   radius.
-- `new_source_ip` needs a reference period longer than the window, and its first evaluation after
+- `new_source_ip` compares a window with the one before it, and its first evaluation after
   deployment sees every address as new. `FRD-501` handles the warm-up; the rule only declares it.
 
 
@@ -187,6 +191,7 @@ created and ignored; suspensions expire on read rather than by a sweeper, so an 
 refusing the moment it runs out; and incidents need no read model at all — the console posts them
 to the gateway's own API, so there is no second copy to diverge.
 
-Two bounded behaviours worth stating rather than changing: the touched-scope set is capped at 4096
-per tick, which delays a finding rather than losing it *provided the scope sees traffic again*; and
-the fired-rule cooldown lives in process, so a restart or a second replica can repeat a finding.
+Two behaviours that were bounded and are now read from the database: the scopes a tick evaluates
+are the ones with rows since the last tick (`request_logs`), so nothing is dropped and every
+instance sees all the traffic; and the fired-rule cooldown asks `anomaly_events`, so a restart or a
+second replica does not repeat a finding (`FRD-501` FR-2, FR-3).

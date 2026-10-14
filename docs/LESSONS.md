@@ -1949,13 +1949,18 @@ reading code.
   and the gap between them is a decision period rather than a retention period: 30 days means
   erasing a record requires deliberately coming back for it. Ask of any destructive action: *who
   benefits from it, and are they the ones who can perform it?*
-- **A tombstone is not absence, and the difference is what makes a check possible.** The gateway
-  cannot refuse an *unknown* use case — Kafka orders nothing, so one that has not arrived yet looks
-  exactly like one that was deleted. It can refuse a **retired** one, because that row is positive
-  knowledge which can only exist after the use case was known. Keeping the row also kept two
-  answers that had been silently changing at the moment of deletion: the retention period the
-  installation had promised, and whether a missing payload was never stored or had expired. **When
-  a delete makes a downstream answer change rather than disappear, that is the bug.**
+- **A tombstone is not absence — and absence is not permission.** A **retired** use case can be
+  refused because its row is positive knowledge, which can only exist after the use case was known.
+  Keeping the row also kept two answers that had been silently changing at the moment of deletion:
+  the retention period the installation had promised, and whether a missing payload was never
+  stored or had expired. **When a delete makes a downstream answer change rather than disappear,
+  that is the bug.** The gateway once declined to refuse an *unknown* use case — Kafka orders
+  nothing, and one created a second ago looks exactly like one that was deleted — and read the
+  missing row as every control's permissive value instead: every model released, every prompt
+  stored, never retired. A row need not arrive a second later: a column narrower than what
+  Management accepts failed every event of one use case, which then served without its controls
+  for good. **A control whose record has not arrived is not a control that says yes**; refuse
+  until it does.
 
 - **Widening a field from one to many is a search, not an edit.** Making a model's region a list
   meant reading the twelve places that consumed it — and three were **already wrong**, in ways that
@@ -2029,6 +2034,12 @@ reading code.
   that never cleared belongs to the component, which that spec never builds. The helper's suite was
   green under mutation; the browser suite found it. When a helper's rule *drops* something, ask what
   each caller was waiting for it to deliver.
+
+  *And the caller can be a test.* A browser test switched a trace tab's live refresh off, then
+  waited for the row its own request had just caused. Rows are written after the answer, so the
+  first load could come back without it, and with refresh off nothing loaded it again: the wait ran
+  out on a row that existed, in two CI runs in a row. **Wait for what a live view delivers, then
+  switch it off.**
 - **An ADR that cites a control as an existing fact is not a check that it exists.** `ADR-0021` §5
   named `Upstream.thinking_modes` in passing — *"beside the existing `thinking_modes`"* — and the
   declaration was read by nothing, so the document described a control the code did not have and
@@ -2280,7 +2291,10 @@ reading code.
   *And two samples are two moments.* A test compared the heights of two tabs read one after the
   other, while the page went on loading above the strip: the whole strip moved between the two
   reads, 254 px to 295 px, and the comparison reported a wrap that never happened. **Read what must
-  be compared in one evaluation**, from one layout.
+  be compared in one evaluation**, from one layout. The same in height: a test read the page's
+  height when a list appeared and again with a window open over it, while the page went on loading
+  beside the list. The page grew 11 px on its own and the window was blamed. The window's share is
+  read with it and with it hidden, in one evaluation.
 - **An unqualified role query is a query about a page that has one of something.** Opening a
   disclosure put a second tab strip on the page and `getByRole('tabpanel')` became ambiguous. Name
   what you mean.

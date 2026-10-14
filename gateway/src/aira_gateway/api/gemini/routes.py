@@ -40,6 +40,7 @@ from aira_gateway.api.serving import (
     declared_routing,
     deprecation_headers,
     ensure_body_is_encodable,
+    fitting,
     json_body,
     prepare_for_dispatch,
     record_refusal,
@@ -176,9 +177,11 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         return await _embed(request, model, method, prepared, trail, headers)
     if method == "generateContent":
         return await _generate_content(request, prepared, trail, headers)
+    asked = prepared.asked
+    assert asked is not None
     return await _stream_response(
         request,
-        prepared.canonical,
+        asked,
         prepared,
         trail,
         sse=request.query_params.get("alt") == "sse",
@@ -189,18 +192,21 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
 async def _generate_content(
     request: Request, prepared: Prepared, trail: AuditTrail, headers: dict[str, str]
 ) -> Response:
-    canonical = prepared.canonical
-    assert canonical is not None
+    canonical, asked = prepared.canonical, prepared.asked
+    assert canonical is not None and asked is not None
     started = time.monotonic()
     async with accounting(
         request, trail, prepared, api="gemini", operation="generateContent", started=started
     ) as acct:
+        # The caller's request, fitted to each candidate in turn: a fallback is held to what the
+        # caller asked and given its own defaults, never the primary's (`fitting`).
         dispatched = await dispatch_with_fallback(
             providers_of(request),
-            canonical,
+            asked,
             prepared.fallbacks,
-            permits=await requirements_for(request, canonical),
+            permits=await requirements_for(request, asked),
             routing_of=await declared_routing(request),
+            fit=fitting(request),
         )
         answer = annotate(canonical, dispatched.response, prepared, trail)
         trail.served_by(answer.model, dispatched.candidate_index)
@@ -251,7 +257,7 @@ async def _embed(
 
 async def _stream_response(
     request: Request,
-    canonical: CanonicalRequest,
+    asked: CanonicalRequest,
     prepared: Prepared,
     trail: AuditTrail,
     *,
@@ -272,12 +278,14 @@ async def _stream_response(
     # Before the chain is opened: the wait for a candidate's first chunk is time this request
     # took, and a `started` taken after it would report every stream as faster than it was.
     started = time.monotonic()
+    # The caller's request, fitted to each candidate in turn (`fitting`), as on `generateContent`.
     streamed = await stream_with_fallback(
         providers_of(request),
-        canonical,
+        asked,
         prepared.fallbacks,
-        permits=await requirements_for(request, canonical),
+        permits=await requirements_for(request, asked),
         routing_of=await declared_routing(request),
+        fit=fitting(request),
     )
     stream = StreamAccounting(
         request,

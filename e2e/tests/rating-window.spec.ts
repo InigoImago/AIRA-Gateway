@@ -61,9 +61,7 @@ test.describe('Rating a pipeline-test answer', () => {
     await page.goto('/pipeline-tests');
     await page.getByTestId('tab-runs').click();
     const opener = page.getByTestId(`open-run-${run.body.id}`);
-    // Measured once the runs are listed, so a list still loading is not taken for the window.
     await expect(opener).toBeVisible({ timeout: 20_000 });
-    const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
 
     await opener.click();
     // Found as what it is, a dialog holding the answer, rather than by a test id only one way of
@@ -86,8 +84,19 @@ test.describe('Rating a pipeline-test answer', () => {
       );
     }
     // The window's body scrolled, not the page: a page that grew to fit the answer would put the
-    // verdicts in reach only by scrolling the page out from under the window.
-    const opened = await page.evaluate(() => document.documentElement.scrollHeight);
-    expect(opened, 'the page grew when the window opened').toBeLessThanOrEqual(pageHeight + 1);
+    // verdicts in reach only by scrolling the page out from under the window. Measured as the
+    // window's own share of the page's height, with and without it in one evaluation, from one
+    // layout: the page behind it goes on loading what it shows beside the runs, so a height read
+    // before the window opened belongs to a page that has since grown on its own.
+    const share = await window_.evaluate((dialog) => {
+      const page = document.documentElement;
+      const shown = dialog.style.display;
+      const withWindow = page.scrollHeight;
+      dialog.style.display = 'none';
+      const withoutWindow = page.scrollHeight;
+      dialog.style.display = shown;
+      return withWindow - withoutWindow;
+    });
+    expect(share, 'the window made the page taller').toBeLessThanOrEqual(1);
   });
 });

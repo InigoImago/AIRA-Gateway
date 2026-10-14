@@ -30,6 +30,21 @@ Kafka, Gateway holds read-models" architecture and removes any synchronous coupl
   (and/or Keycloak groups) so `/uc/<slug>` authorization stays correct.
 - **FR-5 Observability**: consumer lag + apply errors are metered; trace context propagated.
 - **FR-6 Replay**: compacted topics allow rebuilding the read-model from scratch.
+- **FR-7 What Management accepts, the read-model holds**: every text an event carries fits the
+  column it is applied to. A narrower column makes PostgreSQL refuse the **whole** event — the
+  consumer logs `config_event_failed` and moves on, the console shows the change saved, and the
+  plane that enforces it never receives it. SQLite enforces no length, so the two declarations are
+  compared across the planes (`tools/tests/test_what_management_accepts_fits_the_gateway.py`); a
+  use case's `description` and `processing_notes` are unbounded on the gateway, the bound being
+  Management's (`MAX_PROSE_LENGTH`).
+- **FR-8 A use case the read-model does not hold serves nothing** (`refuse_unless_live`, the first
+  step of `prepare_for_dispatch`, and the dry run). Every control a use case carries lives on its
+  row — its release, whether its content is stored, its retirement — and each reads its permissive
+  value when there is none. So a request naming a slug without a row is refused `403` ("not known
+  to this gateway"), recorded as `invalid_request` with no payload stored, rather than served with
+  every model, every prompt stored and no retirement. A use case created a moment ago serves once
+  its event has arrived; a Keycloak group `/use-cases/<slug>` naming a slug Management does not
+  have is refused for good. Retired use cases are refused the same way (`FRD-607` §4.1).
 
 ## 4. Design & Architecture
 - `aira_common` gains a typed Kafka producer/consumer wrapper over the FRD-000 abstraction (real
@@ -44,4 +59,6 @@ Kafka, Gateway holds read-models" architecture and removes any synchronous coupl
 
 ## 6. Dependencies & Risks
 - Builds on FRD-202. Foundation for FRD-205 and later phases. Risk: eventual consistency window →
-  bounded + monitored; Risk: delivery guarantees → outbox + idempotent apply.
+  bounded + monitored, and a use case inside it is refused rather than served without its controls
+  (FR-8); Risk: delivery guarantees → outbox + idempotent apply; Risk: an event the read-model
+  cannot hold → the planes' bounds compared in CI (FR-7).

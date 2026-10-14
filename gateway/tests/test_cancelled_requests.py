@@ -165,7 +165,7 @@ from aira_gateway.budgets import ledger as ledger_scripts  # noqa: E402
 from aira_gateway.budgets.ledger import BudgetLedger  # noqa: E402
 from aira_gateway.budgets.service import BudgetService  # noqa: E402
 from aira_gateway.core.canonical import CanonicalChunk  # noqa: E402
-from aira_gateway.db.models import BudgetRead, BudgetUsage  # noqa: E402
+from aira_gateway.db.models import BudgetRead, BudgetUsage, UseCaseRead  # noqa: E402
 
 
 class _CountingRunner:
@@ -318,6 +318,8 @@ async def _disconnected(
                     **(_PRICES if priced else {}),
                 )
             )
+            # A use case the gateway has never heard of serves nothing (`refuse_unless_live`).
+            session.add(UseCaseRead(slug="demo", name="demo"))
             session.add(
                 BudgetRead(
                     id=1,

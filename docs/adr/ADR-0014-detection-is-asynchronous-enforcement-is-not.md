@@ -78,6 +78,12 @@ This also makes the safe rollout possible: a new rule starts in `alert`, is watc
 promoted to `throttle` or `block` once its false-positive rate is known. A detection system whose
 only setting is "block" is a detection system nobody switches on.
 
+> **Amended 2026-10-14.** The installation-wide version of that rollout is
+> `AIRA_ENFORCE_SUSPENSIONS=false`, and it has to hold for what a rule *writes* as well as for what
+> the gate refuses: a blocking rule went on writing live suspensions while it was off, and each one
+> stopped its target the moment enforcement was switched on. A rule that would act records
+> `detected_not_enforced` instead, and writes nothing.
+
 ### 4. A rule is configuration, distributed like every other rule
 
 Anomaly rules are authored in Management, distributed over Kafka to a gateway read-model, exactly

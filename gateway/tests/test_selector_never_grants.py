@@ -119,13 +119,15 @@ def test_the_gemini_path_selector_is_authorised_too() -> None:
 
 async def test_a_member_still_gets_through_on_both_surfaces() -> None:
     """The other half of "keep the functionality": the fix must refuse the right people only."""
-    from aira_gateway.db.models import ModelRead
+    from aira_gateway.db.models import ModelRead, UseCaseRead
 
     member = Principal(subject="ada", method="oidc", use_cases=("uc-a",))
 
     with _client(member) as client:
         async with client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
             session.add(ModelRead(model="mock-1", numeric_id=1, capabilities=["generate"]))
+            # Known to the gateway: a use case it has never heard of serves nothing.
+            session.add(UseCaseRead(slug="uc-a", name="uc-a"))
             await session.commit()
         gemini = client.post(
             "/v1beta/models/mock-1:generateContent",

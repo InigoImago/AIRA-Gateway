@@ -84,7 +84,8 @@ whether it ever uses Kerberos or not.
   domain is not running or Chromium cannot load MIT Kerberos; it applies the realm's half with a
   **10-second** cache lifespan so a revocation can be watched to its end, and its teardown removes
   that half again, passed or not.
-- **FR-7 — CI runs it** after the browser suite, in the stack job.
+- **FR-7 — CI runs it** after the browser suite, in the browser job, which starts a stack of its
+  own beside the integration job's.
 
 ## 5. Design & Architecture
 

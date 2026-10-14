@@ -8,52 +8,23 @@ from __future__ import annotations
 
 import sys
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from sqlalchemy import URL
 
 from aira_common.config import BaseAiraSettings
 from aira_common.counters import SentinelConfig, SentinelConfigError, parse_sentinels
 from aira_common.integration_debug import configure_integration_debug
-from aira_common.kafka import KafkaSecurity, validate_stage
+from aira_common.kafka import KafkaSecurity, parse_bootstrap_servers, validate_stage
 from aira_common.logging import configure_logging
 from aira_common.observability import configure_observability, set_payload_rendering
-from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
+from aira_common.oidc import (
+    DEFAULT_CLOCK_SKEW_SECONDS,
+    DEFAULT_EXPIRY_LEEWAY_SECONDS,
+    check_tolerance,
+)
 from aira_common.roles import Role, parse_role_groups
 from aira_gateway import __version__
 from aira_gateway.residency import parse_model_regions
-
-#: Kafka's own port, for a broker written without one.
-DEFAULT_KAFKA_PORT = 9092
-
-
-def parse_bootstrap_servers(value: str) -> tuple[tuple[str, int], ...]:
-    """``(host, port)`` per entry of a comma-separated broker list, as a Kafka client dials it.
-
-    A bare host takes Kafka's port, and an IPv6 broker is written ``[address]:port`` — the brackets
-    are not part of the host. An entry nothing could dial raises `ValueError` naming it.
-    """
-    return tuple(_broker(entry.strip()) for entry in value.split(",") if entry.strip())
-
-
-def _broker(entry: str) -> tuple[str, int]:
-    port_text: str | None
-    if entry.startswith("["):
-        host, closed, rest = entry[1:].partition("]")
-        if not closed or (rest and not rest.startswith(":")):
-            raise ValueError(f"{entry!r} is neither [address] nor [address]:port")
-        port_text = rest[1:] if rest else None
-    elif entry.count(":") > 1:
-        raise ValueError(f"{entry!r}: write an IPv6 broker as [address]:port")
-    else:
-        host, colon, after = entry.partition(":")
-        port_text = after if colon else None
-    if not host:
-        raise ValueError(f"{entry!r} names no host")
-    if port_text is None:
-        return host, DEFAULT_KAFKA_PORT
-    if not (port_text.isascii() and port_text.isdigit() and 0 < int(port_text) < 65536):
-        raise ValueError(f"{entry!r}: the port must be a number from 1 to 65535")
-    return host, int(port_text)
 
 
 def _default_jwks_uri(issuer: str) -> str:
@@ -169,6 +140,14 @@ class GatewaySettings(BaseAiraSettings):
     @classmethod
     def _one_stage(cls, value: str) -> str:
         return validate_stage(value)
+
+    @field_validator("oidc_clock_skew_seconds", "oidc_expiry_leeway_seconds")
+    @classmethod
+    def _a_tolerance_not_a_lifetime(cls, value: float, info: ValidationInfo) -> float:
+        """At startup whether or not OIDC is configured (`FRD-134` FR-3): checked only where a
+        verifier is built, a value out of bounds started a plane without a word — until somebody
+        switched OIDC on, and it refused to start then."""
+        return check_tolerance(value, f"AIRA_{str(info.field_name).upper()}")
 
     @field_validator("kafka_bootstrap_servers")
     @classmethod

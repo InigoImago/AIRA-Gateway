@@ -69,7 +69,9 @@ usable, and `FRD-113` cannot tell a supported task type from a typo.
   error about a field they never set. It also sharpens the budget reservation for both vendors.
   The default is written into the request before dispatch, for every dialect. It was once used for
   the budget estimate only and never sent, so a Gemini model declared at 256 answered with over a
-  thousand tokens when the caller set no cap.
+  thousand tokens when the caller set no cap. **Both halves are per candidate**: a fallback is sent
+  its own default, not the primary's, and a cap the caller set is a condition on every candidate of
+  the chain, not only on the model routing chose (`FRD-302` FR-5a/5b).
 - **FR-2a Publisher and platform addressing.** Which vendor serves the model (`google`,
   `anthropic`, `openai`, …), which platform reaches it, and how that platform addresses it. It
   selects the wire dialect and the endpoint method (`FRD-115` FR-2).

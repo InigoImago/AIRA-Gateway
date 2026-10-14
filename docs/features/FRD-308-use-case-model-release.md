@@ -175,6 +175,10 @@ Enforced in both planes, because a dropdown is a convenience and not a control:
   The gateway would refuse it at dispatch anyway — this is the refusal that arrives while somebody
   can still fix it, instead of surfacing later as refused traffic on a configuration that looks
   correct.
+- **A step's own call** asks again, every time (`installation_requirements`). Withdrawing a release
+  leaves a saved pipeline as it was, and Management accepts the withdrawal, so the step's model is
+  passed over at the call, with the reason, and the step degrades — rather than a redactor going on
+  sending the caller's text to a model the use case no longer has.
 - **The gateway's dry run** does the same, and that one was a genuine escape hatch. It was
   measured before it was fixed: a caller posted a pipeline naming any model as its classifier and
   the gateway **called it** — no use case, no release check, no approval check, no budget, no rate

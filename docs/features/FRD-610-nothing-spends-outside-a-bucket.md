@@ -40,7 +40,8 @@ Three decisions inside that:
 - **`Outcome.DIAGNOSTIC`, its own value.** Counted as `served`, these would inflate every request
   figure with traffic no use case made — the shape `FRD-125b` refused for pipeline calls. Separable
   is what makes it governable: *"what did diagnostics cost this month"* is now a question somebody
-  can ask.
+  can ask. A report's `requests` leaves them out — it counted rows, so one check was one request in
+  the installation's figures — and its spend keeps them, because they were spent.
 - **Bookkeeping never breaks the answer.** A persistence failure is logged and the verdict still
   returns: a diagnostic that fails because its own accounting failed would be the worst of both.
 
@@ -147,12 +148,12 @@ away for reasons nobody asked for, so the conditions are narrow and each one is 
 | a *token* or *request* limit | counts unpriced traffic exactly like any other — no refusal |
 | no budget at all | no refusal |
 | `AIRA_ENFORCE_BUDGETS=false` | nothing is capped, so nothing is refused for being uncountable |
-| a disabled (lifted) cost budget | does not bind (`applicable`), so it cannot make a model unusable |
+| a disabled (lifted) cost budget | is counted and caps nothing (`cost_limited` asks `enabled`), so it cannot make a model unusable |
 | the mock upstream | exempt, like every other requirement: deterministic fiction has no price, and the demo ships a cost budget |
 
-Which budgets bind is `applicable`'s answer, the same rows the reservation books against — so the
-use case's shared pot, a per-member cost budget **and** the installation's own bucket (§3.1) each
-make a price a requirement. The price question is `PricingService.price_for`, the one definition
+Which budgets bind is `applicable`'s answer, less the lifted ones — the rows the reservation is
+made against — so the use case's shared pot, a per-member cost budget **and** the installation's
+own bucket (§3.1) each make a price a requirement. The price question is `PricingService.price_for`, the one definition
 the audit trail and the counters already use.
 
 **The order is cheap on purpose:** the price is asked first and the budgets only when there is no
@@ -199,8 +200,10 @@ rather than merely honest.
 
 - **A hard cap on the vendor's side.** Right, and not ours: it belongs in the cloud account, and a
   gateway that believes it is the only spending path is a gateway that will be wrong.
-- **Per-request cost limits.** A ceiling per request bounds nothing over a month, and the reservation
-  already refuses a request that cannot fit its budget.
+- **Per-request cost limits.** A ceiling per request bounds nothing over a month. The reservation
+  refuses once a budget is **spent** — a counter already at its limit — and not a single request
+  larger than what is left: that one is admitted and settled at what it cost, which is why a
+  remainder can go negative (`FRD-139` FR-4).
 - **Alerting.** `FRD-500`'s anomaly rules already watch spend; a second mechanism would be a second
   opinion about the same number.
 

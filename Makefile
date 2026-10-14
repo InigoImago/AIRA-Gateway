@@ -327,11 +327,11 @@ up-full: env ## Start EVERYTHING in containers, demo provisioning included (infr
 	@echo "SPA: $(CONSOLE_URL)   (login ucadmin / demo-password)"
 
 demo-ready: ## Block until the demo's keys and *all* its models have reached the gateway
-	@# **Three steps that belong together, in one place**, because two callers need them: `showcase`
-	@# and the CI integration job. `wait-healthy` is not a substitute — it answers whether four HTTP
-	@# endpoints respond, which says nothing about whether the models a suite calls are catalogued
-	@# (`FRD-130` §4f). A sequence with one caller looks like that caller's business right up to the
-	@# second caller, and by then it is already a copy.
+	@# **Three steps that belong together, in one place**, because three callers need them:
+	@# `showcase` and both CI jobs that start a stack. `wait-healthy` is not a substitute — it
+	@# answers whether four HTTP endpoints respond, which says nothing about whether the models a
+	@# suite calls are catalogued (`FRD-130` §4f). A sequence with one caller looks like that
+	@# caller's business right up to the second caller, and by then it is already a copy.
 	@#
 	@# The seed deliberately waits only for the pull to **start** (`docker-compose.apps.yml` says
 	@# why: a blocked registry must not cost the accounts, use cases and budgets that have nothing

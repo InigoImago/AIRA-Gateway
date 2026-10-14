@@ -151,6 +151,10 @@ async def list_suspensions(
     case, or they themselves, are stopped: the fact a member most needs when requests start
     answering 429. Anybody else is refused.
     """
+    if use_case and not is_valid_use_case(use_case):
+        # The charset every caller-supplied slug meets: anything else names no use case, and a NUL
+        # in a query parameter is refused by Postgres — our 500 for the caller's typo.
+        raise GeminiHTTPError(400, "Invalid use case identifier.", "INVALID_ARGUMENT")
     oversight = principal.allows(Permission.INCIDENT_SUSPEND) or principal.allows(
         Permission.ANOMALY_READ_ALL
     )
@@ -257,6 +261,14 @@ async def create_suspension(
     throttle_rpm = _whole(body, "throttle_rpm", minimum=1, maximum=MAX_THROTTLE_RPM)
     if action == RuleAction.THROTTLE.value and not throttle_rpm:
         raise GeminiHTTPError(400, "'throttle_rpm' is required for a throttle.", "INVALID_ARGUMENT")
+    if action == RuleAction.BLOCK.value and throttle_rpm is not None:
+        # Required for a throttle and refused otherwise (`FRD-503` §4.4), as Management refuses it
+        # on a rule: a block that carries a rate reads, on the list, as one that lets some through.
+        raise GeminiHTTPError(
+            400,
+            "'throttle_rpm' applies to a throttle only; a block stops all traffic.",
+            "INVALID_ARGUMENT",
+        )
     # At least one minute: a suspension that expired before it was stored would be listed as a kill
     # switch while stopping nothing (`FRD-125`).
     minutes = _whole(body, "minutes", minimum=1, maximum=MAX_SUSPENSION_MINUTES)
@@ -288,6 +300,9 @@ async def lift_suspension(
 ) -> JSONResponse:
     """Lift one. The row is kept and stamped, never deleted (`FRD-503` FR-8)."""
     _require_an_incident_role(principal)
+    # An id with a control character names no suspension, and a NUL would be Postgres's 500.
+    if printable(suspension_id) != suspension_id:
+        raise GeminiHTTPError(404, "No such suspension.", "NOT_FOUND")
     async with sessionmaker_of(request)() as session:
         row = await session.get(AccessSuspension, suspension_id)
         if row is None:

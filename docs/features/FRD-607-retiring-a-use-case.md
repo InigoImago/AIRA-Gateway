@@ -61,24 +61,33 @@ only**, only for a use case already retired, and only after `PURGE_AFTER_DAYS` (
 
 ## 4. Design
 
-### 4.1 A tombstone is not absence, and that is what makes FR-3 possible
+### 4.1 A tombstone is not absence, and both refuse
 
 `_retire_usecase` keeps the `use_cases` row. That looks like a detail and is the load-bearing part.
 
-The gateway deliberately has **no** use-case existence check at authentication, and
+When retirement was built, the gateway deliberately had **no** use-case existence check, and
 `_delete_usecase` carried the reason: use cases and API keys arrive on different Kafka topics with
 no ordering between them, so a use case whose row has not arrived yet looks exactly like one that
 was deleted. Refusing on *absence* would refuse a use case created a second ago.
 
 A tombstone removes that ambiguity. It is positive knowledge that Management retired this slug, and
 it can only exist after the use case was known — so a refusal built on it is safe, where a refusal
-built on absence was not.
+built on absence was then thought not to be.
 
 That matters because retirement would otherwise have left a hole exactly where the threat is. API
 keys stop working; group grants go with the read-model rows. But a Keycloak group of the form
 `/use-cases/<slug>` resolves **from the token alone** (`FRD-102`, `auth/oidc.py`) and touches no
 AIRA table. Every OIDC member of a retired use case could have gone on calling it, with all of its
 own controls deleted underneath them — no budget, no rate limit, no pipeline, no release.
+
+**Absence refuses as well** (`refuse_unless_live`, `FRD-204` FR-8). The reasoning above held for a
+row that arrives a second late and not for one that never arrives — and without a check, every
+control on a missing row read its permissive value: every model released, every prompt stored,
+never retired. A row went missing for good when Management accepted a description longer than the
+gateway's column: the use case's events failed one after another, its retirement among them, and
+its members were served without its controls. A use case created a moment ago is now refused until
+its event arrives, the seconds a new membership already takes. The tombstone still decides what the
+refusal *says* — retired, not unknown — and keeps the retention promise (§4.2).
 
 ### 4.1a A rebuilt read-model retires too
 

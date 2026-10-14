@@ -22,6 +22,12 @@ before dispatch, with a shaped `429 RESOURCE_EXHAUSTED`.
   limit (tokens are only known after the call, so token budgets are enforced as "stop once exceeded").
 - **Reset**: implicit via `period_key` — a new period starts a fresh counter row.
 - Decisions traced (`aira.budget.*`). Enforcement toggle (`enforce_budgets`), default on.
+- **A lifted budget counts.** A budget switched off (`enabled` false) refuses nothing and is not
+  reserved against, and every request is still booked into its counter — in Postgres and in the
+  shared counter, which outlives the switch. So it behaves like the installation's own toggle:
+  the figures stay true, and putting the budget back caps spending from what was spent. It once
+  stopped counting as well, and putting it back handed out a fresh allowance for the rest of the
+  period (`test_a_lifted_budget_still_counts.py`).
 
 ## 3. Testing & Acceptance
 - Hermetic: a request-count budget blocks the N+1th request; a token budget blocks once exceeded;

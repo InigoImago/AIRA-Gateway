@@ -41,6 +41,7 @@ from aira_gateway.api.serving import (
     guard_before_work,
     json_body,
     record_pipeline_calls,
+    refuse_unless_live,
     released_for,
 )
 from aira_gateway.audit import AuditTrail
@@ -300,6 +301,12 @@ async def dry_run(
     refusal = use_case_refusal(principal, payload.use_case)
     if refusal is not None:
         return _error(403, refusal, "PERMISSION_DENIED")
+    try:
+        # A dry run calls real models on the use case's behalf, so it meets the rule a request
+        # meets: a use case this gateway does not hold, or holds retired, serves nothing.
+        await refuse_unless_live(request, payload.use_case)
+    except REFUSALS as exc:
+        return _refusal(exc)
     authors = await _may_author(request, principal, payload.use_case)
     refused_authority = await _authority_refusal(request, payload, pipeline, authors)
     if refused_authority is not None:

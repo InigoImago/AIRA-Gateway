@@ -263,6 +263,15 @@ async def _each_member_budget(sessionmaker) -> None:
         await session.commit()
 
 
+async def _known(app) -> None:  # noqa: ANN001
+    """The gateway's record of the use case: one it has never heard of serves nothing."""
+    from aira_gateway.db.models import UseCaseRead
+
+    async with app.state.db_sessionmaker() as session:
+        await session.merge(UseCaseRead(slug="uc", name="uc"))
+        await session.commit()
+
+
 async def test_that_budget_still_binds_nobody_else(sessionmaker) -> None:
     """The half that must not have been widened: one person spending their own allowance leaves
     everybody else's where it was. Asked of `each_member`, the scope that keys a counter on the
@@ -272,6 +281,7 @@ async def test_that_budget_still_binds_nobody_else(sessionmaker) -> None:
 
     def call(app) -> int:  # noqa: ANN001
         with TestClient(app) as client:
+            client.portal.call(_known, app)  # type: ignore[attr-defined]
             return client.post(
                 "/v1beta/models/mock-1:generateContent",
                 json=_BODY,
@@ -316,7 +326,7 @@ async def test_concurrent_large_prompts_cannot_pass_a_limit_with_room_for_one() 
 
     from aira_gateway.budgets.ledger import BudgetLedger
     from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
-    from aira_gateway.db.models import BudgetRead, ModelRead
+    from aira_gateway.db.models import BudgetRead, ModelRead, UseCaseRead
     from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
 
     class _Runner:
@@ -358,6 +368,7 @@ async def test_concurrent_large_prompts_cannot_pass_a_limit_with_room_for_one() 
     async with app.router.lifespan_context(app):
         async with app.state.db_sessionmaker() as session:
             session.add(ModelRead(model="agent-1", capabilities=["generate"]))
+            session.add(UseCaseRead(slug="uc", name="uc"))
             session.add(
                 BudgetRead(
                     id=1,

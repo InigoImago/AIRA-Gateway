@@ -287,6 +287,40 @@ def test_only_oversight_may_author_a_rule_that_acts_everywhere(captured_events) 
     assert published[-1]["use_case"] is None
 
 
+@pytest.mark.parametrize("named", ["uc", "elsewhere"])
+def test_a_global_rule_does_not_quietly_drop_the_use_case_it_names(named: str) -> None:
+    """`use_case` is decided by the route and read-only, and a read-only field is ignored on input:
+    a rule posted here naming a use case was created **global** — with `block`, a stop in every use
+    case instead of one. Refused by name, and nothing is created."""
+    admin = _user("named-admin", "global-admin")
+    _use_case(admin)
+    itsec = _user("named-itsec", "it-security")
+
+    refused = _client(itsec).post(
+        GLOBAL, _rule(name="meant-for-one", use_case=named), format="json"
+    )
+
+    assert refused.status_code == 400
+    assert "use_case" in refused.json()["error"]["details"]
+    assert not AnomalyRule.objects.filter(name="meant-for-one").exists()
+
+
+def test_a_use_case_s_rule_may_name_its_own_use_case_and_no_other() -> None:
+    admin = _user("own-admin", "global-admin")
+    slug = _use_case(admin)
+    _use_case(admin, "other")
+
+    own = _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(use_case=slug), format="json")
+    other = _client(admin).post(
+        f"{BASE}{slug}/anomaly-rules/", _rule(name="second", use_case="other"), format="json"
+    )
+
+    assert own.status_code == 201, own.json()
+    assert own.json()["use_case"] == slug
+    assert other.status_code == 400
+    assert "use_case" in other.json()["error"]["details"]
+
+
 def test_a_global_rule_is_visible_to_everybody_it_could_act_on() -> None:
     """A rule that can block your traffic is a rule you are entitled to know about."""
     itsec = _user("visible-itsec", "it-security")

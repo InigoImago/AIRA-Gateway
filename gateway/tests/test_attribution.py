@@ -1,3 +1,6 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -64,14 +67,29 @@ class _OidcStub:
         return Principal("oidc-user", "oidc", use_cases=self._use_cases)
 
 
+def _known(client: TestClient, *slugs: str) -> None:
+    """Give the gateway a record of each use case. One it has never heard of serves nothing
+    (`refuse_unless_live`), and these tests are about who may *select* one."""
+
+    async def seed() -> None:
+        async with client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
+            session.add_all(UseCaseRead(slug=slug, name=slug) for slug in slugs)
+            await session.commit()
+
+    client.portal.call(seed)  # type: ignore[attr-defined]
+
+
+@contextmanager
 def _oidc_client(
     use_cases: tuple[str, ...] = ("demo-uc",), *, require_use_case: bool = False
-) -> TestClient:
+) -> Iterator[TestClient]:
     app = create_app(
         GatewaySettings(log_json=True, auth_required=True, require_use_case=require_use_case)
     )
     app.state.oidc_validator = _OidcStub(use_cases)
-    return TestClient(app)
+    with TestClient(app) as client:
+        _known(client, *use_cases)
+        yield client
 
 
 def _generate(client: TestClient, path: str, headers: dict[str, str]):
@@ -116,10 +134,12 @@ def test_require_use_case_skipped_for_demo() -> None:
 
 def test_demo_use_case_not_membership_checked(client) -> None:
     # demo principal (auth off): any use case is attributed, not authorized
+    _known(client, "anything")
     assert _generate(client, "/uc/anything", {}).status_code == 200
 
 
 def test_apikey_use_case_not_membership_checked(authed_client) -> None:
+    _known(authed_client, "anything")
     resp = _generate(authed_client, "/uc/anything", {"x-goog-api-key": keys.DEMO_API_KEY})
     assert resp.status_code == 200
 
@@ -165,6 +185,7 @@ async def test_an_unbound_key_is_not_restricted(authed_client) -> None:
     app = authed_client.app
     full, prefix, key_hash = generate_api_key()
     async with app.state.db_sessionmaker() as session:
+        session.add(UseCaseRead(slug="anything", name="anything"))
         session.add(
             ApiKey(
                 id=f"{prefix}-unbound",

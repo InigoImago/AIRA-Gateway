@@ -21,7 +21,13 @@ to Anthropic, a document to an OpenAI-compatible server, a thinking budget that 
 output cap. The adapter finds out while mapping (`DialectUnsupported`), one step later than a
 condition would, and a fallback on another dialect may serve the request as written.
 
-Conditions arrive as an async predicate, so dispatch never learns what a region or a media type is.
+**Each candidate is sent the request as the caller made it, with its own defaults.** What the
+caller left to the model — the output cap, the thinking, the cache marker — is the candidate's to
+fill (`fit`), never the first candidate's: a fallback held to the primary's default cap answers
+with the primary's few tokens and a 200, which is the silent degradation above in another form.
+
+Conditions arrive as an async predicate and the fit as an async function, so dispatch never learns
+what a region, a media type or a default is.
 """
 
 from __future__ import annotations
@@ -64,6 +70,10 @@ class Routing:
 
 #: Given a model name, how the catalogue says to reach it.
 RoutingOf = Callable[[str], Awaitable[Routing]]
+
+#: Given the caller's request addressed to a candidate, the request as that candidate is sent it —
+#: or why it cannot be sent one.
+Fit = Callable[[CanonicalRequest], Awaitable[CanonicalRequest | str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,8 +154,10 @@ async def _candidates(
     permits: Permits | None,
     routing_of: RoutingOf | None,
     skipped: list[Skipped],
+    fit: Fit | None = None,
 ) -> AsyncIterator[tuple[int, str, Upstream, CanonicalRequest]]:
-    """Each candidate that may be **called**, in order, with the request addressed to it.
+    """Each candidate that may be **called**, in order, with the request addressed — and, given
+    ``fit``, fitted — to it.
 
     One walk for both forms of the chain, because every difference between them would be a
     difference in what a stream is allowed to reach — and that is how `:streamGenerateContent`
@@ -171,7 +183,14 @@ async def _candidates(
         update: dict[str, Any] = {"model": model}
         if routing_of is not None:
             update["addressing"] = routing.addressing
-        yield index, model, provider, request.model_copy(update=update)
+        addressed = request.model_copy(update=update)
+        if fit is not None:
+            fitted = await fit(addressed)
+            if isinstance(fitted, str):
+                skipped.append(Skipped(model, fitted))
+                continue
+            addressed = fitted
+        yield index, model, provider, addressed
 
 
 async def dispatch_with_fallback(
@@ -181,6 +200,7 @@ async def dispatch_with_fallback(
     *,
     permits: Permits | None = None,
     routing_of: RoutingOf | None = None,
+    fit: Fit | None = None,
 ) -> Dispatched:
     skipped: list[Skipped] = []
     failed: list[Attempted] = []
@@ -188,7 +208,7 @@ async def dispatch_with_fallback(
     unsayable: list[DialectUnsupported] = []
 
     async for index, model, provider, addressed in _candidates(
-        registry, request, fallback_models, permits, routing_of, skipped
+        registry, request, fallback_models, permits, routing_of, skipped, fit
     ):
         try:
             # Per attempt, so each model tried leaves its own model-access record (`FRD-619`).
@@ -221,6 +241,7 @@ async def stream_with_fallback(
     *,
     permits: Permits | None = None,
     routing_of: RoutingOf | None = None,
+    fit: Fit | None = None,
 ) -> Streaming:
     """The chain for a streamed request, opened rather than awaited (`ADR-0032`, `FRD-302` FR-6).
 
@@ -241,7 +262,7 @@ async def stream_with_fallback(
     unsayable: list[DialectUnsupported] = []
 
     async for index, model, provider, addressed in _candidates(
-        registry, request, fallback_models, permits, routing_of, skipped
+        registry, request, fallback_models, permits, routing_of, skipped, fit
     ):
         chunks: AsyncIterator[CanonicalChunk] | None = None
         try:

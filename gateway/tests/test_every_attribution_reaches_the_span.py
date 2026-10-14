@@ -36,7 +36,7 @@ from aira_common.observability import model_call_attributes
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import create_all
-from aira_gateway.db.models import ModelRead
+from aira_gateway.db.models import ModelRead, UseCaseRead
 
 MODEL = "mock-1"
 NUMERIC_ID = 4711
@@ -56,6 +56,8 @@ async def served() -> AsyncIterator[tuple[httpx.AsyncClient, InMemorySpanExporte
     await create_all(app.state.db_engine)
     async with app.state.db_sessionmaker() as session:
         session.add(ModelRead(model=MODEL, numeric_id=NUMERIC_ID, capabilities=["generate"]))
+        # Known to the gateway: a use case it has never heard of serves nothing.
+        session.add(UseCaseRead(slug=USE_CASE, name=USE_CASE))
         await session.commit()
     exporter = InMemorySpanExporter()
     provider = TracerProvider()

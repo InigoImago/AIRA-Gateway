@@ -66,3 +66,41 @@ async def test_a_catalogued_model_is_listed_with_the_verbs_it_declares() -> None
     ], "a model declared to generate only must not offer the embedding verb it would refuse"
     assert one.status_code == 200, one.text
     assert [model["id"] for model in kira] == [7]
+
+
+class _Configured:
+    """An adapter whose model configuration names — a real model, not the test double."""
+
+    def __init__(self, *names: str) -> None:
+        self._names = names
+
+    def models(self) -> list[UpstreamModel]:
+        return [
+            UpstreamModel(name, name, ("generateContent",), "configured") for name in self._names
+        ]
+
+
+async def test_a_configured_model_the_catalogue_has_not_approved_is_not_offered() -> None:
+    """Named in configuration, a catalogued model nobody approved was listed — and every request to
+    it was refused (`FRD-307`). One the catalogue does **not** know yet stays: this list is where
+    the console discovers what to catalogue, marked `airaDeclared: false`, and a request to it is
+    still refused until somebody catalogues and approves it."""
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.state.providers = ProviderRegistry(
+        [*app.state.providers.each(), _Configured("uncatalogued-1", "approved-1", "withheld-1")]
+    )
+    with TestClient(app) as client:
+        await _declare(app, "approved-1", capabilities=["generate"], approved=True)
+        await _declare(app, "withheld-1", capabilities=["generate"], approved=False)
+        listed = {m["name"]: m for m in client.get("/v1beta/models").json()["models"]}
+        asked = client.post(
+            "/v1beta/models/uncatalogued-1:generateContent",
+            json={"contents": [{"parts": [{"text": "hi"}]}]},
+        )
+
+    assert "models/approved-1" in listed
+    assert "models/withheld-1" not in listed, "known to the catalogue and refused: not offered"
+    assert listed["models/uncatalogued-1"]["airaDeclared"] is False, "kept for discovery"
+    assert "models/mock-1" in listed, "the test double is exempt, as it is from the refusal"
+    assert asked.status_code == 400, asked.text
+    assert "not in the model catalog" in asked.text

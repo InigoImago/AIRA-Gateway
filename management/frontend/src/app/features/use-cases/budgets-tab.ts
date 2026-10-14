@@ -161,7 +161,8 @@ export class BudgetsTab {
   }
 
   /**
-   * Lift a budget without losing it, or put it back. The gateway obeys only `enabled` budgets.
+   * Lift a budget without losing it, or put it back. A lifted budget refuses nothing and is still
+   * counted, so putting it back caps spending from what was actually spent.
    *
    * The whole row is sent because the endpoint upserts on scope+subject+period: a body carrying
    * only the switch would blank the limits beside it.

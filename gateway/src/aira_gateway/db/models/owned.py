@@ -22,7 +22,8 @@ class ApiKey(Base):
     #: The **owner**: who answers for the key, and whose name every audit row carries.
     subject: Mapped[str] = mapped_column(String(255))
     #: The use case the key is bound to (`FRD-205`). Null for the demo/CLI break-glass keys, which
-    #: are usable only with an explicit `/uc` selector.
+    #: may name one per call and are the one exemption from naming none (`must_name_a_use_case`):
+    #: such a call books against the installation's own budget (`FRD-610`).
     use_case: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     #: Who created the key, when that is not its owner — a team's shared credential (`FRD-604`

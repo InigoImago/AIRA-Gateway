@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Integer, func, or_, select
+from sqlalchemy import Integer, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_common.anomalies import RATIO_KINDS, RuleKind, RuleTarget
 from aira_common.logging import get_logger
-from aira_gateway.audit import NOT_TRAFFIC, Outcome
+from aira_gateway.audit import NOT_TRAFFIC, PIPELINE_OPERATION_PREFIX, Outcome
 from aira_gateway.db.models import AnomalyRuleRead, RequestLog
 from aira_gateway.db.models.owned import REQUEST_PERSON
 
@@ -74,18 +74,30 @@ def _column(rule: AnomalyRuleRead) -> Any:
     return group
 
 
-def _scoped(stmt: Any, rule: AnomalyRuleRead, group: Any) -> Any:
+def _scoped(stmt: Any, rule: AnomalyRuleRead, group: Any, *, spend: bool = False) -> Any:
     """Narrow a query to the rule's reach, to rows that have a target, and to traffic.
 
     A global rule (``use_case`` NULL) is not narrowed to a use case. A row that is no caller's
     traffic (`audit.NOT_TRAFFIC`, an administrator's model check) is measured by no rule: a
     check that succeeded is not a refusal, and is not the caller's request either. A NULL outcome
     is a row from before outcomes were recorded, when only served requests were.
+
+    **A target is a value.** A row with no caller — refused for its size before anybody signed in
+    — carries an empty subject, and as a target the empty string is a person nobody is: a block on
+    it stops nobody and is listed as in force.
+
+    **A pipeline step's own call is not a request** (`pipeline:<step>`): the gateway made it on the
+    request's behalf, and counted among the requests it halved every share a use case running a
+    step could reach — a filter blocking everything measured 50 %. Only ``spend`` counts it, because
+    it was spent.
     """
     if rule.use_case is not None:
         stmt = stmt.where(RequestLog.use_case == rule.use_case)
     traffic = or_(RequestLog.outcome.is_(None), RequestLog.outcome.notin_(sorted(NOT_TRAFFIC)))
-    return stmt.where(group.is_not(None), traffic)
+    stmt = stmt.where(group.is_not(None), group != "", traffic)
+    if not spend:
+        stmt = stmt.where(not_(RequestLog.operation.startswith(PIPELINE_OPERATION_PREFIX)))
+    return stmt
 
 
 def _window(rule: AnomalyRuleRead, now: datetime) -> tuple[datetime, datetime]:
@@ -222,7 +234,7 @@ async def _evaluate_ratio(
         stmt = select(group, measure, func.count()).where(
             RequestLog.created_at >= start, RequestLog.created_at < end
         )
-        stmt = _scoped(stmt, rule, group).group_by(group)
+        stmt = _scoped(stmt, rule, group, spend=kind is RuleKind.SPEND_SPIKE).group_by(group)
         return {
             str(value): (int(amount or 0), int(rows))
             for value, amount, rows in (await session.execute(stmt)).all()

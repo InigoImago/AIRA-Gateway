@@ -23,8 +23,10 @@ can run, because a step whose success you cannot check is a step you will do twi
 
 The order is not arbitrary, and §9 of [`INTEGRATIONS.md`](INTEGRATIONS.md) gives the reasoning:
 **prices before budgets** (an unpriced model makes a cost budget unenforceable), **alert before
-block** (a detection rule that blocks wrongly once is switched off for ever), and
-**`AIRA_REQUIRE_USE_CASE` last** (turning it on early refuses traffic that used to work).
+block** (a detection rule that blocks wrongly once is switched off for ever), and **every caller
+names a use case from the start**: `AIRA_REQUIRE_USE_CASE` is on by default and refuses to be
+switched off anywhere but `local`, because a request with no use case has nothing to budget, limit
+or attribute. The break-glass key keeps its exemption (`ADR-0015`).
 
 ### Step 0 — one file, before you touch anything
 
@@ -161,7 +163,7 @@ environment on purpose, so a value written there wins over anything a `.env` hol
 
 Then follow [`INTEGRATIONS.md` §9](INTEGRATIONS.md): Redis for shared counters, prices and
 capabilities in the catalogue, the retention worker on a schedule, OTLP, and only then budgets,
-rate limits, anomaly rules in **alert**, and `AIRA_REQUIRE_USE_CASE=true` last of all.
+rate limits, and anomaly rules in **alert** first.
 
 ### What this runbook does not cover
 
@@ -386,9 +388,10 @@ dependencies, before any image is built.
 
 ### What a release does
 
-Pushing the tag runs the whole workflow. The three images are published only if the unit tests, the
-browser tests, the live-stack job *and* the description check all pass on the tagged commit — the
-publish job declares `needs` on all four, so a green release is a green commit by construction. A
+Pushing the tag runs the whole workflow. The three images are published only if the unit tests of
+both planes, the integration suite, the browser suite *and* the description check all pass on the
+tagged commit — the publish job declares `needs` on all five, so a green release is a green commit
+by construction. A
 **GitHub Release** is created last, carrying your words, then the commits since the previous
 release, then the image references.
 
@@ -751,7 +754,7 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 | ------------------------------------ | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AIRA_OIDC_ENABLED`                  | `false`                             | Accept OIDC bearer tokens. **Required for the SPA's dry-run and consumption views.** Without it only API keys are accepted.                                                                                                                                                                                                 |
 | `AIRA_AUTH_REQUIRED`                 | `true`                              | `false` opens all API routes with a synthetic `demo` principal. Demo only.                                                                                                                                                                                                                                                  |
-| `AIRA_REQUIRE_USE_CASE`              | `false`                             | Reject authenticated requests that carry no use-case selector                                                                                                                                                                                                                                                               |
+| `AIRA_REQUIRE_USE_CASE`              | `true`                              | Reject authenticated requests that carry no use-case selector; `false` refuses to start outside `local`                                                                                                                                                                                                                                                               |
 | `AIRA_STORE_PAYLOADS`                | `true`                              | Persist request/response bodies in `request_logs`. **Kill switch**: `false` here means no use case can store them, whatever its own setting says (FRD-404).                                                                                                                                                                 |
 | `AIRA_DEFAULT_RETENTION_DAYS`        | `7`                                 | Payload retention for requests that carry **no** use case. Use-case traffic follows the period set on its use case (FRD-404).                                                                                                                                                                                               |
 | `AIRA_LOG_RETENTION_DAYS`            | `0`                                 | Delete whole `request_logs` rows older than this. `0` keeps them forever — the cost reporting reads them, so opt in deliberately.                                                                                                                                                                                           |
@@ -763,7 +766,7 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 | `AIRA_TRUST_FORWARDED_FOR`           | `false`                             | Honour `X-Forwarded-For` for the recorded source IP                                                                                                                                                                                                                                                                         |
 | `AIRA_MAX_REQUEST_BYTES`             | `8388608` (8 MiB)                   | Hard ceiling on a request body; larger bodies get 413 before being buffered                                                                                                                                                                                                                                                 |
 | `AIRA_GOOGLE_API_KEY`                | `''`                                | Registers the real Gemini provider when set                                                                                                                                                                                                                                                                                 |
-| `AIRA_GEMINI_MODELS`                 | `gemini-2.0-flash,gemini-1.5-flash` | Models exposed by that provider                                                                                                                                                                                                                                                                                             |
+| `AIRA_GEMINI_MODELS`                 | empty                               | Models exposed by that provider; empty, the catalog's discovery asks the key                                                                                                                                                                                                                                                                                             |
 | `AIRA_GEMINI_BASE_URL`               | Google's v1beta endpoint            | Upstream base URL                                                                                                                                                                                                                                                                                                           |
 
 #### The SPA's reverse proxy must re-resolve its upstreams

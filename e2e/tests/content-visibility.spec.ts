@@ -78,18 +78,23 @@ async function chooseContentMode(page: Page, slug: string, mode: string) {
 /**
  * Open a trace's content panel and leave it open.
  *
- * **Live refresh off first.** The tab polls, and a refresh landing between the click and the
- * assertion closes the panel again — the first run of this test found the row collapsed with its
- * button still reading *"Show the prompt and response"*, which looks like a click that missed.
- * The toggle is also what a person would do before reading a row carefully.
+ * **The row first, with live refresh still on.** A request's row is written after its answer, so
+ * the tab's first load can come back without it, and only a later refresh brings it. Switched off
+ * before the row has arrived, the tab keeps that first answer for good, and the wait runs out on a
+ * row that exists.
+ *
+ * **Then live refresh off, before the click.** A refresh landing between the click and the
+ * assertion closes the panel again, which looks like a click that missed. Switching off drops a
+ * refresh in flight (`Live.pause`), so nothing lands after it. The toggle is also what a person
+ * would do before reading a row carefully.
  */
 async function openContent(page: Page) {
-  const live = page.getByTestId('traces-live');
-  await expect(live).toBeVisible({ timeout: 60_000 });
-  if (await live.isChecked()) await live.uncheck();
-
   const opener = page.locator('[data-testid^="open-payload-"]').first();
   await expect(opener).toBeVisible({ timeout: 60_000 });
+
+  const live = page.getByTestId('traces-live');
+  if (await live.isChecked()) await live.uncheck();
+
   await opener.click();
   // Deliberately no assertion that the panel opened: whether it does is exactly what differs
   // between a reader who may and one who may not, and each test says which it expects.
@@ -129,6 +134,9 @@ test.describe('Who may read prompts and responses', () => {
   test('an administrator of the use case is refused the content and keeps the row', async ({
     page,
   }) => {
+    // Three waits of up to a minute each — the key reaching the gateway, the row reaching the tab,
+    // a second person signing in — which the suite's 45 seconds would cut short.
+    test.slow();
     await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('vis'), 'Oversight only');
     // **The setting first, before any traffic.** A use-case update reaches the gateway over Kafka
@@ -165,6 +173,8 @@ test.describe('Who may read prompts and responses', () => {
   test('IT Security reads the same prompt the administrator was refused', async ({ page }) => {
     // The other half, and the half that makes the first one a *governance* statement rather than a
     // storage one: the content exists, it is kept, and somebody accountable can still read it.
+    // The same three waits as the test above.
+    test.slow();
     await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('vis'), 'Oversight reads');
     await chooseContentMode(page, slug, 'oversight');

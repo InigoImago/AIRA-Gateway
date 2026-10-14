@@ -43,6 +43,15 @@ class Suspended(Exception):
         self.reason = reason
 
 
+class Throttled(Suspended):
+    """A request a throttling suspension refused: over the rate the caller is held to.
+
+    A `Suspended`, not a `RateLimited`, because it is recorded as one (`FRD-503` FR-5): folding it
+    into `rate_limited` would hide "we stopped this caller on purpose" inside "this caller is going
+    too fast". The bucket that refused is the rate limiter's; whose it was is this module's.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class Throttle:
     """A rate a suspended caller is held to, rather than being stopped outright."""
@@ -50,6 +59,19 @@ class Throttle:
     label: str
     key: str
     limit_rpm: int
+    #: What the refusal says, as a block's does: the target, and who decided.
+    target: str = ""
+    author: str = ""
+    reason: str = ""
+
+    def refusal(self, retry_after: str) -> Throttled:
+        """The refusal for a request this throttle's bucket turned away."""
+        return Throttled(
+            f"Access for this {self.target.replace('_', ' ')} is throttled to {self.limit_rpm} "
+            f"request(s) a minute ({self.author}).",
+            retry_after=retry_after,
+            reason=self.reason or self.author,
+        )
 
 
 class SuspensionService:
@@ -83,6 +105,11 @@ class SuspensionService:
         # moment it does.
         return [row for row in self._cached if _still_applies(row, moment)]
 
+    @property
+    def enforcing(self) -> bool:
+        """Whether a suspension stops anything here (`AIRA_ENFORCE_SUSPENSIONS`)."""
+        return self._enforce
+
     async def check(
         self,
         use_case: str | None,
@@ -111,7 +138,9 @@ class SuspensionService:
         ]
         blocks = [row for row in matching if row.action == RuleAction.BLOCK.value]
         if blocks:
-            row = blocks[0]
+            # The caller is stopped until every block has ended, so the one that ends last speaks:
+            # its `Retry-After` is the earliest moment a retry can succeed.
+            row = max(blocks, key=lambda block: int(_retry_after(block)))
             retry_after = _retry_after(row)
             _log.info(
                 "request_suspended",
@@ -132,6 +161,9 @@ class SuspensionService:
                 label=f"suspension {row.target}:{row.target_value}",
                 key=f"suspension:{row.id}",
                 limit_rpm=row.throttle_rpm or 1,
+                target=row.target,
+                author=row.author,
+                reason=row.reason or "",
             )
             for row in matching
             if row.action == RuleAction.THROTTLE.value and row.throttle_rpm

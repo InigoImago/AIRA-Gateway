@@ -26,6 +26,9 @@ MAKEFILE = ROOT / "Makefile"
 #: constant rather than as a string that reads like a mistake.
 ON = True
 
+#: The jobs that release a version, as opposed to the jobs that check a commit.
+RELEASE_JOBS = {"described", "publish"}
+
 
 def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text())
@@ -56,10 +59,17 @@ def test_a_version_tag_is_what_starts_a_release() -> None:
 def test_nothing_is_published_that_the_gates_and_the_description_check_did_not_pass() -> None:
     """**The property the release exists behind.** Drop one name from `needs` and the workflow still
     parses, still publishes, and publishes something no test looked at — or something that says
-    nothing about itself, depending on which name went."""
+    nothing about itself, depending on which name went.
+
+    Every job that is not a release job is a check, read from the workflow rather than listed here:
+    a check job added later gates the release without anybody having to remember that it should.
+    The list below is the floor, so a workflow that lost its checks does not pass by having none.
+    """
+    checks = set(_workflow()["jobs"]) - RELEASE_JOBS
     needs = _job("publish")["needs"]
 
-    assert set(needs) == {"python", "frontend", "stack", "described"}, (
+    assert {"python", "frontend", "stack", "browser"} <= checks
+    assert set(needs) == checks | {"described"}, (
         f"the release depends on {needs}; every check job and the description check must gate it"
     )
 

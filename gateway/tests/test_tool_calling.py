@@ -393,7 +393,8 @@ async def test_a_use_case_that_has_enabled_them_gets_through() -> None:
 
 async def test_an_unknown_use_case_is_refused_rather_than_assumed_permissive() -> None:
     """Absence of a row is absence of permission. A read-model that has not caught up yet must not
-    be read as consent."""
+    be read as consent — for tools as for everything else the row decides, so the request is
+    refused before its tools are looked at (`refuse_unless_live`)."""
     from fastapi.testclient import TestClient
 
     app = _app()
@@ -404,22 +405,24 @@ async def test_an_unknown_use_case_is_refused_rather_than_assumed_permissive() -
             headers={"x-aira-use-case": "never-heard-of-it"},
         )
 
-    assert response.status_code == 400
+    assert response.status_code == 403
+    assert response.json()["error"]["status"] == "PERMISSION_DENIED"
 
 
 async def test_a_request_without_tools_is_not_asked_for_the_tool_permission() -> None:
-    """The ordinary request is not held to a capability it does not use: its use case has no row,
-    so it has not enabled tool calling — and a request that declares no functions still succeeds
-    exactly as before. (The row itself is read by other controls, once per request; what this
-    pins is that the tool check refuses nothing it was not asked about.)"""
+    """The ordinary request is not held to a capability it does not use: its use case has not
+    enabled tool calling — and a request that declares no functions still succeeds exactly as
+    before. (The row itself is read by other controls, once per request; what this pins is that
+    the tool check refuses nothing it was not asked about.)"""
     from fastapi.testclient import TestClient
 
     app = _app()
     with TestClient(app) as client:
+        await _use_case(app, "no-tools-uc", tools_enabled=False)
         response = client.post(
             "/v1beta/models/mock-1:generateContent",
             json={"contents": [{"parts": [{"text": "hi"}]}]},
-            headers={"x-aira-use-case": "no-such-use-case"},
+            headers={"x-aira-use-case": "no-tools-uc"},
         )
 
     assert response.status_code == 200, response.text

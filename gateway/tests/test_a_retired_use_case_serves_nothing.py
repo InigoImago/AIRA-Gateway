@@ -11,11 +11,11 @@ not remove a Keycloak group. Every OIDC member of a retired use case could have 
 pipeline, no release. Retiring a *compromised* use case has to stop the traffic, or it is a filing
 action dressed as a control.
 
-**The check is only possible because the row survives.** `_retire_usecase` used to delete it, and
-the comment on that function explains why refusing on absence would be wrong: use cases and keys
-arrive on different Kafka topics with no ordering, so a use case that has not arrived yet looks
-exactly like one that was deleted. A tombstone is not absence — it is positive knowledge, and it
-can only exist after the use case was known.
+**The row survives, and the refusal says what it knows.** `_retire_usecase` used to delete it;
+it keeps it as a tombstone now — positive knowledge that the use case was retired, which can only
+exist after it was known — so the caller is told *retired*, and the retention promise holds. A
+use case with no row at all is refused as well, as unknown
+(`test_an_unknown_use_case_serves_nothing.py`).
 """
 
 from datetime import UTC, datetime
@@ -188,6 +188,22 @@ async def test_a_read_model_rebuilt_from_the_topics_still_refuses_it() -> None:
     assert by_token.status_code == 403, by_token.text
     assert "retired" in by_token.text
     assert by_key.status_code in (401, 403), by_key.text
+
+
+async def test_a_dry_run_of_a_retired_use_case_is_refused_too() -> None:
+    """A dry run calls real models on the use case's behalf, and asked only whether the caller was
+    a member — which a token naming the slug still says. It meets the request's rule now."""
+    app = _app()
+    with TestClient(app) as client:
+        await _seed(app, retired=True)
+        response = client.post(
+            "/v1beta/pipeline:dryRun",
+            json={"use_case": SLUG, "user": "hi", "pipeline": {}},
+            headers={"Authorization": "Bearer t"},
+        )
+
+    assert response.status_code == 403, response.text
+    assert "retired" in response.text
 
 
 async def test_a_request_naming_no_use_case_is_unaffected() -> None:

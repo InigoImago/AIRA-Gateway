@@ -319,26 +319,18 @@ reserves exactly 20 000 more than the same request without one).
   model, not a rule that guesses.
 - **Open** — whether any consumer uses `auto`. It costs nothing to support and maps to Google's
   `-1`, so it stays.
-- **Open (found 2026-08-20, stated rather than half-fixed)** — **a `disabled` setting travels to a
-  fallback candidate that cannot express it.** `thinking.permitted_by` returns *permitted* for
+- **Closed (found 2026-08-20, fixed by per-hop resolution)** — **a `disabled` setting travelled to
+  a fallback candidate that cannot express it.** `thinking.permitted_by` returns *permitted* for
   `disabled` whatever the candidate declares, on the reasonable ground that a model which never
-  thinks is already honouring "do not think". The wire disagrees: the setting is resolved **once**,
-  against the routed model, and `dispatch_with_fallback` carries it unchanged to every hop — so a
-  chain whose primary declares `disabled` and whose fallback declares no thinking sends
+  thinks is already honouring "do not think". The wire disagreed: the setting was resolved **once**,
+  against the routed model, and `dispatch_with_fallback` carried it unchanged to every hop — so a
+  chain whose primary declares `disabled` and whose fallback declares no thinking sent
   `thinkingConfig: {thinkingBudget: 0}` or `reasoning_effort: "none"` to a model that has no such
-  field. `thinking.py`'s own measurement records what that is: *"a 400 from Google for every model
-  that cannot have thinking switched off"*, which is precisely why `_validated` returns `None`
-  rather than an explicit off for the **routed** model.
-
-  Reachable only through that chain, and it degrades a request rather than answering it wrongly —
-  the caller gets a `502` instead of an answer, never a quietly worse answer, which is the failure
-  class this feature exists to prevent. **Not fixed here on purpose.** The obvious fix, refusing the
-  candidate in `permitted_by`, is a *narrowing*: it would skip a model that is perfectly able to
-  serve the request, and turn a chain that works today into `no_capable_model`. The correct fix is
-  per-hop **resolution** — the setting each candidate is actually sent, resolved against that
-  candidate's declaration — which is a change to who owns the resolution and belongs to whoever
-  decides that, not to a review pass. `dispatch.Routing` is where the per-candidate facts now live
-  and is the natural place for it.
+  field, and its vendor refused it. The fix named here was the one made: **per-hop resolution**.
+  The chain starts from the setting as the caller asked it and resolves it against each candidate's
+  own declaration (`prepare.fitting`, `FRD-302` FR-5a), so the fallback is sent nothing — and a
+  model's *default* thinking, resolved the same way, is no longer a condition on the candidate
+  behind it either. Pinned by `test_every_candidate_is_sent_its_own_defaults.py`.
 
 ## 12. Rollout / Demo
 

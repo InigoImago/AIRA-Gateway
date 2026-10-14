@@ -5,6 +5,7 @@ from aira_gateway.app import create_app
 from aira_gateway.auth import keys
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
+from aira_gateway.db.models import UseCaseRead
 
 _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
 _ROUTE = "/v1beta/models/mock-1:generateContent"
@@ -65,6 +66,14 @@ def test_oidc_bearer_accepted_when_validator_present() -> None:
     app = create_app(GatewaySettings(log_json=True, auth_required=True))
     app.state.oidc_validator = _FakeOidcValidator()
     with TestClient(app) as oidc_client:
+
+        async def known() -> None:
+            # A use case the gateway has never heard of serves nothing (`refuse_unless_live`).
+            async with app.state.db_sessionmaker() as session:
+                session.add(UseCaseRead(slug="demo-uc", name="demo-uc"))
+                await session.commit()
+
+        oidc_client.portal.call(known)  # type: ignore[attr-defined]
         # The selector is explicit on this surface (`FRD-102`) — unlike KIRA, which picks a lone
         # membership for you. This test is about **authentication**, so it names the use case its
         # identity belongs to rather than relying on a fall-through that no longer exists.

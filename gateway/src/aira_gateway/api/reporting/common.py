@@ -10,6 +10,7 @@ from fastapi import APIRouter, Response
 from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.principal import Principal
+from aira_gateway.persistence.sanitize import printable
 from aira_gateway.reporting.service import Scope
 
 #: The widest window a report or register may span. The window is indexed, but an unbounded one
@@ -117,7 +118,8 @@ def parse_cursor(cursor: str) -> tuple[datetime, str]:
     """``<iso8601>|<id>`` — the id makes the order total, since two rows can share a millisecond
     (`FRD-502` §4.2)."""
     stamp, _, row_id = cursor.partition("|")
-    if not row_id:
+    # An id with a control character is no row's — and a NUL would be Postgres's 500.
+    if not row_id or printable(row_id) != row_id:
         raise GeminiHTTPError(
             400, "'cursor' is not a cursor from this endpoint.", "INVALID_ARGUMENT"
         )

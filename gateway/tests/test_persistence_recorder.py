@@ -82,6 +82,20 @@ def test_a_chain_shorter_than_the_hops_falls_back_to_the_socket() -> None:
     assert client_ip(request) == "172.16.0.1"
 
 
+def test_no_proxy_in_front_means_the_header_is_the_caller_s_and_ignored() -> None:
+    """`AIRA_TRUSTED_PROXY_HOPS=0` says nothing appends to the header, so all of it is what the
+    caller sent. It was read as one hop, and the caller's own last entry was the address on every
+    audit row — the spoofing the right-hand reading exists to prevent."""
+    request = _request(
+        {"x-forwarded-for": "6.6.6.6"},
+        client=("172.16.0.1", 1),
+        trust_forwarded_for=True,
+        trusted_proxy_hops=0,
+    )
+
+    assert client_ip(request) == "172.16.0.1"
+
+
 def test_an_empty_forwarded_header_falls_back_to_the_socket() -> None:
     request = _request(
         {"x-forwarded-for": " , "}, client=("172.16.0.1", 1), trust_forwarded_for=True

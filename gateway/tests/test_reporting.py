@@ -234,8 +234,21 @@ async def test_failed_and_refused_never_count_the_same_request(sessionmaker) -> 
 
     totals = (await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER))["totals"]
 
-    assert totals["requests"] == 21
+    # The three model checks are no request at all (`FRD-610` §2): 21 rows, 18 requests.
+    assert totals["requests"] == 18
     assert totals["failed_requests"] == 3
+
+
+async def test_a_model_check_is_spend_and_not_a_request(sessionmaker) -> None:
+    """`FRD-610` §2 gave a model check its own outcome so it would not inflate every request figure
+    with traffic no use case made — and the figure counted rows, so one check by an administrator
+    was one request in the installation's report. What it cost is still what it cost."""
+    await _log(sessionmaker, use_case=None, outcome="diagnostic", cost=500)
+
+    totals = (await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER))["totals"]
+
+    assert totals["requests"] == 0
+    assert totals["cost_nanos"] == 500
 
 
 async def test_latency_is_reported_as_an_average_and_a_maximum(sessionmaker) -> None:

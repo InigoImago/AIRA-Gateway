@@ -3,9 +3,11 @@
 Each step type is one method returning a `StepEvaluation`; `runner.PipelineEngine` interprets it for
 the served path and for the dry run alike. A step reaches only the models its own configuration
 names — its `model` and its own `fallback_models` chain (`FRD-302` FR-7), never a default nobody
-chose — so the release, approval and residency checks on those names hold. A step whose models
-cannot be reached at all degrades in its own safe direction: the LLM filter to the heuristic, the
-router to its `default_model`, the redactor to a block.
+chose — and asks the installation's conditions of each before calling it (`StepPermits`): those
+names were checked when the pipeline was saved, and a release withdrawn or an approval revoked since
+must stop the call. A step whose models cannot be reached, or may not be called, degrades in its own
+safe direction — the LLM filter to the heuristic, the router to its `default_model`, the redactor to
+a block — and says why.
 
 **The chain moves on for reachability and nothing else** (FR-8). A model that answered has
 answered: an `UNDETERMINED` verdict or a rewrite too short to trust stops the chain, because a
@@ -45,6 +47,11 @@ from aira_gateway.upstreams.base import ProviderRegistry
 #: It answers with the whole declaration because the step needs two facts from it: who serves the
 #: model, and whether its thinking may be switched off.
 DeclarationOf = Callable[[str], Awaitable[ModelDeclaration]]
+
+#: Why this request may not have a step call a model, or ``None`` if it may — the conditions every
+#: model a request reaches meets (`api.serving.conditions`), handed in per request because only the
+#: request knows its use case's release.
+StepPermits = Callable[[str], Awaitable[str | None]]
 
 
 class Reachable(Protocol):
@@ -166,6 +173,21 @@ def _scanned_text(request: CanonicalRequest, scope: Any) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class _Candidates:
+    """The models a step may ask, in order, each with its adapter — and the ones it may not."""
+
+    found: list[tuple[str, Any]]
+    #: `model: why` for each name the request's conditions withheld (`StepPermits`).
+    withheld: list[str]
+
+    def why_none(self, otherwise: str) -> str:
+        """Why the step asked no model: what the conditions withheld, else ``otherwise``."""
+        if self.withheld:
+            return "no model this step names may be called: " + "; ".join(self.withheld)
+        return otherwise
+
+
+@dataclass(frozen=True, slots=True)
 class _Routed:
     """What `_route` worked out: the category, the model to send to, the cost, and the reply."""
 
@@ -175,6 +197,8 @@ class _Routed:
     reply: str = ""
     #: The model asked to classify — not the routed-to one, so the screen names who decided.
     classifier: str | None = None
+    #: Why no classifier was asked, where none was.
+    unasked: str = ""
 
 
 class StepEvaluator:
@@ -188,14 +212,17 @@ class StepEvaluator:
         step: PipelineStep,
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None,
+        permits: StepPermits | None = None,
     ) -> StepEvaluation:
         """The single dispatch over step types: a new step is a branch here and a method below."""
         if step.type is StepType.INJECTION_FILTER:
-            return await self._evaluate_injection_filter(step.config, request, declaration_of)
+            return await self._evaluate_injection_filter(
+                step.config, request, declaration_of, permits
+            )
         if step.type is StepType.MODEL_ROUTE:
-            return await self._evaluate_model_route(step.config, request, declaration_of)
+            return await self._evaluate_model_route(step.config, request, declaration_of, permits)
         if step.type is StepType.PII_FILTER:
-            return await self._evaluate_pii_filter(step.config, request, declaration_of)
+            return await self._evaluate_pii_filter(step.config, request, declaration_of, permits)
         # Unknown steps are dropped at parse time; a new `StepType` without a branch here is a type
         # error, and at run time a refusal to guess rather than a step reported as having passed.
         assert_never(step.type)
@@ -207,8 +234,10 @@ class StepEvaluator:
         config: dict[str, Any],
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None,
+        permits: StepPermits | None = None,
     ) -> StepEvaluation:
-        classification, fell_back = await self._classify(config, request, declaration_of)
+        classification, unasked = await self._classify(config, request, declaration_of, permits)
+        fell_back = unasked is not None
         verdict = classification.verdict
         said = _said(
             classification.reply, classification.call.model if classification.call else None
@@ -219,7 +248,7 @@ class StepEvaluator:
         # reads exactly like the model's own, and only the operator can fix the model name.
         why = f"{verdict} (by the heuristic)" if fell_back else str(verdict)
         notes = [
-            *([f"decided by the heuristic: {_NO_CLASSIFIER}"] if fell_back else []),
+            *([f"decided by the heuristic: {unasked}"] if unasked is not None else []),
             *([_PARTIAL_SCAN] if classification.unscanned else []),
         ]
         return StepEvaluation(
@@ -251,8 +280,9 @@ class StepEvaluator:
         config: dict[str, Any],
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None,
+        permits: StepPermits | None = None,
     ) -> StepEvaluation:
-        routed = await self._route(config, request, declaration_of)
+        routed = await self._route(config, request, declaration_of, permits)
         category, target, call = routed.category, routed.target, routed.call
         said = _said(routed.reply, routed.classifier)
         if call is None and config.get("categories"):
@@ -266,7 +296,7 @@ class StepEvaluator:
             why = (
                 "the classifier could not be reached or refused the request"
                 if routed.classifier
-                else _NO_CLASSIFIER
+                else routed.unasked or _NO_CLASSIFIER
             )
             decision = {"step": "model_route", "action": "not_asked", "why": reason}
             return StepEvaluation(
@@ -325,6 +355,7 @@ class StepEvaluator:
         config: dict[str, Any],
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None,
+        permits: StepPermits | None = None,
     ) -> StepEvaluation:
         """Replace personal data in the prompt, using a model the use case trusts (`FRD-309`).
 
@@ -333,9 +364,10 @@ class StepEvaluator:
         allow` is the operator's recorded choice. Only the **user's own text** is rewritten — the
         system instruction is the use case's, and a redactor must not edit it.
         """
-        candidates = await self._models_for(config, declaration_of)
-        if not candidates:
-            return self._pii_failure(config, "no model is available to redact with", None)
+        candidates = await self._models_for(config, declaration_of, permits)
+        if not candidates.found:
+            why = candidates.why_none("no model is available to redact with")
+            return self._pii_failure(config, why, None)
 
         original = request.last_user_text()
 
@@ -347,8 +379,8 @@ class StepEvaluator:
                 await self._thinking_for(model, declaration_of),
             ).rewrite(original)
 
-        answered = await self._asked(candidates, ask)
-        # `candidates` is not empty, so the chain answered with something.
+        answered = await self._asked(candidates.found, ask)
+        # `candidates.found` is not empty, so the chain answered with something.
         assert answered is not None
         model, result = answered
         if result.text is None:
@@ -402,9 +434,10 @@ class StepEvaluator:
         config: dict[str, Any],
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None = None,
-    ) -> tuple[Classification, bool]:
-        """The verdict, from the first of this step's models that could be reached — and whether
-        the heuristic gave it in place of an `llm` step's model.
+        permits: StepPermits | None = None,
+    ) -> tuple[Classification, str | None]:
+        """The verdict, from the first of this step's models that could be reached — and, where the
+        heuristic gave it in place of an `llm` step's model, why.
 
         An `llm` step whose models none resolve falls back to the **heuristic** — a downgrade of
         the method, not of the verdict, so a mistyped model name cannot take a use case's traffic
@@ -422,11 +455,13 @@ class StepEvaluator:
                     await self._thinking_for(model, declaration_of),
                 ).classify_text(text)
 
-            answered = await self._asked(await self._models_for(config, declaration_of), ask)
+            candidates = await self._models_for(config, declaration_of, permits)
+            answered = await self._asked(candidates.found, ask)
             if answered is not None:
-                return answered[1], False
-            return await self._heuristic(config).classify_text(text), True
-        return await self._heuristic(config).classify_text(text), False
+                return answered[1], None
+            heuristic = await self._heuristic(config).classify_text(text)
+            return heuristic, candidates.why_none(_NO_CLASSIFIER)
+        return await self._heuristic(config).classify_text(text), None
 
     def _heuristic(self, config: dict[str, Any]) -> InjectionClassifier:
         """The pattern classifier: the `heuristic` mode, and where an `llm` step with no reachable
@@ -444,6 +479,7 @@ class StepEvaluator:
         config: dict[str, Any],
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None = None,
+        permits: StepPermits | None = None,
     ) -> _Routed:
         """The category, the model to use, what asking cost (billed even when nothing matched,
         `FRD-125`), and what the model said (for the dry run's screen)."""
@@ -459,9 +495,10 @@ class StepEvaluator:
                 provider, model, categories, await self._thinking_for(model, declaration_of)
             ).classify_text(_system_and_user(request))
 
-        answered = await self._asked(await self._models_for(config, declaration_of), ask)
+        candidates = await self._models_for(config, declaration_of, permits)
+        answered = await self._asked(candidates.found, ask)
         if answered is None:
-            return _Routed(None, default_model)
+            return _Routed(None, default_model, unasked=candidates.why_none(_NO_CLASSIFIER))
         model, routing = answered
         if routing.category:
             for category in categories:
@@ -476,17 +513,23 @@ class StepEvaluator:
         return _Routed(None, default_model, routing.call, routing.reply, model)
 
     async def _models_for(
-        self, config: dict[str, Any], declaration_of: DeclarationOf | None
-    ) -> list[tuple[str, Any]]:
+        self,
+        config: dict[str, Any],
+        declaration_of: DeclarationOf | None,
+        permits: StepPermits | None = None,
+    ) -> _Candidates:
         """The models this step may ask, in order, each with the adapter that serves it.
 
         Its own `model` first, then its own `fallback_models` (`FRD-302` FR-7). A name no provider
         serves is left out rather than tried — that is the "quietly do less" the single-model
-        version had, and the chain is what now gives the step somewhere else to go. Duplicates are
-        dropped, so a chain that repeats the step's own model does not pay for it twice.
+        version had, and the chain is what now gives the step somewhere else to go. A name the
+        request's conditions refuse is left out too, and **kept with its reason**: a step that
+        degrades because its model was withdrawn has to say so, or it reads as a typo. Duplicates
+        are dropped, so a chain that repeats the step's own model does not pay for it twice.
         """
         named = [config.get("model"), *(config.get("fallback_models") or [])]
         found: list[tuple[str, Any]] = []
+        withheld: list[str] = []
         seen: set[str] = set()
         for name in named:
             model = str(name) if name else ""
@@ -494,9 +537,14 @@ class StepEvaluator:
                 continue
             seen.add(model)
             provider = await self._provider_for(model, declaration_of)
-            if provider is not None:
-                found.append((model, provider))
-        return found
+            if provider is None:
+                continue
+            refusal = await permits(model) if permits is not None else None
+            if refusal is not None:
+                withheld.append(f"{model}: {refusal}")
+                continue
+            found.append((model, provider))
+        return _Candidates(found, withheld)
 
     async def _asked[Answer: Reachable](
         self,

@@ -101,10 +101,14 @@ def _measures() -> list[Any]:
     """The columns every breakdown reports, in one place so the rows cannot diverge.
 
     ``requests`` counts every model call, including those a pipeline step made on the caller's
-    behalf (`pipeline:<step>` rows): they cost money, and the budgets count them the same way.
+    behalf (`pipeline:<step>` rows): they cost money, and the budgets count them the same way. A
+    model check (`diagnostic`) is not one: its own outcome exists so it inflates no request figure
+    (`FRD-610` §2). What it spent is still spend, and is summed below with everything else.
     """
     return [
-        func.count().label("requests"),
+        func.coalesce(
+            func.sum(case((RequestLog.outcome == Outcome.DIAGNOSTIC.value, 0), else_=1)), 0
+        ).label("requests"),
         func.coalesce(func.sum(RequestLog.prompt_tokens), 0).label("prompt_tokens"),
         func.coalesce(func.sum(RequestLog.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),

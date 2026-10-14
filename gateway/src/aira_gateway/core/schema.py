@@ -136,7 +136,9 @@ def parse(raw: Any, bounds: SchemaBounds | None = None) -> ResponseSchema:
         raise SchemaRejected("The response schema must be an object.")
 
     try:
-        encoded = len(json.dumps(raw).encode("utf-8"))
+        # Compact and unescaped: the document as a client writes it at its smallest. The default
+        # separators added a byte per comma and colon, and ASCII escapes counted an "ä" as six.
+        encoded = len(json.dumps(raw, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     except (TypeError, ValueError) as exc:
         raise SchemaRejected("The response schema is not representable as JSON.") from exc
     if encoded > bounds.max_bytes:

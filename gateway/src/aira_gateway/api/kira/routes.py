@@ -43,6 +43,7 @@ from aira_gateway.api.serving import (
     check_structured_result,
     declared_routing,
     ensure_body_is_encodable,
+    fitting,
     json_body,
     prepare_for_dispatch,
     record_refusal,
@@ -86,17 +87,18 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
     trail = AuditTrail(operation="chat", api="kira")
     try:
         prepared = await _prepare(request, principal, trail)
-        canonical = prepared.canonical
-        assert canonical is not None
+        canonical, asked = prepared.canonical, prepared.asked
+        assert canonical is not None and asked is not None
         async with accounting(
             request, trail, prepared, api="kira", operation="chat", started=started
         ) as acct:
             dispatched = await dispatch_with_fallback(
                 providers_of(request),
-                canonical,
+                asked,
                 prepared.fallbacks,
-                permits=await requirements_for(request, canonical),
+                permits=await requirements_for(request, asked),
                 routing_of=await declared_routing(request),
+                fit=fitting(request),
             )
             answer = annotate(canonical, dispatched.response, prepared, trail)
             trail.served_by(answer.model, dispatched.candidate_index)
@@ -128,14 +130,15 @@ async def streaming_chat(
     trail = AuditTrail(operation="streaming-chat", api="kira")
     try:
         prepared = await _prepare(request, principal, trail)
-        canonical = prepared.canonical
-        assert canonical is not None
+        asked = prepared.asked
+        assert asked is not None
         streamed = await stream_with_fallback(
             providers_of(request),
-            canonical,
+            asked,
             prepared.fallbacks,
-            permits=await requirements_for(request, canonical),
+            permits=await requirements_for(request, asked),
             routing_of=await declared_routing(request),
+            fit=fitting(request),
         )
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
@@ -180,7 +183,7 @@ async def streaming_chat(
                 # An unfinished schema-constrained answer is not data (`FRD-112` FR-6). The status
                 # is already sent, so the terminal event is withheld instead: a client waiting for
                 # `completed` never treats half a document as whole.
-                check_structured_result(canonical, answer)
+                check_structured_result(asked, answer)
             except KIRA_REFUSALS as exc:
                 stream.broke_off(exc)
                 return

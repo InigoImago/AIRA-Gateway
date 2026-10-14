@@ -81,10 +81,14 @@ async def test_period_rolls_over(sessionmaker) -> None:
     assert (await service.guard("uc", "bob", NEXT_DAY)).budgets != []
 
 
-async def test_disabled_budget_is_ignored(sessionmaker) -> None:
+async def test_a_disabled_budget_is_not_enforced(sessionmaker) -> None:
+    """Not reserved against and never refusing — and still counted (`test_a_lifted_budget_still_
+    counts.py`), which is why it is carried as ``lifted`` rather than dropped."""
     await _add(sessionmaker, id=1, limit_requests=1, enabled=False)
     service = BudgetService(sessionmaker)
-    assert (await service.guard("uc", "bob", NOW)).budgets == []
+    reservation = await service.guard("uc", "bob", NOW)
+    assert reservation.budgets == []
+    assert [budget.id for budget in reservation.lifted] == [1]
 
 
 async def test_enforce_off_reserves_nothing_refuses_nobody_and_still_counts(sessionmaker) -> None:

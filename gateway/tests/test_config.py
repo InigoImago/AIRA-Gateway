@@ -86,7 +86,18 @@ def test_no_broker_is_no_broker_to_check() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ["kafka:9092x", "kafka:", "kafka:0", "kafka:70000", ":9092", "2001:db8::1:9092", "[::1:9092"],
+    [
+        "kafka:9092x",
+        "kafka:",
+        "kafka:0",
+        "kafka:70000",
+        ":9092",
+        "2001:db8::1:9092",
+        "[::1:9092",
+        "bro ker:9092",
+        "[not-an-address]:9092",
+        "kafka/1:9092",
+    ],
 )
 def test_a_broker_list_nothing_could_dial_refuses_to_start(value: str) -> None:
     """At startup, by name: read per probe, `kafka:9092x` was a 500 on every readiness check."""
@@ -145,3 +156,24 @@ def test_zero_keeps_the_meaning_it_is_documented_with() -> None:
     """`0` writes every audit row on the request path, and switches the auth bound off."""
     settings = GatewaySettings(log_queue_size=0, max_auth_failures_per_minute=0)
     assert (settings.log_queue_size, settings.max_auth_failures_per_minute) == (0, 0)
+
+
+def test_a_container_s_service_name_is_a_broker_too() -> None:
+    """The host-name check refuses what nothing could dial, and only that: a Compose service
+    name may carry an underscore, which a strict host-name rule would refuse."""
+    assert GatewaySettings(kafka_bootstrap_servers="aira_kafka:9092").kafka_host_port == (
+        "aira_kafka",
+        9092,
+    )
+
+
+@pytest.mark.parametrize("setting", ["oidc_clock_skew_seconds", "oidc_expiry_leeway_seconds"])
+@pytest.mark.parametrize("value", [400.0, -1.0, float("nan")], ids=str)
+def test_a_token_tolerance_out_of_bounds_refuses_to_start_with_oidc_off(
+    setting: str, value: float
+) -> None:
+    """`FRD-134` FR-3: refused above 300 seconds at startup. The bound was checked where a
+    verifier is built, so with OIDC off a gateway started on any value — and refused to start the
+    day somebody switched OIDC on, for a setting nobody had touched since."""
+    with pytest.raises(ValidationError, match=setting.upper()):
+        GatewaySettings(oidc_issuer="", **{setting: value})

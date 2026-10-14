@@ -1526,7 +1526,6 @@ graph TB
     subgraph day3["Day 3 — it is defensible"]
         c1["Budgets and rate limits per use case"]
         c2["Anomaly rules, in <b>alert</b> first"]
-        c3["AIRA_REQUIRE_USE_CASE=true"]
         c4["Promote rules to throttle / block"]
     end
     day1 --> day2 --> day3
@@ -1535,8 +1534,9 @@ graph TB
 The order is not arbitrary. **Prices before budgets** — an unpriced model makes a cost budget
 unenforceable, and unpriced traffic is counted apart rather than as zero. **Alert before block** —
 a rule is a hypothesis until somebody has watched it be right, and a detection system that blocks
-wrongly once is switched off forever. **`REQUIRE_USE_CASE` last** — turning it on before every
-caller is migrated refuses traffic that used to work.
+wrongly once is switched off forever. **Every caller names a use case from the start** —
+`AIRA_REQUIRE_USE_CASE` is on by default and refuses to be switched off anywhere but `local`, so
+migrating callers is the first day's work, not the last.
 
 ### Groups for the question catalogue
 

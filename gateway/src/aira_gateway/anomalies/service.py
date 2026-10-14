@@ -217,7 +217,10 @@ class AnomalyService:
         """
         if action is RuleAction.ALERT:
             return RuleAction.ALERT.value
-        if self.suspensions is None or not rule.action_minutes:
+        # With suspensions switched off a rule records what it would have done and writes no
+        # decision: one written would stop its target the moment enforcement is switched on, for
+        # traffic seen while the installation was only learning what its rules do.
+        if self.suspensions is None or not self.suspensions.enforcing or not rule.action_minutes:
             return NOT_ENFORCED
         session.add(
             suspension_from_rule(

@@ -18,6 +18,7 @@ from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.db.models import UseCaseRead
 from aira_gateway.embedding import EmbeddingBounds
 from aira_gateway.pipeline.dispatch import Routing, RoutingOf
+from aira_gateway.requirements import ModelApproved
 from aira_gateway.state import providers_of, sessionmaker_of, settings_of
 from aira_gateway.upstreams.base import UpstreamModel
 
@@ -152,7 +153,12 @@ async def served_models(request: Request) -> list[UpstreamModel]:
 
     Configuration **and** the catalogue: a catalogued model is served by the adapter owning its
     provider even when configuration does not name it (`FRD-507`), so a list of configuration alone
-    omits models that work. An unapproved one is left out, since it would be refused (`FRD-307`).
+    omits models that work. One the catalogue holds and has not approved is left out, since it
+    would be refused (`FRD-307`) and there is nothing left to discover about it.
+
+    **A configured model the catalogue does not know yet stays listed**, marked `airaDeclared:
+    false`: this list is where the console discovers what to catalogue (`FRD-507`), and leaving it
+    out would hide exactly that. A request to it is refused until it is catalogued and approved.
     """
     registry = providers_of(request)
     catalog = catalog_of(request)
@@ -166,8 +172,9 @@ async def served_models(request: Request) -> list[UpstreamModel]:
             model.region,
         )
         for model in registry.models()
+        if not await _withheld(catalog, registry, model.name)
     ]
-    configured = {model.name for model in listed}
+    configured = {model.name for model in registry.models()}
     for declaration in await catalog.catalogued():
         if declaration.name in configured or not declaration.approved or not declaration.provider:
             continue
@@ -187,6 +194,17 @@ async def served_models(request: Request) -> list[UpstreamModel]:
             )
         )
     return listed
+
+
+async def _withheld(catalog: ModelCatalog, registry: object, model: str) -> bool:
+    """Whether the catalogue knows ``model`` and has not approved it — refused, and known.
+
+    The test double is exempt here as it is from the refusal (`requirements._is_test_double`).
+    """
+    declaration = await catalog.declaration(model)
+    if not declaration.in_catalog or declaration.approved:
+        return False
+    return await ModelApproved(catalog, registry).refusal(model) is not None
 
 
 def _verbs(declaration: ModelDeclaration, offered: tuple[str, ...]) -> tuple[str, ...]:

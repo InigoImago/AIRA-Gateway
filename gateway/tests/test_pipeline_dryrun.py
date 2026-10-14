@@ -8,6 +8,8 @@ no audit row. 1000 tokens spent, nothing recorded.
 """
 
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -74,8 +76,24 @@ def _app(*providers: object):  # noqa: ANN202
     return app
 
 
-def _client(*providers: object) -> TestClient:
-    return TestClient(_app(*providers), headers={"x-goog-api-key": DEMO_API_KEY})
+def _known(client: TestClient, slug: str = "uc") -> None:
+    """Put the use case on record with its release unstated — the row a Management predating
+    `FRD-308` writes. One the gateway has never heard of dry-runs nothing (`refuse_unless_live`)."""
+    from aira_gateway.db.models import UseCaseRead
+
+    async def seed() -> None:
+        async with client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
+            session.add(UseCaseRead(slug=slug, name=slug, allowed_models=None))
+            await session.commit()
+
+    client.portal.call(seed)  # type: ignore[attr-defined]
+
+
+@contextmanager
+def _client(*providers: object) -> Iterator[TestClient]:
+    with TestClient(_app(*providers), headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        _known(client)
+        yield client
 
 
 def test_dryrun_blocks_injection() -> None:
@@ -225,10 +243,11 @@ async def test_a_dry_run_cannot_call_a_model_the_use_case_may_not() -> None:
 async def test_a_dry_run_cannot_call_a_model_the_installation_never_approved() -> None:
     """The release has a third state; the installation's approval does not (2026-08-27).
 
-    `released_for` answers `None` for a use case **nobody has described** — no read-model row at
-    all, or a row written by a Management that predates `FRD-308`. Falling through on that is
-    right: an absent answer is not an absent release, and reading it as one would stop every use
-    case on a half-upgraded stack.
+    `released_for` answers `None` for a use case whose row **does not describe its release** — one
+    written by a Management that predates `FRD-308`. Falling through on that is right: an absent
+    answer is not an absent release, and reading it as one would stop every use case on a
+    half-upgraded stack. (A use case with no row at all is refused before this question is asked,
+    `refuse_unless_live`.)
 
     What fell through with it was `FRD-307`, and that one has no such state — a Global
     Administrator either catalogued and approved a model or did not. So the endpoint had the use
@@ -251,8 +270,9 @@ async def test_a_dry_run_cannot_call_a_model_the_installation_never_approved() -
 
     app = _app(_Spy("unapproved-1", "SAFE"))
     with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
-        # No `_release`: the use case has no row, so the release check has nothing to say. This is
-        # the state the gate below is the only thing standing in.
+        # Released `None`: the row says nothing about the release, so the release check has
+        # nothing to say. This is the state the gate below is the only thing standing in.
+        await _release(app, "uc", None)
         resp = client.post(
             _URL,
             json={
@@ -307,6 +327,7 @@ async def test_every_step_that_asks_a_model_asks_the_approval_first(step: dict) 
 
     app = _app(_Spy("unapproved-1", "SAFE"))
     with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", None)
         resp = client.post(
             _URL, json={"use_case": "uc", "user": "hi", "pipeline": {"steps": [step]}}
         )
@@ -330,6 +351,7 @@ async def test_a_route_target_is_released_but_never_approval_checked_here() -> N
     """
     app = _app(_Classifier("router", "zzq-nomatch"))
     with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", None)
         resp = client.post(
             _URL,
             json={
@@ -790,6 +812,7 @@ async def test_a_step_chain_is_approval_checked_like_the_model_in_front_of_it() 
 
     app = _app(_Spy("approved-1", "SAFE"), _Spy("unapproved-2", "SAFE"))
     with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", None)
         await _approve(app, "approved-1")
         resp = client.post(
             _URL,
@@ -828,6 +851,7 @@ async def test_a_step_chain_of_approved_models_runs_and_the_trace_names_who_answ
 
     app = _app(_Down("approved-1", "SAFE"), _Classifier("approved-2", "INJECTION"))
     with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", None)
         resp = client.post(
             _URL,
             json={
@@ -910,11 +934,14 @@ class _Echo(_Classifier):
         )
 
 
-def _as(principal: Principal, saved: dict = SAVED) -> TestClient:
+@contextmanager
+def _as(principal: Principal, saved: dict = SAVED) -> Iterator[TestClient]:
     app = _app(_Echo("scrubber", ""))
     app.dependency_overrides[require_principal] = lambda: principal
     app.state.pipeline_store = _Saved(saved)
-    return TestClient(app)
+    with TestClient(app) as client:
+        _known(client)
+        yield client
 
 
 def _try(client: TestClient, pipeline: dict, **extra: object):  # noqa: ANN202

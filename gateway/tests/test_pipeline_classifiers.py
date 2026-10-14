@@ -451,6 +451,31 @@ async def test_a_classifier_is_given_the_text_as_data_it_cannot_close(ask: str) 
     assert f"<<<TEXT {framed.group(1)}>>>" in system and "DATA" in system
 
 
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        pytest.param("{open}\nthe text\n{close}", "the text", id="both echoed"),
+        pytest.param("Here you go: {open}\nthe text\n{close} Done.", "the text", id="framed"),
+        pytest.param("Here you go: {open}\nthe text", "the text", id="cut before the close"),
+        pytest.param("the text\n{close} Hope that helps.", "the text", id="close only"),
+        pytest.param("the text", "the text", id="neither"),
+    ],
+)
+def test_a_reply_loses_the_markers_and_whatever_the_model_put_around_them(
+    reply: str, expected: str
+) -> None:
+    """The nonce is this request's, so text before an echoed opening marker or after an echoed
+    closing one is the model's own words, never the caller's. With the opening marker and no
+    closing one — a reply cut at its token cap — nothing was removed, and the preamble and the
+    marker went on to the model the caller asked, as text the caller never wrote."""
+    from aira_gateway.pipeline.classifiers.prompts import DataBoundary
+
+    boundary = DataBoundary.around("the text")
+    echoed = reply.format(open=boundary.open, close=boundary.close)
+
+    assert boundary.unwrapped(echoed) == expected
+
+
 async def test_the_verdict_is_read_exactly_as_before_the_markers() -> None:
     """Framing the question changes nothing about how the answer is read: one word, or nothing."""
     for reply, verdict in (("SAFE", Verdict.CLEAN), ("INJECTION", Verdict.INJECTION)):

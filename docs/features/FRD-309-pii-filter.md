@@ -65,8 +65,10 @@ trusts.
   as long again, beyond an allowance for placeholders) — a summary, a refusal, a truncation or a
   preamble applied would send the model a different question than the caller asked, with a 200.
   The text reaches the redactor between two markers carrying a nonce made for the request, so a
-  prompt holding a marker cannot close the data region; what the model writes outside an echoed
-  pair is its own, never the caller's text. An answer *in place of* a short rewrite still passes
+  prompt holding a marker cannot close the data region; what the model writes before an echoed
+  opening marker or after an echoed closing one is its own, never the caller's text — with the
+  pair or without it, since a reply cut at its token cap echoes the first and never reaches the
+  second. An answer *in place of* a short rewrite still passes
   these checks: a summary of a short prompt is indistinguishable from a rewrite.
 - **FR-5 A failure blocks by default**, and `on_failure: allow` is recorded on the audit row as the
   choice it is (`FRD-125`).

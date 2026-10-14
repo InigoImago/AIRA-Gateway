@@ -57,8 +57,9 @@ def client_ip(request: Request) -> str | None:
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
             chain = [part.strip() for part in forwarded.split(",") if part.strip()]
-            hops = max(1, int(settings.trusted_proxy_hops))
-            if len(chain) >= hops:
+            hops = int(settings.trusted_proxy_hops)
+            # No proxy appending means the whole header is the caller's: it names nobody.
+            if 0 < hops <= len(chain):
                 return chain[-hops][:64]
     return request.client.host if request.client else None
 

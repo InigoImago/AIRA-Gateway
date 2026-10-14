@@ -87,13 +87,14 @@ class DataBoundary:
         the pair is the model's own preamble or comment, never the caller's text.
         """
         text = reply.strip()
-        start, end = text.find(self.open), text.rfind(self.close)
-        if 0 <= start < end:
-            return text[start + len(self.open) : end].strip()
-        if text.startswith(self.open):
-            text = text[len(self.open) :]
-        if text.endswith(self.close):
-            text = text[: -len(self.close)]
+        start = text.find(self.open)
+        if start >= 0:
+            # Whatever comes before an echoed opening marker is the model's own preamble — with or
+            # without the closing one, which a reply cut at its token cap never reaches.
+            text = text[start + len(self.open) :]
+        end = text.rfind(self.close)
+        if end >= 0:
+            text = text[:end]
         return text.strip()
 
 

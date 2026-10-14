@@ -1019,8 +1019,9 @@ because a group nobody could verify is not one to grant access from.
 - **There is one emergency credential, and it is an ordinary key otherwise.** An operator with
   database access can mint a "break-glass" key on the gateway's command line for when the control
   plane itself is unavailable. It expires like any other key, its prefix and owner are on every
-  request it makes, and it can be revoked the same way. What it lacks is a use case of its own, so
-  whoever uses it has to name one on every call.
+  request it makes, and it can be revoked the same way. What it lacks is a use case of its own: it
+  may name one on a call, and a call that names none is the one exemption from
+  `AIRA_REQUIRE_USE_CASE`, booked against the installation's own budget (`FRD-610`).
 - **Every refusal is evidence too.** A request refused before it is attributed writes no audit row,
   so who was refused, from where, and why is recorded on its trace instead.
 

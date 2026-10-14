@@ -531,7 +531,7 @@ async def test_a_refused_document_books_what_the_model_spent(
     reached no budget, no cost report and no anomaly rule: schema requests that reliably truncate
     were unbounded spend against a cost limit that never moved. The row keeps what was spent, and
     files it as the model stopping, not as the caller's mistake."""
-    from aira_gateway.db.models import BudgetRead, BudgetUsage
+    from aira_gateway.db.models import BudgetRead, BudgetUsage, UseCaseRead
 
     app = _app()
     with TestClient(app) as client:
@@ -543,6 +543,8 @@ async def test_a_refused_document_books_what_the_model_spent(
             output_price_per_million_nanos=2_000_000_000,
         )
         async with app.state.db_sessionmaker() as session:
+            # Known to the gateway: a use case it has never heard of serves nothing.
+            session.add(UseCaseRead(slug="demo", name="demo"))
             session.add(
                 BudgetRead(
                     id=1,

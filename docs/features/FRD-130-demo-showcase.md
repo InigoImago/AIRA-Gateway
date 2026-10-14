@@ -280,7 +280,8 @@ Since 2026-10-07, in `tools/tests/`: that the readiness wait requires every mode
 (asserted as a shape — the tuple's elements are the names the traffic imports — so dropping either
 fails, and a rename cannot make it pass by finding nothing), and that the integration job waits
 through `demo-ready` *before* the suite while the pull-wait stays written in one place. Mutations
-`CS15`–`CS19`.
+`CS15`–`CS19`. The browser suite runs in a job of its own on a stack of its own, and is asked the
+same (`CS17b`).
 
 ## 6. Open
 

@@ -40,8 +40,9 @@ Management (Phase 2, FRD-205).
   that set, else **403 PERMISSION_DENIED**.
 - **FR-4 Attribution**: build `Attribution(subject, method, use_case)` and set it on `request.state`;
   add span attributes `aira.subject`, `aira.use_case`, `aira.auth_method`.
-- **FR-5 Policy**: `require_use_case` (default false) — when true, an authenticated non-demo request
-  without a use case is rejected **400 INVALID_ARGUMENT**.
+- **FR-5 Policy**: `require_use_case` (default **true** since 2026-08-11, and refused off anywhere
+  but `local`) — an authenticated request without a use case is rejected **400 INVALID_ARGUMENT**,
+  the unbound break-glass key excepted (`ADR-0015`).
 - **FR-6 Non-OIDC**: API-key/demo requests attribute the provided use case as-is (no group check yet).
 
 ## 5. Design & Architecture

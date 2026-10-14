@@ -77,6 +77,13 @@ reason a step's own model call applies no dispatch condition is that an administ
 name and the serializer checked it. A fallback name nobody checked would be the hole that
 `allow_check`'s removal closed, reopened one field along.
 
+> **Amended 2026-10-14.** The check when the pipeline is saved is necessary and not sufficient: a
+> release withdrawn, or an approval revoked, after the pipeline was saved left the step calling the
+> model — a redactor sending the caller's text to a model the installation had withdrawn. A step's
+> own call now asks the installation's conditions — residency, approval, release, a price where
+> spend is capped — before each call (`api/serving/conditions.py`), and passes over a model it may
+> not call with that reason, degrading as above.
+
 **3. A candidate that was tried and failed is recorded**, with the upstream's own reason, beside
 the ones a condition excluded. Both are `step: dispatch` decisions on the audit row; the action
 says which happened — `skipped` for a condition, `failed` for an attempt.

@@ -8,11 +8,15 @@ Vault in real deployments (see PRD §9).
 
 from __future__ import annotations
 
-from pydantic import field_validator
+from pydantic import ValidationInfo, field_validator
 
 from aira_common.config import BaseAiraSettings
 from aira_common.kafka import KafkaSecurity, parse_bootstrap_servers, validate_stage
-from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
+from aira_common.oidc import (
+    DEFAULT_CLOCK_SKEW_SECONDS,
+    DEFAULT_EXPIRY_LEEWAY_SECONDS,
+    check_tolerance,
+)
 
 #: The well-known development signing key. ``config.security`` refuses to start any non-local
 #: environment that is still using it.
@@ -92,6 +96,14 @@ class ManagementSettings(BaseAiraSettings):
     @classmethod
     def _one_stage(cls, value: str) -> str:
         return validate_stage(value)
+
+    @field_validator("oidc_clock_skew_seconds", "oidc_expiry_leeway_seconds")
+    @classmethod
+    def _a_tolerance_not_a_lifetime(cls, value: float, info: ValidationInfo) -> float:
+        """At startup whether or not OIDC is configured (`FRD-134` FR-3): checked only where a
+        verifier is built, a value out of bounds started a plane without a word — until somebody
+        switched OIDC on, and it refused to start then."""
+        return check_tolerance(value, f"AIRA_{str(info.field_name).upper()}")
 
     @field_validator("kafka_bootstrap_servers")
     @classmethod

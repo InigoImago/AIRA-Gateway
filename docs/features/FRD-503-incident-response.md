@@ -44,15 +44,20 @@ anomaly event records `blocked` or `throttled` rather than `detected_not_enforce
 **FR-3** — `guard_before_work` — the one pre-dispatch gate every verb takes (`FRD-126`) — refuses a
 blocked caller with **429** and a `Retry-After` naming when the suspension ends. Not 403: the
 condition is temporary and the client's correct behaviour is to come back, which is exactly what 429
-means.
+means. Where several blocks apply, the one that **ends last** names it — the earliest moment a retry
+can succeed; the first one the query returned once sent a client back nine minutes early.
 
 **FR-4** — A throttled caller is admitted through an additional token bucket at the suspension's
 rate, alongside whatever rate limits already apply. All-or-nothing across buckets, as `FRD-405` FR-4
-requires, so a throttled request does not debit the limits that would have granted it.
+requires, so a throttled request does not debit the limits that would have granted it. The bucket is
+the suspension's, not the rate limiter's: `AIRA_ENFORCE_RATE_LIMITS=false` leaves it in force, and
+only `AIRA_ENFORCE_SUSPENSIONS` switches it off.
 
 **FR-5** — A refusal caused by a suspension is recorded with outcome **`suspended`**, its own value
 in the closed vocabulary. Folding it into `rate_limited` would hide "we stopped this caller on
-purpose" inside "this caller is going too fast", and those want different answers.
+purpose" inside "this caller is going too fast", and those want different answers. **A throttle's
+refusal too**: its bucket is taken by the rate limiter, and when that bucket is the one that refused,
+the refusal is the suspension's (`Throttled`), naming the rate and who set it.
 
 **FR-6** — `POST /v1beta/suspensions` creates one by hand and `DELETE /{id}` lifts; both require
 `incident.suspend` (IT Security or Global Administrator), because a hand-made suspension is a global

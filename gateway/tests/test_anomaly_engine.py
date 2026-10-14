@@ -83,6 +83,59 @@ async def _evaluate(sessions, rule: AnomalyRuleRead):
 # ---- rates ----------------------------------------------------------------------------------
 
 
+async def test_a_step_s_own_call_does_not_halve_the_blocked_share(sessions) -> None:
+    """An LLM filter writes a `pipeline:injection_filter` row for its classifier beside the
+    request's own row. Both counted as requests, so a use case blocking every prompt measured 50 %
+    and a rule at 100 % never fired — every threshold above half was decorative."""
+    await _seed(
+        sessions,
+        *[
+            row
+            for _ in range(6)
+            for row in (
+                _log(operation="pipeline:injection_filter", outcome=Outcome.SERVED.value),
+                _log(outcome=Outcome.BLOCKED_BY_PIPELINE.value, status=400),
+            )
+        ],
+    )
+
+    findings = await _evaluate(sessions, _rule(kind="blocked_prompt_rate", threshold=100))
+
+    assert [(f.observed, f.sample) for f in findings] == [(100, 6)]
+
+
+async def test_a_step_s_own_call_still_counts_as_spend(sessions) -> None:
+    """It was spent, so a spend spike sees it: what a step's model costs is the use case's cost."""
+    await _seed(
+        sessions,
+        *[_log(minutes_ago=20, cost_nanos=100) for _ in range(4)],
+        *[_log(cost_nanos=100) for _ in range(4)],
+        *[_log(operation="pipeline:pii_filter", cost_nanos=1_000) for _ in range(4)],
+    )
+
+    findings = await _evaluate(
+        sessions, _rule(kind="spend_spike", threshold=300, target="use_case")
+    )
+
+    assert [f.observed for f in findings] == [1100]
+
+
+async def test_a_row_with_no_caller_is_nobody_s_finding(sessions) -> None:
+    """A body refused for its size before anybody signed in is recorded with an empty subject. As a
+    target that is a person nobody is: a block on `''` stops nobody and was listed as in force."""
+    await _seed(
+        sessions,
+        *[
+            _log(subject="", outcome=Outcome.REQUEST_TOO_LARGE.value, status=413, use_case=None)
+            for _ in range(6)
+        ],
+    )
+
+    findings = await _evaluate(sessions, _rule(use_case=None, threshold=50))
+
+    assert findings == []
+
+
 async def test_a_refusal_rate_above_the_threshold_is_found(sessions) -> None:
     await _seed(
         sessions,

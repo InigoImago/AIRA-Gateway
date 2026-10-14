@@ -280,3 +280,18 @@ def test_the_dataclass_defaults_are_the_settings_defaults() -> None:
     assert defaults.max_bytes == settings.max_response_schema_bytes
     assert defaults.max_depth == settings.max_response_schema_depth
     assert defaults.max_properties == settings.max_response_schema_properties
+
+
+def test_the_size_bound_measures_the_document_as_written() -> None:
+    """The bound applies to the submitted document, and was measured on a re-serialisation with a
+    space after every comma and colon and every non-ASCII character escaped: a compact schema of
+    exactly the bound was refused as a few bytes over it, and an "ä" counted six bytes."""
+    compact = {"type": "object", "description": "x" * 10}
+    written = json.dumps(compact, separators=(",", ":"))
+    parse(compact, SchemaBounds(max_bytes=len(written)))  # exactly at the bound: accepted
+
+    umlauts = {"type": "string", "description": "ä" * 100}
+    in_utf8 = len(json.dumps(umlauts, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    parse(umlauts, SchemaBounds(max_bytes=in_utf8))
+    with pytest.raises(SchemaRejected, match=f"{in_utf8} bytes"):
+        parse(umlauts, SchemaBounds(max_bytes=in_utf8 - 1))

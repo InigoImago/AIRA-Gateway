@@ -14,8 +14,12 @@ Three things, one delivery:
 
 1. **An IT Security console** — findings across every use case, the suspensions in force, and the
    kill switch, with the global rules that produce them.
-2. **Own warnings.** A use case's members see the findings *about their own use case*. A warning
-   nobody who could act on it can see is a warning that changes nothing.
+2. **Own warnings.** A use case's members see the findings *about their own use case*: its own
+   rules', and a global rule's that measured the use case. A global rule's finding about a **person
+   or a credential** carries no use case — the traffic it measured may span several — and is shown
+   to the oversight roles only; the stop it caused is visible to the person it stops, through
+   `GET /v1beta/suspensions?use_case=` (`FRD-503` FR-6a). A warning nobody who could act on it can
+   see is a warning that changes nothing.
 3. **A trace overview per use case** — what actually happened, request by request: when, which
    model, which outcome, how many tokens, what it cost, how long it took, and the trace id.
 
@@ -51,7 +55,10 @@ that grows to cover more than it was about.
 
 **FR-2** — It shows **findings** across every use case the caller may see: when, which rule, which
 kind, which use case, the target, the measurement **and the numbers it was drawn from**, and what
-was actually done (`alert` / `blocked` / `throttled` / `detected_not_enforced`).
+was actually done (`alert` / `blocked` / `throttled` / `detected_not_enforced`). The last is also
+what a blocking or throttling rule records while `AIRA_ENFORCE_SUSPENSIONS` is off: it writes no
+suspension then, or switching enforcement on would stop every target found while the installation
+was only learning what its rules do.
 
 **FR-3** — It shows the **suspensions**: in force, expired, and lifted — with author, reason and
 expiry. Lifted ones stay: "blocked for two hours last Tuesday" is what a review asks.
@@ -148,8 +155,9 @@ and the answer comes from the principal's roles rather than from the console's o
 
 ## 5. Testing
 
-- **Scope**: a member sees their own findings and traces and nobody else's; an oversight role sees
-  every use case; a caller with neither gets an empty list rather than a 403.
+- **Scope**: a member sees their use cases' findings and traces and nobody else's — a global
+  finding about a person is oversight-only (§1); an oversight role sees every use case; a caller
+  with neither gets an empty list rather than a 403.
 - **No payloads**: asserted on the endpoint's *response body* — no `request_payload`,
   `response_payload`, or any key carrying one, whatever the row holds.
 - **Cursor**: two pages over a table that grew between them contain no duplicate and no gap.

@@ -54,6 +54,9 @@ class Reservation:
     """
 
     budgets: list[BudgetRead] = field(default_factory=list)
+    #: Budgets that bind and refuse nothing — lifted (`enabled` false). Never reserved against;
+    #: booked when the request settles, so their figures stay true (`store.applicable`).
+    lifted: list[BudgetRead] = field(default_factory=list)
     #: Who the request is from: an `each_member` budget's counter key **is** the caller, and
     #: settle/release run long after the subject was resolved.
     subject: str | None = None
@@ -64,7 +67,7 @@ class Reservation:
     resolved: bool = False
 
     def __bool__(self) -> bool:
-        return bool(self.budgets)
+        return bool(self.budgets or self.lifted)
 
 
 def _left(limit: int | None, used: int) -> int | None:
@@ -117,18 +120,25 @@ class BudgetService:
         now = now or datetime.now(UTC)
         amounts = estimated or Amounts(requests=1)
         async with self._sessionmaker() as session:
-            budgets = await applicable(session, use_case, subject)
-            if not budgets:
+            binding = await applicable(session, use_case, subject)
+            if not binding:
                 return Reservation()
             # Each budget is booked under the period it was admitted in, whenever the request ends.
-            periods = {budget.id: keys.period_key(budget.period, now) for budget in budgets}
+            periods = {budget.id: keys.period_key(budget.period, now) for budget in binding}
+            budgets = [budget for budget in binding if budget.enabled]
+            lifted = [budget for budget in binding if not budget.enabled]
             if not self._enforce:
-                return Reservation(budgets=budgets, subject=subject, period_keys=periods)
+                return Reservation(
+                    budgets=budgets, lifted=lifted, subject=subject, period_keys=periods
+                )
             if self._ledger is not None:
                 partial = Reservation(
                     budgets=budgets,
+                    lifted=lifted,
                     subject=subject,
                     reserved=amounts,
+                    # The lifted budgets' periods now; the enforced ones' as each is reserved.
+                    period_keys={budget.id: periods[budget.id] for budget in lifted},
                     atomic=True,
                 )
                 try:
@@ -153,7 +163,9 @@ class BudgetService:
                         await self._release_quietly(partial)
                     raise
             await self._check_only(session, budgets, now, subject)
-        return Reservation(budgets=budgets, subject=subject, period_keys=periods, atomic=False)
+        return Reservation(
+            budgets=budgets, lifted=lifted, subject=subject, period_keys=periods, atomic=False
+        )
 
     async def _reserve(
         self, session: AsyncSession, reservation: Reservation, now: datetime
@@ -233,7 +245,7 @@ class BudgetService:
             return
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
-            budgets = await applicable(session, use_case, subject)
+            budgets = [b for b in await applicable(session, use_case, subject) if b.enabled]
             if budgets:
                 await self._check_only(session, budgets, now, subject)
 
@@ -278,14 +290,14 @@ class BudgetService:
         (`FRD-113` FR-6), or a request-count budget could not see batched traffic.
         """
         reservation.resolved = True
-        if not reservation.budgets:
+        if not reservation:
             return
         now = now or datetime.now(UTC)
         # Under the period the request was admitted in, in both stores: one admitted at 23:59:59
         # and settled after midnight belongs to the counter it reserved against — booked into the
         # next period instead, neither period's counter would ever see it.
         await self.record(
-            reservation.budgets,
+            [*reservation.budgets, *reservation.lifted],
             tokens,
             cost_nanos=cost_nanos,
             now=now,
@@ -293,9 +305,14 @@ class BudgetService:
             subject=reservation.subject,
             periods=reservation.period_keys,
         )
+        actual = Amounts(tokens=tokens, requests=requests, cost_nanos=cost_nanos or 0)
+        # A lifted budget reserved nothing, so its shared counter takes the whole figure — or a
+        # budget put back within the counter's lifetime would start from less than was spent.
+        await self._add_to_counters(
+            reservation.lifted, reservation.subject, reservation.period_keys, actual, now
+        )
         if not reservation.atomic or self._ledger is None:
             return
-        actual = Amounts(tokens=tokens, requests=requests, cost_nanos=cost_nanos or 0)
         correction = Amounts(
             tokens=actual.tokens - reservation.reserved.tokens,
             requests=actual.requests - reservation.reserved.requests,
@@ -399,14 +416,30 @@ class BudgetService:
             requests=1,
             subject=subject,
         )
-        if self._ledger is None:
-            return  # degraded to the Postgres path, which the line above already wrote
         amounts = Amounts(tokens=tokens, requests=1, cost_nanos=cost_nanos or 0)
+        await self._add_to_counters(budgets, subject, {}, amounts, now)
+
+    async def _add_to_counters(
+        self,
+        budgets: list[BudgetRead],
+        subject: str | None,
+        periods: dict[int, str],
+        amounts: Amounts,
+        now: datetime,
+    ) -> None:
+        """Add a figure no reservation held to each budget's shared counter.
+
+        **Both stores** for what was booked in Postgres without a reservation — a step's call, a
+        lifted budget: the guard reads the shared counter, so booking Postgres alone would let the
+        spend reach enforcement only when the counter is rebuilt.
+        """
+        if self._ledger is None:
+            return  # degraded to the Postgres path, which the caller already wrote
         for budget in budgets:
             try:
                 await self._ledger.adjust(
                     keys.scope_key(budget, subject),
-                    keys.period_key(budget.period, now),
+                    periods.get(budget.id) or keys.period_key(budget.period, now),
                     amounts=amounts,
                 )
             except CountersUnavailable:
@@ -432,7 +465,8 @@ class BudgetService:
             return False
         async with self._sessionmaker() as session:
             budgets = await applicable(session, use_case, subject)
-        return any(budget.limit_cost_nanos is not None for budget in budgets)
+        # A lifted budget caps nothing, so it binds no model to a price either.
+        return any(budget.enabled and budget.limit_cost_nanos is not None for budget in budgets)
 
     async def usage(
         self,

@@ -170,8 +170,9 @@ class JwtVerifier:
                 algorithms=self._algorithms,
                 issuer=self._issuer,
                 audience=self._audience,
-                # Covers `iat`, `nbf` **and** `exp`; the expiry half is narrowed again below.
-                leeway=self._clock_skew,
+                # One leeway for `iat`, `nbf` **and** `exp`, so the wider of the two: each claim is
+                # narrowed to its own tolerance below, and only narrowed.
+                leeway=max(self._clock_skew, self._expiry_leeway),
                 options={
                     "verify_aud": self._audience is not None,
                     # Present *and* valid. Without this, a token with no `exp` verifies happily.
@@ -192,10 +193,11 @@ class JwtVerifier:
                 ),
             )
             return None
-        # The expiry half, narrowed: `decode` accepted up to `clock_skew` past `exp`, and this
-        # refuses what `expiry_leeway` does not cover. Subtractive only, so no verification is
-        # reimplemented and `exp` stays required.
-        overdue = time.time() - float(claims["exp"])
+        # Each claim narrowed to its own tolerance (`FRD-134` FR-1): `decode` accepted the wider of
+        # the two everywhere. Subtractive only, so no verification is reimplemented and every
+        # claim `decode` checked keeps its type check and its presence requirement.
+        now = time.time()
+        overdue = now - float(claims["exp"])
         if overdue > self._expiry_leeway:
             _log.info(
                 "oidc_token_expired",
@@ -203,6 +205,16 @@ class JwtVerifier:
                 expiry_leeway_seconds=self._expiry_leeway,
             )
             return None
+        for claim in ("iat", "nbf"):
+            ahead = float(claims[claim]) - now if claim in claims else 0.0
+            if ahead > self._clock_skew:
+                _log.info(
+                    "oidc_token_rejected",
+                    reason="ImmatureSignatureError",
+                    detail=f"{claim} {ahead:.0f}s ahead of this host, tolerance "
+                    f"{self._clock_skew:.0f}s",
+                )
+                return None
         return claims
 
 

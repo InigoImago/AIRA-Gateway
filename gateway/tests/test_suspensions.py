@@ -251,6 +251,29 @@ async def test_a_rule_that_only_alerts_writes_no_decision(sessions) -> None:
     assert await _suspensions(sessions) == []
 
 
+@pytest.mark.parametrize("action", ["block", "throttle"])
+async def test_while_suspensions_are_off_a_rule_records_and_decides_nothing(
+    sessions, action: str
+) -> None:
+    """`AIRA_ENFORCE_SUSPENSIONS=false` is *"the setting to use while learning what your rules
+    do"*: findings are recorded, nobody is refused. A rule went on writing live suspensions, each
+    with an hour to run — and the moment enforcement was switched on, every one of them stopped
+    its target, for traffic seen while the installation was only learning."""
+    await _add(sessions, _rule(action=action, throttle_rpm=5 if action == "throttle" else None))
+    async with sessions() as session:
+        for _ in range(10):
+            session.add(_log())
+        await session.commit()
+
+    off = SuspensionService(sessions, enforce=False)
+    events = await AnomalyService(sessions, suspensions=off).tick(NOW)
+
+    assert [event.action_taken for event in events] == ["detected_not_enforced"]
+    assert await _suspensions(sessions) == []
+    # And switched on afterwards, nothing from the learning phase applies.
+    assert await SuspensionService(sessions).check("demo-uc", "ada", None) == []
+
+
 async def test_a_throttling_rule_carries_its_rate_onto_the_decision(sessions) -> None:
     await _add(sessions, _rule(action="throttle", throttle_rpm=5))
     async with sessions() as session:
@@ -432,6 +455,115 @@ def test_the_refusal_is_recorded_as_suspended_rather_than_rate_limited() -> None
         outcomes = portal.call(_outcomes, client.app.state.db_sessionmaker)
 
     assert Outcome.SUSPENDED.value in outcomes
+
+
+def _throttled_twice(**settings: object) -> tuple[list[int], list[str]]:
+    """Two requests from a caller throttled to one a minute: their statuses, and the outcomes the
+    audit trail recorded for them."""
+
+    async def _outcomes(sessionmaker) -> list[str]:
+        async with sessionmaker() as session:
+            return list((await session.execute(select(RequestLog.outcome))).scalars().all())
+
+    with (
+        _api(demo_mode=True, log_queue_size=0, **settings) as client,
+        anyio.from_thread.start_blocking_portal() as portal,
+    ):
+        portal.call(
+            _add,
+            client.app.state.db_sessionmaker,
+            _suspension(use_case=None, target_value="demo", action="throttle", throttle_rpm=1),
+        )
+        client.app.state.suspensions.invalidate()
+        statuses = [
+            client.post(
+                "/v1beta/models/mock-1:generateContent",
+                json={"contents": [{"parts": [{"text": "hello"}]}]},
+            ).status_code
+            for _ in range(2)
+        ]
+        outcomes = portal.call(_outcomes, client.app.state.db_sessionmaker)
+    return statuses, outcomes
+
+
+def test_a_throttle_s_refusal_is_recorded_as_suspended_too() -> None:
+    """`FRD-503` FR-5 names *a refusal caused by a suspension*, and a throttle is one: it ran as
+    the rate limiter's bucket and was recorded as `rate_limited` — the very folding FR-5 rules out,
+    and the outcome the anomaly rules read as going too fast."""
+    statuses, outcomes = _throttled_twice()
+
+    assert statuses == [200, 429]
+    assert Outcome.SUSPENDED.value in outcomes
+    assert Outcome.RATE_LIMITED.value not in outcomes
+
+
+def test_a_throttle_holds_with_rate_limits_switched_off() -> None:
+    """`AIRA_ENFORCE_RATE_LIMITS=false` switches off the configured limits. A throttle is a
+    suspension, and `AIRA_ENFORCE_SUSPENSIONS` is its switch — the limiter returned before taking
+    it, and a caller under investigation was served at any rate."""
+    statuses, _ = _throttled_twice(enforce_rate_limits=False)
+
+    assert statuses == [200, 429]
+
+
+@pytest.mark.parametrize("first", ["short", "long"])
+async def test_two_blocks_say_when_the_last_one_ends(sessions, first: str) -> None:
+    """A person blocked for a minute inside a use case blocked for ten is refused for ten:
+    `Retry-After` named whichever block the query returned first, and a client honouring it came
+    back nine minutes early, to be refused again."""
+    short = _suspension(target="subject", expires_at=datetime.now(UTC) + timedelta(minutes=1))
+    long = _suspension(
+        target="use_case",
+        target_value="demo-uc",
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    for row in (short, long) if first == "short" else (long, short):
+        await _add(sessions, row)
+
+    with pytest.raises(Suspended) as refused:
+        await SuspensionService(sessions).check("demo-uc", "ada", None)
+
+    assert int(refused.value.retry_after) > 500
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1beta/suspensions?use_case=%00",
+        "/v1beta/anomalies?use_case=%00",
+        "/v1beta/anomalies?cursor=2026-10-14T00:00:00%2B00:00%7C%00",
+    ],
+    ids=["suspensions use case", "anomalies use case", "anomalies cursor"],
+)
+def test_a_control_character_in_a_parameter_is_the_caller_s_400(path: str) -> None:
+    """PostgreSQL refuses a NUL in any text it is asked about, so a NUL in a query parameter was
+    answered with this gateway's 500. SQLite takes it without a word — which is why the refusal is
+    asserted here, by name, rather than the crash."""
+    with _api() as client:
+        response = client.get(path)
+
+    assert response.status_code == 400, response.text
+
+
+def test_lifting_an_id_with_a_control_character_lifts_nothing_by_name() -> None:
+    with _api() as client:
+        response = client.delete("/v1beta/suspensions/%00")
+
+    assert response.status_code == 404, response.text
+
+
+def test_a_block_does_not_carry_a_rate() -> None:
+    """`throttle_rpm` is required for a throttle and refused otherwise (`FRD-503` §4.4), as
+    Management refuses it on a rule. A block stored with a rate reads, on the list, as a stop that
+    lets some traffic through."""
+    with _api() as client:
+        response = client.post(
+            "/v1beta/suspensions",
+            json={"target": "subject", "target_value": "ada", "action": "block", "throttle_rpm": 5},
+        )
+
+    assert response.status_code == 400
+    assert "throttle_rpm" in response.json()["error"]["message"]
 
 
 def test_stopping_traffic_by_hand_needs_an_oversight_role() -> None:

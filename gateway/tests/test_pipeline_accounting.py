@@ -13,6 +13,8 @@ All three follow from one omission, which is why one record closes all three.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -21,7 +23,7 @@ from sqlalchemy import select
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, CanonicalUsage
-from aira_gateway.db.models import ModelRead, RequestLog
+from aira_gateway.db.models import ModelRead, RequestLog, UseCaseRead
 from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
@@ -96,6 +98,21 @@ def _app(pipeline: Pipeline, guard: _Guard):  # noqa: ANN201
     app.state.pipeline_engine = PipelineEngine(registry)
     app.state.pipeline_store = _Store(pipeline)
     return app
+
+
+@contextmanager
+def _running(app) -> Iterator[TestClient]:  # noqa: ANN001
+    """The app, started, with the use case these requests name on record: one the gateway has
+    never heard of serves nothing (`refuse_unless_live`)."""
+    with TestClient(app) as client:
+
+        async def known() -> None:
+            async with app.state.db_sessionmaker() as session:
+                session.add(UseCaseRead(slug="demo", name="demo"))
+                await session.commit()
+
+        client.portal.call(known)  # type: ignore[attr-defined]
+        yield client
 
 
 async def _rows(app) -> list[RequestLog]:  # noqa: ANN001
@@ -218,7 +235,7 @@ async def test_the_pipeline_call_is_booked_against_the_budget() -> None:
     guard = _Guard()
     app = _app(_filter(action="flag"), guard)
 
-    with TestClient(app) as client:
+    with _running(app) as client:
         async with app.state.db_sessionmaker() as session:
             session.add(
                 BudgetRead(
@@ -259,7 +276,7 @@ async def test_the_pipeline_call_spends_the_request_budget_too() -> None:
 
     app = _app(_filter(action="flag"), _Guard())
 
-    with TestClient(app) as client:
+    with _running(app) as client:
         async with app.state.db_sessionmaker() as session:
             session.add(
                 BudgetRead(
@@ -318,7 +335,7 @@ async def test_an_exhausted_budget_refuses_before_the_pipeline_spends_anything()
     app = _app(_filter(action="flag"), guard)
     app.state.budgets = _Exhausted()
 
-    with TestClient(app) as client:
+    with _running(app) as client:
         response = client.post(
             "/v1beta/models/guard:generateContent", json=_BODY, headers={"x-aira-use-case": "demo"}
         )
@@ -334,7 +351,7 @@ async def test_the_embedding_verb_takes_the_same_early_gate() -> None:
     app = _app(_filter(action="flag"), _Guard())
     app.state.budgets = _Exhausted()
 
-    with TestClient(app) as client:
+    with _running(app) as client:
         response = client.post(
             "/v1beta/models/guard:embedContent",
             json={"content": {"parts": [{"text": "hi"}]}},
@@ -356,7 +373,7 @@ async def test_the_compatibility_surface_takes_the_same_early_gate() -> None:
     app = _app(_filter(action="flag"), guard)
     app.state.budgets = _Exhausted()
 
-    with TestClient(app) as client:
+    with _running(app) as client:
         # This surface addresses models by the predecessor's integer ids, so the catalog has to
         # carry one or the request never reaches the pipeline at all — and the test would pass for
         # a reason that has nothing to do with the gate.

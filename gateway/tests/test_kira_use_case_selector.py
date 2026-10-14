@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from aira_gateway.app import create_app
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
-from aira_gateway.db.models import ModelRead
+from aira_gateway.db.models import ModelRead, UseCaseRead
 
 KIRA = "/kira/api/external/chat"
 GEMINI = "/v1beta/models/mock-1:generateContent"
@@ -66,6 +66,8 @@ async def _client(*use_cases: str, require_use_case: bool = False) -> TestClient
                 publisher="google",
             )
         )
+        # Known to the gateway: a use case it has never heard of serves nothing.
+        session.add_all(UseCaseRead(slug=slug, name=slug) for slug in use_cases)
         await session.commit()
     return client
 

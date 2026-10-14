@@ -34,9 +34,9 @@ detected, over what window, about whom, and what was done. It runs entirely off 
 **FR-1** — A background task evaluates rules on an interval (`AIRA_ANOMALY_INTERVAL_SECONDS`,
 default 60). It is started with the gateway and stopped with it.
 
-**FR-2** — Only **touched** scopes are evaluated. The request-log writer marks the use case,
-subject and credential of every row it persists; the evaluator takes that set and clears it. An
-installation serving no traffic performs no queries.
+**FR-2** — Only **touched** scopes are evaluated: those with rows since the last tick, read from
+`request_logs` by the tick itself. Every instance therefore sees all the traffic rather than its own
+share (`FRD-127`), and an installation serving no traffic evaluates no rule.
 
 **FR-3** — A rule is evaluated at most once per **cooldown**, which is its own window. A rule with a
 15-minute window that fires does not fire again on the next tick for the same target — the second
@@ -54,6 +54,13 @@ its scope:
 | `spend_spike` | spend in the window as a percentage of the preceding window of the same length |
 | `request_spike` | request count, likewise |
 | `new_source_ip` | source addresses in the window not seen for that target in the reference period |
+
+The rows are the **callers' requests**. A pipeline step's own model call (`pipeline:<step>`) is the
+gateway's, made on a request's behalf, and counts only towards `spend_spike` — counted among the
+requests it halved every share a use case running a step could reach, so a filter blocking every
+prompt measured 50 %. A row with **no target value** — a body refused for its size before anybody
+signed in has an empty subject — is measured by no rule: as a target, the empty string is a person
+nobody is, and a block on it stopped nobody while it was listed as in force.
 
 **FR-5** — A rate or ratio with fewer than `min_sample` rows in the window is **not evaluated**, and
 that is recorded as nothing rather than as a pass. One refusal out of one request is 100 %.
@@ -79,10 +86,10 @@ Two obvious designs are both wrong. Evaluating on every persisted row means N qu
 off the hot path but not off the *machine*. Scanning every rule on a timer means a quiet
 installation with 200 use cases runs 200 pointless queries a minute, forever.
 
-The writer already touches every row; marking three strings costs nothing and turns the timer into
-"evaluate what changed". The set is bounded and dropped on overflow — losing a *hint* delays a
-finding by one tick, and a bounded loss beats unbounded memory in the component whose whole job is
-to still be running when something goes wrong.
+"Evaluate what changed" is asked of the rows themselves: the tick reads which scopes have rows
+since it last looked. A set the writer marked in memory would see one instance's share of the
+traffic and lose its hints on overflow or restart; the table has neither problem, and the query is
+one index range per tick.
 
 ### 4.2 The cooldown is the window
 

@@ -22,7 +22,7 @@ from aira_gateway.pipeline.engine.outcomes import (
     TextsOutcome,
     TraceEntry,
 )
-from aira_gateway.pipeline.engine.steps import DeclarationOf, StepEvaluator
+from aira_gateway.pipeline.engine.steps import DeclarationOf, StepEvaluator, StepPermits
 from aira_gateway.pipeline.engine.texts import (
     REDACTIONS_AT_ONCE,
     TEXT_ONLY_STEPS,
@@ -48,11 +48,13 @@ class PipelineEngine:
         model_calls: list[ModelCall] | None = None,
         rewrites: list[tuple[str, str]] | None = None,
         declaration_of: DeclarationOf | None = None,
+        permits: StepPermits | None = None,
     ) -> PipelineOutcome:
         """Run the configured steps, raising ``PipelineRejected`` on the first block.
 
         ``declaration_of`` lets a step reach a model the catalogue knows and configuration does not
-        (`FRD-507`); without it such a step finds no provider and does less.
+        (`FRD-507`); without it such a step finds no provider and does less. ``permits`` is what
+        this request may have a step call; without it a step asks no condition of its models.
         """
         outcome = PipelineOutcome(
             request=request,
@@ -62,7 +64,7 @@ class PipelineEngine:
             rewrites=rewrites if rewrites is not None else [],
         )
         for step in pipeline.steps:
-            evaluation = await self._steps.evaluate(step, outcome.request, declaration_of)
+            evaluation = await self._steps.evaluate(step, outcome.request, declaration_of, permits)
             if evaluation.call is not None:
                 outcome.model_calls.append(evaluation.call)
             if evaluation.decision is not None:
@@ -87,6 +89,7 @@ class PipelineEngine:
         model_calls: list[ModelCall] | None = None,
         rewrites: list[tuple[str, str]] | None = None,
         declaration_of: DeclarationOf | None = None,
+        permits: StepPermits | None = None,
     ) -> TextsOutcome:
         """Run the steps that mean anything for texts alone — an embedding (`TEXT_ONLY_STEPS`).
 
@@ -104,7 +107,9 @@ class PipelineEngine:
         for step in pipeline.steps:
             if step.type not in TEXT_ONLY_STEPS:
                 continue
-            evaluations = await self._evaluate_each(step, outcome.texts, model, declaration_of)
+            evaluations = await self._evaluate_each(
+                step, outcome.texts, model, declaration_of, permits
+            )
 
             # Spend and rewrites first, as in `run`: recorded whether or not the step refuses.
             outcome.model_calls.extend(
@@ -131,6 +136,7 @@ class PipelineEngine:
         texts: Sequence[str],
         model: str,
         declaration_of: DeclarationOf | None,
+        permits: StepPermits | None = None,
     ) -> list[StepEvaluation]:
         """One evaluation per text, a bounded handful at a time, **in the texts' order** —
         `asyncio.gather` keeps argument order, and a rewrite applied to the wrong text is silent."""
@@ -138,7 +144,9 @@ class PipelineEngine:
 
         async def one(text: str) -> StepEvaluation:
             async with limit:
-                return await self._steps.evaluate(step, _one_message(text, model), declaration_of)
+                return await self._steps.evaluate(
+                    step, _one_message(text, model), declaration_of, permits
+                )
 
         return list(await asyncio.gather(*(one(text) for text in texts)))
 

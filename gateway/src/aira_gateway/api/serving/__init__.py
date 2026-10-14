@@ -51,6 +51,7 @@ from aira_gateway.api.serving.controls import (
     enforce_pre_dispatch,
     estimate,
     guard_before_work,
+    refuse_unless_live,
     resolve_reasoning,
 )
 from aira_gateway.api.serving.pipeline_run import (
@@ -61,6 +62,7 @@ from aira_gateway.api.serving.pipeline_run import (
 )
 from aira_gateway.api.serving.prepare import (
     Prepared,
+    fitting,
     prepare_for_dispatch,
     requirements_for,
     resolve_direct_target,
@@ -97,6 +99,7 @@ __all__ = [
     "enforce_pre_dispatch",
     "ensure_body_is_encodable",
     "estimate",
+    "fitting",
     "guard_before_work",
     "json_body",
     "notice_outcome",
@@ -105,6 +108,7 @@ __all__ = [
     "record_pipeline_calls",
     "record_refusal",
     "refusal_outcome",
+    "refuse_unless_live",
     "released_for",
     "released_models",
     "requirements_for",

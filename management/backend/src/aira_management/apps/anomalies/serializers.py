@@ -93,7 +93,34 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
                 {"name": f"A rule called '{name}' already exists among {where}. Choose another."}
             )
 
+    def _names_its_own_use_case(self) -> None:
+        """A body naming a use case must name the one the rule lives in — the route's, or none.
+
+        `use_case` is read-only because the route decides it, and a read-only field is ignored on
+        input: a rule posted to the global endpoint with a use case in its body was created
+        **global**, and with `action: block` it applied in every use case. Refused by name instead,
+        like every other field this API will not take as written.
+        """
+        named = self.initial_data.get("use_case") if isinstance(self.initial_data, dict) else None
+        if named in (None, ""):
+            return
+        if self.instance is not None:
+            scope = self.instance.use_case
+        else:
+            scope = self.context.get("use_case")
+        if scope is not None and named == scope.slug:
+            return
+        where = (
+            f"belongs to use case '{scope.slug}'"
+            if scope is not None
+            else "applies in every use case; a rule for one use case is created on that use case"
+        )
+        raise serializers.ValidationError(
+            {"use_case": f"This rule {where}, so it cannot name '{named}'."}
+        )
+
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        self._names_its_own_use_case()
         self._unique_name(attrs)
         kind = RuleKind(self._effective(attrs, "kind", RuleKind.REFUSAL_RATE))
         action = RuleAction(self._effective(attrs, "action", RuleAction.ALERT))

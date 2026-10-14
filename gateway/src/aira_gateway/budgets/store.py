@@ -30,16 +30,19 @@ class Usage:
 async def applicable(
     session: AsyncSession, use_case: str | None, subject: str | None
 ) -> list[BudgetRead]:
-    """Every enabled budget that binds this request.
+    """Every budget that binds this request, **lifted ones included**.
+
+    A lifted budget (`enabled` false) refuses nothing and still counts, as the installation's own
+    switch does (`BudgetService.guard`): its figures stay true, and putting it back caps spending
+    from what was spent rather than handing out a fresh allowance for the rest of the period. So
+    each caller asks `enabled` where it decides whether to refuse, and books every row it gets.
 
     A request naming a use case reads that use case's rows; one naming none reads the
     installation's (`FRD-610`). `Scope.applying` decides which of the fetched rows bind — the one
     place a scope is defined, which the rate limiter follows too.
     """
     result = await session.execute(
-        select(BudgetRead).where(
-            BudgetRead.use_case == (use_case or ""), BudgetRead.enabled.is_(True)
-        )
+        select(BudgetRead).where(BudgetRead.use_case == (use_case or ""))
     )
     return [
         budget

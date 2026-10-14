@@ -10,7 +10,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aira_gateway.db.base import Base, new_id
@@ -31,8 +41,12 @@ class UseCaseRead(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
-    description: Mapped[str] = mapped_column(String(2000), default="")
-    processing_notes: Mapped[str] = mapped_column(String(2000), default="")
+    #: Unbounded, because the bound is Management's (`MAX_PROSE_LENGTH`): a column narrower than
+    #: what Management accepts refuses the whole event, and the use case — its release, its
+    #: storage switch, its retirement — never reaches this plane. The two are compared by
+    #: `test_what_management_accepts_fits_the_gateway.py`.
+    description: Mapped[str] = mapped_column(Text, default="")
+    processing_notes: Mapped[str] = mapped_column(Text, default="")
     #: Whether prompts and responses are written at all, and for how long they are kept (`FRD-404`).
     store_payloads: Mapped[bool] = mapped_column(Boolean, default=True)
     retention_days: Mapped[int] = mapped_column(Integer, default=7)

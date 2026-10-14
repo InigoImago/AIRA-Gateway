@@ -12,7 +12,9 @@ from sqlalchemy.sql.elements import ColumnElement
 from aira_common.anomalies import RuleTarget
 from aira_common.permissions import Permission
 from aira_gateway.anomalies.evaluator import without_addresses
+from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.reporting.common import parse_cursor, router, scope_label, visible_scope
+from aira_gateway.auth.attribution import is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import AnomalyEvent
@@ -72,9 +74,13 @@ async def anomalies(
 ) -> JSONResponse:
     """What the detector has found (`FRD-501` FR-8), newest first.
 
-    A global rule's findings are shown to whoever may see the use case the traffic belonged to; a
-    finding with no use case is oversight-only, since there is nobody else it is about.
+    A global rule's finding about a use case is shown to whoever may see that use case. One about a
+    person or a credential carries no use case — the traffic it measured may span several — and is
+    oversight-only; the stop it caused is visible to the person it stops (`/v1beta/suspensions`).
     """
+    if use_case and not is_valid_use_case(use_case):
+        # Anything outside the slug charset names no use case — and a NUL is Postgres's 500.
+        raise GeminiHTTPError(400, "Invalid use case identifier.", "INVALID_ARGUMENT")
     scope = visible_scope(principal, Permission.ANOMALY_READ_ALL)
     if use_case and scope is not None and use_case not in scope:
         # Emptiness rather than a refusal, with `in_scope` saying which empty this is.

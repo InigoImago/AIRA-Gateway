@@ -149,6 +149,56 @@ async def test_a_use_case_published_by_the_relay_reaches_the_gateway(engine: Asy
         await management.dispose()
 
 
+async def test_a_use_case_with_the_longest_text_management_accepts_reaches_the_gateway(
+    engine: AsyncEngine,
+) -> None:
+    """`FRD-204` FR-7, on the database that enforces lengths. SQLite enforces none, which is how
+    gateway columns of 2000 characters sat under Management's 20 000: PostgreSQL refused the event
+    whole, and the use case — its release, its storage switch, its retirement — never arrived."""
+    from aira_management.apps.usecases.models import MAX_PROSE_LENGTH
+
+    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    installation.remember("read_model", slug)
+    management = await _management_engine()
+    try:
+        await _queue_outbox_event(
+            management,
+            "aira.usecases",
+            slug,
+            "usecase.upserted",
+            {
+                "slug": slug,
+                "name": "Integration probe, long prose",
+                "description": "d" * MAX_PROSE_LENGTH,
+                "processing_notes": "n" * MAX_PROSE_LENGTH,
+            },
+        )
+        relay = _run_relay()
+        assert relay.returncode == 0, relay.stderr
+
+        row = await _wait_for(
+            engine,
+            "SELECT length(description) AS described, length(processing_notes) AS noted"
+            " FROM use_cases WHERE slug = :slug",
+            {"slug": slug},
+        )
+        assert row is not None, (
+            "the gateway did not apply the use case: a column narrower than what Management "
+            "accepts refuses the whole event"
+        )
+        assert (row.described, row.noted) == (MAX_PROSE_LENGTH, MAX_PROSE_LENGTH)
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM use_cases WHERE slug = :slug"), {"slug": slug}
+            )
+        async with management.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM outbox_outboxevent WHERE key = :key"), {"key": slug}
+            )
+        await management.dispose()
+
+
 async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: AsyncEngine) -> None:
     """The api-keys topic was one of the three `make kafka-topics` used to miss."""
     import httpx
@@ -163,6 +213,15 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
     subject = installation.subject("integration-distributed")
     management = await _management_engine()
     try:
+        # The use case the key is bound to travels too: a use case the gateway holds no record of
+        # serves nothing, to its keys as to its members (`FRD-204` FR-8).
+        await _queue_outbox_event(
+            management,
+            "aira.usecases",
+            slug,
+            "usecase.upserted",
+            {"slug": slug, "name": "Integration probe", "allowed_models": ["mock-1"]},
+        )
         await _queue_outbox_event(
             management,
             "aira.api-keys",
@@ -184,6 +243,10 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
             engine, "SELECT subject FROM api_keys WHERE prefix = :prefix", {"prefix": prefix}
         )
         assert applied is not None, "the api-keys topic did not reach the gateway"
+        known = await _wait_for(
+            engine, "SELECT 1 FROM use_cases WHERE slug = :slug", {"slug": slug}
+        )
+        assert known is not None, "the use-case topic did not reach the gateway"
 
         # The distributed key works over real HTTP and is bound to its use case.
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -212,9 +275,13 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
             await connection.execute(
                 text("DELETE FROM api_keys WHERE prefix = :prefix"), {"prefix": prefix}
             )
+            await connection.execute(
+                text("DELETE FROM use_cases WHERE slug = :slug"), {"slug": slug}
+            )
         async with management.begin() as connection:
             await connection.execute(
-                text("DELETE FROM outbox_outboxevent WHERE key = :key"), {"key": prefix}
+                text("DELETE FROM outbox_outboxevent WHERE key IN (:key, :slug)"),
+                {"key": prefix, "slug": slug},
             )
         await management.dispose()
 

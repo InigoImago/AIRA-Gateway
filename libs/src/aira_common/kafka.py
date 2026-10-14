@@ -6,6 +6,7 @@ fake. Trace context travels on message headers (`FRD-001`, `FRD-615`).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from collections.abc import Callable
@@ -89,6 +90,10 @@ EVENT_TYPE_HEADER = "event_type"
 #: Kafka's own port, for a broker written without one.
 DEFAULT_KAFKA_PORT = 9092
 
+#: A host name or an IPv4 address: letters, digits, dots and hyphens — and the underscore a
+#: container network allows in a service name.
+_HOST_NAME = re.compile(r"[A-Za-z0-9._-]+\Z")
+
 
 def parse_bootstrap_servers(value: str) -> tuple[tuple[str, int], ...]:
     """``(host, port)`` per entry of a comma-separated broker list, as a Kafka client dials it.
@@ -106,6 +111,10 @@ def _broker(entry: str) -> tuple[str, int]:
         host, closed, rest = entry[1:].partition("]")
         if not closed or (rest and not rest.startswith(":")):
             raise ValueError(f"{entry!r} is neither [address] nor [address]:port")
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError as exc:
+            raise ValueError(f"{entry!r}: {host!r} is not an IPv6 address") from exc
         port_text = rest[1:] if rest else None
     elif entry.count(":") > 1:
         raise ValueError(f"{entry!r}: write an IPv6 broker as [address]:port")
@@ -114,6 +123,9 @@ def _broker(entry: str) -> tuple[str, int]:
         port_text = after if colon else None
     if not host:
         raise ValueError(f"{entry!r} names no host")
+    if not entry.startswith("[") and not _HOST_NAME.match(host):
+        # A space or any character no host name has: the client would retry it for ever.
+        raise ValueError(f"{entry!r}: {host!r} is not a host name a client could dial")
     if port_text is None:
         return host, DEFAULT_KAFKA_PORT
     if not (port_text.isascii() and port_text.isdigit() and 0 < int(port_text) < 65536):

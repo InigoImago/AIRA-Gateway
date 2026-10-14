@@ -248,6 +248,16 @@ def test_a_dry_run_still_honours_a_model_the_caller_named() -> None:
     }
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     with TestClient(app) as client:
+
+        async def known() -> None:
+            # A use case the gateway has never heard of dry-runs nothing (`refuse_unless_live`).
+            from aira_gateway.db.models import UseCaseRead
+
+            async with app.state.db_sessionmaker() as session:
+                session.add(UseCaseRead(slug="uc", name="uc"))
+                await session.commit()
+
+        client.portal.call(known)  # type: ignore[attr-defined]
         named = client.post(
             "/v1beta/pipeline:dryRun",
             json={

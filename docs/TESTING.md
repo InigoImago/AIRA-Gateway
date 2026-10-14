@@ -126,8 +126,8 @@ it away again, passed or not. Each test makes the people it needs in the domain 
 that stands in for one of its workstations, holding that person's ticket or none — console and
 gateway, the people who get in and those who must not ([`FRD-140`](features/FRD-140-windows-sign-on.md)).
 It **refuses rather than skips** when the domain is down or Chromium cannot load MIT Kerberos
-(`libgssapi_krb5.so.2`). CI runs it last in the stack job. The configuration it stands on is
-guarded in the default run too, by `tools/tests/test_windows_sso.py`.
+(`libgssapi_krb5.so.2`). CI runs it after the browser suite, in the browser job. The configuration
+it stands on is guarded in the default run too, by `tools/tests/test_windows_sso.py`.
 
 ### Beside it: the UI audit (`make ui-audit`)
 Not a test and never red: a walk through every page, tab and window for each of the five demo roles,
