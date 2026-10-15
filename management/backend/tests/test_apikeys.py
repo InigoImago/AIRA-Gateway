@@ -240,6 +240,7 @@ def test_list_keys_is_masked() -> None:
         "label",
         "owner",
         "issued_by",
+        "owner_withheld",
         "is_active",
         "created_at",
         "revoked_at",
@@ -466,3 +467,57 @@ def test_a_label_longer_than_its_column_is_refused_by_name() -> None:
     assert refused.status_code == 400
     assert "label" in refused.json()["error"]["details"]
     assert accepted.status_code == 201
+
+
+# ---- whose key it is, under strict data mode (FRD-627 FR-15) -----------------------------------
+
+
+def _keys_of_bob():
+    """A use case where bob, a member, holds a key; carol administers it; gov is IT Steuerung."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    bob, carol = _user("bob"), _user("carol")
+    for name, role in (("bob", "user"), ("carol", "admin")):
+        _client(admin).post(
+            f"{BASE}demo-uc/members/", {"username": name, "role": role}, format="json"
+        )
+    _client(bob).post(f"{BASE}demo-uc/api-keys/", {"label": "laptop"}, format="json")
+    return {
+        "bob": bob,
+        "carol": carol,
+        "gov": _user("gov", "it-steuerung"),
+        "sec": _user("sec", "it-security"),
+    }
+
+
+def _row(user) -> dict:
+    rows = _client(user).get(f"{BASE}demo-uc/api-keys/").json()
+    assert len(rows) == 1
+    return rows[0]
+
+
+@pytest.mark.parametrize(
+    ("reader", "sees"),
+    [
+        pytest.param("bob", True, id="the-owner"),
+        pytest.param("sec", True, id="it-security"),
+        pytest.param("carol", False, id="an-administrator-of-the-use-case"),
+        pytest.param("gov", False, id="it-steuerung"),
+    ],
+)
+def test_a_keys_owner_is_for_the_owner_and_the_incident_roles(reader: str, sees: bool) -> None:
+    row = _row(_keys_of_bob()[reader])
+
+    assert row["owner_withheld"] is not sees
+    assert (row["owner"] == "bob") is sees
+    if not sees:
+        assert row["owner"] is None and row["issued_by"] is None
+    assert row["prefix"] and row["label"] == "laptop", "the key itself is still listed"
+
+
+@pytest.mark.usefixtures("strict_data_off")
+def test_with_the_mode_off_every_reader_sees_the_owner() -> None:
+    row = _row(_keys_of_bob()["carol"])
+
+    assert row["owner"] == "bob"
+    assert row["owner_withheld"] is False

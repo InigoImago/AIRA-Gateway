@@ -137,6 +137,20 @@ GRANTABLE: frozenset[Permission] = frozenset(
     permission for permission, info in CATALOGUE.items() if not info.reserved
 )
 
+#: What sees a person: their stored content, and their name, key and address on a request, a figure
+#: or a finding. Under strict data mode (`FRD-627`, `ADR-0036`) only the two incident roles hold
+#: these — Global Administrator by construction, IT Security by its fixed set — and no stored role
+#: may, so no installation can hand a colleague's conduct to a third role while the mode is on.
+STRICT_DATA_RESERVED: frozenset[Permission] = frozenset(
+    {Permission.PAYLOAD_READ_ANY, Permission.INCIDENT_INVESTIGATE}
+)
+
+
+def grantable(*, strict_data: bool) -> frozenset[Permission]:
+    """What a stored role may hold under the installation's data mode."""
+    return GRANTABLE - STRICT_DATA_RESERVED if strict_data else GRANTABLE
+
+
 #: IT Security's fixed set: it sees every use case, investigates and stops, reads content, and
 #: writes the question catalogue. It changes no use case and no model.
 IT_SECURITY_PERMISSIONS: frozenset[Permission] = frozenset(
@@ -198,25 +212,26 @@ class RoleDefinition:
     fixed: bool = False
 
 
-def parse_permissions(values: Iterable[str]) -> frozenset[Permission]:
+def parse_permissions(values: Iterable[str], *, strict_data: bool) -> frozenset[Permission]:
     """The permissions a stored role names, as a set a role may hold.
 
     A name the catalogue no longer has grants nothing, and a reserved permission is dropped: a row
     that was written by hand, or before a permission became reserved, must not confer it. A value
-    that is not a string is no name at all, and grants nothing the same way.
+    that is not a string is no name at all, and grants nothing the same way. Under strict data mode
+    the permissions that see a person are dropped as well (`STRICT_DATA_RESERVED`) — a grant stored
+    while the mode was off stays in the table and confers nothing until it is off again.
     """
     known = {str(permission) for permission in Permission}
-    return (
-        frozenset(
-            Permission(value) for value in values if isinstance(value, str) and value in known
-        )
-        & GRANTABLE
-    )
+    return frozenset(
+        Permission(value) for value in values if isinstance(value, str) and value in known
+    ) & grantable(strict_data=strict_data)
 
 
 def builtin_roles(
     mapping: dict[Role, tuple[str, ...]],
     it_steuerung: frozenset[Permission] | None = None,
+    *,
+    strict_data: bool,
 ) -> tuple[RoleDefinition, ...]:
     """The three built-in roles, conferred by the groups `AIRA_ROLE_GROUPS` names.
 
@@ -224,7 +239,9 @@ def builtin_roles(
     holds its default. A stored set is read through :func:`parse_permissions`, so it can never hold
     the reserved permission.
     """
-    steuerung = IT_STEUERUNG_DEFAULT if it_steuerung is None else it_steuerung & GRANTABLE
+    steuerung = (IT_STEUERUNG_DEFAULT if it_steuerung is None else it_steuerung) & grantable(
+        strict_data=strict_data
+    )
     sets = {
         # By construction, not a stored list: a permission added in a later release is held
         # without anybody ticking it, and no table can take it away.
@@ -275,7 +292,10 @@ def allows(permissions: Iterable[Permission], wanted: Permission) -> bool:
 
 
 def builtin_permissions(
-    role_slugs: Iterable[str], it_steuerung: frozenset[Permission] | None = None
+    role_slugs: Iterable[str],
+    it_steuerung: frozenset[Permission] | None = None,
+    *,
+    strict_data: bool = True,
 ) -> frozenset[Permission]:
     """What the built-in roles among ``role_slugs`` may do, without any group lookup.
 
@@ -284,7 +304,7 @@ def builtin_permissions(
     """
     held = set(role_slugs)
     granted: frozenset[Permission] = frozenset()
-    for role in builtin_roles({}, it_steuerung):
+    for role in builtin_roles({}, it_steuerung, strict_data=strict_data):
         if role.slug in held:
             granted |= role.permissions
     return granted

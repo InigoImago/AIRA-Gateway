@@ -34,6 +34,7 @@ from aira_common.permissions import (
     parse_permissions,
 )
 from aira_common.roles import parse_role_groups, roles_from_groups
+from aira_management.config.runtime import get_settings
 from aira_management.memo import remembered
 from aira_management.roles import ALL_ROLES, Role
 
@@ -66,24 +67,31 @@ def role_definitions() -> tuple[RoleDefinition, ...]:
     """Every role this installation knows, with what each may do (`FRD-614`).
 
     The fixed roles from code, IT Steuerung with its stored set (its default when none is stored),
-    and every role the installation defined, each conferred by its one group.
+    and every role the installation defined, each conferred by its one group. Under strict data
+    mode (`FRD-627`) no stored role holds what sees a person, whatever its row says: the grant is
+    dropped when read, so turning the mode off restores it.
     """
     from aira_management.apps.roles.models import StoredRole
 
+    strict = get_settings().strict_data_mode
     rows = list(StoredRole.objects.all())
     steuerung = next((row for row in rows if row.slug == str(Role.IT_STEUERUNG)), None)
-    stored_set = parse_permissions(steuerung.permissions) if steuerung is not None else None
+    stored_set = (
+        parse_permissions(steuerung.permissions, strict_data=strict)
+        if steuerung is not None
+        else None
+    )
     custom = tuple(
         RoleDefinition(
             slug=row.slug,
             label=row.label,
             group_paths=(row.group_path,) if row.group_path else (),
-            permissions=parse_permissions(row.permissions),
+            permissions=parse_permissions(row.permissions, strict_data=strict),
         )
         for row in rows
         if not row.builtin
     )
-    return builtin_roles(role_groups(), stored_set) + custom
+    return builtin_roles(role_groups(), stored_set, strict_data=strict) + custom
 
 
 def token_groups(claims: dict[str, Any]) -> list[str]:

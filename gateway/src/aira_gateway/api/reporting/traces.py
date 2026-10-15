@@ -7,6 +7,8 @@ by `payloads.may_read_payload` and recorded before they are returned (`ADR-0009`
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
+from typing import Any
 
 import structlog
 from fastapi import Depends, Query, Request, Response
@@ -25,8 +27,10 @@ from aira_gateway.payloads import (
     own_requests,
     payload_body,
     restricted_use_cases,
+    sees_people,
+    withheld_row,
 )
-from aira_gateway.state import sessionmaker_of
+from aira_gateway.state import sessionmaker_of, settings_of
 
 #: What a trace row exposes — an **allow-list**: a column added to `request_logs` must not appear
 #: because nobody excluded it, and the two that must never appear (`request_payload`,
@@ -79,6 +83,27 @@ def _out_of_scope() -> dict[str, object]:
     return {"traces": [], "next_cursor": None, "scope": "use_cases", "in_scope": False}
 
 
+#: The label the row's name is read under, so it can never collide with a listed field.
+_OWNER_NAME = "_owner_name"
+
+
+def _listed(row: dict[str, Any], principal: Principal, *, withholding: bool) -> dict[str, Any]:
+    """One row on the wire: the allow-listed fields, and — when the caller does not see people —
+    another person's row without its name and key (`FRD-627` FR-7)."""
+    name = row.pop(_OWNER_NAME)
+    withheld = withholding and withheld_row(
+        principal, SimpleNamespace(subject=row.get("subject"), username=name)
+    )
+    if withheld:
+        row["subject"] = None
+        row["credential"] = None
+    row["person_withheld"] = withheld
+    return {
+        field: (value.isoformat() if isinstance(value, datetime) else value)
+        for field, value in row.items()
+    }
+
+
 @router.get("/v1beta/traces")
 async def traces(
     request: Request,
@@ -109,8 +134,15 @@ async def traces(
     """
     scope = visible_scope(principal, Permission.TRACE_READ_ALL)
     investigating = principal.allows(Permission.INCIDENT_INVESTIGATE)
+    strict_data = settings_of(request).strict_data_mode
+    # Under strict data mode another person's row is listed without its person (`FRD-627` FR-7).
+    withholding = strict_data and not sees_people(principal)
     fields = TRACE_FIELDS + (INCIDENT_FIELDS if investigating else ())
-    stmt = select(*(getattr(RequestLog, field) for field in fields))
+    # The name is read to decide whose row it is, and never sent: `TRACE_FIELDS` is the allow-list.
+    stmt = select(
+        *(getattr(RequestLog, field) for field in fields),
+        RequestLog.username.label(_OWNER_NAME),
+    )
 
     if source_ip and not investigating:
         # Refused rather than ignored, and before any early answer: a filter that silently does
@@ -119,6 +151,15 @@ async def traces(
             403,
             "Filtering by source address needs the permission to investigate "
             "(incident.investigate).",
+            "PERMISSION_DENIED",
+        )
+    if withholding and (subject or credential):
+        # A filter by person or key would name, by its answer, whose rows these are.
+        raise GeminiHTTPError(
+            403,
+            "This installation runs strict data mode: requests by person or by API key are "
+            "visible to Global Administrators and IT Security only. 'Only my requests' shows "
+            "your own.",
             "PERMISSION_DENIED",
         )
     if scope is not None:
@@ -155,7 +196,7 @@ async def traces(
     # credential (`own_requests`): the console is OIDC and the traffic usually an API key.
     sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
-        restricted = await restricted_use_cases(session, principal)
+        restricted = await restricted_use_cases(session, principal, strict_data=strict_data)
     if restricted:
         stmt = stmt.where(
             or_(
@@ -189,13 +230,7 @@ async def traces(
     )
     return JSONResponse(
         {
-            "traces": [
-                {
-                    field: (value.isoformat() if isinstance(value, datetime) else value)
-                    for field, value in row.items()
-                }
-                for row in rows
-            ],
+            "traces": [_listed(dict(row), principal, withholding=withholding) for row in rows],
             "next_cursor": next_cursor,
             "scope": scope_label(scope),
             "in_scope": True,
@@ -227,7 +262,9 @@ async def trace_payload(
             # One answer for "no such row" and "not yours", so nothing confirms a request exists.
             raise GeminiHTTPError(404, "No such request.", "NOT_FOUND")
 
-        verdict = await may_read_payload(session, principal, row)
+        verdict = await may_read_payload(
+            session, principal, row, strict_data=settings_of(request).strict_data_mode
+        )
         if not verdict.allowed:
             if verdict.is_authority_refusal:
                 raise GeminiHTTPError(403, verdict.message, "PERMISSION_DENIED")

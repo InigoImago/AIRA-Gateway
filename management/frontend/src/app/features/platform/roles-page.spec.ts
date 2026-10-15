@@ -110,6 +110,8 @@ interface Options {
   catalogueFails?: boolean;
   confirm?: boolean;
   meFails?: boolean;
+  /** What the server's catalogue lists; the shared one by default. */
+  catalogue?: PermissionInfo[];
 }
 
 function setup(options: Options = {}) {
@@ -131,7 +133,9 @@ function setup(options: Options = {}) {
       return options.rolesLoad ? options.rolesLoad() : of(state.roles);
     },
     permissionCatalogue: () =>
-      options.catalogueFails ? refused(503, 'The catalogue is not available.') : of(CATALOGUE),
+      options.catalogueFails
+        ? refused(503, 'The catalogue is not available.')
+        : of(options.catalogue ?? CATALOGUE),
     roleChanges: (query: Record<string, unknown>) => {
       calls.changes.push(query);
       return changes.shift() ?? of(page([]));
@@ -869,5 +873,61 @@ describe('RolesPage (`FRD-614` FR-9)', () => {
     );
     // The page on screen stays, rather than an empty table claiming the log is empty.
     expect(paging.q('role-change-1')).not.toBeNull();
+  });
+});
+
+describe('RolesPage — strict data mode (`FRD-627` FR-2, FR-12)', () => {
+  /** The catalogue with the two permissions that see people, as the server marks them. */
+  const withPeople = (strict: boolean): PermissionInfo[] => [
+    ...CATALOGUE,
+    ...['payload.read_any', 'incident.investigate'].map((name) => ({
+      name,
+      area: 'Incidents',
+      label: name,
+      sensitive: true,
+      reserved: false,
+      grantable: !strict,
+      strict_data_reserved: strict,
+    })),
+  ];
+
+  it('shows the two people permissions disabled, with the reason, and never sends them', async () => {
+    const held = { ...STG, permissions: [...STG.permissions, 'incident.investigate'] };
+    const { q, open, click, calls } = setup({
+      catalogue: withPeople(true),
+      roles: [GA, SEC, held, CUSTOM],
+    });
+    await open('it-steuerung');
+    await click('edit-role');
+
+    for (const name of ['payload.read_any', 'incident.investigate']) {
+      const box = q<HTMLInputElement>(`permission-${name}`)!;
+      expect(box.disabled).toBe(true);
+      expect(box.checked).toBe(false);
+      expect(q(`locked-${name}`)?.textContent).toContain('strict data mode');
+      expect(q(`locked-${name}`)?.textContent).toContain('Global Administrators and IT Security');
+    }
+    // Everything else stays grantable.
+    expect(q<HTMLInputElement>('permission-usecase.manage_all')?.disabled).toBe(false);
+    expect(q('locked-usecase.manage_all')).toBeNull();
+
+    await click('permission-usecase.manage_all');
+    await click('save-role');
+    // A stored grant the server already drops is not sent back for it to refuse.
+    expect(calls.updated).toEqual([
+      [
+        'it-steuerung',
+        { permissions: ['usecase.read_all', 'usecase.manage_all', 'report.read_all', 'role.read'] },
+      ],
+    ]);
+  });
+
+  it('offers them as ordinary boxes when the mode is off', async () => {
+    const { q, click } = setup({ catalogue: withPeople(false) });
+    await click('new-role');
+
+    expect(q<HTMLInputElement>('permission-incident.investigate')?.disabled).toBe(false);
+    expect(q<HTMLInputElement>('permission-payload.read_any')?.disabled).toBe(false);
+    expect(q('locked-incident.investigate')).toBeNull();
   });
 });

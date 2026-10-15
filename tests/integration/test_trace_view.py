@@ -63,6 +63,21 @@ async def _traces(client: httpx.AsyncClient, token: str, **params) -> dict:
     return response.json()
 
 
+async def _refused(client: httpx.AsyncClient, token: str, **params) -> bool:
+    """Whether the gateway refuses this question outright — strict data mode's answer to a filter
+    by person or key from somebody who does not see people."""
+    response = await client.get(
+        f"{GATEWAY_URL}/v1beta/traces",
+        headers={"Authorization": f"Bearer {token}"},
+        params=params,
+        timeout=30.0,
+    )
+    if response.status_code == 403:
+        assert "strict data mode" in response.json()["error"]["message"]
+        return True
+    return False
+
+
 async def _traces_until(
     client: httpx.AsyncClient,
     token: str,
@@ -294,7 +309,7 @@ async def test_filtering_by_address_is_refused_rather_than_ignored(governance_to
     assert "source address" in response.json()["error"]["message"].lower()
 
 
-async def test_a_filter_narrows_and_never_widens(fixture, member_token, governance_token) -> None:
+async def test_a_filter_narrows_and_never_widens(fixture, member_token, security_token) -> None:
     """Every filter is applied after `visible_scope`. No combination of them may reach a use case
     the caller could not already see — which is the property an added parameter is most likely to
     break, because each one is written next to the last.
@@ -302,17 +317,25 @@ async def test_a_filter_narrows_and_never_widens(fixture, member_token, governan
     Asked about a use case that **has** a row the member may not see, with filters that **match**
     that row: asked about one with no rows at all, every filter returned nothing whether or not it
     respected the scope. And asked once naming the use case and once naming none.
+
+    Read by IT Security, who sees the person and the key on the row; under strict data mode, the
+    default, a member who asks by person or key is refused outright, which narrows as well.
     """
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
         # The row exists, and what would match it is read off it by somebody allowed to see it.
-        theirs = (await _traces_until(client, governance_token, use_case=fixture.slug))["traces"][0]
+        theirs = (await _traces_until(client, security_token, use_case=fixture.slug))["traces"][0]
+        assert theirs["subject"] and theirs["credential"], "IT Security sees whose row it is"
         for params in (
             {"mine": "true"},
             {"tools_only": "false"},
             {"credential": theirs["credential"]},
             {"subject": theirs["subject"]},
         ):
+            if ("credential" in params or "subject" in params) and await _refused(
+                client, member_token, use_case=fixture.slug, **params
+            ):
+                continue
             named = await _traces(client, member_token, use_case=fixture.slug, **params)
             assert named["traces"] == [], f"{params} reached outside the caller's scope"
             assert named["in_scope"] is False, params
@@ -323,19 +346,21 @@ async def test_a_filter_narrows_and_never_widens(fixture, member_token, governan
 
 
 async def test_only_my_own_requests_is_offered_to_a_role_that_sees_everything(
-    fixture, governance_token
+    fixture, security_token
 ) -> None:
     """A reader checking what *they* did should not have to read past everybody else — and the
     filter must be a real question to the server, not a label."""
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
-        everybody = await _traces_until(client, governance_token, use_case=fixture.slug)
-        mine = await _traces(client, governance_token, use_case=fixture.slug, mine="true")
+        everybody = await _traces_until(client, security_token, use_case=fixture.slug)
+        mine = await _traces(client, security_token, use_case=fixture.slug, mine="true")
 
     # The traffic was made by the *fixture's* API key, not by the governance reader, so "mine"
     # must exclude it. Asserting the filter changes the answer is the point; asserting a count
     # would be asserting how much other traffic the stack happens to hold.
     assert everybody["traces"], "no traffic to filter"
+    # Read by a role that sees people, so the comparison below compares names and not two nulls.
+    assert everybody["traces"][0]["subject"], "the row names nobody"
     assert all(row["subject"] != everybody["traces"][0]["subject"] for row in mine["traces"]), (
         "'only my own requests' returned somebody else's"
     )

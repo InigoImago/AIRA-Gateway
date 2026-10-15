@@ -22,6 +22,9 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import PayloadAccess, RequestLog, UseCaseMemberRead, UseCaseRead
 
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
+
 NOW = datetime(2026, 9, 13, 12, 0, tzinfo=UTC)
 
 GLOBAL_ADMIN = Principal(subject="root", method="oidc", username="admin", roles=("global-admin",))

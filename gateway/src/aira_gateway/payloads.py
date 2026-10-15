@@ -22,13 +22,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol, overload
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.access import GrantRole, strongest
+from aira_common.anomalies import RuleTarget
 from aira_common.permissions import Permission
 from aira_gateway.audit import PIPELINE_OPERATION_PREFIX, Outcome
 from aira_gateway.auth.principal import Principal
@@ -59,6 +60,30 @@ class PayloadVisibility(StrEnum):
 
 #: The values this gateway understands. A value outside it came from a newer Management.
 VISIBILITIES = frozenset(value.value for value in PayloadVisibility)
+
+
+@overload
+def effective_visibility(stored: str, *, strict_data: bool) -> str: ...
+@overload
+def effective_visibility(stored: None, *, strict_data: bool) -> str | None: ...
+def effective_visibility(stored: str | None, *, strict_data: bool) -> str | None:
+    """The visibility that decides, given the installation's data mode (`FRD-627`).
+
+    Under strict data mode every use case is `oversight`, whatever its administrator stored: the
+    mode is the operator's, not each use case's, and is applied here on read so that turning it off
+    restores every stored choice (`ADR-0036`).
+    """
+    return PayloadVisibility.OVERSIGHT_ONLY.value if strict_data else stored
+
+
+def sees_people(principal: Principal) -> bool:
+    """Whether this caller may see **who** — another person's name, key, address, content, figures.
+
+    Under strict data mode the question every withholding asks. `incident.investigate` is the
+    permission, and the mode keeps it with Global Administrator and IT Security
+    (`STRICT_DATA_RESERVED`), so this is those two roles.
+    """
+    return principal.allows(Permission.INCIDENT_INVESTIGATE)
 
 
 class PayloadRefusal(StrEnum):
@@ -164,7 +189,16 @@ def _row_person(subject: str | None, username: str | None) -> str | None:
     return username or subject
 
 
-def is_own_request(principal: Principal, row: RequestLog) -> bool:
+class OwnedRow(Protocol):
+    """What deciding whose request a row is reads: a stored row, or a listed one's two names."""
+
+    @property
+    def subject(self) -> str | None: ...
+    @property
+    def username(self) -> str | None: ...
+
+
+def is_own_request(principal: Principal, row: OwnedRow) -> bool:
     """Whether ``row`` is **this caller's own** request — whichever credential made it.
 
     The raw subject still matches (older rows carry no name), and so does the person's name, so a
@@ -228,14 +262,14 @@ async def grant_role_in(session: AsyncSession, principal: Principal, use_case: s
 
 
 async def may_read_payload(
-    session: AsyncSession, principal: Principal, row: RequestLog
+    session: AsyncSession, principal: Principal, row: RequestLog, *, strict_data: bool
 ) -> PayloadVerdict:
     """The whole decision, in one place and in one order.
 
     Authority first, then whether the data exists: telling somebody who may not look that a payload
     *would* have been there is itself a disclosure.
     """
-    ground = await _authority(session, principal, row)
+    ground = await _authority(session, principal, row, strict_data=strict_data)
     if isinstance(ground, PayloadRefusal):
         return PayloadVerdict(allowed=False, refusal=ground)
 
@@ -266,7 +300,7 @@ def _is_the_gateways_own_call(row: RequestLog) -> bool:
 
 
 async def _authority(
-    session: AsyncSession, principal: Principal, row: RequestLog
+    session: AsyncSession, principal: Principal, row: RequestLog, *, strict_data: bool
 ) -> str | PayloadRefusal:
     """The ground on which this caller may read content, or the reason they may not."""
     if principal.allows(Permission.PAYLOAD_READ_ANY):
@@ -282,7 +316,9 @@ async def _authority(
     use_case = (
         await session.execute(select(UseCaseRead).where(UseCaseRead.slug == row.use_case))
     ).scalar_one_or_none()
-    visibility = use_case.payload_visibility if use_case is not None else None
+    visibility = effective_visibility(
+        use_case.payload_visibility if use_case is not None else None, strict_data=strict_data
+    )
 
     # **Before the administrator check**, which is the whole of this mode: the use case has left
     # its content to the installation's oversight roles, and an administrator of the use case is
@@ -309,7 +345,9 @@ def payload_body(row: RequestLog) -> dict[str, Any]:
     }
 
 
-async def restricted_use_cases(session: AsyncSession, principal: Principal) -> list[str]:
+async def restricted_use_cases(
+    session: AsyncSession, principal: Principal, *, strict_data: bool
+) -> list[str]:
     """Use cases in which this caller may see **only their own** requests.
 
     The list view needs this as much as the payload view: a visible row tells a user who else is
@@ -320,7 +358,12 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
     case still has to be able to see its own traffic — what failed, what it cost, who is calling
     too much — and taking that away would answer a question nobody asked (`FRD-622` FR-1c). Only
     `own` restricts which rows a member sees.
+
+    **Under strict data mode nothing is restricted here**, because every use case is `oversight`:
+    each caller sees the rows, and the rows carry no other person (`withheld_row`).
     """
+    if strict_data:
+        return []
     return await _narrowed(
         session,
         principal,
@@ -329,7 +372,9 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
     )
 
 
-async def people_restricted_use_cases(session: AsyncSession, principal: Principal) -> list[str]:
+async def people_restricted_use_cases(
+    session: AsyncSession, principal: Principal, *, strict_data: bool
+) -> list[str]:
     """Use cases in which this caller may see **only their own** figures per person (`FRD-603`).
 
     The second question a works council asks, and for two months the answer was *"it does not
@@ -352,6 +397,9 @@ async def people_restricted_use_cases(session: AsyncSession, principal: Principa
     be able to see what they themselves used (`FRD-626`). Roles that may read every figure
     (`report.read_all`) are not narrowed at all — the oversight the mode leaves content to.
     """
+    if strict_data:
+        # Every use case is `oversight` (`FRD-627`): only a caller who sees people is exempt.
+        return [] if sees_people(principal) else sorted(principal.use_cases)
     # Two walks, because the **exemption differs by mode** and that is the whole distinction: on
     # `own` an administrator of the use case sees everybody's figures, as they see everybody's rows
     # and everybody's prompts; on `oversight` they do not, because that mode is defined by its own
@@ -415,3 +463,30 @@ async def _narrowed(
     # And administrators by *group* grant, which writes no member row (see `grant_role_in`).
     administered |= {slug for slug, role in principal.grants if role == GrantRole.ADMIN.value}
     return sorted(narrowed - administered)
+
+
+def withheld_row(principal: Principal, row: OwnedRow) -> bool:
+    """Whether a request row is listed **without its person** to this caller (`FRD-627` FR-7).
+
+    Under strict data mode a caller who does not see people still sees every row in their scope —
+    a use case must see what failed and what it cost — but another person's row carries no name
+    and no key: those are what rebuild, row by row, the split by person the mode withholds.
+    """
+    return not sees_people(principal) and not is_own_request(principal, row)
+
+
+#: The targets of a finding or a stop that name somebody: a person, or the key a person holds.
+PERSON_TARGETS = frozenset({RuleTarget.SUBJECT.value, RuleTarget.CREDENTIAL.value})
+
+
+def names_this_caller(row: Any, principal: Principal) -> bool:
+    """Whether a finding or a stop (``target``, ``target_value``) is about this caller themselves.
+
+    Either alphabet, as findings are matched: a directory id for a sign-in, a username for a key —
+    and a key by its prefix. A person is always entitled to what was found or done about them.
+    """
+    if row.target == RuleTarget.SUBJECT.value:
+        return row.target_value in {name for name in (principal.subject, principal.person) if name}
+    if row.target == RuleTarget.CREDENTIAL.value:
+        return bool(principal.credential) and row.target_value == principal.credential
+    return False

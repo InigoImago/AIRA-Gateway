@@ -372,3 +372,42 @@ describe('WarningsTab — reading a finding', () => {
     expect(withAction('detected_not_enforced')).toContain('not enforced');
   });
 });
+
+describe('WarningsTab — strict data mode (`FRD-627` FR-8)', () => {
+  const stoppedOn = (over: Partial<Suspension>) =>
+    setup({ suspensions: [of({ suspensions: [{ ...SUSPENSION, ...over }] })] });
+
+  it('says "a person" or "a key" for a finding whose target is withheld, never a blank', () => {
+    const { element } = setup({
+      events: [
+        { ...EVENT, id: 'p', target: 'subject', target_value: null, target_withheld: true },
+        { ...EVENT, id: 'k', target: 'credential', target_value: null, target_withheld: true },
+      ],
+    });
+    const withheld = Array.from(element.querySelectorAll('[data-testid="target-withheld"]'));
+
+    expect(withheld.map((cell) => cell.textContent?.trim())).toEqual(['a person', 'a key']);
+    expect(withheld[0].getAttribute('title')).toContain('strict data mode');
+    expect(element.textContent).not.toContain('null');
+  });
+
+  it('shows the target of a finding that is not withheld', () => {
+    const { element, text } = setup({
+      events: [{ ...EVENT, target: 'subject', target_value: 'ada', target_withheld: false }],
+    });
+
+    expect(element.querySelector('[data-testid="target-withheld"]')).toBeNull();
+    expect(text()).toContain('ada');
+  });
+
+  it('says a person or a key is stopped, without naming them', () => {
+    expect(
+      stoppedOn({ target: 'subject', target_value: null, target_withheld: true }).testid(
+        'stopped-banner',
+      )?.textContent,
+    ).toContain('A person is stopped here.');
+    const key = stoppedOn({ target: 'credential', target_value: null, target_withheld: true });
+    expect(key.testid('stopped-banner')?.textContent).toContain('A key is stopped here.');
+    expect(key.testid('stopped-banner')?.textContent).not.toContain('null');
+  });
+});

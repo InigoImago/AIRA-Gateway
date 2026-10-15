@@ -7,14 +7,17 @@ from typing import Any
 from rest_framework import serializers
 
 from aira_common.apikeys import KeyLifetimeOutOfRange, check_key_lifetime
+from aira_common.permissions import Permission
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.config.runtime import get_settings
+from aira_management.rbac import permissions_of
 
 
 class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
     """Public, masked view of a key: prefix + metadata, never the hash or plaintext."""
 
     owner = serializers.CharField(source="owner.username", read_only=True)
+    owner_withheld = serializers.SerializerMethodField()
 
     class Meta:
         model = ApiKey
@@ -23,6 +26,7 @@ class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
             "label",
             "owner",
             "issued_by",
+            "owner_withheld",
             "is_active",
             "created_at",
             "revoked_at",
@@ -32,6 +36,32 @@ class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
         #: nothing here is a caller's to decide, and a writable one would let a caller revive a
         #: revoked key or choose the prefix of somebody else's.
         read_only_fields = fields
+
+    def _withheld(self, key: ApiKey) -> bool:
+        """Whether this key's person is withheld from the reader (`FRD-627` FR-15).
+
+        Under strict data mode a key's owner and issuer are a person, and with the prefix on every
+        request row the owner would name whose traffic that is — so they are for the person
+        concerned, and for whoever sees people (Global Administrator and IT Security). Without a
+        reader in the context nothing is withheld: the issuing response goes to the issuer.
+        """
+        viewer = self.context.get("viewer")
+        if viewer is None or not get_settings().strict_data_mode:
+            return False
+        if Permission.INCIDENT_INVESTIGATE in permissions_of(viewer):
+            return False
+        name = viewer.get_username()
+        return name not in {key.owner.get_username(), key.issued_by or ""}
+
+    def get_owner_withheld(self, key: ApiKey) -> bool:
+        return self._withheld(key)
+
+    def to_representation(self, instance: ApiKey) -> dict[str, Any]:
+        data = super().to_representation(instance)
+        if data["owner_withheld"]:
+            data["owner"] = None
+            data["issued_by"] = None
+        return data
 
 
 class IssueApiKeySerializer(serializers.Serializer[Any]):

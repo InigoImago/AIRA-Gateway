@@ -47,7 +47,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **1745 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **1782 properties** across auth, budgets,
   pipeline, retention, the management control plane, the gateway's counters and the console — a
   `.spec.ts` selection runs under Vitest, everything else under pytest; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
@@ -89,11 +89,8 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 - **Lint/format**: Python is **ruff** — `ruff check` *and* `ruff format --check`, no black. Angular
   is **Prettier**, with `ng build` (so `tsc`) standing in for a linter. CI blocks on all of these
   (`make lint-py`, `make lint-frontend`, `.github/workflows/ci.yml`).
-  **There is no ESLint**, and this line claimed there was: no config file, no `lint` target in
-  `angular.json`, no CI step. It also named black, which this repository has never used. Both
-  halves were a rule the project stated and did not have — the shape `LESSONS.md` §5 lists, and the
-  more embarrassing for sitting in the file every contributor reads first. Adding ESLint is a
-  reasonable thing to want; asserting it while `npx eslint` exits 2 is not.
+  **There is no ESLint** — no config, no `lint` target, no CI step; do not claim one until it exists
+  (`LESSONS.md` §5).
 - **A change to what is processed is a change to the privacy notice** (`ADR-0027`, `FRD-625`).
   Every stored column of both planes is named in `apps/privacy/activities.py` or declared not
   personal, and the suite fails otherwise; a changed register or text needs a new `EDITION` and
@@ -229,6 +226,9 @@ browser `make test-e2e` · `make mutants`, which breaks a property and requires 
 - `FRD-106` (an OpenAI-compatible **surface**) stays **withdrawn** — `FRD-132` measured a real
   coding assistant against the existing Gemini surface and it worked unmodified. The OpenAI
   *dialect* as an upstream is unaffected and shipped.
+- **Strict data mode is on by default** (`FRD-627`, `ADR-0036`): a person — their content, figures,
+  name and key on a request, a finding about them — is seen by Global Administrator and IT Security
+  only. A test of the per-use-case ladder asks for `strict_data_off` by name.
 - **Stated gaps, not oversights** (`docs/GAP-ANALYSIS.md`): FRD-131's `tool_results` filter scope
   is not built; configuration changes are not audited except roles; Kafka events carry no schema
   version; a refusal before attribution is on its span, not in the audit table (`FRD-122`).

@@ -30,7 +30,7 @@ field names, response shapes and error codes:
 | `POST /kira/api/external/embed` | one vector |
 | `GET /kira/api/external/models` | the catalog, as integer ids |
 | `GET /kira/api/external/health`, `/version-info` | unchanged shapes, no credential needed. Outside a local or demo installation `/health` lists the upstreams only to an operator (`operations.diagnose`, or the break-glass key); anybody else gets the verdict |
-| `GET /kira/api/external/ki-usage` | unchanged shape; needs `report.read_all`, so a key bound to a use case never reaches it |
+| `GET /kira/api/external/ki-usage` | unchanged shape; needs `report.read_all`, so a key bound to a use case never reaches it. Under strict data mode, the default, a row is a **use case** — its slug in `user_id` — rather than a person |
 
 Errors keep the predecessor's envelope — a flat `{"code": …, "message": …}`, never Google's nested
 `error` object — so a client that branches on `code` keeps branching on the same strings.

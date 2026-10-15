@@ -109,7 +109,8 @@ test.describe('Payload storage', () => {
     await expect(page.locator('[role="status"]')).toContainText('no longer stored');
 
     // Switching storage back on deletes nothing, so nothing is asked.
-    await page.check('[data-testid="content-mode-members"]');
+    // Oversight-only: a mode that stores, and the one strict data mode — the default — offers.
+    await page.check('[data-testid="content-mode-oversight"]');
     await expect(page.locator('#retention-days')).toBeVisible();
     await page.fill('#retention-days', '3');
     await page.click('button:has-text("Save storage settings")');

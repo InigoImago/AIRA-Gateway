@@ -30,8 +30,13 @@ export interface ReportRow {
    */
   partial_usage_requests?: number;
   failed_requests: number;
-  avg_latency_ms: number | null;
-  max_latency_ms: number | null;
+  /**
+   * Average and slowest answer, or `null` where nothing was measured. **Absent** from every row
+   * split by person in strict data mode: latency per person is a performance measure, so it is not
+   * computed at all — not hidden, not zero.
+   */
+  avg_latency_ms?: number | null;
+  max_latency_ms?: number | null;
 }
 
 /** One person's consumption, and which credential produced which part of it (`FRD-606`). */
@@ -104,6 +109,12 @@ export interface Report {
    * other people's figures (`FRD-622` FR-1c). Absent from an older gateway, which never withheld.
    */
   people_limited?: boolean;
+  /**
+   * Whether the installation runs strict data mode (`AIRA_STRICT_DATA_MODE`). With
+   * `people_limited`, the reader may not see what other people used: the splits by person carry
+   * their own row only, and a screen about people is not shown at all. Absent means off.
+   */
+  strict_data?: boolean;
   /**
    * Whether budgets refuse at all in this installation (`AIRA_ENFORCE_BUDGETS`, `FRD-610` §3.3).
    *

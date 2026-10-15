@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 
 from aira_common.observability import attribute_model_calls_to, set_span_attributes
+from aira_common.pseudonym import pseudonym
 from aira_gateway.scopes import person as person_key
 
 if TYPE_CHECKING:  # pragma: no cover - imported for the annotation only
@@ -96,7 +97,8 @@ def attribute(request: Request, attribution: Attribution) -> Attribution:
     """
     request.state.attribution = attribution
     identity = {
-        "aira.subject": attribution.subject,
+        # A pseudonym under strict data mode: spans leave AIRA's role checks behind (`FRD-627`).
+        "aira.subject": pseudonym(attribution.subject),
         "aira.auth_method": attribution.method,
         "aira.use_case": attribution.use_case,
         "aira.credential": attribution.credential,
@@ -129,7 +131,7 @@ def mark_refused(
         {
             "aira.outcome": outcome,
             "aira.status": status,
-            "aira.subject": subject,
+            "aira.subject": pseudonym(subject),
             "aira.auth_method": method,
             "aira.credential": credential,
             "aira.use_case.requested": requested,

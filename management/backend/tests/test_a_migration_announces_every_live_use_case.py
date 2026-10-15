@@ -36,6 +36,9 @@ MIGRATION = importlib.import_module(
 )
 
 
+# Off, because the migration is history: it ran once, with its own frozen copy of the event, and
+# derives the retired boolean from the stored value. Strict data mode is applied when read.
+@pytest.mark.usefixtures("strict_data_off")
 def test_every_live_use_case_is_announced_in_full(settings) -> None:
     settings.AIRA_KAFKA_STAGE = "t"
     live = UseCase.objects.create(slug="live", name="Live")

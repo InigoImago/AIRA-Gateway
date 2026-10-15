@@ -15,6 +15,7 @@
  *   sentence below: a rule that alerts *records* and takes nothing away.
  */
 import { AnomalyEvent, AnomalyRule } from '../../core/api/models';
+import { targetName } from '../../core/ui/withheld';
 
 /** What each kind's stored threshold is counted in — the unit a bare number beside it is in. */
 const UNITS: Record<string, string> = {
@@ -182,7 +183,7 @@ export function describeEvent(event: AnomalyEvent): string {
     : thresholdText(event.kind, event.threshold);
   const scope = event.use_case ? `in ${event.use_case}` : 'across every use case';
   return (
-    `Over ${event.window_minutes} minutes ${scope}, ${event.target_value} reached ${observed}, ` +
+    `Over ${event.window_minutes} minutes ${scope}, ${targetName(event)} reached ${observed}, ` +
     `against a threshold of ${threshold}, measured over ${event.sample} request(s).`
   );
 }

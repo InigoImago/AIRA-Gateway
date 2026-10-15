@@ -31,6 +31,8 @@ days = "{days} days"
 no_limit = "without a time limit — this installation has not set one"
 content_stored = "This installation allows content to be stored; each use case decides whether it is."
 content_not_stored = "This installation stores no request or response content, whatever a use case specifies."
+strict_data_on = "This installation runs in strict data mode. Stored content of requests and responses can be read only by Global Administrators and IT Security — not by the members or the administrators of a use case, whatever the use case specifies. Consumption figures per person, the name and API key on a request record, and the person or API key a security finding or block concerns are visible only to Global Administrators and IT Security and to the person concerned. Response times are not evaluated per person, for anybody. A key's owner and issuer are shown only to them and to Global Administrators and IT Security, and in operational telemetry and log lines a person's name appears only as a pseudonym. While the mode is on, no other role can be given these rights. A use case's totals and every breakdown that names no person stay visible, and you always see your own requests and figures."
+strict_data_off = "This installation does not run in strict data mode, so each use case decides who inside it reads content and sees figures per person (requests, tokens, costs, response times). With “every member”, everybody in the use case reads all content and sees everybody's figures; with “own requests only”, its administrators read and see all of it and everybody else only their own; and where content is left to Global Administrators and IT Security, nobody inside the use case reads content or sees figures per person, not even its administrators. Request records show who made each request to everybody who may see them. The use case’s totals, and your own figures, are visible in every case, and roles that may read every report see all figures per person."
 unset_controller = "[Not configured — the installation has not named the controller (AIRA_PRIVACY_CONTROLLER).]"
 unset_dpo_contact = "No contact for a data protection officer is recorded for this installation. Please contact the controller."
 unset_works_agreement = "No works agreement is recorded for this installation."
@@ -66,9 +68,8 @@ paragraphs = [
 items = [
   "Access by permission only: who sees which data follows from the role, which is bound to a group in the identity service, and from membership of a use case.",
   "Request and response content is visible only to those permitted to see it. Every single read is recorded with the reader, their roles and the ground, before the content is shown. That record is not deleted.",
-  "Which roles may read content is stated under “Who has access within the organisation”. A use case can specify that its members see only their own requests, or that nobody in the use case reads content at all — not even its own administrators — leaving it to the two roles that may read any content.",
+  "Which roles may read content is stated under “Who has access within the organisation”. {data_mode}",
   "Each use case decides whether content is stored at all and for how long, from 1 to 3650 days. {content_storage}",
-  "Consumption figures per person (requests, tokens, costs, response times) follow the same setting as the content: with “every member” they are visible to everybody in the use case; with “own requests only” to its administrators; and where content is left to Global Administrators and IT Security, to nobody inside the use case. The use case’s totals, and your own figures, are visible in every case, and roles that may read every report see all of them.",
 ]
 
 [sections.access]
@@ -77,7 +78,7 @@ paragraphs = [
   "Access follows the principle of least privilege. A role is granted through a group in the identity service. The roles this installation defines, and what each may do with other people's data, are listed here as they are configured in this installation:",
 ]
 items = [
-  "Administrators and members of a use case see its members, requests, reports and findings, and its content only where the use case allows it. Every read of content is recorded.",
+  "Administrators and members of a use case see its members, requests, reports and findings within the limits set out under “No monitoring of performance or behaviour”, and its content only where those allow it. Every read of content is recorded.",
   "When the installation changes a role, this notice changes with it and you are asked to acknowledge it again. Every change to a role is logged.",
 ]
 
@@ -93,6 +94,13 @@ items = [
 "incident.suspend" = "block or throttle people, API keys and use cases"
 "directory.search" = "search the directory for names and email addresses"
 none = "no access to other people's data beyond their own use cases"
+
+# What three of those rights still reach while strict data mode is on, for a role that may not
+# investigate incidents: the rows and figures, without the person.
+[access_strict]
+"trace.read_all" = "see the request records of every use case, without the name or API key of anybody else"
+"report.read_all" = "see the consumption of every use case, including as an export, without anybody else's figures per person"
+"anomaly.read_all" = "see the security findings and blocks of every use case, including any IP addresses they name, without the person or API key they concern"
 
 [sections.recipients]
 title = "Recipients and transfers to third countries"
@@ -164,7 +172,7 @@ data = "The key's owner, the person who issued it where that is somebody else, i
 purpose = "To tie an application's access to a person who is responsible for it, and to be able to limit and revoke that access."
 legal_basis = "Art. 6(1)(b) and (f) GDPR; Art. 32 GDPR."
 retention = "Unless specified otherwise a key expires after {key_lifetime}, and after {key_max_lifetime} at the latest. The record is kept without automatic deletion after expiry or revocation, so that earlier requests remain attributable."
-recipients = "The owner, the use case's administrators, and roles that may manage use cases across the installation or investigate incidents."
+recipients = "The owner, the use case's administrators, and roles that may manage use cases across the installation or investigate incidents — in strict data mode, the owner's and issuer's names only to them and to Global Administrators and IT Security."
 
 [activities.request_record]
 title = "Record of every request"
@@ -172,7 +180,7 @@ data = "For every request to a model, including refused ones: the identifier and
 purpose = "Operation and troubleshooting, cost allocation and budget control, evidence of data residency per request, detection and investigation of security incidents."
 legal_basis = "Art. 6(1)(f) GDPR (operation, security and cost control); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "Request records in this installation: {log_retention}."
-recipients = "By role and use case (see “Who has access within the organisation”). The request list shows source IP addresses only to people who may investigate incidents."
+recipients = "By role and use case (see “Who has access within the organisation”), within the limits set out under “No monitoring of performance or behaviour”. The request list shows source IP addresses only to people who may investigate incidents."
 
 [activities.content]
 title = "Request and response content"
@@ -180,7 +188,7 @@ data = "The text of the request and of the response, including the model's reaso
 purpose = "Investigating security incidents and errors, and traceability within the use case. {content_storage}"
 legal_basis = "Art. 6(1)(f) GDPR (information security and troubleshooting); Art. 6(1)(b) GDPR where the use case serves the performance of your duties."
 retention = "For as long as the use case specifies (1 to 3650 days), and for requests without a use case {default_retention}. The content is then deleted; the request record remains for the period that applies to it."
-recipients = "Authorised people only: roles that may read content in every use case, and the use case's administrators and — where allowed — its members. Every read is recorded."
+recipients = "Authorised people only: roles that may read content in every use case and — where this installation leaves it to the use case and the use case allows it — the use case's administrators and members (see “No monitoring of performance or behaviour”). Every read is recorded."
 
 [activities.content_reads]
 title = "Record of reads of content"
@@ -192,11 +200,11 @@ recipients = "Roles that may see the record of reads of content (see “Who has 
 
 [activities.consumption]
 title = "Consumption, budgets and rate limits"
-data = "Counters per person and use case of requests, tokens and costs per day or month; reports built from them per person with requests, failures, tokens, costs and response times, including as a CSV export. To fend off attacks, failed sign-ins are counted briefly per IP address."
+data = "Counters per person and use case of requests, tokens and costs per day or month; reports built from them per person with requests, failures, tokens and costs, and response times unless strict data mode is on, including as a CSV export. To fend off attacks, failed sign-ins are counted briefly per IP address."
 purpose = "To allocate costs, and to enforce budgets and rate limits per person so that nobody uses up other people's allowance, and to protect availability. Not: to assess the performance of individuals."
 legal_basis = "Art. 6(1)(f) GDPR (cost control and availability)."
 retention = "Counters per period are kept without automatic deletion; counters for rate limits and sign-in attempts lapse after minutes. Reports are computed from the request record each time they are opened."
-recipients = "Members of the use case concerned and roles that may read every report; you see your own consumption yourself."
+recipients = "You see your own consumption yourself, and the members of a use case see its totals. Who else sees figures per person follows the installation's data mode (see “No monitoring of performance or behaviour”)."
 
 [activities.security]
 title = "Anomaly detection and security incidents"
@@ -204,7 +212,7 @@ data = "Findings of rules concerning a person, a key or a use case, with the mea
 purpose = "To detect and contain misuse, compromised access and cost outliers."
 legal_basis = "Art. 6(1)(f) GDPR (information security); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "Without automatic deletion; blocks are kept as history after they are lifted."
-recipients = "Roles that may see the security findings of every use case, and members of the use case concerned. The IP addresses in a finding's description, and in the reason of a block a rule set, are shown only to people who may investigate incidents. Members see a block only where it applies to the whole use case or to themselves."
+recipients = "Roles that may see the security findings of every use case, and members of the use case concerned. The IP addresses in a finding's description, and in the reason of a block a rule set, are shown only to people who may investigate incidents. Members see a block only where it applies to the whole use case or to themselves. Whether a finding or block shows the person or API key it concerns to anybody but Global Administrators, IT Security and that person follows the installation's data mode (see “No monitoring of performance or behaviour”)."
 
 [activities.model_providers]
 title = "Transfer to model providers"
@@ -216,7 +224,7 @@ recipients = "The providers of the models released for the use case, in the rele
 
 [activities.telemetry]
 title = "Operational telemetry"
-data = "Where the installation has enabled it: technical measurements and log lines per request with the identifier of the person making it, use case, access, source IP address, browser identification (user agent), model, outcome, tokens and cost — never the content of requests or responses."
+data = "Where the installation has enabled it: technical measurements and log lines per request with the identifier of the person making it (in strict data mode a pseudonym, which names nobody), use case, access, source IP address, browser identification (user agent), model, outcome, tokens and cost — never the content of requests or responses."
 purpose = "Monitoring the availability and performance of the systems, troubleshooting, and forwarding security-relevant events to a SIEM."
 legal_basis = "Art. 6(1)(f) GDPR; Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "According to the periods of the observability or SIEM system the controller has connected; AIRA does not set those periods."

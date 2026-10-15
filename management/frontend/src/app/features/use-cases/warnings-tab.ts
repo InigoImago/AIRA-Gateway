@@ -14,8 +14,10 @@ import { AnomalyEvent, AnomalyPage, Suspension } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { Live } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { WITHHELD_REASON, targetAtStart, targetName } from '../../core/ui/withheld';
 
 const REFRESH_SECONDS = 20;
+
 /** Findings per page. The listing is cursor-paged and all-time, so "load older" fetches the rest. */
 export const FINDINGS_PAGE = 50;
 /**
@@ -102,9 +104,14 @@ export class WarningsTab implements OnInit {
   /** Whom a stop is on, in words: the use case itself, a person, or one API key. */
   protected stoppedWhat(row: Suspension): string {
     if (row.target === 'use_case') return 'This use case is stopped.';
+    // Strict data mode withholds whom: "A person is stopped here", never a blank name.
+    if (row.target_withheld) return `${targetAtStart(row)} is stopped here.`;
     if (row.target === 'credential') return `API key ${row.target_value} is stopped here.`;
     return `${row.target_value} is stopped here.`;
   }
+
+  protected readonly targetName = targetName;
+  protected readonly withheldReason = WITHHELD_REASON;
 
   ngOnInit(): void {
     this.destroyRef.onDestroy(() => this.olderRequest?.unsubscribe());

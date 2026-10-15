@@ -1,4 +1,4 @@
-import { PERMISSIONS, can } from './roles';
+import { PERMISSIONS, can, peopleWithheld, strictData } from './roles';
 
 describe('can', () => {
   it('answers yes for a permission the server listed', () => {
@@ -29,5 +29,24 @@ describe('can', () => {
 describe('PERMISSIONS', () => {
   it('names each permission once', () => {
     expect(new Set(PERMISSIONS).size).toBe(PERMISSIONS.length);
+  });
+});
+
+describe('strict data mode (`FRD-627`)', () => {
+  it('reads the mode from /me, and absent as off', () => {
+    expect(strictData({ strict_data: true })).toBe(true);
+    expect(strictData({ strict_data: false })).toBe(false);
+    expect(strictData({})).toBe(false);
+    expect(strictData(null)).toBe(false);
+  });
+
+  it('withholds people only in strict mode, and only from a reader without incident.investigate', () => {
+    expect(peopleWithheld({ strict_data: true, permissions: [] })).toBe(true);
+    expect(peopleWithheld({ strict_data: true, permissions: ['payload.read_any'] })).toBe(true);
+    expect(peopleWithheld({ strict_data: true, permissions: ['incident.investigate'] })).toBe(
+      false,
+    );
+    expect(peopleWithheld({ strict_data: false, permissions: [] })).toBe(false);
+    expect(peopleWithheld(null)).toBe(false);
   });
 });

@@ -123,6 +123,19 @@ export class RoleEditor {
     () => !this.feedback.busy() && this.blocker() === null && (this.isNew() || this.dirty()),
   );
 
+  /**
+   * Why a permission cannot be ticked here, or `null` when it can. The catalogue says which ones
+   * strict data mode keeps for Global Administrator and IT Security (`strict_data_reserved`): the
+   * server refuses a role that asks for them, so they are shown, unticked and not offered.
+   */
+  protected lockedWhy(permission: PermissionInfo): string | null {
+    if (permission.strict_data_reserved !== true) return null;
+    return (
+      'Not grantable: this installation runs strict data mode (AIRA_STRICT_DATA_MODE), which ' +
+      'keeps it for Global Administrators and IT Security.'
+    );
+  }
+
   protected has(name: string): boolean {
     return this.permissions().has(name);
   }
@@ -203,8 +216,9 @@ export class RoleEditor {
   /** The ticked permissions in the catalogue's order, so the change log reads like the form. */
   private ordered(): string[] {
     const held = this.permissions();
+    // A locked permission is never sent: the server would refuse the whole save for it.
     return this.catalogue()
-      .filter((permission) => held.has(permission.name))
+      .filter((permission) => held.has(permission.name) && this.lockedWhy(permission) === null)
       .map((permission) => permission.name);
   }
 

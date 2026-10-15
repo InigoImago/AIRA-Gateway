@@ -15,13 +15,14 @@ from aira_common.config import BaseAiraSettings
 from aira_common.counters import SentinelConfig, SentinelConfigError, parse_sentinels
 from aira_common.integration_debug import configure_integration_debug
 from aira_common.kafka import KafkaSecurity, parse_bootstrap_servers, validate_stage
-from aira_common.logging import configure_logging
+from aira_common.logging import configure_logging, get_logger
 from aira_common.observability import configure_observability, set_payload_rendering
 from aira_common.oidc import (
     DEFAULT_CLOCK_SKEW_SECONDS,
     DEFAULT_EXPIRY_LEEWAY_SECONDS,
     check_tolerance,
 )
+from aira_common.pseudonym import configure_pseudonyms
 from aira_common.roles import Role, parse_role_groups
 from aira_gateway import __version__
 from aira_gateway.residency import parse_model_regions
@@ -404,7 +405,17 @@ def configure_process(settings: GatewaySettings) -> bool:
     Integration debugging comes first because exporters and tokens are watched call sites
     (`FRD-617`). Returns whether telemetry was configured.
     """
+    stable = configure_pseudonyms(
+        enabled=settings.strict_data_mode, secret=settings.pseudonym_secret
+    )
     configure_logging(settings.log_level, json_output=settings.log_json)
+    if not stable:
+        # Said once per process, because the cost is invisible otherwise: a SIEM that sees one
+        # person as several callers has nothing to tell it why.
+        get_logger("aira_gateway.telemetry").warning(
+            "pseudonym_key_per_process",
+            hint="Set AIRA_PSEUDONYM_SECRET (from Vault) so a person has one pseudonym everywhere.",
+        )
     configure_integration_debug(settings.debug_integrations)
     set_payload_rendering(settings.debug_otel_payload)
     return configure_observability(

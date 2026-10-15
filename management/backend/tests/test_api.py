@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 
 from aira_common.oidc import JwtVerifier
 
-from .conftest import role_claims
+from .conftest import role_claims, setting
 
 pytestmark = pytest.mark.django_db
 
@@ -351,3 +351,15 @@ def test_an_address_no_column_can_hold_is_left_out_rather_than_failing_the_sign_
 
     assert response.status_code == 200, response.content
     assert get_user_model().objects.get(username="claims-user").email == ""
+
+
+@pytest.mark.parametrize("strict", [True, False], ids=["strict", "open"])
+def test_me_states_whether_the_installation_runs_strict_data_mode(strict: bool) -> None:
+    """The console offers no choice the mode overrides, so it must be told the mode (`FRD-627`),
+    not infer it from a refusal. Both values, because a constant would pass one of them."""
+    user = get_user_model().objects.create(username="anna")
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    with setting(strict_data_mode=strict):
+        assert client.get("/api/v1/me").json()["strict_data"] is strict

@@ -35,6 +35,9 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import RequestLog, UseCaseMemberRead, UseCaseRead
 
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
+
 WHEN = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 WINDOW = "?from=2026-10-01&to=2026-11-01"
 

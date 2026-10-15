@@ -44,9 +44,13 @@ class RoleResolver:
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
         mapping: dict[Role, tuple[str, ...]],
+        *,
+        strict_data: bool = True,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._mapping = mapping
+        #: `AIRA_STRICT_DATA_MODE` (`FRD-627`): stored roles cannot hold what sees a person.
+        self._strict_data = strict_data
         self._definitions = self._fixed_only()
         self._loaded_at = 0.0
         #: False until the first successful load, and again after a failed one.
@@ -62,7 +66,7 @@ class RoleResolver:
 
     def _fixed_only(self) -> tuple[RoleDefinition, ...]:
         """What holds while nothing stored can be read: IT Steuerung confers nothing."""
-        return builtin_roles(self._mapping, it_steuerung=frozenset())
+        return builtin_roles(self._mapping, it_steuerung=frozenset(), strict_data=self._strict_data)
 
     async def definitions(self) -> tuple[RoleDefinition, ...]:
         if self._settled(time.monotonic()):
@@ -100,17 +104,22 @@ class RoleResolver:
         steuerung = next(
             (row for row in rows if row.slug == str(Role.IT_STEUERUNG) and row.builtin), None
         )
-        stored_set = parse_permissions(steuerung.permissions or []) if steuerung else None
+        strict = self._strict_data
+        stored_set = (
+            parse_permissions(steuerung.permissions or [], strict_data=strict)
+            if steuerung
+            else None
+        )
         custom = tuple(
             RoleDefinition(
                 slug=row.slug,
                 label=row.label or row.slug,
                 group_paths=(row.group_path,) if row.group_path else (),
-                permissions=parse_permissions(row.permissions or []),
+                permissions=parse_permissions(row.permissions or [], strict_data=strict),
             )
             for row in rows
             if not row.builtin and row.slug not in _BUILTIN_SLUGS
         )
-        self._definitions = builtin_roles(self._mapping, stored_set) + custom
+        self._definitions = builtin_roles(self._mapping, stored_set, strict_data=strict) + custom
         self._loaded_at = now
         self._ready = True

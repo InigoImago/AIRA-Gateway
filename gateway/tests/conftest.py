@@ -3,6 +3,7 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from aira_common.pseudonym import configure_pseudonyms
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 
@@ -40,6 +41,28 @@ def _no_redis_from_this_machine() -> Iterator[None]:
             del os.environ["AIRA_REDIS_URL"]
         else:
             os.environ["AIRA_REDIS_URL"] = previous
+
+
+@pytest.fixture(autouse=True)
+def _names_until_an_app_says_otherwise() -> Iterator[None]:
+    """Pseudonyms are process-wide state, set by `configure_process` (`FRD-627` FR-14): an app built
+    by one test would otherwise decide what the next test's spans and log lines say."""
+    configure_pseudonyms(enabled=False, secret="")
+    yield
+    configure_pseudonyms(enabled=False, secret="")
+
+
+@pytest.fixture
+def strict_data_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run a test with strict data mode **off** (`FRD-627`).
+
+    For the tests of the per-use-case ladder — `members`, `own`, `oversight` — and of what
+    `report.read_all` sees: that machinery decides only while the operator has switched the mode
+    off, and the mode's own guarantees are tested on its default, in `test_strict_data_mode.py`.
+    Through the environment, so every `GatewaySettings()` a test builds reads it; a test that passes
+    `strict_data_mode=` explicitly still wins.
+    """
+    monkeypatch.setenv("AIRA_STRICT_DATA_MODE", "false")
 
 
 @pytest.fixture

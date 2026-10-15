@@ -545,8 +545,9 @@ every `return` is a fact eventually forgotten at one of them.
   row, a pipeline step's own `pipeline:<step>` row and a model check's `diagnostic` row keep none.
 - **For how long.** Until the use case's retention period has passed (default 7 days), or until the
   next run for a use case that has switched storage off. The row itself stays (§7).
-- **Who reads it.** The use case's `payload_visibility` decides who inside it may, and
-  `payload.read_any` who outside it may; every read is recorded in `payload_access` before the
+- **Who reads it.** Under strict data mode, the default, the Global Administrator and IT Security
+  only. With the mode off, the use case's `payload_visibility` decides who inside it may, and
+  `payload.read_any` who outside it may. Every read is recorded in `payload_access` before the
   content is handed over.
 
 ---

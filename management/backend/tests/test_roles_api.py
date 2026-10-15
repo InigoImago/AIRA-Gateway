@@ -20,7 +20,7 @@ from rest_framework.test import APIClient
 from aira_common.directory import KeycloakDirectory
 from aira_common.permissions import CATALOGUE, IT_STEUERUNG_DEFAULT, Permission
 
-from .conftest import GROUP_FOR
+from .conftest import GROUP_FOR, setting
 
 pytestmark = pytest.mark.django_db
 
@@ -410,3 +410,95 @@ def test_a_group_path_longer_than_its_column_is_refused_before_anybody_is_asked(
 
     assert response.status_code == 400
     assert response.json()["error"]["details"]["group_path"] == ["At most 255 characters."]
+
+
+# == strict data mode (`FRD-627` FR-2, FR-12) ======================================================
+
+#: What sees a person, written out rather than read from the engine, so a test of the engine's set
+#: is not the engine's set compared with itself.
+SEES_A_PERSON = ("payload.read_any", "incident.investigate")
+
+
+@pytest.mark.parametrize("permission", SEES_A_PERSON)
+def test_strict_mode_refuses_giving_a_custom_role_what_sees_a_person(
+    directory, captured, permission: str
+) -> None:
+    refused = _create(_admin(), permissions=["report.read_all", permission])
+
+    assert refused.status_code == 400
+    message = str(refused.json())
+    assert permission in message
+    assert "Global Administrator and IT Security" in message
+    assert "AIRA_STRICT_DATA_MODE" in message
+    assert not StoredRole.objects.filter(builtin=False).exists()
+    assert captured == [], "a refused role was announced"
+
+
+@pytest.mark.parametrize("permission", SEES_A_PERSON)
+def test_strict_mode_refuses_giving_it_steuerung_or_a_custom_role_it_on_change(
+    directory, permission: str
+) -> None:
+    admin = _admin()
+    assert _create(admin, permissions=["report.read_all"]).status_code == 201
+
+    for slug in ("it-steuerung", "controlling"):
+        refused = admin.patch(f"{BASE}{slug}/", {"permissions": [permission]}, format="json")
+        assert refused.status_code == 400, slug
+        assert "AIRA_STRICT_DATA_MODE" in str(refused.json())
+    assert StoredRole.objects.get(slug="controlling").permissions == ["report.read_all"]
+    assert permissions_of(_user("itgov", "it-steuerung")) == IT_STEUERUNG_DEFAULT
+    assert RoleChange.objects.filter(action=RoleChange.UPDATED).count() == 0
+
+
+@pytest.mark.usefixtures("strict_data_off")
+@pytest.mark.parametrize("permission", SEES_A_PERSON)
+def test_with_the_mode_off_a_role_may_be_given_what_sees_a_person(
+    directory, permission: str
+) -> None:
+    created = _create(_admin(), permissions=[permission])
+
+    assert created.status_code == 201, created.content
+    member = _user("controller", groups=("/finance/controlling",))
+    assert permissions_of(member) == {Permission(permission)}
+
+
+@pytest.mark.parametrize("permission", SEES_A_PERSON)
+def test_a_grant_stored_with_the_mode_off_confers_nothing_while_it_is_on(
+    directory, permission: str
+) -> None:
+    """Dropped when read, not erased: the row keeps it, and turning the mode off restores it."""
+    StoredRole.objects.create(
+        slug="controlling",
+        label="Controlling",
+        group_path="/finance/controlling",
+        permissions=[permission, "report.read_all"],
+    )
+    member = _user("controller", groups=("/finance/controlling",))
+
+    assert permissions_of(member) == {Permission.REPORT_READ_ALL}
+    listed = {row["slug"]: row for row in _admin().get(BASE).json()}
+    assert listed["controlling"]["permissions"] == ["report.read_all"]
+    with setting(strict_data_mode=False):
+        assert permissions_of(_user("controller-2", groups=("/finance/controlling",))) == {
+            Permission.REPORT_READ_ALL,
+            Permission(permission),
+        }
+
+
+def test_the_catalogue_marks_what_strict_mode_withholds(directory) -> None:
+    rows = {row["name"]: row for row in _admin().get(f"{BASE}catalogue/").json()}
+
+    assert sorted(name for name, row in rows.items() if row["strict_data_reserved"]) == sorted(
+        SEES_A_PERSON
+    )
+    assert sorted(name for name, row in rows.items() if not row["grantable"]) == sorted(
+        ("role.manage", *SEES_A_PERSON)
+    )
+
+
+@pytest.mark.usefixtures("strict_data_off")
+def test_with_the_mode_off_the_catalogue_withholds_only_the_reserved_permission(directory) -> None:
+    rows = _admin().get(f"{BASE}catalogue/").json()
+
+    assert not [row["name"] for row in rows if row["strict_data_reserved"]]
+    assert [row["name"] for row in rows if not row["grantable"]] == ["role.manage"]

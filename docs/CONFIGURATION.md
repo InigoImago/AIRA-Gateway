@@ -147,12 +147,14 @@ audit row. That is why the check is a startup refusal rather than a warning.
 
 ### Storage and retention
 
-Management reads the first three as well: the privacy notice states them
+Management reads the first four as well: the privacy notice states them
 ([§4](#the-privacy-notice)).
 
 | Variable                      | Default | What it does                                                                                                                                                     |
 | ----------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AIRA_STORE_PAYLOADS`         | `true`  | Operator **kill switch** above the per-use-case setting: a use-case admin may decline storage but cannot re-enable it where the operator forbade it.             |
+| `AIRA_STRICT_DATA_MODE`       | `true`  | **Strict data mode**, read by both planes. On, nobody but Global Administrator and IT Security sees a person: stored content is readable by those two roles only, whatever a use case chose; figures per person, the name and API key on a request, and the person or key a finding or block names reach only them and the person concerned; latency per person is computed for nobody; and no other role can be given `payload.read_any` or `incident.investigate`. Applied when read, so turning it off restores every use case's own content setting and every stored grant. The privacy notice states which mode runs. |
+| `AIRA_PSEUDONYM_SECRET` | — | The key a person's name is **pseudonymised** with in spans, the SIEM feed and log lines while strict data mode is on — the same person always the same pseudonym, so one caller can still be followed, and nobody reads the name off it. A keyed hash, because usernames are guessable and an unkeyed one is reversed by hashing the directory. Shared by both planes, and a credential: from Vault. Unset, each process draws its own key and says so once at start-up; nothing leaks, but pseudonyms differ between processes and restarts. Re-identifying a caller is the audit trail's job, not this key's: a span carries its trace id, and the request's row names the caller to Global Administrator and IT Security. |
 | `AIRA_DEFAULT_RETENTION_DAYS` | `7`     | For traffic that carries no use case, and for rows whose use case the read-model does not know. Use-case traffic follows its own period. **1 to 3650**, the bounds a use case's own period has; anything else refuses to start on both planes, because the retention sweep and the privacy notice — which prints this value — would read it differently. |
 | `AIRA_LOG_RETENTION_DAYS`     | `0`     | Whole-row deletion. **0 = never**, deliberately: payload retention and record retention are separate clocks, and deleting rows would truncate the spend history. |
 | `AIRA_LOG_QUEUE_SIZE`         | `512`   | Audit-write queue. `0` writes on the request path — supported, and the cost is the latency the queue exists to remove.                                           |

@@ -84,6 +84,9 @@ core:
   # Whether prompts and answers are stored at all, and for how long, unless a use case says
   # otherwise (`FRD-404`).
   store_payloads: true
+  # Nobody but Global Administrator and IT Security sees a person — content, figures per person,
+  # names and keys on requests, the person a finding names. Off, each use case decides again.
+  strict_data_mode: true
   # A stream whose caller left before the vendor said what it used is counted at the vendor's own
   # free endpoint and booked as a floor (`FRD-128` FR-6). Off sends nothing to the vendor a second
   # time — the privacy notice says it does — and such a stream stays unknown.
@@ -446,6 +449,7 @@ secrets:
     - AIRA_FOUNDRY_API_KEY
     - AIRA_KAFKA_SASL_PASSWORD
     - AIRA_DIRECTORY_CLIENT_SECRET
+    - AIRA_PSEUDONYM_SECRET              # telemetry's pseudonyms under strict data mode
     - AIRA_REDIS_PASSWORD
     - AIRA_REDIS_SENTINEL_PASSWORD
   # The one credential Vault cannot supply, because it is what authenticates *to* Vault. An

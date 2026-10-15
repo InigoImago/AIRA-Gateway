@@ -32,6 +32,9 @@ from aira_gateway.config import GatewaySettings
 from aira_gateway.consumer.apply import HANDLERS
 from aira_gateway.db.models import RequestLog, UseCaseRead
 
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
+
 P = Permission
 MAPPING = {
     Role.GLOBAL_ADMIN: ("/aira/global-admins",),
@@ -217,7 +220,7 @@ async def _resolve(app: Any, caller: Principal) -> Principal:
     request = types.SimpleNamespace(
         app=types.SimpleNamespace(
             state=types.SimpleNamespace(
-                role_definitions=RoleResolver(app.state.db_sessionmaker, MAPPING)
+                role_definitions=RoleResolver(app.state.db_sessionmaker, MAPPING, strict_data=False)
             )
         )
     )

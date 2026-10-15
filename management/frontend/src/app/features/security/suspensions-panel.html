@@ -210,7 +210,13 @@
             @for (row of activeView.rows(); track row.id) {
               <tr>
                 <td>
-                  <code>{{ row.target_value }}</code>
+                  @if (row.target_withheld) {
+                    <em class="muted" data-testid="target-withheld" [title]="withheldReason">{{
+                      targetName(row)
+                    }}</em>
+                  } @else {
+                    <code>{{ row.target_value }}</code>
+                  }
                   <div class="muted text-sm">{{ reachOf(row) }}</div>
                 </td>
                 <td>
@@ -236,7 +242,7 @@
                         type="button"
                         class="btn btn--sm"
                         [disabled]="feedback.busy()"
-                        [attr.aria-label]="'Restore access for ' + row.target_value"
+                        [attr.aria-label]="'Restore access for ' + targetName(row)"
                         (click)="lift(row)"
                       >
                         Restore
@@ -280,7 +286,13 @@
                 @for (row of pastView.rows(); track row.id) {
                   <tr [attr.data-testid]="'past-' + row.id">
                     <td>
-                      <code>{{ row.target_value }}</code>
+                      @if (row.target_withheld) {
+                        <em class="muted" data-testid="target-withheld" [title]="withheldReason">{{
+                          targetName(row)
+                        }}</em>
+                      } @else {
+                        <code>{{ row.target_value }}</code>
+                      }
                       <div class="muted text-sm">{{ reachOf(row) }}</div>
                     </td>
                     <td>

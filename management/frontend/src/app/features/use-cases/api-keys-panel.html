@@ -217,10 +217,17 @@
             </td>
             <td>{{ key.label || '—' }}</td>
             <td>
-              {{ key.owner }}
-              <!-- Only when issuer and owner differ; on every row it would be noise. -->
-              @if (key.issued_by) {
-                <div class="muted text-sm">issued by {{ key.issued_by }}</div>
+              @if (key.owner_withheld) {
+                <!-- Strict data mode: the server withheld whose key this is; said, never blank. -->
+                <span class="muted" data-testid="key-owner-withheld" [title]="withheldReason">{{
+                  anotherMember
+                }}</span>
+              } @else {
+                {{ key.owner }}
+                <!-- Only when issuer and owner differ; on every row it would be noise. -->
+                @if (key.issued_by) {
+                  <div class="muted text-sm">issued by {{ key.issued_by }}</div>
+                }
               }
             </td>
             <td>

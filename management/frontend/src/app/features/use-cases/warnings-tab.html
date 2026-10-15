@@ -82,7 +82,13 @@
                 <div class="muted text-sm">{{ event.kind }}</div>
               </td>
               <td>
-                <code>{{ event.target_value }}</code>
+                @if (event.target_withheld) {
+                  <em class="muted" data-testid="target-withheld" [title]="withheldReason">{{
+                    targetName(event)
+                  }}</em>
+                } @else {
+                  <code>{{ event.target_value }}</code>
+                }
                 <div class="muted text-sm">{{ event.target }}</div>
               </td>
               <td>

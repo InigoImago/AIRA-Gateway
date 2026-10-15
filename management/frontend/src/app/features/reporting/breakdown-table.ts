@@ -36,6 +36,15 @@ export class BreakdownTable {
    * The largest spend, so every bar shares one scale. Over **all** rows, not the page: a per-page
    * scale would make page three's smallest row look like the biggest spender.
    */
+  /**
+   * Whether the rows carry latency at all. A split by person in strict data mode has no latency
+   * keys — it is a performance measure, so it is not computed — and a column of dashes would read
+   * as "nothing was measured" rather than "this is not measured per person".
+   */
+  protected readonly hasLatency = computed(() =>
+    this.rows().some((row) => row.avg_latency_ms !== undefined),
+  );
+
   protected readonly peak = computed(() =>
     this.rows().reduce((most, row) => Math.max(most, row.cost_nanos), 0),
   );

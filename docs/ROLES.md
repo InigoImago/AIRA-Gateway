@@ -88,7 +88,7 @@ built-in roles hold; IT Steuerung's column is its default, which an installation
 | `anomaly.read_all`          | The security console and the findings of every use case                       |     |      ✓       |      ✓      |      ✓       |
 | `anomaly.rule.global.write` | Author anomaly rules that apply everywhere                                    |     |      ✓       |      ✓      |              |
 | `incident.suspend`          | Stop and resume callers, credentials and use cases                            |  ⚠  |      ✓       |      ✓      |              |
-| `incident.investigate`      | The Requests screen, source addresses, and requests a use case restricts to their makers | ⚠ | ✓ | ✓ |        |
+| `incident.investigate`      | The Requests screen, source addresses, and requests a use case restricts to their makers; under strict data mode, every person | ⚠ | ✓ | ✓ |        |
 | `operations.diagnose`       | Check whether a model answers; the detail of the readiness probe              |     |      ✓       |      ✓      |              |
 | `smoketest.author`          | Write the question catalogue                                                  |     |      ✓       |      ✓      |              |
 | `smoketest.run_any`         | Run the question catalogue on any use case this person may call               |     |      ✓       |      ✓      |              |
@@ -136,7 +136,38 @@ Two rules the code enforces so that neither plane has to restate them:
 - **Where two grants differ, the stronger wins.** An access decision that depended on which row was
   read first is not a decision anybody can review.
 
-**What a use case shows its own people** is one setting, `payload_visibility`:
+### Strict data mode — the default
+
+**While `AIRA_STRICT_DATA_MODE` is on, which it is unless an operator switches it off, nobody but
+the Global Administrator and IT Security learns from AIRA what a named colleague did.** It is an
+installation setting, not a use case's, so no administrator can lift it. While it is on:
+
+- **Stored content** is either not kept or readable by those two roles only. A use case offers
+  *Not stored* and *Oversight roles only*; whatever it stored before reads as the latter.
+- **Requests** are listed to everybody in the use case — what failed and what it cost are the use
+  case's — but another person's row shows no name and no API key, and the requests cannot be
+  filtered by person or key. Each reader sees their own rows in full.
+- **Figures split by person** — on the Members tab, the reporting screen and its export — carry
+  only the reader's own row; the Members tab does not show the table at all. KIRA's `ki-usage`
+  reports one row per use case instead of per person, to every caller.
+  `report.read_all` is no exemption: IT Steuerung sees every total and every breakdown, and no
+  person. Totals and breakdowns by use case, model and outcome stay for everybody.
+- **No latency per person** is computed for anybody. How fast a model answers stays, per model.
+- **Findings and stops** that name a person or a key show "a person" or "a key", except to the
+  person concerned.
+- **A key's owner and issuer** on the use case's key list are shown to them and to the two roles
+  only; everybody else reads "another member".
+- **`payload.read_any` and `incident.investigate`** — the two permissions that see a person —
+  cannot be granted to IT Steuerung or to a role the installation defines.
+
+Who sees a person, then, is whoever holds `incident.investigate`: the Global Administrator and IT
+Security. Spans, the SIEM feed and the logs carry a **pseudonym** in place of a person's name — the
+same person always the same one, keyed so that nobody can hash the directory back to names. They
+keep the key prefix and the source address, which an incident needs.
+
+Switched off, each use case's own setting decides again, as below.
+
+**What a use case shows its own people**, with the mode off, is one setting, `payload_visibility`:
 
 | Value               | Requests listed                        | Stored content                          | Figures split by person                 |
 | ------------------- | -------------------------------------- | --------------------------------------- | --------------------------------------- |

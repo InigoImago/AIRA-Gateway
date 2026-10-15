@@ -10,6 +10,7 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { saveBlob } from '../../core/ui/save-blob';
+import { ANOTHER_MEMBER, WITHHELD_REASON } from '../../core/ui/withheld';
 import { openCodeModel } from './opencode-config';
 import { OPENCODE_BUDGET_PLUGIN } from './opencode-plugin.generated';
 
@@ -52,6 +53,9 @@ export class ApiKeysPanel {
   private readonly service = inject(UseCaseService);
   private readonly confirmService = inject(ConfirmService);
   protected readonly feedback = inject(PageFeedback);
+  /** The words in place of a key's person that strict data mode withholds. */
+  protected readonly anotherMember = ANOTHER_MEMBER;
+  protected readonly withheldReason = WITHHELD_REASON;
 
   protected readonly showIssueKey = signal(false);
   protected readonly keyLabel = signal('');

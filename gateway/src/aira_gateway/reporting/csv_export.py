@@ -53,12 +53,15 @@ def filename(breakdown: str, start: str, end: str) -> str:
     return f"aira-usage_{breakdown}_{start[:10]}_{end[:10]}.csv"
 
 
-def render(report: dict[str, Any], breakdown: str, currency: str) -> str:
+def render(report: dict[str, Any], breakdown: str, currency: str, *, latency: bool = True) -> str:
     """One breakdown of the report as RFC 4180 CSV.
 
     Money is formatted for display, not written as nano-units: a spreadsheet is read by people. The
-    integer stays in the JSON, which is what a script should read.
+    integer stays in the JSON, which is what a script should read. Without ``latency`` the two
+    latency columns are left out — under strict data mode a split by person carries none
+    (`FRD-627` FR-5), and a column of zeros would read as a measurement.
     """
+    kept = len(COLUMNS) if latency else len(COLUMNS) - 2
     if breakdown not in BREAKDOWNS:
         raise UnknownBreakdown(
             f"'{breakdown}' is not a breakdown. Available: {', '.join(BREAKDOWNS)}."
@@ -69,7 +72,7 @@ def render(report: dict[str, Any], breakdown: str, currency: str) -> str:
     # `\r\n` is what RFC 4180 specifies, and what Excel expects from a file it did not write.
     writer = csv.writer(buffer, lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL)
 
-    writer.writerow([*COLUMNS[:6], f"cost_{currency.lower()}", *COLUMNS[7:]])
+    writer.writerow([*COLUMNS[:6], f"cost_{currency.lower()}", *COLUMNS[7:]][:kept])
     for row in rows:
         # Every cell through `safe_cell`, not only `key`: the rule is about the file, so a column
         # added later is covered without anybody remembering it.
@@ -91,7 +94,7 @@ def render(report: dict[str, Any], breakdown: str, currency: str) -> str:
                 safe_cell(row.get("unmetered_requests", 0)),
                 safe_cell(row.get("avg_latency_ms", 0)),
                 safe_cell(row.get("max_latency_ms", 0)),
-            ]
+            ][:kept]
         )
 
     unpriced = sum(int(row.get("unpriced_requests") or 0) for row in rows)

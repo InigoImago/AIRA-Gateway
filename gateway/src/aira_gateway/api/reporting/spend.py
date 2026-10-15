@@ -21,7 +21,7 @@ from aira_gateway.api.reporting.common import (
 )
 from aira_gateway.auth.dependencies import require_principal, require_valid_use_case
 from aira_gateway.auth.principal import Principal
-from aira_gateway.payloads import people_restricted_use_cases
+from aira_gateway.payloads import people_restricted_use_cases, sees_people
 from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
 from aira_gateway.reporting.register import RegisterService
 from aira_gateway.reporting.register_csv import filename as register_filename
@@ -33,6 +33,21 @@ from aira_gateway.state import sessionmaker_of, settings_of
 #: What may be asked of the series parameter. ``auto`` lets the window decide; the empty string is
 #: *no series at all*, which is what a caller who only wants the tables sends.
 GRANULARITIES = ("auto", "day", "hour")
+
+#: The splits keyed on a human. The CSV offers one of them; the JSON carries both.
+PERSON_BREAKDOWNS = ("member",)
+PERSON_SPLITS = ("by_member", "by_person")
+
+#: How long a person took, which under strict data mode no split by person carries: it measures
+#: performance, and answers no question about cost (`FRD-627` FR-5).
+LATENCY_FIELDS = ("avg_latency_ms", "max_latency_ms")
+
+
+def _without_latency_per_person(report: dict[str, object]) -> None:
+    for split in PERSON_SPLITS:
+        for row in report.get(split) or []:  # type: ignore[attr-defined]
+            for field in LATENCY_FIELDS:
+                row.pop(field, None)
 
 
 async def _people_limited_to(request: Request, principal: Principal, scope: Scope) -> str | None:
@@ -50,16 +65,24 @@ async def _people_limited_to(request: Request, principal: Principal, scope: Scop
     the narrow use case's rows silently into an aggregate by person — is the disclosure this exists
     to stop.
     """
+    if settings_of(request).strict_data_mode:
+        # Every use case is `oversight`, and reading every figure is no exemption: a split by
+        # person is for whoever sees people, and for the person (`FRD-627` FR-4).
+        return None if sees_people(principal) else _own_name(principal)
     if principal.allows(Permission.REPORT_READ_ALL):
         return None
     async with sessionmaker_of(request)() as session:
-        narrowed = await people_restricted_use_cases(session, principal)
+        narrowed = await people_restricted_use_cases(session, principal, strict_data=False)
     if not narrowed:
         return None
     if scope is not None and not set(narrowed) & set(scope):
         return None
-    # The name the figures are keyed on, with the subject behind it: an API key's subject *is* the
-    # name, and an older row carries no name at all (`FRD-606`).
+    return _own_name(principal)
+
+
+def _own_name(principal: Principal) -> str:
+    """The name the figures are keyed on, with the subject behind it: an API key's subject *is* the
+    name, and an older row carries no name at all (`FRD-606`)."""
     return principal.person or principal.subject
 
 
@@ -162,10 +185,21 @@ async def reporting(
     # whether budgets refuse at all. Same fact as `/v1beta/usage` and `/v1beta/me/budget`, from the
     # same settings object — one plane answers for it, the one that enforces.
     report["enforced"] = settings_of(request).enforce_budgets
+    # Said for the same reason as `people_limited`: the console hides the split by person rather
+    # than show a table of one, and must not decide the mode itself (`FRD-627` FR-9).
+    strict_data = settings_of(request).strict_data_mode
+    report["strict_data"] = strict_data
+    if strict_data:
+        _without_latency_per_person(report)
 
     if fmt == "json":
         return JSONResponse(report)
-    body = render(report, breakdown, settings_of(request).currency)
+    body = render(
+        report,
+        breakdown,
+        settings_of(request).currency,
+        latency=not (strict_data and breakdown in PERSON_BREAKDOWNS),
+    )
     return csv_attachment(
         body, filename(breakdown, window_start.isoformat(), window_end.isoformat())
     )
@@ -188,9 +222,9 @@ async def register(
     window_start, window_end = window(start, end, what="register")
     fmt = negotiate(request.headers.get("accept", ""))
     scope = visible_scope(principal, Permission.REPORT_READ_ALL)
-    compiled = await RegisterService(sessionmaker_of(request)).compile(
-        scope, window_start, window_end
-    )
+    compiled = await RegisterService(
+        sessionmaker_of(request), strict_data=settings_of(request).strict_data_mode
+    ).compile(scope, window_start, window_end)
 
     if fmt == "csv":
         body = render_register(compiled, window_start.isoformat(), window_end.isoformat())

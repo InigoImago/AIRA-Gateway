@@ -312,6 +312,31 @@ describe('ApiKeysPanel rendering', () => {
     // An ordinary key says nothing extra — a distinction on every row is one nobody reads.
     expect(rows[1]).not.toContain('issued by');
   });
+
+  it('says "another member" where strict data mode withholds whose key it is', () => {
+    const harness = setup({
+      keys: [
+        {
+          prefix: 'aa',
+          label: 'laptop',
+          owner: null,
+          issued_by: null,
+          owner_withheld: true,
+          is_active: true,
+        },
+        { prefix: 'bb', label: 'mine', owner: 'vadim', owner_withheld: false, is_active: true },
+      ] as never,
+    });
+
+    const rows = [...harness.html().querySelectorAll('tbody tr')];
+    const withheld = rows[0].querySelector('[data-testid="key-owner-withheld"]');
+    expect(withheld?.textContent?.trim()).toBe('another member');
+    expect(withheld?.getAttribute('title')).toContain('strict data mode');
+    expect(rows[0].textContent).toContain('laptop');
+    expect(rows[0].textContent).not.toContain('null');
+    expect(rows[1].querySelector('[data-testid="key-owner-withheld"]')).toBeNull();
+    expect(rows[1].textContent).toContain('vadim');
+  });
 });
 
 /**

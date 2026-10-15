@@ -11,13 +11,17 @@ must list exactly the pair. The same holds for:
 - a built-in role beside a custom one;
 - a role beside a grant on a use case.
 
+Every case runs twice, once per data mode (`FRD-627`): with strict data mode on, a stored role's
+grant of what sees a person confers nothing, so the union is the pair *without* those two — the
+same rule, asked of the same probes.
+
 The gateway's half is `gateway/tests/test_the_pairwise_permission_matrix.py`.
 """
 
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -35,8 +39,16 @@ from django.core.cache import cache
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from aira_common.permissions import CATALOGUE, GRANTABLE, Permission, builtin_permissions
+from aira_common.permissions import (
+    CATALOGUE,
+    GRANTABLE,
+    Permission,
+    builtin_permissions,
+    grantable,
+)
 from aira_common.roles import Role
+
+from .conftest import setting
 
 pytestmark = pytest.mark.django_db
 
@@ -184,6 +196,13 @@ def _id(pair: tuple[Permission, Permission | None]) -> str:
     return f"{pair[0]}+{pair[1] or 'nothing'}"
 
 
+@pytest.fixture(autouse=True, params=[True, False], ids=["strict", "open"])
+def strict(request: pytest.FixtureRequest, strict_data_on: None) -> Iterator[bool]:
+    """The data mode this case runs under; both, for every case."""
+    with setting(strict_data_mode=request.param):
+        yield request.param
+
+
 @pytest.fixture(autouse=True)
 def _fresh_throttle() -> None:
     """Every combination is one person's few requests; the request throttle counts in the cache,
@@ -258,10 +277,10 @@ def test_the_combinations_are_every_single_every_overlap_and_every_pair() -> Non
 
 @pytest.mark.parametrize(("first", "second"), COMBINATIONS, ids=[_id(c) for c in COMBINATIONS])
 def test_two_custom_roles_give_exactly_their_union(
-    world: dict[str, Any], first: Permission, second: Permission | None
+    world: dict[str, Any], first: Permission, second: Permission | None, strict: bool
 ) -> None:
     _bind(first, second)
-    granted = frozenset({first} | ({second} if second else set()))
+    granted = frozenset({first} | ({second} if second else set())) & grantable(strict_data=strict)
     _assert_exactly(_person(GROUP_A, GROUP_B), world, granted)
 
 
@@ -271,17 +290,19 @@ def test_two_custom_roles_give_exactly_their_union(
     ids=[f"{role}+{extra}" for role in Role for extra in ORDER],
 )
 def test_a_builtin_role_and_a_custom_one_give_exactly_their_union(
-    world: dict[str, Any], role: Role, extra: Permission
+    world: dict[str, Any], role: Role, extra: Permission, strict: bool
 ) -> None:
     _bind(extra, None)
-    granted = builtin_permissions([str(role)]) | {extra}
+    granted = builtin_permissions([str(role)], strict_data=strict) | (
+        {extra} & grantable(strict_data=strict)
+    )
     _assert_exactly(_person(BUILTIN_GROUP[role], GROUP_A), world, granted)
 
 
 @pytest.mark.parametrize("grant", [UseCaseMembership.ADMIN, UseCaseMembership.USER])
 @pytest.mark.parametrize("extra", ORDER, ids=str)
 def test_a_grant_on_another_use_case_adds_no_permission(
-    world: dict[str, Any], extra: Permission, grant: str
+    world: dict[str, Any], extra: Permission, grant: str, strict: bool
 ) -> None:
     """A grant is a relationship to one use case, never a permission. What an `admin` grant opens
     elsewhere is documented: the question catalogue's door and the directory, which serve the
@@ -296,7 +317,7 @@ def test_a_grant_on_another_use_case_adds_no_permission(
         if grant == UseCaseMembership.ADMIN
         else frozenset()
     )
-    _assert_exactly(user, world, frozenset({extra}), also=doors)
+    _assert_exactly(user, world, frozenset({extra}) & grantable(strict_data=strict), also=doors)
 
 
 def test_an_admin_grant_on_a_retired_use_case_opens_no_door(world: dict[str, Any]) -> None:

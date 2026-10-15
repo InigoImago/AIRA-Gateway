@@ -269,6 +269,7 @@
         [slug]="slug()"
         [useCase]="useCase()"
         [canManage]="canManage()"
+        [strictData]="strictData()"
         (saved)="useCase.set($event)"
       />
     </div>
@@ -282,17 +283,33 @@
       [members]="members()"
       (changed)="accessChanged()"
     />
-    <app-people-panel
-      [month]="peopleMonth()"
-      [today]="peopleToday()"
-      [budgets]="budgets()"
-      [only]="peopleNarrowedTo()"
-      [whyOnly]="whyPeopleNarrowed()"
-      [monthUnavailable]="monthFailed()"
-      [todayUnavailable]="todayFailed()"
-      [reason]="consumption().reason"
-      [currency]="currency()"
-    />
+    @if (peopleHidden()) {
+      <!-- Strict data mode: not one row of it — not even the reader's own, which is on the
+           overview, nor what is left of anybody's allowance. -->
+      <div class="card" data-testid="people-withheld">
+        <h3 class="section-title">What each person used</h3>
+        <p class="muted" style="margin: 0">
+          In this installation, figures per person are visible only to Global Administrators and IT
+          Security. Your own figures are on the
+          <button type="button" class="btn btn--sm" (click)="selectTab('overview')">
+            Overview
+          </button>
+          tab.
+        </p>
+      </div>
+    } @else {
+      <app-people-panel
+        [month]="peopleMonth()"
+        [today]="peopleToday()"
+        [budgets]="budgets()"
+        [only]="peopleNarrowedTo()"
+        [whyOnly]="whyPeopleNarrowed()"
+        [monthUnavailable]="monthFailed()"
+        [todayUnavailable]="todayFailed()"
+        [reason]="consumption().reason"
+        [currency]="currency()"
+      />
+    }
   }
 
   @if (tab() === 'keys') {

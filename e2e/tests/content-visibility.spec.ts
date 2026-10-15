@@ -115,11 +115,14 @@ test.describe('Who may read prompts and responses', () => {
     await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('vis'), 'Content visibility');
 
-    // All four, in the order the panel lists them: a mode that is not offered cannot be chosen,
-    // and the one added last is the one a template edit would drop.
+    // Strict data mode is the shipped default, so two modes are offered and the two that let the
+    // use case's own people read content are not: a mode that is offered can be chosen.
     await page.goto(`/use-cases/${slug}`);
-    for (const mode of ['not-stored', 'oversight', 'admins-and-own', 'members']) {
+    for (const mode of ['not-stored', 'oversight']) {
       await expect(page.getByTestId(`content-mode-${mode}`)).toBeVisible();
+    }
+    for (const mode of ['admins-and-own', 'members']) {
+      await expect(page.getByTestId(`content-mode-${mode}`)).toHaveCount(0);
     }
 
     await chooseContentMode(page, slug, 'oversight');

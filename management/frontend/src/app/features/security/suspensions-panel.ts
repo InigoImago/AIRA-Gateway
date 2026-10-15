@@ -8,10 +8,11 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
+import { WITHHELD_REASON, targetAtStart, targetName } from '../../core/ui/withheld';
 
 /** Everything about a suspension a person might type to find it. */
 function haystack(row: Suspension): string {
-  return [row.target, row.target_value, row.author, row.reason].join(' ');
+  return [row.target, targetName(row), row.author, row.reason].join(' ');
 }
 
 /** What a stop reaches — "subject · uc-a", or "· everywhere" for one that is not scoped. */
@@ -61,6 +62,8 @@ export class SuspensionsPanel {
 
   // The kill-switch form. Signals, because the app is zoneless (FRD-203 §4).
   protected readonly showStop = signal(false);
+  protected readonly targetName = targetName;
+  protected readonly withheldReason = WITHHELD_REASON;
   protected readonly target = signal<'subject' | 'credential' | 'use_case'>('subject');
   protected readonly targetValue = signal('');
   protected readonly reason = signal('');
@@ -151,13 +154,13 @@ export class SuspensionsPanel {
   }
 
   protected lift(row: Suspension): void {
-    const question = `Restore access for ${row.target_value}? It was stopped by ${row.author}.`;
+    const question = `Restore access for ${targetName(row)}? It was stopped by ${row.author}.`;
     if (!this.confirmService.ask(question)) return;
     this.feedback.run(this.service.liftSuspension(row.id), {
       failure: 'Could not restore access.',
       success: () => {
         this.feedback.succeed(
-          `${row.target_value} is restored. It takes a few seconds to reach every instance.`,
+          `${targetAtStart(row)} is restored. It takes a few seconds to reach every instance.`,
         );
         this.changed.emit();
       },

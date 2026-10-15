@@ -31,6 +31,7 @@ from aira_gateway.db.models import (
     UseCaseMemberRead,
     UseCaseRead,
 )
+from aira_gateway.payloads import effective_visibility
 
 #: A use case's status. A retired one (`FRD-607`) stays in the register by default: it is still a
 #: processing record for as long as its stored prompts exist.
@@ -176,8 +177,12 @@ class Register:
 class RegisterService:
     """Assembles the register. Reads only."""
 
-    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessionmaker: async_sessionmaker[AsyncSession], *, strict_data: bool = True
+    ) -> None:
         self._sessionmaker = sessionmaker
+        #: The register states the visibility that decides, not the one stored (`FRD-627` FR-10).
+        self._strict_data = strict_data
 
     async def compile(
         self, scope: tuple[str, ...] | None, start: datetime, end: datetime
@@ -232,7 +237,9 @@ class RegisterService:
             models=released,
             prompts_stored=row.store_payloads,
             retention_days=row.retention_days if row.store_payloads else None,
-            content_visibility=row.payload_visibility,
+            content_visibility=effective_visibility(
+                row.payload_visibility, strict_data=self._strict_data
+            ),
             tools=row.tools_enabled,
             prompt_caching=row.prompt_caching_enabled,
             cache_ttl=row.prompt_cache_ttl,

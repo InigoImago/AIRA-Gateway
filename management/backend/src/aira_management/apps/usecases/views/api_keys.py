@@ -96,7 +96,9 @@ class ApiKeysMixin(UseCaseViewBase):
         usecase = self.get_object()
         if request.method == "GET":
             keys = ApiKey.objects.filter(use_case=usecase).select_related("owner")
-            return Response(ApiKeySerializer(keys, many=True).data)
+            return Response(
+                ApiKeySerializer(keys, many=True, context={"viewer": request.user}).data
+            )
 
         if not self._is_member(usecase):
             raise PermissionDenied("Only members of this use case may issue API keys.")

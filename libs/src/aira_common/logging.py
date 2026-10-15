@@ -17,6 +17,7 @@ import structlog
 from opentelemetry import trace
 
 from aira_common.observability import install_access_log_redaction
+from aira_common.pseudonym import pseudonymise_event
 
 #: The stdlib logger every rendered line is also handed to, so the OTLP handler on the root logger
 #: can ship it (`FRD-001` FR-6). structlog's `PrintLoggerFactory` alone creates no `LogRecord`.
@@ -110,6 +111,9 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
+        # A person's name leaves as a pseudonym under strict data mode (`FRD-627` FR-14); a no-op
+        # while the mode is off.
+        pseudonymise_event,
         # Last before the renderer: it must see the event dict, and what it removes must not be
         # rendered.
         hold_back_from_export,

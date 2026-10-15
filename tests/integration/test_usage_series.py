@@ -182,7 +182,7 @@ async def test_the_bands_add_up_to_the_totals_over_real_postgres(
 
 
 async def test_a_person_filter_finds_one_person_across_both_their_credentials(
-    engine: AsyncEngine, governance_token: str, window_slug: str
+    engine: AsyncEngine, security_token: str, window_slug: str
 ) -> None:
     """`FRD-626` FR-15, on the store that serves it.
 
@@ -218,8 +218,10 @@ async def test_a_person_filter_finds_one_person_across_both_their_credentials(
                 },
             )
 
+    # IT Security, who sees people: under strict data mode, the default, a person's series is
+    # theirs and the incident roles' only, and IT Steuerung would get an empty one.
     series = await _series(
-        governance_token, start, start + timedelta(days=5), use_case=slug, person="erika"
+        security_token, start, start + timedelta(days=5), use_case=slug, person="erika"
     )
 
     assert sum(point["cost_nanos"] for point in series["points"]) == to_nanos("1.50")

@@ -8,6 +8,7 @@ import { UseCaseService } from '../../core/api/use-case.service';
 import { can } from '../../core/auth/roles';
 import { Live } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { WITHHELD_REASON, targetName } from '../../core/ui/withheld';
 import { describeAction, describeEvent, describeRule, figureText } from './rule-language';
 import { SecurityRulesPanel } from './security-rules-panel';
 import { SuspensionsPanel } from './suspensions-panel';
@@ -138,6 +139,10 @@ export class SecurityPage implements OnInit {
   protected explain(rule: AnomalyRule): string {
     return describeRule(rule);
   }
+
+  /** Whom a finding is about, or what kind of thing when strict data mode withholds it. */
+  protected readonly targetName = targetName;
+  protected readonly withheldReason = WITHHELD_REASON;
 
   /** What a finding measured, against what, over how many requests. */
   protected explainEvent(event: AnomalyEvent): string {

@@ -44,3 +44,19 @@ export function can(
 ): boolean {
   return me?.permissions?.includes(permission) ?? false;
 }
+
+/** Whether the installation runs strict data mode, as `/me` reports it. Absent is off. */
+export function strictData(me: { strict_data?: boolean } | null | undefined): boolean {
+  return me?.strict_data === true;
+}
+
+/**
+ * Whether the server withholds other people from this reader: strict mode, and no
+ * `incident.investigate`. The console uses it only to leave out a control the server would refuse
+ * with `403`; what a row shows comes from the row itself (`person_withheld`, `target_withheld`).
+ */
+export function peopleWithheld(
+  me: { permissions?: readonly string[]; strict_data?: boolean } | null | undefined,
+): boolean {
+  return strictData(me) && !can(me, 'incident.investigate');
+}

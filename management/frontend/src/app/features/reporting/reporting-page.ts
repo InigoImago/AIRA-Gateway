@@ -241,7 +241,7 @@ export class ReportingPage implements OnInit {
     const totals = this.report()?.totals;
     if (!totals) return [];
     const latency =
-      totals.avg_latency_ms === null
+      totals.avg_latency_ms == null
         ? '—'
         : `${totals.avg_latency_ms} / ${totals.max_latency_ms} ms`;
     return [
@@ -285,7 +285,7 @@ export class ReportingPage implements OnInit {
         key: 'latency',
         label: 'Latency',
         value: latency,
-        unit: totals.avg_latency_ms === null ? undefined : 'average / maximum',
+        unit: totals.avg_latency_ms == null ? undefined : 'average / maximum',
         help: FIGURE_HELP.latency,
       },
     ];

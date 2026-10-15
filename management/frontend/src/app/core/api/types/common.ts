@@ -41,4 +41,10 @@ export interface Me {
    * the roles nor `use_cases` can reproduce, so the console does not derive it.
    */
   may_test?: boolean;
+  /**
+   * Whether the installation runs strict data mode (`AIRA_STRICT_DATA_MODE`): content is not stored
+   * or read by the oversight roles only, and nobody else sees what one named colleague did. Read
+   * through `strictData()` in `core/auth/roles.ts`. Absent from an older server, which means off.
+   */
+  strict_data?: boolean;
 }

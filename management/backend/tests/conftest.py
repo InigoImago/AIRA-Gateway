@@ -9,9 +9,11 @@ is thirteen chances for one of them to drift.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
+from aira_management.config.runtime import get_settings
 from django.core.cache import cache
 
 from aira_common.roles import CONFIGURABLE_ROLES
@@ -38,6 +40,39 @@ def _a_fresh_cache() -> Iterator[None]:
     cache.clear()
     yield
     cache.clear()
+
+
+@contextmanager
+def setting(**values: Any) -> Iterator[None]:
+    """Change values on the process's settings object for a block, and put them back after."""
+    settings = get_settings()
+    previous = {key: getattr(settings, key) for key in values}
+    for key, value in values.items():
+        object.__setattr__(settings, key, value)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            object.__setattr__(settings, key, value)
+
+
+@pytest.fixture(autouse=True)
+def strict_data_on() -> Iterator[None]:
+    """Every Management test runs as a fresh installation does: strict data mode on (`FRD-627`).
+
+    Pinned rather than read from the environment, so a developer's `.env` with the mode off cannot
+    turn the suite into one about a different installation.
+    """
+    with setting(strict_data_mode=True):
+        yield
+
+
+@pytest.fixture
+def strict_data_off(strict_data_on: None) -> Iterator[None]:
+    """The installation that turned strict data mode off, where each use case's own setting and
+    every stored grant decide (`ADR-0036`). Asked for by name by every test about that world."""
+    with setting(strict_data_mode=False):
+        yield
 
 
 @pytest.fixture(autouse=True)

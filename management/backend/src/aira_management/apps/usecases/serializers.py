@@ -23,6 +23,7 @@ from aira_management.apps.usecases.models import (
     UseCaseGroupGrant,
     UseCaseMembership,
 )
+from aira_management.config.runtime import get_settings
 from aira_management.rbac import django_group_name
 
 #: How many models one use case may be released: generous, and finite (`ADR-0007`).
@@ -105,6 +106,34 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
                 "Administrator releases a model into the catalog before a use case can be given it."
             )
         return models
+
+    def validate_payload_visibility(self, visibility: str) -> str:
+        """Under strict data mode only `oversight` may be saved (`FRD-627` FR-3).
+
+        Refused rather than stored and ignored: the administrator would read back `oversight` and
+        believe the choice was taken. The stored value of a use case that chose otherwise while the
+        mode was off is left alone, so turning the mode off restores it.
+        """
+        if get_settings().strict_data_mode and visibility != UseCase.PAYLOAD_VISIBILITY_OVERSIGHT:
+            raise serializers.ValidationError(
+                "While strict data mode is on (AIRA_STRICT_DATA_MODE), stored content is readable "
+                "by Global Administrator and IT Security only, so this use case cannot let its "
+                "members or administrators read it. Choose 'oversight', or ask the operator to "
+                "turn the mode off for the installation."
+            )
+        return visibility
+
+    def to_representation(self, instance: UseCase) -> dict[str, Any]:
+        """The **effective** visibility: what the gateway enforces, not what is stored.
+
+        Under strict data mode that is `oversight` for every use case (`FRD-627` FR-3, FR-10), so no
+        screen shows a choice that is not being honoured. The event still carries the stored value,
+        and the gateway applies the mode on read.
+        """
+        data = super().to_representation(instance)
+        if "payload_visibility" in data and get_settings().strict_data_mode:
+            data["payload_visibility"] = UseCase.PAYLOAD_VISIBILITY_OVERSIGHT
+        return data
 
     def validate_slug(self, slug: str) -> str:
         """The slug is the use case's **identity**, set once.

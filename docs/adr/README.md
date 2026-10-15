@@ -46,3 +46,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0033 | [The budget reaches a developer through code we ship into their client](ADR-0033-a-figure-a-developer-did-not-ask-for.md) | **Accepted** | 2026-10-11 |
 | 0034 | [A region outside the list is permitted for a model by name, never for every model](ADR-0034-a-region-permitted-for-a-model-by-name.md) | **Accepted** | 2026-10-13 |
 | 0035 | [Windows sign-on is Keycloak's, and AIRA takes no part in it](ADR-0035-windows-sign-on-is-keycloaks.md) | **Accepted** | 2026-10-13 |
+| 0036 | [Strict data mode is an installation default, decided on read](ADR-0036-strict-data-mode-is-an-installation-default.md) | **Accepted** | 2026-10-15 |

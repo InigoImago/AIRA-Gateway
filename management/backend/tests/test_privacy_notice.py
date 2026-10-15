@@ -164,6 +164,7 @@ def test_every_activity_carries_all_five_statements_in_every_language() -> None:
         {"controller": "Other AG"},
         {"log_retention_days": 30},
         {"store_payloads": False},
+        {"strict_data": False},
         {"roles": (notice.RoleAccess("New role", ("payload.read_any",)),)},
     ],
 )
@@ -330,6 +331,7 @@ def test_a_changed_notice_is_due_again_for_somebody_who_acknowledged_the_old_one
     assert client.get(NOTICE).json()["due"] == "changed"
 
 
+@pytest.mark.usefixtures("strict_data_off")
 def test_a_new_role_that_may_read_content_is_a_changed_notice() -> None:
     client = _client(_user("anna"))
     client.post(
@@ -456,3 +458,99 @@ def test_the_notice_states_how_long_the_event_channel_keeps_what_it_sent() -> No
     retention = next(f["text"] for f in account["fields"] if f["key"] == "retention")
 
     assert f"{KEPT_AFTER_DAYS} days after it was sent" in retention
+
+
+# == strict data mode (`FRD-627` FR-11) ============================================================
+
+
+def _no_monitoring(rendered: dict[str, Any]) -> str:
+    return _text(next(s for s in rendered["sections"] if s["key"] == "no_monitoring"))
+
+
+@pytest.mark.parametrize(
+    ("code", "on", "off"),
+    [
+        ("en", "runs in strict data mode", "does not run in strict data mode"),
+        ("de", "läuft im strengen Datenmodus", "läuft nicht im strengen Datenmodus"),
+    ],
+)
+def test_the_notice_states_which_data_mode_the_installation_runs(
+    code: str, on: str, off: str
+) -> None:
+    strict = _no_monitoring(notice.render(code, _installation(strict_data=True)))
+    relaxed = _no_monitoring(notice.render(code, _installation(strict_data=False)))
+
+    assert on in strict and off not in strict
+    assert off in relaxed and on not in relaxed
+
+
+def test_the_strict_notice_says_who_sees_people_and_that_nobody_sees_latency_per_person() -> None:
+    """What the mode means, in the words a works council reads: content, figures per person,
+    names and keys on requests, persons in findings — and response times per person for nobody."""
+    said = _no_monitoring(notice.render("en", _installation(strict_data=True)))
+
+    assert "read only by Global Administrators and IT Security" in said
+    assert "Consumption figures per person, the name and API key on a request record" in said
+    assert "security finding or block" in said
+    assert "to the person concerned" in said
+    assert "Response times are not evaluated per person, for anybody" in said
+
+
+def test_the_open_notice_describes_each_use_case_s_own_setting() -> None:
+    said = _no_monitoring(notice.render("en", _installation(strict_data=False)))
+
+    assert "each use case decides who inside it reads content" in said
+    assert "“every member”" in said and "“own requests only”" in said
+
+
+def test_the_installation_s_mode_is_what_the_notice_states() -> None:
+    assert notice.Installation.of(ManagementSettings(strict_data_mode=True), ()).strict_data
+    assert not notice.Installation.of(ManagementSettings(strict_data_mode=False), ()).strict_data
+
+
+@pytest.mark.parametrize("strict", [True, False], ids=["strict", "open"])
+def test_the_served_notice_states_the_configured_mode(
+    configured: dict[str, Any], strict: bool
+) -> None:
+    configured["strict_data_mode"] = strict
+
+    said = _no_monitoring(_client(_user("anna")).get(f"{NOTICE}?language=en").json())
+
+    assert ("runs in strict data mode" in said) is strict
+
+
+def test_in_strict_mode_a_role_that_may_not_see_people_reads_its_rows_without_them() -> None:
+    """IT Steuerung keeps `report.read_all`, but under the mode it no longer reaches anybody's
+    figures per person — and its line must not claim it does. IT Security, which may see people,
+    keeps the full phrase."""
+    roles = (
+        RoleDefinition("steuerung", "Steuerung", (), frozenset({Permission.REPORT_READ_ALL})),
+        RoleDefinition(
+            "security",
+            "Security",
+            (),
+            frozenset({Permission.REPORT_READ_ALL, Permission.INCIDENT_INVESTIGATE}),
+        ),
+    )
+    strict = _access_items(
+        notice.render(
+            "en", notice.Installation.of(ManagementSettings(strict_data_mode=True), roles)
+        )
+    )
+    relaxed = _access_items(
+        notice.render(
+            "en", notice.Installation.of(ManagementSettings(strict_data_mode=False), roles)
+        )
+    )
+
+    assert strict[0] == (
+        "Steuerung: see the consumption of every use case, including as an export, without "
+        "anybody else's figures per person"
+    )
+    assert strict[1].startswith(
+        "Security: see consumption per person in every use case, including as an export"
+    )
+    assert (
+        relaxed[0]
+        == "Steuerung: see consumption per person in every use case, including as an export"
+    )

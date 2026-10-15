@@ -41,6 +41,8 @@ function setup(
     canManage?: boolean;
     /** The answer to "this deletes stored content — go ahead?". */
     confirmAnswer?: boolean;
+    /** Whether the installation runs strict data mode, as `/me` said. */
+    strictData?: boolean;
   } = {},
 ) {
   TestBed.resetTestingModule();
@@ -75,6 +77,7 @@ function setup(
   fixture.componentRef.setInput('useCase', useCase);
   fixture.componentRef.setInput('canManage', options.canManage ?? true);
   fixture.componentRef.setInput('shown', true);
+  fixture.componentRef.setInput('strictData', options.strictData ?? false);
   fixture.componentInstance.saved.subscribe((value) => saved.push(value));
   fixture.detectChanges();
   const html = () => fixture.nativeElement as HTMLElement;
@@ -367,5 +370,79 @@ describe('DataProtectionPanel — a refused save', () => {
     expect(harness.component.retentionDays()).toBe(30);
     expect(harness.saved).toEqual([]);
     expect(harness.component.canSaveRetention()).toBe(true);
+  });
+});
+
+describe('DataProtectionPanel — strict data mode (`FRD-627` FR-3)', () => {
+  const OVERSIGHT: UseCase = { ...USE_CASE, payload_visibility: 'oversight' as const };
+
+  it('offers only "Not stored" and "Oversight roles only", and says why the others are gone', () => {
+    const harness = setup({ strictData: true, useCase: OVERSIGHT });
+    const offered = Array.from(
+      harness.html().querySelectorAll<HTMLInputElement>('input[name="content_mode"]'),
+    ).map((radio) => radio.value);
+
+    expect(offered).toEqual(['not-stored', 'oversight']);
+    expect(harness.radio('oversight')?.checked).toBe(true);
+    const why = harness.html().querySelector('[data-testid="strict-data-modes"]');
+    expect(why?.textContent).toContain('strict data mode');
+    expect(why?.textContent).toContain('AIRA_STRICT_DATA_MODE');
+    expect(why?.textContent).toContain('Global Administrators and IT Security');
+    // No other role is named as a reader: strict mode leaves no "any role given that permission".
+    expect(harness.text()).not.toContain('any role given that permission');
+  });
+
+  it('offers all four modes and no strict sentence when the mode is off', () => {
+    const harness = setup({ strictData: false });
+
+    expect(harness.html().querySelectorAll('input[name="content_mode"]').length).toBe(4);
+    expect(harness.html().querySelector('[data-testid="strict-data-modes"]')).toBeNull();
+    expect(harness.text()).toContain('any role given that permission');
+  });
+
+  it('reads a stored use case as oversight, whatever an older server still reports', () => {
+    // Saving from here then sends `oversight`, never the `members` the server would refuse.
+    const harness = setup({ strictData: true });
+
+    expect(harness.radio('oversight')?.checked).toBe(true);
+    expect(harness.component.retentionChanged()).toBe(false);
+    harness.component.retentionDays.set(14);
+    harness.component.saveRetention();
+    expect(sentUpdate(harness.calls)).toEqual({
+      store_payloads: true,
+      payload_visibility: 'oversight',
+      retention_days: 14,
+    });
+  });
+
+  it('saves "not stored" from the DOM in strict mode', () => {
+    const harness = setup({ strictData: true, useCase: OVERSIGHT });
+    harness.radio('not-stored')!.click();
+    harness.fixture.detectChanges();
+    harness.component.saveRetention();
+
+    expect(sentUpdate(harness.calls)).toEqual({ store_payloads: false });
+  });
+
+  it('tells a reader who may not change it that the installation is strict', () => {
+    const strict = setup({ strictData: true, canManage: false, useCase: OVERSIGHT });
+    expect(
+      strict.html().querySelector('[data-testid="strict-data-readonly"]')?.textContent,
+    ).toContain('strict data mode');
+    expect(
+      strict.html().querySelector('[data-testid="content-mode-readonly"]')?.textContent,
+    ).toContain('Oversight roles only');
+
+    const open = setup({ strictData: false, canManage: false });
+    expect(open.html().querySelector('[data-testid="strict-data-readonly"]')).toBeNull();
+  });
+
+  it('reads the strict mode into modeOf', () => {
+    expect(modeOf({ store_payloads: true, payload_visibility: 'members' }, true)).toBe('oversight');
+    expect(modeOf({ store_payloads: true, payload_visibility: 'own' }, true)).toBe('oversight');
+    expect(modeOf({ store_payloads: false, payload_visibility: 'members' }, true)).toBe(
+      'not-stored',
+    );
+    expect(modeOf({ store_payloads: true, payload_visibility: 'members' }, false)).toBe('members');
   });
 });

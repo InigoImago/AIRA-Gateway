@@ -111,10 +111,14 @@ export interface AccessChange {
 export interface ApiKey {
   prefix: string;
   label: string;
-  /** Who **answers for** the credential — the name every audit row carries (`FRD-604`). */
-  owner: string;
+  /** Who **answers for** the credential — the name every audit row carries (`FRD-604`). `null`
+   *  when strict data mode withholds it from this reader (`owner_withheld`). */
+  owner: string | null;
   /** The human who created it, when that is not the owner (a team's shared credential). */
-  issued_by?: string;
+  issued_by?: string | null;
+  /** The server withheld owner and issuer: strict data mode keeps a key's person with the person
+   *  and with Global Administrators and IT Security. */
+  owner_withheld?: boolean;
   is_active: boolean;
   created_at?: string;
   revoked_at?: string | null;

@@ -33,6 +33,9 @@ from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import PayloadAccess, RequestLog, UseCaseMemberRead, UseCaseRead
 from aira_gateway.payloads import MESSAGES, PayloadRefusal
 
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
+
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
 PROMPT = {"contents": [{"parts": [{"text": "the customer number is 4711"}]}]}
 ANSWER = {"candidates": [{"content": "acknowledged"}]}
@@ -509,7 +512,7 @@ async def test_a_restricted_use_case_does_not_narrow_a_group_granted_administrat
         await session.commit()
 
     async with sessions() as session:
-        assert await restricted_use_cases(session, GROUP_ADMIN) == []
+        assert await restricted_use_cases(session, GROUP_ADMIN, strict_data=False) == []
 
 
 async def test_a_restricted_use_case_still_narrows_a_group_granted_member(sessions) -> None:
@@ -529,7 +532,7 @@ async def test_a_restricted_use_case_still_narrows_a_group_granted_member(sessio
         await session.commit()
 
     async with sessions() as session:
-        assert await restricted_use_cases(session, plain) == ["uc-a"]
+        assert await restricted_use_cases(session, plain, strict_data=False) == ["uc-a"]
 
 
 # ═══ oversight only: stored, and read by nobody in the use case ═════════════════════════════════

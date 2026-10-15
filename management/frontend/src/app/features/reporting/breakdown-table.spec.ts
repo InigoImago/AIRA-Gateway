@@ -178,3 +178,40 @@ describe('BreakdownTable — a spend nobody could compute (FRD-626 FR-18)', () =
     expect(spend.textContent).not.toContain('nothing priced');
   });
 });
+
+describe('BreakdownTable — a split by person in strict data mode (`FRD-627` FR-5)', () => {
+  /** A member row as the gateway sends it in strict mode: no latency keys at all. */
+  function withoutLatency(over: Partial<ReportRow> = {}): ReportRow {
+    const { avg_latency_ms: _avg, max_latency_ms: _max, ...rest } = row(over);
+    return rest;
+  }
+
+  it('has no latency column when the rows carry no latency, and no blank or NaN in its place', () => {
+    const { element, text } = setup(
+      [withoutLatency({ key: 'erika' }), withoutLatency({ key: 'bob' })],
+      'Member',
+    );
+
+    expect(element.querySelector('[data-testid="latency-column"]')).toBeNull();
+    expect(text()).not.toContain('Latency');
+    expect(text()).not.toContain(' ms');
+    expect(text()).not.toContain('NaN');
+    expect(text()).not.toContain('undefined');
+    // Every body row has as many cells as there are headings.
+    const headings = element.querySelectorAll('thead th').length;
+    for (const line of Array.from(element.querySelectorAll('tbody tr'))) {
+      expect(line.children.length).toBe(headings);
+    }
+  });
+
+  it('keeps the latency column where the rows carry it, a dash for none measured', () => {
+    const { element, text } = setup([
+      row({ key: 'model-a' }),
+      row({ key: 'model-b', avg_latency_ms: null, max_latency_ms: null }),
+    ]);
+
+    expect(element.querySelector('[data-testid="latency-column"]')).not.toBeNull();
+    expect(text()).toContain('40 ms / 90 ms');
+    expect(text()).toContain('—');
+  });
+});

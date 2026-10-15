@@ -199,7 +199,9 @@ def _assemble_services(
     # Which use cases a token's Keycloak groups were granted (`FRD-209`); the same cache shape.
     app.state.group_grants = GroupGrantResolver(sessionmaker)
     # What each role may do (`FRD-614`); the same cache shape, refusing rather than admitting.
-    app.state.role_definitions = RoleResolver(sessionmaker, settings.parsed_role_groups())
+    app.state.role_definitions = RoleResolver(
+        sessionmaker, settings.parsed_role_groups(), strict_data=settings.strict_data_mode
+    )
     # Detection reads the rows the writer produces (`ADR-0014`), so every instance sees all the
     # traffic rather than its own share (`FRD-127`).
     app.state.anomalies = AnomalyService(

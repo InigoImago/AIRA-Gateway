@@ -163,9 +163,13 @@ the [gap analysis](docs/GAP-ANALYSIS.md).
   requests and tokens are three views of one load, and the figures are a table as well as a picture.
 - **A request browser**, across use cases for the roles that investigate and inside one for the
   people who run it: which system, whose identity, which machine, what the pipeline objected to.
-- **The prompts and answers themselves**, for the roles entitled to them and inside a use case as
-  far as its `payload_visibility` allows (`members`, `own` or `oversight`) — and **every read writes
+- **The prompts and answers themselves**, for the roles entitled to them — and **every read writes
   a record** of who read what, when, and on what authority.
+- **Strict data mode, on by default**: nobody but the Global Administrator and IT Security sees
+  what a named colleague did. Content is not stored or readable by those two only; figures per
+  person, the name and key on a request and the person a finding names are withheld from everybody
+  else, and nobody sees latency per person. Switched off, each use case decides as far as its
+  `payload_visibility` allows (`members`, `own` or `oversight`). See [`docs/ROLES.md`](docs/ROLES.md).
 - **Anomaly detection.** Seven rule kinds in a closed vocabulary — refusal rate, error rate, spend
   spike, request spike, a new source address for a credential, payload size, blocked-prompt rate —
   evaluated against the request log, including refusals. `alert` is the default because a system

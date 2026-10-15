@@ -26,6 +26,9 @@ from aira_gateway.config import GatewaySettings
 from aira_gateway.reporting.csv_export import BOM, UnknownBreakdown, filename, render
 from aira_gateway.reporting.service import Figures
 
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
+
 #: **Every key here is one `Figures.as_dict()` actually emits**, and a test below checks that claim
 #: against the dataclass rather than against this comment. It did not, and this fixture said
 #: `failed` where the report says `failed_requests` — so the renderer read `failed`, found nothing,

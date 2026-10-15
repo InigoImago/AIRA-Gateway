@@ -107,7 +107,7 @@ interface Overrides {
    * Who is reading. `null` is a signed-in account whose username the server did not give — the
    * condition under which the reader's own cards are not rendered at all.
    */
-  me?: { username: string } | null;
+  me?: { username: string; strict_data?: boolean } | null;
   addMember?: Observable<Membership>;
   removeMember?: Observable<{ revoked_keys: string[] }>;
   issueApiKey?: Observable<unknown>;
@@ -296,6 +296,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
                   username: overrides.me?.username ?? 'erika',
                   email: '',
                   roles: [],
+                  strict_data: overrides.me?.strict_data,
                 }),
         },
       },
@@ -1265,5 +1266,93 @@ describe('UseCaseDetail — whether budgets are enforced', () => {
     (harness.component as unknown as { loadBudgets: () => void }).loadBudgets();
 
     expect(harness.component.enforced()).toBeNull();
+  });
+});
+
+describe('UseCaseDetail — strict data mode (`FRD-627` FR-3, FR-9)', () => {
+  /** Two people's month, and a per-head allowance — everything the section could show. */
+  const peopleReport = (over: Partial<Report>) =>
+    of(
+      emptyReport({
+        by_person: [
+          reportRow({ key: 'erika', requests: 3, cost: '1.00', cost_nanos: 1_000_000_000 }),
+          reportRow({ key: 'bob', requests: 9, cost: '4.00', cost_nanos: 4_000_000_000 }),
+        ],
+        ...over,
+      }),
+    );
+  const ALLOWANCE = of([
+    { scope: 'each_member', period: 'month', limit_cost: '20.00', enabled: true },
+  ] as Budget[]);
+
+  const membersTab = (harness: Harness) => {
+    harness.component.selectTab('members');
+    harness.fixture.detectChanges();
+    return harness.html();
+  };
+
+  it('leaves out what each person used for a limited reader, and says where their own figures are', () => {
+    const harness = setup({
+      budgets: ALLOWANCE,
+      useCaseReport: peopleReport({
+        strict_data: true,
+        people_limited: true,
+        by_person: [reportRow({ key: 'erika', requests: 3, cost: '1.00' })],
+      }),
+    });
+    const html = membersTab(harness);
+
+    expect(html.querySelector('app-people-panel')).toBeNull();
+    expect(html.querySelector('[data-testid="person-erika"]')).toBeNull();
+    expect(html.textContent).not.toContain('Left of allowance');
+    const withheld = html.querySelector('[data-testid="people-withheld"]');
+    expect(withheld?.textContent).toContain('Global Administrators and IT Security');
+    expect(withheld?.textContent).toContain('Overview');
+
+    withheld!.querySelector('button')!.click();
+    harness.fixture.detectChanges();
+    expect(harness.component.tab()).toBe('overview');
+    // …where the reader's own figures still are.
+    expect(harness.html().querySelector('[data-testid="person-erika"]')).not.toBeNull();
+  });
+
+  it('still shows every person to a reader the gateway did not limit', () => {
+    // Global Administrator and IT Security: strict, but not `people_limited`.
+    const harness = setup({
+      budgets: ALLOWANCE,
+      useCaseReport: peopleReport({ strict_data: true, people_limited: false }),
+    });
+    const html = membersTab(harness);
+
+    expect(html.querySelector('[data-testid="people-withheld"]')).toBeNull();
+    expect(html.querySelector('[data-testid="person-erika"]')).not.toBeNull();
+    expect(html.querySelector('[data-testid="person-bob"]')).not.toBeNull();
+    expect(html.textContent).toContain('Left of allowance');
+  });
+
+  it('narrows to the reader, not hides, when only the use case limits and the mode is off', () => {
+    const harness = setup({
+      useCaseReport: peopleReport({
+        strict_data: false,
+        people_limited: true,
+        by_person: [reportRow({ key: 'erika', requests: 3 })],
+      }),
+    });
+    const html = membersTab(harness);
+
+    expect(html.querySelector('[data-testid="people-withheld"]')).toBeNull();
+    expect(html.querySelector('[data-testid="person-erika"]')).not.toBeNull();
+    expect(html.querySelector('[data-testid="people-why-only"]')).not.toBeNull();
+  });
+
+  it("hands the installation's mode from /me to the data-protection panel", () => {
+    const strict = setup({ me: { username: 'erika', strict_data: true } });
+    strict.fixture.detectChanges();
+    expect(strict.html().querySelectorAll('input[name="content_mode"]').length).toBe(2);
+    expect(strict.html().querySelector('[data-testid="strict-data-modes"]')).not.toBeNull();
+
+    const open = setup({ me: { username: 'erika', strict_data: false } });
+    open.fixture.detectChanges();
+    expect(open.html().querySelectorAll('input[name="content_mode"]').length).toBe(4);
   });
 });

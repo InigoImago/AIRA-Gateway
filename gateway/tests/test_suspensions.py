@@ -24,6 +24,9 @@ from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import AnomalyRuleRead, RequestLog
 
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
+
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 
 

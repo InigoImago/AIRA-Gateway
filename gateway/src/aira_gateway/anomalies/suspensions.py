@@ -257,11 +257,15 @@ def suspension_from_rule(
     )
 
 
-def as_dict(row: AccessSuspension, *, addresses: bool = True) -> dict[str, object]:
+def as_dict(
+    row: AccessSuspension, *, addresses: bool = True, withheld: bool = False
+) -> dict[str, object]:
     """The wire shape. Written once so the list endpoint and the create response agree.
 
     A rule's reason is its finding's description, so without ``addresses`` it is cut as the
     finding is (`FRD-502` FR-12). A person's reason is what they chose to write, and stays.
+    ``withheld`` drops the person or key the stop names, for a reader who under strict data mode
+    does not see people (`FRD-627` FR-8); the caller decides it, since only it knows the reader.
     """
     reason = row.reason
     if not addresses and row.author.startswith(RULE_AUTHOR):
@@ -271,7 +275,8 @@ def as_dict(row: AccessSuspension, *, addresses: bool = True) -> dict[str, objec
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "use_case": row.use_case,
         "target": row.target,
-        "target_value": row.target_value,
+        "target_value": None if withheld else row.target_value,
+        "target_withheld": withheld,
         "action": row.action,
         "throttle_rpm": row.throttle_rpm,
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,

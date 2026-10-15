@@ -21,13 +21,16 @@ from aira_common.directory import DirectoryUnavailable
 from aira_common.permissions import (
     CATALOGUE,
     GRANTABLE,
+    STRICT_DATA_RESERVED,
     Permission,
     RoleDefinition,
+    grantable,
 )
 from aira_common.roles import Role
 from aira_management.apps.directory.service import build_directory
 from aira_management.apps.roles.models import RoleChange, StoredRole
 from aira_management.apps.usecases.events import emit
+from aira_management.config.runtime import get_settings
 from aira_management.pagination import ConsolePagination
 from aira_management.rbac import requires, role_definitions, role_groups
 
@@ -104,6 +107,20 @@ def _permissions(raw: Any) -> list[str]:
                 "permissions": [
                     f"{', '.join(sorted(str(p) for p in reserved))} is held by the Global "
                     "Administrator alone and cannot be given to a role."
+                ]
+            }
+        )
+    # Strict data mode (`FRD-627` FR-2): what sees a person stays with the two incident roles. Asked
+    # of the setting at the write, as the read asks it, so a grant refused here is never one the
+    # read would have dropped silently.
+    withheld = wanted - grantable(strict_data=get_settings().strict_data_mode)
+    if withheld:
+        raise ValidationError(
+            {
+                "permissions": [
+                    f"{', '.join(sorted(str(p) for p in withheld))} is held by Global "
+                    "Administrator and IT Security only while strict data mode is on "
+                    "(AIRA_STRICT_DATA_MODE), and cannot be given to another role."
                 ]
             }
         )
@@ -190,7 +207,14 @@ class RoleViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def catalogue(self, request: Request) -> Response:  # noqa: ARG002
-        """Every permission with its area and label, for the console's checkboxes (FR-10)."""
+        """Every permission with its area and label, for the console's checkboxes (FR-10).
+
+        ``grantable`` is whether a stored role may hold it now, and ``strict_data_reserved``
+        whether strict data mode is what withholds it (`FRD-627` FR-12) — so the console can say
+        why, rather than restating which permissions the mode reserves.
+        """
+        strict = get_settings().strict_data_mode
+        allowed = grantable(strict_data=strict)
         return Response(
             [
                 {
@@ -199,6 +223,8 @@ class RoleViewSet(viewsets.ViewSet):
                     "label": info.label,
                     "sensitive": info.sensitive,
                     "reserved": info.reserved,
+                    "grantable": permission in allowed,
+                    "strict_data_reserved": strict and permission in STRICT_DATA_RESERVED,
                 }
                 for permission, info in CATALOGUE.items()
             ]

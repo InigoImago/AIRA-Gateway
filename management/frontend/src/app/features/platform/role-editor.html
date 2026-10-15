@@ -85,7 +85,8 @@
                 type="checkbox"
                 [name]="permission.name"
                 [attr.data-testid]="'permission-' + permission.name"
-                [checked]="has(permission.name)"
+                [checked]="has(permission.name) && !lockedWhy(permission)"
+                [disabled]="lockedWhy(permission) !== null"
                 (change)="toggle(permission.name, $any($event.target).checked)"
               />
               <span>
@@ -97,6 +98,11 @@
                     [title]="sensitiveExplained"
                     >⚠ Sensitive</span
                   >
+                }
+                @if (lockedWhy(permission); as why) {
+                  <span class="field__hint" [attr.data-testid]="'locked-' + permission.name">{{
+                    why
+                  }}</span>
                 }
               </span>
             </label>

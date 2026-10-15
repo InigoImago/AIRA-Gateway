@@ -78,6 +78,9 @@ services:
       AIRA_REDACT_PATTERNS: ${AIRA_REDACT_PATTERNS:-}
       AIRA_REQUIRE_USE_CASE: ${AIRA_REQUIRE_USE_CASE:-true}
       AIRA_STORE_PAYLOADS: ${AIRA_STORE_PAYLOADS:-true}
+      AIRA_STRICT_DATA_MODE: ${AIRA_STRICT_DATA_MODE:-true}
+      # The key a person's name is pseudonymised with in telemetry and logs. From Vault.
+      AIRA_PSEUDONYM_SECRET: ${AIRA_PSEUDONYM_SECRET:-}
       AIRA_TRUSTED_PROXY_HOPS: ${AIRA_TRUSTED_PROXY_HOPS:-1}
       AIRA_TRUST_FORWARDED_FOR: ${AIRA_TRUST_FORWARDED_FOR:-false}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
@@ -296,6 +299,10 @@ services:
       # The same three the gateway obeys, so the notice states what the gateway does rather than
       # a default Management assumed.
       AIRA_STORE_PAYLOADS: ${AIRA_STORE_PAYLOADS:-true}
+      # Both planes apply strict data mode when they read; the notice states it.
+      AIRA_STRICT_DATA_MODE: ${AIRA_STRICT_DATA_MODE:-true}
+      # The key a person's name is pseudonymised with in telemetry and logs. From Vault.
+      AIRA_PSEUDONYM_SECRET: ${AIRA_PSEUDONYM_SECRET:-}
       AIRA_DEFAULT_RETENTION_DAYS: ${AIRA_DEFAULT_RETENTION_DAYS:-7}
       AIRA_LOG_RETENTION_DAYS: ${AIRA_LOG_RETENTION_DAYS:-0}
     depends_on:

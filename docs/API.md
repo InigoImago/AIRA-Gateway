@@ -149,7 +149,7 @@ thins every span. The guides say the rest.
 | `GET /kira/api/external/models` | any credential | The served models that have a KIRA id, by that id, with their capabilities, limits, thinking and embedding options. |
 | `GET /kira/api/external/health` | public; the upstreams are listed only to whom `/readyz` shows its diagnosis | The gateway, and each upstream from the background probe's last verdict; `503` when any of them is unhealthy. |
 | `GET /kira/api/external/version-info` | public | Build metadata, `null` where none was set. |
-| `GET /kira/api/external/ki-usage` | `report.read_all` | Requests and tokens per member between `startDatum` and `endDatum`, `model_id` always `0`. |
+| `GET /kira/api/external/ki-usage` | `report.read_all` | Requests and tokens per member between `startDatum` and `endDatum`, `model_id` always `0`. Under strict data mode, per **use case**, its slug in `user_id`. |
 
 The four Gemini verbs are one route, `/v1beta/models/{model}:{verb}`, split at the **last** colon so
 a model name may contain one; any other verb, `:countTokens` among them, is `400`.
@@ -253,7 +253,7 @@ written in one transaction, so neither happens without the other.
 
 | Operation         | Who may call | Answers |
 | ----------------- | ------------ | ------- |
-| `GET /api/v1/me`  | signed in | `{subject, username, email, roles, role_labels, permissions, use_cases, api_key_default_days, api_key_max_days, currency, may_test}` — what the server decides, so the console asks rather than guesses: `permissions` from the caller's roles, `use_cases` the slugs the token's `/use-cases/<slug>` groups name, `may_test` whether the pipeline tests are offered. |
+| `GET /api/v1/me`  | signed in | `{subject, username, email, roles, role_labels, permissions, use_cases, api_key_default_days, api_key_max_days, currency, may_test, strict_data}` — what the server decides, so the console asks rather than guesses: `permissions` from the caller's roles, `use_cases` the slugs the token's `/use-cases/<slug>` groups name, `may_test` whether the pipeline tests are offered, `strict_data` whether the installation runs strict data mode (`AIRA_STRICT_DATA_MODE`). |
 | `GET /api/v1/`    | signed in | DRF's router index, `{"use-cases": "<url>"}`. The console does not call it. |
 
 ### 3.3 Use cases
@@ -262,7 +262,9 @@ written in one transaction, so neither happens without the other.
 `description`, `processing_notes`, `store_payloads`, `payload_visibility`, `tools_enabled`,
 `include_reasoning`, `prompt_caching_enabled`, `prompt_cache_ttl`, `retention_days`,
 `allowed_models`, `created_at`, `updated_at` and `permissions` — what this caller may do here:
-`can_admin`, `can_manage`, `is_member`, `may_call`.
+`can_admin`, `can_manage`, `is_member`, `may_call`. While strict data mode is on, `payload_visibility`
+is answered as `oversight` whatever is stored, and saving any other value is refused `400`; the
+stored value is kept and is what the event carries, so turning the mode off restores it.
 
 | Operation | Who may call | Answers |
 | --------- | ------------ | ------- |
@@ -288,7 +290,7 @@ grant revokes every key whose owner no longer holds any grant on the use case.
 | `GET /api/v1/use-cases/{slug}/groups/` | sees it | `[{group_path, role, granted_by, reaches, created_at}]`. |
 | `POST /api/v1/use-cases/{slug}/groups/` | admin | Body `{group_path, role}`. `201` the grant. The path is checked for its shape, not for existence: a group Keycloak does not have yet can be granted, so a mistyped path makes a grant that reaches nobody. `reaches` counts the people Management has seen sign in with that group — `0` says nobody known holds it yet. Emits `use_case_group.granted`. |
 | `DELETE /api/v1/use-cases/{slug}/groups/revoke/` | admin | The path in `?group_path=`, because a group path has slashes. `200 {revoked_keys}`. Emits `use_case_group.revoked`, and `api_key.revoked` per key revoked. |
-| `GET /api/v1/use-cases/{slug}/api-keys/` | sees it | `[{prefix, label, owner, issued_by, is_active, created_at, revoked_at, expires_at}]` — never a key. |
+| `GET /api/v1/use-cases/{slug}/api-keys/` | sees it | `[{prefix, label, owner, issued_by, owner_withheld, is_active, created_at, revoked_at, expires_at}]` — never a key. Under strict data mode `owner` and `issued_by` are `null` (`owner_withheld: true`) except to them and to `incident.investigate`. |
 | `POST /api/v1/use-cases/{slug}/api-keys/` | a grant, or `usecase.manage_all` — whose holder is then made a member, because a key must rest on a grant that can end; naming another `owner` needs admin | Body `{label, owner, expires_in_days}`, all optional: the owner defaults to the caller, the lifetime to `AIRA_API_KEY_DEFAULT_DAYS` and at most `AIRA_API_KEY_MAX_DAYS`. `201 {api_key, prefix, label, owner, issued_by, use_case, expires_at}` — **the key is shown this once**; only its hash is kept. Emits `api_key.created`, and `membership.upserted` when the owner held no grant. |
 | `DELETE /api/v1/use-cases/{slug}/api-keys/{prefix}/` | admin | `204`; `400` when no active key has that prefix. Emits `api_key.revoked`. |
 
@@ -385,11 +387,11 @@ role is written to the role change log with its author and the role before and a
 | `GET /api/v1/directory/` | `directory.search`, or an `admin` grant on any live use case | `?q=`, at least two characters. `{results: [{kind, id, label, detail}], source}` — `kind` `user` or `group`; `source` `keycloak`, or `local` (what Management already knows) when no directory client is configured or it cannot be reached, or `none` for a shorter query. Every search is logged; nothing is written to Keycloak. |
 | `GET /api/v1/roles/` | `role.read` | Every role: `[{slug, label, group_paths, permissions, builtin, fixed}]`. |
 | `POST /api/v1/roles/` | `role.manage` | Body `{label, group_path, permissions}`. The group must exist in Keycloak and confer no other role — `503` when Keycloak cannot be asked. `201`. Emits `role.upserted`. |
-| `GET /api/v1/roles/catalogue/` | `role.read` | Every permission: `[{name, area, label, sensitive, reserved}]`. |
+| `GET /api/v1/roles/catalogue/` | `role.read` | Every permission: `[{name, area, label, sensitive, reserved, grantable, strict_data_reserved}]` — `grantable` whether a stored role may hold it now, `strict_data_reserved` whether strict data mode is what withholds it. |
 | `GET /api/v1/roles/changes/` | `role.read` | The change log, paged; `?role=`. Each `{id, role, action, actor, at, before, after}`. |
 | `POST /api/v1/roles/check-group/` | `role.manage` | Body `{group_path}`: `200 {group_path, exists: true}`, or the refusal a save would give. |
 | `GET /api/v1/roles/{slug}/` | `role.read` | One role. |
-| `PATCH /api/v1/roles/{slug}/` | `role.manage` | `200`. The fixed roles (`global-admin`, `it-security`) are refused `403`; a built-in role changes only its permissions. Emits `role.upserted`. |
+| `PATCH /api/v1/roles/{slug}/` | `role.manage` | `200`. The fixed roles (`global-admin`, `it-security`) are refused `403`; a built-in role changes only its permissions. While strict data mode is on, `payload.read_any` and `incident.investigate` are refused `400` for every role, here and on `POST`. Emits `role.upserted`. |
 | `DELETE /api/v1/roles/{slug}/` | `role.manage` | `204`; a built-in role is refused `403`. Emits `role.removed`. |
 | `GET /api/v1/privacy-notice` | signed in | `?language=`, else the browser's `Accept-Language`. The notice, its `version`, `edition` and `languages`, and for the caller `mode`, `due` and `acknowledged_at`. |
 | `POST /api/v1/privacy-notice/acknowledgements` | signed in | Body `{version, language}`. `201` the first time, `200` again; `409` when the notice changed while it was open. |

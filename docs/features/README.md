@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**95 of 99 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**96 of 100 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -110,3 +110,4 @@ status that goes stale in the copy nobody opens.
 | [624](FRD-624-speech-output-on-the-gemini-surface.md) | Speech output on the Gemini surface | 8 | ✅ Done |
 | [625](FRD-625-privacy-notice.md) | The privacy notice, written from a register the schema is checked against | 6 | ✅ Done |
 | [626](FRD-626-usage-over-time.md) | Usage over time: which model, when, what it cost | 6 (Governance & Analytics) | ✅ Done |
+| [627](FRD-627-strict-data-mode.md) | Strict data mode | 6 (reporting) | ✅ Built |

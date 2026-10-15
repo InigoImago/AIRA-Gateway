@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, input, output, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { finalize } from 'rxjs';
 import { UseCase } from '../../core/api/models';
@@ -48,12 +48,31 @@ export const CONTENT_MODES: readonly { value: ContentMode; label: string; explai
   },
 ];
 
-/** The mode a use case is in. Not stored wins: with nothing written, who may read it is moot. */
+/**
+ * The two modes strict data mode leaves (`AIRA_STRICT_DATA_MODE`): nothing stored, or read by
+ * Global Administrators and IT Security only. The others would let somebody inside the use case
+ * read a colleague's requests, which the installation has ruled out for every use case.
+ */
+export const STRICT_MODES: readonly ContentMode[] = ['not-stored', 'oversight'];
+
+/** What *Oversight roles only* means under strict data mode, where no other role may read. */
+const STRICT_OVERSIGHT_EXPLAINS =
+  'Kept for oversight and read by nobody in this use case — not by its administrators either. ' +
+  'Only Global Administrators and IT Security can open a request, and every such read is ' +
+  'recorded. The use case’s totals stay visible here; figures per person show each reader their ' +
+  'own.';
+
+/**
+ * The mode a use case is in. Not stored wins: with nothing written, who may read it is moot. Under
+ * strict data mode anything stored is read as oversight, as the server enforces it — whatever an
+ * older server still reports.
+ */
 export function modeOf(
   useCase: Pick<UseCase, 'store_payloads' | 'payload_visibility'> | null,
+  strict = false,
 ): ContentMode {
   if (useCase?.store_payloads === false) return 'not-stored';
-  if (useCase?.payload_visibility === 'oversight') return 'oversight';
+  if (strict || useCase?.payload_visibility === 'oversight') return 'oversight';
   return useCase?.payload_visibility === 'own' ? 'admins-and-own' : 'members';
 }
 
@@ -89,6 +108,11 @@ export class DataProtectionPanel implements OnInit {
   readonly useCase = input<UseCase | null>(null);
   readonly canManage = input(false);
   /**
+   * Whether the installation runs strict data mode, from `/me`. An operator's setting, not this
+   * use case's: only two modes are offered, and the panel says why.
+   */
+  readonly strictData = input(false);
+  /**
    * Whether the Overview tab is open. The panel stays on the page either way, so an unsaved
    * change survives a look at another tab.
    */
@@ -100,7 +124,16 @@ export class DataProtectionPanel implements OnInit {
   private readonly confirmService = inject(ConfirmService);
   protected readonly feedback = inject(PageFeedback);
 
-  protected readonly modes = CONTENT_MODES;
+  /** The modes on offer: all four, or the two strict data mode leaves. */
+  protected readonly modes = computed(() =>
+    this.strictData()
+      ? CONTENT_MODES.filter((option) => STRICT_MODES.includes(option.value)).map((option) =>
+          option.value === 'oversight'
+            ? { ...option, explains: STRICT_OVERSIGHT_EXPLAINS }
+            : option,
+        )
+      : CONTENT_MODES,
+  );
   /** This panel's save is in flight — its own, so the form beside it keeps its label. */
   protected readonly saving = signal(false);
   protected readonly retentionDays = signal<number | null>(null);
@@ -117,7 +150,7 @@ export class DataProtectionPanel implements OnInit {
 
   /** The saved mode in words, for a reader who may not change it. */
   protected currentLabel(): string {
-    const current = modeOf(this.useCase());
+    const current = modeOf(this.useCase(), this.strictData());
     return CONTENT_MODES.find((option) => option.value === current)?.label ?? '';
   }
 
@@ -135,7 +168,7 @@ export class DataProtectionPanel implements OnInit {
   protected retentionChanged(): boolean {
     return (
       this.retentionDays() !== (this.useCase()?.retention_days ?? null) ||
-      this.mode() !== modeOf(this.useCase())
+      this.mode() !== modeOf(this.useCase(), this.strictData())
     );
   }
 
@@ -205,6 +238,6 @@ export class DataProtectionPanel implements OnInit {
 
   private fill(useCase: UseCase | null): void {
     this.retentionDays.set(useCase?.retention_days ?? null);
-    this.mode.set(modeOf(useCase));
+    this.mode.set(modeOf(useCase, this.strictData()));
   }
 }

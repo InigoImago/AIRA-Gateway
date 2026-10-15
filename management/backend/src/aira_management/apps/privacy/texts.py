@@ -62,6 +62,11 @@ LABELS: tuple[str, ...] = (
 #: that may do none of it.
 ACCESS: tuple[str, ...] = (*(str(p) for p in PERSONAL_DATA_PERMISSIONS), "none")
 
+#: The permissions whose phrase is narrower under strict data mode (`FRD-627`) for a role that may
+#: not investigate incidents: they still reach every row and figure, but no longer the person on it.
+#: `notice.access` prints the `[access_strict]` phrase for these instead of the `[access]` one.
+ACCESS_STRICT: tuple[str, ...] = ("trace.read_all", "report.read_all", "anomaly.read_all")
+
 #: What `notice.render` fills in from this installation's configuration, and nothing else.
 PLACEHOLDERS: frozenset[str] = frozenset(
     {
@@ -74,6 +79,7 @@ PLACEHOLDERS: frozenset[str] = frozenset(
         "key_lifetime",
         "key_max_lifetime",
         "outbox_retention",
+        "data_mode",
     }
 )
 
@@ -84,6 +90,8 @@ VALUES: tuple[str, ...] = (
     "no_limit",
     "content_stored",
     "content_not_stored",
+    "strict_data_on",
+    "strict_data_off",
     "unset_controller",
     "unset_dpo_contact",
     "unset_works_agreement",
@@ -111,6 +119,8 @@ class Language:
     labels: MappingProxyType[str, str]
     values: MappingProxyType[str, str]
     access: MappingProxyType[str, str]
+    #: The narrower phrases strict data mode prints, keyed as `access` (`ACCESS_STRICT`).
+    access_strict: MappingProxyType[str, str]
     sections: MappingProxyType[str, Section]
     #: Activity key → field → text.
     activities: MappingProxyType[str, MappingProxyType[str, str]]
@@ -127,6 +137,7 @@ def strings(language: Language) -> dict[str, str]:
     found |= {f"labels.{key}": text for key, text in language.labels.items()}
     found |= {f"values.{key}": text for key, text in language.values.items()}
     found |= {f"access.{key}": text for key, text in language.access.items()}
+    found |= {f"access_strict.{key}": text for key, text in language.access_strict.items()}
     for key, section in language.sections.items():
         found[f"sections.{key}.title"] = section.title
         for index, text in enumerate(section.paragraphs):
@@ -183,9 +194,12 @@ def parse(code: str, raw: dict[str, Any]) -> Language:
     labels = _keys("labels", raw.get("labels"), LABELS, code)
     values = _keys("values", raw.get("values"), VALUES, code)
     access = _keys("access", raw.get("access"), ACCESS, code)
+    access_strict = _keys("access_strict", raw.get("access_strict"), ACCESS_STRICT, code)
     sections = _keys("sections", raw.get("sections"), SECTIONS, code)
     activities = _keys("activities", raw.get("activities"), ACTIVITY_KEYS, code)
-    unknown = sorted(set(raw) - {"meta", "labels", "values", "access", "sections", "activities"})
+    unknown = sorted(
+        set(raw) - {"meta", "labels", "values", "access", "access_strict", "sections", "activities"}
+    )
     if unknown:
         raise NoticeTextError(f"{code}.toml: unknown tables {unknown}")
 
@@ -217,6 +231,9 @@ def parse(code: str, raw: dict[str, Any]) -> Language:
         labels=MappingProxyType({k: _text(f"labels.{k}", labels[k], code) for k in LABELS}),
         values=MappingProxyType({k: _text(f"values.{k}", values[k], code) for k in VALUES}),
         access=MappingProxyType({k: _text(f"access.{k}", access[k], code) for k in ACCESS}),
+        access_strict=MappingProxyType(
+            {k: _text(f"access_strict.{k}", access_strict[k], code) for k in ACCESS_STRICT}
+        ),
         sections=MappingProxyType(parsed_sections),
         activities=MappingProxyType(parsed_activities),
     )

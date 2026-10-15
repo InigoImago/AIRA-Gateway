@@ -125,7 +125,9 @@ def test_the_permission_table_is_the_engines() -> None:
 
     rows = _permission_rows()
     assert set(rows) == {str(permission) for permission in CATALOGUE}, "§2 lists other permissions"
-    for role, column in zip(builtin_roles({}), (3, 4, 5), strict=True):
+    # The default installation: strict data mode on. The built-in defaults hold nothing it reserves,
+    # so the table reads the same either way.
+    for role, column in zip(builtin_roles({}, strict_data=True), (3, 4, 5), strict=True):
         for permission in CATALOGUE:
             ticked = rows[str(permission)][column] == "✓"
             assert ticked == (permission in role.permissions), f"{role.slug} / {permission}"

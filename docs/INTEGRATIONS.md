@@ -1178,6 +1178,17 @@ question before wiring it up, and know what a SIEM receives: a span per request 
 sampled, with the metrics and log lines whole — a feed, not the audit trail, which is the rows in
 the gateway's database ([§1](#1-postgresql)).
 
+**Under strict data mode spans and log lines name nobody.** `aira.subject`, and every person field
+of a log line, carries `p-` and a keyed hash of the name instead: the same person is always the same
+pseudonym, so a SIEM can still follow one caller, and nobody reads the name off it. The key is
+`AIRA_PSEUDONYM_SECRET`, from Vault and shared by both planes; without it each process draws its own
+and says so once, and a person's pseudonym then differs between processes. `aira.credential` (a key
+prefix) and `aira.source_ip` stay, because an incident needs them — so who may query the tracing
+backend and the SIEM is still that system's access control: grant it to IT Security. To learn who a
+pseudonym is, follow the span's trace id to the request's audit row, which the incident roles read.
+The shipped Grafana dashboard selects no caller, and an anonymous visitor there is a Viewer, who
+cannot query spans ad hoc.
+
 If a flat shape is what you need, the collector is where to produce it: this build ships the
 `file`, `kafka`, `elasticsearch`, `opensearch`, `splunk_hec` and `syslog` exporters alongside
 `otlphttp`, and those speak their destinations' own formats rather than OTLP.

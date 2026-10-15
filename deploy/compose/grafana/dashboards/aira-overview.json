@@ -48,7 +48,7 @@
             "uid": "tempo"
           },
           "queryType": "traceql",
-          "query": "{ span.aira.operation != nil } | select(span.aira.use_case, span.aira.model, span.aira.outcome, span.aira.status, span.aira.total_tokens, span.aira.subject)",
+          "query": "{ span.aira.operation != nil } | select(span.aira.use_case, span.aira.model, span.aira.outcome, span.aira.status, span.aira.total_tokens)",
           "limit": 50,
           "tableType": "spans"
         }
@@ -79,7 +79,7 @@
             "uid": "tempo"
           },
           "queryType": "traceql",
-          "query": "{ span.aira.outcome != \"served\" } | select(span.aira.use_case, span.aira.model, span.aira.outcome, span.aira.status, span.aira.subject)",
+          "query": "{ span.aira.outcome != \"served\" } | select(span.aira.use_case, span.aira.model, span.aira.outcome, span.aira.status)",
           "limit": 50,
           "tableType": "spans"
         }

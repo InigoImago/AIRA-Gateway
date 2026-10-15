@@ -211,15 +211,19 @@ async def ki_usage(request: Request, principal: Principal = Depends(require_prin
     )
 
     # The predecessor keys usage by (user, model); the report aggregates the two separately. Rows
-    # are therefore per user with model id 0, rather than a fabricated cross-tabulation.
+    # are therefore per user with model id 0, rather than a fabricated cross-tabulation. Under
+    # strict data mode a row is a **use case**, its slug in `user_id`, for every caller: usage per
+    # person is what the mode withholds, and the shape stays the one a KIRA client parses
+    # (`FRD-627` FR-6).
+    per = "by_use_case" if request.app.state.settings.strict_data_mode else "by_member"
     rows: list[dict[str, Any]] = [
         schemas.KiUsageRow(
-            user_id=member["key"],
+            user_id=str(member["key"] or ""),
             model_id=0,
             entry_count=member["requests"],
             token_input_sum=member["prompt_tokens"],
             token_output_sum=member["completion_tokens"],
         ).model_dump()
-        for member in report["by_member"]
+        for member in report[per]
     ]
     return JSONResponse(rows, headers=surface_headers(request))

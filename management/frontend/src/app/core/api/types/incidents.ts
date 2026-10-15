@@ -24,7 +24,13 @@ export interface AnomalyEvent {
   kind: string;
   use_case: string | null;
   target: string;
-  target_value: string;
+  /** `null` when `target_withheld`. */
+  target_value: string | null;
+  /**
+   * The finding names a person or a key other than the reader, and strict data mode withholds it
+   * from a reader who may not see people. Absent from an older gateway, which never withheld.
+   */
+  target_withheld?: boolean;
   /** What was measured, the threshold it crossed, and how many rows it was drawn from — a finding
    *  nobody can check is a finding nobody acts on. */
   observed: number;
@@ -56,7 +62,10 @@ export interface Suspension {
   created_at: string | null;
   use_case: string | null;
   target: string;
-  target_value: string;
+  /** `null` when `target_withheld`. */
+  target_value: string | null;
+  /** The stop is on a person or a key the reader may not see in strict data mode. */
+  target_withheld?: boolean;
   action: string;
   throttle_rpm: number | null;
   expires_at: string | null;
@@ -91,8 +100,14 @@ export interface Trace {
   provider: string | null;
   region: string | null;
   trace_id: string | null;
-  subject: string;
+  /** `null` when `person_withheld`. */
+  subject: string | null;
   credential: string | null;
+  /**
+   * The row is somebody else's and strict data mode withholds who made it from this reader:
+   * `subject` and `credential` are then `null`. Absent from an older gateway, which never withheld.
+   */
+  person_withheld?: boolean;
   use_case: string | null;
   /** What the model asked to have run (`FRD-131` FR-7) — **names and counts, never arguments**. */
   tool_calls: { declared: number; called: string[] } | null;

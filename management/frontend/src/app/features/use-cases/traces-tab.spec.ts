@@ -65,6 +65,8 @@ interface Options {
   pagesFail?: unknown;
   /** `/me` fails instead of answering. */
   meFails?: boolean;
+  /** Whether `/me` says the installation runs strict data mode. */
+  strictData?: boolean;
 }
 
 function setup(options: Options = {}) {
@@ -87,7 +89,11 @@ function setup(options: Options = {}) {
           get: () =>
             options.meFails
               ? throwError(() => ({ status: 503 }))
-              : of({ roles: options.roles ?? [], permissions: options.permissions ?? [] }),
+              : of({
+                  roles: options.roles ?? [],
+                  permissions: options.permissions ?? [],
+                  strict_data: options.strictData,
+                }),
         },
       },
       {
@@ -1034,5 +1040,92 @@ describe('TracesTab — how stale the list is', () => {
     harness.fixture.detectChanges();
 
     expect(harness.testid('traces-stamp')?.textContent).toContain('3m ago');
+  });
+});
+
+describe('TracesTab — strict data mode (`FRD-627` FR-7)', () => {
+  /** Somebody else's request, as the gateway lists it to a reader who may not see people. */
+  const withheld = trace({ id: 'theirs', subject: null, credential: null, person_withheld: true });
+  const own = trace({ id: 'mine', subject: 'erika', credential: 'aira_ab12' });
+  const page = { traces: [withheld, own], next_cursor: null, scope: 'use_cases' as const };
+
+  it('lists a withheld row as "another member", with no key and no via-key badge', () => {
+    const { element, testid } = setup({ strictData: true, pages: [page] });
+    const theirs = element.querySelector('[data-testid="open-payload-theirs"]')!.closest('tr')!;
+    const mine = element.querySelector('[data-testid="open-payload-mine"]')!.closest('tr')!;
+
+    expect(theirs.textContent).toContain('another member');
+    expect(theirs.querySelector('[data-testid="trace-via-key"]')).toBeNull();
+    expect(
+      theirs.querySelector('[data-testid="trace-person-withheld"]')?.getAttribute('title'),
+    ).toContain('Global Administrators and IT Security');
+    expect(theirs.textContent).not.toContain('null');
+    // The reader's own row keeps its name and its badge.
+    expect(mine.textContent).toContain('erika');
+    expect(mine.querySelector('[data-testid="trace-via-key"]')).not.toBeNull();
+    expect(testid('trace-person-withheld')).not.toBeNull();
+  });
+
+  it('shows no key or badge on a withheld row even if one arrived with it', () => {
+    // The row's flag decides, not whether a value happens to be there: an older gateway that
+    // marked the row and still sent the prefix must not have it rendered.
+    const leaky = trace({
+      id: 'leaky',
+      subject: null,
+      credential: 'aira_ab12',
+      person_withheld: true,
+    });
+    const { testid, openFirst, text } = setup({
+      strictData: true,
+      pages: [{ traces: [leaky], next_cursor: null, scope: 'use_cases' }],
+    });
+
+    expect(testid('trace-via-key')).toBeNull();
+    openFirst();
+    expect(testid('trace-key-withheld')).not.toBeNull();
+    expect(text()).not.toContain('aira_ab12');
+  });
+
+  it('says the key is withheld in the open row, rather than a dash that reads as "no key"', () => {
+    const { openFirst, testid, text } = setup({ strictData: true, pages: [page] });
+    openFirst();
+
+    expect(testid('trace-key-withheld')?.textContent).toContain('withheld');
+    expect(text()).not.toContain('aira_ab12null');
+  });
+
+  it('hides the key filter from a reader who may not see people, and keeps "Only my requests"', () => {
+    const { testid, queries, tab } = setup({ strictData: true, permissions: [], pages: [page] });
+
+    expect(testid('trace-credential')).toBeNull();
+    expect(testid('mine-only')).not.toBeNull();
+    // A prefix left from before `/me` answered is not sent either: the server would refuse it.
+    const typed = tab as unknown as {
+      credential: { set: (v: string) => void };
+      startLive: () => void;
+    };
+    typed.credential.set('aira_ab');
+    typed.startLive();
+    expect(queries.at(-1)?.['credential']).toBe('');
+  });
+
+  it('keeps the key filter for a reader who may see people, or when the mode is off', () => {
+    const investigator = setup({ strictData: true, permissions: ['incident.investigate'] });
+    expect(investigator.testid('trace-credential')).not.toBeNull();
+
+    const open = setup({ strictData: false, permissions: [] });
+    expect(open.testid('trace-credential')).not.toBeNull();
+  });
+
+  it('names a row whose person is not withheld, as before', () => {
+    const { text, testid } = setup({
+      strictData: true,
+      permissions: ['incident.investigate'],
+      pages: [{ traces: [trace({ subject: 'bob' })], next_cursor: null, scope: 'use_cases' }],
+    });
+
+    expect(text()).toContain('bob');
+    expect(testid('trace-person-withheld')).toBeNull();
+    expect(testid('trace-via-key')).not.toBeNull();
   });
 });

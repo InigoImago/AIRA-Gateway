@@ -263,3 +263,14 @@ describe('rule-language — every kind has words', () => {
     expect(describeAction(event({ action_taken: 'something_new' }))).toBe('something_new');
   });
 });
+
+describe('describeEvent — strict data mode (`FRD-627` FR-8)', () => {
+  it('says what kind of target it was when the value is withheld', () => {
+    expect(describeEvent(event({ target_value: null, target_withheld: true }))).toContain(
+      'a person reached',
+    );
+    expect(
+      describeEvent(event({ target: 'credential', target_value: null, target_withheld: true })),
+    ).toContain('a key reached');
+  });
+});

@@ -14,6 +14,7 @@ from aira_management.apps.budgets.models import Budget
 from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.ratelimits.models import RateLimit
 from aira_management.apps.usecases.models import UseCase
+from aira_management.config.runtime import get_settings
 
 
 def _snapshot(usecase: UseCase) -> dict[str, Any]:
@@ -23,15 +24,18 @@ def _snapshot(usecase: UseCase) -> dict[str, Any]:
         "description": usecase.description,
         "processing_notes": usecase.processing_notes,
         "store_payloads": usecase.store_payloads,
+        # The **stored** choice, not the effective one: the gateway applies strict data mode when
+        # it reads (`FRD-627`), so turning the mode off restores this without a new event.
         "payload_visibility": usecase.payload_visibility,
         # **The retired field, still emitted, derived.** A gateway older than
         # `payload_visibility`
         # reads this one and nothing else, and an absent boolean is `False` to it — so leaving it
         # out would *unrestrict* a use case on every instance not yet upgraded, which is a
         # disclosure rather than a missing feature. Management is upgraded first (`FRD-204`), so
-        # this is the window that exists by design; it goes when no gateway reads it.
-        "restrict_members_to_own_requests": usecase.payload_visibility
-        != UseCase.PAYLOAD_VISIBILITY_MEMBERS,
+        # this is the window that exists by design; it goes when no gateway reads it. **Restricted
+        # under strict data mode** whatever is stored, because such a gateway knows no mode either.
+        "restrict_members_to_own_requests": get_settings().strict_data_mode
+        or usecase.payload_visibility != UseCase.PAYLOAD_VISIBILITY_MEMBERS,
         "tools_enabled": usecase.tools_enabled,
         "include_reasoning": usecase.include_reasoning,
         "prompt_caching_enabled": usecase.prompt_caching_enabled,

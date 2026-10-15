@@ -1363,3 +1363,54 @@ describe('SecurityPage — stopping and authoring are separate permissions', () 
     ).toEqual(['stop', 'restore', 'new-rule', 'edit-rule']);
   });
 });
+
+describe('SecurityPage — strict data mode (`FRD-627` FR-8)', () => {
+  const WITHHELD_EVENT: AnomalyEvent = {
+    ...EVENT,
+    target: 'credential',
+    target_value: null,
+    target_withheld: true,
+  };
+  const WITHHELD_STOP: Suspension = {
+    ...SUSPENSION,
+    target: 'subject',
+    target_value: null,
+    target_withheld: true,
+  };
+
+  it('says "a key" for a withheld finding, in the table, the sentence and the detail grid', () => {
+    const harness = setup({ events: [WITHHELD_EVENT] });
+
+    expect(harness.testid('target-withheld')?.textContent?.trim()).toBe('a key');
+    harness.click('[data-testid="event-toggle-e1"]');
+    expect(harness.testid('event-detail-e1')?.textContent).toContain('a key reached');
+    expect(harness.text()).not.toContain('null');
+  });
+
+  it('names the target of a finding that is not withheld', () => {
+    const harness = setup();
+
+    expect(harness.testid('target-withheld')).toBeNull();
+    harness.click('[data-testid="event-toggle-e1"]');
+    expect(harness.testid('event-detail-e1')?.textContent).toContain('ada reached');
+  });
+
+  it('says "a person" for a withheld stop, active and past, and restores it by that name', () => {
+    const harness = setup({
+      suspensions: of({
+        suspensions: [
+          WITHHELD_STOP,
+          { ...WITHHELD_STOP, id: 's2', lifted_at: '2026-08-08T11:00:00Z', lifted_by: 'user:x' },
+        ],
+      }),
+    });
+    harness.toSuspensions();
+    const cells = Array.from(harness.element.querySelectorAll('[data-testid="target-withheld"]'));
+
+    expect(cells.map((cell) => cell.textContent?.trim())).toEqual(['a person', 'a person']);
+    expect(harness.text()).not.toContain('null');
+    harness.click('[aria-label="Restore access for a person"]');
+    expect(harness.calls).toContain('lift:s1');
+    expect(harness.notice()).toContain('A person is restored');
+  });
+});

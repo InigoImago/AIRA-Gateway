@@ -36,6 +36,9 @@ from aira_gateway.db.models import (
 )
 from aira_gateway.reporting.register import NO_REGION
 
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
+
 GOVERNANCE = Principal(subject="gov", method="oidc", roles=("it-steuerung",), username="gov")
 MEMBER = Principal(
     subject="ada", method="oidc", roles=("use-case-user",), use_cases=("mine",), username="ada"

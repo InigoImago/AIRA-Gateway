@@ -5,6 +5,9 @@ identity is written in two alphabets — an OIDC token's `sub` is a directory id
 owner's *username* — and every place that compares one of them against a stored value is a place
 that can pick the wrong one. `LESSONS.md` §1 records the shape and the instruction that follows
 from it: *"Correct the definition, then grep for the comparison."* Each time, one reader was
+
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
 corrected and the next was found weeks later by somebody who could not see their own requests.
 
 So this file does not test `person()`. It enumerates **every reader** — the budget key, the rate
@@ -650,7 +653,7 @@ async def test_an_administrator_is_never_restricted_inside_their_own_use_case(
         use_cases=("uc-a",),
     )
     async with sessions() as session:
-        assert await restricted_use_cases(session, holder) == []
+        assert await restricted_use_cases(session, holder, strict_data=False) == []
 
 
 @pytest.mark.asyncio
@@ -666,7 +669,7 @@ async def test_a_member_is_restricted_where_the_use_case_says_so(
         use_cases=("uc-a",),
     )
     async with sessions() as session:
-        assert await restricted_use_cases(session, holder) == ["uc-a"]
+        assert await restricted_use_cases(session, holder, strict_data=False) == ["uc-a"]
 
 
 @pytest.mark.asyncio
@@ -687,7 +690,7 @@ async def test_a_group_granted_administrator_sees_the_whole_list(
         grants=(("uc-a", "admin"),),
     )
     async with sessions() as session:
-        assert await restricted_use_cases(session, granted) == []
+        assert await restricted_use_cases(session, granted, strict_data=False) == []
 
 
 @pytest.mark.asyncio
@@ -697,7 +700,7 @@ async def test_an_incident_role_is_never_restricted(
     await _use_case(sessions, restricted=True, role="user")
     security = Principal(subject="sec", method="oidc", roles=("it-security",), use_cases=("uc-a",))
     async with sessions() as session:
-        assert await restricted_use_cases(session, security) == []
+        assert await restricted_use_cases(session, security, strict_data=False) == []
 
 
 # ═══ 7. the wire ════════════════════════════════════════════════════════════════════════════════
@@ -792,6 +795,7 @@ NAMED_COMPARISONS = {
     "payloads.py::own_requests": "the same rule as a query: subject or person, never subject alone",
     "payloads.py::_narrowed": "a membership row is keyed by `_member_key`, Management's alphabet",
     "payloads.py::grant_role_in": "the same membership key",
+    "payloads.py::names_this_caller": "a finding's target in either alphabet, as findings match",
     "api/reporting/spend.py::reporting": "a narrowing that takes the caller in either alphabet",
     "api/reporting/traces.py::traces": "a filter: the subject the incident view was asked for",
     "api/incidents/content_reads.py::content_reads": "a filter, matched beside `username` too",

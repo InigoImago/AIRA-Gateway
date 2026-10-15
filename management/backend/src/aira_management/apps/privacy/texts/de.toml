@@ -31,6 +31,8 @@ days = "{days} Tage"
 no_limit = "ohne zeitliche Begrenzung — diese Installation hat keine Frist festgelegt"
 content_stored = "Diese Installation erlaubt das Speichern von Inhalten; ob sie gespeichert werden, legt jeder Use Case fest."
 content_not_stored = "Diese Installation speichert keine Inhalte von Anfragen und Antworten, gleich was ein Use Case vorsieht."
+strict_data_on = "Diese Installation läuft im strengen Datenmodus. Gespeicherte Inhalte von Anfragen und Antworten können nur Global Administratoren und IT Security lesen — nicht die Mitglieder und nicht die Administration eines Use Case, gleich was der Use Case vorsieht. Verbrauchszahlen je Person, Name und API-Schlüssel in einem Anfrage-Protokoll sowie die Person oder der API-Schlüssel, die ein Sicherheitsbefund oder eine Sperre betrifft, sind nur für Global Administratoren und IT Security und für die betroffene Person selbst sichtbar. Antwortzeiten werden für niemanden je Person ausgewertet. Inhaber und Aussteller eines API-Schlüssels sehen nur diese selbst sowie Global Administratoren und IT Security, und in der Betriebstelemetrie und in Protokollzeilen erscheint der Name einer Person nur als Pseudonym. Solange der Modus eingeschaltet ist, kann keine andere Rolle diese Rechte erhalten. Die Summen eines Use Case und jede Aufschlüsselung, die keine Person nennt, bleiben sichtbar, und Ihre eigenen Anfragen und Zahlen sehen Sie immer."
+strict_data_off = "Diese Installation läuft nicht im strengen Datenmodus; deshalb legt jeder Use Case fest, wer in ihm Inhalte liest und Zahlen je Person (Anfragen, Tokens, Kosten, Antwortzeiten) sieht. Bei „alle Mitglieder“ lesen und sehen alle im Use Case alles; bei „nur eigene Anfragen“ seine Administration alles und alle anderen nur das Eigene; und wo Inhalte nur Global Administratoren und IT Security lesen dürfen, liest und sieht niemand im Use Case Inhalte oder Zahlen je Person, auch seine Administration nicht. Anfrage-Protokolle zeigen jedem, der sie sehen darf, wer die Anfrage gestellt hat. Die Summen des Use Case und die eigenen Zahlen sind in jedem Fall sichtbar, und Rollen mit Leserecht auf alle Berichte sehen alle Zahlen je Person."
 unset_controller = "[Nicht konfiguriert — die Installation hat den Verantwortlichen nicht angegeben (AIRA_PRIVACY_CONTROLLER).]"
 unset_dpo_contact = "Für diese Installation ist keine Kontaktadresse einer oder eines Datenschutzbeauftragten hinterlegt. Wenden Sie sich an den Verantwortlichen."
 unset_works_agreement = "Für diese Installation ist keine Betriebs- oder Dienstvereinbarung hinterlegt."
@@ -66,9 +68,8 @@ paragraphs = [
 items = [
   "Zugriff nur nach Berechtigung: Wer welche Daten sieht, ergibt sich aus der Rolle, die an eine Gruppe im Identitätsdienst gebunden ist, und aus der Zuordnung zu einem Use Case.",
   "Inhalte von Anfragen und Antworten sieht nur, wer dazu berechtigt ist. Jeder einzelne Lesezugriff wird mit der lesenden Person, ihren Rollen und dem Anlass aufgezeichnet, bevor der Inhalt angezeigt wird. Diese Aufzeichnung wird nicht gelöscht.",
-  "Welche Rollen Inhalte lesen dürfen, steht unter „Wer innerhalb der Organisation Zugriff hat“. Ein Use Case kann festlegen, dass seine Mitglieder nur ihre eigenen Anfragen sehen — oder dass im Use Case niemand Inhalte liest, auch seine eigenen Administratoren nicht, sondern nur die beiden Rollen, die jeden Inhalt lesen dürfen.",
+  "Welche Rollen Inhalte lesen dürfen, steht unter „Wer innerhalb der Organisation Zugriff hat“. {data_mode}",
   "Ob Inhalte überhaupt gespeichert werden und wie lange, legt jeder Use Case fest; eingestellt werden können 1 bis 3650 Tage. {content_storage}",
-  "Verbrauchszahlen je Person (Anfragen, Tokens, Kosten, Antwortzeiten) folgen derselben Einstellung wie die Inhalte: bei „alle Mitglieder“ sind sie für alle im Use Case sichtbar, bei „nur eigene Anfragen“ für seine Administratoren, und wo Inhalte nur Global Administratoren und IT Security lesen dürfen, für niemanden im Use Case. Die Summen des Use Case und die eigenen Zahlen sind in jedem Fall sichtbar, und Rollen mit Leserecht auf alle Berichte sehen alle Zahlen.",
 ]
 
 [sections.access]
@@ -77,7 +78,7 @@ paragraphs = [
   "Zugriffe werden nach dem Grundsatz der geringsten Berechtigung vergeben. Eine Rolle wird über eine Gruppe im Identitätsdienst vergeben. Welche Rollen diese Installation kennt und was jede davon mit den Daten anderer Personen tun darf, steht hier so, wie es in dieser Installation eingestellt ist:",
 ]
 items = [
-  "Administration und Mitglieder eines Use Case sehen dessen Mitglieder, Anfragen, Berichte und Befunde, Inhalte nur, soweit der Use Case es vorsieht. Jeder Lesezugriff auf Inhalte wird aufgezeichnet.",
+  "Administration und Mitglieder eines Use Case sehen dessen Mitglieder, Anfragen, Berichte und Befunde in den Grenzen, die unter „Keine Leistungs- und Verhaltenskontrolle“ beschrieben sind, Inhalte nur, soweit diese es zulassen. Jeder Lesezugriff auf Inhalte wird aufgezeichnet.",
   "Ändert die Installation eine Rolle, ändern sich diese Hinweise mit ihr, und Sie werden gebeten, sie erneut zur Kenntnis zu nehmen. Jede Änderung einer Rolle wird protokolliert.",
 ]
 
@@ -93,6 +94,13 @@ items = [
 "incident.suspend" = "Personen, API-Schlüssel und Use Cases sperren oder drosseln"
 "directory.search" = "im Verzeichnis nach Namen und E-Mail-Adressen suchen"
 none = "keine Zugriffe auf Daten anderer Personen über die eigenen Use Cases hinaus"
+
+# Was drei dieser Rechte im strengen Datenmodus noch erreichen, für eine Rolle, die keine Vorfälle
+# untersuchen darf: die Zeilen und Zahlen, ohne die Person.
+[access_strict]
+"trace.read_all" = "Anfrage-Protokolle aller Use Cases sehen, ohne Namen oder API-Schlüssel anderer Personen"
+"report.read_all" = "Verbrauch aller Use Cases sehen, auch als Export, ohne Zahlen je Person außer den eigenen"
+"anomaly.read_all" = "Sicherheitsbefunde und Sperren aller Use Cases sehen, einschließlich darin genannter IP-Adressen, ohne die betroffene Person oder den betroffenen API-Schlüssel"
 
 [sections.recipients]
 title = "Empfänger und Übermittlung in Drittländer"
@@ -164,7 +172,7 @@ data = "Inhaberin oder Inhaber des Schlüssels, gegebenenfalls die ausstellende 
 purpose = "Anwendungen einen Zugang zuzuordnen, für den eine Person verantwortlich ist, und diesen Zugang befristen und widerrufen zu können."
 legal_basis = "Art. 6 Abs. 1 lit. b und lit. f DSGVO; Art. 32 DSGVO."
 retention = "Ein Schlüssel läuft ohne abweichende Angabe nach {key_lifetime} ab, spätestens nach {key_max_lifetime}. Der Datensatz bleibt nach Ablauf oder Widerruf ohne automatische Löschung erhalten, damit frühere Anfragen zuordenbar bleiben."
-recipients = "Die Inhaberin oder der Inhaber, die Administration des Use Case und Rollen, die Use Cases übergreifend verwalten oder Vorfälle untersuchen dürfen."
+recipients = "Die Inhaberin oder der Inhaber, die Administration des Use Case und Rollen, die Use Cases übergreifend verwalten oder Vorfälle untersuchen dürfen — im strengen Datenmodus die Namen von Inhaber und Aussteller nur diese selbst sowie Global Administratoren und IT Security."
 
 [activities.request_record]
 title = "Protokoll jeder Anfrage"
@@ -172,7 +180,7 @@ data = "Zu jeder Anfrage an ein Modell, auch zu abgelehnten: Kennung und Benutze
 purpose = "Betrieb und Fehleranalyse, Kostenzuordnung und Budgetsteuerung, Nachweis der Datenresidenz je Anfrage, Erkennung und Aufklärung von Sicherheitsvorfällen."
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Betrieb, Sicherheit und Kostenkontrolle); Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 32 DSGVO."
 retention = "Protokollzeilen dieser Installation: {log_retention}."
-recipients = "Nach Rolle und Use Case (siehe „Wer innerhalb der Organisation Zugriff hat“). Quell-IP-Adressen zeigt die Anfrageliste nur Personen, die Vorfälle untersuchen dürfen."
+recipients = "Nach Rolle und Use Case (siehe „Wer innerhalb der Organisation Zugriff hat“), in den Grenzen, die unter „Keine Leistungs- und Verhaltenskontrolle“ beschrieben sind. Quell-IP-Adressen zeigt die Anfrageliste nur Personen, die Vorfälle untersuchen dürfen."
 
 [activities.content]
 title = "Inhalte von Anfragen und Antworten"
@@ -180,7 +188,7 @@ data = "Der Text der Anfrage und der Antwort, einschließlich der Begründung de
 purpose = "Aufklärung von Sicherheitsvorfällen und Fehlern sowie Nachvollziehbarkeit innerhalb des Use Case. {content_storage}"
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Informationssicherheit und Fehleranalyse); Art. 6 Abs. 1 lit. b DSGVO, soweit der Use Case der Erfüllung Ihrer Aufgaben dient."
 retention = "So lange, wie der Use Case festlegt (1 bis 3650 Tage), für Anfragen ohne Use Case {default_retention}. Danach werden die Inhalte gelöscht; das Protokoll der Anfrage bleibt nach der dafür geltenden Frist bestehen."
-recipients = "Nur berechtigte Personen: Rollen, die Inhalte aller Use Cases lesen dürfen, sowie Administration und – soweit zugelassen – Mitglieder des Use Case. Jeder Lesezugriff wird aufgezeichnet."
+recipients = "Nur berechtigte Personen: Rollen, die Inhalte aller Use Cases lesen dürfen, sowie – soweit diese Installation es dem Use Case überlässt und er es zulässt – Administration und Mitglieder des Use Case (siehe „Keine Leistungs- und Verhaltenskontrolle“). Jeder Lesezugriff wird aufgezeichnet."
 
 [activities.content_reads]
 title = "Aufzeichnung von Zugriffen auf Inhalte"
@@ -192,11 +200,11 @@ recipients = "Rollen, die das Protokoll der Zugriffe auf Inhalte einsehen dürfe
 
 [activities.consumption]
 title = "Verbrauch, Budgets und Ratenbegrenzung"
-data = "Zähler je Person und Use Case für Anfragen, Tokens und Kosten je Tag oder Monat; daraus erstellte Berichte je Person mit Anfragen, Fehlern, Tokens, Kosten und Antwortzeiten, auch als CSV-Export. Zur Abwehr von Angriffen werden fehlgeschlagene Anmeldungen je IP-Adresse kurzzeitig gezählt."
+data = "Zähler je Person und Use Case für Anfragen, Tokens und Kosten je Tag oder Monat; daraus erstellte Berichte je Person mit Anfragen, Fehlern, Tokens und Kosten sowie, außer im strengen Datenmodus, Antwortzeiten, auch als CSV-Export. Zur Abwehr von Angriffen werden fehlgeschlagene Anmeldungen je IP-Adresse kurzzeitig gezählt."
 purpose = "Kosten zuzuordnen, Budgets und Ratenbegrenzungen je Person durchzusetzen, damit niemand das Kontingent anderer aufbraucht, und die Verfügbarkeit zu schützen. Nicht: die Leistung einzelner Personen zu bewerten."
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Kostenkontrolle und Verfügbarkeit)."
 retention = "Zähler bleiben je Zeitraum ohne automatische Löschung erhalten; Zähler für Ratenbegrenzung und Anmeldeversuche verfallen nach Minuten. Berichte werden bei jedem Abruf aus dem Protokoll der Anfragen berechnet."
-recipients = "Mitglieder des jeweiligen Use Case sowie Rollen mit Leserecht auf alle Berichte; Ihre eigenen Verbrauchswerte sehen Sie selbst."
+recipients = "Ihre eigenen Verbrauchswerte sehen Sie selbst, die Summen eines Use Case seine Mitglieder. Wer darüber hinaus Zahlen je Person sieht, folgt dem Datenmodus der Installation (siehe „Keine Leistungs- und Verhaltenskontrolle“)."
 
 [activities.security]
 title = "Erkennung von Auffälligkeiten und Sicherheitsvorfälle"
@@ -204,7 +212,7 @@ data = "Befunde von Regeln, die eine Person, einen Schlüssel oder einen Use Cas
 purpose = "Missbrauch, kompromittierte Zugänge und Kostenausreißer zu erkennen und einzudämmen."
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Informationssicherheit); Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 32 DSGVO."
 retention = "Ohne automatische Löschung; Sperren bleiben nach ihrer Aufhebung als Historie erhalten."
-recipients = "Rollen, die Sicherheitsbefunde aller Use Cases sehen dürfen, sowie Mitglieder des betroffenen Use Case. Die IP-Adressen in der Beschreibung eines Befunds und im Grund einer von einer Regel gesetzten Sperre sehen nur Personen, die Vorfälle untersuchen dürfen. Sperren sehen Mitglieder nur, soweit sie den Use Case als Ganzes oder sie selbst betreffen."
+recipients = "Rollen, die Sicherheitsbefunde aller Use Cases sehen dürfen, sowie Mitglieder des betroffenen Use Case. Die IP-Adressen in der Beschreibung eines Befunds und im Grund einer von einer Regel gesetzten Sperre sehen nur Personen, die Vorfälle untersuchen dürfen. Sperren sehen Mitglieder nur, soweit sie den Use Case als Ganzes oder sie selbst betreffen. Ob ein Befund oder eine Sperre die betroffene Person oder den betroffenen API-Schlüssel anderen als Global Administratoren, IT Security und der Person selbst zeigt, folgt dem Datenmodus der Installation (siehe „Keine Leistungs- und Verhaltenskontrolle“)."
 
 [activities.model_providers]
 title = "Übermittlung an Modellanbieter"
@@ -216,7 +224,7 @@ recipients = "Die Anbieter der für den Use Case freigegebenen Modelle, in den f
 
 [activities.telemetry]
 title = "Betriebstelemetrie"
-data = "Falls die Installation sie aktiviert hat: technische Messpunkte und Protokollzeilen je Anfrage mit Kennung der anfragenden Person, Use Case, Zugang, Quell-IP-Adresse, Browserkennung (User-Agent), Modell, Ergebnis, Tokens und Kosten — nie der Inhalt von Anfragen oder Antworten."
+data = "Falls die Installation sie aktiviert hat: technische Messpunkte und Protokollzeilen je Anfrage mit Kennung der anfragenden Person (im strengen Datenmodus ein Pseudonym, das niemanden nennt), Use Case, Zugang, Quell-IP-Adresse, Browserkennung (User-Agent), Modell, Ergebnis, Tokens und Kosten — nie der Inhalt von Anfragen oder Antworten."
 purpose = "Überwachung von Verfügbarkeit und Leistung der Systeme, Fehleranalyse und Weiterleitung sicherheitsrelevanter Ereignisse an ein SIEM."
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO; Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 32 DSGVO."
 retention = "Nach den Fristen des Beobachtungs- oder SIEM-Systems, das der Verantwortliche angebunden hat; AIRA legt diese Fristen nicht fest."

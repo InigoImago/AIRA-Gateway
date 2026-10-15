@@ -26,6 +26,13 @@ export interface PermissionInfo {
   label: string;
   sensitive: boolean;
   reserved: boolean;
+  /** Whether a stored role may hold it now. Absent from an older server. */
+  grantable?: boolean;
+  /**
+   * Strict data mode (`AIRA_STRICT_DATA_MODE`) keeps this one for Global Administrator and IT
+   * Security alone, so no other role may be given it while the mode is on. Absent means no.
+   */
+  strict_data_reserved?: boolean;
 }
 
 /** What a role held at one moment, as the change log records it. */

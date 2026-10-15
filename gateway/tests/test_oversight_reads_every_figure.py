@@ -30,6 +30,9 @@ from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
+
 #: The three organisation-wide roles, and what each is entitled to see. `it-security` is the row
 #: this file exists for; the other two are here so a fix that widened everything would fail.
 GLOBAL_ADMIN = Principal(subject="root", method="oidc", roles=("global-admin",))

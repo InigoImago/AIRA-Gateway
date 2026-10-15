@@ -57,5 +57,9 @@ class MeView(APIView):
                 # itself (`ADR-0020`): it is an object-level question the roles and slugs above
                 # cannot answer (`FRD-206`).
                 "may_test": MayRunTests().has_permission(request, None),
+                # Whether the installation withholds every person from all but Global
+                # Administrator and IT Security (`FRD-627`), so the console offers no choice the
+                # mode overrides.
+                "strict_data": settings.strict_data_mode,
             }
         )

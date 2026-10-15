@@ -5,6 +5,58 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Strict data mode: nobody but the incident roles learns what a named colleague did (2026-10-15)
+
+The owner asked for a mode, on by default, that gives a works council no reason to fear AIRA as a
+tool for judging employees: content either not stored or readable by Global Administrator and IT
+Security only; the per-person figures on the Members tab switched off; on request rows, the person
+and the key only for those two; and *"where else does this happen?"*.
+
+**Audited before built**, three read-only sweeps across both planes and the console. The per-use-case
+ladder of `FRD-622`/`FRD-603` §5.5 was meant to give this and did not: under `oversight` every
+member still saw each colleague's request rows — time to the second, name, key, latency, cost — and
+every finding that named them, from which the withheld split by person rebuilds itself;
+`report.read_all` (IT Steuerung) saw every split by person in the installation, an hour-by-hour
+profile of one named person included; KIRA's `ki-usage` handed the same out per user; latency per
+person was on the screen and in the CSV; any use-case administrator could leave the rung; and
+`payload.read_any` and `incident.investigate` could be granted to any role. The local Grafana listed
+callers per request to an anonymous Admin.
+
+**Built** (`FRD-627`, `ADR-0036`): `AIRA_STRICT_DATA_MODE`, shared, default `true`, decided on read
+in both planes so switching it off restores every use case's own setting. Who sees a person is
+whoever holds `incident.investigate`, which the mode keeps with the two incident roles. Content
+reads as `oversight` everywhere and Management refuses the other two values; splits by person carry
+the reader's own row, `report.read_all` no exemption; nobody gets latency per person; another
+person's request row has no name and no key, and filtering by either is refused; findings and stops
+name "a person" or "a key" except to the person concerned; `ki-usage` is the incident roles'; the
+Members tab does not show the table; the role editor locks the two permissions; the privacy notice
+states the mode (edition 2026-10-15). Grafana's dashboard selects no caller and anonymous is a
+Viewer. The retired `restrict_members_to_own_requests` flag restricts under the mode, for a gateway
+too old to know it.
+
+**Owner's decisions**: other people's rows anonymous rather than hidden; per-person figures for the
+incident roles only, IT Steuerung included in the withholding; an installation setting rather than a
+console switch; findings, stops, latency, Grafana and the per-person allowance covered.
+
+**Then, on the owner's review**, three more: telemetry and logs carry a **pseudonym** instead of a
+person's name — an HMAC keyed by `AIRA_PSEUDONYM_SECRET` from Vault, because usernames are a short
+list and an unkeyed hash of one is reversed by hashing the directory; a structlog processor does it
+for every line, so no call site has to remember. A key's owner and issuer on the key list are the
+person's and the incident roles' only. And KIRA's `ki-usage` reports per use case, its slug in
+`user_id`, to every caller — the shape a KIRA client parses, and no person in it.
+
+**Left as stated, not built**: key prefix and source address stay in spans and logs, because an
+incident needs them; membership lists and the content-read log keep names. Pseudonyms are
+process-wide state, so the gateway's tests reset them before each test — an app one test builds
+would otherwise decide what the next test's spans say.
+
+**Measured.** 37 new mutations (`SDG-1`–`SDG-19`, `SDM1`–`SDM8`, `SD-1`–`SD-10`, plus re-anchored
+`RL1`, `WR8`, `FX-L-19`), each seen caught; 1782 properties. The tests of the per-use-case ladder ask
+for the mode off by name (`strict_data_off`), so the default is what every other test runs. The live
+integration and browser suites were adapted and not run here.
+
+---
+
 ## Every document read against its code (2026-10-14)
 
 The owner asked whether the documentation was still complete and current. It was not, and the

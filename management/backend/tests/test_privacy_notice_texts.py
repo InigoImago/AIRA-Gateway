@@ -183,3 +183,12 @@ def test_the_browser_language_is_negotiated_against_the_files_that_exist(
     header: str, expected: str
 ) -> None:
     assert notice.negotiate(header, "de") == expected
+
+
+def test_a_strict_mode_phrase_missing_is_refused() -> None:
+    """Under strict data mode the narrower phrase is what a role's line prints; a language without
+    it would print the wider claim, which is untrue in that mode."""
+    raw = copy.deepcopy(_raw())
+    del raw["access_strict"]["report.read_all"]
+    with pytest.raises(NoticeTextError, match="access_strict"):
+        parse("xx", raw)

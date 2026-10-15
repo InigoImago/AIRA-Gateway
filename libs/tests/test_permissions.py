@@ -14,12 +14,15 @@ from aira_common.permissions import (
     ALL_PERMISSIONS,
     CATALOGUE,
     GRANTABLE,
+    IT_SECURITY_PERMISSIONS,
     IT_STEUERUNG_DEFAULT,
+    STRICT_DATA_RESERVED,
     Permission,
     RoleDefinition,
     allows,
     builtin_roles,
     effective,
+    grantable,
     held_roles,
     parse_permissions,
 )
@@ -71,7 +74,7 @@ def test_a_builtin_role_answers_what_the_old_checks_answered(
     role: Role, permission: Permission
 ) -> None:
     holders, where = BEFORE_THE_ENGINE[permission]
-    granted = effective(MAPPING[role], builtin_roles(MAPPING))
+    granted = effective(MAPPING[role], builtin_roles(MAPPING, strict_data=False))
     assert allows(granted, permission) == (role in holders), where
 
 
@@ -79,7 +82,7 @@ def test_stopping_traffic_is_narrower_than_seeing_it() -> None:
     """Every built-in role that may stop traffic also sees every use case, and IT Steuerung sees
     every use case without stopping any (PRD §154) — the distinction `FRD-503` is about, stated
     over permissions now that no check asks a role."""
-    defined = {role.slug: role.permissions for role in builtin_roles(MAPPING)}
+    defined = {role.slug: role.permissions for role in builtin_roles(MAPPING, strict_data=False)}
 
     for slug, permissions in defined.items():
         if Permission.INCIDENT_SUSPEND in permissions:
@@ -90,30 +93,38 @@ def test_stopping_traffic_is_narrower_than_seeing_it() -> None:
 
 def test_the_global_administrator_holds_every_permission_by_construction() -> None:
     """Not a stored list: a permission added later is held without anybody ticking it."""
-    assert effective(MAPPING[GA], builtin_roles(MAPPING)) == ALL_PERMISSIONS
+    assert effective(MAPPING[GA], builtin_roles(MAPPING, strict_data=False)) == ALL_PERMISSIONS
 
 
 def test_no_role_but_the_global_administrator_holds_the_reserved_permission() -> None:
-    for role in builtin_roles(MAPPING, it_steuerung=ALL_PERMISSIONS):
+    for role in builtin_roles(MAPPING, it_steuerung=ALL_PERMISSIONS, strict_data=False):
         assert (Permission.ROLE_MANAGE in role.permissions) == (role.slug == GA)
 
 
 def test_only_the_global_administrator_and_it_security_are_fixed() -> None:
-    fixed = {role.slug for role in builtin_roles(MAPPING) if role.fixed}
+    fixed = {role.slug for role in builtin_roles(MAPPING, strict_data=False) if role.fixed}
     assert fixed == {GA, SEC}
-    assert all(role.builtin for role in builtin_roles(MAPPING))
+    assert all(role.builtin for role in builtin_roles(MAPPING, strict_data=False))
 
 
 def test_it_steuerung_holds_its_stored_set_and_its_default_without_one() -> None:
     narrowed = frozenset({Permission.REPORT_READ_ALL})
-    assert effective(MAPPING[STG], builtin_roles(MAPPING, it_steuerung=narrowed)) == narrowed
-    assert effective(MAPPING[STG], builtin_roles(MAPPING)) == IT_STEUERUNG_DEFAULT
+    assert (
+        effective(MAPPING[STG], builtin_roles(MAPPING, it_steuerung=narrowed, strict_data=False))
+        == narrowed
+    )
+    assert (
+        effective(MAPPING[STG], builtin_roles(MAPPING, strict_data=False)) == IT_STEUERUNG_DEFAULT
+    )
 
 
 def test_an_empty_stored_set_is_empty_rather_than_the_default() -> None:
     """ "Nothing stored" and "stored as nothing" are two answers: narrowing a role to nothing must
     hold."""
-    assert effective(MAPPING[STG], builtin_roles(MAPPING, it_steuerung=frozenset())) == frozenset()
+    assert (
+        effective(MAPPING[STG], builtin_roles(MAPPING, it_steuerung=frozenset(), strict_data=False))
+        == frozenset()
+    )
 
 
 def test_permissions_add_up_across_roles() -> None:
@@ -123,37 +134,42 @@ def test_permissions_add_up_across_roles() -> None:
         group_paths=("/finance/controlling",),
         permissions=frozenset({Permission.BUDGET_INSTALLATION_WRITE}),
     )
-    roles = (*builtin_roles(MAPPING), custom)
+    roles = (*builtin_roles(MAPPING, strict_data=False), custom)
     both = effective(("/aira/it-steuerung", "/finance/controlling"), roles)
     assert both == IT_STEUERUNG_DEFAULT | {Permission.BUDGET_INSTALLATION_WRITE}
 
 
 def test_a_group_path_matches_exactly_and_never_as_a_prefix() -> None:
-    roles = builtin_roles(MAPPING)
+    roles = builtin_roles(MAPPING, strict_data=False)
     assert effective(("/aira/global-admins-readonly",), roles) == frozenset()
     assert effective(("/aira",), roles) == frozenset()
     assert [role.slug for role in held_roles(("/aira/it-security",), roles)] == [SEC]
 
 
 def test_no_group_and_no_mapping_confer_nothing() -> None:
-    assert effective((), builtin_roles(MAPPING)) == frozenset()
-    assert effective(MAPPING[GA], builtin_roles({})) == frozenset()
+    assert effective((), builtin_roles(MAPPING, strict_data=False)) == frozenset()
+    assert effective(MAPPING[GA], builtin_roles({}, strict_data=False)) == frozenset()
 
 
 def test_a_stored_role_can_never_hold_the_reserved_permission_or_an_unknown_one() -> None:
-    parsed = parse_permissions(["role.manage", "usecase.create", "no.such.permission"])
+    parsed = parse_permissions(
+        ["role.manage", "usecase.create", "no.such.permission"], strict_data=False
+    )
     assert parsed == frozenset({Permission.USECASE_CREATE})
 
 
 def test_a_stored_value_that_is_not_a_name_grants_nothing_rather_than_raising() -> None:
     """A role row is JSON, written by hand or by a newer release. An object or a list in it is a
     permission nobody can hold — not a reason the whole row stops being read."""
-    parsed = parse_permissions(["usecase.create", ["x"], {"name": "catalog.write"}, 7, None])  # type: ignore[list-item]
+    parsed = parse_permissions(
+        ["usecase.create", ["x"], {"name": "catalog.write"}, 7, None],  # type: ignore[list-item]
+        strict_data=False,
+    )
     assert parsed == frozenset({Permission.USECASE_CREATE})
 
 
 def test_a_group_that_is_not_a_path_matches_no_role_rather_than_raising() -> None:
-    roles = builtin_roles({Role.IT_SECURITY: ("/aira/it-security",)})
+    roles = builtin_roles({Role.IT_SECURITY: ("/aira/it-security",)}, strict_data=False)
     held = held_roles([{"path": "/aira/it-security"}, ["x"], "/aira/it-security"], roles)  # type: ignore[list-item]
     assert [role.slug for role in held] == [SEC]
 
@@ -162,3 +178,48 @@ def test_every_permission_is_described_and_only_role_manage_is_reserved() -> Non
     assert set(CATALOGUE) == set(Permission)
     assert {Permission.ROLE_MANAGE} == ALL_PERMISSIONS - GRANTABLE
     assert all(info.label and info.area for info in CATALOGUE.values())
+
+
+# == strict data mode (`FRD-627` FR-2) =============================================================
+
+#: What sees a person, written out rather than read from `STRICT_DATA_RESERVED`: a set compared with
+#: itself would pass whatever the engine reserved.
+SEES_A_PERSON = frozenset({Permission.PAYLOAD_READ_ANY, Permission.INCIDENT_INVESTIGATE})
+
+
+def test_strict_data_mode_reserves_exactly_what_sees_a_person() -> None:
+    assert STRICT_DATA_RESERVED == SEES_A_PERSON
+    assert grantable(strict_data=True) == GRANTABLE - SEES_A_PERSON
+    assert grantable(strict_data=False) == GRANTABLE
+
+
+@pytest.mark.parametrize("permission", sorted(SEES_A_PERSON), ids=str)
+def test_a_stored_grant_that_sees_a_person_confers_nothing_while_the_mode_is_on(
+    permission: Permission,
+) -> None:
+    """Dropped when read, not when written: the row keeps it, and turning the mode off restores
+    it (`ADR-0036`)."""
+    stored = [str(permission), "usecase.create"]
+    assert parse_permissions(stored, strict_data=True) == frozenset({Permission.USECASE_CREATE})
+    assert parse_permissions(stored, strict_data=False) == frozenset(
+        {permission, Permission.USECASE_CREATE}
+    )
+
+
+def test_it_steuerung_never_sees_a_person_while_the_mode_is_on() -> None:
+    strict = {
+        r.slug: r.permissions for r in builtin_roles(MAPPING, ALL_PERMISSIONS, strict_data=True)
+    }
+    relaxed = {
+        r.slug: r.permissions for r in builtin_roles(MAPPING, ALL_PERMISSIONS, strict_data=False)
+    }
+    assert not strict[STG] & SEES_A_PERSON
+    assert relaxed[STG] >= SEES_A_PERSON
+
+
+def test_the_two_incident_roles_keep_what_sees_a_person_while_the_mode_is_on() -> None:
+    """The mode narrows every other role, never these two: somebody must still investigate."""
+    defined = {r.slug: r.permissions for r in builtin_roles(MAPPING, strict_data=True)}
+    assert defined[GA] == ALL_PERMISSIONS
+    assert defined[SEC] == IT_SECURITY_PERMISSIONS
+    assert defined[SEC] >= SEES_A_PERSON

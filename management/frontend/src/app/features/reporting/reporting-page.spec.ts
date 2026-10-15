@@ -856,3 +856,25 @@ describe('ReportingPage — whether budgets are enforced', () => {
     expect(cardInput(of(report()))).toBeNull();
   });
 });
+
+describe('ReportingPage — strict data mode (`FRD-627` FR-5)', () => {
+  it('shows the members without a latency column, and keeps the latency of the totals', () => {
+    const { avg_latency_ms: _avg, max_latency_ms: _max, ...alice } = row({ key: 'alice' });
+    const harness = setup(of(report({ strict_data: true, by_member: [alice] })));
+    harness.component.exportBreakdown.set('member');
+    harness.fixture.detectChanges();
+    const table = harness.element.querySelector('app-breakdown-table')!;
+
+    expect(table.textContent).toContain('alice');
+    expect(table.querySelector('[data-testid="latency-column"]')).toBeNull();
+    expect(table.textContent).not.toContain(' ms');
+    // The installation's own latency is not about a person, and stays.
+    expect(harness.text()).toContain('40 / 90 ms');
+
+    harness.component.exportBreakdown.set('model');
+    harness.fixture.detectChanges();
+    expect(
+      harness.element.querySelector('app-breakdown-table [data-testid="latency-column"]'),
+    ).not.toBeNull();
+  });
+});

@@ -6,7 +6,7 @@ from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from .conftest import role_claims
+from .conftest import role_claims, setting
 
 pytestmark = pytest.mark.django_db
 
@@ -631,6 +631,7 @@ def test_a_release_list_is_bounded() -> None:
 # ---- who may read the content, as one choice (`FRD-622` FR-1) ------------------------------
 
 
+@pytest.mark.usefixtures("strict_data_off")
 def test_a_use_case_starts_readable_by_its_members() -> None:
     """The default is the behaviour that existed before the setting did: a restriction is imposed,
     never assumed. Asserted on a freshly created use case, because a default nobody states is a
@@ -642,6 +643,7 @@ def test_a_use_case_starts_readable_by_its_members() -> None:
     assert UseCase.objects.get(slug="demo-uc").payload_visibility == "members"
 
 
+@pytest.mark.usefixtures("strict_data_off")
 @pytest.mark.parametrize("visibility", ["members", "own", "oversight"])
 def test_an_administrator_of_the_use_case_chooses_who_may_read_it(
     captured_events, visibility: str
@@ -666,6 +668,7 @@ def test_an_administrator_of_the_use_case_chooses_who_may_read_it(
     assert upserted[-1]["payload_visibility"] == visibility
 
 
+@pytest.mark.usefixtures("strict_data_off")
 def test_the_oversight_mode_can_be_left_again() -> None:
     """The door closes and opens. Making it one-way was considered and declined: the panel belongs
     to the use case's administrator, and a latch only an installation role could open would be a
@@ -695,6 +698,7 @@ def test_a_visibility_nobody_defined_is_refused_where_it_is_typed(value: object)
     assert response.status_code == 400, f"{value!r} was accepted"
 
 
+@pytest.mark.usefixtures("strict_data_off")
 def test_the_event_still_carries_the_retired_boolean_for_a_gateway_that_reads_it(
     captured_events,
 ) -> None:
@@ -719,6 +723,19 @@ def test_the_event_still_carries_the_retired_boolean_for_a_gateway_that_reads_it
     # Oversight is narrower than the boolean can say, so it says the narrowest it can.
     assert sent["oversight"]["restrict_members_to_own_requests"] is True
     assert sent["oversight"]["payload_visibility"] == "oversight"
+
+
+def test_under_strict_data_mode_the_retired_boolean_always_restricts(captured_events) -> None:
+    """A gateway too old to read `payload_visibility` knows no data mode either, and reads only the
+    boolean. Under the mode every use case is `oversight` (`FRD-627`), so the boolean restricts,
+    whatever the use case stored — which is `members` for one created without the field."""
+    admin = _user("admin1", "global-admin")
+    _create(_client(admin), "demo-uc", "Demo")
+    _client(admin).patch(f"{BASE}demo-uc/", {"retention_days": 9}, format="json")
+
+    upserted = [payload for kind, payload in captured_events if kind == "usecase.upserted"]
+    assert upserted[-1]["restrict_members_to_own_requests"] is True
+    assert UseCase.objects.get(slug="demo-uc").payload_visibility == "members"
 
 
 def test_a_reader_is_refused_by_who_they_are_before_what_they_sent() -> None:
@@ -777,3 +794,88 @@ def test_a_page_of_use_cases_costs_the_same_however_many_rows_it_has() -> None:
     permissions and releases are read for the page at once."""
     one_row = _queries_for_the_list(1)  # first, so it pays for the process-wide caches
     assert _queries_for_the_list(25) == one_row
+
+
+# ---- strict data mode decides content visibility for every use case (`FRD-627` FR-3) ----------
+
+#: The message a refusal must carry: it names the mode, so a legitimate need finds the operator.
+STRICT_MODE_NAMED = "AIRA_STRICT_DATA_MODE"
+
+
+def test_a_new_use_case_is_created_and_reported_as_oversight_in_strict_mode() -> None:
+    """Creation does not fail on the column's default; what is stored stays the default, and what
+    is answered is what the gateway enforces."""
+    admin = _user("admin1", "global-admin")
+    created = _create(_client(admin), "demo-uc", "Demo")
+
+    assert created.status_code == 201, created.data
+    assert created.json()["payload_visibility"] == "oversight"
+    assert UseCase.objects.get(slug="demo-uc").payload_visibility == "members"
+
+
+@pytest.mark.parametrize("visibility", ["members", "own"])
+def test_strict_mode_refuses_saving_a_visibility_that_lets_the_use_case_read(
+    captured_events, visibility: str
+) -> None:
+    usecase = UseCase.objects.create(slug="uc", name="UC", payload_visibility="oversight")
+    admin = _administrator("uc-admin", usecase)
+    before = len(captured_events)
+
+    response = _client(admin).patch(f"{BASE}uc/", {"payload_visibility": visibility}, format="json")
+
+    assert response.status_code == 400
+    assert STRICT_MODE_NAMED in str(response.data)
+    assert UseCase.objects.get(slug="uc").payload_visibility == "oversight"
+    assert len(captured_events) == before, "a refused save announced a change"
+
+
+@pytest.mark.parametrize("visibility", ["members", "own"])
+def test_strict_mode_refuses_creating_a_use_case_its_members_could_read(visibility: str) -> None:
+    admin = _user("admin1", "global-admin")
+
+    response = _client(admin).post(
+        BASE, {"slug": "uc", "name": "UC", "payload_visibility": visibility}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert STRICT_MODE_NAMED in str(response.data)
+    assert not UseCase.objects.filter(slug="uc").exists()
+
+
+def test_strict_mode_accepts_oversight_and_leaves_other_fields_writable(captured_events) -> None:
+    """A screen that sends back what it was shown must not be refused for it."""
+    usecase = UseCase.objects.create(slug="uc", name="UC")
+    admin = _administrator("uc-admin", usecase)
+
+    response = _client(admin).patch(
+        f"{BASE}uc/", {"payload_visibility": "oversight", "name": "Renamed"}, format="json"
+    )
+
+    assert response.status_code == 200, response.data
+    assert UseCase.objects.get(slug="uc").payload_visibility == "oversight"
+    upserted = [payload for kind, payload in captured_events if kind == "usecase.upserted"]
+    assert upserted[-1]["payload_visibility"] == "oversight"
+
+
+@pytest.mark.parametrize("stored", ["members", "own"])
+def test_strict_mode_reports_the_effective_visibility_and_keeps_the_stored_one(
+    captured_events, stored: str
+) -> None:
+    """Decided on read (`ADR-0036`): the answer is `oversight`, the row and the event keep the
+    administrator's choice, and turning the mode off answers it again — lossless."""
+    usecase = UseCase.objects.create(slug="uc", name="UC", payload_visibility=stored)
+    admin = _administrator("uc-admin", usecase)
+    client = _client(admin)
+
+    assert client.get(f"{BASE}uc/").json()["payload_visibility"] == "oversight"
+    listed = client.get(BASE).json()["results"]
+    assert [row["payload_visibility"] for row in listed] == ["oversight"]
+
+    renamed = client.patch(f"{BASE}uc/", {"name": "Renamed"}, format="json")
+    assert renamed.json()["payload_visibility"] == "oversight"
+    assert UseCase.objects.get(slug="uc").payload_visibility == stored
+    upserted = [payload for kind, payload in captured_events if kind == "usecase.upserted"]
+    assert upserted[-1]["payload_visibility"] == stored, "the gateway applies the mode itself"
+
+    with setting(strict_data_mode=False):
+        assert client.get(f"{BASE}uc/").json()["payload_visibility"] == stored

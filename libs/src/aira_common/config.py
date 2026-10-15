@@ -157,6 +157,24 @@ class BaseAiraSettings(BaseSettings):
     what it is set to — one definition, so the notice cannot describe a different installation.
     """
 
+    strict_data_mode: bool = True
+    """Withhold every person from everybody but Global Administrator and IT Security (`FRD-627`).
+
+    On by default, because a system able to judge employees' conduct or performance is
+    co-determined and an assurance any use-case administrator could lift is not one (`ADR-0036`).
+    While on: content is not stored or readable by those two roles only; figures split by person,
+    the person and key on a request row, and the person a finding or stop names reach only them and
+    the person concerned; nobody sees latency per person; and `payload.read_any` and
+    `incident.investigate` cannot be granted to another role. Decided when read, in both planes,
+    so turning it off restores every use case's own setting.
+    """
+
+    pseudonym_secret: str = ""
+    """The key telemetry and logs pseudonymise a person's name with under strict data mode
+    (`FRD-627` FR-14). A credential, so it comes from Vault, and shared by both planes so one
+    person has one pseudonym. Empty, each process draws its own: no name leaks, but a SIEM can no
+    longer follow one caller across processes and restarts."""
+
     default_retention_days: int = Field(default=7, ge=1, le=3650)
     """Payload retention in days for requests carrying no use case (FRD-404); use-case traffic
     follows its use case's period. Shared for the same reason as ``store_payloads``. Within the

@@ -23,8 +23,9 @@ from aira_gateway.api.reporting.common import visible_scope
 from aira_gateway.auth.attribution import is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
+from aira_gateway.payloads import PERSON_TARGETS, names_this_caller, sees_people
 from aira_gateway.persistence.sanitize import printable
-from aira_gateway.state import sessionmaker_of, suspensions_of
+from aira_gateway.state import sessionmaker_of, settings_of, suspensions_of
 
 #: What a suspension may name: `AccessSuspension.target_value`'s width, stated as a decision rather
 #: than read off the column. Refused beyond it, never truncated — a shortened target matches nobody.
@@ -191,11 +192,23 @@ async def list_suspensions(
             )
         ).scalars()
     addresses = principal.allows(Permission.INCIDENT_INVESTIGATE)
+    # Under strict data mode a stop on another person or their key names nobody to a reader who
+    # does not see people — IT Steuerung reads every finding, not every person (`FRD-627` FR-8).
+    withholding = settings_of(request).strict_data_mode and not sees_people(principal)
     # In force first, then lifted and expired ones: "who was blocked last Tuesday" is what an
     # incident review asks (`FRD-503` FR-8).
     return JSONResponse(
         {
-            "suspensions": [as_dict(row, addresses=addresses) for row in rows],
+            "suspensions": [
+                as_dict(
+                    row,
+                    addresses=addresses,
+                    withheld=withholding
+                    and row.target in PERSON_TARGETS
+                    and not names_this_caller(row, principal),
+                )
+                for row in rows
+            ],
             "scope": audience,
             "in_scope": True,
         }

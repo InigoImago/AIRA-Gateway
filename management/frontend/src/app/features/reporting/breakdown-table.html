@@ -60,15 +60,17 @@
                   prompt tokens can still be the expensive one.
                 </app-info-hint>
               </th>
-              <th scope="col">
-                Latency (avg / max)
-                <app-info-hint label="latency" testid="table-latency">
-                  How long the gateway took to answer, end to end — average and slowest. Average and
-                  maximum rather than a percentile, because a percentile is not computable on every
-                  store this runs against, and a figure that quietly means something else on a
-                  different database is worse than a plainer one.
-                </app-info-hint>
-              </th>
+              @if (hasLatency()) {
+                <th scope="col" data-testid="latency-column">
+                  Latency (avg / max)
+                  <app-info-hint label="latency" testid="table-latency">
+                    How long the gateway took to answer, end to end — average and slowest. Average
+                    and maximum rather than a percentile, because a percentile is not computable on
+                    every store this runs against, and a figure that quietly means something else on
+                    a different database is worse than a plainer one.
+                  </app-info-hint>
+                </th>
+              }
             </tr>
           </thead>
           <tbody>
@@ -115,13 +117,15 @@
                   }
                 </td>
                 <td>{{ count(row.prompt_tokens) }} / {{ count(row.completion_tokens) }}</td>
-                <td>
-                  @if (row.avg_latency_ms === null) {
-                    <span class="muted">—</span>
-                  } @else {
-                    {{ row.avg_latency_ms }} ms / {{ row.max_latency_ms }} ms
-                  }
-                </td>
+                @if (hasLatency()) {
+                  <td>
+                    @if (row.avg_latency_ms == null) {
+                      <span class="muted">—</span>
+                    } @else {
+                      {{ row.avg_latency_ms }} ms / {{ row.max_latency_ms }} ms
+                    }
+                  </td>
+                }
               </tr>
             }
           </tbody>

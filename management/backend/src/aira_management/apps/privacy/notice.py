@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from aira_common.permissions import RoleDefinition
+from aira_common.permissions import Permission, RoleDefinition
 from aira_management.apps.outbox.models import KEPT_AFTER_DAYS
 from aira_management.apps.privacy.activities import ACTIVITIES, PERSONAL_DATA_PERMISSIONS
 from aira_management.apps.privacy.edition import EDITION
@@ -32,6 +32,9 @@ class RoleAccess:
 
     label: str
     permissions: tuple[str, ...]
+    #: Whether the role may see a person (`incident.investigate`) — what strict data mode asks
+    #: before it narrows the phrases in `ACCESS_STRICT`.
+    sees_people: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +50,8 @@ class Installation:
     api_key_default_days: int
     api_key_max_days: int
     roles: tuple[RoleAccess, ...]
+    #: `AIRA_STRICT_DATA_MODE` (`FRD-627` FR-11): the notice says which mode the installation runs.
+    strict_data: bool = True
 
     @classmethod
     def of(cls, settings: ManagementSettings, roles: tuple[RoleDefinition, ...]) -> Installation:
@@ -63,9 +68,11 @@ class Installation:
                 RoleAccess(
                     role.label,
                     tuple(str(p) for p in PERSONAL_DATA_PERMISSIONS if p in role.permissions),
+                    Permission.INCIDENT_INVESTIGATE in role.permissions,
                 )
                 for role in roles
             ),
+            strict_data=settings.strict_data_mode,
         )
 
 
@@ -87,6 +94,9 @@ def values(language: Language, installation: Installation) -> dict[str, str]:
     filled["content_storage"] = language.values[
         "content_stored" if installation.store_payloads else "content_not_stored"
     ]
+    filled["data_mode"] = language.values[
+        "strict_data_on" if installation.strict_data else "strict_data_off"
+    ]
     filled["log_retention"] = _days(language, installation.log_retention_days)
     filled["default_retention"] = _days(language, installation.default_retention_days)
     filled["key_lifetime"] = language.values["days"].format(days=installation.api_key_default_days)
@@ -97,10 +107,19 @@ def values(language: Language, installation: Installation) -> dict[str, str]:
 
 
 def access(language: Language, installation: Installation) -> list[str]:
-    """One line per role: its name, and what it may do to other people's data."""
+    """One line per role: its name, and what it may do to other people's data.
+
+    Under strict data mode a role that may not see people reaches the rows and figures of
+    `ACCESS_STRICT` without the person on them, and its line says so.
+    """
+
+    def phrase(role: RoleAccess, name: str) -> str:
+        if installation.strict_data and not role.sees_people and name in language.access_strict:
+            return language.access_strict[name]
+        return language.access[name]
+
     return [
-        f"{role.label}: "
-        + "; ".join(language.access[name] for name in role.permissions or ("none",))
+        f"{role.label}: " + "; ".join(phrase(role, name) for name in role.permissions or ("none",))
         for role in installation.roles
     ]
 

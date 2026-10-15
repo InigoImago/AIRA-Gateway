@@ -16,11 +16,24 @@
         }
         Only an administrator of this use case can change that.
       </p>
+      @if (strictData()) {
+        <p class="field__hint" style="margin: 0.5rem 0 0" data-testid="strict-data-readonly">
+          This installation runs strict data mode, so nobody in a use case can read its requests.
+        </p>
+      }
     } @else {
       <form class="stack" (ngSubmit)="saveRetention()">
         <fieldset class="content-modes">
           <legend class="section-title">Who may read prompts and responses</legend>
-          @for (option of modes; track option.value) {
+          @if (strictData()) {
+            <p class="field__hint" style="margin: 0" data-testid="strict-data-modes">
+              This installation runs strict data mode (<code>AIRA_STRICT_DATA_MODE</code>, set by
+              its operator), so content is either not stored or read by Global Administrators and IT
+              Security only. Letting administrators or members of a use case read requests is not
+              available.
+            </p>
+          }
+          @for (option of modes(); track option.value) {
             <!-- No `for`: the input is nested, and a `for` as well makes a real browser forward the
                  click twice (jsdom does not reproduce it). -->
             <label class="checkline content-modes__option">

@@ -18,8 +18,13 @@ from aira_gateway.auth.attribution import is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import AnomalyEvent
-from aira_gateway.payloads import restricted_use_cases
-from aira_gateway.state import sessionmaker_of
+from aira_gateway.payloads import (
+    PERSON_TARGETS,
+    names_this_caller,
+    restricted_use_cases,
+    sees_people,
+)
+from aira_gateway.state import sessionmaker_of, settings_of
 
 #: Findings per page by default, and the most one page may hold.
 ANOMALY_PAGE = 50
@@ -100,7 +105,9 @@ async def anomalies(
     # since the rows alone disclose who else calls and how often.
     sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
-        restricted = await restricted_use_cases(session, principal)
+        restricted = await restricted_use_cases(
+            session, principal, strict_data=settings_of(request).strict_data_mode
+        )
     if restricted:
         stmt = stmt.where(_about_this_caller(restricted, principal))
 
@@ -125,9 +132,17 @@ async def anomalies(
     next_cursor = f"{rows[-1].created_at.isoformat()}|{rows[-1].id}" if has_more and rows else None
     # The rule the request list keeps for the source address (`FRD-502` FR-12).
     investigating = principal.allows(Permission.INCIDENT_INVESTIGATE)
+    withholding = settings_of(request).strict_data_mode and not sees_people(principal)
     return JSONResponse(
         {
-            "events": [_event(row, investigating=investigating) for row in rows],
+            "events": [
+                _event(
+                    row,
+                    investigating=investigating,
+                    withheld=withholding and not names_this_caller(row, principal),
+                )
+                for row in rows
+            ],
             "next_cursor": next_cursor,
             "scope": scope_label(scope),
             "in_scope": True,
@@ -135,8 +150,10 @@ async def anomalies(
     )
 
 
-def _event(row: AnomalyEvent, *, investigating: bool) -> dict[str, Any]:
-    """One finding on the wire — its addresses only to a reader who may investigate."""
+def _event(row: AnomalyEvent, *, investigating: bool, withheld: bool) -> dict[str, Any]:
+    """One finding on the wire — its addresses only to a reader who may investigate, and under
+    strict data mode the person or key it names only to one who sees people (`FRD-627` FR-8)."""
+    withheld = withheld and row.target in PERSON_TARGETS
     return {
         "id": row.id,
         "created_at": row.created_at.isoformat(),
@@ -146,7 +163,8 @@ def _event(row: AnomalyEvent, *, investigating: bool) -> dict[str, Any]:
         "kind": row.kind,
         "use_case": row.use_case,
         "target": row.target,
-        "target_value": row.target_value,
+        "target_value": None if withheld else row.target_value,
+        "target_withheld": withheld,
         "observed": row.observed,
         "threshold": row.threshold,
         "sample": row.sample,

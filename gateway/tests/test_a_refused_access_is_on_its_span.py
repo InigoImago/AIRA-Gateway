@@ -20,6 +20,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from aira_common.observability import request_sampler
+from aira_common.pseudonym import pseudonym
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.kira.attribution import resolve as kira_attribution
 from aira_gateway.api.kira.errors import KiraError
@@ -106,7 +107,7 @@ def test_a_forbidden_attempt_says_who_asked_for_what(
     attributes = _span(exporter)
     assert attributes["aira.outcome"] == "forbidden"
     assert attributes["aira.status"] == 403
-    assert attributes["aira.subject"] == principal.subject
+    assert attributes["aira.subject"] == pseudonym(principal.subject)
     assert attributes["aira.auth_method"] == principal.method
     assert attributes["aira.use_case.requested"] == "wanted"
     assert "aira.use_case" not in attributes
@@ -208,7 +209,7 @@ async def test_a_request_that_names_no_use_case_is_on_its_span(
     attributes = _span(exporter)
     assert attributes["aira.outcome"] == "unattributed"
     assert attributes["aira.status"] == 400
-    assert attributes["aira.subject"] == "alice"
+    assert attributes["aira.subject"] == pseudonym("alice")
     assert "aira.use_case" not in attributes
 
 
@@ -252,7 +253,7 @@ async def test_the_kira_surface_marks_what_it_cannot_attribute(
     attributes = _span(exporter)
     assert attributes["aira.outcome"] == "unattributed"
     assert attributes["aira.status"] in (400, 403)
-    assert attributes["aira.subject"] == "alice"
+    assert attributes["aira.subject"] == pseudonym("alice")
 
 
 async def test_an_address_asked_to_wait_is_on_its_span(

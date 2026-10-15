@@ -6,11 +6,12 @@ import { Subject, Subscription, debounceTime, distinctUntilChanged, map } from '
 import { MeService } from '../../core/api/me.service';
 import { Trace, TracePayload } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { can } from '../../core/auth/roles';
+import { can, peopleWithheld } from '../../core/auth/roles';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Live } from '../../core/ui/live';
 import { displayAmount, displayCount } from '../../core/ui/money';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { ANOTHER_MEMBER, WITHHELD_REASON } from '../../core/ui/withheld';
 
 const REFRESH_SECONDS = 10;
 const PAGE = 50;
@@ -106,7 +107,14 @@ export class TracesTab implements OnInit {
 
   /** The permission the gateway enforces the incident fields with, as `/me` lists it. */
   protected readonly mayInvestigate = computed(() => can(this.me(), 'incident.investigate'));
-  private readonly me = signal<{ permissions?: string[] } | null>(null);
+  /**
+   * Whether the key filter is offered. In strict data mode a reader who may not see people gets
+   * `403` for it, since a key leads back to the person it was issued to; *Only my requests* stays.
+   */
+  protected readonly mayFilterByKey = computed(() => !peopleWithheld(this.me()));
+  private readonly me = signal<{ permissions?: string[]; strict_data?: boolean } | null>(null);
+  protected readonly anotherMember = ANOTHER_MEMBER;
+  protected readonly withheldReason = WITHHELD_REASON;
   /** What the two typed filters say, so a pause that changed nothing asks nothing. */
   private readonly typed = new Subject<string>();
   /** The content read in flight; dropped when another row is opened, so it can never land there. */
@@ -214,7 +222,9 @@ export class TracesTab implements OnInit {
       toolsOnly: this.toolsOnly(),
       flaggedOnly: this.flaggedOnly(),
       mine: this.mine(),
-      credential: this.credential().trim(),
+      // Never sent where the field is not offered: a prefix typed before `/me` answered would
+      // otherwise be refused on every refresh.
+      credential: this.mayFilterByKey() ? this.credential().trim() : '',
       sourceIp: this.sourceIp().trim(),
       requestId: this.focus() ?? '',
       limit: PAGE,

@@ -89,17 +89,20 @@
         }
       </select>
     </div>
-    <div class="field field--narrow">
-      <label for="trace-credential">API key</label>
-      <input
-        id="trace-credential"
-        type="text"
-        placeholder="prefix, e.g. 7f2a"
-        [ngModel]="credential()"
-        (ngModelChange)="setCredential($event)"
-        data-testid="trace-credential"
-      />
-    </div>
+    @if (mayFilterByKey()) {
+      <!-- Strict data mode answers 403 to a reader who may not see people: a key names a person. -->
+      <div class="field field--narrow">
+        <label for="trace-credential">API key</label>
+        <input
+          id="trace-credential"
+          type="text"
+          placeholder="prefix, e.g. 7f2a"
+          [ngModel]="credential()"
+          (ngModelChange)="setCredential($event)"
+          data-testid="trace-credential"
+        />
+      </div>
+    }
     @if (mayInvestigate()) {
       <!-- The server answers 403 to anyone without an incident role, so only they see the field
            (`FRD-206`). -->
@@ -217,11 +220,18 @@
                 <!-- The caller, and the use case when the table spans several: context for the
                      row, not a column to scan by. -->
                 <div class="muted text-sm">
-                  {{ row.subject }}
+                  @if (row.person_withheld) {
+                    <!-- Strict data mode: somebody else's row, listed without who or which key. -->
+                    <em data-testid="trace-person-withheld" [title]="withheldReason">{{
+                      anotherMember
+                    }}</em>
+                  } @else {
+                    {{ row.subject }}
+                  }
                   <!-- For an API key the name is whoever the key was issued to — who answers for
                        it, not who wrote the request. Words rather than a tooltip, which a touch
                        screen cannot hover (`FRD-207`). -->
-                  @if (row.credential) {
+                  @if (row.credential && !row.person_withheld) {
                     <span class="badge badge--muted" data-testid="trace-via-key">via API key</span>
                   }
                   @if (!slug() && row.use_case) {
@@ -296,7 +306,11 @@
                     <div>
                       <dt>API key</dt>
                       <dd>
-                        <code>{{ row.credential || '—' }}</code>
+                        @if (row.person_withheld) {
+                          <em class="muted" data-testid="trace-key-withheld">withheld</em>
+                        } @else {
+                          <code>{{ row.credential || '—' }}</code>
+                        }
                       </dd>
                     </div>
                     <div>

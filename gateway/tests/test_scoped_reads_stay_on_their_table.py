@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -40,6 +41,9 @@ from aira_gateway.auth.keys import generate_api_key
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import AnomalyEvent, ApiKey, RequestLog, UseCaseRead
+
+#: The per-use-case ladder, which decides while strict data mode is off (`FRD-627`).
+pytestmark = pytest.mark.usefixtures("strict_data_off")
 
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "aira_gateway" / "api" / "reporting"
 

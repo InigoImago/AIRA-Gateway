@@ -210,8 +210,11 @@ services:
     container_name: ${AIRA_STACK:-aira}-otel-lgtm
     profiles: ["observability"]
     environment:
+      # Anonymous is a **Viewer**: it reads the provisioned dashboards, which name no caller, and
+      # cannot open Explore, where any span — and its caller — could be queried ad hoc (`FRD-627`).
+      # Whoever needs that signs in as the image's `admin`.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
     # A dashboard of our own, provisioned rather than imported by hand (`FRD-615`). The image
     # ships RED-metric dashboards and leaves the drop-in provider commented out in its own
     # `sample.yaml`; without one, somebody who has just switched telemetry on lands on a Grafana
