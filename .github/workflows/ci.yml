@@ -116,10 +116,20 @@ jobs:
   # the time and neither waits for the other: one after the other on one stack, they outgrew a
   # forty-minute job. The browser suite makes what it reads, so it needs nothing the integration
   # suite leaves behind.
+  #
+  # **And each suite twice, in each data mode** (`FRD-627`). Strict data mode is the default, and an
+  # installation may switch it off; what a reader sees differs between the two, so both are what
+  # ships. The suites ask the stack which mode it runs and check that mode's answer.
   stack:
-    name: Stack — integration
+    name: Stack — integration (strict data mode ${{ matrix.strict_data_mode }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        strict_data_mode: ["true", "false"]
+    env:
+      AIRA_STRICT_DATA_MODE: ${{ matrix.strict_data_mode }}
     steps:
       - uses: actions/checkout@v5
 
@@ -165,9 +175,15 @@ jobs:
         run: make down-full
 
   browser:
-    name: Stack — browser end-to-end
+    name: Stack — browser end-to-end (strict data mode ${{ matrix.strict_data_mode }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        strict_data_mode: ["true", "false"]
+    env:
+      AIRA_STRICT_DATA_MODE: ${{ matrix.strict_data_mode }}
     steps:
       - uses: actions/checkout@v5
 

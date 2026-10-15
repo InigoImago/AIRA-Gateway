@@ -5,6 +5,23 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The live suites, in both data modes (2026-10-15)
+
+CI's integration run failed four tests after strict data mode became the default: two read requests
+as IT Steuerung and expected the key, one filtered by person as IT Steuerung, and the permission
+matrix granted a custom role `payload.read_any`. The mode had been built and tested hermetically; the
+live suite had not been run against it. Each is now answered for the mode in force: the readers that
+need a person read as IT Security, the matrix asks Management which permissions a stored role may
+hold in this stack's mode and checks the reserved two are refused by name, and a new
+`tests/integration/test_strict_data_mode.py` states both answers for what IT Steuerung sees.
+
+On the owner's word, **both modes are tested**: the integration and browser jobs run as a matrix over
+`AIRA_STRICT_DATA_MODE`, and the suites ask the stack (`strict_data` from `/api/v1/me`) rather than
+assume. Measured here against the showcase in both modes: the thirteen affected integration tests
+and the four affected browser specs green each way. `PB31` re-anchored to the renamed job.
+
+---
+
 ## A prompt's line breaks are line breaks (2026-10-15)
 
 Stored content is shown as pretty-printed JSON, and JSON writes a line break inside a string as

@@ -28,6 +28,11 @@ export async function login(page: Page, user: { username: string; password: stri
       response.url().includes('/api/v1/privacy-notice') && response.request().method() === 'GET',
     { timeout: 60_000 },
   );
+  // The account as the console received it, kept for `strictDataMode`.
+  const me = page.waitForResponse(
+    (response) => response.url().endsWith('/api/v1/me') && response.request().method() === 'GET',
+    { timeout: 60_000 },
+  );
   await page.goto('/');
 
   // Either the app redirects to Keycloak (first visit) or an existing session lands straight in
@@ -46,6 +51,21 @@ export async function login(page: Page, user: { username: string; password: stri
 
   await expect(userName).toHaveText(user.username, { timeout: 30_000 });
   await acknowledgePrivacyNoticeIfDue(page, await notice);
+  signedIn.set(page, (await (await me).json()) as { strict_data?: boolean });
+}
+
+/** What `/api/v1/me` answered for the page's sign-in. */
+const signedIn = new WeakMap<Page, { strict_data?: boolean }>();
+
+/**
+ * Whether the stack under test runs strict data mode (`FRD-627`) — the server's answer to the
+ * console, read from the sign-in, never assumed: CI runs the suite against a stack started each way,
+ * and a spec whose answer depends on the mode checks the one in force.
+ */
+export function strictDataMode(page: Page): boolean {
+  const me = signedIn.get(page);
+  if (!me) throw new Error('strictDataMode: sign in with login() first');
+  return me.strict_data !== false;
 }
 
 /**

@@ -102,14 +102,23 @@ async def _traces_until(
 
 
 async def test_a_real_request_appears_as_a_trace_with_what_it_actually_cost(
-    fixture, governance_token
+    fixture, security_token, governance_token
 ) -> None:
     """The columns are filled in by the recorder, so this is the only place they can be checked
-    against a request that really happened rather than against a row a test wrote."""
+    against a request that really happened rather than against a row a test wrote.
+
+    Read by IT Security, who sees whose request it was. IT Steuerung reads every row too, and under
+    strict data mode — the default — the same row reaches it without the key that made it.
+    """
     async with httpx.AsyncClient(timeout=180.0) as client:
         assert (await _generate(client, fixture)).status_code == 200
         # The audit write is off the hot path (`FRD-405`); the row lands within a moment.
-        rows = (await _traces_until(client, governance_token, use_case=fixture.slug))["traces"]
+        rows = (await _traces_until(client, security_token, use_case=fixture.slug))["traces"]
+        governed = (await _traces_until(client, governance_token, use_case=fixture.slug))["traces"]
+
+    assert governed and governed[0]["id"] == rows[0]["id"], "IT Steuerung reads the same row"
+    if governed[0].get("person_withheld"):
+        assert governed[0]["credential"] is None and governed[0]["subject"] is None
 
     assert rows, "a served request left no trace row"
     row = rows[0]

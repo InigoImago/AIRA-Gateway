@@ -8666,9 +8666,9 @@ MUTATIONS = [
         "PB31",
         "a check job added later gates the release, though nobody listed it",
         ".github/workflows/ci.yml",
-        "  browser:\n    name: Stack — browser end-to-end\n",
+        "  browser:\n    name: Stack — browser end-to-end (strict data mode",
         "  later:\n    runs-on: ubuntu-latest\n    steps:\n      - run: exit 1\n\n"
-        "  browser:\n    name: Stack — browser end-to-end\n",
+        "  browser:\n    name: Stack — browser end-to-end (strict data mode",
         "tools/tests/test_a_release_is_published_only_behind_the_gates.py",
     ),
     Mutation(

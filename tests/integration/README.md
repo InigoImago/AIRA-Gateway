@@ -24,6 +24,13 @@ make demo-ready     # until the demo's keys and models have reached the gateway
 make test-integration
 ```
 
+**Both data modes.** Strict data mode is on by default, and what a reader sees differs with it off,
+so CI runs the integration and the browser suite once in each (`AIRA_STRICT_DATA_MODE=true` and
+`false`, a matrix over both stack jobs). Locally, the suites ask the running stack which mode it is
+in and check that mode's answer, so the same commands test either; switch the stack between them
+with `make showcase-strict-off` and `make showcase-strict-on` (`make showcase-mode` says which runs),
+or start it with the variable set: `AIRA_STRICT_DATA_MODE=false make up-full`.
+
 The suite talks to the gateway and Management over HTTP, to both PostgreSQL databases directly, to
 Keycloak through the development realm's test service accounts, and to Redis, Vault, the collector
 and the local model; it also runs `docker` on the host. Before the first test it prints what the

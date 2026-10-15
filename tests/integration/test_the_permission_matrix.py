@@ -37,9 +37,10 @@ import pytest
 from aira_common.permissions import (
     ALL_PERMISSIONS,
     CATALOGUE,
-    GRANTABLE,
     IT_SECURITY_PERMISSIONS,
+    STRICT_DATA_RESERVED,
     Permission,
+    grantable,
 )
 
 from . import installation, keycloak
@@ -351,6 +352,13 @@ async def assert_matrix(
 # == the realm, for the test's own caller =========================================================
 
 
+async def _strict_data(client: httpx.AsyncClient) -> bool:
+    """Whether the stack under test runs strict data mode — Management's answer, from `/me`."""
+    response = await client.get(f"{MANAGEMENT_URL}/api/v1/me", headers=_auth(await _admin()))
+    assert response.status_code == 200, response.text
+    return bool(response.json()["strict_data"])
+
+
 async def _admin() -> str:
     """A Global Administrator's token, fetched where it is used.
 
@@ -591,8 +599,21 @@ async def test_the_matrix_grows_changes_and_holds() -> None:
             )
 
             # 3. Growing, one permission at a time, the whole matrix after each. A token per step:
-            #    the growth takes longer than one lives.
-            for permission in (p for p in CATALOGUE if p in GRANTABLE):
+            #    the growth takes longer than one lives. What a stored role may hold depends on the
+            #    stack's data mode, which Management says rather than this test assuming it.
+            strict = await _strict_data(client)
+            if strict:
+                # Strict data mode keeps what sees a person with the two incident roles: asked for,
+                # it is refused by name rather than stored and ignored.
+                for reserved in sorted(STRICT_DATA_RESERVED, key=str):
+                    refused = await client.patch(
+                        f"{MANAGEMENT_URL}/api/v1/roles/{role}/",
+                        headers=_auth(await _admin()),
+                        json={"permissions": [str(reserved)]},
+                    )
+                    assert refused.status_code == 400, refused.text
+                    assert "AIRA_STRICT_DATA_MODE" in refused.text
+            for permission in (p for p in CATALOGUE if p in grantable(strict_data=strict)):
                 granted.add(permission)
                 await _set(client, role, permissions=_ordered(granted))
                 await assert_matrix(

@@ -81,13 +81,16 @@ def _check(response: httpx.Response, *allowed: int) -> dict:
     ],
 )
 async def test_a_filter_combination_is_answered_and_never_widens(
-    governance_token, member_token, fixture, params
+    security_token, member_token, fixture, params
 ) -> None:
     """`mine` plus another subject is a contradiction, not a request for both — an OR here would
     hand somebody else's traffic to a reader who asked for their own.
 
     And whatever the combination, it never widens: asked by a member about a use case that has a
     row they may not see, every one of them answers nothing about it.
+
+    Asked by IT Security, who may filter by person and key; under strict data mode, the default, a
+    member who names a person or a key is refused outright, which narrows too.
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
         served = await client.post(
@@ -102,8 +105,14 @@ async def test_a_filter_combination_is_answered_and_never_widens(
             {"slug": fixture.slug},
             timeout=20.0,
         )
-        body = _check(await _traces(client, governance_token, **params), 200)
-        outsider = _check(await _traces(client, member_token, use_case=fixture.slug, **params), 200)
+        body = _check(await _traces(client, security_token, **params), 200)
+        names_somebody = bool(params.get("subject") or params.get("credential"))
+        asked = await _traces(client, member_token, use_case=fixture.slug, **params)
+        if names_somebody and asked.status_code == 403:
+            # Strict data mode: a filter by person or key is not the member's to ask.
+            assert "strict data mode" in asked.json()["error"]["message"]
+            return
+        outsider = _check(asked, 200)
 
     assert isinstance(body["traces"], list)
     if params.get("mine") == "true" and params.get("subject"):

@@ -89,6 +89,13 @@ make demo-ready         # block until the models and keys have reached the gatew
 make test-integration   # uv run pytest -m integration --no-cov
 ```
 
+**Both data modes.** Strict data mode is on by default, and what a reader sees differs with it off,
+so CI runs the integration and the browser suite once in each (`AIRA_STRICT_DATA_MODE=true` and
+`false`, a matrix over both stack jobs). Locally, the suites ask the running stack which mode it is
+in and check that mode's answer, so the same commands test either; switch the stack between them
+with `make showcase-strict-off` and `make showcase-strict-on` (`make showcase-mode` says which runs),
+or start it with the variable set: `AIRA_STRICT_DATA_MODE=false make up-full`.
+
 > **`make test-integration` can spend money.** `tests/integration/test_speech_live.py` sends
 > requests to the paid Vertex model `gemini-2.5-flash-tts` (in `europe-west1`) whenever the stack
 > has Vertex credentials — in `deploy/compose/.env` or in its Vault — and skips only when nothing on

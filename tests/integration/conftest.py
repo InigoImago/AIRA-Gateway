@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 import seed_local_catalog
 import stack_addresses
@@ -304,6 +305,21 @@ async def member_token(member_department: str) -> str:
 async def admin_token() -> str:
     """A real token carrying `global-admin` — may create a use case and grant access to it."""
     return await _token(ADMIN_CLIENT_ID, ADMIN_CLIENT_SECRET)
+
+
+@pytest.fixture
+async def strict_data(admin_token: str) -> bool:
+    """Whether the stack under test runs strict data mode (`FRD-627`) — Management's answer.
+
+    Asked, never assumed: the suite runs against a stack started either way (CI runs both), and a
+    test whose answer depends on the mode states both answers and checks the one in force.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{MANAGEMENT_URL}/api/v1/me", headers={"Authorization": f"Bearer {admin_token}"}
+        )
+    assert response.status_code == 200, response.text
+    return bool(response.json()["strict_data"])
 
 
 @pytest.fixture

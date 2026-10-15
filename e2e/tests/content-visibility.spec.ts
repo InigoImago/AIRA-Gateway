@@ -6,6 +6,7 @@ import {
   grantGroup,
   login,
   releaseAllModels,
+  strictDataMode,
   uniqueSlug,
   issueKey,
 } from './support';
@@ -122,13 +123,17 @@ test.describe('Who may read prompts and responses', () => {
     await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('vis'), 'Content visibility');
 
-    // Strict data mode is the shipped default, so two modes are offered and the two that let the
-    // use case's own people read content are not: a mode that is offered can be chosen.
+    // Under strict data mode, the default, two modes are offered and the two that let the use
+    // case's own people read content are not; switched off, all four. A mode that is offered can
+    // be chosen, and the one added last is the one a template edit would drop.
     await page.goto(`/use-cases/${slug}`);
-    for (const mode of ['not-stored', 'oversight']) {
+    const offered = strictDataMode(page)
+      ? ['not-stored', 'oversight']
+      : ['not-stored', 'oversight', 'admins-and-own', 'members'];
+    for (const mode of offered) {
       await expect(page.getByTestId(`content-mode-${mode}`)).toBeVisible();
     }
-    for (const mode of ['admins-and-own', 'members']) {
+    for (const mode of ['admins-and-own', 'members'].filter((m) => !offered.includes(m))) {
       await expect(page.getByTestId(`content-mode-${mode}`)).toHaveCount(0);
     }
 
