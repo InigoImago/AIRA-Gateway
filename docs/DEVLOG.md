@@ -5,6 +5,16 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A prompt's line breaks are line breaks (2026-10-15)
+
+Stored content is shown as pretty-printed JSON, and JSON writes a line break inside a string as
+`\n`: the coding assistant's system prompt — 380 of them in 48,000 characters — arrived as one
+unbroken paragraph. The console now shows a string's `\n` and `\t` as a break and a tab
+(`core/ui/readable-json.ts`); every other escape stays, and an escaped backslash before an `n` is not
+mistaken for one. Display only — nothing copies or parses the text. Mutation `UI-21`, caught.
+
+---
+
 ## The platform tables keep their columns and open the rest (2026-10-15)
 
 The content-read log and the role change log scrolled sideways: seven columns, and a permission

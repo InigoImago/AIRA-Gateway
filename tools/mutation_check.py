@@ -232,6 +232,14 @@ SERVING_OPTIONS = (
 )
 
 MUTATIONS = [
+    Mutation(
+        "UI-21",
+        "a line break inside a stored prompt is shown as a line break, not as \\n",
+        "management/frontend/src/app/core/ui/readable-json.ts",
+        "    character === 'n' ? '\\n' : character === 't' ? '\\t' : escape,",
+        "    escape,",
+        "management/frontend/src/app/features/use-cases/traces-tab.spec.ts",
+    ),
     # ---- the platform tables: the essentials in columns, the rest behind a click ----------------
     Mutation(
         "UI-19",

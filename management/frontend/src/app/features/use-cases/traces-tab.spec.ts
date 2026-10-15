@@ -577,6 +577,26 @@ describe('TracesTab — while a page is in flight', () => {
     expect(testid('payload-recorded')).not.toBeNull();
   });
 
+  it('shows a line break inside the prompt as a line break, not as \\n', () => {
+    // A system prompt is hundreds of lines; JSON writes each break as `\n`, and a pane that showed
+    // those would show one unbroken paragraph.
+    const { testid, readFirst } = setup({
+      permissions: ['payload.read_any'],
+      payload: {
+        id: 't1',
+        available: true,
+        ground: 'incident',
+        request: { systemInstruction: 'Be brief.\nAnswer in German.' },
+        response: { text: 'ok' },
+      },
+    });
+    readFirst();
+
+    const prompt = testid('payload-request')?.textContent ?? '';
+    expect(prompt).toContain('Be brief.\nAnswer in German.');
+    expect(prompt).not.toContain('\\n');
+  });
+
   it("closes it again, so one request's content is open at a time", () => {
     const { testid, readFirst, openFirst } = setup({ permissions: ['payload.read_any'] });
     readFirst();

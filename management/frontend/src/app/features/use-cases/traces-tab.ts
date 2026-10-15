@@ -13,6 +13,7 @@ import { displayAmount, displayCount } from '../../core/ui/money';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { ANOTHER_MEMBER, WITHHELD_REASON } from '../../core/ui/withheld';
 import { modeOf } from './data-protection-panel';
+import { readableJson } from '../../core/ui/readable-json';
 
 const REFRESH_SECONDS = 10;
 const PAGE = 50;
@@ -419,10 +420,9 @@ export class TracesTab implements OnInit {
     this.payloadLoading.set(false);
   }
 
-  /** Pretty-printed, because a prompt is read by a person. */
+  /** Pretty-printed, with a string's line breaks shown as breaks: a prompt is read by a person. */
   protected asText(value: unknown): string {
-    if (value === null || value === undefined) return '';
-    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    return readableJson(value);
   }
 
   /** Money for people, never through a float; the exact integer stays in the API for scripts. */
