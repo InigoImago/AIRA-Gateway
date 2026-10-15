@@ -283,27 +283,13 @@
       [members]="members()"
       (changed)="accessChanged()"
     />
-    @if (peopleHidden()) {
-      <!-- Strict data mode: not one row of it — not even the reader's own, which is on the
-           overview, nor what is left of anybody's allowance. -->
-      <div class="card" data-testid="people-withheld">
-        <h3 class="section-title">What each person used</h3>
-        <p class="muted" style="margin: 0">
-          In this installation, figures per person are visible only to Global Administrators and IT
-          Security. Your own figures are on the
-          <button type="button" class="btn btn--sm" (click)="selectTab('overview')">
-            Overview
-          </button>
-          tab.
-        </p>
-      </div>
-    } @else {
+    @if (peopleShown()) {
+      <!-- Only for a reader who manages every use case and whose figures were not narrowed: to
+           anybody else it is a table of one, or a note — nothing to act on. -->
       <app-people-panel
         [month]="peopleMonth()"
         [today]="peopleToday()"
         [budgets]="budgets()"
-        [only]="peopleNarrowedTo()"
-        [whyOnly]="whyPeopleNarrowed()"
         [monthUnavailable]="monthFailed()"
         [todayUnavailable]="todayFailed()"
         [reason]="consumption().reason"
@@ -357,7 +343,7 @@
   }
 
   @if (tab() === 'traces') {
-    <app-traces-tab [slug]="slug()" />
+    <app-traces-tab [slug]="slug()" [useCase]="useCase()" />
   }
 
   @if (tab() === 'rate-limits') {

@@ -14,7 +14,9 @@ import structlog
 from fastapi import Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from aira_common.access import GrantRole
 from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.reporting.common import parse_cursor, router, scope_label, visible_scope
@@ -22,7 +24,10 @@ from aira_gateway.audit import Outcome
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import PayloadAccess, RequestLog
+from aira_gateway.db.models.owned import ACCESS_CONTENT, ACCESS_METADATA
 from aira_gateway.payloads import (
+    grant_role_in,
+    is_own_request,
     may_read_payload,
     own_requests,
     payload_body,
@@ -137,7 +142,7 @@ async def traces(
     strict_data = settings_of(request).strict_data_mode
     # Under strict data mode another person's row is listed without its person (`FRD-627` FR-7).
     withholding = strict_data and not sees_people(principal)
-    fields = TRACE_FIELDS + (INCIDENT_FIELDS if investigating else ())
+    fields = _fields(investigating)
     # The name is read to decide whose row it is, and never sent: `TRACE_FIELDS` is the allow-list.
     stmt = select(
         *(getattr(RequestLog, field) for field in fields),
@@ -238,6 +243,60 @@ async def traces(
     )
 
 
+@router.get("/v1beta/traces/{trace_row_id}")
+async def trace_detail(
+    request: Request,
+    trace_row_id: str,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    """One request's details — and a record that this reader opened them (`FRD-627` FR-16).
+
+    The list says that a request happened; its details — model, tokens, cost, latency, trace — are
+    what a reader opens to look at one person's request, so the opening is recorded as reading the
+    content is, in the same table under `kind = metadata`. Scoped exactly as the list is, and the
+    record is committed **before** the details are returned: a look that cannot be recorded does
+    not happen.
+    """
+    scope = visible_scope(principal, Permission.TRACE_READ_ALL)
+    strict_data = settings_of(request).strict_data_mode
+    withholding = strict_data and not sees_people(principal)
+    fields = _fields(principal.allows(Permission.INCIDENT_INVESTIGATE))
+    async with sessionmaker_of(request)() as session:
+        row = (
+            await session.execute(select(RequestLog).where(RequestLog.id == trace_row_id))
+        ).scalar_one_or_none()
+        restricted = await restricted_use_cases(session, principal, strict_data=strict_data)
+        hidden = (
+            row is None
+            or (scope is not None and row.use_case not in scope)
+            or (row.use_case in restricted and not is_own_request(principal, row))
+        )
+        if hidden or row is None:
+            # One answer for "no such row" and "not yours", as the content's route gives.
+            raise GeminiHTTPError(404, "No such request.", "NOT_FOUND")
+        ground = await _ground_for_details(session, principal, row)
+        session.add(_access(principal, row, ground=ground, kind=ACCESS_METADATA))
+        await session.commit()
+        listed = {field: getattr(row, field) for field in fields}
+        listed[_OWNER_NAME] = row.username
+    return JSONResponse(
+        {"trace": _listed(listed, principal, withholding=withholding), "recorded": True}
+    )
+
+
+async def _ground_for_details(session: AsyncSession, principal: Principal, row: RequestLog) -> str:
+    """On what authority a reader opened a request's details — the words the content's record uses,
+    and `oversight` for a role that reads every use case's requests without a grant on this one."""
+    if principal.allows(Permission.INCIDENT_INVESTIGATE):
+        return "incident"
+    role = await grant_role_in(session, principal, row.use_case) if row.use_case else None
+    if role == GrantRole.ADMIN.value:
+        return "use_case_admin"
+    if role is not None:
+        return "use_case_member"
+    return "oversight"
+
+
 @router.get("/v1beta/traces/{trace_row_id}/payload")
 async def trace_payload(
     request: Request,
@@ -278,23 +337,7 @@ async def trace_payload(
                 }
             )
 
-        session.add(
-            PayloadAccess(
-                request_log_id=row.id,
-                use_case=row.use_case or "",
-                subject=principal.subject,
-                # The name too, so a read joins to the person rather than a credential (`FRD-613`).
-                username=principal.username,
-                ground=verdict.ground,
-                # The roles held at this moment (`FRD-622` FR-3): `incident` alone does not say
-                # which role read it, and today's roles are not evidence of the ones held then.
-                roles=",".join(sorted(principal.roles)),
-                # What read it: a key reads on its owner's grant, and its reads must not be filed
-                # as the owner's own (`FRD-622` FR-6).
-                auth_method=principal.method,
-                credential=principal.credential,
-            )
-        )
+        session.add(_access(principal, row, ground=verdict.ground, kind=ACCESS_CONTENT))
         await session.commit()
         body = payload_body(row)
 
@@ -309,3 +352,28 @@ async def trace_payload(
         ground=verdict.ground,
     )
     return JSONResponse({**body, "available": True, "ground": verdict.ground})
+
+
+def _fields(investigating: bool) -> tuple[str, ...]:
+    """What a row carries to this reader: the allow-list, and the address to an incident role."""
+    return TRACE_FIELDS + (INCIDENT_FIELDS if investigating else ())
+
+
+def _access(principal: Principal, row: RequestLog, *, ground: str, kind: str) -> PayloadAccess:
+    """The record of one look at one request — its content or its details (`FRD-627` FR-16)."""
+    return PayloadAccess(
+        request_log_id=row.id,
+        use_case=row.use_case or "",
+        subject=principal.subject,
+        # The name too, so a read joins to the person rather than a credential (`FRD-613`).
+        username=principal.username,
+        ground=ground,
+        # The roles held at this moment (`FRD-622` FR-3): `incident` alone does not say which role
+        # read it, and today's roles are not evidence of the ones held then.
+        roles=",".join(sorted(principal.roles)),
+        # What read it: a key reads on its owner's grant, and its reads must not be filed as the
+        # owner's own (`FRD-622` FR-6).
+        auth_method=principal.method,
+        credential=principal.credential,
+        kind=kind,
+    )

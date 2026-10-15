@@ -390,9 +390,21 @@ textarea:focus {
   outline-offset: 0;
   border-color: var(--aira-brand);
 }
-input[type='checkbox'] {
+/* **A box or a dot is not a text field.** The rule above gives every input a field's padding,
+ * border and background; on a radio that drew the checked dot as a speck inside a padded square,
+ * off the label's line. Both go back to the browser's own control at its natural size, in the
+ * brand's colour, and `.checkline` lines them up with their label. */
+input[type='checkbox'],
+input[type='radio'] {
   min-width: auto;
   width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  flex: none;
+  accent-color: var(--aira-brand);
 }
 input:disabled,
 select:disabled,
@@ -1096,7 +1108,11 @@ $field-label-gap: 0.3rem;
   align-items: flex-start;
 }
 .checkline input {
-  margin-top: 0.15rem;
+  margin-left: 0;
+  margin-right: 0;
+  /* Half the difference between a line of label text (1.35–1.5 lines of `--aira-text-base`) and
+   * the control's own ~13px, so the control sits on the first line rather than above it. */
+  margin-top: 0.2rem;
 }
 
 /* The content modes of a use case (`FRD-622` FR-1): a legend, then one radio line per mode with
@@ -1750,7 +1766,17 @@ tr.is-open > * {
 
 /* Prompts are long and arrive as JSON. Scrolls inside itself, so the page never scrolls
    sideways — the rule every wide element on this console follows. */
+/* Side by side, the two panes are one row: each column stretches to the taller one and its pane
+   fills the rest, so a short answer beside a long prompt does not end halfway down. Both scroll
+   inside the same cap. */
+.payload-grid > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 .payload {
+  flex: 1;
+  margin: 0;
   max-height: 22rem;
   overflow: auto;
   white-space: pre-wrap;

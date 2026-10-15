@@ -69,8 +69,12 @@ async function chooseContentMode(page: Page, slug: string, mode: string) {
   await page.goto(`/use-cases/${slug}`);
   const radio = page.getByTestId(`content-mode-${mode}`);
   await expect(radio).toBeVisible();
-  await radio.click();
-  await page.click('button:has-text("Save storage settings")');
+  // Under strict data mode, the default, a new use case already reads as oversight-only — the
+  // server's answer, rendered — and saving an unchanged form is not offered.
+  if (!(await radio.isChecked())) {
+    await radio.click();
+    await page.click('button:has-text("Save storage settings")');
+  }
   await page.reload();
   await expect(page.getByTestId(`content-mode-${mode}`)).toBeChecked();
 }
@@ -89,15 +93,18 @@ async function chooseContentMode(page: Page, slug: string, mode: string) {
  * would do before reading a row carefully.
  */
 async function openContent(page: Page) {
-  const opener = page.locator('[data-testid^="open-payload-"]').first();
+  const opener = page.locator('[data-testid^="open-detail-"]').first();
   await expect(opener).toBeVisible({ timeout: 60_000 });
 
   const live = page.getByTestId('traces-live');
   if (await live.isChecked()) await live.uncheck();
 
   await opener.click();
-  // Deliberately no assertion that the panel opened: whether it does is exactly what differs
-  // between a reader who may and one who may not, and each test says which it expects.
+  // The details open for every reader who sees the row, and the opening is recorded.
+  await expect(page.getByTestId('detail-recorded')).toBeVisible();
+  // The content is offered only to a reader who can read it; each test says which it expects.
+  const read = page.locator('[data-testid^="read-payload-"]');
+  if (await read.count()) await read.first().click();
 }
 
 /** A second identity needs its **own context**: Keycloak's SSO cookie would continue the first. */
@@ -162,12 +169,9 @@ test.describe('Who may read prompts and responses', () => {
     // The row is there — the request happened, and the figures are the use case's own business.
     await openContent(administrator.page);
 
-    // **Asked, refused, and told why**, in the gateway's own words through the page's single
-    // banner (`CLAUDE.md` §3: no silent failures). The control is not hidden: a reader who found
-    // the button missing would learn nothing, and one who found an empty panel would reasonably
-    // conclude the audit trail is broken.
-    await expect(administrator.page.locator('[role="alert"]')).toContainText('oversight only');
-    await expect(administrator.page.locator('[role="alert"]')).toContainText('administrators');
+    // **Not offered**: a button that can only answer "you may not" is a control the reader cannot
+    // use, so the content is offered to the roles that can read it and to nobody else here.
+    await expect(administrator.page.locator('[data-testid^="read-payload-"]')).toHaveCount(0);
     await expect(administrator.page.getByTestId('payload-request')).toHaveCount(0);
     await expect(administrator.page.locator('body')).not.toContainText(sentence(slug));
     await administrator.context.close();

@@ -5,6 +5,8 @@ import {
   AnomalyRule,
   ContentReadPage,
   Suspension,
+  ContentReadKind,
+  TraceDetail,
   TracePage,
   TracePayload,
 } from '../types/incidents';
@@ -72,16 +74,29 @@ export function withIncidents<T extends ApiClientClass>(Base: T) {
       return this.http.get<TracePayload>(`${GW}/v1beta/traces/${seg(id)}/payload`);
     }
 
+    /**
+     * One request's details — and, on the server, a record that they were opened.
+     *
+     * Asked for when a row is opened rather than read off the list: who opened which request is
+     * recorded like a read of its content, and only a call of its own can be.
+     */
+    traceDetail(id: string): Observable<TraceDetail> {
+      return this.http.get<TraceDetail>(`${GW}/v1beta/traces/${seg(id)}`);
+    }
+
     /** Who read which stored content, for the platform roles (`FRD-622` FR-4). Paged by cursor. */
     contentReads(options: {
       useCase?: string;
       reader?: string;
+      /** Only openings of content, or only openings of details. */
+      kind?: ContentReadKind | '';
       cursor?: string;
       limit?: number;
     }): Observable<ContentReadPage> {
       const params: Record<string, string | number> = { limit: options.limit ?? 50 };
       if (options.useCase) params['use_case'] = options.useCase;
       if (options.reader) params['reader'] = options.reader;
+      if (options.kind) params['kind'] = options.kind;
       if (options.cursor) params['cursor'] = options.cursor;
       return this.http.get<ContentReadPage>(`${GW}/v1beta/content-reads`, { params });
     }

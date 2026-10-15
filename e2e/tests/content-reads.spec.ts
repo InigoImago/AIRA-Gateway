@@ -35,9 +35,12 @@ test.describe('Platform administration — content reads', () => {
       .toBe(200);
 
     await page.goto(`/use-cases/${slug}?tab=traces`);
-    const opener = page.locator('[data-testid^="open-payload-"]').first();
+    // Two deliberate steps, both recorded: the request's details, then its content.
+    const opener = page.locator('[data-testid^="open-detail-"]').first();
     await expect(opener).toBeVisible({ timeout: 60_000 });
     await opener.click();
+    await expect(page.getByTestId('detail-recorded')).toBeVisible();
+    await page.locator('[data-testid^="read-payload-"]').first().click();
     await expect(page.getByTestId('payload-request')).toContainText('content read probe');
 
     // From the header, beside the name — not from the main navigation.
@@ -57,10 +60,11 @@ test.describe('Platform administration — content reads', () => {
     await row.getByTestId('read-request').click();
     await expect(page).toHaveURL(new RegExp(`/use-cases/${slug}\\?.*request=`));
     await expect(page.getByTestId('focused-request')).toBeVisible();
-    const openers = page.locator('[data-testid^="open-payload-"]');
+    const openers = page.locator('[data-testid^="open-detail-"]');
     await expect(openers).toHaveCount(1);
     await expect(page.getByTestId('payload-request')).toHaveCount(0);
     await openers.click();
+    await page.locator('[data-testid^="read-payload-"]').first().click();
     await expect(page.getByTestId('payload-request')).toContainText('content read probe');
 
     await page.getByTestId('show-all-requests').click();

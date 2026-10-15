@@ -107,7 +107,7 @@ interface Overrides {
    * Who is reading. `null` is a signed-in account whose username the server did not give — the
    * condition under which the reader's own cards are not rendered at all.
    */
-  me?: { username: string; strict_data?: boolean } | null;
+  me?: { username: string; strict_data?: boolean; permissions?: string[] } | null;
   addMember?: Observable<Membership>;
   removeMember?: Observable<{ revoked_keys: string[] }>;
   issueApiKey?: Observable<unknown>;
@@ -297,6 +297,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
                   email: '',
                   roles: [],
                   strict_data: overrides.me?.strict_data,
+                  permissions: overrides.me?.permissions ?? [],
                 }),
         },
       },
@@ -1291,58 +1292,77 @@ describe('UseCaseDetail — strict data mode (`FRD-627` FR-3, FR-9)', () => {
     return harness.html();
   };
 
-  it('leaves out what each person used for a limited reader, and says where their own figures are', () => {
-    const harness = setup({
-      budgets: ALLOWANCE,
-      useCaseReport: peopleReport({
-        strict_data: true,
-        people_limited: true,
-        by_person: [reportRow({ key: 'erika', requests: 3, cost: '1.00' })],
-      }),
-    });
-    const html = membersTab(harness);
+  /** A Global Administrator, as the console knows one: by the permission, never the role. */
+  const ADMIN = { username: 'erika', permissions: ['usecase.manage_all'] };
+  /** Everybody else — a use-case administrator, IT Security, IT Steuerung, a member. */
+  const OTHER = { username: 'erika', permissions: ['incident.investigate', 'report.read_all'] };
 
-    expect(html.querySelector('app-people-panel')).toBeNull();
-    expect(html.querySelector('[data-testid="person-erika"]')).toBeNull();
-    expect(html.textContent).not.toContain('Left of allowance');
-    const withheld = html.querySelector('[data-testid="people-withheld"]');
-    expect(withheld?.textContent).toContain('Global Administrators and IT Security');
-    expect(withheld?.textContent).toContain('Overview');
+  it('renders nothing of what each person used to a reader who does not manage every use case', () => {
+    // No card, no note, no button to the overview: a section a reader can only be told about is
+    // not one for them. Their own figures are on the overview either way.
+    for (const strict_data of [true, false]) {
+      for (const people_limited of [true, false]) {
+        const harness = setup({
+          me: { ...OTHER, strict_data },
+          budgets: ALLOWANCE,
+          useCaseReport: peopleReport({ strict_data, people_limited }),
+        });
+        const html = membersTab(harness);
 
-    withheld!.querySelector('button')!.click();
-    harness.fixture.detectChanges();
-    expect(harness.component.tab()).toBe('overview');
-    // …where the reader's own figures still are.
-    expect(harness.html().querySelector('[data-testid="person-erika"]')).not.toBeNull();
+        expect(html.querySelector('app-people-panel')).toBeNull();
+        expect(html.querySelector('[data-testid="people-withheld"]')).toBeNull();
+        expect(html.querySelector('[data-testid="person-bob"]')).toBeNull();
+        expect(html.textContent).not.toContain('What each person used');
+        expect(html.textContent).not.toContain('Left of allowance');
+        // The tab bar has its own *Overview*; what must be gone is the note that pointed there.
+        expect(html.textContent).not.toContain('Your own figures are on the');
+      }
+    }
   });
 
-  it('still shows every person to a reader the gateway did not limit', () => {
-    // Global Administrator and IT Security: strict, but not `people_limited`.
-    const harness = setup({
-      budgets: ALLOWANCE,
-      useCaseReport: peopleReport({ strict_data: true, people_limited: false }),
-    });
-    const html = membersTab(harness);
+  it('shows every person to a reader who manages every use case, in either mode', () => {
+    for (const strict_data of [true, false]) {
+      const harness = setup({
+        me: { ...ADMIN, strict_data },
+        budgets: ALLOWANCE,
+        useCaseReport: peopleReport({ strict_data, people_limited: false }),
+      });
+      const html = membersTab(harness);
 
-    expect(html.querySelector('[data-testid="people-withheld"]')).toBeNull();
-    expect(html.querySelector('[data-testid="person-erika"]')).not.toBeNull();
-    expect(html.querySelector('[data-testid="person-bob"]')).not.toBeNull();
-    expect(html.textContent).toContain('Left of allowance');
+      expect(html.querySelector('[data-testid="person-erika"]')).not.toBeNull();
+      expect(html.querySelector('[data-testid="person-bob"]')).not.toBeNull();
+      expect(html.textContent).toContain('Left of allowance');
+    }
   });
 
-  it('narrows to the reader, not hides, when only the use case limits and the mode is off', () => {
+  it('renders nothing to that reader either when the gateway narrowed their report', () => {
+    // A report narrowed to its reader is one row of a table about people: the permission alone
+    // does not make the section worth showing.
     const harness = setup({
+      me: ADMIN,
       useCaseReport: peopleReport({
-        strict_data: false,
         people_limited: true,
         by_person: [reportRow({ key: 'erika', requests: 3 })],
       }),
     });
     const html = membersTab(harness);
 
-    expect(html.querySelector('[data-testid="people-withheld"]')).toBeNull();
-    expect(html.querySelector('[data-testid="person-erika"]')).not.toBeNull();
-    expect(html.querySelector('[data-testid="people-why-only"]')).not.toBeNull();
+    expect(html.querySelector('app-people-panel')).toBeNull();
+    expect(html.querySelector('[data-testid="person-erika"]')).toBeNull();
+  });
+
+  it("keeps the reader's own figures on the overview, whoever they are", () => {
+    const harness = setup({
+      me: { ...OTHER, strict_data: true },
+      useCaseReport: peopleReport({
+        strict_data: true,
+        people_limited: true,
+        by_person: [reportRow({ key: 'erika', requests: 3, cost: '1.00' })],
+      }),
+    });
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="person-erika"]')).not.toBeNull();
   });
 
   it("hands the installation's mode from /me to the data-protection panel", () => {

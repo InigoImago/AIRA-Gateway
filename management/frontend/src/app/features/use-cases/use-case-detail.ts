@@ -22,7 +22,7 @@ import {
 import { errorMessage } from '../../core/api/error-message';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { strictData as strictDataOf } from '../../core/auth/roles';
+import { can, strictData as strictDataOf } from '../../core/auth/roles';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { Preset, windowFor } from '../../core/ui/periods';
 import { UsageChart } from '../../core/ui/charts/usage-chart';
@@ -205,29 +205,23 @@ export class UseCaseDetail implements OnInit {
    * table the server had filled — or fill one it had narrowed.
    */
   protected readonly peopleLimited = signal(false);
-  /** Whether the report says the installation runs strict data mode (`AIRA_STRICT_DATA_MODE`). */
-  protected readonly reportStrict = signal(false);
   /**
-   * Whether the members tab leaves out *What each person used* entirely: strict data mode, and a
-   * reader the gateway narrowed to their own row. One row in a table of people, or a remainder of
-   * a per-person allowance, is still a figure about people; the reader's own is on the overview.
+   * Whether `/me` lists `usecase.manage_all` — by default the Global Administrator's alone. Asked
+   * as a permission, never as a role: an installation that gives it to another role gives that
+   * role this section too.
    */
-  protected readonly peopleHidden = computed(() => this.reportStrict() && this.peopleLimited());
+  protected readonly managesAll = signal(false);
+  /**
+   * Whether the members tab shows *What each person used*: to a reader who manages every use case
+   * and whose report the gateway did not narrow. Anybody else would see one row of a table about
+   * people, or a note about why not — nothing they can use. Their own figures are on the overview.
+   */
+  protected readonly peopleShown = computed(() => this.managesAll() && !this.peopleLimited());
   /**
    * Whether the installation runs strict data mode, from `/me` — what the data-protection panel
    * offers depends on it before any report has arrived.
    */
   protected readonly strictData = signal(false);
-  /** Whom the members tab's figures are narrowed to, or `null` for everybody's. */
-  protected readonly peopleNarrowedTo = computed(() =>
-    this.peopleLimited() ? this.myName() : null,
-  );
-  /** Said on the members tab, where one row in a table of people would otherwise read as a fault. */
-  protected readonly whyPeopleNarrowed = computed(() =>
-    this.peopleLimited()
-      ? 'This use case shows figures per person only to the roles that may read its content.'
-      : '',
-  );
 
   /** The signed-in reader's name — what the gateway groups a person's figures under (`FRD-606`). */
   protected readonly myName = signal<string | null>(null);
@@ -293,6 +287,7 @@ export class UseCaseDetail implements OnInit {
       next: (me) => {
         this.myName.set(me.username || null);
         this.strictData.set(strictDataOf(me));
+        this.managesAll.set(can(me, 'usecase.manage_all'));
         // **Here and not in `ngOnInit`**: the chart is about this person, and until `/me` answers
         // there is nobody to ask about. Started earlier it would fetch the use case's whole traffic
         // and label it as the reader's own.
@@ -446,7 +441,6 @@ export class UseCaseDetail implements OnInit {
           // would claim this use case consumed nothing.
           this.consumptionOutOfScope.set(report.in_scope === false);
           this.peopleLimited.set(report.people_limited === true);
-          this.reportStrict.set(report.strict_data === true);
           into(report.in_scope === false ? null : report.totals);
           const people = report.in_scope === false ? [] : (report.by_person ?? []);
           (preset === 'today' ? this.peopleToday : this.peopleMonth).set(people);

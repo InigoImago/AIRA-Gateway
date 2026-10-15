@@ -148,6 +148,12 @@ Index(
 REQUEST_PERSON = func.coalesce(func.nullif(RequestLog.username, ""), RequestLog.subject)
 
 
+#: The two things a reader opens, and an access record names (`PayloadAccess.kind`).
+ACCESS_CONTENT = "content"
+ACCESS_METADATA = "metadata"
+ACCESS_KINDS = (ACCESS_CONTENT, ACCESS_METADATA)
+
+
 class PayloadAccess(Base):
     """One reading of a stored prompt or response (`FRD-505` FR-6).
 
@@ -184,6 +190,11 @@ class PayloadAccess(Base):
     #: for a read recorded before they were kept.
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     credential: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: **What** was opened (`FRD-627` FR-16): `content`, the prompt and the answer, or `metadata`,
+    #: a request's details. Both are a reader looking at one person's request, and both are kept.
+    kind: Mapped[str] = mapped_column(
+        String(16), default=ACCESS_CONTENT, server_default=ACCESS_CONTENT, index=True
+    )
 
 
 class AnomalyEvent(Base):

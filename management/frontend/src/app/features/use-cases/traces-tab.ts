@@ -4,14 +4,15 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Subject, Subscription, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { Trace, TracePayload } from '../../core/api/models';
+import { Trace, TracePayload, UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { can, peopleWithheld } from '../../core/auth/roles';
+import { can, peopleWithheld, strictData } from '../../core/auth/roles';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Live } from '../../core/ui/live';
 import { displayAmount, displayCount } from '../../core/ui/money';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { ANOTHER_MEMBER, WITHHELD_REASON } from '../../core/ui/withheld';
+import { modeOf } from './data-protection-panel';
 
 const REFRESH_SECONDS = 10;
 const PAGE = 50;
@@ -54,6 +55,11 @@ const OUTCOMES = [
 export class TracesTab implements OnInit {
   /** The use case to show, or empty for every one this caller may see (`FRD-505` FR-2). */
   readonly slug = input<string>('');
+  /**
+   * The use case itself, from the page that has it — what decides whether anybody but the content
+   * roles may read its prompts. `null` on the Requests page, which spans every use case.
+   */
+  readonly useCase = input<UseCase | null>(null);
 
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
@@ -104,14 +110,43 @@ export class TracesTab implements OnInit {
    */
   protected readonly payload = signal<TracePayload | null>(null);
   protected readonly payloadLoading = signal(false);
+  /**
+   * The open row's details, as the server answered when it recorded the opening. Rendered from
+   * this answer and not from the list row: the screen shows what was opened, and only once the
+   * opening is on record. Set only from an answer whose id is the open row's.
+   */
+  protected readonly detail = signal<Trace | null>(null);
+  protected readonly detailLoading = signal(false);
+  /** The opening did not answer; the reason is in the page's banner. */
+  protected readonly detailFailed = signal(false);
 
   /** The permission the gateway enforces the incident fields with, as `/me` lists it. */
   protected readonly mayInvestigate = computed(() => can(this.me(), 'incident.investigate'));
   /**
    * Whether the key filter is offered. In strict data mode a reader who may not see people gets
    * `403` for it, since a key leads back to the person it was issued to; *Only my requests* stays.
+   * Not before `/me` has answered, nor when it failed: until the mode is known the filter could be
+   * the one the server refuses, so it is held back — as the incident fields are.
    */
-  protected readonly mayFilterByKey = computed(() => !peopleWithheld(this.me()));
+  protected readonly mayFilterByKey = computed(() => {
+    const me = this.me();
+    return me !== null && !peopleWithheld(me);
+  });
+  /**
+   * Whether *Show the prompt and response* is offered. The server lets `payload.read_any` read any
+   * request; anybody else only inside a use case that stores content and leaves it to its people —
+   * not `oversight`, which every use case is under strict data mode. Without the use case (the
+   * Requests page) there is nothing to judge that by, so only `payload.read_any` is offered it. A
+   * button that can only answer with a refusal is a control the reader cannot use.
+   */
+  protected readonly mayReadContent = computed(() => {
+    const me = this.me();
+    if (can(me, 'payload.read_any')) return true;
+    const useCase = this.useCase();
+    if (!useCase) return false;
+    const mode = modeOf(useCase, strictData(me));
+    return mode !== 'not-stored' && mode !== 'oversight';
+  });
   private readonly me = signal<{ permissions?: string[]; strict_data?: boolean } | null>(null);
   protected readonly anotherMember = ANOTHER_MEMBER;
   protected readonly withheldReason = WITHHELD_REASON;
@@ -119,6 +154,8 @@ export class TracesTab implements OnInit {
   private readonly typed = new Subject<string>();
   /** The content read in flight; dropped when another row is opened, so it can never land there. */
   private payloadRequest: Subscription | null = null;
+  /** The opening in flight; dropped when another row is opened, for the same reason. */
+  private detailRequest: Subscription | null = null;
   /** The older page in flight; dropped when the question changes, or it appends excluded rows. */
   private moreRequest: Subscription | null = null;
   /** The page banner's message for a failed live load, withdrawn when a later load answers. */
@@ -154,6 +191,7 @@ export class TracesTab implements OnInit {
     this.destroyRef.onDestroy(() => {
       typing.unsubscribe();
       this.payloadRequest?.unsubscribe();
+      this.detailRequest?.unsubscribe();
       this.moreRequest?.unsubscribe();
     });
   }
@@ -288,28 +326,30 @@ export class TracesTab implements OnInit {
    * Open or close a row's details — its metadata, never its content.
    *
    * The whole row is the target because a small button at the far left of a wide table is a small
-   * target. It does **not** read the prompt: that read is recorded under the reader's name, and a
-   * click meant to select or copy a name or a time must not make one (`FRD-622`).
+   * target. Opening is recorded under the reader's name, so a click that ends a text selection —
+   * somebody copying a cell — opens nothing. The prompt is never read here: that is a second,
+   * deliberate click (`FRD-622`).
    */
   protected toggleRow(row: Trace): void {
     // A click that ends a text selection is somebody copying a cell, not opening the row.
     if (window.getSelection()?.toString()) return;
+    this.flip(row);
+  }
+
+  /** The row's own button, for a keyboard and a screen reader: it opens the details, as the row
+   *  does, and reads no content. */
+  protected toggleDetail(row: Trace, event: Event): void {
+    event.stopPropagation();
+    this.flip(row);
+  }
+
+  /** Close the row if it is the open one, or open its details. Never reads the content. */
+  private flip(row: Trace): void {
     if (this.openRow() === row.id) {
       this.closeRow();
     } else {
       this.openDetail(row);
     }
-  }
-
-  /** The row's own button: labelled "Show the prompt and response", so pressing it is the read. */
-  protected toggleContent(row: Trace, event: Event): void {
-    event.stopPropagation();
-    if (this.openRow() === row.id) {
-      this.closeRow();
-      return;
-    }
-    this.openDetail(row);
-    this.readPayload(row);
   }
 
   /**
@@ -333,17 +373,43 @@ export class TracesTab implements OnInit {
     });
   }
 
+  /**
+   * Open a row: ask the server for its details, which it records as opened. A failure is reported
+   * through the page's banner, as a failed content read is; the row stays open and says so.
+   */
   private openDetail(row: Trace): void {
     this.dropPayload();
+    this.dropDetail();
     this.openRow.set(row.id);
     // Paused while a row is open: a refresh replaces the list, and the open row may then be off
     // the first page — the detail would point at a request no longer on screen.
     this.live.pause();
+    this.detailLoading.set(true);
+    this.detailRequest = this.service.traceDetail(row.id).subscribe({
+      next: (body) => {
+        this.detailLoading.set(false);
+        if (body.trace.id === row.id && this.openRow() === row.id) this.detail.set(body.trace);
+      },
+      error: (response: unknown) => {
+        this.detailLoading.set(false);
+        this.detailFailed.set(true);
+        this.feedback.fail(response, 'Could not open the details of this request.');
+      },
+    });
   }
 
   private closeRow(): void {
     this.dropPayload();
+    this.dropDetail();
     this.openRow.set(null);
+  }
+
+  private dropDetail(): void {
+    this.detailRequest?.unsubscribe();
+    this.detailRequest = null;
+    this.detail.set(null);
+    this.detailLoading.set(false);
+    this.detailFailed.set(false);
   }
 
   private dropPayload(): void {

@@ -151,7 +151,11 @@
           >
             <option value="use_case">Use case</option>
             <option value="model">Model</option>
-            <option value="member">Member</option>
+            @if (!peopleLimited()) {
+              <!-- Not offered where the gateway narrows people to the reader: the table, and the
+                   file, would hold their own row and nobody else's. -->
+              <option value="member">Member</option>
+            }
             <option value="outcome">Outcome</option>
           </select>
         </div>
@@ -171,8 +175,9 @@
         <!-- Said rather than discovered by a 400: the CSV renderer takes three breakdowns
              (`FRD-602`, `FRD-206`). Under the row, not in it: it is a sentence, not a control. -->
         <p class="muted" data-testid="export-unavailable">
-          The outcome breakdown is shown here but not exported. Pick use case, model or member to
-          download a file.
+          The outcome breakdown is shown here but not exported. Pick
+          {{ peopleLimited() ? 'use case or model' : 'use case, model or member' }} to download a
+          file.
         </p>
       }
       <p class="field__hint" style="margin-top: 0.5rem">

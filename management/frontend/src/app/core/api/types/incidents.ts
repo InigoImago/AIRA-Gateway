@@ -135,6 +135,16 @@ export interface TracePayload {
   ground?: string;
 }
 
+/**
+ * One request's details, opened (`GET /v1beta/traces/{id}`). The same fields as its row in the
+ * list; what differs is that the server records the opening, with who and when, before answering.
+ */
+export interface TraceDetail {
+  trace: Trace;
+  /** The opening was recorded — said by the server, so the screen states it only when it is so. */
+  recorded: boolean;
+}
+
 export interface TracePage {
   traces: Trace[];
   /** `null` on the last page. A cursor, not an offset: rows arrive while somebody reads, and an
@@ -150,6 +160,9 @@ export interface TracePage {
 }
 
 /** One reading of a request's stored prompt and response (`FRD-622` FR-4). Metadata only. */
+/** The two things whose opening the log records. */
+export type ContentReadKind = 'content' | 'metadata';
+
 export interface ContentRead {
   id: string;
   created_at: string;
@@ -159,6 +172,11 @@ export interface ContentRead {
   username: string | null;
   /** The authority the read rested on: `incident`, `use_case_admin` or `use_case_member`. */
   ground: string;
+  /**
+   * What was opened: the stored prompt and response, or the request's details. Absent from an
+   * older gateway, which recorded content reads only.
+   */
+  kind?: ContentReadKind;
   /** The reader's organisation-wide roles at that moment; `null` for a read from before they were
    *  kept, which is unknown rather than "none". */
   roles: string[] | null;

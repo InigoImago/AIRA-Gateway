@@ -5,6 +5,33 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Strict data mode, looked at: no button that can only say no, and every look recorded (2026-10-15)
+
+The owner walked through the showcase in strict mode and found what tests had not: a use-case
+administrator was offered "Show the prompt and response" and got a red page banner for pressing it;
+the chosen content mode's radio rendered as a dot (the global input style padded radios like text
+fields); Prompt and Response were of different heights; the Members tab still carried a card about
+who may see per-person figures, with a button; and the showcase had no history at all for three of
+its four use cases — its demo keys had been revoked, so `make showcase` had never driven traffic.
+
+**Built**: the content button only for a reader who can read the content (`payload.read_any`, or a
+use case whose effective visibility lets them); the row toggle says "Show the details"; equal panels;
+radios and checkboxes reset globally. *What each person used* is the Global Administrator's alone, in
+either mode (`usecase.manage_all`), with nothing in its place for anybody else. **Opening a
+request's details is recorded** for every reader — `GET /v1beta/traces/{id}` writes an access record
+(`kind: metadata`, gateway migration `0051`) before answering, the content-read log shows and filters
+what was opened, and the privacy notice says so. A sweep for the same shape — a control that can only
+answer empty or refused — took the reporting page's member breakdown from a reader whose report is
+limited, and the API-key filter until `/me` has answered.
+
+**Measured**: the keys reset, a month of history and a round of traffic, all against the local model;
+the four affected browser specs run green against the rebuilt showcase (one had chosen a mode that
+strict mode had already chosen, and waited for a Save that is not offered for an unchanged form);
+22 new mutations (`UI-1`–`UI-18`, `SDG-20`–`SDG-23`), `N41`, `N54`, `RD1`, `G5-8`, `SD-5`,
+`FX-F12-16` re-anchored after the shared lines moved into one helper — each caught.
+
+---
+
 ## The showcase shows strict data mode both ways (2026-10-15)
 
 The owner asked whether to integrate the mode into the showcase or build two. One stack, switched:

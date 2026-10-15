@@ -17,7 +17,9 @@
         Only an administrator of this use case can change that.
       </p>
       @if (strictData()) {
-        <p class="field__hint" style="margin: 0.5rem 0 0" data-testid="strict-data-readonly">
+        <!-- A callout, not a hint: it is the installation's rule, read at the size of the text
+             around it rather than as a footnote to one field. -->
+        <p class="callout" style="margin: 0.75rem 0 0" data-testid="strict-data-readonly">
           This installation runs strict data mode, so nobody in a use case can read its requests.
         </p>
       }
@@ -26,7 +28,9 @@
         <fieldset class="content-modes">
           <legend class="section-title">Who may read prompts and responses</legend>
           @if (strictData()) {
-            <p class="field__hint" style="margin: 0" data-testid="strict-data-modes">
+            <!-- A callout, not a hint: it says why two of the four modes are missing, and at the
+                 hint's size it read as a footnote to the legend. -->
+            <p class="callout" style="margin: 0" data-testid="strict-data-modes">
               This installation runs strict data mode (<code>AIRA_STRICT_DATA_MODE</code>, set by
               its operator), so content is either not stored or read by Global Administrators and IT
               Security only. Letting administrators or members of a use case read requests is not

@@ -192,8 +192,8 @@ recipients = "Authorised people only: roles that may read content in every use c
 
 [activities.content_reads]
 title = "Record of reads of content"
-data = "Who read which stored content and when, with username, sign-in method and the access used (key prefix or application), their roles at that moment and the ground (security incident, administration or membership of the use case)."
-purpose = "Control over access to content, so that content cannot be viewed unnoticed."
+data = "Who read which stored content, or opened the details of which request (model, tokens, cost, response time), and when — with username, sign-in method and the access used (key prefix or application), their roles at that moment, the ground (security incident, oversight, administration or membership of the use case) and which of the two was opened."
+purpose = "Control over access to content and to the details of individual requests, so that neither can be viewed unnoticed."
 legal_basis = "Art. 6(1)(c) GDPR in conjunction with Art. 5(2) and Art. 32 GDPR; Art. 6(1)(f) GDPR."
 retention = "Without automatic deletion: the content expires, the fact that it was read does not."
 recipients = "Roles that may see the record of reads of content (see “Who has access within the organisation”)."

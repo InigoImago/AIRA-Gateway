@@ -146,9 +146,10 @@ installation setting, not a use case's, so no administrator can lift it. While i
   *Not stored* and *Oversight roles only*; whatever it stored before reads as the latter.
 - **Requests** are listed to everybody in the use case — what failed and what it cost are the use
   case's — but another person's row shows no name and no API key, and the requests cannot be
-  filtered by person or key. Each reader sees their own rows in full.
-- **Figures split by person** — on the Members tab, the reporting screen and its export — carry
-  only the reader's own row; the Members tab does not show the table at all. KIRA's `ki-usage`
+  filtered by person or key. Each reader sees their own rows in full. The button that opens the
+  prompt and response is offered only to the two roles that can read it.
+- **Figures split by person** — on the reporting screen and its export — carry only the reader's
+  own row, and the reporting screen does not offer a breakdown by member. KIRA's `ki-usage`
   reports one row per use case instead of per person, to every caller.
   `report.read_all` is no exemption: IT Steuerung sees every total and every breakdown, and no
   person. Totals and breakdowns by use case, model and outcome stay for everybody.
@@ -159,6 +160,13 @@ installation setting, not a use case's, so no administrator can lift it. While i
   only; everybody else reads "another member".
 - **`payload.read_any` and `incident.investigate`** — the two permissions that see a person —
   cannot be granted to IT Steuerung or to a role the installation defines.
+
+**In either mode**, two more rules hold:
+
+- **Opening a request's details** — model, tokens, cost, latency, trace — is recorded, for every
+  reader, as reading its content is; the content-read log lists both and says which was opened.
+- **"What each person used"** on a use case's Members tab is shown to the Global Administrator only
+  (`usecase.manage_all`); everybody else sees their own figures on the Overview tab.
 
 Who sees a person, then, is whoever holds `incident.investigate`: the Global Administrator and IT
 Security. Spans, the SIEM feed and the logs carry a **pseudonym** in place of a person's name — the

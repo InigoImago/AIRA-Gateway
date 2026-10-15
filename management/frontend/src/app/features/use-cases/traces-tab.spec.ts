@@ -2,7 +2,7 @@ import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { Observable, Subject, of, throwError } from 'rxjs';
-import { Trace, TracePage, TracePayload } from '../../core/api/models';
+import { Trace, TraceDetail, TracePage, TracePayload, UseCase } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -38,7 +38,7 @@ function trace(over: Partial<Trace> = {}): Trace {
 @Component({
   selector: 'app-traces-host',
   imports: [TracesTab],
-  template: `<app-traces-tab [slug]="slug()" />`,
+  template: `<app-traces-tab [slug]="slug()" [useCase]="useCase()" />`,
   // Only `PageFeedback`: the tab provides its own `Live`, exactly as it does in
   // production, and a harness that provided it here would be testing a different
   // component from the one that ships.
@@ -46,6 +46,12 @@ function trace(over: Partial<Trace> = {}): Trace {
 })
 class Host {
   readonly slug = signal('uc-a');
+  readonly useCase = signal<UseCase | null>(null);
+}
+
+/** The fields of a use case that decide who may read its content, and nothing else. */
+function useCaseWith(over: Partial<UseCase>): UseCase {
+  return { slug: 'uc-a', store_payloads: true, payload_visibility: 'members', ...over } as UseCase;
 }
 
 interface Options {
@@ -67,6 +73,13 @@ interface Options {
   meFails?: boolean;
   /** Whether `/me` says the installation runs strict data mode. */
   strictData?: boolean;
+  /** The use case the page hands the tab; absent is the Requests page, which has none. */
+  useCase?: UseCase | null;
+  /** What `GET /traces/{id}` answers in place of the listed row. */
+  detail?: (id: string) => TraceDetail;
+  detailFails?: unknown;
+  /** Openings held back per request id. */
+  heldDetails?: Record<string, Subject<TraceDetail>>;
 }
 
 function setup(options: Options = {}) {
@@ -99,6 +112,14 @@ function setup(options: Options = {}) {
       {
         provide: UseCaseService,
         useValue: {
+          traceDetail: (id: string): Observable<TraceDetail> => {
+            queries.push({ detailFor: id });
+            if (options.heldDetails?.[id]) return options.heldDetails[id];
+            if (options.detailFails) return throwError(() => options.detailFails);
+            if (options.detail) return of(options.detail(id));
+            const listed = pages.flatMap((page) => page.traces).find((row) => row.id === id);
+            return of({ trace: listed ?? trace({ id }), recorded: true });
+          },
           tracePayload: (id: string) => {
             queries.push({ payloadFor: id });
             if (options.heldPayloads?.[id]) return options.heldPayloads[id];
@@ -128,6 +149,7 @@ function setup(options: Options = {}) {
     ],
   });
   const fixture = TestBed.createComponent(Host);
+  if (options.useCase) fixture.componentInstance.useCase.set(options.useCase);
   fixture.detectChanges();
   const element = fixture.nativeElement as HTMLElement;
   const tab = fixture.debugElement.children[0].componentInstance as unknown as Record<
@@ -146,7 +168,14 @@ function setup(options: Options = {}) {
      *  column — the table was eleven columns wide and scrolled sideways, so it carries what a
      *  reader *scans* by and the rest belongs to the one request they chose to look at. */
     openFirst: () => {
-      element.querySelector<HTMLElement>('[data-testid^="open-payload-"]')?.click();
+      element.querySelector<HTMLElement>('[data-testid^="open-detail-"]')?.click();
+      fixture.detectChanges();
+    },
+    /** Open the first row, then press *Show the prompt and response* under its details. */
+    readFirst: () => {
+      element.querySelector<HTMLElement>('[data-testid^="open-detail-"]')?.click();
+      fixture.detectChanges();
+      element.querySelector<HTMLElement>('[data-testid^="read-payload-"]')?.click();
       fixture.detectChanges();
     },
     click: (id: string) => {
@@ -540,9 +569,8 @@ describe('TracesTab — while a page is in flight', () => {
   it("opens a request's content in place, and says the read was recorded", () => {
     /** The record is the condition on which `ADR-0009` was reopened, not a log line beside it —
      *  so the reader is told, rather than it happening quietly behind them. */
-    const { fixture, testid, element } = setup({ permissions: ['incident.investigate'] });
-    element.querySelector<HTMLElement>('[data-testid^="open-payload-"]')?.click();
-    fixture.detectChanges();
+    const { testid, readFirst } = setup({ permissions: ['payload.read_any'] });
+    readFirst();
 
     expect(testid('payload-request')?.textContent).toContain('hello');
     expect(testid('payload-response')?.textContent).toContain('hi');
@@ -550,15 +578,11 @@ describe('TracesTab — while a page is in flight', () => {
   });
 
   it("closes it again, so one request's content is open at a time", () => {
-    const { fixture, testid, element } = setup({ permissions: ['incident.investigate'] });
-    const open = () => {
-      element.querySelector<HTMLElement>('[data-testid^="open-payload-"]')?.click();
-      fixture.detectChanges();
-    };
-    open();
+    const { testid, readFirst, openFirst } = setup({ permissions: ['payload.read_any'] });
+    readFirst();
     expect(testid('payload-request')).not.toBeNull();
 
-    open();
+    openFirst();
 
     expect(testid('payload-request')).toBeNull();
   });
@@ -567,8 +591,8 @@ describe('TracesTab — while a page is in flight', () => {
     /** "Storage is off", "retention removed it" and "this never reached a model" are three
      *  different facts about the installation, and two of them are somebody's to change. A single
      *  "not available" teaches the reader to distrust the screen. */
-    const { fixture, testid } = setup({
-      permissions: ['incident.investigate'],
+    const { testid, readFirst } = setup({
+      permissions: ['payload.read_any'],
       payload: {
         id: 't1',
         available: false,
@@ -576,10 +600,7 @@ describe('TracesTab — while a page is in flight', () => {
         message: 'This use case does not store prompts and responses.',
       },
     });
-    (fixture.nativeElement as HTMLElement)
-      .querySelector<HTMLElement>('[data-testid^="open-payload-"]')
-      ?.click();
-    fixture.detectChanges();
+    readFirst();
 
     expect(testid('payload-unavailable')?.textContent).toContain('does not store');
     expect(testid('payload-request')).toBeNull();
@@ -590,11 +611,13 @@ describe('TracesTab — while a page is in flight', () => {
      *  banner per page is the rule, and the parent renders it. A first version of this test looked
      *  for the sentence inside the tab and failed for exactly that reason — which is the design
      *  working, not a gap. */
-    const { fixture, testid } = setup({ permissions: [], payloadFails: true });
-    (fixture.nativeElement as HTMLElement)
-      .querySelector<HTMLElement>('[data-testid^="open-payload-"]')
-      ?.click();
-    fixture.detectChanges();
+    // A member of a use case that leaves content to its members: offered the button, and refused.
+    const { fixture, testid, readFirst } = setup({
+      permissions: [],
+      useCase: useCaseWith({ payload_visibility: 'members' }),
+      payloadFails: true,
+    });
+    readFirst();
 
     // From the **host's** injector, not `TestBed.inject`: the harness provides `PageFeedback` on
     // the host component exactly as a page does, and an environment-level lookup would resolve a
@@ -665,14 +688,14 @@ describe('TracesTab — while a page is in flight', () => {
     const { element } = setup({ permissions: ['incident.investigate'] });
 
     const firstCell = element.querySelector('tbody tr td');
-    expect(firstCell?.querySelector('[data-testid^="open-payload-"]')).not.toBeNull();
+    expect(firstCell?.querySelector('[data-testid^="open-detail-"]')).not.toBeNull();
   });
 
   it("opens a request's details by clicking anywhere on its row — and reads no content", () => {
     /** A 2.5rem target at the far left of a wide table is a small target, so the whole row opens
      *  the details. It does not read the prompt: that read is recorded under the reader's name,
      *  and a click meant to select or copy a subject or a time must not make one (`FRD-622`). */
-    const { fixture, element, testid, queries } = setup({ permissions: ['incident.investigate'] });
+    const { fixture, element, testid, queries } = setup({ permissions: ['payload.read_any'] });
     element.querySelector<HTMLElement>('tbody tr td:nth-child(2)')?.click();
     fixture.detectChanges();
 
@@ -839,7 +862,7 @@ describe('TracesTab — answers that arrive late', () => {
     // prompt attributed to another's name, model and time, under "this read was recorded".
     const held = { a: new Subject<TracePayload>(), b: new Subject<TracePayload>() };
     const harness = setup({
-      permissions: ['incident.investigate'],
+      permissions: ['payload.read_any'],
       heldPayloads: held,
       pages: [
         {
@@ -853,8 +876,10 @@ describe('TracesTab — answers that arrive late', () => {
       ],
     });
 
-    harness.click('open-payload-a');
-    harness.click('open-payload-b');
+    harness.click('open-detail-a');
+    harness.click('read-payload-a');
+    harness.click('open-detail-b');
+    harness.click('read-payload-b');
     held.b.next(payloadOf('b', 'PROMPT OF B'));
     held.a.next(payloadOf('a', 'PROMPT OF A'));
     harness.fixture.detectChanges();
@@ -870,14 +895,15 @@ describe('TracesTab — answers that arrive late', () => {
     // only under the request it says it belongs to.
     const held = { b: new Subject<TracePayload>() };
     const harness = setup({
-      permissions: ['incident.investigate'],
+      permissions: ['payload.read_any'],
       heldPayloads: held,
       pages: [
         { traces: [trace({ id: 'a' }), trace({ id: 'b' })], next_cursor: null, scope: 'all' },
       ],
     });
 
-    harness.click('open-payload-b');
+    harness.click('open-detail-b');
+    harness.click('read-payload-b');
     held.b.next(payloadOf('a', 'PROMPT OF A'));
     harness.fixture.detectChanges();
 
@@ -887,16 +913,17 @@ describe('TracesTab — answers that arrive late', () => {
   it('drops the read still in flight when another row is opened', () => {
     const held = { a: new Subject<TracePayload>(), b: new Subject<TracePayload>() };
     const harness = setup({
-      permissions: ['incident.investigate'],
+      permissions: ['payload.read_any'],
       heldPayloads: held,
       pages: [
         { traces: [trace({ id: 'a' }), trace({ id: 'b' })], next_cursor: null, scope: 'all' },
       ],
     });
 
-    harness.click('open-payload-a');
+    harness.click('open-detail-a');
+    harness.click('read-payload-a');
     expect(held.a.observed).toBe(true);
-    harness.click('open-payload-b');
+    harness.click('open-detail-b');
 
     expect(held.a.observed).toBe(false);
   });
@@ -1051,8 +1078,8 @@ describe('TracesTab — strict data mode (`FRD-627` FR-7)', () => {
 
   it('lists a withheld row as "another member", with no key and no via-key badge', () => {
     const { element, testid } = setup({ strictData: true, pages: [page] });
-    const theirs = element.querySelector('[data-testid="open-payload-theirs"]')!.closest('tr')!;
-    const mine = element.querySelector('[data-testid="open-payload-mine"]')!.closest('tr')!;
+    const theirs = element.querySelector('[data-testid="open-detail-theirs"]')!.closest('tr')!;
+    const mine = element.querySelector('[data-testid="open-detail-mine"]')!.closest('tr')!;
 
     expect(theirs.textContent).toContain('another member');
     expect(theirs.querySelector('[data-testid="trace-via-key"]')).toBeNull();
@@ -1127,5 +1154,164 @@ describe('TracesTab — strict data mode (`FRD-627` FR-7)', () => {
     expect(text()).toContain('bob');
     expect(testid('trace-person-withheld')).toBeNull();
     expect(testid('trace-via-key')).not.toBeNull();
+  });
+});
+
+describe('TracesTab — opening a request is recorded', () => {
+  it('asks the server for the details and renders them from its answer, not from the list', () => {
+    // The screen shows what the server handed over when it recorded the opening. A list row and
+    // an opened detail that could differ would be two sources for one request.
+    const { openFirst, queries, testid } = setup({
+      detail: (id) => ({
+        trace: trace({ id, model: 'model-from-the-opening', requested_model: null }),
+        recorded: true,
+      }),
+    });
+    openFirst();
+
+    expect(queries.filter((query) => 'detailFor' in query)).toEqual([{ detailFor: 't1' }]);
+    expect(testid('trace-detail')?.textContent).toContain('model-from-the-opening');
+    expect(testid('trace-detail')?.textContent).not.toContain('qwen3:0.6b');
+    expect(testid('detail-recorded')?.textContent).toContain(
+      'Opening this was recorded, with your name and the time.',
+    );
+  });
+
+  it('shows nothing of the details until the opening is on record', () => {
+    const held = { t1: new Subject<TraceDetail>() };
+    const { openFirst, testid, fixture } = setup({ heldDetails: held });
+    openFirst();
+
+    expect(testid('detail-loading')).not.toBeNull();
+    expect(testid('trace-detail')).toBeNull();
+    expect(testid('detail-recorded')).toBeNull();
+
+    held.t1.next({ trace: trace(), recorded: true });
+    fixture.detectChanges();
+    expect(testid('detail-loading')).toBeNull();
+    expect(testid('trace-detail')).not.toBeNull();
+  });
+
+  it('reports a refused opening through the page banner, and says so in the row', () => {
+    const { openFirst, testid, fixture } = setup({
+      detailFails: { status: 404, error: { error: { message: 'No such request.' } } },
+    });
+    openFirst();
+
+    const feedback = fixture.debugElement.injector.get(PageFeedback);
+    expect(feedback.error()).toBeTruthy();
+    expect(testid('detail-failed')).not.toBeNull();
+    expect(testid('trace-detail')).toBeNull();
+    expect(testid('detail-recorded')).toBeNull();
+  });
+
+  it('never places the details of another request under the open row', () => {
+    const held = { b: new Subject<TraceDetail>() };
+    const harness = setup({
+      heldDetails: held,
+      pages: [
+        { traces: [trace({ id: 'a' }), trace({ id: 'b' })], next_cursor: null, scope: 'all' },
+      ],
+    });
+    harness.click('open-detail-b');
+    held.b.next({ trace: trace({ id: 'a', model: 'MODEL OF A' }), recorded: true });
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('trace-detail')).toBeNull();
+    expect(harness.text()).not.toContain('MODEL OF A');
+  });
+
+  it('labels the row toggle as what it does — it opens the details, and reads no content', () => {
+    const { testid, element, queries, fixture } = setup({ permissions: ['payload.read_any'] });
+    const toggle = element.querySelector<HTMLElement>('[data-testid="open-detail-t1"]')!;
+    expect(toggle.getAttribute('aria-label')).toBe('Show the details');
+
+    toggle.click();
+    fixture.detectChanges();
+
+    expect(toggle.getAttribute('aria-label')).toBe('Hide the details');
+    expect(queries.some((query) => 'payloadFor' in query)).toBe(false);
+    expect(testid('payload-request')).toBeNull();
+    expect(testid('read-payload-t1')).not.toBeNull();
+  });
+});
+
+describe('TracesTab — the content button, only for a reader who can read', () => {
+  /** Whether the opened row offers *Show the prompt and response*, and the note that goes with it. */
+  function offered(options: Options): { button: boolean; note: boolean } {
+    const harness = setup(options);
+    harness.openFirst();
+    const detail = harness.element.querySelector('.row-detail');
+    return {
+      button: harness.testid('read-payload-t1') !== null,
+      note: (detail?.textContent ?? '').includes('Opening them is recorded'),
+    };
+  }
+
+  it('offers it to a reader who may read any content, on either page and in either mode', () => {
+    for (const strictData of [false, true]) {
+      expect(offered({ permissions: ['payload.read_any'], strictData })).toEqual({
+        button: true,
+        note: true,
+      });
+      expect(
+        offered({
+          permissions: ['payload.read_any'],
+          strictData,
+          useCase: useCaseWith({ payload_visibility: 'oversight' }),
+        }),
+      ).toEqual({ button: true, note: true });
+    }
+  });
+
+  it("offers it to a use case's people where the use case leaves its content to them", () => {
+    for (const payload_visibility of ['members', 'own'] as const) {
+      expect(offered({ permissions: [], useCase: useCaseWith({ payload_visibility }) })).toEqual({
+        button: true,
+        note: true,
+      });
+    }
+  });
+
+  it('withholds it — and its note — where the server could only refuse', () => {
+    const nothing = { button: false, note: false };
+    // Oversight only: nobody inside the use case reads, its administrators included.
+    expect(
+      offered({ permissions: [], useCase: useCaseWith({ payload_visibility: 'oversight' }) }),
+    ).toEqual(nothing);
+    // Nothing stored: there is no content to show.
+    expect(
+      offered({
+        permissions: [],
+        useCase: useCaseWith({ store_payloads: false, payload_visibility: 'members' }),
+      }),
+    ).toEqual(nothing);
+    // Strict data mode: every use case is oversight, whatever it stored.
+    expect(
+      offered({
+        permissions: [],
+        strictData: true,
+        useCase: useCaseWith({ payload_visibility: 'members' }),
+      }),
+    ).toEqual(nothing);
+    // The Requests page has no use case to judge by: only the content permission is offered it.
+    expect(offered({ permissions: ['incident.investigate', 'trace.read_all'] })).toEqual(nothing);
+  });
+
+  it('still shows the details, and that opening them was recorded, to a reader without it', () => {
+    const { openFirst, testid } = setup({ permissions: [], strictData: true });
+    openFirst();
+
+    expect(testid('trace-detail')).not.toBeNull();
+    expect(testid('detail-recorded')).not.toBeNull();
+    expect(testid('read-payload-t1')).toBeNull();
+  });
+});
+
+describe('TracesTab — the key filter before the mode is known', () => {
+  it('holds the key filter back when /me has not said whether people are withheld', () => {
+    // Shown before `/me` answered, a strict-mode reader could type a prefix the server refuses.
+    const { testid } = setup({ meFails: true });
+    expect(testid('trace-credential')).toBeNull();
   });
 });

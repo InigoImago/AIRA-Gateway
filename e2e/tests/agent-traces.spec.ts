@@ -193,7 +193,7 @@ test.describe('Reading what was actually sent', () => {
     await login(investigatorPage, USERS.security);
     await investigatorPage.goto(`/use-cases/${slug}?tab=traces`);
 
-    const opener = investigatorPage.locator('[data-testid^="open-payload-"]').first();
+    const opener = investigatorPage.locator('[data-testid^="open-detail-"]').first();
     await expect(opener).toBeVisible({ timeout: 60_000 });
 
     // Visible **without scrolling the table sideways** — the complaint that moved it to the first
@@ -204,6 +204,7 @@ test.describe('Reading what was actually sent', () => {
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);
 
     await opener.click();
+    await investigatorPage.locator('[data-testid^="read-payload-"]').first().click();
     await expect(investigatorPage.getByTestId('payload-recorded')).toBeVisible();
     // The prompt itself, not merely a panel: the distinction three defects this week lived in.
     await expect(investigatorPage.getByTestId('payload-request')).toContainText(

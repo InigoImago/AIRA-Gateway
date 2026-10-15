@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { Subject, debounceTime, map, tap } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { ContentRead, Me } from '../../core/api/models';
+import { ContentRead, ContentReadKind, Me } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { CursorTableView } from '../../core/ui/cursor-table-view';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -18,12 +18,23 @@ const TYPING_PAUSE_MS = 300;
 /** The authority a read rested on, in words (`FRD-505` FR-6). */
 export const GROUND_LABELS: Record<string, string> = {
   incident: 'Platform role (incident)',
+  // Opening a request's details on a role that reads every use case's requests (IT Steuerung).
+  oversight: 'Platform role (oversight)',
   use_case_admin: 'Use case administrator',
   use_case_member: 'Use case member',
 };
 
 /**
- * Who opened which request's stored prompt and response (`FRD-622` FR-6): when, who, from which
+ * What an entry records as opened, in words. A row from a gateway that predates the field is a
+ * content read: that was all it recorded.
+ */
+export const KIND_LABELS: Record<ContentReadKind, string> = {
+  content: 'prompt and response',
+  metadata: 'details',
+};
+
+/**
+ * Who opened which request's details or stored prompt and response (`FRD-622` FR-6): when, who, from which
  * use case, on what ground and with which roles at the time. The record outlives the content, so a
  * row may name a request whose prompt has already expired.
  */
@@ -43,6 +54,9 @@ export class ContentReadsPage implements OnInit {
   protected readonly me = signal<Me | null>(null);
   protected readonly useCase = signal('');
   protected readonly reader = signal('');
+  /** Only openings of content, only openings of details, or both (empty). */
+  protected readonly kind = signal<ContentReadKind | ''>('');
+  protected readonly kindLabels = KIND_LABELS;
   /**
    * One page at a time, paged at the server by cursor (`FRD-622` FR-6). An offset would show a
    * row twice when a read is recorded while somebody pages; a cursor anchors each page.
@@ -82,9 +96,19 @@ export class ContentReadsPage implements OnInit {
     this.typed.next();
   }
 
+  /** A choice, not typing: asked at once, from the first page. */
+  protected setKind(value: ContentReadKind | ''): void {
+    this.kind.set(value);
+    this.view.reset();
+  }
+
   /** Whether a filter narrows the list, so an empty one says which empty it is. */
   protected filtered(): boolean {
-    return !!(this.useCase().trim() || this.reader().trim());
+    return !!(this.useCase().trim() || this.reader().trim() || this.kind());
+  }
+
+  protected kindOf(row: ContentRead): string {
+    return KIND_LABELS[row.kind ?? 'content'];
   }
 
   /**
@@ -120,7 +144,17 @@ export class ContentReadsPage implements OnInit {
     return row.roles.map((role) => labels[role] ?? role).join(', ');
   }
 
-  private query(): { useCase: string; reader: string; limit: number } {
-    return { useCase: this.useCase().trim(), reader: this.reader().trim(), limit: PAGE };
+  private query(): {
+    useCase: string;
+    reader: string;
+    kind: ContentReadKind | '';
+    limit: number;
+  } {
+    return {
+      useCase: this.useCase().trim(),
+      reader: this.reader().trim(),
+      kind: this.kind(),
+      limit: PAGE,
+    };
   }
 }

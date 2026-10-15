@@ -90,6 +90,10 @@ one named person included. A use case's administrator could also leave the rung 
   fields carry `p-` and an HMAC of the name, keyed by `AIRA_PSEUDONYM_SECRET` (Vault, both planes):
   one person, one pseudonym, no name. Without the secret each process draws a key and warns once.
   Re-identification is the audit trail's: a span's trace id leads to the request row.
+- **FR-16 — Opening a request's details is recorded**, for every reader: `GET /v1beta/traces/{id}`
+  returns one row as the list shows it and writes an access record (`kind: metadata`) first. The
+  access log carries `kind` and filters by it. The console fetches the details this way, and offers
+  the prompt and response only to a reader who can read them.
 - **FR-15 — A key's person.** The use case's key list shows owner and issuer only to them and to
   whoever sees people; everybody else reads `owner_withheld: true` and "another member".
 

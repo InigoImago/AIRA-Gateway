@@ -162,8 +162,8 @@ there is — *every member reads everything* — so the difference is as large a
 
 | Where | Strict data mode on | Off |
 | --- | --- | --- |
-| **Members** — *What each person used* | not shown; a note says who may see it | every person's requests, tokens, spend and allowance left |
-| **Requests** | `ucuser`'s rows read *another member*, without the API key; the prompt is refused | `ucuser` by name and key; the prompt opens |
+| **Members** — *What each person used* | not shown — it is the Global Administrator's, in either mode | not shown either |
+| **Requests** | `ucuser`'s rows read *another member*, without the API key; no button for the prompt | `ucuser` by name and key; the prompt opens |
 | **Warnings** | a finding about a member — when a rule fired on one — names *a person* | names them |
 | **API keys** | `ucuser`'s key belongs to *another member* | `ucuser` |
 | **Data protection** | two choices: not stored, or Global Administrators and IT Security only | four |
@@ -175,6 +175,10 @@ totals. Then:
   model; the breakdown by member shows nobody while the mode is on;
 - **as `itsec`**, the same screens — every person, in both modes: the incident roles are what the
   mode leaves people to;
+- **as `admin`**, the Members tab — *What each person used*, with what is left of each person's
+  allowance: the one place it is shown;
+- **as `admin`**, **Platform → Content reads** — every opening of a request's details and every
+  read of its content, by whom, on what ground, with *What was opened* telling the two apart;
 - **Grafana**, once telemetry is on (`AIRA_OTEL_ENABLED=true`, see
   [Telemetry](#telemetry-as-an-example-of-what-this-buys)) — a span's caller is a pseudonym such as
   `p-3f9a…` while the mode is on, and so is the person in every log line. `make showcase` draws a

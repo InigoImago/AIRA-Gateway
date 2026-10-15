@@ -2,8 +2,8 @@
   <header>
     <h2 class="card__title" style="margin: 0">Content reads</h2>
     <p class="muted lead">
-      Every time somebody opened a request's stored prompt and response: when, who, from which use
-      case, and in which role. Kept after the content itself has expired.
+      Every time somebody opened a request — its details, or its stored prompt and response: when,
+      who, from which use case, and in which role. Kept after the content itself has expired.
     </p>
   </header>
 
@@ -32,6 +32,19 @@
         (ngModelChange)="setReader($event)"
       />
     </div>
+    <div class="field">
+      <label for="reads-kind">What was opened</label>
+      <select
+        id="reads-kind"
+        data-testid="reads-kind"
+        [ngModel]="kind()"
+        (ngModelChange)="setKind($event)"
+      >
+        <option value="">anything</option>
+        <option value="content">{{ kindLabels.content }}</option>
+        <option value="metadata">{{ kindLabels.metadata }}</option>
+      </select>
+    </div>
   </div>
 
   @if (view.loading() && !view.rows().length) {
@@ -44,7 +57,7 @@
       @if (filtered()) {
         No reads match these filters.
       } @else {
-        No stored content has been read yet.
+        No request has been opened yet.
       }
     </p>
   } @else {
@@ -56,6 +69,7 @@
             <th scope="col">Reader</th>
             <th scope="col">Use case</th>
             <th scope="col">Request</th>
+            <th scope="col">What was opened</th>
             <th scope="col">Ground</th>
             <th scope="col">Roles at the time</th>
           </tr>
@@ -81,6 +95,7 @@
                   ><code>{{ row.request_log_id }}</code></a
                 >
               </td>
+              <td data-testid="read-kind">{{ kindOf(row) }}</td>
               <td data-testid="read-ground">{{ ground(row) }}</td>
               <td data-testid="read-roles">{{ roles(row) }}</td>
             </tr>

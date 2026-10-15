@@ -388,8 +388,24 @@ describe('DataProtectionPanel — strict data mode (`FRD-627` FR-3)', () => {
     expect(why?.textContent).toContain('strict data mode');
     expect(why?.textContent).toContain('AIRA_STRICT_DATA_MODE');
     expect(why?.textContent).toContain('Global Administrators and IT Security');
+    // A callout at the size of the text around it, not a footnote-sized hint to the legend.
+    expect(why?.classList.contains('callout')).toBe(true);
+    expect(why?.classList.contains('field__hint')).toBe(false);
     // No other role is named as a reader: strict mode leaves no "any role given that permission".
     expect(harness.text()).not.toContain('any role given that permission');
+  });
+
+  it('puts each radio first in its own line, beside its label', () => {
+    // The global field rule once drew a radio as a speck in a padded box; the reset that undoes it
+    // is for `input[type=radio]` inside a `.checkline`, so each radio has to be exactly that.
+    const harness = setup({ strictData: true, useCase: OVERSIGHT });
+    for (const radio of Array.from(
+      harness.html().querySelectorAll<HTMLInputElement>('input[name="content_mode"]'),
+    )) {
+      expect(radio.type).toBe('radio');
+      expect(radio.parentElement?.classList).toContain('checkline');
+      expect(radio.parentElement?.firstElementChild).toBe(radio);
+    }
   });
 
   it('offers all four modes and no strict sentence when the mode is off', () => {
@@ -429,6 +445,9 @@ describe('DataProtectionPanel — strict data mode (`FRD-627` FR-3)', () => {
     expect(
       strict.html().querySelector('[data-testid="strict-data-readonly"]')?.textContent,
     ).toContain('strict data mode');
+    expect(
+      strict.html().querySelector('[data-testid="strict-data-readonly"]')?.classList,
+    ).toContain('callout');
     expect(
       strict.html().querySelector('[data-testid="content-mode-readonly"]')?.textContent,
     ).toContain('Oversight roles only');

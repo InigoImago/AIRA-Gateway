@@ -29,7 +29,7 @@ TEXTS = Path(__file__).resolve().parent / "texts"
 EDITION = "2026-10-15"
 
 #: `source_digest()` as of ``EDITION``.
-SOURCE_DIGEST = "fab6c12ec9f901e419a9f0e896f2a6d4933c7e1fafbe201f507e447c5b829afb"
+SOURCE_DIGEST = "285db616e3ec5437f55f279b061be2554be9ad3e530d3612a540a40bb5f15cfa"
 
 
 def source_digest() -> str:

@@ -131,7 +131,7 @@
     <div class="callout spread" style="margin-top: 0.75rem" data-testid="focused-request">
       <span>
         Showing one request, <code>{{ id }}</code
-        >, as linked from the content-read log. Opening its content is recorded like any other read.
+        >, as linked from the content-read log. Opening it is recorded like any other opening.
       </span>
       <button
         type="button"
@@ -185,8 +185,8 @@
         </thead>
         <tbody>
           @for (row of traces(); track row.id) {
-            <!-- The row opens its details; only the button reads the content, because that read is
-                 recorded under the reader's name and a click meant to copy a cell must not make one. -->
+            <!-- The row opens its details, and the server records that it was opened; the content
+                 is a second, deliberate click under the details. -->
             <tr
               class="row-openable"
               [class.is-open]="openRow() === row.id"
@@ -199,11 +199,9 @@
                   type="button"
                   class="btn btn--sm btn--ghost"
                   [attr.aria-expanded]="openRow() === row.id"
-                  [attr.aria-label]="
-                    openRow() === row.id ? 'Hide the details' : 'Show the prompt and response'
-                  "
-                  [attr.data-testid]="'open-payload-' + row.id"
-                  (click)="toggleContent(row, $event)"
+                  [attr.aria-label]="openRow() === row.id ? 'Hide the details' : 'Show the details'"
+                  [attr.data-testid]="'open-detail-' + row.id"
+                  (click)="toggleDetail(row, $event)"
                 >
                   {{ openRow() === row.id ? '▾' : '▸' }}
                 </button>
@@ -258,139 +256,154 @@
             @if (openRow() === row.id) {
               <tr class="row-detail">
                 <td [attr.colspan]="20">
-                  <!-- The details the columns leave out, for the one request that was opened. -->
-                  <dl class="detail-grid">
-                    <div>
-                      <dt>Model</dt>
-                      <dd>
-                        <code>{{ row.model }}</code>
-                        @if (row.requested_model && row.requested_model !== row.model) {
-                          <div class="muted text-sm">
-                            asked for {{ row.requested_model }}
-                            @if (row.model_selection) {
-                              · {{ row.model_selection }}
-                            }
-                          </div>
-                        }
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Tokens</dt>
-                      <dd>
-                        @if (row.prompt_tokens === null && row.completion_tokens === null) {
-                          —
-                        } @else {
-                          {{ tokens(row.prompt_tokens) }} in /
-                          {{ tokens(row.completion_tokens) }} out
-                        }
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Cost</dt>
-                      <dd>{{ cost(row) }}</dd>
-                    </div>
-                    <div>
-                      <dt>Latency</dt>
-                      <dd>{{ row.latency_ms === null ? '—' : row.latency_ms + ' ms' }}</dd>
-                    </div>
-                    <div>
-                      <dt>Use case</dt>
-                      <dd>
-                        @if (row.use_case) {
-                          <a [routerLink]="['/use-cases', row.use_case]">{{ row.use_case }}</a>
-                        } @else {
-                          —
-                        }
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>API key</dt>
-                      <dd>
-                        @if (row.person_withheld) {
-                          <em class="muted" data-testid="trace-key-withheld">withheld</em>
-                        } @else {
-                          <code>{{ row.credential || '—' }}</code>
-                        }
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>
-                        Tools
-                        <app-info-hint label="What tool calls are">
-                          What the model asked the caller to run, and how many functions it was
-                          offered. Names only — never the arguments, which are the caller's content
-                          and live under the use case's payload storage and retention.
-                        </app-info-hint>
-                      </dt>
-                      <dd>
-                        @if (row.tool_calls; as tools) {
-                          @if (tools.called.length) {
-                            {{ tools.called.join(', ') }}
-                          } @else {
-                            <!-- "Offered some, called none" is a different event from "offered
-                                 none". -->
-                            {{ tools.declared }} offered, none called
-                          }
-                        } @else {
-                          —
-                        }
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Trace</dt>
-                      <dd>
-                        <span class="trace-id">{{ row.trace_id ?? '—' }}</span>
-                      </dd>
-                    </div>
-                  </dl>
-
-                  @if (payloadLoading()) {
-                    <p class="loading">
+                  <!-- The details the columns leave out, for the one request that was opened —
+                       rendered from the server's answer, which recorded the opening. -->
+                  @if (detailLoading()) {
+                    <p class="loading" data-testid="detail-loading">
                       <span class="spinner" aria-hidden="true"></span>
                       Opening…
                     </p>
-                  } @else if (payload(); as content) {
-                    @if (content.available) {
-                      <!-- The server has already recorded this read; that record is the condition
-                           on which ADR-0009 was reopened. -->
-                      <p class="muted text-sm" data-testid="payload-recorded">
-                        Opening this was recorded, with your name and the time.
-                      </p>
-                      <div class="payload-grid">
-                        <div>
-                          <h4 class="section-title">Prompt</h4>
-                          <pre class="payload" data-testid="payload-request">{{
-                            asText(content.request)
-                          }}</pre>
-                        </div>
-                        <div>
-                          <h4 class="section-title">Response</h4>
-                          <pre class="payload" data-testid="payload-response">{{
-                            asText(content.response)
-                          }}</pre>
-                        </div>
+                  } @else if (detail(); as d) {
+                    <dl class="detail-grid" data-testid="trace-detail">
+                      <div>
+                        <dt>Model</dt>
+                        <dd>
+                          <code>{{ d.model }}</code>
+                          @if (d.requested_model && d.requested_model !== d.model) {
+                            <div class="muted text-sm">
+                              asked for {{ d.requested_model }}
+                              @if (d.model_selection) {
+                                · {{ d.model_selection }}
+                              }
+                            </div>
+                          }
+                        </dd>
                       </div>
-                    } @else {
-                      <!-- The server's own reason: storage off, retention expired, or no model was
-                           reached — three different facts. -->
-                      <p class="empty" data-testid="payload-unavailable">{{ content.message }}</p>
+                      <div>
+                        <dt>Tokens</dt>
+                        <dd>
+                          @if (d.prompt_tokens === null && d.completion_tokens === null) {
+                            —
+                          } @else {
+                            {{ tokens(d.prompt_tokens) }} in / {{ tokens(d.completion_tokens) }} out
+                          }
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Cost</dt>
+                        <dd>{{ cost(d) }}</dd>
+                      </div>
+                      <div>
+                        <dt>Latency</dt>
+                        <dd>{{ d.latency_ms === null ? '—' : d.latency_ms + ' ms' }}</dd>
+                      </div>
+                      <div>
+                        <dt>Use case</dt>
+                        <dd>
+                          @if (d.use_case) {
+                            <a [routerLink]="['/use-cases', d.use_case]">{{ d.use_case }}</a>
+                          } @else {
+                            —
+                          }
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>API key</dt>
+                        <dd>
+                          @if (d.person_withheld) {
+                            <em class="muted" data-testid="trace-key-withheld">withheld</em>
+                          } @else {
+                            <code>{{ d.credential || '—' }}</code>
+                          }
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>
+                          Tools
+                          <app-info-hint label="What tool calls are">
+                            What the model asked the caller to run, and how many functions it was
+                            offered. Names only — never the arguments, which are the caller's
+                            content and live under the use case's payload storage and retention.
+                          </app-info-hint>
+                        </dt>
+                        <dd>
+                          @if (d.tool_calls; as tools) {
+                            @if (tools.called.length) {
+                              {{ tools.called.join(', ') }}
+                            } @else {
+                              <!-- "Offered some, called none" is a different event from "offered
+                                   none". -->
+                              {{ tools.declared }} offered, none called
+                            }
+                          } @else {
+                            —
+                          }
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Trace</dt>
+                        <dd>
+                          <span class="trace-id">{{ d.trace_id ?? '—' }}</span>
+                        </dd>
+                      </div>
+                    </dl>
+                    <p class="muted text-sm" data-testid="detail-recorded">
+                      Opening this was recorded, with your name and the time.
+                    </p>
+
+                    @if (payloadLoading()) {
+                      <p class="loading">
+                        <span class="spinner" aria-hidden="true"></span>
+                        Opening…
+                      </p>
+                    } @else if (payload(); as content) {
+                      @if (content.available) {
+                        <!-- The server has already recorded this read; that record is the condition
+                             on which ADR-0009 was reopened. -->
+                        <p class="muted text-sm" data-testid="payload-recorded">
+                          Reading the prompt and response was recorded too.
+                        </p>
+                        <div class="payload-grid">
+                          <div>
+                            <h4 class="section-title">Prompt</h4>
+                            <pre class="payload" data-testid="payload-request">{{
+                              asText(content.request)
+                            }}</pre>
+                          </div>
+                          <div>
+                            <h4 class="section-title">Response</h4>
+                            <pre class="payload" data-testid="payload-response">{{
+                              asText(content.response)
+                            }}</pre>
+                          </div>
+                        </div>
+                      } @else {
+                        <!-- The server's own reason: storage off, retention expired, or no model was
+                             reached — three different facts. -->
+                        <p class="empty" data-testid="payload-unavailable">{{ content.message }}</p>
+                      }
+                    } @else if (mayReadContent()) {
+                      <!-- Asked for by its own control: the read is recorded, so it is never a side
+                           effect of looking at the row's metadata. Offered only to a reader the
+                           server would let read it — a button that can only be refused is not one. -->
+                      <div class="row">
+                        <button
+                          type="button"
+                          class="btn btn--sm"
+                          (click)="readPayload(row)"
+                          [attr.data-testid]="'read-payload-' + row.id"
+                        >
+                          Show the prompt and response
+                        </button>
+                        <span class="muted text-sm">
+                          Opening them is recorded, with your name and the time.
+                        </span>
+                      </div>
                     }
-                  } @else {
-                    <!-- Asked for by its own control: the read is recorded, so it is never a side
-                         effect of looking at the row's metadata. -->
-                    <div class="row">
-                      <button
-                        type="button"
-                        class="btn btn--sm"
-                        (click)="readPayload(row)"
-                        [attr.data-testid]="'read-payload-' + row.id"
-                      >
-                        Show the prompt and response
-                      </button>
-                      <span class="muted text-sm">
-                        Opening them is recorded, with your name and the time.
-                      </span>
-                    </div>
+                  } @else if (detailFailed()) {
+                    <p class="empty" data-testid="detail-failed">
+                      The details could not be opened; the message above says why.
+                    </p>
                   }
                 </td>
               </tr>

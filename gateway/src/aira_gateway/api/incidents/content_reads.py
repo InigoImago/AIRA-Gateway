@@ -21,6 +21,7 @@ from aira_gateway.api.reporting.common import parse_cursor
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import PayloadAccess
+from aira_gateway.db.models.owned import ACCESS_KINDS
 from aira_gateway.state import sessionmaker_of
 
 #: What a row exposes — an allow-list, so a column added to `payload_access` does not appear because
@@ -36,6 +37,8 @@ READ_FIELDS = (
     "roles",
     "auth_method",
     "credential",
+    # What was opened: the content, or a request's details (`FRD-627` FR-16).
+    "kind",
 )
 
 #: Rows per page by default, and the most one page may hold.
@@ -62,6 +65,7 @@ async def content_reads(
     principal: Principal = Depends(require_principal),
     use_case: str = Query("", max_length=64),
     reader: str = Query("", max_length=255),
+    kind: str = Query("", max_length=16),
     limit: int = Query(READ_PAGE, ge=1, le=MAX_READ_PAGE),
     cursor: str = Query("", max_length=128),
 ) -> JSONResponse:
@@ -78,7 +82,17 @@ async def content_reads(
         )
 
     # The filters without the cursor, so the total counts every page rather than what is left.
+    if kind and kind not in ACCESS_KINDS:
+        # Named, as every refused filter on this surface is: a filter that matched nothing would
+        # read as "nobody opened anything".
+        raise GeminiHTTPError(
+            400,
+            f"'{kind}' is not a kind. Available: {', '.join(ACCESS_KINDS)}.",
+            "INVALID_ARGUMENT",
+        )
     conditions: list[ColumnElement[bool]] = []
+    if kind:
+        conditions.append(PayloadAccess.kind == kind)
     if use_case:
         conditions.append(PayloadAccess.use_case == use_case)
     if reader:

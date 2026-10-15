@@ -159,6 +159,7 @@ CONTENT_READS = Activity(
             "roles",
             "auth_method",
             "credential",
+            "kind",
         ),  # fmt: skip
     ),
 )

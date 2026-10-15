@@ -375,6 +375,27 @@ describe('UseCaseService', () => {
     http.expectOne('/gw/v1beta/suspensions/a%2Fb').flush({});
   });
 
+  it("opens one request's details at its own address, which the server records", () => {
+    let answered: unknown;
+    service.traceDetail('a/b').subscribe((body) => (answered = body));
+    const opened = http.expectOne((r) => r.url === '/gw/v1beta/traces/a%2Fb');
+    expect(opened.request.method).toBe('GET');
+    opened.flush({ trace: { id: 'a/b' }, recorded: true });
+    expect(answered).toEqual({ trace: { id: 'a/b' }, recorded: true });
+  });
+
+  it('asks the content-read log for one kind only when one is chosen', () => {
+    service.contentReads({ kind: 'metadata' }).subscribe();
+    const one = http.expectOne((r) => r.url === '/gw/v1beta/content-reads');
+    expect(one.request.params.get('kind')).toBe('metadata');
+    one.flush({ reads: [], next_cursor: null, count: 0 });
+
+    service.contentReads({ kind: '' }).subscribe();
+    const every = http.expectOne((r) => r.url === '/gw/v1beta/content-reads');
+    expect(every.request.params.has('kind')).toBe(false);
+    every.flush({ reads: [], next_cursor: null, count: 0 });
+  });
+
   it('sends only the trace filters that were actually set', () => {
     // An empty filter sent as an empty string is not the same request: the server would read it as
     // "outcome equals nothing" and answer with nothing.

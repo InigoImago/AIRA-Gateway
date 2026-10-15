@@ -192,8 +192,8 @@ recipients = "Nur berechtigte Personen: Rollen, die Inhalte aller Use Cases lese
 
 [activities.content_reads]
 title = "Aufzeichnung von Zugriffen auf Inhalte"
-data = "Wer welchen gespeicherten Inhalt wann gelesen hat, mit Benutzername, Anmeldeverfahren und verwendetem Zugang (Schlüssel-Präfix oder Anwendung), den Rollen zu diesem Zeitpunkt und dem Anlass (Sicherheitsvorfall, Administration oder Mitgliedschaft im Use Case)."
-purpose = "Kontrolle der Zugriffe auf Inhalte, damit Inhalte nicht unbemerkt eingesehen werden können."
+data = "Wer welchen gespeicherten Inhalt gelesen oder die Details welcher Anfrage (Modell, Tokens, Kosten, Antwortzeit) geöffnet hat und wann — mit Benutzername, Anmeldeverfahren und verwendetem Zugang (Schlüssel-Präfix oder Anwendung), den Rollen zu diesem Zeitpunkt, dem Anlass (Sicherheitsvorfall, Aufsicht, Administration oder Mitgliedschaft im Use Case) und welches von beiden geöffnet wurde."
+purpose = "Kontrolle der Zugriffe auf Inhalte und auf die Details einzelner Anfragen, damit beides nicht unbemerkt eingesehen werden kann."
 legal_basis = "Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 5 Abs. 2 und Art. 32 DSGVO; Art. 6 Abs. 1 lit. f DSGVO."
 retention = "Ohne automatische Löschung: Der Inhalt läuft ab, die Tatsache des Zugriffs nicht."
 recipients = "Rollen, die das Protokoll der Zugriffe auf Inhalte einsehen dürfen (siehe „Wer innerhalb der Organisation Zugriff hat“)."

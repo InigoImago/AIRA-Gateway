@@ -206,6 +206,12 @@ export class ReportingPage implements OnInit {
   /** The period the figures are for, as a person reads it: first and last day included. */
   protected readonly shownPeriod = computed(() => periodText(this.shown()));
 
+  /**
+   * Whether the gateway narrowed the splits by person to this reader (`people_limited`). The
+   * *Member* breakdown is then the reader's own row — and its CSV the same — so it is not offered.
+   */
+  protected readonly peopleLimited = computed(() => this.report()?.people_limited === true);
+
   /** Whether this caller is seeing the whole installation or only their own use cases. */
   protected readonly seesEverything = computed(() => this.report()?.scope === 'all');
 
@@ -325,6 +331,10 @@ export class ReportingPage implements OnInit {
     this.request = this.service.report(window.from, window.to).subscribe({
       next: (report) => {
         this.report.set(report);
+        // A breakdown no longer offered is not left on screen, nor downloaded.
+        if (report.people_limited === true && this.exportBreakdown() === 'member') {
+          this.exportBreakdown.set('use_case');
+        }
         this.shown.set(window);
         this.loading.set(false);
       },

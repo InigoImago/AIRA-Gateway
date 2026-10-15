@@ -878,3 +878,44 @@ describe('ReportingPage — strict data mode (`FRD-627` FR-5)', () => {
     ).not.toBeNull();
   });
 });
+
+describe('ReportingPage — a breakdown by member for a reader limited to their own row', () => {
+  const offered = (harness: ReturnType<typeof setup>) =>
+    Array.from(
+      harness.element.querySelectorAll<HTMLOptionElement>(
+        '[data-testid="export-breakdown"] option',
+      ),
+    ).map((option) => option.value);
+
+  it('does not offer it when the gateway narrowed people to the reader, in either mode', () => {
+    for (const strict_data of [true, false]) {
+      const harness = setup(of(report({ people_limited: true, strict_data })));
+
+      expect(offered(harness)).toEqual(['use_case', 'model', 'outcome']);
+      harness.component.exportBreakdown.set('outcome');
+      harness.fixture.detectChanges();
+      expect(harness.testid('export-unavailable')?.textContent).toContain('use case or model');
+      expect(harness.testid('export-unavailable')?.textContent).not.toContain('member');
+    }
+  });
+
+  it('offers it to a reader whose report was not narrowed', () => {
+    const harness = setup(of(report({ people_limited: false, strict_data: true })));
+
+    expect(offered(harness)).toEqual(['use_case', 'model', 'member', 'outcome']);
+  });
+
+  it('leaves the member breakdown — and its download — when a narrowed report arrives', () => {
+    let limited = false;
+    const harness = setup(() => of(report({ people_limited: limited })));
+    harness.component.exportBreakdown.set('member');
+    limited = true;
+    harness.component.load();
+    harness.fixture.detectChanges();
+
+    expect(harness.component.exportBreakdown()).toBe('use_case');
+    expect(harness.text()).not.toContain('By member');
+    harness.component.download();
+    expect(harness.exports.at(-1)?.breakdown).toBe('use_case');
+  });
+});

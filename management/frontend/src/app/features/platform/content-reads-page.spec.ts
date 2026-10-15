@@ -129,7 +129,7 @@ describe('ContentReadsPage (`FRD-622` FR-6)', () => {
     const { html, text } = setup([of({ reads: [], next_cursor: null, count: 0 })]);
 
     expect(html().querySelector('table')).toBeNull();
-    expect(text()).toContain('No stored content has been read yet.');
+    expect(text()).toContain('No request has been opened yet.');
   });
 
   it('asks with the filters and says when they match nothing', () => {
@@ -243,5 +243,70 @@ describe('ContentReadsPage — a typed filter', () => {
 
     expect(harness.html().querySelector('[data-testid="read-read-1"]')).not.toBeNull();
     expect(harness.html().querySelector('[role="alert"]')).toBeNull();
+  });
+});
+
+describe('ContentReadsPage — what was opened', () => {
+  it('says per entry whether the content or the details were opened', () => {
+    const { html } = setup([
+      of({
+        reads: [
+          { ...READ, id: 'c', kind: 'content' },
+          { ...READ, id: 'm', kind: 'metadata' },
+          // From a gateway that predates the field: it recorded content reads only.
+          { ...READ, id: 'old' },
+        ],
+        next_cursor: null,
+        count: 3,
+      }),
+    ]);
+    const kind = (id: string) =>
+      html().querySelector(`[data-testid="read-${id}"] [data-testid="read-kind"]`)?.textContent;
+
+    expect(Array.from(html().querySelectorAll('th')).map((th) => th.textContent?.trim())).toContain(
+      'What was opened',
+    );
+    expect(kind('c')?.trim()).toBe('prompt and response');
+    expect(kind('m')?.trim()).toBe('details');
+    expect(kind('old')?.trim()).toBe('prompt and response');
+  });
+
+  it('names the ground of a details opening by a role that reads every use case', () => {
+    const { html } = setup([
+      of({
+        reads: [{ ...READ, kind: 'metadata', ground: 'oversight' }],
+        next_cursor: null,
+        count: 1,
+      }),
+    ]);
+    expect(html().querySelector('[data-testid="read-ground"]')?.textContent?.trim()).toBe(
+      'Platform role (oversight)',
+    );
+  });
+
+  it('asks the server for one kind when it is chosen, at once and from the first page', () => {
+    const harness = setup([
+      of({ reads: [READ], next_cursor: null, count: 1 }),
+      of({ reads: [], next_cursor: null, count: 0 }),
+    ]);
+    const select = harness.html().querySelector<HTMLSelectElement>('[data-testid="reads-kind"]')!;
+    expect(Array.from(select.options).map((option) => option.value)).toEqual([
+      '',
+      'content',
+      'metadata',
+    ]);
+
+    select.value = 'metadata';
+    select.dispatchEvent(new Event('change'));
+    harness.fixture.detectChanges();
+
+    expect(harness.queries.at(-1)).toMatchObject({ kind: 'metadata' });
+    expect(harness.queries.at(-1)?.['cursor']).toBeUndefined();
+    expect(harness.text()).toContain('No reads match these filters.');
+  });
+
+  it('asks for every kind until one is chosen', () => {
+    const harness = setup([of({ reads: [READ], next_cursor: null, count: 1 })]);
+    expect(harness.queries[0]).toMatchObject({ kind: '' });
   });
 });

@@ -382,3 +382,69 @@ def test_a_request_span_names_its_caller_by_pseudonym(monkeypatch: pytest.Monkey
     # Each on its own: a request that was served, and one refused before attribution.
     assert attributed == refused == pseudonym("alice") != "alice"
     assert str(attributed).startswith("p-")
+
+
+# ---- opening a request's details is recorded (FR-16) ------------------------------------------
+
+
+async def _accesses(app) -> list[tuple[str, str, str, str]]:
+    from sqlalchemy import select as _select
+
+    from aira_gateway.db.models import PayloadAccess
+
+    async with app.state.db_sessionmaker() as session:
+        rows = (await session.execute(_select(PayloadAccess))).scalars().all()
+        return [(row.request_log_id, row.subject, row.ground, row.kind) for row in rows]
+
+
+def _recorded(client: TestClient) -> list[tuple[str, str, str, str]]:
+    with anyio.from_thread.start_blocking_portal() as portal:
+        return portal.call(lambda: _accesses(client.app))
+
+
+def test_opening_a_requests_details_is_recorded_and_withholds_the_person() -> None:
+    client = _seeded(BOSS)
+
+    response = client.get("/v1beta/traces/row-alice")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["recorded"] is True
+    assert body["trace"]["id"] == "row-alice"
+    assert body["trace"]["cost_nanos"] == 1_000
+    assert body["trace"]["subject"] is None and body["trace"]["person_withheld"] is True
+    assert _recorded(client) == [("row-alice", "boss", "use_case_admin", "metadata")]
+
+
+@pytest.mark.parametrize(
+    ("reader", "ground"),
+    [(ALICE, "use_case_member"), (GOV, "oversight"), (SEC, "incident")],
+    ids=["member", "it-steuerung", "it-security"],
+)
+def test_every_reader_who_opens_details_leaves_a_record(reader: Principal, ground: str) -> None:
+    client = _seeded(reader)
+
+    assert client.get("/v1beta/traces/row-boss").status_code == 200
+    assert _recorded(client) == [("row-boss", reader.subject, ground, "metadata")]
+
+
+def test_details_out_of_scope_are_not_found_and_leave_no_record() -> None:
+    stranger = Principal(subject="eve", method="oidc", roles=("use-case-user",), use_cases=("x",))
+    client = _seeded(stranger)
+
+    assert client.get("/v1beta/traces/row-boss").status_code == 404
+    assert client.get("/v1beta/traces/no-such-row").status_code == 404
+    assert _recorded(client) == []
+
+
+def test_the_log_says_what_was_opened_and_filters_by_it() -> None:
+    client = _seeded(SEC)
+    client.get("/v1beta/traces/row-alice")
+    client.get("/v1beta/traces/row-alice/payload")
+
+    everything = client.get("/v1beta/content-reads").json()["reads"]
+    details = client.get("/v1beta/content-reads?kind=metadata").json()["reads"]
+
+    assert sorted(read["kind"] for read in everything) == ["content", "metadata"]
+    assert [read["kind"] for read in details] == ["metadata"]
+    assert client.get("/v1beta/content-reads?kind=other").status_code == 400
