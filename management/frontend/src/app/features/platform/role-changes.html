@@ -15,59 +15,82 @@
   } @else if (!view.rows().length) {
     <p class="empty" data-testid="no-role-changes">No role has been created or changed yet.</p>
   } @else {
-    <!-- Focusable: on a narrow screen the log scrolls sideways, and a region that scrolls must be
-         reachable by keyboard (WCAG 2.1.1) — its rows hold no link or button to land on. -->
-    <div class="table-wrap" tabindex="0" role="region" aria-label="Role change log">
+    <!-- When, who, which role and what kind of change, on one line each; what changed opens under
+         the row, so a long permission list never pushes the table sideways. -->
+    <div class="table-wrap">
       <table class="table">
         <thead>
           <tr>
+            <th scope="col"><span class="sr-only">Details</span></th>
             <th scope="col">When</th>
             <th scope="col">Who</th>
             <th scope="col">Role</th>
             <th scope="col">Action</th>
-            <th scope="col">What changed</th>
           </tr>
         </thead>
         <tbody>
           @for (change of view.rows(); track change.id) {
-            @let diff = summary(change);
-            <tr [attr.data-testid]="'role-change-' + change.id">
+            <tr
+              class="row-openable"
+              [class.is-open]="openRow() === change.id"
+              [attr.data-testid]="'role-change-' + change.id"
+              (click)="toggle(change.id)"
+            >
+              <td class="table__open">
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost"
+                  [attr.aria-expanded]="openRow() === change.id"
+                  [attr.aria-label]="
+                    openRow() === change.id ? 'Hide what changed' : 'Show what changed'
+                  "
+                  [attr.data-testid]="'open-change-' + change.id"
+                  (click)="toggle(change.id, $event)"
+                >
+                  {{ openRow() === change.id ? '▾' : '▸' }}
+                </button>
+              </td>
               <td class="nowrap">{{ change.at | date: 'yyyy-MM-dd HH:mm' }}</td>
               <td data-testid="change-actor">{{ change.actor }}</td>
               <td data-testid="change-role">{{ roleName(change) }}</td>
               <td data-testid="change-action">{{ actions[change.action] }}</td>
-              <td>
-                <ul class="role-diff">
-                  @if (diff.label) {
-                    <li data-testid="change-label">Name: {{ diff.label }}</li>
-                  }
-                  @if (diff.group) {
-                    <li data-testid="change-group">
-                      Group: <code>{{ diff.group }}</code>
-                    </li>
-                  }
-                  @if (diff.added.length) {
-                    <li data-testid="change-added">
-                      Added:
-                      @for (name of diff.added; track name) {
-                        <code [title]="permissionLabel(name)">{{ name }}</code>
-                      }
-                    </li>
-                  }
-                  @if (diff.removed.length) {
-                    <li data-testid="change-removed">
-                      Removed:
-                      @for (name of diff.removed; track name) {
-                        <code [title]="permissionLabel(name)">{{ name }}</code>
-                      }
-                    </li>
-                  }
-                  @if (!diff.label && !diff.group && !diff.added.length && !diff.removed.length) {
-                    <li class="muted">Saved without a difference</li>
-                  }
-                </ul>
-              </td>
             </tr>
+            @if (openRow() === change.id) {
+              @let diff = summary(change);
+              <tr class="row-detail">
+                <td colspan="5">
+                  <ul class="role-diff" data-testid="change-detail">
+                    @if (diff.label) {
+                      <li data-testid="change-label">Name: {{ diff.label }}</li>
+                    }
+                    @if (diff.group) {
+                      <li data-testid="change-group">
+                        Group: <code>{{ diff.group }}</code>
+                      </li>
+                    }
+                    @if (diff.added.length) {
+                      <li data-testid="change-added">
+                        Added:
+                        @for (name of diff.added; track name) {
+                          <code [title]="permissionLabel(name)">{{ name }}</code>
+                        }
+                      </li>
+                    }
+                    @if (diff.removed.length) {
+                      <li data-testid="change-removed">
+                        Removed:
+                        @for (name of diff.removed; track name) {
+                          <code [title]="permissionLabel(name)">{{ name }}</code>
+                        }
+                      </li>
+                    }
+                    @if (!diff.label && !diff.group && !diff.added.length && !diff.removed.length) {
+                      <li class="muted">Saved without a difference</li>
+                    }
+                  </ul>
+                </td>
+              </tr>
+            }
           }
         </tbody>
       </table>

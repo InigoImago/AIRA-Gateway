@@ -180,6 +180,10 @@ export interface ContentRead {
   /** The reader's organisation-wide roles at that moment; `null` for a read from before they were
    *  kept, which is unknown rather than "none". */
   roles: string[] | null;
+  /** How the reader signed in (`oidc`, `api_key`); `null` for a read from before it was kept. */
+  auth_method?: string | null;
+  /** The access used: an API key's prefix or an OIDC client; `null` where none was recorded. */
+  credential?: string | null;
 }
 
 export interface ContentReadPage {

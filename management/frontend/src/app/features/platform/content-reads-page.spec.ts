@@ -54,10 +54,17 @@ function setup(pages: Observable<ContentReadPage>[], me: Observable<Me> = of(ME)
   const fixture = TestBed.createComponent(ContentReadsPage);
   fixture.detectChanges();
   const html = () => fixture.nativeElement as HTMLElement;
+  /** Open one read's details, as a reader does: by its button. */
+  const open = (id: string) => {
+    html().querySelector<HTMLButtonElement>(`[data-testid="open-read-${id}"]`)!.click();
+    fixture.detectChanges();
+    return html().querySelector<HTMLElement>('[data-testid="read-detail"]')!;
+  };
   return {
     fixture,
     queries,
     html,
+    open,
     text: () => html().textContent ?? '',
     component: fixture.componentInstance as unknown as Page,
   };
@@ -65,24 +72,26 @@ function setup(pages: Observable<ContentReadPage>[], me: Observable<Me> = of(ME)
 
 describe('ContentReadsPage (`FRD-622` FR-6)', () => {
   it('shows who read which request, from which use case, on what ground and in which role', () => {
-    const { html } = setup([of({ reads: [READ], next_cursor: null, count: 1 })]);
+    const { html, open } = setup([of({ reads: [READ], next_cursor: null, count: 1 })]);
     const row = html().querySelector('[data-testid="read-read-1"]')!;
 
     expect(row.textContent).toContain('2026-09-13');
     expect(row.querySelector('[data-testid="read-who"]')?.textContent).toContain('admin');
-    expect(row.querySelector('[data-testid="read-request"]')?.textContent).toContain('req-1');
-    expect(row.querySelector('[data-testid="read-ground"]')?.textContent).toContain(
+    expect(row.querySelector('a')?.getAttribute('href')).toBe('/use-cases/kundenservice');
+    const detail = open('read-1');
+    expect(detail.querySelector('[data-testid="read-request"]')?.textContent).toContain('req-1');
+    expect(detail.querySelector('[data-testid="read-ground"]')?.textContent).toContain(
       'Platform role (incident)',
     );
-    expect(row.querySelector('[data-testid="read-roles"]')?.textContent).toContain(
+    expect(detail.querySelector('[data-testid="read-roles"]')?.textContent).toContain(
       'Global Administrator',
     );
-    expect(row.querySelector('a')?.getAttribute('href')).toBe('/use-cases/kundenservice');
   });
 
   it('names the roles as the server does, an installation’s own roles included (`FRD-614` FR-10)', () => {
     const read: ContentRead = { ...READ, roles: ['controlling', 'deleted-role'] };
-    const { html } = setup([of({ reads: [read], next_cursor: null, count: 1 })]);
+    const { html, open } = setup([of({ reads: [read], next_cursor: null, count: 1 })]);
+    open('read-1');
 
     // A role deleted since has no name any more; its slug is what the record still holds.
     expect(html().querySelector('[data-testid="read-roles"]')?.textContent?.trim()).toBe(
@@ -91,10 +100,11 @@ describe('ContentReadsPage (`FRD-622` FR-6)', () => {
   });
 
   it('still shows the log when the account cannot be loaded, naming roles by slug', () => {
-    const { html } = setup(
+    const { html, open } = setup(
       [of({ reads: [READ], next_cursor: null, count: 1 })],
       throwError(() => ({ status: 500 })),
     );
+    open('read-1');
 
     expect(html().querySelector('[data-testid="read-roles"]')?.textContent?.trim()).toBe(
       'global-admin',
@@ -102,27 +112,68 @@ describe('ContentReadsPage (`FRD-622` FR-6)', () => {
   });
 
   it('links a read to the request itself: its row in the use case, not its content', () => {
-    const { html } = setup([of({ reads: [READ], next_cursor: null, count: 1 })]);
-    const link = html().querySelector('[data-testid="read-read-1"] [data-testid="read-request"]');
+    const { open } = setup([of({ reads: [READ], next_cursor: null, count: 1 })]);
+    const link = open('read-1').querySelector('[data-testid="read-request"]');
 
     expect(link?.getAttribute('href')).toBe('/use-cases/kundenservice?tab=traces&request=req-1');
   });
 
   it('links a read without a use case to the cross-use-case requests', () => {
     const loose: ContentRead = { ...READ, id: 'loose', use_case: '' };
-    const { html } = setup([of({ reads: [loose], next_cursor: null, count: 1 })]);
-    const link = html().querySelector('[data-testid="read-loose"] [data-testid="read-request"]');
+    const { open } = setup([of({ reads: [loose], next_cursor: null, count: 1 })]);
+    const link = open('loose').querySelector('[data-testid="read-request"]');
 
     expect(link?.getAttribute('href')).toBe('/requests?request=req-1');
   });
 
   it('says a read from before roles were kept is unknown, and names the subject without a name', () => {
     const old: ContentRead = { ...READ, id: 'old', username: null, roles: null };
-    const { html } = setup([of({ reads: [old], next_cursor: null, count: 1 })]);
+    const { html, open } = setup([of({ reads: [old], next_cursor: null, count: 1 })]);
     const row = html().querySelector('[data-testid="read-old"]')!;
 
-    expect(row.querySelector('[data-testid="read-roles"]')?.textContent).toContain('Not recorded');
     expect(row.querySelector('[data-testid="read-who"]')?.textContent).toContain('sub-1');
+    expect(open('old').querySelector('[data-testid="read-roles"]')?.textContent).toContain(
+      'Not recorded',
+    );
+  });
+
+  it('keeps the table to four columns and opens the rest under the row, one row at a time', () => {
+    const other: ContentRead = {
+      ...READ,
+      id: 'read-2',
+      auth_method: 'api_key',
+      credential: 'ab12',
+    };
+    const { html, open, fixture } = setup([
+      of({
+        reads: [{ ...READ, auth_method: 'oidc', credential: 'aira-console' }, other],
+        next_cursor: null,
+        count: 2,
+      }),
+    ]);
+    const headers = Array.from(html().querySelectorAll('th')).map((th) => th.textContent?.trim());
+
+    // The four a reader scans by; the request, ground, roles and access wait behind a click.
+    expect(headers).toEqual(['Details', 'When', 'Reader', 'What was opened', 'Use case']);
+    expect(html().querySelector('[data-testid="read-detail"]')).toBeNull();
+
+    expect(open('read-1').querySelector('[data-testid="read-access"]')?.textContent).toContain(
+      'single sign-on · aira-console',
+    );
+    expect(open('read-2').querySelector('[data-testid="read-access"]')?.textContent).toContain(
+      'API key · ab12',
+    );
+    expect(html().querySelectorAll('[data-testid="read-detail"]').length).toBe(1);
+
+    // The row itself opens and closes too; a link inside it only follows the link.
+    html().querySelector<HTMLElement>('[data-testid="read-read-2"]')!.click();
+    fixture.detectChanges();
+    expect(html().querySelector('[data-testid="read-detail"]')).toBeNull();
+    html().querySelector<HTMLElement>('[data-testid="read-read-1"]')!.click();
+    fixture.detectChanges();
+    expect(
+      html().querySelector('[data-testid="open-read-read-1"]')?.getAttribute('aria-expanded'),
+    ).toBe('true');
   });
 
   it('says that nothing has been read yet, rather than showing an empty table', () => {
@@ -272,13 +323,14 @@ describe('ContentReadsPage — what was opened', () => {
   });
 
   it('names the ground of a details opening by a role that reads every use case', () => {
-    const { html } = setup([
+    const { html, open } = setup([
       of({
         reads: [{ ...READ, kind: 'metadata', ground: 'oversight' }],
         next_cursor: null,
         count: 1,
       }),
     ]);
+    open('read-1');
     expect(html().querySelector('[data-testid="read-ground"]')?.textContent?.trim()).toBe(
       'Platform role (oversight)',
     );

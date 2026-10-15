@@ -5,6 +5,17 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The platform tables keep their columns and open the rest (2026-10-15)
+
+The content-read log and the role change log scrolled sideways: seven columns, and a permission
+list in a cell. Each now shows what a reader scans by — when, who, what was opened and where; when,
+who, which role and what kind of change — and opens the rest under the row, one at a time, the way
+the request list does: the request, ground, roles and access of a read, the difference a change made.
+Measured on the showcase at 1280 and 900 pixels: no table is wider than its frame, open or closed.
+Mutations `UI-19` and `UI-20`, each caught.
+
+---
+
 ## Strict data mode, looked at: no button that can only say no, and every look recorded (2026-10-15)
 
 The owner walked through the showcase in strict mode and found what tests had not: a use-case

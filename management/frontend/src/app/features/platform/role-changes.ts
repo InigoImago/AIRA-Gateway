@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, computed, inject, input } from '@angular/core';
+import { Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { PermissionInfo, RoleChange, RoleSnapshot } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -66,6 +66,15 @@ export class RoleChanges implements OnInit {
   private readonly feedback = inject(PageFeedback);
 
   protected readonly actions = ACTION_LABELS;
+  /** The one change whose difference is open; one at a time, as the request list opens rows. */
+  protected readonly openRow = signal<number | null>(null);
+
+  /** Open or close one change. From the button too, which must not also count as a click on the
+   *  row and close what it just opened. */
+  protected toggle(id: number, event?: Event): void {
+    event?.stopPropagation();
+    this.openRow.update((open) => (open === id ? null : id));
+  }
   protected readonly view = new ServerTableView<RoleChange>(
     (_query, page) => this.service.roleChanges({ page, pageSize: PAGE }),
     (response) => this.feedback.fail(response, 'Could not load the change log of the roles.'),

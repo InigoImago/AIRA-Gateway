@@ -232,6 +232,23 @@ SERVING_OPTIONS = (
 )
 
 MUTATIONS = [
+    # ---- the platform tables: the essentials in columns, the rest behind a click ----------------
+    Mutation(
+        "UI-19",
+        "a content read's request, ground, roles and access open under the row, not all at once",
+        "management/frontend/src/app/features/platform/content-reads-page.html",
+        "            @if (openRow() === row.id) {\n",
+        "            @if (true) {\n",
+        "management/frontend/src/app/features/platform/content-reads-page.spec.ts",
+    ),
+    Mutation(
+        "UI-20",
+        "what a role change did opens under its row, one row at a time",
+        "management/frontend/src/app/features/platform/role-changes.html",
+        "            @if (openRow() === change.id) {\n",
+        "            @if (true) {\n",
+        "management/frontend/src/app/features/platform/roles-page.spec.ts",
+    ),
     # ---- strict data mode, the console's polish (FRD-627) --------------------------------------
     Mutation(
         "UI-1",

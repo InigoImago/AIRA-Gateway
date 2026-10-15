@@ -61,44 +61,87 @@
       }
     </p>
   } @else {
+    <!-- The columns that answer "who opened what, when"; the rest — which request, on what ground,
+         in which roles, with which access — opens under the row, so the table never scrolls
+         sideways. -->
     <div class="table-wrap">
       <table class="table" data-testid="content-reads">
         <thead>
           <tr>
+            <th scope="col"><span class="sr-only">Details</span></th>
             <th scope="col">When</th>
             <th scope="col">Reader</th>
-            <th scope="col">Use case</th>
-            <th scope="col">Request</th>
             <th scope="col">What was opened</th>
-            <th scope="col">Ground</th>
-            <th scope="col">Roles at the time</th>
+            <th scope="col">Use case</th>
           </tr>
         </thead>
         <tbody>
           @for (row of view.rows(); track row.id) {
-            <tr [attr.data-testid]="'read-' + row.id">
-              <td>{{ row.created_at | date: 'yyyy-MM-dd HH:mm' }}</td>
+            <tr
+              class="row-openable"
+              [class.is-open]="openRow() === row.id"
+              [attr.data-testid]="'read-' + row.id"
+              (click)="toggle(row.id)"
+            >
+              <td class="table__open">
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost"
+                  [attr.aria-expanded]="openRow() === row.id"
+                  [attr.aria-label]="openRow() === row.id ? 'Hide the details' : 'Show the details'"
+                  [attr.data-testid]="'open-read-' + row.id"
+                  (click)="toggle(row.id, $event)"
+                >
+                  {{ openRow() === row.id ? '▾' : '▸' }}
+                </button>
+              </td>
+              <td class="nowrap">{{ row.created_at | date: 'yyyy-MM-dd HH:mm' }}</td>
               <td data-testid="read-who">{{ who(row) }}</td>
+              <td data-testid="read-kind">{{ kindOf(row) }}</td>
               <td>
                 @if (row.use_case) {
-                  <a [routerLink]="['/use-cases', row.use_case]">{{ row.use_case }}</a>
+                  <a
+                    [routerLink]="['/use-cases', row.use_case]"
+                    (click)="$event.stopPropagation()"
+                    >{{ row.use_case }}</a
+                  >
                 } @else {
                   —
                 }
               </td>
-              <td>
-                <a
-                  [routerLink]="requestLink(row)"
-                  [queryParams]="requestQuery(row)"
-                  title="Show this request"
-                  data-testid="read-request"
-                  ><code>{{ row.request_log_id }}</code></a
-                >
-              </td>
-              <td data-testid="read-kind">{{ kindOf(row) }}</td>
-              <td data-testid="read-ground">{{ ground(row) }}</td>
-              <td data-testid="read-roles">{{ roles(row) }}</td>
             </tr>
+            @if (openRow() === row.id) {
+              <tr class="row-detail">
+                <td colspan="5">
+                  <dl class="detail-grid" data-testid="read-detail">
+                    <div>
+                      <dt>Request</dt>
+                      <dd>
+                        <a
+                          [routerLink]="requestLink(row)"
+                          [queryParams]="requestQuery(row)"
+                          title="Show this request"
+                          data-testid="read-request"
+                          ><code>{{ row.request_log_id }}</code></a
+                        >
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Ground</dt>
+                      <dd data-testid="read-ground">{{ ground(row) }}</dd>
+                    </div>
+                    <div>
+                      <dt>Roles at the time</dt>
+                      <dd data-testid="read-roles">{{ roles(row) }}</dd>
+                    </div>
+                    <div>
+                      <dt>Signed in with</dt>
+                      <dd data-testid="read-access">{{ access(row) }}</dd>
+                    </div>
+                  </dl>
+                </td>
+              </tr>
+            }
           }
         </tbody>
       </table>

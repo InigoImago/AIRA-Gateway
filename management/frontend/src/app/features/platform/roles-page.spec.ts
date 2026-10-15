@@ -779,10 +779,17 @@ describe('RolesPage (`FRD-614` FR-9)', () => {
         after: null,
       },
     ];
-    const { q } = setup({ changes: [of(page(rows))] });
+    const { q, click } = setup({ changes: [of(page(rows))] });
     const row = (id: number) => q(`role-change-${id}`)!;
     const cell = (id: number, part: string) =>
       row(id).querySelector(`[data-testid="${part}"]`)?.textContent?.trim();
+    /** What a change did, which opens under its row — one row at a time. */
+    const diff = async (id: number) => {
+      await click(`open-change-${id}`);
+      return q('change-detail')!;
+    };
+    const part = (detail: HTMLElement, name: string) =>
+      detail.querySelector(`[data-testid="${name}"]`)?.textContent?.trim();
 
     expect(q('role-changes')).not.toBeNull();
     expect(row(3).textContent).toContain('2026-09-13');
@@ -790,24 +797,29 @@ describe('RolesPage (`FRD-614` FR-9)', () => {
     // The role's name today, from `/me`.
     expect(cell(3, 'change-role')).toBe('Controlling');
     expect(cell(3, 'change-action')).toBe('Changed');
-    expect(cell(3, 'change-label')).toContain('Controlling → Controlling & Finance');
-    expect(cell(3, 'change-group')).toContain('/finance/controlling → /finance/cf');
-    expect(cell(3, 'change-added')).toContain('usecase.manage_all');
-    expect(cell(3, 'change-added')).not.toContain('report.read_all');
-    expect(cell(3, 'change-removed')).toContain('usecase.read_all');
-    expect(row(3).querySelector('[data-testid="change-added"] code')?.getAttribute('title')).toBe(
+    // What changed waits behind a click, so a long permission list never widens the table.
+    expect(q('change-detail')).toBeNull();
+    const third = await diff(3);
+    expect(part(third, 'change-label')).toContain('Controlling → Controlling & Finance');
+    expect(part(third, 'change-group')).toContain('/finance/controlling → /finance/cf');
+    expect(part(third, 'change-added')).toContain('usecase.manage_all');
+    expect(part(third, 'change-added')).not.toContain('report.read_all');
+    expect(part(third, 'change-removed')).toContain('usecase.read_all');
+    expect(third.querySelector('[data-testid="change-added"] code')?.getAttribute('title')).toBe(
       'Administer every use case',
     );
 
     // A deleted role is no longer in `/me`: the name it had is what the log recorded.
     expect(cell(2, 'change-role')).toBe('Old role');
     expect(cell(2, 'change-action')).toBe('Deleted');
-    expect(cell(2, 'change-label')).toContain('Old role');
-    expect(cell(2, 'change-removed')).toContain('role.read');
-    expect(row(2).querySelector('[data-testid="change-added"]')).toBeNull();
+    const second = await diff(2);
+    expect(part(second, 'change-label')).toContain('Old role');
+    expect(part(second, 'change-removed')).toContain('role.read');
+    expect(second.querySelector('[data-testid="change-added"]')).toBeNull();
+    expect(q('open-change-3')?.getAttribute('aria-expanded')).toBe('false');
 
     expect(cell(1, 'change-role')).toBe('IT Steuerung');
-    expect(row(1).textContent).toContain('Saved without a difference');
+    expect((await diff(1)).textContent).toContain('Saved without a difference');
     // Neither a name today nor a recorded one: the slug.
     expect(cell(0, 'change-role')).toBe('gone');
     expect(cell(0, 'change-action')).toBe('Created');

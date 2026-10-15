@@ -38,6 +38,13 @@ export const KIND_LABELS: Record<ContentReadKind, string> = {
  * use case, on what ground and with which roles at the time. The record outlives the content, so a
  * row may name a request whose prompt has already expired.
  */
+/** Sign-in methods in words; an unknown one is shown as the gateway wrote it. */
+const ACCESS_METHODS: Record<string, string> = {
+  oidc: 'single sign-on',
+  api_key: 'API key',
+  demo: 'demo (authentication off)',
+};
+
 @Component({
   selector: 'app-content-reads-page',
   imports: [DatePipe, FormsModule, RouterLink, TablePager],
@@ -57,6 +64,8 @@ export class ContentReadsPage implements OnInit {
   /** Only openings of content, only openings of details, or both (empty). */
   protected readonly kind = signal<ContentReadKind | ''>('');
   protected readonly kindLabels = KIND_LABELS;
+  /** The one read whose details are open; one at a time, as the request list opens rows. */
+  protected readonly openRow = signal<string | null>(null);
   /**
    * One page at a time, paged at the server by cursor (`FRD-622` FR-6). An offset would show a
    * row twice when a read is recorded while somebody pages; a cursor anchors each page.
@@ -137,6 +146,20 @@ export class ContentReadsPage implements OnInit {
    * The roles held when the content was read, in the server's names; `null` is a read from before
    * they were kept. A role deleted since is named by its slug, which is all the record still has.
    */
+  /** Open or close one read's details. From the button too, which must not also count as a click
+   *  on the row and close what it just opened. */
+  protected toggle(id: string, event?: Event): void {
+    event?.stopPropagation();
+    this.openRow.update((open) => (open === id ? null : id));
+  }
+
+  /** How the reader came in: the sign-in method and, where one was recorded, the key or client. */
+  protected access(row: ContentRead): string {
+    const method = row.auth_method ? (ACCESS_METHODS[row.auth_method] ?? row.auth_method) : null;
+    if (!method) return '—';
+    return row.credential ? `${method} · ${row.credential}` : method;
+  }
+
   protected roles(row: ContentRead): string {
     if (row.roles === null) return 'Not recorded';
     if (!row.roles.length) return 'None';

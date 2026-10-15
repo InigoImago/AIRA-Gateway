@@ -52,12 +52,15 @@ test.describe('Platform administration — content reads', () => {
     const row = page.locator('[data-testid="content-reads"] tbody tr').first();
     await expect(row).toContainText(slug, { timeout: 15_000 });
     await expect(row.getByTestId('read-who')).toHaveText('admin');
-    await expect(row.getByTestId('read-ground')).toHaveText('Platform role (incident)');
-    await expect(row.getByTestId('read-roles')).toContainText('Global administrator');
+    // The ground, the roles and the request open under the row, so the table never scrolls sideways.
+    await row.locator('[data-testid^="open-read-"]').click();
+    const detail = page.getByTestId('read-detail');
+    await expect(detail.getByTestId('read-ground')).toHaveText('Platform role (incident)');
+    await expect(detail.getByTestId('read-roles')).toContainText('Global administrator');
 
     // The request id leads to the request: its row in the use case's traces, marked, with the
     // content one deliberate click away — that click is a recorded read of its own.
-    await row.getByTestId('read-request').click();
+    await detail.getByTestId('read-request').click();
     await expect(page).toHaveURL(new RegExp(`/use-cases/${slug}\\?.*request=`));
     await expect(page.getByTestId('focused-request')).toBeVisible();
     const openers = page.locator('[data-testid^="open-detail-"]');
