@@ -184,6 +184,12 @@ jobs:
         strict_data_mode: ["true", "false"]
     env:
       AIRA_STRICT_DATA_MODE: ${{ matrix.strict_data_mode }}
+      # Management's per-user throttle, raised for this job only. The suite is one browser signed in
+      # as a handful of demo accounts — mostly `admin` — loading screen after screen, each of which
+      # asks for several panels at once and refreshes live; it crossed the 600 a minute a person
+      # never reaches, and an API key it was issuing came back `429`. The throttle is not what this
+      # job tests, and a test that waits it out tests the clock.
+      AIRA_THROTTLE_USER: 6000/minute
     steps:
       - uses: actions/checkout@v5
 

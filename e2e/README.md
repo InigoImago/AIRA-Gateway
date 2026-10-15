@@ -36,6 +36,11 @@ make test-e2e                  # or make e2e: install, run, then purge what the 
 cd e2e && npx playwright test --ui   # interactive; run `make purge-e2e-use-cases` afterwards
 ```
 
+**A whole run can cross Management's per-user throttle** (`AIRA_THROTTLE_USER`, 600 requests a
+minute): the suite signs in as a handful of demo accounts and loads screen after screen, and a
+request it needed then answers `429`. CI starts the stack for this suite with `6000/minute`; for a
+full local run, start it the same way: `AIRA_THROTTLE_USER=6000/minute make up-full`.
+
 **What a run leaves behind.** Everything a test creates is written to a register under
 `e2e/.artifacts/` before it is made. The global teardown (`teardown.ts`) signs in as the Global
 Administrator and removes exactly what the register names, through the API — so a use case is
