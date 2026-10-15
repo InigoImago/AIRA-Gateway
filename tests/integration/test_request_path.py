@@ -91,7 +91,11 @@ async def test_a_dispatched_request_is_recorded_with_its_attribution_and_cost(
     assert row.status == 200
     assert row.operation == "generateContent"
     assert row.total_tokens == row.prompt_tokens + row.completion_tokens
-    assert row.latency_ms is not None and row.latency_ms > 0
+    # Measured, which is what `None` would deny. **Not `> 0`**: the mock answers in-process, a
+    # fast runner serves it inside a millisecond, and the gateway counts whole milliseconds rounded
+    # down — so 0 is a measurement there. A real model's latency is asserted in
+    # `test_local_model.py`.
+    assert row.latency_ms is not None and row.latency_ms >= 0
     assert row.source_ip  # the audit trail names who called
 
     # Priced from the prompt/completion split, not from a total at one rate (FRD-403 §1).
