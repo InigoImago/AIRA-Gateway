@@ -2259,6 +2259,11 @@ reading code.
   defect hid — so it closes the test's own socket and requires `503` too. The same file's other
   sweep had met the symptom first and **skipped the route by hand**; an exemption that makes a
   machine-dependent answer go away is the finding, silenced.
+  *A test can also write the machine:* the showcase's mode switch took its file as a parameter
+  default, `env_file: Path = ENV_FILE`, which Python fixes when the module loads — so the tests that
+  pointed `ENV_FILE` at a temporary file still appended two lines to the developer's real `.env`,
+  credentials and all. Resolve such a path when called, and guard the real file in the test module:
+  compared whole, before and after every test.
 
   *And the machine includes the repository.* A release guard asserted about `v0.1.1`'s and
   `v0.1.0`'s annotations — tags a developer's clone has and CI's does not, because

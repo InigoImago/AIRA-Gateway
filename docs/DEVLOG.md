@@ -5,6 +5,31 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The showcase shows strict data mode both ways (2026-10-15)
+
+The owner asked whether to integrate the mode into the showcase or build two. One stack, switched:
+the mode is decided when read, so the same requests, figures and findings appear with and without
+the people in them — the comparison a works council is asked to judge, and one two diverging
+stacks could not offer at twice the memory and a second set of ports.
+
+`make showcase-strict-on`, `make showcase-strict-off` and `make showcase-mode`
+(`tools/showcase_mode.py`) set `AIRA_STRICT_DATA_MODE` in `deploy/compose/.env` — one line, nothing
+printed from the file, a rendered `.env` refused — and recreate what changed. `kundenservice` stores
+*every member* explicitly, so the difference is the largest there is; `make showcase` draws a random
+`AIRA_PSEUDONYM_SECRET` into the `.env` once, so pseudonyms stay stable across restarts without a
+published key (the showcase overlay may not restate a core service's environment, and a published
+key would let anyone hash the demo's names back). `make showcase-doctor` reports the mode and a
+stack that disagrees with its `.env`. `docs/deployment/showcase.md` walks through both.
+
+**Found on the way, and fixed before it shipped**: the switch's tests wrote the developer's real
+`.env`, because the path was a parameter default bound when the module loaded. The two lines were
+removed again by name, the path is now read when called, and the test module compares the real file
+before and after every test (`LESSONS.md` §7). Mutations `SC-1`–`SC-3`, each seen caught; a fourth,
+on the seed's explicit visibility, survived because the model's default says the same, and was
+dropped rather than kept as a claim.
+
+---
+
 ## Strict data mode: nobody but the incident roles learns what a named colleague did (2026-10-15)
 
 The owner asked for a mode, on by default, that gives a works council no reason to fear AIRA as a

@@ -313,3 +313,15 @@ def test_a_seed_fills_only_positions_never_used() -> None:
     assert summary["questions"] == len(QUESTIONS) - 1
     assert Case.objects.get(position=1).topic == "Theirs"
     assert Case.objects.filter(retired=False).count() == len(QUESTIONS)
+
+
+@pytest.mark.django_db
+def test_the_showcase_stores_every_member_where_the_data_mode_is_shown() -> None:
+    """`kundenservice` stores the most open setting on purpose (`FRD-627`): strict data mode reads
+    it as oversight-only, and `make showcase-strict-off` shows what it means — so the same seed
+    demonstrates both. A seed that left the default would demonstrate one, by accident."""
+    from aira_management.apps.usecases.models import UseCase
+
+    call_command("seed_demo", stdout=StringIO())
+
+    assert UseCase.objects.get(slug="kundenservice").payload_visibility == "members"

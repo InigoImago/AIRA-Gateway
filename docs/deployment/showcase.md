@@ -142,6 +142,47 @@ credential for reports that it is declared and nothing serves it.
 `coding-assistant`'s key and the models it may call; [`tools/opencode/README.md`](../../tools/opencode/README.md)
 has the rest. `make showcase-agent` writes the file again.
 
+### Strict data mode, both ways
+
+The showcase runs in **strict data mode**, as every installation does unless an operator switches
+it off: nobody but the Global Administrator and IT Security learns what a named colleague did. The
+mode is applied when data is read, so one command shows the same requests, figures and findings
+without it — the comparison a works council is asked to judge.
+
+```bash
+make showcase-mode         # which mode deploy/compose/.env asks for, and which one is running
+make showcase-strict-off   # each use case's own setting decides again; containers are recreated
+make showcase-strict-on    # back to the default
+```
+
+Each switch writes one line of `deploy/compose/.env`, `AIRA_STRICT_DATA_MODE`, and recreates the
+containers whose environment changed; the data stays. `kundenservice` stores the most open setting
+there is — *every member reads everything* — so the difference is as large as it can be. Sign in as
+`ucadmin`, who administers it, and open **Use cases → kundenservice**:
+
+| Where | Strict data mode on | Off |
+| --- | --- | --- |
+| **Members** — *What each person used* | not shown; a note says who may see it | every person's requests, tokens, spend and allowance left |
+| **Requests** | `ucuser`'s rows read *another member*, without the API key; the prompt is refused | `ucuser` by name and key; the prompt opens |
+| **Warnings** | a finding about a member — when a rule fired on one — names *a person* | names them |
+| **API keys** | `ucuser`'s key belongs to *another member* | `ucuser` |
+| **Data protection** | two choices: not stored, or Global Administrators and IT Security only | four |
+
+`ucadmin`'s own rows, figures and key are shown in full either way, and so are the use case's
+totals. Then:
+
+- **as `itgov`** (IT Steuerung), **Reporting** — every total and every breakdown by use case and
+  model; the breakdown by member shows nobody while the mode is on;
+- **as `itsec`**, the same screens — every person, in both modes: the incident roles are what the
+  mode leaves people to;
+- **Grafana**, once telemetry is on (`AIRA_OTEL_ENABLED=true`, see
+  [Telemetry](#telemetry-as-an-example-of-what-this-buys)) — a span's caller is a pseudonym such as
+  `p-3f9a…` while the mode is on, and so is the person in every log line. `make showcase` draws a
+  random `AIRA_PSEUDONYM_SECRET` into `deploy/compose/.env` once, so one person keeps one
+  pseudonym across restarts; a real deployment keeps that key in Vault.
+
+`make showcase-doctor` says which mode is running, and warns when the stack and `.env` disagree.
+
 ---
 
 ## Step 5: point an existing client at it

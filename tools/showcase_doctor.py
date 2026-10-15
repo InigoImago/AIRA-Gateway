@@ -24,6 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import showcase_mode
 import stack_addresses
 
 KEYCLOAK = os.environ.get("KEYCLOAK_URL") or stack_addresses.url("keycloak")
@@ -367,12 +368,30 @@ def _redirect_uris() -> list[str]:
         return []
 
 
+def check_data_mode() -> None:
+    """Which data mode the demo shows (`FRD-627`) — not a fault either way, but a walkthrough that
+    expects names and finds "another member" looks exactly like a broken one."""
+    print("\nData mode — whose names the console shows")
+    wanted, live = showcase_mode.configured(), showcase_mode.running(stack=STACK)
+    if live is None:
+        say(None, "the gateway is not running, so no mode is in force")
+        return
+    say(True, showcase_mode.describe(live))
+    if live != wanted:
+        say(False, "deploy/compose/.env asks for the other mode")
+        blame(
+            "The running stack is in a different data mode from the one deploy/compose/.env sets.",
+            "Run make showcase-strict-on or make showcase-strict-off.",
+        )
+
+
 def main() -> int:
     print("Checking the showcase, link by link. Nothing here changes anything.")
     check_identity()
     check_management()
     check_gateway()
     check_the_browsers_login_chain()
+    check_data_mode()
 
     print()
     if not problems:

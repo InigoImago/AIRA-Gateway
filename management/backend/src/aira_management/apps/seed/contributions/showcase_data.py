@@ -63,6 +63,10 @@ def _use_cases() -> list[dict[str, Any]]:
             ),
             "store_payloads": True,
             "retention_days": 7,
+            # **Every member**, the most open setting, on purpose: strict data mode, the default,
+            # reads it as oversight-only, and `make showcase-strict-off` shows what it would mean —
+            # the same rows, prompts and figures, with the people in them (`FRD-627`).
+            "payload_visibility": "members",
         },
         {
             "slug": "entwicklung",

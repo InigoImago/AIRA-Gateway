@@ -149,7 +149,8 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         current-version release-tag release-check release-notes release-subject ci wait-healthy \
         prune mutants \
         ui-audit release-pull up-integrated kafka-topics-external \
-        windows-sso-up windows-sso-down test-windows-sso
+        windows-sso-up windows-sso-down test-windows-sso \
+        showcase-strict-on showcase-strict-off showcase-mode
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -359,6 +360,8 @@ demo-ready: ## Block until the demo's keys and *all* its models have reached the
 	uv run python tools/demo_wait_ready.py
 
 showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, and real traffic
+	@# One key per machine for the pseudonyms strict data mode writes into telemetry (`FRD-627`).
+	@uv run python tools/showcase_mode.py key
 	@echo "==> starting the stack (this pulls a model on the first run and takes a few minutes)"
 	$(COMPOSE_FULL) --profile demo up -d $(BUILD_FLAG)
 	@# `wait-healthy`, not a second loop of its own. This waited on the **gateway** alone and then
@@ -481,6 +484,28 @@ showcase-doctor: ## Report which link of the demo is broken (reads only, changes
 
 showcase-agent: ## Write an OpenCode config for the showcase's coding-assistant use case
 	@uv run python tools/showcase_agent.py
+
+# Strict data mode, both ways, on one stack (`FRD-627`). The mode is decided when read, so the same
+# requests, figures and findings are shown with and without the people in them — which is what a
+# works council is asked to judge. `up -d` recreates exactly the containers whose environment the
+# switch changed; the data stays.
+showcase-strict-on: env ## Showcase in strict data mode (the default): only GA and IT Security see a person
+	@uv run python tools/showcase_mode.py on
+	@uv run python tools/showcase_mode.py key
+	$(COMPOSE_FULL) --profile demo up -d $(BUILD_FLAG)
+	@$(MAKE) --no-print-directory wait-healthy
+	@echo "Sign in as ucadmin and open Kundenservice: Members, Requests, Warnings, API keys."
+	@echo "Then as itsec, who sees the people. docs/deployment/showcase.md walks through it."
+
+showcase-strict-off: env ## Showcase with strict data mode off: each use case's own setting decides
+	@uv run python tools/showcase_mode.py off
+	@uv run python tools/showcase_mode.py key
+	$(COMPOSE_FULL) --profile demo up -d $(BUILD_FLAG)
+	@$(MAKE) --no-print-directory wait-healthy
+	@echo "Sign in as ucadmin and open Kundenservice again: the same rows, now with names."
+
+showcase-mode: ## Say which data mode the showcase is set to, and which one is running
+	@uv run python tools/showcase_mode.py status
 
 down-full: down ## Stop the full containerised stack (keeps volumes) — an alias for `down`
 	@:

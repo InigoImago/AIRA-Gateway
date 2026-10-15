@@ -234,6 +234,30 @@ SERVING_OPTIONS = (
 MUTATIONS = [
     # ---- strict data mode, the gateway (FRD-627) ----------------------------------------------
     Mutation(
+        "SC-1",
+        "switching the showcase's mode replaces its line rather than adding a second",
+        "tools/showcase_mode.py",
+        "            lines[index] = wanted\n",
+        "            lines.append(wanted)\n",
+        "tools/tests/test_showcase_mode.py",
+    ),
+    Mutation(
+        "SC-2",
+        "a .env rendered from a configuration file is refused, not edited",
+        "tools/showcase_mode.py",
+        "    if RENDERED_STAMP in text:\n        raise Refused(",
+        "    if False:\n        raise Refused(",
+        "tools/tests/test_showcase_mode.py",
+    ),
+    Mutation(
+        "SC-3",
+        "the showcase's pseudonym key is drawn once and then kept",
+        "tools/showcase_mode.py",
+        "        if separator and name.strip() == KEY_NAME and value.strip():\n            return False\n",
+        "        pass\n",
+        "tools/tests/test_showcase_mode.py",
+    ),
+    Mutation(
         "SD-10",
         "a key whose owner is withheld says another member, never a blank owner",
         "management/frontend/src/app/features/use-cases/api-keys-panel.html",
