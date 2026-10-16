@@ -84,11 +84,35 @@
         (ngModelChange)="setOutcome($event)"
       >
         <option value="">any</option>
-        @for (value of outcomes; track value) {
-          <option [value]="value">{{ value }}</option>
+        @for (choice of outcomes; track choice.value) {
+          <option [value]="choice.value">{{ choice.label }}</option>
         }
       </select>
     </div>
+    <!-- Sent on Enter or the button, not per keystroke: an id is pasted whole, and half of one
+         matches nothing. -->
+    <form class="field request-id-search" (ngSubmit)="findRequest()">
+      <label for="trace-request-id">
+        Request id
+        <app-info-hint label="Where the request id comes from" testid="hint-request-id">
+          Every response from the gateway carries its request's id in the
+          <code>X-AIRA-Request-Id</code> header, refusals included. Paste it here to find that
+          request and open what happened to it.
+        </app-info-hint>
+      </label>
+      <div class="row">
+        <input
+          id="trace-request-id"
+          type="text"
+          placeholder="from X-AIRA-Request-Id"
+          [ngModel]="requestIdTyped()"
+          (ngModelChange)="requestIdTyped.set($event)"
+          [ngModelOptions]="{ standalone: true }"
+          data-testid="trace-request-id"
+        />
+        <button type="submit" class="btn" data-testid="find-request">Find</button>
+      </div>
+    </form>
     @if (mayFilterByKey()) {
       <!-- Strict data mode answers 403 to a reader who may not see people: a key names a person. -->
       <div class="field field--narrow">
@@ -127,11 +151,11 @@
   </div>
 
   @if (focus(); as id) {
-    <!-- One request, linked from the content-read log (`FRD-622` FR-6). -->
+    <!-- One request: found by its id, or linked from the content-read log (`FRD-622` FR-6). -->
     <div class="callout spread" style="margin-top: 0.75rem" data-testid="focused-request">
       <span>
         Showing one request, <code>{{ id }}</code
-        >, as linked from the content-read log. Opening it is recorded like any other opening.
+        >. Opening it is recorded like any other opening.
       </span>
       <button
         type="button"
@@ -243,10 +267,16 @@
                        any other 200. -->
                   <span class="badge badge--danger" data-testid="flagged">flagged</span>
                 }
+                <!-- A short name to scan by; the full sentence is the title, and in the details. -->
                 @if (served(row)) {
-                  <span class="badge badge--success">served</span>
+                  <span class="badge badge--success" [title]="outcomeSentence(row)">served</span>
                 } @else if (row.outcome) {
-                  <span class="badge badge--danger">{{ row.outcome }}</span>
+                  <span
+                    class="badge badge--danger"
+                    [title]="outcomeSentence(row)"
+                    data-testid="outcome-badge"
+                    >{{ outcomeLabel(row.outcome) }}</span
+                  >
                 } @else {
                   <!-- A non-2xx row from before `FRD-122`: the status is all that was recorded. -->
                   <span class="badge badge--warning">{{ row.status }}</span>
@@ -264,6 +294,7 @@
                       Opening…
                     </p>
                   } @else if (detail(); as d) {
+                    <app-what-happened [trace]="d" [tryLink]="tryLink()" />
                     <dl class="detail-grid" data-testid="trace-detail">
                       <div>
                         <dt>Model</dt>
@@ -286,6 +317,20 @@
                             —
                           } @else {
                             {{ tokens(d.prompt_tokens) }} in / {{ tokens(d.completion_tokens) }} out
+                          }
+                          @if (d.reasoning_tokens) {
+                            <div class="muted text-sm" data-testid="reasoning-tokens">
+                              of which {{ tokens(d.reasoning_tokens) }} thinking
+                            </div>
+                          }
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Provider</dt>
+                        <dd data-testid="trace-provider">
+                          {{ d.provider || '—' }}
+                          @if (d.region) {
+                            <div class="muted text-sm">{{ d.region }}</div>
                           }
                         </dd>
                       </div>

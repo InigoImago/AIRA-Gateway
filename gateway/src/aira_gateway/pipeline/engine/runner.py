@@ -76,7 +76,7 @@ class PipelineEngine:
             if evaluation.rewrote is not None:
                 outcome.rewrites.append(evaluation.rewrote)
             if evaluation.block_reason is not None:
-                raise PipelineRejected(evaluation.block_reason)
+                raise PipelineRejected(evaluation.block_reason, step=str(step.type))
         return outcome
 
     async def run_over_texts(
@@ -122,7 +122,7 @@ class PipelineEngine:
             if decision is not None:
                 outcome.decisions.append(decision)
             if notable is not None and notable.block_reason is not None:
-                raise PipelineRejected(notable.block_reason)
+                raise PipelineRejected(notable.block_reason, step=str(step.type))
 
             outcome.texts = tuple(
                 evaluation.request.last_user_text() if evaluation.request is not None else text

@@ -92,6 +92,10 @@ class PendingLog:
     #: Bytes the caller sent (`FRD-501`). NULL where unknown, never 0: an unknown size must not
     #: look like a small one.
     request_bytes: int | None = None
+    #: The id the caller was given in `X-AIRA-Request-Id` (`FRD-628` FR-1); `None` draws one.
+    row_id: str | None = None
+    #: The message the caller was given, where the request did not succeed (`FRD-628` FR-4).
+    error: str | None = None
 
 
 class RequestLogWriter:
@@ -286,7 +290,18 @@ class RequestLogWriter:
                 region=entry.region,
                 api=entry.api,
                 request_bytes=entry.request_bytes,
+                row_id=entry.row_id,
+                # Through the same redactor as the payloads: an upstream's error text can quote
+                # what it was sent, and a credential in it must not reach the row.
+                error=self._redacted_message(entry.error),
             )
+
+    def _redacted_message(self, message: str | None) -> str | None:
+        if not message:
+            return None
+        redacted = self._redactor.redact({"error": message})
+        value = redacted.get("error") if isinstance(redacted, dict) else None
+        return value if isinstance(value, str) else None
 
     async def _may_store_payloads(self, session: AsyncSession, use_case: str | None) -> bool:
         """Whether this request's bodies may be written at all (`FRD-404`).

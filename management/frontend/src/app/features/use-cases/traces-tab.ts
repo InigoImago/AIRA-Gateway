@@ -14,6 +14,8 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 import { ANOTHER_MEMBER, WITHHELD_REASON } from '../../core/ui/withheld';
 import { modeOf } from './data-protection-panel';
 import { readableJson } from '../../core/ui/readable-json';
+import { WhatHappenedPanel } from './what-happened-panel';
+import { outcomeLabel, outcomeSentence, pipelineDecided } from './what-happened';
 
 const REFRESH_SECONDS = 10;
 const PAGE = 50;
@@ -47,7 +49,7 @@ const OUTCOMES = [
  */
 @Component({
   selector: 'app-traces-tab',
-  imports: [DatePipe, FormsModule, InfoHint, RouterLink],
+  imports: [DatePipe, FormsModule, InfoHint, RouterLink, WhatHappenedPanel],
   templateUrl: './traces-tab.html',
   // `Live` on the component so its timer stops with the panel. `PageFeedback` comes from the page:
   // one banner per page, not one per panel.
@@ -102,6 +104,14 @@ export class TracesTab implements OnInit {
    * marked; its content is still opened by a click, because opening it is a recorded read.
    */
   protected readonly focus = signal<string | null>(null);
+  /** What is typed into *Request id* — sent only when the reader asks, since an id is pasted whole. */
+  protected readonly requestIdTyped = signal('');
+  /**
+   * The id the reader asked to find on this page, opened once its row arrives. Only a search typed
+   * here opens the row: opening is recorded under the reader's name, and somebody following a link
+   * from the content-read log is auditing that log, not asking to add to it.
+   */
+  private openOnArrival: string | null = null;
 
   /** The row whose detail is open. One at a time: several open rows is an unreadable screen. */
   protected readonly openRow = signal<string | null>(null);
@@ -120,6 +130,13 @@ export class TracesTab implements OnInit {
   protected readonly detailLoading = signal(false);
   /** The opening did not answer; the reason is in the page's banner. */
   protected readonly detailFailed = signal(false);
+  /**
+   * Where the open row's use case can have its pipeline tried with the reader's own text, or `null`
+   * where that is not offered (`FRD-628` FR-7): only for a request a pipeline step decided about,
+   * and only where the gateway would run the test for this reader — a link to a test that can only
+   * refuse is not one worth following.
+   */
+  protected readonly tryLink = signal<string[] | null>(null);
 
   /** The permission the gateway enforces the incident fields with, as `/me` lists it. */
   protected readonly mayInvestigate = computed(() => can(this.me(), 'incident.investigate'));
@@ -157,12 +174,14 @@ export class TracesTab implements OnInit {
   private payloadRequest: Subscription | null = null;
   /** The opening in flight; dropped when another row is opened, for the same reason. */
   private detailRequest: Subscription | null = null;
+  /** The question whether the open row's pipeline may be tried; dropped with the row. */
+  private tryRequest: Subscription | null = null;
   /** The older page in flight; dropped when the question changes, or it appends excluded rows. */
   private moreRequest: Subscription | null = null;
   /** The page banner's message for a failed live load, withdrawn when a later load answers. */
   private liveFailure: string | null = null;
 
-  protected readonly outcomes = OUTCOMES;
+  protected readonly outcomes = OUTCOMES.map((value) => ({ value, label: outcomeLabel(value) }));
 
   ngOnInit(): void {
     // The request to focus on, from the address (`FRD-622` FR-6). Followed rather than read once:
@@ -175,6 +194,7 @@ export class TracesTab implements OnInit {
       )
       .subscribe((requested) => {
         this.focus.set(requested);
+        this.requestIdTyped.set(requested ?? '');
         this.startLive();
       });
     this.destroyRef.onDestroy(() => focusing.unsubscribe());
@@ -193,8 +213,39 @@ export class TracesTab implements OnInit {
       typing.unsubscribe();
       this.payloadRequest?.unsubscribe();
       this.detailRequest?.unsubscribe();
+      this.tryRequest?.unsubscribe();
       this.moreRequest?.unsubscribe();
     });
+  }
+
+  /**
+   * Find one request by the id the gateway gave its caller (`X-AIRA-Request-Id`, `FRD-628` FR-1),
+   * and open it. Through the address, as the content-read log's link does, so a reload or a shared
+   * link shows the same request.
+   */
+  protected findRequest(): void {
+    const id = this.requestIdTyped().trim();
+    if (!id) return;
+    this.openOnArrival = id;
+    if (id === this.focus()) {
+      // Already the question: the list will not be asked again, so open the row it already has.
+      this.openArrived(this.traces());
+      return;
+    }
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { request: id },
+      queryParamsHandling: 'merge',
+    });
+  }
+
+  /** Open the searched-for row once it is on screen; a row that never arrives is said by the list. */
+  private openArrived(rows: Trace[]): void {
+    const wanted = this.openOnArrival;
+    if (!wanted) return;
+    this.openOnArrival = null;
+    const row = rows.find((candidate) => candidate.id === wanted);
+    if (row && this.openRow() !== row.id) this.openDetail(row);
   }
 
   protected setCredential(value: string): void {
@@ -241,6 +292,7 @@ export class TracesTab implements OnInit {
         this.cursor.set(page.next_cursor);
         this.inScope.set(page.in_scope !== false);
         this.loading.set(false);
+        this.openArrived(page.traces);
         if (this.liveFailure) this.feedback.withdraw(this.liveFailure);
         this.liveFailure = null;
       },
@@ -317,6 +369,15 @@ export class TracesTab implements OnInit {
     });
   }
 
+  /** The outcome's short name for the list, and its full sentence for the badge's title. */
+  protected outcomeLabel(outcome: string): string {
+    return outcomeLabel(outcome);
+  }
+
+  protected outcomeSentence(row: Trace): string {
+    return outcomeSentence(row.outcome, row.status);
+  }
+
   protected served(row: Trace): boolean {
     // A row from before `FRD-122` has no outcome; a 2xx there is served, never a red "200".
     if (row.outcome) return row.outcome === 'served';
@@ -389,13 +450,41 @@ export class TracesTab implements OnInit {
     this.detailRequest = this.service.traceDetail(row.id).subscribe({
       next: (body) => {
         this.detailLoading.set(false);
-        if (body.trace.id === row.id && this.openRow() === row.id) this.detail.set(body.trace);
+        if (body.trace.id === row.id && this.openRow() === row.id) {
+          this.detail.set(body.trace);
+          this.judgeTry(body.trace);
+        }
       },
       error: (response: unknown) => {
         this.detailLoading.set(false);
         this.detailFailed.set(true);
         this.feedback.fail(response, 'Could not open the details of this request.');
       },
+    });
+  }
+
+  /**
+   * Whether to offer the pipeline test for this request. The use case's page hands its own
+   * permissions in; the Requests page spans every use case, so it asks for this one. A use case
+   * that cannot be read is one whose pipeline page cannot be opened either: no link, and nothing to
+   * report — the request's details are what was asked for, and they are on screen.
+   */
+  private judgeTry(trace: Trace): void {
+    const slug = trace.use_case;
+    if (!slug || !pipelineDecided(trace)) return;
+    const link = ['/use-cases', slug, 'pipeline'];
+    const known = this.useCase();
+    if (known && known.slug === slug) {
+      // A missing answer is "no opinion", as the test panel itself reads it.
+      if (known.permissions?.may_call !== false) this.tryLink.set(link);
+      return;
+    }
+    this.tryRequest = this.service.get(slug).subscribe({
+      // Dropped with the row, so an answer can only ever land under the row it was asked for.
+      next: (useCase) => {
+        if (useCase.permissions?.may_call !== false) this.tryLink.set(link);
+      },
+      error: () => undefined,
     });
   }
 
@@ -408,6 +497,9 @@ export class TracesTab implements OnInit {
   private dropDetail(): void {
     this.detailRequest?.unsubscribe();
     this.detailRequest = null;
+    this.tryRequest?.unsubscribe();
+    this.tryRequest = null;
+    this.tryLink.set(null);
     this.detail.set(null);
     this.detailLoading.set(false);
     this.detailFailed.set(false);

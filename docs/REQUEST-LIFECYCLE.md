@@ -638,8 +638,8 @@ own; only its message says which upstream answered.
 
 | Question                       | Where                                                                |
 | ------------------------------ | -------------------------------------------------------------------- |
-| What happened to this request? | `request_logs`, by `trace_id` (also on the response as `x-trace-id`) |
-| Why was it refused?            | the `outcome` column, and `pipeline_decisions`: each step's verdict, and every candidate the chain skipped or tried |
+| What happened to this request? | its row, by the `X-AIRA-Request-Id` every response carries — the console's request search, or `GET /v1beta/traces/{id}`; or by `trace_id` (`x-trace-id`) |
+| Why was it refused?            | the response says it: `X-AIRA-Reason`, and on the Gemini surface Google's `ErrorInfo` in `error.details`. The row keeps the message the caller was given (`error`) and `pipeline_decisions` — each step's verdict, and every candidate the chain skipped or tried — which the request's details in the console show as a timeline |
 | It was refused before it was attributed | its trace: `aira.outcome` on the span (§3)                  |
 | Was a control degraded?        | the `degraded` column on that row                                    |
 | Is anything stopped right now? | `GET /v1beta/suspensions`: every stop for `incident.suspend` or `anomaly.read_all`; a member asking with `?use_case=` sees whether that use case, or they, are stopped |

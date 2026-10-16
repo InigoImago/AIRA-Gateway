@@ -50,6 +50,10 @@ ALLOWED_OMISSIONS: dict[str, dict[str, str]] = {
     "api/serving/pipeline_run.py:record_pipeline_calls": {
         "model_selection": "a classifier call is not routed and falls back to nothing",
         "pipeline_decisions": "the decisions belong to the caller's row, not to the step's own",
+        "error": (
+            "a step's own call is recorded when it answered; a step that failed is said in the "
+            "caller's row, whose message names it"
+        ),
         "tool_calls": "a classifier is asked for a word, never for a function",
         "usage_basis": (
             "a step's model call is buffered, so the vendor's report arrives whole with the answer "
@@ -60,6 +64,10 @@ ALLOWED_OMISSIONS: dict[str, dict[str, str]] = {
     # the upstream answered — a document it did not finish — was paid for, and its row says so.
     "api/serving/accounting.py:_write_refusal": {},
     "api/incidents/diagnostics.py:_record_diagnostic": {
+        "error": (
+            "the check's verdict is the answer to the administrator who pressed the button, and "
+            "its outcome is `diagnostic`, which no caller was refused"
+        ),
         # An administrator asking a model about itself (`FRD-610`). Four fields are not omitted so
         # much as **inapplicable**, and each for its own reason rather than as a group:
         "model_selection": (

@@ -13,12 +13,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 from starlette.types import Message, Receive, Scope, Send
 
+from aira_gateway.api.kira.headers import UNMODELLED_HEADER
 from aira_gateway.config import GatewaySettings
+from aira_gateway.explaining import (
+    MODEL_HEADER,
+    PIPELINE_HEADER,
+    REASON_HEADER,
+    REQUEST_ID_HEADER,
+)
 
 #: What a cross-origin caller may send, and which response headers it may read.
 ALLOWED_METHODS = ("GET", "POST", "OPTIONS")
 ALLOWED_HEADERS = ("authorization", "content-type", "x-goog-api-key", "x-aira-use-case")
-EXPOSED_HEADERS = ("x-trace-id", "retry-after", "deprecation", "sunset", "warning")
+#: The `X-AIRA-*` headers that say what happened (`FRD-628`) are among them: a browser client that
+#: cannot read them is told nothing the others are.
+EXPOSED_HEADERS = (
+    "x-trace-id",
+    "retry-after",
+    "deprecation",
+    "sunset",
+    "warning",
+    REQUEST_ID_HEADER,
+    REASON_HEADER,
+    MODEL_HEADER,
+    PIPELINE_HEADER,
+    UNMODELLED_HEADER.lower(),
+)
 
 
 class CorsMisconfigured(Exception):

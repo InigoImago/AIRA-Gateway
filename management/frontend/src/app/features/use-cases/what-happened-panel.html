@@ -1,0 +1,45 @@
+<section class="what-happened" data-testid="what-happened" aria-labelledby="what-happened-title">
+  <h4 class="section-title" id="what-happened-title">What happened</h4>
+  <p class="what-happened__outcome">
+    <span data-testid="outcome-sentence">{{ sentence() }}</span>
+    <span class="muted text-sm" data-testid="outcome-status">HTTP {{ trace().status }}</span>
+  </p>
+
+  @if (trace().error; as message) {
+    <!-- The caller's own message, word for word: it is what they saw, and what they will quote. -->
+    <div class="what-happened__message">
+      <span class="muted text-sm">The caller was told:</span>
+      <p class="what-happened__error" data-testid="caller-message">{{ message }}</p>
+    </div>
+  }
+
+  @if (story().length) {
+    <ol class="what-happened__story" data-testid="story">
+      @for (line of story(); track $index) {
+        <li
+          [class.is-warning]="line.tone === 'warning'"
+          [class.is-danger]="line.tone === 'danger'"
+          data-testid="story-line"
+        >
+          {{ line.text }}
+        </li>
+      }
+    </ol>
+  }
+
+  @if (degraded(); as line) {
+    <!-- A control on its fallback still decided, but not as configured: the reader needs to know
+         which answer to trust less. -->
+    <p class="callout callout--warning text-sm" data-testid="degraded">{{ line }}</p>
+  }
+
+  @if (tryLink(); as link) {
+    <p class="text-sm">
+      <a [routerLink]="link" data-testid="try-pipeline">Try the pipeline with your own text →</a>
+      <span class="muted">
+        The request's own text is not shown here; the pipeline's test runs the same steps on text
+        you type.
+      </span>
+    </p>
+  }
+</section>

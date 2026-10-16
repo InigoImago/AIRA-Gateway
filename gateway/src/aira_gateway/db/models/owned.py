@@ -98,6 +98,10 @@ class RequestLog(Base):
     tool_calls: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     #: Which controls were running on a fallback while this request was handled (`FRD-405`).
     degraded: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    #: The message the caller was given when the request did not succeed (`FRD-628` FR-4) — kept,
+    #: because under strict data mode it is often all that explains a request to the people who run
+    #: it. Bounded and redacted as payloads are; NULL for a request that succeeded.
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: **Of which** came from a provider cache, and **of which** populated one (`FRD-133`) —
     #: subsets of `prompt_tokens`, kept apart because they are priced apart.

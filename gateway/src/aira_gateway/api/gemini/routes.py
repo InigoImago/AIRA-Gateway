@@ -113,7 +113,7 @@ async def generate(resource: str, request: Request) -> Response:
     try:
         return await _generate(resource, request, trail)
     except REFUSALS as exc:
-        response = refusal_response(exc)
+        response = refusal_response(exc, request)
         await record_refusal(request, trail, exc, status=response.status_code, started=started)
         return response
 
@@ -318,7 +318,7 @@ async def _stream_response(
             except REFUSALS as exc:
                 stream.broke_off(exc)
                 # The same envelope the refusal boundary renders, as the stream's last element.
-                element = bytes(refusal_response(exc).body).decode()
+                element = bytes(refusal_response(exc, request).body).decode()
                 yield f"data: {element}\n\n" if sse else f"{separator}{element}"
             if not sse:
                 yield "]"

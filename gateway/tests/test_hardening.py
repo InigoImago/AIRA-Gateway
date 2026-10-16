@@ -80,7 +80,10 @@ async def test_an_oversized_request_under_a_use_case_prefix_is_still_a_kira_requ
         rows = await _oversized_rows(app)
 
     assert response.status_code == 413
-    assert response.json() == {"code": "VALIDATION_ERROR", "message": "Request body too large."}
+    assert response.json() == {
+        "code": "VALIDATION_ERROR",
+        "message": "Request body too large: the limit is 100 bytes.",
+    }
     assert [row.api for row in rows] == ["kira"]
 
 

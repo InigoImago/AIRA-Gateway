@@ -69,9 +69,11 @@ from aira_gateway.api.serving.prepare import (
 )
 from aira_gateway.api.serving.refusals import (
     REFUSALS,
+    caller_message,
+    refusal_metadata,
     refusal_outcome,
+    refusal_reason,
     stream_failure_status,
-    upstream_error,
     upstream_status,
 )
 from aira_gateway.api.serving.streaming import AccountedStream, StreamAccounting
@@ -107,7 +109,10 @@ __all__ = [
     "provenance",
     "record_pipeline_calls",
     "record_refusal",
+    "caller_message",
+    "refusal_metadata",
     "refusal_outcome",
+    "refusal_reason",
     "refuse_unless_live",
     "released_for",
     "released_models",
@@ -119,7 +124,6 @@ __all__ = [
     "schema_bounds",
     "served_models",
     "stream_failure_status",
-    "upstream_error",
     "upstream_status",
     "use_case_of",
     "use_case_record",

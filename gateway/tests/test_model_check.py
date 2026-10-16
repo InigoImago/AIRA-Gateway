@@ -806,7 +806,17 @@ async def test_no_body_at_all_still_means_an_empty_one() -> None:
         absent = client.post("/v1beta/models/gemini-2.0-flash:checkThinking")
         empty = client.post("/v1beta/models/gemini-2.0-flash:checkThinking", json={})
 
-    assert (absent.status_code, absent.json()) == (empty.status_code, empty.json())
+    assert (absent.status_code, _without_request_id(absent.json())) == (
+        empty.status_code,
+        _without_request_id(empty.json()),
+    )
+
+
+def _without_request_id(body: dict) -> dict:
+    """An answer with the one thing two requests never share left out: each request's own id."""
+    for detail in body.get("error", {}).get("details", []):
+        detail.get("metadata", {}).pop("request_id", None)
+    return body
 
 
 @pytest.mark.anyio

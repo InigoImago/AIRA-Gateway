@@ -47,6 +47,7 @@ from aira_gateway.api.serving import (
     json_body,
     prepare_for_dispatch,
     record_refusal,
+    refusal_reason,
     requirements_for,
     resolve_direct_target,
     schema_bounds,
@@ -61,6 +62,7 @@ from aira_gateway.embedding import (
     EMBEDDING_AGGREGATION_NOT_SUPPORTED,
     EmbeddingRejected,
 )
+from aira_gateway.explaining import REASON_HEADER, explain
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
 from aira_gateway.telemetry import model_call_span
@@ -456,4 +458,7 @@ def body_shape(body: Any) -> Any:
 def _error_response(request: Request, exc: Exception) -> JSONResponse:
     response = refusal_response(exc)
     response.headers.update(surface_headers(request))
+    # Which control refused, in a header: KIRA's envelope is the predecessor's and keeps its fields
+    # (`FRD-628` FR-3), so a migrating client's error handling is untouched.
+    explain(request.state, REASON_HEADER, refusal_reason(exc))
     return response

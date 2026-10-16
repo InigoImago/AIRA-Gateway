@@ -23,7 +23,7 @@ from aira_common.logging import get_logger
 from aira_gateway.api.serving.context import attribution_of, provenance
 from aira_gateway.api.serving.counting import Unreported, count_unreported, floor_priced
 from aira_gateway.api.serving.prepare import Prepared
-from aira_gateway.api.serving.refusals import REFUSALS, refusal_outcome
+from aira_gateway.api.serving.refusals import REFUSALS, caller_message, refusal_outcome
 from aira_gateway.audit import AuditTrail, Outcome, UsageBasis, decision_summary, tool_summary
 from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
 from aira_gateway.embedding import describe_vectors
@@ -57,6 +57,8 @@ class Accounting:
     #: Overwritten by whatever actually happened; the default says the caller left.
     status: int = CLIENT_CLOSED_REQUEST
     outcome: Outcome | None = None
+    #: What the caller was told where the request did not succeed (`FRD-628` FR-4).
+    error: str | None = None
     #: Whether anything was produced. Not `usage is None`: an embedding produces vectors and
     #: reports no tokens, and settling it as "nothing" would hide batched traffic from a limit.
     produced: bool = False
@@ -165,9 +167,11 @@ class Accounting:
         if tool_calls and self.trail is not None:
             self.trail.tool_calls = list(tool_calls)
 
-    def failed(self, status: int, outcome: Outcome) -> None:
+    def failed(self, status: int, outcome: Outcome, error: str | None = None) -> None:
         self.status = status
         self.outcome = outcome
+        #: What the caller was told, kept on the row (`FRD-628` FR-4).
+        self.error = error
 
 
 @asynccontextmanager
@@ -295,6 +299,7 @@ async def _settle_and_record(
         tool_calls=tool_summary(trail),
         provenance=await provenance(request, model, trail.served_region),
         api=api,
+        error=state.error,
     )
 
 
@@ -397,6 +402,9 @@ async def _write_refusal(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
+        # What the caller was told (`FRD-628` FR-4): under strict data mode it is often all that
+        # explains the refusal to the people who run the use case.
+        error=caller_message(exc),
         # What the request offered, even though it was refused (`FRD-131` FR-7).
         tool_calls=tool_summary(trail),
         provenance=await provenance(request, trail.served_model, trail.served_region),

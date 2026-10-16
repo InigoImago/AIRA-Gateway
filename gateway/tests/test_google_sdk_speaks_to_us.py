@@ -148,6 +148,46 @@ def test_the_sdk_reads_the_error_envelope(client: genai.Client) -> None:
     assert "not found" in (raised.value.message or "").lower()
 
 
+def test_the_sdk_carries_which_control_refused_and_the_request_id(client: genai.Client) -> None:
+    """`FRD-628` FR-3, as the SDK hands it to a developer: Google's `ErrorInfo` in `details`, which
+    the SDK keeps and prints with the exception — so the reason, and the id that finds the request
+    in the console, are in the very line a developer reads. The status and message are unchanged."""
+    with pytest.raises(genai.errors.APIError) as raised:
+        client.models.generate_content(model="no-such-model", contents="hallo")
+
+    (info,) = raised.value.details["error"]["details"]
+    assert info["@type"] == "type.googleapis.com/google.rpc.ErrorInfo"
+    assert info["reason"] == "MODEL_NOT_FOUND"
+    assert info["domain"] == "aira.gateway"
+    request_id = info["metadata"]["request_id"]
+    assert request_id in str(raised.value)
+    assert raised.value.response.headers["x-aira-request-id"] == request_id
+    assert raised.value.response.headers["x-aira-reason"] == "model_not_found"
+
+
+def test_the_sdk_reads_an_answer_that_says_which_model_answered(base_url: str) -> None:
+    """The headers that explain an answer are headers, so the SDK parses the body it always did
+    and a client that wants them reads them from the HTTP response (`FRD-628` FR-2)."""
+    seen: dict[str, str] = {}
+
+    def keep(response: httpx.Response) -> None:
+        seen.update(response.headers)
+
+    sdk = genai.Client(
+        api_key="not-checked-here",
+        http_options=types.HttpOptions(
+            base_url=base_url,
+            api_version="v1beta",
+            client_args={"event_hooks": {"response": [keep]}},
+        ),
+    )
+    response = sdk.models.generate_content(model=MODEL, contents="hallo")
+
+    assert response.text
+    assert seen["x-aira-model"] == MODEL
+    assert seen["x-aira-request-id"]
+
+
 def test_the_sdk_embeds(client: genai.Client) -> None:
     """`:embedContent`, the verb that has now been the odd one out three times."""
     response = client.models.embed_content(model=MODEL, contents="hallo")
@@ -300,9 +340,17 @@ def test_the_json_array_ends_in_the_error_element(breaking_url: str) -> None:
         "Die erste Hälfte ",
         "der Antwort",
     ]
-    assert elements[-1] == {
-        "error": {"code": 503, "message": "upstream connection reset", "status": "UNAVAILABLE"}
-    }
+    error = elements[-1]["error"]
+    assert (error["code"], error["message"], error["status"]) == (
+        503,
+        "upstream connection reset",
+        "UNAVAILABLE",
+    )
+    # Google's own `ErrorInfo`, naming what failed and the request it was (`FRD-628` FR-3).
+    (info,) = error["details"]
+    assert info["@type"] == "type.googleapis.com/google.rpc.ErrorInfo"
+    assert info["reason"] == "UPSTREAM_ERROR"
+    assert info["metadata"]["request_id"] == response.headers["x-aira-request-id"]
 
 
 # == an attachment, as the SDK encodes it ==========================================================

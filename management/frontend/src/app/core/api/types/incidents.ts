@@ -77,6 +77,31 @@ export interface Suspension {
 }
 
 /**
+ * One thing that was decided about a request on its way (`FRD-628` FR-5): a pipeline step's verdict,
+ * a model the chain passed over, a notice. Content-free — the step's word, never the text it judged.
+ *
+ * Every key is optional because each step says only what it has to say, and a step the console does
+ * not know yet still arrives in this shape.
+ */
+export interface PipelineDecision {
+  /** `injection_filter`, `model_route`, `pii_filter`, `dispatch`, `notice` — or one added later. */
+  step?: string;
+  action?: string;
+  flagged?: boolean;
+  /** The routing category that matched. */
+  category?: string;
+  /** A re-route: the model asked for, and the model it was sent to. */
+  from?: string;
+  /** The re-route's target, or for `dispatch` the candidate that was skipped or failed. */
+  to?: string;
+  /** Why, in one word or a short phrase: a verdict, a model, a reason a candidate was passed over. */
+  why?: string;
+  /** Over an embedding batch: how many texts there were, and how many a step changed. */
+  texts?: number;
+  changed?: number;
+}
+
+/**
  * One request, as metadata (`FRD-502`).
  *
  * **No payloads** — not the prompt, not the response, not a snippet. Content is `TracePayload`,
@@ -116,6 +141,17 @@ export interface Trace {
   /** Only sent to an incident role, hence optional rather than nullable: "the column is not for
    *  you" and "the row has no address" differ. */
   source_ip?: string | null;
+  /** Of the completion, how much was thinking. Absent from an older gateway. */
+  reasoning_tokens?: number | null;
+  /**
+   * What was decided on the way, in order (`FRD-628` FR-5). Only in a request's details, never on
+   * the list; `null` where nothing was decided or the row predates it.
+   */
+  pipeline_decisions?: PipelineDecision[] | null;
+  /** Which controls ran on a fallback, as `{control: fallback}`; empty or `null` when none did. */
+  degraded?: Record<string, string> | null;
+  /** The message the caller was given, when the request did not succeed. Details only. */
+  error?: string | null;
 }
 
 /**

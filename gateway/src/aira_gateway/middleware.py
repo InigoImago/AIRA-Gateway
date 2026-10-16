@@ -26,6 +26,16 @@ from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
 from aira_gateway.api.kira.headers import surface_refusal
 from aira_gateway.audit import Outcome
 from aira_gateway.auth.attribution import USE_CASE_PATH_KEY
+from aira_gateway.db.base import new_id
+from aira_gateway.explaining import (
+    EXPLAINING_HEADERS,
+    REASON_HEADER,
+    REQUEST_ID_HEADER,
+    TRAIL_STATE,
+    answer_headers,
+    explain,
+    header_value,
+)
 from aira_gateway.persistence.recorder import client_ip
 from aira_gateway.persistence.writer import PendingLog
 
@@ -50,14 +60,21 @@ def is_kira_path(path: str) -> bool:
     return path.startswith(KIRA_BASE)
 
 
-def too_large_response(request: Request) -> JSONResponse:
+def too_large_message(limit: int) -> str:
+    """The ceiling's refusal in words, naming the ceiling (`FRD-628` FR-6): a caller who is told
+    only "too large" cannot tell by how much to shrink."""
+    return f"Request body too large: the limit is {limit} bytes."
+
+
+def too_large_response(request: Request, limit: int) -> JSONResponse:
     """The body ceiling's refusal, in the envelope of the surface it was aimed at.
 
     One response whichever exit refused the body — a declared length here, a body that outgrew it
     in the exception handler — because a KIRA client switches on `code`, and migrating
     (`FRD-107`) must be only a change of URL.
     """
-    message = "Request body too large."
+    message = too_large_message(limit)
+    explain(request.state, REASON_HEADER, str(Outcome.REQUEST_TOO_LARGE))
     if is_kira_path(request.url.path):
         return surface_refusal(request, 413, kira_code_for_status(413), message)
     return gemini_error_response(413, message, "INVALID_ARGUMENT")
@@ -130,6 +147,8 @@ async def record_oversized(scope: Scope, limit: int) -> None:
     try:
         await writer.submit(
             PendingLog(
+                row_id=(scope.get("state") or {}).get("request_id"),
+                error=too_large_message(limit),
                 subject="",
                 auth_method="",
                 use_case=None,
@@ -212,7 +231,7 @@ class BodySizeLimitMiddleware:
         return 0
 
     async def _reject(self, scope: Scope, send: Send) -> None:
-        response = too_large_response(Request(scope))
+        response = too_large_response(Request(scope), self.max_bytes)
         await send(
             {
                 "type": "http.response.start",
@@ -265,6 +284,49 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+
+class RequestIdMiddleware:
+    """Give every request an id, and put it — with whatever explains the answer — on the response.
+
+    The id is drawn here, before any route runs, so a refusal from a dependency, the body ceiling
+    or an exception handler carries it as an answer does; the audit row takes the same id
+    (`persistence.recorder.claim_request_id`). Headers rather than body fields, because a Gemini
+    SDK validates the body it parses and ignores a header it does not know (`FRD-628` §2).
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        state = scope.setdefault("state", {})
+        request_id = state.setdefault("request_id", new_id())
+
+        async def send_explained(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or [])
+                present = {name.lower() for name, _ in headers}
+                trail = state.get(TRAIL_STATE)
+                # What the trail says — the model that answered, what the pipeline did — then what
+                # a route said itself (`X-AIRA-Reason`), which is the more specific of the two.
+                answered = answer_headers(trail, message["status"]) if trail is not None else {}
+                added = {
+                    REQUEST_ID_HEADER: str(request_id),
+                    **answered,
+                    **(state.get(EXPLAINING_HEADERS) or {}),
+                }
+                headers.extend(
+                    (name.encode("latin-1"), header_value(value))
+                    for name, value in added.items()
+                    if name.encode("latin-1") not in present
+                )
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_explained)
 
 
 class TraceIdMiddleware:

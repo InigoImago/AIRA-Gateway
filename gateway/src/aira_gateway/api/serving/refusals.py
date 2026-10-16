@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi.responses import JSONResponse
-
 from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError
-from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.serving.controls import UseCaseRetired, UseCaseUnknown
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import Outcome
@@ -75,16 +72,6 @@ def upstream_status(status_code: int | None) -> tuple[int, str]:
     return (502, "UNAVAILABLE")
 
 
-def upstream_error(exc: UpstreamError) -> JSONResponse:
-    """An upstream failure as a client-facing response.
-
-    Shared rather than per surface: which upstream statuses pass through is a fact about the
-    upstream, and one outage must not look like two different problems depending on the URL.
-    """
-    code, status = upstream_status(exc.status_code)
-    return _error(code, exc.message, status)
-
-
 def stream_failure_status(exc: Exception) -> int:
     """The status recorded for a stream that broke off after its own status had gone out.
 
@@ -97,6 +84,40 @@ def stream_failure_status(exc: Exception) -> int:
     if isinstance(exc, GeminiHTTPError):
         return exc.code
     return 502
+
+
+#: The refusals that come before a request is attributed, by status: they write no row, and the
+#: outcome vocabulary has no word for them.
+_UNATTRIBUTED_REASONS: dict[int, str] = {401: "unauthenticated", 403: "permission_denied"}
+
+
+def caller_message(exc: Exception) -> str:
+    """The sentence a refusal gave its caller, as either surface renders it (`FRD-628` FR-4)."""
+    message = getattr(exc, "message", None)
+    return str(message) if message else str(exc)
+
+
+def refusal_reason(exc: Exception) -> str:
+    """Which control refused, as one word from the audit's outcomes (`FRD-628` FR-3).
+
+    The same word the request's row records, so what a client is told and what the console shows
+    are one vocabulary. A refusal raised before a request is attributed says what stopped it.
+    """
+    if isinstance(exc, GeminiHTTPError) and exc.code in _UNATTRIBUTED_REASONS:
+        return _UNATTRIBUTED_REASONS[exc.code]
+    return str(refusal_outcome(exc))
+
+
+def refusal_metadata(exc: Exception) -> dict[str, str]:
+    """What a program needs beside the reason to act on a refusal — text values only, as Google's
+    `ErrorInfo.metadata` carries them."""
+    metadata: dict[str, str] = {}
+    if isinstance(exc, PipelineRejected) and exc.step:
+        metadata["step"] = exc.step
+    resets_at = getattr(exc, "resets_at", None)
+    if resets_at:
+        metadata["resets_at"] = str(resets_at)
+    return metadata
 
 
 def refusal_outcome(exc: Exception) -> Outcome:

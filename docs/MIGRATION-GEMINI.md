@@ -238,6 +238,23 @@ are accepted — `application/pdf`, `application/x-javascript`, `text/javascript
 image must carry its format's signature bytes; the text types have none to check. A model reads only
 the types its catalogue entry declares.
 
+**When something did not work**, AIRA says what in Google's own terms and in headers, so no SDK
+parses anything new:
+
+* a refusal's `error.details` holds one `google.rpc.ErrorInfo` whose `reason` names the control —
+  `BLOCKED_BY_PIPELINE` with `metadata.step`, `BUDGET_EXCEEDED` with `metadata.resets_at`,
+  `RATE_LIMITED`, `NO_CAPABLE_MODEL`, `UPSTREAM_ERROR`, … — and `metadata.request_id`. The
+  `google-genai` SDK keeps `details` on its `APIError` and prints it, so the reason and the id are in
+  the line a developer reads;
+* every response carries `X-AIRA-Request-Id`; an answer carries `X-AIRA-Model`, the model that
+  actually answered, and `X-AIRA-Pipeline`, what the use case's pipeline did (`pii_filter=redacted`,
+  `model_route=a>b`, …); a refusal carries `X-AIRA-Reason`.
+
+With strict data mode on — the default — the use case's own people cannot read prompts and answers.
+Paste the request id into **Use case → Requests → Request id**: the request's details say, step by
+step, what the pipeline decided, which models were tried and why each did not answer, and the
+message the caller was given.
+
 ---
 
 ## 6. Checking it worked

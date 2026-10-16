@@ -43,6 +43,7 @@ from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.exception_handlers import register_exception_handlers
 from aira_gateway.middleware import (
     BodySizeLimitMiddleware,
+    RequestIdMiddleware,
     SecurityHeadersMiddleware,
     TraceIdMiddleware,
     UseCasePathMiddleware,
@@ -123,6 +124,8 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # Outermost of ours, so a response produced by an exception handler still carries it (`FRD-117`
     # FR-4). Starlette answers an unhandled error outside all of them (`_handle_unexpected`).
     app.add_middleware(TraceIdMiddleware)
+    # Outermost of all ours: the id is drawn before anything can refuse, so every answer has one.
+    app.add_middleware(RequestIdMiddleware)
 
     _include_routers(app)
     register_exception_handlers(app)

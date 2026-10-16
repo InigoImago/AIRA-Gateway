@@ -605,6 +605,10 @@ class GeminiErrorDetail(BaseModel):
     code: int
     message: str
     status: str
+    #: Google's own place for machine-readable detail: a list of typed messages, here one
+    #: `google.rpc.ErrorInfo` naming which control refused (`FRD-628` FR-3). Left out when there is
+    #: none, as Google leaves it out.
+    details: list[dict[str, Any]] | None = None
 
 
 class GeminiError(BaseModel):

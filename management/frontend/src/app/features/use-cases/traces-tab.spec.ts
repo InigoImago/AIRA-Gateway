@@ -80,6 +80,10 @@ interface Options {
   detailFails?: unknown;
   /** Openings held back per request id. */
   heldDetails?: Record<string, Subject<TraceDetail>>;
+  /** What `GET /use-cases/{slug}` answers — asked by the Requests page about an opened row. */
+  readUseCase?: (slug: string) => Observable<UseCase>;
+  /** The page's slug; empty is the Requests page, which spans every use case. */
+  slug?: string;
 }
 
 function setup(options: Options = {}) {
@@ -112,6 +116,12 @@ function setup(options: Options = {}) {
       {
         provide: UseCaseService,
         useValue: {
+          get: (slug: string): Observable<UseCase> => {
+            queries.push({ useCaseFor: slug });
+            return options.readUseCase
+              ? options.readUseCase(slug)
+              : throwError(() => ({ status: 404 }));
+          },
           traceDetail: (id: string): Observable<TraceDetail> => {
             queries.push({ detailFor: id });
             if (options.heldDetails?.[id]) return options.heldDetails[id];
@@ -150,6 +160,7 @@ function setup(options: Options = {}) {
   });
   const fixture = TestBed.createComponent(Host);
   if (options.useCase) fixture.componentInstance.useCase.set(options.useCase);
+  if (options.slug !== undefined) fixture.componentInstance.slug.set(options.slug);
   fixture.detectChanges();
   const element = fixture.nativeElement as HTMLElement;
   const tab = fixture.debugElement.children[0].componentInstance as unknown as Record<
@@ -691,7 +702,10 @@ describe('TracesTab — while a page is in flight', () => {
         },
       ],
     });
-    expect(named.element.querySelector('.badge--danger')?.textContent?.trim()).toBe('rate_limited');
+    // In words, short enough to scan; the full sentence is the badge's title (`FRD-628`).
+    const badge = named.element.querySelector('.badge--danger');
+    expect(badge?.textContent?.trim()).toBe('rate limit');
+    expect(badge?.getAttribute('title')).toContain('A rate limit refused this request');
 
     const unnamed = setup({
       pages: [{ traces: [trace({ outcome: null, status: 500 })], next_cursor: null, scope: 'all' }],
@@ -1333,5 +1347,239 @@ describe('TracesTab — the key filter before the mode is known', () => {
     // Shown before `/me` answered, a strict-mode reader could type a prefix the server refuses.
     const { testid } = setup({ meFails: true });
     expect(testid('trace-credential')).toBeNull();
+  });
+});
+
+/** A request a pipeline step decided about, and whose answer came from a fallback. */
+function decided(over: Partial<Trace> = {}): Trace {
+  return trace({
+    id: 'r1',
+    outcome: 'blocked_by_pipeline',
+    status: 400,
+    error: 'Request blocked by the prompt-injection filter.',
+    pipeline_decisions: [
+      { step: 'injection_filter', flagged: true, action: 'blocked', why: 'injection' },
+    ],
+    ...over,
+  });
+}
+
+function onePage(...rows: Trace[]): TracePage[] {
+  return [{ traces: rows, next_cursor: null, scope: 'use_cases' }];
+}
+
+describe('TracesTab — what happened to a request (`FRD-628` FR-5)', () => {
+  it('says in the opened row what happened, with the status and the message the caller got', () => {
+    const harness = setup({ pages: onePage(decided()) });
+    harness.openFirst();
+
+    const story = harness.testid('what-happened');
+    expect(story?.textContent).toContain('A pipeline step refused this request.');
+    expect(harness.testid('outcome-status')?.textContent).toContain('400');
+    expect(harness.testid('caller-message')?.textContent).toBe(
+      'Request blocked by the prompt-injection filter.',
+    );
+    expect(harness.testid('story-line')?.textContent?.trim()).toBe(
+      'Prompt-injection filter: refused (verdict: injection)',
+    );
+  });
+
+  it('says nothing of what happened until the opening is on record', () => {
+    const held = new Subject<TraceDetail>();
+    const harness = setup({ pages: onePage(decided()), heldDetails: { r1: held } });
+    harness.openFirst();
+    expect(harness.testid('what-happened')).toBeNull();
+
+    held.next({ trace: decided(), recorded: true });
+    harness.fixture.detectChanges();
+    expect(harness.testid('what-happened')).not.toBeNull();
+  });
+
+  it('names the provider, the region and the thinking share in the details', () => {
+    const harness = setup({
+      pages: onePage(trace({ provider: 'vertex', region: 'europe-west4', reasoning_tokens: 1234 })),
+    });
+    harness.openFirst();
+
+    expect(harness.testid('trace-provider')?.textContent).toContain('vertex');
+    expect(harness.testid('trace-provider')?.textContent).toContain('europe-west4');
+    expect(harness.testid('reasoning-tokens')?.textContent).toContain('1,234 thinking');
+  });
+
+  it('shows no thinking line where nothing was thought', () => {
+    const harness = setup({ pages: onePage(trace({ reasoning_tokens: null })) });
+    harness.openFirst();
+    expect(harness.testid('reasoning-tokens')).toBeNull();
+  });
+
+  it('names the outcome in words in the list, with the full sentence as the title', () => {
+    const harness = setup({ pages: onePage(decided()) });
+    const badge = harness.testid('outcome-badge');
+
+    expect(badge?.textContent?.trim()).toBe('refused by pipeline');
+    expect(badge?.getAttribute('title')).toBe('A pipeline step refused this request.');
+  });
+
+  it('offers the outcome filter in the same words, and sends the outcome itself', () => {
+    const harness = setup();
+    const options = [...harness.element.querySelectorAll('#trace-outcome option')];
+    const budget = options.find((option) => option.textContent?.trim() === 'budget');
+
+    expect(budget?.getAttribute('value')).toBe('budget_exceeded');
+  });
+});
+
+describe('TracesTab — finding a request by its id (`FRD-628` FR-1)', () => {
+  async function find(id: string, options: Options = {}) {
+    const harness = setup(options);
+    const input = harness.testid('trace-request-id') as HTMLInputElement;
+    input.value = id;
+    input.dispatchEvent(new Event('input'));
+    harness.click('find-request');
+    await harness.fixture.whenStable();
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  it('says where the id comes from', () => {
+    const harness = setup();
+    harness.click('info-hint-request-id');
+    expect(harness.testid('help-hint-request-id')?.textContent).toContain('X-AIRA-Request-Id');
+  });
+
+  it('asks the server for that request, through the address, and opens it', async () => {
+    const harness = await find('  r1 ', { pages: onePage(decided()) });
+
+    expect(harness.queries.some((query) => query['requestId'] === 'r1')).toBe(true);
+    expect(TestBed.inject(Router).url).toContain('request=r1');
+    expect(harness.queries.some((query) => query['detailFor'] === 'r1')).toBe(true);
+    expect(harness.testid('what-happened')).not.toBeNull();
+    // The details, never the content: that is still a deliberate click of its own.
+    expect(harness.queries.some((query) => 'payloadFor' in query)).toBe(false);
+  });
+
+  it('opens the row when the id asked for is already the one shown', async () => {
+    const harness = setup({ pages: onePage(decided()) });
+    await TestBed.inject(Router).navigateByUrl('/?request=r1');
+    harness.fixture.detectChanges();
+    expect(harness.testid('what-happened')).toBeNull();
+
+    harness.click('find-request');
+    expect(harness.testid('what-happened')).not.toBeNull();
+  });
+
+  it('asks nothing for an empty field', async () => {
+    const harness = await find('   ');
+    expect(harness.queries.some((query) => query['requestId'])).toBe(false);
+    expect(TestBed.inject(Router).url).not.toContain('request=');
+  });
+
+  it('says a request that is not found is not found', async () => {
+    const harness = await find('nope', { pages: onePage() });
+    expect(harness.testid('no-traces')?.textContent).toContain('no longer in the audit trail');
+    expect(harness.queries.some((query) => 'detailFor' in query)).toBe(false);
+  });
+
+  it('shows the linked id in the field, and opens nothing for a link', async () => {
+    const harness = setup({ pages: onePage(decided()) });
+    await TestBed.inject(Router).navigateByUrl('/?request=r1');
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    harness.fixture.detectChanges();
+
+    expect((harness.testid('trace-request-id') as HTMLInputElement).value).toBe('r1');
+    // Following the content-read log's link is auditing that log, not adding to it.
+    expect(harness.queries.some((query) => 'detailFor' in query)).toBe(false);
+  });
+});
+
+describe('TracesTab — from a request to the pipeline test (`FRD-628` FR-7)', () => {
+  const callable = useCaseWith({
+    permissions: { can_admin: false, can_manage: false, is_member: true, may_call: true },
+  });
+
+  it('links a request a pipeline step decided about to the use case pipeline page', () => {
+    const harness = setup({ pages: onePage(decided()), useCase: callable });
+    harness.openFirst();
+
+    const link = harness.testid('try-pipeline');
+    expect(link?.textContent).toContain('Try the pipeline with your own text');
+    expect(link?.getAttribute('href')).toBe('/use-cases/uc-a/pipeline');
+  });
+
+  it('offers no link where the gateway would refuse this reader the test', () => {
+    const harness = setup({
+      pages: onePage(decided()),
+      useCase: useCaseWith({
+        permissions: { can_admin: false, can_manage: false, is_member: false, may_call: false },
+      }),
+    });
+    harness.openFirst();
+    expect(harness.testid('try-pipeline')).toBeNull();
+  });
+
+  it('offers no link for a request only the model chain or a notice decided about', () => {
+    const harness = setup({
+      pages: onePage(
+        trace({
+          pipeline_decisions: [
+            { step: 'dispatch', action: 'failed', to: 'm1', why: 'HTTP 503' },
+            { step: 'notice', action: 'shown' },
+          ],
+        }),
+      ),
+      useCase: callable,
+    });
+    harness.openFirst();
+    expect(harness.testid('what-happened')).not.toBeNull();
+    expect(harness.testid('try-pipeline')).toBeNull();
+  });
+
+  it('asks about the use case on the Requests page, and links only where it may be tried', () => {
+    const asked = setup({
+      slug: '',
+      pages: onePage(decided()),
+      readUseCase: () => of(callable),
+    });
+    asked.openFirst();
+    expect(asked.queries.some((query) => query['useCaseFor'] === 'uc-a')).toBe(true);
+    expect(asked.testid('try-pipeline')?.getAttribute('href')).toBe('/use-cases/uc-a/pipeline');
+
+    const refused = setup({
+      slug: '',
+      pages: onePage(decided()),
+      readUseCase: () =>
+        of(
+          useCaseWith({
+            permissions: { can_admin: false, can_manage: false, is_member: false, may_call: false },
+          }),
+        ),
+    });
+    refused.openFirst();
+    expect(refused.testid('try-pipeline')).toBeNull();
+  });
+
+  it('offers no link for a use case this reader cannot open', () => {
+    const harness = setup({ slug: '', pages: onePage(decided()) });
+    harness.openFirst();
+    expect(harness.testid('what-happened')).not.toBeNull();
+    expect(harness.testid('try-pipeline')).toBeNull();
+  });
+
+  it('never places a late answer about the use case under another row', () => {
+    const late = new Subject<UseCase>();
+    const harness = setup({
+      slug: '',
+      pages: onePage(decided(), decided({ id: 'r2', pipeline_decisions: null })),
+      readUseCase: () => late,
+    });
+    harness.openFirst();
+    // The second row is opened before the first one's answer arrives.
+    harness.element.querySelectorAll<HTMLElement>('[data-testid^="open-detail-"]')[1].click();
+    harness.fixture.detectChanges();
+    late.next(callable);
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('try-pipeline')).toBeNull();
   });
 });

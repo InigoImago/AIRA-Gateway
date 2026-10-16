@@ -306,7 +306,7 @@ async def dry_run(
         # meets: a use case this gateway does not hold, or holds retired, serves nothing.
         await refuse_unless_live(request, payload.use_case)
     except REFUSALS as exc:
-        return _refusal(exc)
+        return _refusal(exc, request)
     authors = await _may_author(request, principal, payload.use_case)
     refused_authority = await _authority_refusal(request, payload, pipeline, authors)
     if refused_authority is not None:
@@ -336,7 +336,7 @@ async def dry_run(
     try:
         await guard_before_work(request)
     except REFUSALS as exc:
-        return _refusal(exc)
+        return _refusal(exc, request)
 
     trail = AuditTrail(operation="pipeline:dryRun", api="gemini")
     try:

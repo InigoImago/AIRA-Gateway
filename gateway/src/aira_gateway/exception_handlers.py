@@ -18,6 +18,7 @@ from aira_common.errors import ErrorDetail, ErrorResponse
 from aira_common.logging import get_logger
 from aira_common.observability import trace_context_fields
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
+from aira_gateway.api.gemini.refusals import refusal_response as gemini_refusal
 from aira_gateway.api.kira.errors import VALIDATION_ERROR as KIRA_VALIDATION_ERROR
 from aira_gateway.api.kira.errors import KiraError, kira_error_response
 from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
@@ -26,7 +27,9 @@ from aira_gateway.api.kira.errors import (
 )
 from aira_gateway.api.kira.headers import surface_headers, surface_refusal
 from aira_gateway.api.serving.accounting import release_reservation
+from aira_gateway.api.serving.refusals import refusal_reason
 from aira_gateway.cors import apply_cors
+from aira_gateway.explaining import REASON_HEADER, explain
 from aira_gateway.middleware import (
     RequestTooLarge,
     SecurityHeadersMiddleware,
@@ -69,7 +72,7 @@ def _gemini(request: Request) -> bool:
 
 
 async def _handle_too_large(request: Request, exc: RequestTooLarge) -> JSONResponse:
-    return too_large_response(request)
+    return too_large_response(request, exc.limit)
 
 
 async def _handle_gemini_error(request: Request, exc: GeminiHTTPError) -> JSONResponse:
@@ -87,8 +90,10 @@ async def _handle_gemini_error(request: Request, exc: GeminiHTTPError) -> JSONRe
                 bool(getattr(request.state, "credential_presented", False))
             )
         # `Retry-After` included: the bound on failed authentications is a 429 from here too.
+        explain(request.state, REASON_HEADER, refusal_reason(exc))
         return surface_refusal(request, exc.code, code, exc.message, headers=exc.headers)
-    return exc.to_response()
+    # The same envelope a route's refusal gets, `ErrorInfo` and reason included (`FRD-628` FR-3).
+    return gemini_refusal(exc, request)
 
 
 async def _handle_kira_error(request: Request, exc: KiraError) -> JSONResponse:

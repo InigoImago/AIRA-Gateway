@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Saying what happened to a request, in terms standard clients already read (2026-10-16)
+
+Strict data mode took the prompt and the answer from the people who run a use case and the
+developers who call it, so the owner asked whether the messages were enough on their own. Audited on
+both surfaces: a refusal the caller caused was explained precisely; what the gateway did itself was
+not. A pipeline block was a 400 indistinguishable by code from a malformed request; re-routing,
+redaction and flag-only filters were silent; an exhausted chain said "Vertex upstream returned 503."
+with no model; a budget named no reset; and the explanation that existed — every step's verdict,
+every candidate tried, `pipeline_decisions` on the row — was served to nobody, IT Security
+included, while the caller's message was not stored at all.
+
+**Built** (`FRD-628`), under the owner's constraint that Gemini compatibility and standard clients
+hold: every response carries `X-AIRA-Request-Id`, which is the audit row's id; an answer carries
+`X-AIRA-Model` and `X-AIRA-Pipeline` (`injection_filter=passed`, `model_route=a>b`); a refusal carries
+`X-AIRA-Reason` and, on the Gemini surface, Google's own `google.rpc.ErrorInfo` in `error.details`
+(reason, `request_id`, `step` or `resets_at`). No status, no first sentence and no KIRA envelope or
+stream event changed. The caller's message is a new `error` column (migration `0052`, privacy
+notice edition 2026-10-16); `GET /v1beta/traces/{id}` adds `pipeline_decisions`, `degraded` and
+`error`, and the console renders them as "What happened": the outcome in a sentence, the message the
+caller got, a numbered timeline of steps and candidates, a search by request id, and a link from a
+pipeline-decided request to the pipeline's test. An exhausted chain names every model and why; a
+budget names its reset (never as `Retry-After`, which would put a client to sleep for a month) and
+says when this request alone is above the whole limit; the body ceiling names its limit.
+
+**Measured against the real clients**: the `google-genai` SDK reads every answer and refusal as before
+and carries the reason and request id in its exception; the AI SDK's Google provider — OpenCode's —
+in both its current major and the previous one generates, streams and parses a refusal unchanged
+(status, message, not retryable), with the new headers readable. Deliberately not added: a KIRA
+stream error event, which a strict predecessor client could choke on — its reason is in the
+request's details. 1852 properties; `SWH-1`–`SWH-17`, `EX-1`–`EX-27`; `DU2`, `PE4`, `SDG-22`,
+`UI-5`, `UI-6` re-anchored.
+
+---
+
 ## The live suites, in both data modes (2026-10-15)
 
 CI's integration run failed four tests after strict data mode became the default: two read requests

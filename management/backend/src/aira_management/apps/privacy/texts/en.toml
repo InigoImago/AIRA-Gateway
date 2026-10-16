@@ -176,7 +176,7 @@ recipients = "The owner, the use case's administrators, and roles that may manag
 
 [activities.request_record]
 title = "Record of every request"
-data = "For every request to a model, including refused ones: the identifier and username of the person making it or of the key's owner, sign-in method, use case, source IP address, the access used (key prefix or application), time, the model requested and the model actually used, provider and region, outcome and status code, the decisions of the checking steps, names of tools called, number of tokens and how it was established (reported by the provider, or counted after the request was cancelled), size, response time, cost and a trace identifier."
+data = "For every request to a model, including refused ones: the identifier and username of the person making it or of the key's owner, sign-in method, use case, source IP address, the access used (key prefix or application), time, the model requested and the model actually used, provider and region, outcome and status code, the message the caller was given if the request did not succeed, the decisions of the checking steps and of each model tried, names of tools called, number of tokens and how it was established (reported by the provider, or counted after the request was cancelled), size, response time, cost and a trace identifier."
 purpose = "Operation and troubleshooting, cost allocation and budget control, evidence of data residency per request, detection and investigation of security incidents."
 legal_basis = "Art. 6(1)(f) GDPR (operation, security and cost control); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "Request records in this installation: {log_retention}."

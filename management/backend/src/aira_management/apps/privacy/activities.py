@@ -61,7 +61,7 @@ REQUEST_METADATA = (
     "publisher", "region", "status", "outcome", "pipeline_decisions", "flagged", "tool_calls",
     "degraded", "prompt_tokens", "cached_input_tokens", "cache_write_tokens", "completion_tokens",
     "reasoning_tokens", "total_tokens", "latency_ms", "request_bytes", "trace_id", "cost_nanos",
-    "usage_basis",
+    "usage_basis", "error",
 )  # fmt: skip
 
 ACCOUNT = Activity(

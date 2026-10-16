@@ -32,7 +32,11 @@ from aira_gateway.api.serving.accounting import Accounting, accounting
 from aira_gateway.api.serving.answers import StreamedNotice
 from aira_gateway.api.serving.counting import Unreported
 from aira_gateway.api.serving.prepare import Prepared
-from aira_gateway.api.serving.refusals import refusal_outcome, stream_failure_status
+from aira_gateway.api.serving.refusals import (
+    caller_message,
+    refusal_outcome,
+    stream_failure_status,
+)
 from aira_gateway.audio import AudioDigest
 from aira_gateway.audit import AuditTrail
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalUsage, ToolCallPart
@@ -193,7 +197,11 @@ class StreamAccounting:
                 # Spent, and partly delivered: what the upstream reported is booked, and the row
                 # keeps the failure's status rather than claiming the request was served.
                 acct.served(self.model, self.usage, stored, self._tool_calls)
-            acct.failed(stream_failure_status(self._failure), refusal_outcome(self._failure))
+            acct.failed(
+                stream_failure_status(self._failure),
+                refusal_outcome(self._failure),
+                caller_message(self._failure),
+            )
         elif self._delivered:
             # Served even when the upstream never reported usage — an OpenAI-compatible server
             # may ignore `stream_options` — or a delivered answer would read as a caller who left

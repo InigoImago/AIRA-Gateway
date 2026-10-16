@@ -86,6 +86,19 @@ def _request_bytes(request: Request) -> int | None:
     return int(value) if isinstance(value, int) else None
 
 
+def claim_request_id(state: Any) -> str | None:
+    """The id this request answered with in `X-AIRA-Request-Id`, for its audit row — **once**.
+
+    A request writes one row of its own (`FRD-628` FR-1); should a second ever claim the id, it
+    draws a fresh one rather than collide with the first on the primary key.
+    """
+    request_id = getattr(state, "request_id", None)
+    if not request_id or getattr(state, "request_id_claimed", False):
+        return None
+    state.request_id_claimed = True
+    return str(request_id)
+
+
 async def record_request(
     request: Request,
     *,
@@ -105,6 +118,7 @@ async def record_request(
     tool_calls: dict[str, Any] | None = None,
     provenance: tuple[str, str, str] | None = None,
     api: str,
+    error: str | None = None,
 ) -> None:
     """Queue a request/response record with its attribution for persistence.
 
@@ -143,6 +157,8 @@ async def record_request(
 
     writer = writer_of(request)
     entry = PendingLog(
+        row_id=claim_request_id(request.state),
+        error=error,
         subject=attribution.subject,
         username=attribution.username,
         auth_method=attribution.method,

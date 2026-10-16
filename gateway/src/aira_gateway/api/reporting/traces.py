@@ -88,6 +88,13 @@ def _out_of_scope() -> dict[str, object]:
     return {"traces": [], "next_cursor": None, "scope": "use_cases", "in_scope": False}
 
 
+#: What a request's **details** add to its list row (`FRD-628` FR-5): what each pipeline step and
+#: each candidate model decided, which controls were running on a fallback, and the message the
+#: caller was given. Content-free by construction — `pipeline_decisions` keeps the safe keys only
+#: (`audit.decision_summary`) — so they go wherever the row goes, strict data mode withholding the
+#: person on them as on the row.
+DETAIL_FIELDS = ("pipeline_decisions", "degraded", "error")
+
 #: The label the row's name is read under, so it can never collide with a listed field.
 _OWNER_NAME = "_owner_name"
 
@@ -279,9 +286,11 @@ async def trace_detail(
         await session.commit()
         listed = {field: getattr(row, field) for field in fields}
         listed[_OWNER_NAME] = row.username
-    return JSONResponse(
-        {"trace": _listed(listed, principal, withholding=withholding), "recorded": True}
-    )
+        explained = {field: getattr(row, field) for field in DETAIL_FIELDS}
+    trace = _listed(listed, principal, withholding=withholding)
+    # What happened, for the one request opened — never on the list, which every refresh reads.
+    trace.update(explained)
+    return JSONResponse({"trace": trace, "recorded": True})
 
 
 async def _ground_for_details(session: AsyncSession, principal: Principal, row: RequestLog) -> str:

@@ -35,6 +35,11 @@ def _app(**settings: Any):  # noqa: ANN201
     return create_app(GatewaySettings(auth_required=False, log_queue_size=0, **settings))
 
 
+async def _rows(app) -> list[RequestLog]:  # noqa: ANN001
+    async with app.state.db_sessionmaker() as session:
+        return list((await session.execute(select(RequestLog))).scalars())
+
+
 async def _catalogue(app, model: str = "mock-1", **fields: Any) -> None:  # noqa: ANN001
     defaults: dict[str, Any] = {
         "numeric_id": 1004,
@@ -120,9 +125,14 @@ async def test_an_unknown_model_id_is_422_model_not_found() -> None:
     with TestClient(app) as client:
         await _catalogue(app)
         response = client.post(f"{BASE}/chat", json=_chat(model_id=9999))
+        rows = await _rows(app)
 
     assert response.status_code == 422
     assert response.json()["code"] == "MODEL_NOT_FOUND"
+    # The predecessor's envelope, untouched; the reason a program reads is a header, in the word
+    # the request's row records (`FRD-628` FR-3).
+    assert set(response.json()) == {"code", "message"}
+    assert response.headers["x-aira-reason"] == rows[-1].outcome
 
 
 async def test_a_model_the_gateway_does_not_serve_answers_the_same_way() -> None:

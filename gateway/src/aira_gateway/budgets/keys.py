@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
+from aira_common.money import format_display
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.db.models import BudgetRead
 from aira_gateway.scopes import INSTALLATION, USE_CASE, Scope
@@ -14,6 +16,27 @@ _BREACH_MESSAGES = {
     "requests": "Request budget exhausted for {scope} ({period}).",
     "tokens": "Token budget exhausted for {scope} ({period}).",
 }
+
+
+#: The refusal when this request's own estimate is more than the whole limit: no reset helps it.
+_ALONE_MESSAGES = {
+    "cost": (
+        "Cost budget for {scope} ({period}) cannot take this request: it alone is estimated at "
+        "{asked}, more than the whole limit of {limit}. Asking for fewer output tokens can fit."
+    ),
+    "requests": (
+        "Request budget for {scope} ({period}) cannot take this request: its limit is {limit}."
+    ),
+    "tokens": (
+        "Token budget for {scope} ({period}) cannot take this request: it alone is estimated at "
+        "{asked} tokens, more than the whole limit of {limit}. Asking for fewer output tokens "
+        "can fit."
+    ),
+}
+
+#: Where each dimension's limit and this request's amount are read from.
+_LIMIT_FIELDS = {"cost": "limit_cost_nanos", "requests": "limit_requests", "tokens": "limit_tokens"}
+_AMOUNT_FIELDS = {"cost": "cost_nanos", "requests": "requests", "tokens": "tokens"}
 
 
 def period_key(period: str, now: datetime) -> str:
@@ -71,11 +94,33 @@ def scope_key(budget: BudgetRead, caller: str | None = None) -> str:
     return scope.usage_key
 
 
-def exceeded(budget: BudgetRead, dimension: str) -> BudgetExceeded:
-    """The refusal for ``budget``, breached on ``dimension`` (`cost`, `requests` or `tokens`)."""
-    return BudgetExceeded(
-        _BREACH_MESSAGES[dimension].format(scope=_scope_label(budget), period=budget.period)
-    )
+def exceeded(
+    budget: BudgetRead, dimension: str, now: datetime, asked: Any | None = None
+) -> BudgetExceeded:
+    """The refusal for ``budget``, breached on ``dimension`` (`cost`, `requests` or `tokens`).
+
+    It says when the period resets (`FRD-628` FR-6), and — where ``asked``, this request's own
+    estimate, is more than the whole limit — that it is this request that cannot fit, not a budget
+    that is spent: a caller told "exhausted" waits for a reset that will not help them.
+    """
+    scope, period = _scope_label(budget), budget.period
+    resets_at = period_ends(budget.period, now).isoformat()
+    limit = getattr(budget, _LIMIT_FIELDS[dimension])
+    alone = getattr(asked, _AMOUNT_FIELDS[dimension], 0) if asked is not None else 0
+    if limit is not None and alone > limit:
+        message = _ALONE_MESSAGES[dimension].format(
+            scope=scope,
+            period=period,
+            asked=_amount(dimension, alone),
+            limit=_amount(dimension, limit),
+        )
+    else:
+        message = _BREACH_MESSAGES[dimension].format(scope=scope, period=period)
+    return BudgetExceeded(f"{message} It resets at {resets_at}.", resets_at=resets_at)
+
+
+def _amount(dimension: str, value: int) -> str:
+    return format_display(value) if dimension == "cost" else str(value)
 
 
 def _scope_label(budget: BudgetRead) -> str:

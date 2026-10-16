@@ -88,14 +88,44 @@ try an unsaved pipeline as an administrator could.
 
 | Where                                       | Body                                                                                       |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Gateway, paths under `/v1beta/`             | Google's envelope: `{"error": {"code": 403, "message": "…", "status": "PERMISSION_DENIED"}}` |
+| Gateway, paths under `/v1beta/`             | Google's envelope: `{"error": {"code": 403, "message": "…", "status": "PERMISSION_DENIED", "details": [ErrorInfo]}}` |
 | Gateway, paths under `/kira/api/external/`  | the predecessor's: `{"code": "…", "message": "…"}`                                         |
 | Gateway, every other path                   | `{"error": {"code": "not_found", "message": "…"}}`                                         |
 | Management                                  | `{"error": {"code": "permission_denied", "message": "…", "details": …}}` — a `400` carries the field errors in `details` |
 
 The gateway answers a parameter it cannot accept with `400` naming it, never `422`, and a body
-larger than `AIRA_MAX_REQUEST_BYTES` with `413` before reading it. A traced response carries its
-trace id in `x-trace-id`, failures included; the health probes are not traced.
+larger than `AIRA_MAX_REQUEST_BYTES` with `413` before reading it, naming the limit. A traced
+response carries its trace id in `x-trace-id`, failures included; the health probes are not traced.
+
+**Which control refused.** A Gemini refusal's `details` holds one Google `ErrorInfo` —
+`{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "BLOCKED_BY_PIPELINE", "domain":
+"aira.gateway", "metadata": {"request_id": "…", "step": "injection_filter"}}` — so a Gemini SDK,
+which keeps `details` and prints it with its exception, carries it to the developer. `reason` is the
+request's outcome in upper case (`BLOCKED_BY_PIPELINE`, `BUDGET_EXCEEDED`, `RATE_LIMITED`,
+`NO_CAPABLE_MODEL`, `UPSTREAM_ERROR`, `MODEL_NOT_FOUND`, `INVALID_REQUEST`, `REQUEST_TOO_LARGE`,
+`SUSPENDED`; `UNAUTHENTICATED` and `PERMISSION_DENIED` before a request is attributed). `metadata`
+adds `step` for a pipeline block and `resets_at` for a budget. The status and the message are what
+they were without it. The KIRA envelope is the predecessor's and gains nothing: there the same word
+is the `X-AIRA-Reason` header.
+
+**Headers that say what happened**, on every gateway response, both surfaces, exposed to browsers:
+
+| Header | When | Value |
+| --- | --- | --- |
+| `X-AIRA-Request-Id` | always | the request's id — its audit row's, which the console's request search and `GET /v1beta/traces/{id}` find |
+| `X-AIRA-Reason` | a refusal | the outcome in lower case, as in `ErrorInfo` |
+| `X-AIRA-Model` | an answer | the model that answered — after routing and fallback |
+| `X-AIRA-Pipeline` | a pipeline ran | one `step=action` per step, comma-separated: `injection_filter=passed`, `pii_filter=redacted`, `model_route=a>b` |
+
+Headers, because a client validates the body it parses and ignores a header it does not know: the
+`google-genai` SDK and the AI SDK's Google provider (OpenCode's) read every answer and every
+refusal as before.
+
+Other refusals' messages say what they need to be acted on: an exhausted fallback chain names every
+model it tried and why each did not answer, keeping the last provider's status; a budget refusal
+names when its period resets — never as `Retry-After`, which would put a client to sleep for the
+rest of the month — and, when this request alone is estimated above the whole limit, says that
+rather than "exhausted".
 
 Management reads JSON bodies only (anything else is `415`) and its paths are exact: `APPEND_SLASH`
 is off, so `/api/v1/use-cases` without its slash is `404`, and so is `/api/v1/me/` with one. Its
@@ -193,7 +223,7 @@ are newest first, `limit` at most 200 (50 by default), continued with the `next_
 | `GET /v1beta/reporting` | any credential, bounded by `report.read_all` | Spend and usage over `from`–`to` (ISO 8601, read as UTC; this calendar month by default; at most 366 days), narrowed by `use_case` and `person`. `series` (`auto`, `day`, `hour`) adds the window bucket by bucket, in bands by `split` (`model`, `use_case`, `outcome`). JSON: `{from, to, totals, by_use_case, by_model, by_member, by_outcome, by_person, series, scope, use_case, person, in_scope, people_limited, enforced}`, `series` only when asked. `Accept: text/csv` answers one `breakdown` (`use_case`, `model`, `member`) as a CSV file; any other `Accept` is `406`. In a use case whose `payload_visibility` is `own`, a member who is not its admin sees only their own row in the two splits by person; on `oversight` nobody inside the use case sees those splits, its admins included. Totals and the other breakdowns stay whole. |
 | `GET /v1beta/register` | any credential, bounded by `report.read_all` | The register of processing activities over `from`–`to`: `{from, to, scope, use_cases, processed_in, catalogue, last_erasure}` — per use case its purpose, its released models and where they run, retention, content visibility, controls and members, and where its traffic actually went. CSV with `Accept: text/csv`. |
 | `GET /v1beta/traces` | any credential, bounded by `trace.read_all`; `source_ip` and filtering by it need `incident.investigate` | Request metadata, never content: `{traces, next_cursor, scope, in_scope}`, each row an allow-list of the audit row's columns (`id`, `created_at`, `operation`, `api`, `model`, `status`, `outcome`, the token counts, `latency_ms`, `cost_nanos`, `provider`, `region`, `trace_id`, `subject`, `credential`, `use_case`, `tool_calls`, `flagged`, …). Filters `use_case`, `outcome`, `refusals_only`, `credential`, `subject`, `source_ip`, `mine`, `tools_only`, `flagged_only`, `request_id`. In a use case whose `payload_visibility` is `own`, a member who is not its admin sees only their own requests; `incident.investigate` is never narrowed. |
-| `GET /v1beta/traces/{id}` | as the list: `trace.read_all`, or a grant on the request's use case | `200 {trace, recorded: true}` — one row as the list shows it to this caller, and **the opening is recorded** (`kind: metadata` in the access log) before it is returned. `404` for a request that does not exist or lies outside the caller's scope, and then nothing is recorded. |
+| `GET /v1beta/traces/{id}` | as the list: `trace.read_all`, or a grant on the request's use case | `200 {trace, recorded: true}` — one row as the list shows it to this caller plus what explains it: `pipeline_decisions` (each step's verdict and each model the chain skipped or tried, with why), `degraded` and `error` (the message the caller was given). **The opening is recorded** (`kind: metadata` in the access log) before it is returned. `404` for a request that does not exist or lies outside the caller's scope, and then nothing is recorded. |
 | `GET /v1beta/traces/{id}/payload` | `payload.read_any`; otherwise a grant on the request's use case, as far as its `payload_visibility` allows | `200 {id, request, response, available: true, ground}` — the read is recorded before the content is returned, and does not happen if the record cannot be written. `200 {id, available: false, reason, message}` when there is nothing to show (`not_stored`, `expired`, `never_had_one`, `never_kept`); `403` with the reason when the caller may not read it; `404` for a request that does not exist or lies outside the caller's scope — one answer for both. |
 | `GET /v1beta/anomalies` | any credential, bounded by `anomaly.read_all` | What the detector found: `{events, next_cursor, scope, in_scope}`, each `{id, created_at, rule_id, rule, kind, use_case, target, target_value, observed, threshold, sample, window_minutes, action_taken, detail}`; addresses in `detail` only with `incident.investigate`. A finding a global rule made about a person or a credential belongs to no use case and is seen with `anomaly.read_all` alone; in a use case on `own`, a member who is not its admin sees the findings about the use case and about themselves. |
 

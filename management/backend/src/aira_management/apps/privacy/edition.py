@@ -26,10 +26,10 @@ from aira_management.apps.privacy.activities import ACTIVITIES, PERSONAL_DATA_PE
 TEXTS = Path(__file__).resolve().parent / "texts"
 
 #: The day the notice's content last changed, ISO 8601.
-EDITION = "2026-10-15"
+EDITION = "2026-10-16"
 
 #: `source_digest()` as of ``EDITION``.
-SOURCE_DIGEST = "285db616e3ec5437f55f279b061be2554be9ad3e530d3612a540a40bb5f15cfa"
+SOURCE_DIGEST = "3abed4ede1738169b3e25dc15388f63da3f9837126855626b8366a9b63e88dba"
 
 
 def source_digest() -> str:

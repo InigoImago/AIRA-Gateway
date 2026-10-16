@@ -48,6 +48,7 @@ from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
 from aira_gateway.embedding import check_shape as check_embedding_shape
 from aira_gateway.embedding import validate as validate_embedding
+from aira_gateway.explaining import TRAIL_STATE
 from aira_gateway.pipeline.dispatch import Fit, NoCapableModel, Permits, Skipped
 from aira_gateway.requirements import (
     MediaTypesSupported,
@@ -104,6 +105,9 @@ async def prepare_for_dispatch(
     default_task_type: str | None = None,
 ) -> Prepared:
     """Run the whole pre-dispatch sequence, in order (see the module docstring)."""
+    # Kept where the response can read it: its headers say which model answered and what the
+    # pipeline did (`FRD-628` FR-2), from this trail, whichever surface and exit answers.
+    setattr(request.state, TRAIL_STATE, trail)
     # First: a use case that is unknown here or retired must not spend an allowance or reach a
     # classifier.
     await refuse_unless_live(request, use_case_of(request))

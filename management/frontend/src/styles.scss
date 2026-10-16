@@ -2720,3 +2720,14 @@ $histogram-scale: 4.5rem;
 .days-fold[open] > summary {
   margin-bottom: 0.6rem;
 }
+
+/* The search for one request by the id a response carried (`X-AIRA-Request-Id`): wide enough to
+ * show a whole id — a 36-character UUID cut off is one nobody can check against what they pasted —
+ * and its button the field's own height, as every control beside a field is. */
+.request-id-search input {
+  width: 38ch;
+  font-family: var(--aira-mono);
+}
+.request-id-search .btn {
+  min-height: var(--aira-control-height);
+}

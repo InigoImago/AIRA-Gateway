@@ -77,7 +77,8 @@ def test_upstream_error_without_status_maps_to_502() -> None:
     assert resp.status_code == 502
     body = resp.json()
     assert body["error"]["status"] == "UNAVAILABLE"
-    assert body["error"]["message"] == "upstream failure"
+    # The model is named, and why it did not answer (`FRD-628` FR-6).
+    assert body["error"]["message"] == "No model answered this request (mock-1: upstream failure)."
 
 
 def test_upstream_429_passes_through_as_resource_exhausted() -> None:

@@ -1,0 +1,46 @@
+.what-happened {
+  margin: 0 0 1rem;
+}
+
+.what-happened__outcome {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+  margin: 0.25rem 0 0.5rem;
+}
+
+/* A caller's message is long and may hold an unbroken id or URL: it wraps rather than widening the
+ * table, and keeps its own line breaks. */
+/* The block that holds the caller's message and its label, spaced like the outcome above it. */
+.what-happened__message {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.what-happened__error {
+  margin: 0.15rem 0 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--aira-danger);
+  background: var(--aira-danger-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.what-happened__story {
+  margin: 0 0 0.5rem;
+  padding-left: 1.4rem;
+  overflow-wrap: anywhere;
+
+  li {
+    margin: 0.15rem 0;
+  }
+
+  .is-warning {
+    color: var(--aira-warning);
+  }
+
+  .is-danger {
+    color: var(--aira-danger);
+    font-weight: 600;
+  }
+}

@@ -120,8 +120,18 @@ def passed_over_by(error: BaseException) -> PassedOver | None:
 
 
 def _exhausted[E: Exception](error: E, skipped: list[Skipped], failed: list[Attempted]) -> E:
-    """``error``, marked with everything the chain passed over on the way to raising it."""
+    """``error``, marked with everything the chain passed over on the way to raising it.
+
+    An outage's message names every model the chain tried and why each did not answer
+    (`FRD-628` FR-6): the last provider's bare status — "Vertex upstream returned 503." — names
+    neither the model nor the candidates before it, and a caller cannot see the audit row that
+    does. The status stays the last upstream's, so a client's retry logic is unchanged.
+    """
     setattr(error, _PASSED_OVER, PassedOver(tuple(skipped), tuple(failed)))
+    if isinstance(error, UpstreamError) and failed:
+        tried = [f"{entry.model}: {entry.reason}" for entry in failed]
+        tried += [f"{entry.model}: skipped, {entry.reason}" for entry in skipped]
+        error.message = f"No model answered this request ({'; '.join(tried)})."
     return error
 
 

@@ -195,7 +195,7 @@ class BudgetService:
             )
             if breached:
                 await self.release(reservation)
-                raise keys.exceeded(budget, breached)
+                raise keys.exceeded(budget, breached, now, amounts)
             reservation.period_keys[budget.id] = period_key
         reservation.resolved = False  # reserved; the outcome is still open
         return reservation
@@ -224,7 +224,7 @@ class BudgetService:
             elif budget.limit_tokens is not None and usage.tokens >= budget.limit_tokens:
                 breached = "tokens"
             if breached:
-                raise keys.exceeded(budget, breached)
+                raise keys.exceeded(budget, breached, now)
 
     async def refuse_if_exhausted(
         self,

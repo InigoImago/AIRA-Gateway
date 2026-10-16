@@ -238,6 +238,7 @@ None of these is an accident, and each has a reason a migrating client can act o
 | **`thinking`** | checked against the model | see below |
 | **Error codes** | more specific (`INVALID_MAX_TOKENS`, `EMBEDDING_BOUND_EXCEEDED`, …) | the predecessor's codes are all still produced where it produces them; the extra ones name cases it had no word for |
 | **`INVALID_TOKEN` vs `NOT_AUTHENTICATED`** | kept apart | a rejected credential is a security signal, an absent one is a deployment slip |
+| **What happened** | headers only: `X-AIRA-Request-Id` on every response, `X-AIRA-Reason` on a refusal, `X-AIRA-Model` and `X-AIRA-Pipeline` on an answer | the envelope and the stream events stay the predecessor's — a client that parses them strictly keeps working — and the request id finds the request's details in the console, which say what the pipeline did and which models were tried. A stream that breaks off still ends without `completed`; its reason is in those details |
 | **Messages** | English | AIRA is English throughout |
 | **`/health`** | cached background probe | probing every upstream on every call makes readiness as slow as the slowest provider — a health check that can take down a healthy service |
 | **`/ki-usage`** | grouped by user, `model_id: 0` | AIRA reports the model dimension in its own rows rather than fabricating a cross-tabulation. The console's **Reporting** screen and its CSV export are the fuller answer |

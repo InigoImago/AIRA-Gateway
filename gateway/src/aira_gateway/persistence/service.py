@@ -48,6 +48,19 @@ def _count(value: int | None) -> int | None:
     return max(0, min(int(value), COUNT_CEILING))
 
 
+#: The longest caller's message an audit row keeps. A refusal's message is a sentence or two; an
+#: upstream's error text is capped where it is read, and this bounds whatever reaches the row.
+ERROR_MESSAGE_LIMIT = 1000
+
+
+def _bounded_message(message: str | None) -> str | None:
+    if not message:
+        return None
+    return (
+        message if len(message) <= ERROR_MESSAGE_LIMIT else message[: ERROR_MESSAGE_LIMIT - 1] + "…"
+    )
+
+
 class RequestLogService:
     """Writes ``request_logs`` rows, bound to an async session."""
 
@@ -88,12 +101,18 @@ class RequestLogService:
         publisher: str | None = None,
         region: str | None = None,
         request_bytes: int | None = None,
+        #: The audit row's id where the request already carries one (`X-AIRA-Request-Id`).
+        row_id: str | None = None,
+        error: str | None = None,
     ) -> RequestLog:
         # A counted usage is two counts and nothing more: the cache split and the thinking were in
         # a report that never came, so they are unknown here — and zero would claim a cache miss
         # and a model that did not think (`FRD-128` FR-6).
         counted = usage_basis == UsageBasis.COUNTED
         entry = RequestLog(
+            # The id the caller was given in `X-AIRA-Request-Id`, so the row is found by it.
+            **({"id": row_id} if row_id else {}),
+            error=_bounded_message(error),
             subject=str(_fits(subject, SUBJECT_COLUMN)),
             username=_fits(username, SUBJECT_COLUMN),
             auth_method=auth_method,
