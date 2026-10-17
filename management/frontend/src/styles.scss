@@ -595,20 +595,24 @@ $field-label-gap: 0.3rem;
  * The comment above says the per-field version failed because it "has to be remembered at every
  * field added afterwards". Per-window is the same sentence one level up, and it was forgotten at
  * every window there is. So the rule is now a property of *a form in a window*, which is a thing
- * the stylesheet can see without being told.
+ * the stylesheet can see without being told. The model editor, a section of the page rather than a
+ * window since it outgrew one, is a form of the same kind and is named beside it.
  */
-.modal__body .form-inline > .field {
+.modal__body .form-inline > .field,
+.editor-page .form-inline > .field {
   flex-basis: 100%;
 }
 /* In a window a field already has the whole row, so its select may too: capped at 22rem it cut
  * "The whole use case — one shared rate" to "one shared r…" beside inputs twice its width. The
  * window bounds it, which is what the cap exists to do on a page. */
-.modal__body .form-inline > .field > select {
+.modal__body .form-inline > .field > select,
+.editor-page .form-inline > .field > select {
   max-width: 100%;
 }
 /* The grouping that is allowed to stay a row. Higher specificity than the rule above by one
  * element selector, so it wins wherever somebody wrote a `fieldset` on purpose. */
-.modal__body fieldset .form-inline > .field {
+.modal__body fieldset .form-inline > .field,
+.editor-page fieldset .form-inline > .field {
   flex-basis: auto;
 }
 

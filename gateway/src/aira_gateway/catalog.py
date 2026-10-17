@@ -38,7 +38,30 @@ MAX_MODEL_NAME = 128
 #: checked against it unconditionally, because the model's own bounds are nullable.
 MAX_ACCOUNTABLE_TOKENS = 2**31 - 1
 
+#: What one attachment is reserved at when its model declares no figure, by media type or by the
+#: kind before the `/`. Only the **reservation** reads it — the budget held back before the answer,
+#: so concurrent requests cannot together pass a limit — and the booking afterwards is the
+#: provider's own count. Erring high: an image is at most about 1 600 tokens on the vendors this
+#: gateway reaches (Gemini 258 per tile, Claude about one per 750 pixels up to 1.15 megapixels), a
+#: PDF page up to about 3 000 when it is read as text and image; a document is reserved as one page.
+#: Asking every administrator for these figures asked for what no administrator can know.
+DEFAULT_ATTACHMENT_TOKENS: dict[str, int] = {
+    "image": 1_600,
+    "application/pdf": 3_000,
+    "text": 2_000,
+}
+#: Any other declared type: the largest of the above.
+FALLBACK_ATTACHMENT_TOKENS = 3_000
+
 _log = structlog.get_logger(__name__)
+
+
+def default_attachment_tokens(media_type: str) -> int:
+    """The reservation for one attachment of ``media_type`` whose model declares no figure."""
+    if media_type in DEFAULT_ATTACHMENT_TOKENS:
+        return DEFAULT_ATTACHMENT_TOKENS[media_type]
+    kind = media_type.partition("/")[0]
+    return DEFAULT_ATTACHMENT_TOKENS.get(kind, FALLBACK_ATTACHMENT_TOKENS)
 
 
 class AmbiguousModelId(Exception):
@@ -139,8 +162,11 @@ class ModelDeclaration:
         total = 0
         for media_type in media_types:
             spec = declared.get(media_type)
-            if isinstance(spec, dict):
-                total += int(spec.get("tokens", 0) or 0)
+            stated = spec.get("tokens") if isinstance(spec, dict) else None
+            if isinstance(stated, int) and not isinstance(stated, bool) and stated > 0:
+                total += stated
+            elif media_type in declared:
+                total += default_attachment_tokens(media_type)
         return total
 
     # -- thinking (FRD-111) ---------------------------------------------------------------

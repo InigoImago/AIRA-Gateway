@@ -23,7 +23,6 @@ import {
 import { MeService, perMillion } from '../../core/api/me.service';
 import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
-import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { causesOf, checkVerdict, providerLabel } from './catalog-display';
 import { CAPABILITY_HELP, thinkingModeMeans } from './declaration-help';
@@ -41,6 +40,26 @@ const WIDTH = /^\d+$/;
 
 /** What the model or the gateway answered about one word, mode or region. */
 type Verdict = { ok: boolean; detail: string };
+
+/**
+ * The gateway's reservation for an attachment its model declares no figure for, by media type or
+ * by the kind before the `/` — the same table as `aira_gateway.catalog.DEFAULT_ATTACHMENT_TOKENS`,
+ * which `tools/tests/test_attachment_defaults_agree.py` holds this to.
+ */
+export const DEFAULT_ATTACHMENT_TOKENS: Readonly<Record<string, number>> = {
+  image: 1600,
+  'application/pdf': 3000,
+  text: 2000,
+};
+const FALLBACK_ATTACHMENT_TOKENS = 3000;
+
+export function defaultAttachmentTokens(mediaType: string): number {
+  return (
+    DEFAULT_ATTACHMENT_TOKENS[mediaType] ??
+    DEFAULT_ATTACHMENT_TOKENS[mediaType.split('/')[0]] ??
+    FALLBACK_ATTACHMENT_TOKENS
+  );
+}
 
 /** What a reference draft put into the form, and from where (`FRD-508`). */
 interface ReferenceFill {
@@ -97,7 +116,7 @@ function provenanceOf(upstream: GatewayProvider): Whereabouts {
  */
 @Component({
   selector: 'app-model-editor',
-  imports: [InfoHint, FormsModule, Modal],
+  imports: [InfoHint, FormsModule],
   templateUrl: './model-editor.html',
   styleUrl: './model-editor.scss',
   host: { style: 'display: contents' },
@@ -220,6 +239,9 @@ export class ModelEditor {
    * filled field reads as a fact somebody checked, and these are a third party's claims.
    */
   protected readonly fromReference = signal<ReferenceFill | null>(null);
+  /** The model reference, once asked (`FRD-508`); `null` until it answers. */
+  protected readonly reference = signal<ModelReference | null>(null);
+  private referenceRequested = false;
 
   // ---- what it can do -----------------------------------------------------------------------
 
@@ -397,6 +419,7 @@ export class ModelEditor {
     this.reset();
     this.feedback.clear();
     this.gateway.load();
+    this.loadReference();
     this.editing.set(editing);
     this.showAdd.set(true);
   }
@@ -499,6 +522,56 @@ export class ModelEditor {
         ? { ...provenanceOf(upstream), region: '' }
         : { provider: entry.platform, publisher: '', region: '', platform: entry.platform },
     );
+    this.applyReference(entry, reference);
+  }
+
+  /**
+   * The reference entry for what is typed — the provider chosen and the model id as it stands —
+   * so a model named by hand can be filled from the list too (`FRD-508`). Only for a new entry:
+   * over a declaration on file a draft would replace a measurement.
+   */
+  protected readonly referenceMatch = computed<ReferenceEntry | null>(() => {
+    const reference = this.reference();
+    const name = this.name().trim();
+    if (!reference || !name || this.editing()) return null;
+    const platform = this.provider().trim();
+    return (
+      reference.entries.find((entry) => entry.platform === platform && entry.name === name) ?? null
+    );
+  });
+
+  /** The reference's model ids for the chosen provider, offered as the id is typed. */
+  protected readonly referenceNames = computed<string[]>(() => {
+    const platform = this.provider().trim();
+    return (this.reference()?.entries ?? [])
+      .filter((entry) => entry.platform === platform)
+      .map((entry) => entry.name);
+  });
+
+  /** Fill the open form from the reference entry its id names, keeping where it lives. */
+  protected fillFromReference(): void {
+    const entry = this.referenceMatch();
+    const reference = this.reference();
+    if (entry && reference) this.applyReference(entry, reference);
+  }
+
+  /** Ask Management for the reference once per editor; a failure leaves the form as it was and
+   *  the button absent — naming a model by hand works without it. */
+  private loadReference(): void {
+    if (this.reference() || this.referenceRequested) return;
+    this.referenceRequested = true;
+    this.service.modelReference().subscribe({
+      next: (reference) => this.reference.set(reference),
+      error: () => {
+        this.referenceRequested = false;
+      },
+    });
+  }
+
+  private applyReference(
+    entry: ReferenceEntry,
+    reference: Pick<ModelReference, 'source' | 'as_of' | 'currency'>,
+  ): void {
     this.publisher.set(entry.publisher);
     this.name.set(entry.name);
     this.displayName.set(entry.display_name);
@@ -592,7 +665,7 @@ export class ModelEditor {
 
   /** Close the window, discarding whatever was typed. Deliberately not a save — and what went wrong
    *  in it goes with it: a refusal about a form nobody is looking at is a report about nothing. */
-  protected close(): void {
+  close(): void {
     if (!this.showAdd()) return;
     this.showAdd.set(false);
     this.editing.set('');
@@ -827,6 +900,12 @@ export class ModelEditor {
    * The gateway reads a missing estimate as zero, so a document would be reserved for as if it
    * were a sentence. Wrong high is intended: `settle` corrects it once real usage arrives.
    */
+  /** What the gateway reserves for one attachment of this type when nothing is declared —
+   *  `aira_gateway.catalog.DEFAULT_ATTACHMENT_TOKENS`, shown so an empty box says what it means. */
+  protected defaultTokens(mediaType: string): string {
+    return String(defaultAttachmentTokens(mediaType));
+  }
+
   protected setMediaTypeTokens(mediaType: string, tokens: number | null): void {
     const specs = { ...this.mediaTypeSpecs() };
     specs[mediaType] = tokens === null || Number.isNaN(tokens) ? null : { tokens };

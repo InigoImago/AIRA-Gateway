@@ -1,21 +1,29 @@
 <!--
-  The editor is a window, not a panel that unfolds under the table: it says which model it is
-  about, has one way out, and cannot be edited past. `app-modal` owns Escape, the backdrop and
-  the keyboard; `modal--steady` keeps its size while the tabs change. The body and the footer are
-  projected as `ng-container`s, so the tab strip, the form and the buttons are direct children of
-  the window's body and footer — which is what the steady layout's rules select. The page's one
-  outcome is said in the window, beside the action (`error`): a refusal behind the backdrop is a
-  report about nothing, and the window does not close on one.
+  The editor is a section of its own, not a window: a declaration has three tabs of fields, a
+  reachability check and its decisions, and a window bounded by the viewport compressed them until
+  every tab scrolled inside it. The catalog page shows this section **in place of** the catalog
+  while it is open — nothing behind it can be edited past — and keeps its address in the URL
+  (`?editor=`), so the browser's Back closes it and a link opens it. The page's one outcome is said
+  here, beside the action (`error`).
 -->
-<app-modal
-  [open]="showAdd()"
-  [title]="title()"
-  testid="model-editor"
-  panelClass="modal--steady"
-  [error]="feedback.error()"
-  (closed)="close()"
->
-  <ng-container modal-body>
+@if (showAdd()) {
+  <section
+    class="card editor-page"
+    data-testid="model-editor"
+    role="region"
+    aria-labelledby="model-editor-title"
+  >
+    <div class="editor-page__head">
+      <button
+        type="button"
+        class="btn btn--sm btn--ghost"
+        (click)="close()"
+        data-testid="model-editor-close"
+      >
+        ← Models &amp; prices
+      </button>
+      <h2 class="page-title" id="model-editor-title">{{ title() }}</h2>
+    </div>
     <!--
         Three tabs, split by the question each field answers. Approval is on none of them: it is
         the decision that makes the model callable (`FRD-307`) and starts off, so it sits beside
@@ -63,13 +71,35 @@
           <input
             id="model-name"
             name="name"
+            data-testid="model-name-input"
             [ngModel]="name()"
             (ngModelChange)="name.set($event)"
             [readOnly]="!!editing()"
             placeholder="gemini-2.0-flash"
             autocomplete="off"
+            list="reference-names"
           />
+          <datalist id="reference-names">
+            @for (known of referenceNames(); track known) {
+              <option [value]="known"></option>
+            }
+          </datalist>
           <span class="field__hint">Exactly as the gateway exposes it.</span>
+          <!-- A model named by hand can be filled from the list too (`FRD-508`). -->
+          @if (referenceMatch(); as entry) {
+            <span class="field__hint" data-testid="reference-match">
+              The model reference describes <code>{{ entry.name }}</code
+              >.
+              <button
+                type="button"
+                class="btn btn--sm"
+                (click)="fillFromReference()"
+                data-testid="fill-from-reference"
+              >
+                Fill from the model reference
+              </button>
+            </span>
+          }
         </div>
         <div class="field">
           <label for="model-region">
@@ -738,6 +768,13 @@
               ticked is refused by name rather than sent without the attachment — a model that never
               saw the document answers confidently about it.
             </span>
+            <span class="field__hint" data-testid="media-tokens-why">
+              The number beside a ticked type is <strong>optional</strong>. It is only what the
+              gateway holds back from a budget while the answer is pending, so that requests in
+              flight cannot together pass a limit; what is booked afterwards is the provider's own
+              count. Left empty, the gateway reserves its own estimate, shown in the box. Change it
+              only if you have measured what one attachment costs on this model.
+            </span>
             @for (mediaType of allMediaTypes; track mediaType) {
               <label class="checkline">
                 <input
@@ -757,10 +794,12 @@
                     [ngModel]="mediaTypeTokens(mediaType)"
                     (ngModelChange)="setMediaTypeTokens(mediaType, $event)"
                     [attr.data-testid]="'media-tokens-' + mediaType"
-                    [attr.aria-label]="'Input tokens one ' + mediaType + ' attachment costs'"
-                    placeholder="tokens"
+                    [attr.aria-label]="
+                      'Tokens reserved for one ' + mediaType + ' attachment (optional)'
+                    "
+                    [placeholder]="defaultTokens(mediaType)"
                   />
-                  <span class="muted">input tokens each</span>
+                  <span class="muted">tokens reserved each (optional)</span>
                 }
               </label>
             }
@@ -839,95 +878,113 @@
       }
     </form>
 
-    <!--
-        The model's standing, in its own band below the tabs: decisions about the model rather than
-        properties of it, so they belong to the whole editor. Approval starts off — a model
-        appearing on an upstream is not somebody deciding it may be used here (`FRD-307`).
-      -->
-    <div class="editor-standing" data-testid="editor-standing">
-      <label class="checkline">
-        <input
-          type="checkbox"
-          name="approved"
-          [ngModel]="approved()"
-          (ngModelChange)="approved.set($event)"
-          data-testid="model-approved"
-        />
-        Approved for use — a use case may call it
-      </label>
+    <!-- The standing and the actions together stick to the viewport's bottom: the decisions
+         stay in one place on every tab, and Save is never below the fold. -->
+    <div class="editor-page__foot">
+      <!--
+          The model's standing, in its own band below the tabs: decisions about the model rather than
+          properties of it, so they belong to the whole editor. Approval starts off — a model
+          appearing on an upstream is not somebody deciding it may be used here (`FRD-307`).
+        -->
+      <div class="editor-standing" data-testid="editor-standing">
+        <label class="checkline">
+          <input
+            type="checkbox"
+            name="approved"
+            [ngModel]="approved()"
+            (ngModelChange)="approved.set($event)"
+            data-testid="model-approved"
+          />
+          Approved for use — a use case may call it
+        </label>
 
-      <label class="checkline">
-        <input
-          type="checkbox"
-          name="deprecated"
-          [ngModel]="deprecated()"
-          (ngModelChange)="deprecated.set($event)"
-        />
-        Deprecated — requests still succeed and carry a warning
-      </label>
-    </div>
-  </ng-container>
+        <label class="checkline">
+          <input
+            type="checkbox"
+            name="deprecated"
+            [ngModel]="deprecated()"
+            (ngModelChange)="deprecated.set($event)"
+          />
+          Deprecated — requests still succeed and carry a warning
+        </label>
+      </div>
 
-  <ng-container modal-foot>
-    <!--
+      <div class="form-actions editor-page__actions">
+        @if (feedback.error(); as message) {
+          <p
+            class="field__hint field__hint--error editor-page__error"
+            role="alert"
+            data-testid="model-editor-error"
+          >
+            {{ message }}
+          </p>
+        }
+        <!--
         The check, where the model is defined. It informs and never blocks (`FRD-114`: deprecation
         warns, revocation blocks): a model is often declared before its credential exists. Shown to
         whoever may ask the gateway, disabled until there is a name, so it can be found.
       -->
-    @if (canDiagnose()) {
-      <button
-        type="button"
-        class="btn"
-        [disabled]="checking() || !name().trim()"
-        (click)="runCheck({ name: name().trim() })"
-        data-testid="editor-check"
-      >
-        {{ checking() ? 'Checking…' : 'Check reachability' }}
-      </button>
-    }
-    @if (check(); as verdict) {
-      <span
-        class="badge"
-        [class.badge--success]="verdict.reachable === true"
-        [class.badge--danger]="verdict.reachable === false || !verdict.served"
-        [class.badge--warning]="verdict.served && verdict.reachable === null"
-        data-testid="editor-verdict"
-      >
-        {{ checkVerdict(verdict) }}
-      </span>
-    }
-    <!-- The slack sits here, between the check and the decisions, so a verdict appearing does
-           not move the check button under the cursor that pressed it. -->
-    <span class="form-actions__spacer"></span>
-    @if (formError(); as message) {
-      <span class="field__hint field__hint--error grow" data-testid="form-error">
-        {{ message }}
-        @if (alreadyCatalogued(); as stored) {
+        @if (canDiagnose()) {
           <button
             type="button"
-            class="btn btn--sm"
-            (click)="edit(stored)"
-            data-testid="open-stored"
+            class="btn"
+            [disabled]="checking() || !name().trim()"
+            (click)="runCheck({ name: name().trim() })"
+            data-testid="editor-check"
           >
-            Open {{ stored.name }}
+            {{ checking() ? 'Checking…' : 'Check reachability' }}
           </button>
         }
-      </span>
-    } @else if (mustCheck()) {
-      <!-- A refusal of the ignorance, not of the verdict: you must look; what you do with the
+        @if (check(); as verdict) {
+          <span
+            class="badge"
+            [class.badge--success]="verdict.reachable === true"
+            [class.badge--danger]="verdict.reachable === false || !verdict.served"
+            [class.badge--warning]="verdict.served && verdict.reachable === null"
+            data-testid="editor-verdict"
+          >
+            {{ checkVerdict(verdict) }}
+          </span>
+        }
+        <!-- The slack sits here, between the check and the decisions, so a verdict appearing does
+           not move the check button under the cursor that pressed it. -->
+        <span class="form-actions__spacer"></span>
+        @if (formError(); as message) {
+          <span class="field__hint field__hint--error grow" data-testid="form-error">
+            {{ message }}
+            @if (alreadyCatalogued(); as stored) {
+              <button
+                type="button"
+                class="btn btn--sm"
+                (click)="edit(stored)"
+                data-testid="open-stored"
+              >
+                Open {{ stored.name }}
+              </button>
+            }
+          </span>
+        } @else if (mustCheck()) {
+          <!-- A refusal of the ignorance, not of the verdict: you must look; what you do with the
              answer is yours. -->
-      <span class="field__hint grow" data-testid="check-required">
-        Check reachability before adding a model. You may add it whatever the answer is.
-      </span>
-    } @else if (!canDiagnose() && !editing()) {
-      <span class="field__hint grow" data-testid="check-unavailable">
-        Added without a reachability check: asking the gateway about a model needs the permission to
-        diagnose (<code>operations.diagnose</code>).
-      </span>
-    }
-    <button type="button" class="btn" (click)="close()">Cancel</button>
-    <button type="submit" form="model-editor-form" class="btn btn--primary" [disabled]="!canSave()">
-      {{ feedback.busy() ? 'Saving…' : 'Save' }}
-    </button>
-  </ng-container>
-</app-modal>
+          <span class="field__hint grow" data-testid="check-required">
+            Check reachability before adding a model. You may add it whatever the answer is.
+          </span>
+        } @else if (!canDiagnose() && !editing()) {
+          <span class="field__hint grow" data-testid="check-unavailable">
+            Added without a reachability check: asking the gateway about a model needs the
+            permission to diagnose (<code>operations.diagnose</code>).
+          </span>
+        }
+        <button type="button" class="btn" (click)="close()">Cancel</button>
+        <button
+          type="submit"
+          form="model-editor-form"
+          class="btn btn--primary"
+          [disabled]="!canSave()"
+        >
+          {{ feedback.busy() ? 'Saving…' : 'Save' }}
+        </button>
+      </div>
+    </div>
+  </section>
+}

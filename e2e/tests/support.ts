@@ -302,7 +302,9 @@ export async function submitOfOpenForm(page: Page) {
   // comma-separated selector: those resolve in document order, so a page-level form rendered above
   // the dialog would be submitted instead — and the assertion after it would still pass, because
   // both buttons say "Add".
-  const inWindow = page.locator('.modal button[type="submit"]').first();
+  const inWindow = page
+    .locator('.modal button[type="submit"], .editor-page__actions button[type="submit"]')
+    .first();
   const inPage = page.locator('form button[type="submit"]').first();
 
   // **Waited for, not sampled.** This used to branch on `await inWindow.count()`, which is a single

@@ -502,6 +502,44 @@ async def test_the_reservation_counts_the_attachment() -> None:
     assert with_pdf.tokens == without.tokens + 2000
 
 
+async def test_an_attachment_with_no_declared_figure_is_reserved_at_the_built_in_estimate() -> None:
+    """An administrator cannot know what a PDF costs a model, and was asked to type it; empty used
+    to reserve **nothing** for the document. The figure only holds budget back before the answer —
+    the booking is the provider's count — so the gateway's own estimate is the honest default."""
+    from aira_gateway.api.serving import estimate
+    from aira_gateway.catalog import DEFAULT_ATTACHMENT_TOKENS, default_attachment_tokens
+
+    app = _app()
+    with TestClient(app) as client:
+        del client
+        await _declare(
+            app,
+            "mock-1",
+            capabilities=["generate", "attachments"],
+            attachments={
+                "media_types": {"application/pdf": None, "image/png": {}, "text/csv": None}
+            },
+        )
+        request = SimpleNamespace(app=app, state=SimpleNamespace())
+        without = await estimate(request, model="mock-1", max_output_tokens=100)
+        both = await estimate(
+            request,
+            model="mock-1",
+            max_output_tokens=100,
+            attachments=["application/pdf", "image/png", "text/csv"],
+        )
+        undeclared = await estimate(
+            request, model="mock-1", max_output_tokens=100, attachments=["audio/wav"]
+        )
+
+    assert both.tokens == without.tokens + 3_000 + 1_600 + 2_000
+    assert undeclared.tokens == without.tokens, (
+        "a type the model does not read is refused, not reserved"
+    )
+    assert default_attachment_tokens("video/mp4") == 3_000
+    assert DEFAULT_ATTACHMENT_TOKENS["image"] == 1_600
+
+
 # == the pipeline's blind spot ====================================================================
 
 

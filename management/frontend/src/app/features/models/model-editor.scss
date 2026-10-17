@@ -11,3 +11,61 @@
 .declaration-part {
   margin: 0.9rem 0 0;
 }
+
+/* **A section of the page, as wide as the page.** The fields keep a form's measure — a name field
+   across a 1400px screen is read as a table. At least a viewport tall, so the foot below is always
+   held at the viewport's bottom: on a short tab and a long one alike the standing decisions and
+   Save sit in the same place, and never below the fold. */
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 100vh;
+}
+.editor-page__head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.editor-page__head .page-title {
+  margin: 0;
+}
+.editor-page > form {
+  flex: 1 0 auto;
+  max-width: 44rem;
+}
+.editor-page__foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--aira-surface);
+  padding-bottom: 0.75rem;
+}
+/* The window's footer rules, for the same row: buttons apart, an explanation on its own line above
+   them rather than squeezed into a column beside them. */
+.editor-page__actions {
+  justify-content: flex-end;
+  gap: 1rem;
+}
+.editor-page__actions > .field__hint {
+  flex-basis: 100%;
+  text-align: left;
+  order: -1;
+}
+.editor-page__error {
+  margin: 0;
+}
+/* The foot shares the viewport with the fields, so it takes as little of it as it can: the two
+   standing decisions on one line, the band's rule its only separation. */
+.editor-page__foot .editor-standing {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  margin-top: 0;
+  padding-top: 0.6rem;
+}
+.editor-page__foot .editor-page__actions {
+  padding-top: 0.6rem;
+  border-top: 0;
+}

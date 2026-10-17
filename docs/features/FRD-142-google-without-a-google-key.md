@@ -15,6 +15,12 @@ its Keycloak — at Google's Security Token Service, or, on Google Cloud, by ask
 server**. The configuration is Google's own `external_account` JSON; the only secret left is the
 gateway's client secret in Keycloak.
 
+**No link between Keycloak and Google Workspace is needed or created.** Federation is a trust in
+the GCP project for one Keycloak *client*; no user, directory or single sign-on crosses between the
+two. What it does need is somebody with IAM rights in that project, and — where an organisation
+policy restricts identity providers — the realm's issuer on its allowed list (`docs/INTEGRATIONS.md`,
+Vertex D).
+
 ## 2. Goals & Non-Goals
 
 **Goals**

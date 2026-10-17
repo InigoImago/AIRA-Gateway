@@ -5,6 +5,27 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The owner's first look at it: a page, not a window; tokens nobody can know (2026-10-17)
+
+Four answers to the owner trying it. **Keycloak and Google Workspace are separate identity worlds**
+— and federation needs no link between them: the trust is a pool in the GCP project for one
+Keycloak *client*; no user, directory or sign-on crosses. What it does need, and the runbook now
+says, is somebody with IAM rights in that project and, where an organisation policy restricts
+identity providers, the realm's issuer on its list. **A model named by hand** could not be filled
+from the reference: the list was reachable only from the picker. The editor now offers the
+reference's ids as the id is typed and *Fill from the model reference* for one it describes.
+**The editor is a section of its own**, replacing the catalog, its address in the URL so Back
+closes it; the foot with the standing decisions and Save is held at the viewport's bottom and was
+compacted to one line after a screenshot showed it taking 190 px. Measured in a browser against the
+showcase, not only in jsdom: that is how the fields were found side by side again — the
+one-question-per-row rule was written for windows. **Document tokens**: a ticked type without a
+figure reserved *nothing*, and the form asked for a figure no administrator can know. The gateway
+now reserves its own estimate (1 600 per image, 3 000 per PDF, 2 000 per text file), the empty box
+shows it and says it is optional and only a reservation. `FX-F34-F3-20b` deleted with the window
+layout it guarded; `FX-F34-F3-21a` and `-4a` re-anchored.
+
+---
+
 ## Connecting a model without research, without a key, and with the reason when it fails (2026-10-17)
 
 The owner set up a standalone installation against an external Keycloak and could not catalogue a

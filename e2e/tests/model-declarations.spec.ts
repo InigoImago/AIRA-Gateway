@@ -98,8 +98,11 @@ test.describe('Model declarations', () => {
     const standing = page.getByTestId('editor-standing');
     await expect(standing).toBeVisible();
 
+    // Measured at the end of the page: the foot is held at the viewport's bottom while the fields
+    // scroll under it, and lets go of it below the last one.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     const geometry = await standing.evaluate((el) => {
-      const strip = document.querySelector('.modal__body > .tabs') as HTMLElement;
+      const strip = document.querySelector('[data-testid="model-editor"] > .tabs') as HTMLElement;
       const form = document.querySelector('#model-editor-form') as HTMLElement;
       const box = el.getBoundingClientRect();
       return {
@@ -126,9 +129,9 @@ test.describe('Model declarations', () => {
     page,
   }) => {
     /** Reported: *"the two toggles now jump with the size of the tab contents, which looks
-     *  unprofessional."* They did. `modal--steady` fixed the dialog's height, which keeps the
-     *  *window* still and lets everything inside it slide: the body was one scrolling block, so
-     *  the strip and the band sat wherever the current tab's fields happened to end.
+     *  unprofessional."* They did, in a window whose body was one scrolling block. The editor is a
+     *  section of the page now, and the band rides in a foot held at the viewport's bottom, so it
+     *  must still not move between tabs whose field counts differ by more than a screen.
      *
      *  Measured, because this is a claim about pixels and nothing else can hold it: the strip's
      *  top and the band's top are identical on all three tabs, whose field counts differ by more
@@ -140,7 +143,7 @@ test.describe('Model declarations', () => {
 
     const measure = async () =>
       page.evaluate(() => {
-        const strip = document.querySelector('.modal__body > .tabs') as HTMLElement;
+        const strip = document.querySelector('[data-testid="model-editor"] > .tabs') as HTMLElement;
         const band = document.querySelector('[data-testid="editor-standing"]') as HTMLElement;
         return {
           strip: Math.round(strip.getBoundingClientRect().top),

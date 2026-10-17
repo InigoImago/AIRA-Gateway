@@ -186,6 +186,13 @@ What must not happen is the estimate silently staying at zero for attachments. T
 "unknown is not zero" rule this codebase already applies to unpriced models, and the same argument
 applies: a reservation that ignores the expensive half of the request is not a limit.
 
+**As built since 2026-10-17:** the "defaulting to conservative published figures" half was missing
+— a type ticked without a number reserved zero, and the console asked every administrator for a
+figure none of them can know. An undeclared figure now reserves the gateway's own estimate
+(`catalog.DEFAULT_ATTACHMENT_TOKENS`: 1 600 per image, 3 000 per PDF, 2 000 per text file, 3 000
+otherwise), the console shows it in the empty box and says the figure is optional, and a declared
+one still wins. Per document, not per page: the request carries no page count before dispatch.
+
 ### 5.4 Persistence: store what it was, not what it contained
 
 `request_logs.request_payload` is `JSONB`. Writing a base64 PDF into it makes each row megabytes,

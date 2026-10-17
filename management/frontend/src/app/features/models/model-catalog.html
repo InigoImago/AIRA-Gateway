@@ -1,247 +1,253 @@
-<div class="stack">
-  <h2 class="page-title">Models &amp; prices</h2>
-  <p class="muted" style="margin: 0">
-    What each model costs per 1,000,000 tokens{{ pricedIn() }}. Input and output are priced
-    separately because every provider bills the two differently. Cost budgets are calculated from
-    these figures; a model without a price still works, but its consumption cannot be costed.
-    <!-- The unit is `AIRA_CURRENCY`, the setting the CSV export labels these figures with. -->
-  </p>
+<!-- The catalog, or the editor in its place: one at a time, so nothing behind the editor can be
+     changed past it (`FRD-508` FR-6). -->
+@if (!modelEditor.showAdd()) {
+  <div class="stack">
+    <h2 class="page-title">Models &amp; prices</h2>
+    <p class="muted" style="margin: 0">
+      What each model costs per 1,000,000 tokens{{ pricedIn() }}. Input and output are priced
+      separately because every provider bills the two differently. Cost budgets are calculated from
+      these figures; a model without a price still works, but its consumption cannot be costed.
+      <!-- The unit is `AIRA_CURRENCY`, the setting the CSV export labels these figures with. -->
+    </p>
 
-  <!-- The declarations card comes first: adding a model is what this screen is for. -->
-  @if (canEdit()) {
-    <div class="card">
-      <div class="spread">
-        <h3 class="section-title">Model declarations</h3>
-        <div class="row">
-          <!--
-            One entrance, and it starts with the provider: every model lives somewhere, and
-            choosing the provider answers what an empty form would ask. The empty form stays
-            reachable inside the browse window, where it is the honest option.
-          -->
-          <button
-            type="button"
-            class="btn btn--primary"
-            (click)="openBrowse()"
-            data-testid="add-model"
-          >
-            + Add a model
-          </button>
+    <!-- The declarations card comes first: adding a model is what this screen is for. -->
+    @if (canEdit()) {
+      <div class="card">
+        <div class="spread">
+          <h3 class="section-title">Model declarations</h3>
+          <div class="row">
+            <!--
+              One entrance, and it starts with the provider: every model lives somewhere, and
+              choosing the provider answers what an empty form would ask. The empty form stays
+              reachable inside the browse window, where it is the honest option.
+            -->
+            <button
+              type="button"
+              class="btn btn--primary"
+              (click)="openBrowse()"
+              data-testid="add-model"
+            >
+              + Add a model
+            </button>
+          </div>
         </div>
-      </div>
-      <p class="muted lead">
-        A declaration is what the gateway enforces: the output cap, what the model can be asked to
-        do, and what it costs. Open a row below to see everything on file for a model, and to
-        correct or remove it.
-      </p>
-
-      <app-served-models [catalogued]="catalogued()" (catalogue)="importServed($event)" />
-    </div>
-  }
-
-  <!-- While the editor is open it shows this outcome itself, where the reader is looking; a copy
-       behind its backdrop would be a second report of the same thing. -->
-  @if (feedback.error(); as message) {
-    @if (!modelEditor.showAdd()) {
-      <p class="callout callout--danger" role="alert">{{ message }}</p>
-    }
-  }
-  @if (feedback.notice(); as message) {
-    <p class="callout" role="status">{{ message }}</p>
-  }
-  @if (!loading() && unpriced().length) {
-    <p class="callout callout--warning">
-      {{ unpriced().length }} model(s) have no price on file. Requests using them are counted, but
-      their cost is unknown and is left out of every spend figure.
-    </p>
-  }
-  @if (!loading() && undeclared().length) {
-    <p class="callout callout--warning" data-testid="undeclared-caveat">
-      {{ undeclared().length }} model(s) have no capability declaration. The gateway serves them at
-      the baseline — generation and embedding — and refuses thinking, structured output and
-      attachments, because absence of information is not permission.
-    </p>
-  }
-
-  <div class="card card--flush">
-    <!-- Outside the loading branch, so a reload never takes the search box away mid-typing
-         (`tools/tests/test_console_info_hints.py`). -->
-    @if (models().length) {
-      <div class="table-tools card__inset card__inset--above">
-        <label class="search">
-          <span>Find a model</span>
-          <input
-            type="search"
-            [value]="view.query()"
-            (input)="view.search($any($event.target).value)"
-            placeholder="part of a model name, or a provider"
-            data-testid="model-search"
-            autocomplete="off"
-          />
-        </label>
-      </div>
-    }
-
-    @if (loading()) {
-      <p class="loading card__inset">
-        <span class="spinner" aria-hidden="true"></span>
-        Loading catalog…
-      </p>
-    } @else if (!models().length) {
-      <p class="empty">No models in the catalog yet.</p>
-    } @else {
-      @if (!view.matches().length) {
-        <p class="empty" data-testid="model-no-match">
-          No model matches “{{ view.query() }}”. The catalog holds {{ models().length }}.
+        <p class="muted lead">
+          A declaration is what the gateway enforces: the output cap, what the model can be asked to
+          do, and what it costs. Open a row below to see everything on file for a model, and to
+          correct or remove it.
         </p>
-      } @else {
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th scope="col"><span class="sr-only">Open</span></th>
-                <th scope="col">Model</th>
-                <th scope="col">Provider</th>
-                <th scope="col">Capabilities</th>
-                <th scope="col">Input {{ perMillion() }}</th>
-                <th scope="col">Output {{ perMillion() }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (model of view.rows(); track model.name) {
-                <tr
-                  class="row-openable"
-                  [class.is-open]="openModel() === model.name"
-                  (click)="toggleDetail(model)"
-                >
-                  <td class="table__open">
-                    <button
-                      type="button"
-                      class="btn btn--sm btn--ghost"
-                      [attr.aria-expanded]="openModel() === model.name"
-                      [attr.aria-label]="
-                        (openModel() === model.name ? 'Hide' : 'Show') +
-                        ' everything about ' +
-                        model.name
-                      "
-                      [attr.data-testid]="'open-model-' + model.name"
-                    >
-                      {{ openModel() === model.name ? '▾' : '▸' }}
-                    </button>
-                  </td>
-                  <td>
-                    <code>{{ model.name }}</code>
-                    @if (model.display_name) {
-                      <div class="muted text-sm">{{ model.display_name }}</div>
-                    }
-                  </td>
-                  <td>{{ model.provider || '—' }}</td>
-                  <td>
-                    @if (model.is_declared) {
-                      <span class="muted text-sm">{{ (model.capabilities ?? []).join(', ') }}</span>
-                    } @else {
-                      <span class="badge badge--warning">undeclared</span>
-                    }
-                    @if (model.deprecated) {
-                      <span class="badge badge--danger">deprecated</span>
-                    }
-                    @if (model.approved === false) {
-                      <!-- The one state a reader must not have to open a row to discover. -->
-                      <span class="badge badge--warning" data-testid="not-approved">
-                        not approved
-                      </span>
-                    }
-                  </td>
-                  <td>
-                    @if (model.is_priced) {
-                      {{ model.input_price_per_million }}
-                    } @else {
-                      <span class="badge badge--warning">no price</span>
-                    }
-                  </td>
-                  <td>{{ model.is_priced ? model.output_price_per_million : '—' }}</td>
-                </tr>
-                @if (openModel() === model.name) {
-                  <tr class="row-detail">
-                    <td [attr.colspan]="20">
-                      <!-- Everything on file, not a chosen subset: the catalog is what the gateway
-                           enforces. -->
-                      <dl class="detail-grid">
-                        @for (field of detailOf(model, currency()); track field.label) {
-                          <div>
-                            <dt>{{ field.label }}</dt>
-                            <dd [attr.data-testid]="'detail-' + field.key">{{ field.value }}</dd>
-                          </div>
-                        }
-                      </dl>
 
-                      <!-- Declared is not reachable: without a credential no adapter is registered,
-                           and every request for the model comes back `model_not_found`. -->
-                      <div class="row" style="margin-bottom: 0.75rem">
-                        <!-- Offered to whoever the gateway would answer (`operations.diagnose`). -->
-                        @if (canDiagnose()) {
-                          <button
-                            type="button"
-                            class="btn btn--sm"
-                            [disabled]="checking()"
-                            (click)="runCheck(model)"
-                            [attr.data-testid]="'check-' + model.name"
-                          >
-                            {{ checking() ? 'Checking…' : 'Check reachability' }}
-                          </button>
-                        }
-                        @if (check(); as verdict) {
-                          <span
-                            class="badge"
-                            [class.badge--success]="verdict.reachable === true"
-                            [class.badge--danger]="verdict.reachable === false || !verdict.served"
-                            [class.badge--warning]="verdict.served && verdict.reachable === null"
-                            data-testid="check-verdict"
-                          >
-                            {{ checkVerdict(verdict) }}
-                          </span>
-                          <span class="muted text-sm" data-testid="check-detail">
-                            {{ verdict.detail }}
-                          </span>
-                        }
-                      </div>
+        <app-served-models [catalogued]="catalogued()" (catalogue)="importServed($event)" />
+      </div>
+    }
 
-                      @if (canEdit()) {
-                        <!-- The actions act on the model whose details are open. -->
-                        <div class="row">
-                          <button
-                            type="button"
-                            class="btn btn--sm"
-                            (click)="edit(model)"
-                            [attr.data-testid]="'edit-' + model.name"
-                          >
-                            Edit declaration
-                          </button>
-                          <button
-                            type="button"
-                            class="btn btn--sm btn--danger"
-                            [disabled]="feedback.busy()"
-                            (click)="remove(model)"
-                            [attr.data-testid]="'remove-' + model.name"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      }
-                    </td>
-                  </tr>
-                }
-              }
-            </tbody>
-          </table>
-        </div>
-
-        <div class="card__inset card__inset--below">
-          <app-table-pager [view]="view" noun="models" testid="model-pager" />
-        </div>
+    <!-- While the editor is open it shows this outcome itself, where the reader is looking; a copy
+         behind its backdrop would be a second report of the same thing. -->
+    @if (feedback.error(); as message) {
+      @if (!modelEditor.showAdd()) {
+        <p class="callout callout--danger" role="alert">{{ message }}</p>
       }
     }
+    @if (feedback.notice(); as message) {
+      <p class="callout" role="status">{{ message }}</p>
+    }
+    @if (!loading() && unpriced().length) {
+      <p class="callout callout--warning">
+        {{ unpriced().length }} model(s) have no price on file. Requests using them are counted, but
+        their cost is unknown and is left out of every spend figure.
+      </p>
+    }
+    @if (!loading() && undeclared().length) {
+      <p class="callout callout--warning" data-testid="undeclared-caveat">
+        {{ undeclared().length }} model(s) have no capability declaration. The gateway serves them
+        at the baseline — generation and embedding — and refuses thinking, structured output and
+        attachments, because absence of information is not permission.
+      </p>
+    }
+
+    <div class="card card--flush">
+      <!-- Outside the loading branch, so a reload never takes the search box away mid-typing
+           (`tools/tests/test_console_info_hints.py`). -->
+      @if (models().length) {
+        <div class="table-tools card__inset card__inset--above">
+          <label class="search">
+            <span>Find a model</span>
+            <input
+              type="search"
+              [value]="view.query()"
+              (input)="view.search($any($event.target).value)"
+              placeholder="part of a model name, or a provider"
+              data-testid="model-search"
+              autocomplete="off"
+            />
+          </label>
+        </div>
+      }
+
+      @if (loading()) {
+        <p class="loading card__inset">
+          <span class="spinner" aria-hidden="true"></span>
+          Loading catalog…
+        </p>
+      } @else if (!models().length) {
+        <p class="empty">No models in the catalog yet.</p>
+      } @else {
+        @if (!view.matches().length) {
+          <p class="empty" data-testid="model-no-match">
+            No model matches “{{ view.query() }}”. The catalog holds {{ models().length }}.
+          </p>
+        } @else {
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th scope="col"><span class="sr-only">Open</span></th>
+                  <th scope="col">Model</th>
+                  <th scope="col">Provider</th>
+                  <th scope="col">Capabilities</th>
+                  <th scope="col">Input {{ perMillion() }}</th>
+                  <th scope="col">Output {{ perMillion() }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (model of view.rows(); track model.name) {
+                  <tr
+                    class="row-openable"
+                    [class.is-open]="openModel() === model.name"
+                    (click)="toggleDetail(model)"
+                  >
+                    <td class="table__open">
+                      <button
+                        type="button"
+                        class="btn btn--sm btn--ghost"
+                        [attr.aria-expanded]="openModel() === model.name"
+                        [attr.aria-label]="
+                          (openModel() === model.name ? 'Hide' : 'Show') +
+                          ' everything about ' +
+                          model.name
+                        "
+                        [attr.data-testid]="'open-model-' + model.name"
+                      >
+                        {{ openModel() === model.name ? '▾' : '▸' }}
+                      </button>
+                    </td>
+                    <td>
+                      <code>{{ model.name }}</code>
+                      @if (model.display_name) {
+                        <div class="muted text-sm">{{ model.display_name }}</div>
+                      }
+                    </td>
+                    <td>{{ model.provider || '—' }}</td>
+                    <td>
+                      @if (model.is_declared) {
+                        <span class="muted text-sm">{{
+                          (model.capabilities ?? []).join(', ')
+                        }}</span>
+                      } @else {
+                        <span class="badge badge--warning">undeclared</span>
+                      }
+                      @if (model.deprecated) {
+                        <span class="badge badge--danger">deprecated</span>
+                      }
+                      @if (model.approved === false) {
+                        <!-- The one state a reader must not have to open a row to discover. -->
+                        <span class="badge badge--warning" data-testid="not-approved">
+                          not approved
+                        </span>
+                      }
+                    </td>
+                    <td>
+                      @if (model.is_priced) {
+                        {{ model.input_price_per_million }}
+                      } @else {
+                        <span class="badge badge--warning">no price</span>
+                      }
+                    </td>
+                    <td>{{ model.is_priced ? model.output_price_per_million : '—' }}</td>
+                  </tr>
+                  @if (openModel() === model.name) {
+                    <tr class="row-detail">
+                      <td [attr.colspan]="20">
+                        <!-- Everything on file, not a chosen subset: the catalog is what the gateway
+                             enforces. -->
+                        <dl class="detail-grid">
+                          @for (field of detailOf(model, currency()); track field.label) {
+                            <div>
+                              <dt>{{ field.label }}</dt>
+                              <dd [attr.data-testid]="'detail-' + field.key">{{ field.value }}</dd>
+                            </div>
+                          }
+                        </dl>
+
+                        <!-- Declared is not reachable: without a credential no adapter is registered,
+                             and every request for the model comes back `model_not_found`. -->
+                        <div class="row" style="margin-bottom: 0.75rem">
+                          <!-- Offered to whoever the gateway would answer (`operations.diagnose`). -->
+                          @if (canDiagnose()) {
+                            <button
+                              type="button"
+                              class="btn btn--sm"
+                              [disabled]="checking()"
+                              (click)="runCheck(model)"
+                              [attr.data-testid]="'check-' + model.name"
+                            >
+                              {{ checking() ? 'Checking…' : 'Check reachability' }}
+                            </button>
+                          }
+                          @if (check(); as verdict) {
+                            <span
+                              class="badge"
+                              [class.badge--success]="verdict.reachable === true"
+                              [class.badge--danger]="verdict.reachable === false || !verdict.served"
+                              [class.badge--warning]="verdict.served && verdict.reachable === null"
+                              data-testid="check-verdict"
+                            >
+                              {{ checkVerdict(verdict) }}
+                            </span>
+                            <span class="muted text-sm" data-testid="check-detail">
+                              {{ verdict.detail }}
+                            </span>
+                          }
+                        </div>
+
+                        @if (canEdit()) {
+                          <!-- The actions act on the model whose details are open. -->
+                          <div class="row">
+                            <button
+                              type="button"
+                              class="btn btn--sm"
+                              (click)="edit(model)"
+                              [attr.data-testid]="'edit-' + model.name"
+                            >
+                              Edit declaration
+                            </button>
+                            <button
+                              type="button"
+                              class="btn btn--sm btn--danger"
+                              [disabled]="feedback.busy()"
+                              (click)="remove(model)"
+                              [attr.data-testid]="'remove-' + model.name"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        }
+                      </td>
+                    </tr>
+                  }
+                }
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card__inset card__inset--below">
+            <app-table-pager [view]="view" noun="models" testid="model-pager" />
+          </div>
+        }
+      }
+    </div>
   </div>
-</div>
+}
 
 <app-model-editor
   #modelEditor

@@ -49,6 +49,19 @@ where, and leaves the region, the check, the approval and the release to the adm
   types, and a banner names what was filled, the source and date, and the draft's notes. Prices are
   filled only where the installation's currency is the list's; otherwise the banner states them.
   The region stays empty.
+- **FR-5 — A model named by hand.** The editor offers the reference's ids for the chosen provider as
+  the id is typed, and for a new entry whose id the reference describes, *Fill from the model
+  reference* fills it the same way, keeping the provider and regions already in the form. Not over a
+  declaration on file. A reference that cannot be loaded leaves naming by hand as it was.
+
+- **FR-6 — The editor is a section of its own.** Declaring or correcting a model replaces the
+  catalog on its page instead of opening a window: three tabs of fields, the check and the decisions
+  had been compressed into a window bounded by the viewport until each tab scrolled inside it. One
+  question per row, at a form's width; the standing decisions and the actions in a foot held at the
+  viewport's bottom, so they stay in one place on every tab. The address is in the URL —
+  `?editor=new`, `?editor=<model>` — so Back closes the editor (discarding the draft, as Cancel
+  does) and a link opens the model it names once the catalog has loaded. Escape no longer closes it:
+  on a page it would discard a draft by accident.
 
 ## 8. Security & Privacy
 
@@ -61,4 +74,4 @@ unchanged.
 `management/backend/tests/test_model_reference.py`: every shipped draft passes
 `validate_declaration`; each mapping rule; shipped by default, live held, failure paused; the
 permission; the route. `model-catalog.spec.ts`: the list in the browse window, the fill, the currency
-rule, the region left empty, the save. Mutations `RF-1`–`RF-21`.
+rule, the region left empty, the save. Mutations `RF-1`–`RF-25`, `ED-1`–`ED-4`.

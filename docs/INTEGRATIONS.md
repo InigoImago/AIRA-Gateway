@@ -900,6 +900,20 @@ token for a Google one, and the Google token acts as the service account for an 
 no secret of yours and you hold none of Google's; what is left to protect and rotate is one client
 secret in your own Keycloak.
 
+**Keycloak and Google stay two separate identity worlds.** Nothing connects Keycloak to Google
+Workspace or Cloud Identity: no directory sync, no single sign-on, no Workspace account or licence.
+The trust lives in the GCP project alone — a *workload identity pool* that believes exactly one
+Keycloak client, a machine and not a person — and lets that client act as one service account.
+Nobody's Keycloak account reaches Google, and no Google user is created.
+
+**Who has to do what.** The Keycloak steps need a realm administrator. The Google steps need, in
+the GCP project, `roles/iam.workloadIdentityPoolAdmin` (step 3) and the right to change the service
+account's IAM policy, `roles/iam.serviceAccountAdmin` or the project's owner (step 4) — usually your
+Google Cloud administrators rather than whoever runs AIRA. An organisation may restrict which
+identity providers a pool may trust (`constraints/iam.workloadIdentityPoolProviders`); then the
+realm's issuer URL has to be added to that policy's allowed values first, and a pool created without
+it is refused with `Org Policy violated` (`ORG_POLICY_VIOLATED` in the model check).
+
 **In Keycloak** (the realm the console already uses, or another):
 
 1. *Clients → Create client*, id `aira-gateway-gcp`. **Client authentication** on, **Service

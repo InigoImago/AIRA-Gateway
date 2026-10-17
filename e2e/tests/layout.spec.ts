@@ -360,7 +360,7 @@ test.describe('Form alignment', () => {
     }
   });
 
-  test('a message in a dialog footer never squeezes the buttons', async ({ page }) => {
+  test('a message in the editor\'s action row never squeezes the buttons', async ({ page }) => {
     /**
      * Reported the moment the model editor's window was narrowed to a form's width: *"when an
      * error is thrown in the interface, the button layout at the bottom breaks when you touch the
@@ -381,7 +381,7 @@ test.describe('Form alignment', () => {
     await openModelEditor(page);
 
     const box = async () => {
-      const buttons = page.locator('.modal__foot button');
+      const buttons = page.locator('.editor-page__actions button');
       const boxes = await buttons.evaluateAll((nodes) =>
         nodes.map((node) => {
           const r = node.getBoundingClientRect();

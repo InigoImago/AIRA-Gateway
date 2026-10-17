@@ -1,4 +1,16 @@
-import { Component, OnInit, computed, inject, signal, viewChild } from '@angular/core';
+import {
+  Component,
+  DestroyRef,
+  OnInit,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+  viewChild,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import { errorMessage } from '../../core/api/error-message';
@@ -23,6 +35,10 @@ import { GatewayProviders } from './gateway-providers';
 import { ModelEditor } from './model-editor';
 import { ServedModels } from './served-models';
 import { REFERENCE_PLATFORMS, ReferenceModels, ReferencePick } from './reference-models';
+
+/** The query parameter that holds the editor's address, and its value for a new model. */
+const EDITOR_PARAM = 'editor';
+const EDITOR_NEW = 'new';
 
 /**
  * Models & prices: the catalog, what is on file for each model, and the ways into the editor
@@ -155,9 +171,57 @@ export class ModelCatalog implements OnInit {
     );
   });
 
+  /**
+   * **The editor's address.** `?editor=new` while a new model is being declared, `?editor=<name>`
+   * while one is corrected, nothing while the catalog shows. Written when the editor opens — so
+   * the browser's Back closes it, as a reader expects of a section that replaced the page — and
+   * replaced when it closes, so Back from the catalog does not reopen an emptied form. Read on
+   * arrival, so a link opens the model it names.
+   */
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly urlEffect = effect(() => {
+    const editor = this.editor();
+    const open = editor.showAdd();
+    const key = open ? editor.editing() || EDITOR_NEW : null;
+    untracked(() => this.writeEditorParam(key));
+  });
+
+  private writeEditorParam(key: string | null): void {
+    const current = this.route.snapshot.queryParamMap.get(EDITOR_PARAM);
+    if (current === key) return;
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { [EDITOR_PARAM]: key },
+      queryParamsHandling: 'merge',
+      // Opening adds a step Back can take; closing replaces it.
+      replaceUrl: key === null,
+    });
+  }
+
+  /** The URL changed under the editor: Back closed it, or a link names a model to open. */
+  private readEditorParam(key: string | null): void {
+    const editor = this.editor();
+    if (!key) {
+      if (editor.showAdd()) editor.close();
+      return;
+    }
+    if (editor.showAdd()) return;
+    if (key === EDITOR_NEW) {
+      editor.add();
+      return;
+    }
+    const stored = this.models().find((model) => model.name === key);
+    if (stored) editor.edit(stored);
+  }
+
   ngOnInit(): void {
     this.meService.get().subscribe({ next: (me) => this.me.set(me), error: () => undefined });
     this.reload();
+    this.route.queryParamMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((params) => this.readEditorParam(params.get(EDITOR_PARAM)));
   }
 
   protected reload(): void {
@@ -166,6 +230,8 @@ export class ModelCatalog implements OnInit {
       next: (models) => {
         this.models.set(models);
         this.loading.set(false);
+        // A link naming a model opens it once the catalog that holds it has arrived.
+        this.readEditorParam(this.route.snapshot.queryParamMap.get(EDITOR_PARAM));
       },
       error: (response: unknown) => {
         this.feedback.fail(response, 'Could not load the model catalog.');

@@ -2,6 +2,7 @@ import { formatDate } from '@angular/common';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
+import { Router, provideRouter } from '@angular/router';
 import { Observable, Subject, defer, map, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import {
@@ -307,6 +308,7 @@ function setup(
   TestBed.configureTestingModule({
     imports: [ModelCatalog],
     providers: [
+      provideRouter([]),
       {
         provide: MeService,
         useValue: { currency: signal(options.currency ?? ''), get: () => of(me) },
@@ -516,9 +518,9 @@ describe('ModelCatalog', () => {
     } as never);
     harness.fixture.detectChanges();
 
-    // Which model this window is about must be on screen.
-    const dialog = html().querySelector('[role="dialog"]');
-    expect(dialog?.textContent).toContain('gemini-2.0-flash');
+    // Which model this section is about must be on screen.
+    const section = html().querySelector('[data-testid="model-editor"]');
+    expect(section?.textContent).toContain('gemini-2.0-flash');
 
     harness.editor.name.set('typo');
     [...html().querySelectorAll<HTMLButtonElement>('button')]
@@ -526,7 +528,7 @@ describe('ModelCatalog', () => {
       ?.click();
     harness.fixture.detectChanges();
 
-    expect(html().querySelector('[role="dialog"]')).toBeNull();
+    expect(html().querySelector('[data-testid="model-editor"]')).toBeNull();
     expect(harness.saved).toHaveLength(0);
     // Reopening must not show the abandoned edit.
     expect(harness.editor.name()).toBe('');
@@ -628,9 +630,10 @@ describe('ModelCatalog interactions', () => {
     html().querySelector<HTMLButtonElement>('[data-testid="add-manually"]')!.click();
     harness.fixture.detectChanges();
 
-    const dialog = html().querySelector('[role="dialog"]');
-    expect(dialog).not.toBeNull();
-    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    const section = html().querySelector('[data-testid="model-editor"]');
+    expect(section).not.toBeNull();
+    // The catalog gives way to it: nothing behind the editor can be changed past it.
+    expect(html().querySelector('[data-testid="add-model"]')).toBeNull();
 
     const name = html().querySelector<HTMLInputElement>('#model-name');
     expect(name).not.toBeNull();
@@ -2105,16 +2108,22 @@ describe('ModelCatalog — declaration blocks', () => {
     });
   });
 
-  it('a ticked media type with no estimate reserves nothing, and says so', async () => {
-    /** An estimate nobody gave is sent as `null`, which the gateway reserves nothing for
-     *  (`attachment_tokens` sums only objects) — why the form must be able to set one
-     *  (`FRD-405`). */
+  it('a ticked media type needs no estimate, and the box says what the gateway reserves', async () => {
+    /** An administrator cannot know what one PDF costs a model. Left empty it is sent as `null`,
+     *  and the gateway reserves its built-in estimate — which the box shows, so empty is not read
+     *  as "nothing" (`FRD-110`). */
     const harness = setup();
     const catalog = harness.editor;
     catalog.edit(DECLARED);
+    catalog.editorTab.set('capabilities');
     catalog.toggleMediaType('image/png', true);
-    catalog.save();
+    harness.fixture.detectChanges();
+    await Promise.resolve();
 
+    const box = harness.testid('media-tokens-image/png') as HTMLInputElement;
+    expect(box.placeholder).toBe('1600');
+    expect(harness.testid('media-tokens-why')?.textContent).toContain('optional');
+    catalog.save();
     expect(harness.saved[0].attachments?.media_types?.['image/png']).toBeNull();
   });
 
@@ -2944,7 +2953,7 @@ describe('ModelCatalog — what goes wrong in the window is said in the window',
     submit(harness).click();
     harness.fixture.detectChanges();
 
-    const alert = harness.html().querySelector('[role="dialog"] [role="alert"]');
+    const alert = harness.html().querySelector('[data-testid="model-editor"] [role="alert"]');
     expect(alert?.textContent).toContain("KIRA id 9001 already belongs to 'gemini-2.0-flash'");
     // One report, where the reader is — not a second copy behind the backdrop.
     expect(harness.html().querySelectorAll('[role="alert"]').length).toBe(1);
@@ -2959,7 +2968,7 @@ describe('ModelCatalog — what goes wrong in the window is said in the window',
     harness.editor.addLevel();
     harness.fixture.detectChanges();
 
-    const alert = harness.html().querySelector('[role="dialog"] [role="alert"]');
+    const alert = harness.html().querySelector('[data-testid="model-editor"] [role="alert"]');
     expect(alert?.textContent).toContain('thinking mode');
 
     [...harness.html().querySelectorAll<HTMLButtonElement>('button')]
@@ -2979,7 +2988,7 @@ describe('ModelCatalog — what goes wrong in the window is said in the window',
 
     harness.component.edit(FLASH);
     harness.fixture.detectChanges();
-    expect(harness.html().querySelector('[role="dialog"] [role="alert"]')).toBeNull();
+    expect(harness.html().querySelector('[data-testid="model-editor"] [role="alert"]')).toBeNull();
   });
 });
 
@@ -3411,42 +3420,83 @@ describe('ModelCatalog — an edit keeps what the form does not show', () => {
   });
 });
 
-describe('ModelCatalog — the editor is the shared window, laid out as before', () => {
-  it('keeps the tab strip, the form and the buttons where the steady layout selects them', () => {
-    /** `modal--steady` pins the strip and the standing band and scrolls only the form, by rules on
-     *  the window body's **direct** children (`.modal--steady .modal__body > form`), and the footer
-     *  places a hint on its own line by `.modal__foot > .field__hint`. A wrapper element between
-     *  them would leave every rule matching nothing — which no unit test would otherwise see. */
+describe('ModelCatalog — the editor is a section of its own (FRD-508 FR-6)', () => {
+  it('replaces the catalog while it is open, and gives it back', () => {
+    /** A window bounded by the viewport compressed three tabs of fields until each scrolled inside
+     *  it. The section takes the page; the catalog returns when it closes. */
     const harness = setup();
     harness.editor.add();
     harness.fixture.detectChanges();
     const q = (selector: string) => harness.html().querySelector(selector);
 
-    expect(q('[data-testid="model-editor"]')?.classList.contains('modal--steady')).toBe(true);
-    expect(q('.modal--steady > .modal__body > .tabs')).not.toBeNull();
-    expect(q('.modal--steady > .modal__body > form#model-editor-form')).not.toBeNull();
-    expect(q('.modal--steady > .modal__body > .editor-standing')).not.toBeNull();
-    expect(q('.modal--steady > .modal__foot > .field__hint')).not.toBeNull();
-    expect(q('.modal--steady > .modal__foot > button[type="submit"]')).not.toBeNull();
+    expect(q('[role="dialog"]')).toBeNull();
+    expect(q('[data-testid="model-editor"]')?.getAttribute('role')).toBe('region');
     expect(q('#model-editor-title')?.textContent).toContain('Add a model');
+    expect(q('[data-testid="add-model"]')).toBeNull();
+    // Save stays in reach: the action row is the one that sticks to the viewport's bottom.
+    expect(q('.editor-page__actions button[type="submit"]')).not.toBeNull();
+
+    harness.click('[data-testid="model-editor-close"]');
+    expect(q('[data-testid="model-editor"]')).toBeNull();
+    expect(q('[data-testid="add-model"]')).not.toBeNull();
   });
 
-  it('closes on Escape and on the backdrop, discarding what was typed', () => {
+  it('puts its address in the URL, so Back closes it', async () => {
     const harness = setup();
-    harness.component.edit(FLASH);
+    const router = TestBed.inject(Router);
+    await router.navigateByUrl('/');
+    harness.editor.add();
     harness.fixture.detectChanges();
-    harness.editor.name.set('typo');
+    await harness.fixture.whenStable();
+    expect(router.url).toBe('/?editor=new');
 
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    harness.editor.name.set('typo');
+    await router.navigateByUrl('/');
     harness.fixture.detectChanges();
+
     expect(harness.editor.showAdd()).toBe(false);
     expect(harness.editor.name()).toBe('');
+    expect(harness.saved).toEqual([]);
+  });
 
+  it('names the model being corrected in the URL, and closing takes it out again', async () => {
+    const harness = setup();
+    const router = TestBed.inject(Router);
     harness.component.edit(FLASH);
     harness.fixture.detectChanges();
-    harness.click('.modal-backdrop');
+    await harness.fixture.whenStable();
+    expect(router.url).toBe('/?editor=gemini-2.0-flash');
+
+    harness.click('[data-testid="model-editor-close"]');
+    await harness.fixture.whenStable();
+    expect(router.url).toBe('/');
+  });
+
+  it('opens the model a link names, once the catalog has arrived', async () => {
+    const harness = setup();
+    const router = TestBed.inject(Router);
+
+    await router.navigateByUrl('/?editor=gemini-2.0-flash');
+    harness.fixture.detectChanges();
+
+    expect(harness.editor.showAdd()).toBe(true);
+    expect(harness.editor.name()).toBe('gemini-2.0-flash');
+
+    await router.navigateByUrl('/');
+    await router.navigateByUrl('/?editor=new');
+    harness.fixture.detectChanges();
+    expect(harness.editor.showAdd()).toBe(true);
+    expect(harness.editor.name()).toBe('');
+  });
+
+  it('ignores a link to a model the catalog does not hold', async () => {
+    const harness = setup();
+    const router = TestBed.inject(Router);
+
+    await router.navigateByUrl('/?editor=nothing-like-it');
+    harness.fixture.detectChanges();
+
     expect(harness.editor.showAdd()).toBe(false);
-    expect(harness.saved).toEqual([]);
   });
 });
 
@@ -3602,5 +3652,61 @@ describe('ModelCatalog — the model reference (FRD-508)', () => {
     harness.fixture.detectChanges();
 
     expect(harness.testid('reference-models')).toBeNull();
+  });
+});
+
+describe('ModelEditor — filling a model named by hand (FRD-508)', () => {
+  it('offers the reference for the id typed, and fills it keeping where the model lives', async () => {
+    /** "Add a model on Vertex" and typing the id is the way in for a model nobody listed for
+     *  you; the list's facts must reach that form too, not only the picker's. */
+    const harness = setup({ currency: 'USD' });
+    const editor = harness.editor as unknown as Editor & {
+      startOn: (upstream: GatewayProvider | null) => void;
+    };
+    editor.startOn(VERTEX);
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    expect(harness.testid('fill-from-reference')).toBeNull();
+
+    harness.type('model-name-input', 'claude-sonnet-9');
+    expect(harness.testid('reference-match')?.textContent).toContain('claude-sonnet-9');
+    harness.click('[data-testid="fill-from-reference"]');
+
+    expect(editor.publisher()).toBe('anthropic');
+    expect(editor.contextWindow()).toBe(1000000);
+    expect(editor.thinkingLevels()).toEqual(['low', 'high']);
+    expect(editor.inputPrice()).toBe('3');
+    expect(editor.regions()).toEqual(['europe-west1']);
+    expect(harness.testid('reference-filled')).not.toBeNull();
+  });
+
+  it('offers the reference ids of the chosen provider as the id is typed', () => {
+    const harness = setup();
+    (harness.editor as unknown as { startOn: (u: GatewayProvider) => void }).startOn(VERTEX);
+    harness.fixture.detectChanges();
+
+    const options = [...harness.html().querySelectorAll('#reference-names option')].map((o) =>
+      o.getAttribute('value'),
+    );
+    expect(options).toEqual(['gemini-old', 'claude-sonnet-9']);
+  });
+
+  it('offers nothing over a declaration on file', () => {
+    const harness = setup();
+    harness.component.edit({ ...FLASH, name: 'claude-sonnet-9', provider: 'vertex' });
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('fill-from-reference')).toBeNull();
+  });
+
+  it('names a model by hand without a reference that could not be loaded', async () => {
+    const harness = setup({ reference: throwError(() => ({ status: 403 })) });
+    (harness.editor as unknown as { startOn: (u: GatewayProvider) => void }).startOn(VERTEX);
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    harness.type('model-name-input', 'claude-sonnet-9');
+
+    expect(harness.testid('fill-from-reference')).toBeNull();
+    expect(harness.editor.name()).toBe('claude-sonnet-9');
   });
 });
