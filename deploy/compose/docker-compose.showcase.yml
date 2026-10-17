@@ -128,7 +128,7 @@ services:
                     AIRA_KAFKA_SASL_PASSWORD AIRA_POSTGRES_PASSWORD AIRA_PSEUDONYM_SECRET \
                     AIRA_REDIS_PASSWORD \
                     AIRA_REDIS_SENTINEL_PASSWORD AIRA_SECRET_KEY AIRA_VERTEX_API_KEY \
-                    AIRA_VERTEX_CREDENTIALS; do
+                    AIRA_VERTEX_CREDENTIALS AIRA_VERTEX_FEDERATION_CLIENT_SECRET; do
           value=$$(eval echo \$$$$name)
           [ -n "$$value" ] && set -- "$$@" "$$name=$$value"
         done
@@ -160,6 +160,7 @@ services:
       AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-}
       AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
       AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
+      AIRA_VERTEX_FEDERATION_CLIENT_SECRET: ${AIRA_VERTEX_FEDERATION_CLIENT_SECRET:-}
     depends_on:
       # `service_started`, not `service_healthy`. The migrations wait for *this* service, so
       # making it wait for a **healthy** Vault put the whole stack behind Vault's health check —

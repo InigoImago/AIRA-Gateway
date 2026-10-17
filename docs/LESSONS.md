@@ -1718,6 +1718,14 @@ reading code.
   never a generation — a "does this work" button must not be what wakes a scaled-to-zero model.
 - **Refusal, not best effort.** `seed` on a candidate that cannot express it answers perfectly and
   simply is not reproducible, and nothing in the response says so.
+- **Keeping a provider's text out must not keep its cause out.** The model check reported the
+  exception's type, rightly refusing to repeat a message that can quote a URL with a key in it — and
+  so answered *Not reachable (UpstreamError)* to an API not enabled, a missing role, a model not in
+  the region and a proxy's certificate alike, and an owner could not catalogue one model in a day.
+  Every platform states its cause in a **structured** field — Google's `ErrorInfo.reason`, an OAuth
+  `error`, Azure's `code` — that carries no credential. Read those, match free text against a fixed
+  vocabulary without repeating it, and write the explanation yourself (`FRD-141`). A redaction rule
+  is about what may be *said*, never about what may be *known*.
 
 ---
 

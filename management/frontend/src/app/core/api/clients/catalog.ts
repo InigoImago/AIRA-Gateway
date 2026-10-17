@@ -6,6 +6,7 @@ import {
   KiraModel,
   ModelCheck,
   OfferedModel,
+  ModelReference,
   ServedModel,
   ThinkingLevelCheck,
 } from '../types/catalog';
@@ -65,6 +66,12 @@ export function withCatalog<T extends ApiClientClass>(Base: T) {
      */
     kiraModels(): Observable<KiraModel[]> {
       return this.http.get<KiraModel[]>(`${GW}/kira/api/external/models`);
+    }
+
+    /** Drafts of catalog entries from a public model list (`FRD-508`), for whoever writes the
+     *  catalogue. Saves research; decides nothing. */
+    modelReference(): Observable<ModelReference> {
+      return this.http.get<ModelReference>(`${API}/v1/model-reference/`);
     }
 
     /** What the **gateway** serves, with the provenance its adapters were configured with

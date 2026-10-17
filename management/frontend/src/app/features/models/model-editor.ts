@@ -13,7 +13,9 @@ import {
   EmbeddingDeclaration,
   GatewayProvider,
   ModelCheck,
+  ModelReference,
   OfferedModel,
+  ReferenceEntry,
   ServedModel,
   ThinkingDeclaration,
   ThinkingModeName,
@@ -23,7 +25,7 @@ import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
-import { checkVerdict, providerLabel } from './catalog-display';
+import { causesOf, checkVerdict, providerLabel } from './catalog-display';
 import { CAPABILITY_HELP, thinkingModeMeans } from './declaration-help';
 import { GatewayProviders } from './gateway-providers';
 
@@ -39,6 +41,17 @@ const WIDTH = /^\d+$/;
 
 /** What the model or the gateway answered about one word, mode or region. */
 type Verdict = { ok: boolean; detail: string };
+
+/** What a reference draft put into the form, and from where (`FRD-508`). */
+interface ReferenceFill {
+  source: string;
+  asOf: string;
+  filled: string[];
+  /** The list's prices, said rather than filled, where the installation counts in another
+   *  currency. Empty when they were filled or the list has none. */
+  listPrices: string;
+  notes: string[];
+}
 
 /** Where a model lives, as an entrance knows it — the four facts an import may copy (`FRD-507`). */
 interface Whereabouts {
@@ -94,6 +107,7 @@ export class ModelEditor {
   private readonly gateway = inject(GatewayProviders);
   private readonly currency = inject(MeService).currency;
   protected readonly perMillion = computed(() => perMillion(this.currency()));
+  protected readonly currencyName = computed(() => this.currency() || 'an unnamed currency');
   protected readonly feedback = inject(PageFeedback);
 
   /** Raised after a successful save, so the page reloads the catalog. */
@@ -201,6 +215,11 @@ export class ModelEditor {
   protected readonly imported = signal(false);
   /** What the vendor said that the console deliberately did **not** turn into a declaration. */
   protected readonly vendorSaid = signal<string[]>([]);
+  /**
+   * What a reference draft filled in, and from where (`FRD-508`): said beside the form, because a
+   * filled field reads as a fact somebody checked, and these are a third party's claims.
+   */
+  protected readonly fromReference = signal<ReferenceFill | null>(null);
 
   // ---- what it can do -----------------------------------------------------------------------
 
@@ -276,6 +295,11 @@ export class ModelEditor {
   private levelsRequest: Subscription | null = null;
 
   protected readonly checkVerdict = checkVerdict;
+  /**
+   * Why the last check failed, one entry per cause with the regions that gave it (`FRD-141`). A
+   * tooltip on a ✗ is where a cause goes unread; this is the sentence that says what to change.
+   */
+  protected readonly checkCauses = computed(() => causesOf(this.check()));
   protected readonly providerLabel = providerLabel;
   protected readonly thinkingModeMeans = thinkingModeMeans;
 
@@ -452,6 +476,74 @@ export class ModelEditor {
       this.providerIsCustom.set(false);
     }
     this.useOffered(model, provider);
+  }
+
+  /**
+   * Start an entry from a reference draft (`FRD-508`): everything the list states, in this
+   * catalog's vocabulary, for the administrator to check — never approved, never released.
+   *
+   * **Prices are copied only where the installation counts in the list's currency.** A US-dollar
+   * figure in a euro field is a budget that is wrong by the exchange rate and looks right; in
+   * another currency the list's prices are shown beside the fields and the fields stay empty.
+   * The region is never guessed: residency is the one guess this product may not make, and the
+   * reachability check is what says where a model answers.
+   */
+  fromReferenceEntry(
+    entry: ReferenceEntry,
+    reference: Pick<ModelReference, 'source' | 'as_of' | 'currency'>,
+    upstream: GatewayProvider | null,
+  ): void {
+    this.begin('');
+    this.applyProvenance(
+      upstream
+        ? { ...provenanceOf(upstream), region: '' }
+        : { provider: entry.platform, publisher: '', region: '', platform: entry.platform },
+    );
+    this.publisher.set(entry.publisher);
+    this.name.set(entry.name);
+    this.displayName.set(entry.display_name);
+    const declared = entry.declaration;
+    this.contextWindow.set(declared.context_window);
+    this.maxOutput.set(declared.max_output_tokens);
+    this.capabilities.set([...declared.capabilities]);
+    this.loadDeclarations({
+      name: entry.name,
+      thinking: declared.thinking,
+      attachments: declared.attachments,
+    } as CatalogModel);
+
+    const filled = ['name', 'display name', 'publisher'];
+    if (declared.context_window) filled.push('context window');
+    if (declared.max_output_tokens) filled.push('output cap');
+    if (declared.capabilities.length) filled.push('capabilities');
+    if (declared.thinking) filled.push('thinking');
+    if (declared.attachments) filled.push('documents and images');
+
+    const prices = entry.prices;
+    const listed = [
+      prices.input && `input ${prices.input}`,
+      prices.output && `output ${prices.output}`,
+      prices.cached_input && `cached input ${prices.cached_input}`,
+      prices.cache_write && `cache write ${prices.cache_write}`,
+    ].filter((part): part is string => !!part);
+    const sameCurrency = !!reference.currency && this.currency() === reference.currency;
+    if (sameCurrency) {
+      this.inputPrice.set(prices.input ?? '');
+      this.outputPrice.set(prices.output ?? '');
+      this.cachedPrice.set(prices.cached_input ?? '');
+      this.cacheWritePrice.set(prices.cache_write ?? '');
+      if (listed.length) filled.push('prices');
+    }
+    this.fromReference.set({
+      source: reference.source,
+      asOf: reference.as_of,
+      filled,
+      listPrices:
+        !sameCurrency && listed.length
+          ? `${listed.join(', ')} ${reference.currency} per million tokens`
+          : '',
+      notes: [...entry.notes, ...(entry.status ? [`listed as ${entry.status}`] : [])],
+    });
   }
 
   /**
@@ -982,6 +1074,7 @@ export class ModelEditor {
     this.provenanceOpened.set(false);
     this.imported.set(false);
     this.vendorSaid.set([]);
+    this.fromReference.set(null);
   }
 
   private clearDeclarations(): void {

@@ -11,7 +11,9 @@ import {
   Me,
   ModelCheck,
   ThinkingLevelCheck,
+  ModelReference,
   OfferedModel,
+  ReferenceEntry,
 } from '../../core/api/models';
 import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -54,6 +56,51 @@ const STUDIO: GatewayProvider = {
   servedModels: 0,
   adapters: 1,
 };
+/** What the model reference answers (`FRD-508`): two Vertex drafts and one for AI Studio. */
+const SONNET: ReferenceEntry = {
+  platform: 'vertex',
+  name: 'claude-sonnet-9',
+  display_name: 'Claude Sonnet 9',
+  publisher: 'anthropic',
+  family: 'claude-sonnet',
+  status: '',
+  release_date: '2026-09-01',
+  knowledge: '2026-05',
+  description: 'Balanced',
+  declaration: {
+    capabilities: ['generate', 'tools', 'attachments', 'thinking', 'prompt_caching'],
+    context_window: 1000000,
+    max_output_tokens: 64000,
+    thinking: { modes: ['limited'], min_tokens: 1024, max_tokens: 63999, levels: ['low', 'high'] },
+    attachments: { media_types: { 'application/pdf': null, 'image/png': null } },
+  },
+  prices: { input: '3', output: '15', cached_input: '0.3', cache_write: '3.75' },
+  notes: ['the thinking ceiling is the output cap less one; the list states none'],
+};
+const OLD_GEMINI: ReferenceEntry = {
+  ...SONNET,
+  name: 'gemini-old',
+  display_name: 'Gemini Old',
+  publisher: 'google',
+  status: 'deprecated',
+  release_date: '2026-10-01',
+  notes: [],
+};
+const STUDIO_GEMINI: ReferenceEntry = {
+  ...SONNET,
+  platform: 'generative-language',
+  name: 'gemini-studio',
+  publisher: 'google',
+  notes: [],
+};
+const REFERENCE: ModelReference = {
+  source: 'https://models.dev/api.json',
+  as_of: '2026-10-17',
+  currency: 'USD',
+  live_error: null,
+  entries: [OLD_GEMINI, SONNET, STUDIO_GEMINI],
+};
+
 /** Two adapters, one provider name, no listing that can answer for the platform. */
 const VERTEX: GatewayProvider = {
   name: 'vertex',
@@ -168,6 +215,7 @@ interface Editor {
   name: { set: (v: string) => void; (): string };
   inputPrice: { set: (v: string) => void; (): string };
   outputPrice: { set: (v: string) => void; (): string };
+  cacheWritePrice: { set: (v: string) => void; (): string };
   formError: () => string | null;
   canSave: () => boolean;
   save: () => void;
@@ -231,6 +279,8 @@ function setup(
     offerings?: Observable<OfferedModel[]>;
     /** `AIRA_CURRENCY` as `/me` states it. */
     currency?: string;
+    /** What Management's model reference answers (`FRD-508`). */
+    reference?: Observable<ModelReference>;
   } = {},
 ) {
   const checked: string[] = [];
@@ -318,6 +368,7 @@ function setup(
             asked.push(name);
             return options.offerings ?? of([OFFERED_FLASH, OFFERED_EMBED]);
           },
+          modelReference: () => options.reference ?? of(REFERENCE),
           servedModels: () =>
             options.served ??
             of([
@@ -2649,6 +2700,78 @@ describe('ModelCatalog — a model in several regions', () => {
     expect(editor.regionVerdict('europe-west4')?.ok).toBe(true);
   });
 
+  it('says why a check failed, once per cause, with the regions that gave it', () => {
+    /** A ✗ with the cause in its tooltip is where the cause goes unread. The cause is a sentence
+     *  that says what to change, and the same cause in two regions is one thing to fix
+     *  (`FRD-141`). */
+    const enable = 'The API aiplatform.googleapis.com is not enabled in project 4711.';
+    const harness = setup({
+      check: of({
+        model: 'gemini-2.5-pro',
+        declared: true,
+        served: true,
+        reachable: false,
+        detail: 'Not reachable (403 SERVICE_DISABLED: ...).',
+        reason: 'SERVICE_DISABLED',
+        explanation: enable,
+        regions: [
+          {
+            region: 'europe-west1',
+            reachable: false,
+            detail: 'x',
+            reason: 'SERVICE_DISABLED',
+            explanation: enable,
+          },
+          {
+            region: 'europe-west4',
+            reachable: false,
+            detail: 'x',
+            reason: 'SERVICE_DISABLED',
+            explanation: enable,
+          },
+          { region: 'europe-west3', reachable: false, detail: 'TimeoutError' },
+        ],
+      }),
+    });
+    const { component, editor } = harness;
+    component.edit({ ...FLASH, name: 'gemini-2.5-pro' });
+    editor.regions.set(['europe-west1', 'europe-west4', 'europe-west3']);
+    harness.lookFirst();
+
+    const causes = harness.html().querySelectorAll('[data-testid="check-causes"] li');
+    expect(causes).toHaveLength(1);
+    expect(causes[0].textContent).toContain('SERVICE_DISABLED');
+    expect(causes[0].textContent).toContain('europe-west1, europe-west4');
+    expect(causes[0].textContent).toContain(enable);
+  });
+
+  it('says the cause of a check that names no region', () => {
+    const harness = setup({
+      check: of({
+        model: 'm',
+        declared: true,
+        served: true,
+        reachable: false,
+        detail: 'Not reachable.',
+        reason: 'CERTIFICATE_NOT_TRUSTED',
+        explanation: 'Point SSL_CERT_FILE at your bundle.',
+        regions: [{ region: '', reachable: false, detail: 'x' }],
+      }),
+    });
+    harness.component.edit({ ...FLASH, name: 'm' });
+    harness.lookFirst();
+
+    expect(harness.testid('cause-CERTIFICATE_NOT_TRUSTED')?.textContent).toContain('SSL_CERT_FILE');
+  });
+
+  it('shows no cause for a model that answered', () => {
+    const harness = setup();
+    harness.component.edit({ ...FLASH, name: 'gemini-2.5-pro' });
+    harness.lookFirst();
+
+    expect(harness.testid('check-causes')).toBeNull();
+  });
+
   it('asks about every region it holds', () => {
     const harness = setup();
     const { component, editor } = harness;
@@ -3324,5 +3447,160 @@ describe('ModelCatalog — the editor is the shared window, laid out as before',
     harness.click('.modal-backdrop');
     expect(harness.editor.showAdd()).toBe(false);
     expect(harness.saved).toEqual([]);
+  });
+});
+
+describe('ModelCatalog — the model reference (FRD-508)', () => {
+  function onVertex(options: Parameters<typeof setup>[0] = {}) {
+    const harness = setup(options);
+    harness.component.openBrowse();
+    harness.fixture.detectChanges();
+    harness.component.chooseBrowseProvider('vertex');
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  it('lists what the reference says about the chosen platform, and nothing about another', () => {
+    /** Vertex publishes no list a credential may read; the reference is the list there is. */
+    const harness = onVertex();
+
+    expect(harness.testid('reference-row-claude-sonnet-9')).not.toBeNull();
+    expect(harness.testid('reference-row-gemini-studio')).toBeNull();
+    expect(harness.testid('reference-count')?.textContent).toContain(
+      '2 described by https://models.dev/api.json, as of 2026-10-17',
+    );
+  });
+
+  it('puts a deprecated model last and says it is deprecated', () => {
+    const harness = onVertex();
+
+    const rows = [...harness.html().querySelectorAll('[data-testid^="reference-row-"]')];
+    expect(rows.map((row) => row.getAttribute('data-testid'))).toEqual([
+      'reference-row-claude-sonnet-9',
+      'reference-row-gemini-old',
+    ]);
+    expect(harness.testid('reference-status-gemini-old')?.textContent).toContain('deprecated');
+  });
+
+  it('finds a model by part of its name', () => {
+    const harness = onVertex();
+
+    harness.type('reference-search', 'sonnet');
+
+    expect(harness.testid('reference-row-gemini-old')).toBeNull();
+    harness.type('reference-search', 'nothing like it');
+    expect(harness.testid('reference-no-match')).not.toBeNull();
+  });
+
+  it('fills the editor with everything the list states, and says where it came from', () => {
+    const harness = onVertex({ currency: 'USD' });
+
+    harness.click('[data-testid="reference-pick-claude-sonnet-9"]');
+    const { editor } = harness;
+
+    expect(editor.name()).toBe('claude-sonnet-9');
+    expect(editor.provider()).toBe('vertex');
+    expect(editor.publisher()).toBe('anthropic');
+    expect(editor.contextWindow()).toBe(1000000);
+    expect(editor.maxOutput()).toBe(64000);
+    expect(editor.capabilities()).toEqual([
+      'generate',
+      'tools',
+      'attachments',
+      'thinking',
+      'prompt_caching',
+    ]);
+    expect(editor.thinkingModes()).toEqual(['limited']);
+    expect([editor.thinkingMin(), editor.thinkingMax()]).toEqual([1024, 63999]);
+    expect(editor.thinkingLevels()).toEqual(['low', 'high']);
+    expect(editor.inputPrice()).toBe('3');
+    expect(editor.cacheWritePrice()).toBe('3.75');
+    // The region is never guessed: residency is not a guess this product may make.
+    expect(editor.regions()).toEqual([]);
+
+    const banner = harness.testid('reference-filled')?.textContent ?? '';
+    expect(banner).toContain('https://models.dev/api.json, as of 2026-10-17');
+    expect(banner).toContain('capabilities, thinking, documents and images, prices');
+    expect(banner).toContain('the thinking ceiling is the output cap less one');
+  });
+
+  it('leaves the prices to you where the installation counts in another currency', () => {
+    /** A dollar figure in a euro field is a budget wrong by the exchange rate that looks right. */
+    const harness = onVertex({ currency: 'EUR' });
+
+    harness.click('[data-testid="reference-pick-claude-sonnet-9"]');
+
+    expect(harness.editor.inputPrice()).toBe('');
+    expect(harness.editor.outputPrice()).toBe('');
+    expect(harness.testid('reference-prices')?.textContent).toContain(
+      'input 3, output 15, cached input 0.3, cache write 3.75 USD per million tokens',
+    );
+    expect(harness.testid('reference-filled')?.textContent).not.toContain('images, prices');
+  });
+
+  it('saves what was filled once a region is added and looked at', () => {
+    const harness = onVertex({ currency: 'USD' });
+    harness.click('[data-testid="reference-pick-claude-sonnet-9"]');
+    const { editor } = harness;
+    editor.regions.set(['europe-west1']);
+    harness.lookFirst();
+
+    editor.save();
+
+    const stored = harness.saved[0];
+    expect(stored.publisher).toBe('anthropic');
+    expect(stored.thinking).toMatchObject({
+      modes: ['limited'],
+      min_tokens: 1024,
+      max_tokens: 63999,
+      levels: ['low', 'high'],
+    });
+    expect(Object.keys(stored.attachments?.media_types ?? {})).toEqual([
+      'application/pdf',
+      'image/png',
+    ]);
+    expect(stored.approved).toBe(false);
+  });
+
+  it('opens a model the catalog already holds rather than drafting over it', () => {
+    const harness = onVertex({
+      models: of([{ ...FLASH, name: 'claude-sonnet-9', input_price_per_million: '9.99' }]),
+    });
+
+    harness.click('[data-testid="reference-pick-claude-sonnet-9"]');
+
+    expect(harness.editor.inputPrice()).toBe('9.99');
+    expect(harness.testid('reference-filled')).toBeNull();
+  });
+
+  it('says when a configured live list could not be read', () => {
+    const harness = onVertex({
+      reference: of({ ...REFERENCE, live_error: 'https://x could not be read (ConnectError).' }),
+    });
+
+    expect(harness.testid('reference-live-error')?.textContent).toContain('ConnectError');
+  });
+
+  it('says so when the reference cannot be loaded, and can ask again', () => {
+    const harness = onVertex({
+      reference: throwError(() => ({
+        status: 503,
+        error: { error: { message: 'Management is down.' } },
+      })),
+    });
+
+    expect(harness.testid('reference-error')?.textContent).toContain('Management is down.');
+  });
+
+  it('offers no reference for a platform it does not describe', () => {
+    const harness = setup({
+      providers: of([{ ...STUDIO, name: 'foundry', label: 'Microsoft Foundry' }]),
+    });
+    harness.component.openBrowse();
+    harness.fixture.detectChanges();
+    harness.component.chooseBrowseProvider('foundry');
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('reference-models')).toBeNull();
   });
 });

@@ -187,6 +187,13 @@ directory:
   url: ''
   # client_secret: → Vault.
 
+# The model reference the console fills a new catalog entry from: a public list's limits,
+# capabilities and list prices, for an administrator to check. Empty answers from the copy this
+# release ships; `https://models.dev/api.json` reads today's list — Management's one outbound call
+# to it, at most daily.
+model:
+  reference_url: ''
+
 # ---------------------------------------------------------------------------------------------
 # The console, a static bundle behind nginx, configured when its **container starts**
 # (`docs/INTEGRATIONS.md` §7). None of these is a setting of either plane: the entrypoint writes
@@ -268,6 +275,15 @@ vertex:
   models: ''
   default_max_tokens: 4096
   timeout_seconds: 120
+  # The key as a file the gateway reads (a Compose or Kubernetes secret), re-read when it
+  # changes. A path, not a secret; the key itself never goes in this file.
+  credentials_file: ''
+  # No Google key: workload identity federation through your OIDC provider (the client's secret
+  # → Vault), with `credentials`/`credentials_file` holding Google's external_account
+  # configuration. Or, on Google Cloud, the machine's own account.
+  federation_token_url: ''
+  federation_client_id: ''
+  metadata_server: false
   # credentials / api_key: → Vault.
 
 # Google AI Studio (the public Gemini API). Its region is `global`, which `allowed.regions` would
@@ -445,6 +461,7 @@ secrets:
     - AIRA_POSTGRES_PASSWORD
     - AIRA_VERTEX_CREDENTIALS            # the service account's whole JSON, as one value
     - AIRA_VERTEX_API_KEY
+    - AIRA_VERTEX_FEDERATION_CLIENT_SECRET  # the gateway's client at your OIDC provider, for federation
     - AIRA_GOOGLE_API_KEY
     - AIRA_FOUNDRY_API_KEY
     - AIRA_KAFKA_SASL_PASSWORD

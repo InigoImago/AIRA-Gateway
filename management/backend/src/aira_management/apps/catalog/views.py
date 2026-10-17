@@ -19,12 +19,15 @@ from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from aira_common.permissions import Permission
+from aira_management.apps.catalog import reference
 from aira_management.apps.catalog.models import Model
 from aira_management.apps.catalog.serializers import ModelSerializer
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.views.payloads import _snapshot
+from aira_management.config.runtime import get_settings
 from aira_management.rbac import requires
 
 #: The Postgres advisory lock every catalogue write holds until it commits, so two writers run one
@@ -172,3 +175,27 @@ class ModelViewSet(viewsets.ModelViewSet[Model]):
         """A change, under the same lock: a KIRA id is checked and written as one step."""
         with _one_writer():
             return super().update(request, *args, **kwargs)
+
+
+class ModelReferenceView(APIView):
+    """Drafts of catalog entries from a public model list (`FRD-508`).
+
+    For whoever writes the catalogue: it saves research, and decides nothing. Each entry is the
+    model editor's fields in this catalog's vocabulary, with where it comes from and when; prices
+    are the list's, in US dollars.
+    """
+
+    def get_permissions(self) -> list[Any]:
+        return [IsAuthenticated(), requires(Permission.CATALOG_WRITE)()]
+
+    def get(self, request: Request) -> Response:
+        found = reference.current(get_settings().model_reference_url)
+        return Response(
+            {
+                "source": found.source,
+                "as_of": found.as_of,
+                "currency": found.currency,
+                "live_error": found.live_error or None,
+                "entries": found.entries,
+            }
+        )

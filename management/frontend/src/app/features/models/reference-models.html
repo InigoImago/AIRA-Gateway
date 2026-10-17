@@ -1,0 +1,128 @@
+<!--
+  A public list's drafts for one platform (`FRD-508`). Choosing a row fills the editor; checking,
+  saving, approving and releasing stay a person's.
+-->
+<div class="stack" style="margin-top: 0.75rem" data-testid="reference-models">
+  <!-- Outside every block a load toggles: a search box destroyed and rebuilt by a reload loses
+       what was being typed into it. -->
+  <div class="table-tools" style="padding: 0 0 0.6rem">
+    <label class="search">
+      <span>Find a model in the reference</span>
+      <input
+        type="search"
+        [value]="search()"
+        (input)="search.set($any($event.target).value)"
+        placeholder="part of a model name"
+        data-testid="reference-search"
+        autocomplete="off"
+      />
+    </label>
+    @if (reference(); as ref) {
+      <span class="muted text-sm" data-testid="reference-count">
+        {{ total() }} described by {{ ref.source }}, as of {{ ref.as_of }}
+      </span>
+    }
+  </div>
+  @if (loading()) {
+    <p class="loading" data-testid="reference-loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Reading the model reference…
+    </p>
+  } @else if (error(); as message) {
+    <p class="callout callout--danger" role="alert" data-testid="reference-error">
+      {{ message }}
+      <button type="button" class="btn btn--sm" (click)="load()">Try again</button>
+    </p>
+  } @else if (reference(); as ref) {
+    @if (ref.live_error) {
+      <p class="field__hint" data-testid="reference-live-error">{{ ref.live_error }}</p>
+    }
+
+    @if (!total()) {
+      <p class="empty" data-testid="reference-empty">
+        The reference describes no model on this platform. Name the model yourself.
+      </p>
+    } @else if (!rows().length) {
+      <p class="empty" data-testid="reference-no-match">
+        No model in the reference matches “{{ search() }}”.
+      </p>
+    } @else {
+      <div class="table-wrap" style="max-height: 45vh; overflow-y: auto">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">The list says</th>
+              <th scope="col">Per 1M tokens ({{ ref.currency }})</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (entry of rows(); track entry.publisher + '/' + entry.name) {
+              <tr [attr.data-testid]="'reference-row-' + entry.name">
+                <td>
+                  <code>{{ entry.name }}</code>
+                  <div class="muted text-sm">
+                    {{ entry.display_name }} · {{ entry.publisher }}
+                    @if (entry.release_date) {
+                      · {{ entry.release_date }}
+                    }
+                  </div>
+                  @if (entry.status) {
+                    <span
+                      class="badge"
+                      [class.badge--warning]="entry.status === 'deprecated'"
+                      [attr.data-testid]="'reference-status-' + entry.name"
+                      >{{ entry.status }}</span
+                    >
+                  }
+                </td>
+                <td class="text-sm">
+                  @if (entry.declaration.context_window) {
+                    <div>context {{ entry.declaration.context_window }}</div>
+                  }
+                  @if (entry.declaration.max_output_tokens) {
+                    <div>output up to {{ entry.declaration.max_output_tokens }}</div>
+                  }
+                  <div class="muted">{{ entry.declaration.capabilities.join(', ') }}</div>
+                </td>
+                <td class="text-sm">
+                  in {{ price(entry.prices.input) }} · out {{ price(entry.prices.output) }}
+                </td>
+                <td class="table__actions">
+                  @if (catalogued().has(entry.name)) {
+                    <span class="badge badge--success">in the catalog</span>
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      (click)="choose(entry)"
+                      [attr.data-testid]="'reference-pick-' + entry.name"
+                    >
+                      Open it
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--primary"
+                      (click)="choose(entry)"
+                      [attr.data-testid]="'reference-pick-' + entry.name"
+                    >
+                      Catalogue…
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted text-sm" style="margin: 0.5rem 0 0">
+        Described by a public list, not by your provider. Choosing one fills the editor with what
+        the list states — limits, capabilities, how it reasons, its list price — for you to check.
+        Whether the model is offered in your region is not in the list: the reachability check
+        answers that. Nothing is written until you save, and nothing is usable until it is approved
+        and released.
+      </p>
+    }
+  }
+</div>

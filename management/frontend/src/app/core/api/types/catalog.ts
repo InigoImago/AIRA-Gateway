@@ -153,8 +153,27 @@ export interface ModelCheck {
   /** The **best** of the regions below: a model that answers in one of its places is reachable. */
   reachable: boolean | null;
   detail: string;
+  /**
+   * The cause the provider or the connection stated (`FRD-141`): a word from a closed list, and
+   * what to do about it. `null` where it stated none — or where nothing failed.
+   */
+  reason?: string | null;
+  explanation?: string | null;
   /** One verdict per declared region (`FRD-609`); a single empty-named entry where none is. */
-  regions?: { region: string; reachable: boolean; detail: string }[];
+  regions?: {
+    region: string;
+    reachable: boolean;
+    detail: string;
+    reason?: string | null;
+    explanation?: string | null;
+  }[];
+}
+
+/** One cause of a failed check, and the regions it was given for. */
+export interface CheckCause {
+  reason: string;
+  explanation: string;
+  regions: string[];
 }
 
 /** What the model itself said about each declared level word (`ADR-0021`). */
@@ -271,4 +290,47 @@ export function readRegions(addressing: Record<string, unknown> | null | undefin
     if (region && !seen.includes(region)) seen.push(region);
   }
   return seen;
+}
+
+/**
+ * A draft of a catalog entry from a public model list (`FRD-508`): the editor's fields in this
+ * catalog's vocabulary. A third party's claim, which is why it travels with its source and date.
+ */
+export interface ReferenceEntry {
+  /** The provider name the gateway stamps on the model (`vertex`, `generative-language`). */
+  platform: string;
+  name: string;
+  display_name: string;
+  publisher: string;
+  family: string;
+  /** `deprecated`, `beta`, `alpha`, or empty for a current model. */
+  status: string;
+  release_date: string;
+  knowledge: string;
+  description: string;
+  declaration: {
+    capabilities: Capability[];
+    context_window: number | null;
+    max_output_tokens: number | null;
+    thinking: ThinkingDeclaration | null;
+    attachments: { media_types: Record<string, { tokens?: number } | null> } | null;
+  };
+  /** Per million tokens, in the reference's currency (US dollars), as decimal strings. */
+  prices: {
+    input: string | null;
+    output: string | null;
+    cached_input: string | null;
+    cache_write: string | null;
+  };
+  notes: string[];
+}
+
+/** The reference as Management answers it: the drafts, and where and when they come from. */
+export interface ModelReference {
+  source: string;
+  as_of: string;
+  currency: string;
+  /** Why a configured live list was not used; `null` when it was, or when none is configured. */
+  live_error: string | null;
+  entries: ReferenceEntry[];
 }

@@ -27,7 +27,8 @@ from aira_gateway.upstreams.vertex.adapters import (
     VertexGeminiAdapter,
     VertexOpenModelAdapter,
 )
-from aira_gateway.upstreams.vertex.auth import CredentialsInvalid, build_token_source
+from aira_gateway.upstreams.vertex.auth import CredentialsInvalid
+from aira_gateway.upstreams.vertex.credentials import build_identity, has_identity
 from aira_gateway.upstreams.vertex.regions import VertexModel
 from aira_gateway.upstreams.vertex.transport import VertexTransport
 
@@ -51,7 +52,8 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     gateway that starts and quietly serves a non-EU region is worse than one that will not start,
     and one that starts without a configured model answers "not found" for it.
     """
-    if not settings.vertex_project or not (settings.vertex_credentials or settings.vertex_api_key):
+    has_account = has_identity(settings)
+    if not settings.vertex_project or not (has_account or settings.vertex_api_key):
         return []
 
     specs = [spec.strip() for spec in settings.vertex_models.split(",") if spec.strip()]
@@ -74,12 +76,8 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     # environment would be a downgrade. The JSON is validated here, at startup, and only when set.
     transport = VertexTransport(
         project=settings.vertex_project,
-        tokens=(
-            build_token_source(settings.vertex_credentials, client)
-            if settings.vertex_credentials
-            else None
-        ),
-        api_key="" if settings.vertex_credentials else settings.vertex_api_key,
+        tokens=(build_identity(settings, client) if has_account else None),
+        api_key="" if has_account else settings.vertex_api_key,
         client=client,
         allowed_regions=allowed,
         model_regions=by_name,

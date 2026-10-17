@@ -135,6 +135,11 @@ class ManagementSettings(BaseAiraSettings):
     #: Keycloak at all, and every group check would then fail as "could not be asked".
     directory_url: str = ""
 
+    #: Where the model reference is read live (`FRD-508`): `https://models.dev/api.json`, or a
+    #: mirror of it. Empty — the default — answers from the copy this release ships, so an
+    #: installation reaches no new address because it was upgraded.
+    model_reference_url: str = ""
+
     #: Which Keycloak group confers which AIRA role (`ADR-0017`), as
     #: ``role=/path[,/path];role=/path``. Group membership is the **only** source of a role — a
     #: realm role on the same token is not read, so assigning one directly grants nothing.

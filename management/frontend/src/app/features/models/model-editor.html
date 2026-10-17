@@ -171,6 +171,24 @@
           }
         </div>
 
+        <!-- Why the last check failed, in words that say what to change (`FRD-141`). -->
+        @if (checkCauses().length) {
+          <div class="callout callout--danger" data-testid="check-causes">
+            <strong>Why it is not reachable</strong>
+            <ul>
+              @for (cause of checkCauses(); track cause.reason + cause.explanation) {
+                <li [attr.data-testid]="'cause-' + cause.reason">
+                  <code>{{ cause.reason }}</code>
+                  @if (cause.regions.length) {
+                    <span class="muted"> in {{ cause.regions.join(', ') }}</span>
+                  }
+                  — {{ cause.explanation }}
+                </li>
+              }
+            </ul>
+          </div>
+        }
+
         <!--
             Where the model lives: a sentence when it is known, a form when it is not. The provider
             answers the other provenance fields, so they are stated rather than asked — and the
@@ -189,7 +207,25 @@
               Change
             </button>
           </p>
-          @if (imported()) {
+          @if (fromReference(); as fill) {
+            <!-- A reference draft is a third party's claim, and says so beside what it filled. -->
+            <div class="callout grow" data-testid="reference-filled" style="margin: 0">
+              <strong>Filled from the model reference</strong>
+              <span class="muted">({{ fill.source }}, as of {{ fill.asOf }})</span>:
+              {{ fill.filled.join(', ') }}. Check each against the provider's documentation — a list
+              entry is a claim, not a measurement. Add the region the model is reached in, then
+              check reachability: whether a model is offered in a region is not in the list.
+              @if (fill.listPrices) {
+                <span class="field__hint" data-testid="reference-prices" style="display: block">
+                  The list's prices are {{ fill.listPrices }}. This installation counts in
+                  {{ currencyName() }}, so the price fields are left for you.
+                </span>
+              }
+              @for (note of fill.notes; track note) {
+                <span class="muted" style="display: block; margin-top: 0.35rem">{{ note }}</span>
+              }
+            </div>
+          } @else if (imported()) {
             <!-- What the import deliberately left alone; the sentence above says what is known. -->
             <p class="callout grow" data-testid="vendor-filled" style="margin: 0">
               Left for you: the price, and what the model can actually do beyond the verbs its API

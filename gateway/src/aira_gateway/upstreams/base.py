@@ -19,6 +19,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
 )
+from aira_gateway.upstreams.diagnosis import Diagnosis
 
 _log = get_logger("aira_gateway.upstreams")
 
@@ -67,12 +68,20 @@ class UpstreamError(Exception):
 
     ``status_code`` is the upstream HTTP status when the provider answered, so the surfaces can pass
     meaningful codes like 429/503 through; ``None`` for a transport failure with no response.
+    ``diagnosis`` is the cause the provider or the connection stated (`FRD-141`): its reason word
+    is in ``message``, its explanation is for the operator's screens and the log.
     """
 
-    def __init__(self, message: str, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        diagnosis: Diagnosis | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.diagnosis = diagnosis
 
 
 class DialectUnsupported(Exception):

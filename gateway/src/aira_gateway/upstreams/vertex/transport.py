@@ -22,6 +22,7 @@ from aira_common.logging import get_logger
 from aira_common.tokens import TokenSource, TokenUnavailable
 from aira_gateway.residency import DEFAULT_ALLOWED_REGIONS, check_region
 from aira_gateway.upstreams.base import UpstreamError
+from aira_gateway.upstreams.diagnosis import of as diagnosis_of
 from aira_gateway.upstreams.exchange import (
     json_object,
     opened_stream,
@@ -76,8 +77,9 @@ class VertexTransport:
             # Refused here: a transport with no credential fails every call the same way and looks
             # like Google being down.
             raise ValueError(
-                "VertexTransport needs a credential: a service-account TokenSource "
-                "(AIRA_VERTEX_CREDENTIALS) or an API key (AIRA_VERTEX_API_KEY)."
+                "VertexTransport needs a credential: a TokenSource for a Google identity "
+                "(AIRA_VERTEX_CREDENTIALS, _CREDENTIALS_FILE or _METADATA_SERVER) or an API key "
+                "(AIRA_VERTEX_API_KEY)."
             )
         self._project = project
         self._tokens = tokens
@@ -144,5 +146,7 @@ class VertexTransport:
             token = await self._tokens.token()
         except TokenUnavailable as exc:
             _log.error("vertex_credentials_unavailable", error=str(exc))
-            raise UpstreamError(CREDENTIALS_UNAVAILABLE, 503) from exc
+            found = diagnosis_of(exc)
+            said = f" Reason: {found.reason}." if found else ""
+            raise UpstreamError(f"{CREDENTIALS_UNAVAILABLE}{said}", 503, found) from exc
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}

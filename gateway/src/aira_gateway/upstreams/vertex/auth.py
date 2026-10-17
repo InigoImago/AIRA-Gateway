@@ -12,12 +12,14 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
 import jwt
 
-from aira_common.tokens import AccessToken, TokenSource
+from aira_common.tokens import AccessToken
+from aira_gateway.upstreams.diagnosis import Diagnosis, from_response, from_transport
 
 #: The OAuth scope Vertex AI accepts. It is broad; what the token can reach is bounded by the
 #: service account's IAM roles, not by the scope.
@@ -32,8 +34,13 @@ class CredentialsInvalid(Exception):
     """The configured service-account credentials cannot be used.
 
     Raised at startup, not at dispatch: a deployment with an unusable credential should refuse to
-    start rather than fail every request with what looks like an upstream outage.
+    start rather than fail every request with what looks like an upstream outage. Raised by a token
+    exchange too, carrying the cause Google stated (`FRD-141`).
     """
+
+    def __init__(self, message: str, diagnosis: Diagnosis | None = None) -> None:
+        super().__init__(message)
+        self.diagnosis = diagnosis
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,12 +89,55 @@ class ServiceAccount:
         return account
 
 
+class KeyFile:
+    """A service-account key read from a file, and read **again** when the file changes.
+
+    A file is how a key reaches a container without passing through a single environment value —
+    a Docker or Kubernetes secret, a Vault agent template — and how it is rotated without a restart:
+    the new key is written over the old one, and the next token is signed with it. A file that is
+    changed into something unusable keeps the last key that worked, and says so where a refresh
+    failure is said: the held token outlives the mistake (`aira_common.tokens`).
+    """
+
+    def __init__(self, path: str) -> None:
+        self._path = Path(path)
+        self._seen: tuple[int, int] | None = None
+        self._account: ServiceAccount | None = None
+        self.load()
+
+    def load(self) -> ServiceAccount:
+        try:
+            stat = self._path.stat()
+        except OSError as exc:
+            raise CredentialsInvalid(
+                f"The service-account key file {self._path} cannot be read ({type(exc).__name__})."
+            ) from None
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        if self._account is None or stamp != self._seen:
+            try:
+                raw = self._path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise CredentialsInvalid(
+                    f"The service-account key file {self._path} cannot be read "
+                    f"({type(exc).__name__})."
+                ) from None
+            self._account = ServiceAccount.from_json(raw)
+            self._seen = stamp
+        return self._account
+
+
 class GoogleServiceAccountAcquirer:
     """Signs an assertion and exchanges it for an access token."""
 
-    def __init__(self, account: ServiceAccount, client: httpx.AsyncClient) -> None:
-        self._account = account
+    def __init__(self, account: ServiceAccount | KeyFile, client: httpx.AsyncClient) -> None:
+        self._source = account
         self._client = client
+
+    @property
+    def _account(self) -> ServiceAccount:
+        """The key to sign with now: a file is looked at again on every exchange, about hourly."""
+        source = self._source
+        return source.load() if isinstance(source, KeyFile) else source
 
     def _assertion(self, issued_at: int) -> str:
         return jwt.encode(
@@ -105,27 +155,33 @@ class GoogleServiceAccountAcquirer:
     async def acquire(self, now: float) -> AccessToken:
         # Wall clock for the assertion (Google validates `iat`/`exp` against real time), the
         # caller's monotonic `now` for the expiry: a clock step must not expire a live token.
-        response = await self._client.post(
-            self._account.token_uri,
-            data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                "assertion": self._assertion(int(time.time())),
-            },
-        )
-        if response.status_code != httpx.codes.OK:
-            # The body can echo the assertion, so only the status is reported. Clock skew is named
-            # because it presents as an unexplained 401 and is the usual cause.
+        try:
+            response = await self._client.post(
+                self._account.token_uri,
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                    "assertion": self._assertion(int(time.time())),
+                },
+            )
+        except httpx.HTTPError as exc:
+            # A proxy that inspects TLS meets the token endpoint first; say so (`FRD-141`).
+            found = from_transport(exc)
             raise CredentialsInvalid(
-                f"Token exchange failed with {response.status_code}. "
-                "A clock more than a few minutes off is the usual cause."
+                f"Token exchange did not reach Google ({type(exc).__name__})."
+                + (f" {found}" if found else ""),
+                found,
+            ) from exc
+        if response.status_code != httpx.codes.OK:
+            # The body can echo the assertion, so its text is never repeated: only the cause it
+            # names, matched against Google's own vocabulary (`diagnosis.from_response`).
+            found = from_response(response)
+            raise CredentialsInvalid(
+                f"Token exchange failed with {response.status_code}."
+                + (f" {found}" if found else ""),
+                found,
             )
         payload = response.json()
         token = payload.get("access_token")
         if not token:
             raise CredentialsInvalid("Token exchange returned no access token.")
         return AccessToken(str(token), expires_at=now + float(payload.get("expires_in", 3600)))
-
-
-def build_token_source(credentials: str, client: httpx.AsyncClient) -> TokenSource:
-    """A shared token source for one service account. Raises if the credentials are unusable."""
-    return TokenSource(GoogleServiceAccountAcquirer(ServiceAccount.from_json(credentials), client))

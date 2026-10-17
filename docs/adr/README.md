@@ -47,3 +47,5 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0034 | [A region outside the list is permitted for a model by name, never for every model](ADR-0034-a-region-permitted-for-a-model-by-name.md) | **Accepted** | 2026-10-13 |
 | 0035 | [Windows sign-on is Keycloak's, and AIRA takes no part in it](ADR-0035-windows-sign-on-is-keycloaks.md) | **Accepted** | 2026-10-13 |
 | 0036 | [Strict data mode is an installation default, decided on read](ADR-0036-strict-data-mode-is-an-installation-default.md) | **Accepted** | 2026-10-15 |
+| 0037 | [Google is reached without a Google key, through the installation's own identity](ADR-0037-google-without-a-google-key.md) | **Accepted** | 2026-10-17 |
+| 0038 | [A catalog entry starts from a public model list, and is still decided by a person](ADR-0038-the-catalog-starts-from-a-public-model-list.md) | **Accepted** | 2026-10-17 |

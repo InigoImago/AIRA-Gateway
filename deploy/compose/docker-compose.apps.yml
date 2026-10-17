@@ -172,11 +172,21 @@ services:
       # nobody noticed: an unpassed setting is invisible until somebody depends on it.
       AIRA_VERTEX_TIMEOUT_SECONDS: ${AIRA_VERTEX_TIMEOUT_SECONDS:-}
       AIRA_FOUNDRY_TIMEOUT_SECONDS: ${AIRA_FOUNDRY_TIMEOUT_SECONDS:-}
-      # Vertex AI, the EU-regional platform the residency story rests on. Two ways to
-      # authenticate: an API key (`AIRA_VERTEX_API_KEY`), or a service account's whole JSON key as
-      # one value (`AIRA_VERTEX_CREDENTIALS`). `/readyz` lists the adapters that came up.
+      # Vertex AI, the EU-regional platform the residency story rests on. Three ways to
+      # authenticate: an API key (`AIRA_VERTEX_API_KEY`), a service account's whole JSON key as one
+      # value (`AIRA_VERTEX_CREDENTIALS`), or that key as a file in `secrets/vertex/`, mounted below
+      # (`AIRA_VERTEX_CREDENTIALS_FILE=/run/aira-secrets/vertex/key.json`). `/readyz` lists the
+      # adapters that came up.
       AIRA_VERTEX_PROJECT: ${AIRA_VERTEX_PROJECT:-}
       AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
+      AIRA_VERTEX_CREDENTIALS_FILE: ${AIRA_VERTEX_CREDENTIALS_FILE:-}
+      # No Google key at all: workload identity federation, the identity fetched from your OIDC
+      # provider as a client of it, with `_CREDENTIALS(_FILE)` holding Google's `external_account`
+      # configuration — or, on Google Cloud, the machine's own account.
+      AIRA_VERTEX_FEDERATION_TOKEN_URL: ${AIRA_VERTEX_FEDERATION_TOKEN_URL:-}
+      AIRA_VERTEX_FEDERATION_CLIENT_ID: ${AIRA_VERTEX_FEDERATION_CLIENT_ID:-}
+      AIRA_VERTEX_FEDERATION_CLIENT_SECRET: ${AIRA_VERTEX_FEDERATION_CLIENT_SECRET:-}
+      AIRA_VERTEX_METADATA_SERVER: ${AIRA_VERTEX_METADATA_SERVER:-false}
       AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
       AIRA_VERTEX_MODELS: ${AIRA_VERTEX_MODELS:-}
       AIRA_VERTEX_DEFAULT_MAX_TOKENS: ${AIRA_VERTEX_DEFAULT_MAX_TOKENS:-}
@@ -232,6 +242,8 @@ services:
       AIRA_DIRECTORY_CLIENT_ID: ${AIRA_DIRECTORY_CLIENT_ID:-aira-directory}
       AIRA_DIRECTORY_CLIENT_SECRET: ${AIRA_DIRECTORY_CLIENT_SECRET:-aira-directory-dev-secret}
       AIRA_DIRECTORY_URL: ${AIRA_DIRECTORY_URL:-http://keycloak:8080}
+      # The model reference's live list (`FRD-508`). Empty: the copy this release ships.
+      AIRA_MODEL_REFERENCE_URL: ${AIRA_MODEL_REFERENCE_URL:-}
       AIRA_LOG_LEVEL: ${AIRA_LOG_LEVEL:-INFO}
       AIRA_OIDC_CLOCK_SKEW_SECONDS: ${AIRA_OIDC_CLOCK_SKEW_SECONDS:-60.0}
       AIRA_OIDC_EXPIRY_LEEWAY_SECONDS: ${AIRA_OIDC_EXPIRY_LEEWAY_SECONDS:-0.0}
@@ -348,6 +360,11 @@ services:
     build: *gateway-build
     container_name: ${AIRA_STACK:-aira}-gateway
     environment: *gateway-env
+    volumes:
+      # Where a key the gateway reads as a file lives (`AIRA_VERTEX_CREDENTIALS_FILE`). Ignored by
+      # git, read-only in the container, and read again when a rotated key is written over it.
+      # The file must be readable by uid 10001, the image's user.
+      - ./secrets/vertex:/run/aira-secrets/vertex:ro
     ports:
       # Loopback by default, like the infrastructure stack — see `docker-compose.yml`. This one
       # is the port that serves models, and the demo profile seeds a key whose plaintext is in

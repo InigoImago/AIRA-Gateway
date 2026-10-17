@@ -146,7 +146,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
         run-frontend up-full demo-ready down-full logs-apps build-images next-version \
-        current-version release-tag release-check release-notes release-subject ci wait-healthy \
+        current-version model-reference release-tag release-check release-notes release-subject ci wait-healthy \
         prune mutants \
         ui-audit release-pull up-integrated kafka-topics-external \
         windows-sso-up windows-sso-down test-windows-sso \
@@ -167,6 +167,9 @@ env: ## Create deploy/compose/.env from the example if missing
 	@# Git cannot carry a directory mode, so it is set here rather than committed — and here
 	@# because every `up*` target depends on `env`.
 	@mkdir -p $(COMPOSE_DIR)/payload && chmod 777 $(COMPOSE_DIR)/payload
+	@# The directory the gateway reads a key file from (`AIRA_VERTEX_CREDENTIALS_FILE`): made here so
+	@# Docker does not create it as root on the first `up`, which would leave it unwritable to you.
+	@mkdir -p $(COMPOSE_DIR)/secrets/vertex
 	@if [ ! -f "$(ENV_FILE)" ]; then \
 		cp "$(ENV_EXAMPLE)" "$(ENV_FILE)"; \
 		echo "Created $(ENV_FILE) from example."; \
@@ -560,6 +563,11 @@ release-tag: ## Create the annotated release tag and check its description (VERS
 	@echo
 	@uv run python tools/release_notes.py "$(VERSION)"
 	@echo "==> push it to publish:  git push origin $(VERSION)"
+
+model-reference: ## Refresh the model reference this release ships, from the public list (WRITE=1 to write)
+	@# Before a release, so its reference is no older than it. The diff of `models.json` is the
+	@# list of what changed in the world; read it before committing it.
+	@uv run python tools/model_reference.py $(if $(WRITE),--write,)
 
 release-check: ## Check that a release tag's annotation is a real description (VERSION=v0.1.1)
 	@uv run python tools/release_notes.py --check "$(VERSION)"

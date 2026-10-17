@@ -98,7 +98,8 @@ for that. The gateway reaches them through `AIRA_OPENAI_SERVERS` in `deploy/comp
 ### Or a cloud model
 
 The credential goes into `deploy/compose/.env`: `AIRA_VERTEX_PROJECT` with `AIRA_VERTEX_API_KEY`
-(or `AIRA_VERTEX_CREDENTIALS`) for Vertex AI in an EU region, or `AIRA_GOOGLE_API_KEY` for Google AI
+(or `AIRA_VERTEX_CREDENTIALS`, the service account's JSON as one line — or
+`AIRA_VERTEX_CREDENTIALS_FILE`, the path of the key file as the gateway container sees it) for Vertex AI in an EU region, or `AIRA_GOOGLE_API_KEY` for Google AI
 Studio — which also needs `global` in `AIRA_ALLOWED_REGIONS`, or the gateway refuses to start. Then
 `make up-full` again. This setup's Vault runs in development mode and keeps nothing across a
 restart, so on this machine the key lives in that file; [Integrated](integrated.md) §4 is how a key
@@ -107,12 +108,19 @@ leaves it.
 Then catalogue the model in the console:
 
 1. Sign in as `admin`.
-2. **Models & prices → + Add a model**.
-3. Fill in the name exactly as the provider spells it, the prices per million tokens, and what the
-   model can do. By default a model with no price is refused wherever a cost budget applies.
+2. **Models & prices → + Add a model**, and choose the provider.
+3. Under **From the model reference**, find the model and press **Catalogue…**: the editor opens
+   with its limits, capabilities, how it reasons and — where this installation counts in US
+   dollars — its list prices filled in from a public model list, and says so. Check them; add the
+   region the model is reached in. A model the reference does not carry, you name yourself: the
+   name exactly as the provider spells it, the prices per million tokens, and what the model can
+   do. By default a model with no price is refused wherever a cost budget applies.
 4. Press **Check reachability**. You check before you add — not because the answer has to be good,
    but because *"I did not know it was unreachable"* is the one outcome a single button can rule
    out.
+   When the answer is no, the editor says why under the regions — an API not enabled, a missing
+   role, a model not offered in that region, a proxy whose certificate is not trusted — and what to
+   change.
 5. Tick **Approved for use** and save.
 
 ---

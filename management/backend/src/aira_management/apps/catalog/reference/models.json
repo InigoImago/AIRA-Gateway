@@ -1,0 +1,3549 @@
+{
+ "as_of": "2026-10-17",
+ "entries": [
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "prompt_caching"
+    ],
+    "context_window": 131072,
+    "max_output_tokens": 65536,
+    "thinking": null
+   },
+   "description": "Maximum-comprehensiveness agentic researcher for multi-step investigation, synthesis, and cited reports",
+   "display_name": "Deep Research Max Preview (Apr-21-2026)",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "deep-research-max-preview-04-2026",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "12"
+   },
+   "publisher": "google",
+   "release_date": "2026-04-21",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "prompt_caching"
+    ],
+    "context_window": 131072,
+    "max_output_tokens": 65536,
+    "thinking": null
+   },
+   "description": "Agentic model for autonomous multi-step research, synthesis, and cited reports",
+   "display_name": "Deep Research Preview (Apr-21-2026)",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "deep-research-preview-04-2026",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "12"
+   },
+   "publisher": "google",
+   "release_date": "2026-04-21",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments"
+    ],
+    "context_window": 128000,
+    "max_output_tokens": 64000,
+    "thinking": null
+   },
+   "description": "Specialized Gemini 2.5 model for browser-control agents that automate UI tasks",
+   "display_name": "Gemini 2.5 Computer Use Preview 10-2025",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-computer-use-preview-10-2025",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "1.25",
+    "output": "10"
+   },
+   "publisher": "google",
+   "release_date": "2025-10-07",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "max_tokens": 24576,
+     "modes": [
+      "disabled",
+      "auto",
+      "limited"
+     ]
+    }
+   },
+   "description": "Fast Gemini workhorse for multimodal apps where latency and price matter",
+   "display_name": "Gemini 2.5 Flash",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.03",
+    "input": "0.3",
+    "output": "2.5"
+   },
+   "publisher": "google",
+   "release_date": "2025-06-17",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments",
+     "prompt_caching"
+    ],
+    "context_window": 32768,
+    "max_output_tokens": 32768,
+    "thinking": null
+   },
+   "description": "Nano Banana image model for fast generation, edits, and character-consistent assets",
+   "display_name": "Nano Banana",
+   "family": "gemini-flash",
+   "knowledge": "2024-06",
+   "name": "gemini-2.5-flash-image",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.075",
+    "input": "0.3",
+    "output": "30"
+   },
+   "publisher": "google",
+   "release_date": "2025-08-26",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "max_tokens": 24576,
+     "min_tokens": 512,
+     "modes": [
+      "auto",
+      "limited"
+     ]
+    }
+   },
+   "description": "Lean Gemini 2.5 lane for cheap multimodal traffic and quick agents",
+   "display_name": "Gemini 2.5 Flash-Lite",
+   "family": "gemini-flash-lite",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-flash-lite",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.01",
+    "input": "0.1",
+    "output": "0.4"
+   },
+   "publisher": "google",
+   "release_date": "2025-06-17",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "speech"
+    ],
+    "context_window": 8192,
+    "max_output_tokens": null,
+    "thinking": null
+   },
+   "description": "Speech generation model for controllable voice, narration, and audio delivery",
+   "display_name": "Gemini 2.5 Flash Preview TTS",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-flash-preview-tts",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.5",
+    "output": "10"
+   },
+   "publisher": "google",
+   "release_date": "2025-05-01",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "max_tokens": 32768,
+     "min_tokens": 128,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Google's proven reasoning model for coding, math, and multimodal analysis",
+   "display_name": "Gemini 2.5 Pro",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-pro",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.125",
+    "input": "1.25",
+    "output": "10"
+   },
+   "publisher": "google",
+   "release_date": "2025-06-17",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "speech"
+    ],
+    "context_window": 8192,
+    "max_output_tokens": null,
+    "thinking": null
+   },
+   "description": "Speech generation model for controllable voice, narration, and audio delivery",
+   "display_name": "Gemini 2.5 Pro Preview TTS",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-pro-preview-tts",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "1",
+    "output": "20"
+   },
+   "publisher": "google",
+   "release_date": "2025-05-01",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "New Gemini flash lane bringing frontier-style multimodal reasoning to cheaper runs",
+   "display_name": "Gemini 3 Flash Preview",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3-flash-preview",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.05",
+    "input": "0.5",
+    "output": "3"
+   },
+   "publisher": "google",
+   "release_date": "2025-12-17",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments",
+     "thinking"
+    ],
+    "context_window": 65536,
+    "max_output_tokens": 32768,
+    "thinking": {
+     "levels": [
+      "low",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Nano Banana Pro for higher-fidelity image generation and design-heavy edits",
+   "display_name": "Nano Banana Pro",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-3-pro-image",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "2",
+    "output": "120"
+   },
+   "publisher": "google",
+   "release_date": "2026-05-28",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments"
+    ],
+    "context_window": 131072,
+    "max_output_tokens": 32768,
+    "thinking": null
+   },
+   "description": "Nano Banana Pro for higher-fidelity image generation and design-heavy edits",
+   "display_name": "Nano Banana Pro",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-3-pro-image-preview",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "2",
+    "output": "120"
+   },
+   "publisher": "google",
+   "release_date": "2025-11-20",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments",
+     "thinking"
+    ],
+    "context_window": 131072,
+    "max_output_tokens": 32768,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Image model for prompt-driven generation, editing, and visual design workflows",
+   "display_name": "Nano Banana 2",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-image",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.5",
+    "output": "60"
+   },
+   "publisher": "google",
+   "release_date": "2026-05-28",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments",
+     "thinking"
+    ],
+    "context_window": 65536,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Image model for prompt-driven generation, editing, and visual design workflows",
+   "display_name": "Nano Banana 2",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-image-preview",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.5",
+    "output": "60"
+   },
+   "publisher": "google",
+   "release_date": "2026-02-26",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Low-latency Gemini model for high-volume multimodal and agent workloads",
+   "display_name": "Gemini 3.1 Flash Lite",
+   "family": "gemini-flash-lite",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-lite",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.025",
+    "input": "0.25",
+    "output": "1.5"
+   },
+   "publisher": "google",
+   "release_date": "2026-05-07",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking"
+    ],
+    "context_window": 65536,
+    "max_output_tokens": 4096,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fastest, most cost-efficient Gemini image model for high-volume 1K generation and editing",
+   "display_name": "Nano Banana 2 Lite",
+   "family": "gemini-flash-lite",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-lite-image",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.25",
+    "output": "30"
+   },
+   "publisher": "google",
+   "release_date": "2026-06-30",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Legacy model retained for compatibility with older integrations",
+   "display_name": "Gemini 3.1 Flash Lite Preview",
+   "family": "gemini-flash-lite",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-lite-preview",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.025",
+    "input": "0.25",
+    "output": "1.5"
+   },
+   "publisher": "google",
+   "release_date": "2026-03-03",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking"
+    ],
+    "context_window": 131072,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "High-quality, low-latency Live API model for real-time dialogue and voice-first AI applications",
+   "display_name": "Gemini 3.1 Flash Live Preview",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-live-preview",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.75",
+    "output": "4.5"
+   },
+   "publisher": "google",
+   "release_date": "2026-03-26",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "speech"
+    ],
+    "context_window": 8192,
+    "max_output_tokens": null,
+    "thinking": null
+   },
+   "description": "Low-latency speech generation with steerable prompts and expressive audio tags",
+   "display_name": "Gemini 3.1 Flash TTS Preview",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-tts-preview",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "1",
+    "output": "20"
+   },
+   "publisher": "google",
+   "release_date": "2026-04-15",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Reasoning-first Gemini preview for agentic coding and complex problem solving",
+   "display_name": "Gemini 3.1 Pro Preview",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-pro-preview",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "12"
+   },
+   "publisher": "google",
+   "release_date": "2026-02-19",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Advanced Gemini model for complex reasoning, coding, and multimodal analysis",
+   "display_name": "Gemini 3.1 Pro Preview Custom Tools",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-pro-preview-customtools",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "12"
+   },
+   "publisher": "google",
+   "release_date": "2026-02-19",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+   "display_name": "Gemini 3.5 Flash",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3.5-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.15",
+    "input": "1.5",
+    "output": "9"
+   },
+   "publisher": "google",
+   "release_date": "2026-05-19",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+   "display_name": "Gemini 3.5 Flash Lite",
+   "family": "gemini-flash-lite",
+   "knowledge": "2026-03",
+   "name": "gemini-3.5-flash-lite",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.03",
+    "input": "0.3",
+    "output": "2.5"
+   },
+   "publisher": "google",
+   "release_date": "2026-07-21",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "generate"
+    ],
+    "context_window": 16384,
+    "max_output_tokens": null,
+    "thinking": null
+   },
+   "description": "Low-latency audio-to-audio model for real-time speech translation across 70+ languages",
+   "display_name": "Gemini 3.5 Live Translate Preview",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-3.5-live-translate-preview",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "3.5",
+    "output": "21"
+   },
+   "publisher": "google",
+   "release_date": "2026-06-09",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+   "display_name": "Gemini 3.6 Flash",
+   "family": "gemini-flash",
+   "knowledge": "2026-03",
+   "name": "gemini-3.6-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.075",
+    "input": "0.75",
+    "output": "3.75"
+   },
+   "publisher": "google",
+   "release_date": "2026-07-21",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "High-efficiency Gemini model for agentic workflows, coding, and multimodal reasoning",
+   "display_name": "Gemini 3.7 Flash",
+   "family": "gemini-flash",
+   "knowledge": "2026-03",
+   "name": "gemini-3.7-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.075",
+    "input": "0.75",
+    "output": "3.75"
+   },
+   "publisher": "google",
+   "release_date": "2026-08-13",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Google's most intelligent Flash model, engineered for long-horizon software engineering, autonomous agents, and complex enterprise workflows",
+   "display_name": "Gemini 3.8 Flash",
+   "family": "gemini-flash",
+   "knowledge": "",
+   "name": "gemini-3.8-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.075",
+    "input": "0.75",
+    "output": "3.75"
+   },
+   "publisher": "google",
+   "release_date": "2026-09-02",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 32768,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Google's flagship reasoning model for complex software engineering, deep math and science, and long-horizon autonomous agents",
+   "display_name": "Gemini 4 Argon",
+   "family": "gemini",
+   "knowledge": "2026-03",
+   "name": "gemini-4-argon",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.1",
+    "input": "2",
+    "output": "10"
+   },
+   "publisher": "google",
+   "release_date": "2026-10-13",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "embed"
+    ],
+    "context_window": 2048,
+    "max_output_tokens": null,
+    "thinking": null
+   },
+   "description": "Embedding model for semantic search, retrieval, clustering, and ranking pipelines",
+   "display_name": "Gemini Embedding 001",
+   "family": "gemini",
+   "knowledge": "2025-05",
+   "name": "gemini-embedding-001",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.15",
+    "output": null
+   },
+   "publisher": "google",
+   "release_date": "2025-05-20",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "embed",
+     "attachments"
+    ],
+    "context_window": 8192,
+    "max_output_tokens": null,
+    "thinking": null
+   },
+   "description": "Multimodal embedding model mapping text, images, video, audio, and PDFs into a unified embedding space",
+   "display_name": "Gemini Embedding 2",
+   "family": "gemini",
+   "knowledge": "2025-11",
+   "name": "gemini-embedding-2",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.2",
+    "output": null
+   },
+   "publisher": "google",
+   "release_date": "2026-04-22",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "High-efficiency Gemini model for agentic workflows, coding, and multimodal reasoning",
+   "display_name": "Gemini Flash Latest",
+   "family": "gemini-flash",
+   "knowledge": "2026-03",
+   "name": "gemini-flash-latest",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.075",
+    "input": "0.75",
+    "output": "3.75"
+   },
+   "publisher": "google",
+   "release_date": "2026-08-13",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+   "display_name": "Gemini Flash-Lite Latest",
+   "family": "gemini-flash-lite",
+   "knowledge": "2026-03",
+   "name": "gemini-flash-lite-latest",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.03",
+    "input": "0.3",
+    "output": "2.5"
+   },
+   "publisher": "google",
+   "release_date": "2026-07-21",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking"
+    ],
+    "context_window": 262144,
+    "max_output_tokens": 32768,
+    "thinking": {
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "Open Gemma instruction model for efficient chat and self-hosted deployments",
+   "display_name": "Gemma 4 26B A4B IT",
+   "family": "gemma",
+   "knowledge": "",
+   "name": "gemma-4-26b-a4b-it",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": null,
+    "output": null
+   },
+   "publisher": "google",
+   "release_date": "2026-04-02",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking"
+    ],
+    "context_window": 262144,
+    "max_output_tokens": 32768,
+    "thinking": {
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "Largest Gemma 4 instruction model for open, self-hosted chat and reasoning",
+   "display_name": "Gemma 4 31B IT",
+   "family": "gemma",
+   "knowledge": "",
+   "name": "gemma-4-31b-it",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": null,
+    "output": null
+   },
+   "publisher": "google",
+   "release_date": "2026-04-02",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": null
+   },
+   "description": "Music generation model for short 30-second clips, loops, and previews from text or image prompts",
+   "display_name": "Lyria 3 Clip Preview",
+   "family": "lyria",
+   "knowledge": "",
+   "name": "lyria-3-clip-preview",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0",
+    "output": "0"
+   },
+   "publisher": "google",
+   "release_date": "2026-03-25",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": null
+   },
+   "description": "Music generation model for full-length songs from text or images with vocals and structure",
+   "display_name": "Lyria 3 Pro Preview",
+   "family": "lyria",
+   "knowledge": "",
+   "name": "lyria-3-pro-preview",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0",
+    "output": "0"
+   },
+   "publisher": "google",
+   "release_date": "2026-03-25",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Claude model for creative writing, analysis, and controlled agent workflows",
+   "display_name": "Claude Fable 5",
+   "family": "claude-fable",
+   "knowledge": "2026-01-31",
+   "name": "claude-fable-5",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "12.5",
+    "cached_input": "1",
+    "input": "10",
+    "output": "50"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-06-09",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Claude model for demanding reasoning and long-horizon agentic work",
+   "display_name": "Claude Fable 5.1",
+   "family": "claude-fable",
+   "knowledge": "2026-06",
+   "name": "claude-fable-5-1",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "12.5",
+    "cached_input": "0.25",
+    "input": "10",
+    "output": "50"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-09-01",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 200000,
+    "max_output_tokens": 64000,
+    "thinking": {
+     "max_tokens": 63999,
+     "min_tokens": 1024,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Fast Claude model for responsive assistance, classification, and lightweight agents",
+   "display_name": "Claude Haiku 4.5",
+   "family": "claude-haiku",
+   "knowledge": "2025-02-28",
+   "name": "claude-haiku-4-5@20251001",
+   "notes": [
+    "the thinking ceiling is the output cap less one; the list states none"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "1.25",
+    "cached_input": "0.1",
+    "input": "1",
+    "output": "5"
+   },
+   "publisher": "anthropic",
+   "release_date": "2025-10-15",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "Fast Claude model for responsive assistance, classification, and lightweight agents",
+   "display_name": "Claude Haiku 5.5",
+   "family": "claude-haiku",
+   "knowledge": "2026-06",
+   "name": "claude-haiku-5-5",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "0.125",
+    "cached_input": "0.01",
+    "input": "0.1",
+    "output": "0.5"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-10-07",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 200000,
+    "max_output_tokens": 32000,
+    "thinking": {
+     "max_tokens": 31999,
+     "min_tokens": 1024,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+   "display_name": "Claude Opus 4.1",
+   "family": "claude-opus",
+   "knowledge": "2025-03-31",
+   "name": "claude-opus-4-1@20250805",
+   "notes": [
+    "the thinking ceiling is the output cap less one; the list states none"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "18.75",
+    "cached_input": "1.5",
+    "input": "15",
+    "output": "75"
+   },
+   "publisher": "anthropic",
+   "release_date": "2025-08-05",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 200000,
+    "max_output_tokens": 64000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "max_tokens": 63999,
+     "min_tokens": 1024,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+   "display_name": "Claude Opus 4.5",
+   "family": "claude-opus",
+   "knowledge": "2025-05",
+   "name": "claude-opus-4-5@20251101",
+   "notes": [
+    "the thinking ceiling is the output cap less one; the list states none"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "6.25",
+    "cached_input": "0.5",
+    "input": "5",
+    "output": "25"
+   },
+   "publisher": "anthropic",
+   "release_date": "2025-11-01",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "max"
+     ],
+     "max_tokens": 127999,
+     "min_tokens": 1024,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "High-end Claude for difficult coding, planning, and slower expert reasoning",
+   "display_name": "Claude Opus 4.6",
+   "family": "claude-opus",
+   "knowledge": "2025-05-31",
+   "name": "claude-opus-4-6",
+   "notes": [
+    "the thinking ceiling is the output cap less one; the list states none",
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "6.25",
+    "cached_input": "0.5",
+    "input": "5",
+    "output": "25"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-02-05",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Stronger Opus tier for advanced software work and high-stakes reasoning",
+   "display_name": "Claude Opus 4.7",
+   "family": "claude-opus",
+   "knowledge": "2026-01-31",
+   "name": "claude-opus-4-7",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "6.25",
+    "cached_input": "0.5",
+    "input": "5",
+    "output": "25"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-04-16",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Top Claude Opus tier for the hardest reasoning, coding, and long-horizon agents",
+   "display_name": "Claude Opus 4.8",
+   "family": "claude-opus",
+   "knowledge": "2026-01",
+   "name": "claude-opus-4-8",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "6.25",
+    "cached_input": "0.5",
+    "input": "5",
+    "output": "25"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-05-28",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 200000,
+    "max_output_tokens": 32000,
+    "thinking": {
+     "max_tokens": 31999,
+     "min_tokens": 1024,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+   "display_name": "Claude Opus 4",
+   "family": "claude-opus",
+   "knowledge": "2025-03-31",
+   "name": "claude-opus-4@20250514",
+   "notes": [
+    "the thinking ceiling is the output cap less one; the list states none"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "18.75",
+    "cached_input": "1.5",
+    "input": "15",
+    "output": "75"
+   },
+   "publisher": "anthropic",
+   "release_date": "2025-05-22",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Strongest Claude Opus model for coding, agents, and professional work",
+   "display_name": "Claude Opus 5",
+   "family": "claude-opus",
+   "knowledge": "2026-05",
+   "name": "claude-opus-5",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "6.25",
+    "cached_input": "0.5",
+    "input": "5",
+    "output": "25"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-07-24",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Claude model for long-running agentic coding and knowledge work",
+   "display_name": "Claude Opus 5.5",
+   "family": "claude-opus",
+   "knowledge": "2026-06",
+   "name": "claude-opus-5-5",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "5",
+    "cached_input": "0.2",
+    "input": "4",
+    "output": "20"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-09-22",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 200000,
+    "max_output_tokens": 64000,
+    "thinking": {
+     "max_tokens": 63999,
+     "min_tokens": 1024,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Balanced Claude model for coding, analysis, agent workflows, and cost control",
+   "display_name": "Claude Sonnet 4.5",
+   "family": "claude-sonnet",
+   "knowledge": "2025-07-31",
+   "name": "claude-sonnet-4-5@20250929",
+   "notes": [
+    "the thinking ceiling is the output cap less one; the list states none"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "3.75",
+    "cached_input": "0.3",
+    "input": "3",
+    "output": "15"
+   },
+   "publisher": "anthropic",
+   "release_date": "2025-09-29",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "max"
+     ],
+     "max_tokens": 127999,
+     "min_tokens": 1024,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Claude workhorse for coding agents, careful analysis, and production cost control",
+   "display_name": "Claude Sonnet 4.6",
+   "family": "claude-sonnet",
+   "knowledge": "2025-08-31",
+   "name": "claude-sonnet-4-6",
+   "notes": [
+    "the thinking ceiling is the output cap less one; the list states none",
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "3.75",
+    "cached_input": "0.3",
+    "input": "3",
+    "output": "15"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-02-17",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 200000,
+    "max_output_tokens": 64000,
+    "thinking": {
+     "max_tokens": 63999,
+     "min_tokens": 1024,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Balanced Claude model for coding, analysis, agent workflows, and cost control",
+   "display_name": "Claude Sonnet 4",
+   "family": "claude-sonnet",
+   "knowledge": "2025-03-31",
+   "name": "claude-sonnet-4@20250514",
+   "notes": [
+    "the thinking ceiling is the output cap less one; the list states none"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "3.75",
+    "cached_input": "0.3",
+    "input": "3",
+    "output": "15"
+   },
+   "publisher": "anthropic",
+   "release_date": "2025-05-22",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "Everyday Claude agent model for coding, planning, browsing, and general work",
+   "display_name": "Claude Sonnet 5",
+   "family": "claude-sonnet",
+   "knowledge": "2026-01-31",
+   "name": "claude-sonnet-5",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "2.5",
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "10"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-06-30",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fast Claude model for everyday coding, agents, and knowledge work",
+   "display_name": "Claude Sonnet 5.5",
+   "family": "claude-sonnet",
+   "knowledge": "2026-06",
+   "name": "claude-sonnet-5-5",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": "2.5",
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "10"
+   },
+   "publisher": "anthropic",
+   "release_date": "2026-09-28",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output"
+    ],
+    "context_window": 128000,
+    "max_output_tokens": 8192,
+    "thinking": null
+   },
+   "description": "Mistral code model for low-latency completion, fill-in-the-middle, and code generation",
+   "display_name": "Codestral 2",
+   "family": "codestral",
+   "knowledge": "",
+   "name": "codestral-2",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.3",
+    "output": "0.9"
+   },
+   "publisher": "google",
+   "release_date": "2025-07-30",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 163840,
+    "max_output_tokens": 32768,
+    "thinking": {
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "DeepSeek chat model for instruction following, coding, and analysis",
+   "display_name": "DeepSeek V3.1",
+   "family": "deepseek",
+   "knowledge": "",
+   "name": "deepseek-v3.1-maas",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.06",
+    "input": "0.6",
+    "output": "1.7"
+   },
+   "publisher": "deepseek-ai",
+   "release_date": "2025-08-28",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 163840,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "DeepSeek chat model for instruction following, coding, and analysis",
+   "display_name": "DeepSeek V3.2",
+   "family": "deepseek",
+   "knowledge": "",
+   "name": "deepseek-v3.2-maas",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.056",
+    "input": "0.56",
+    "output": "1.68"
+   },
+   "publisher": "deepseek-ai",
+   "release_date": "2025-12-17",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "max_tokens": 24576,
+     "modes": [
+      "disabled",
+      "auto",
+      "limited"
+     ]
+    }
+   },
+   "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+   "display_name": "Gemini 2.5 Flash",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.03",
+    "input": "0.3",
+    "output": "2.5"
+   },
+   "publisher": "google",
+   "release_date": "2025-06-17",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments"
+    ],
+    "context_window": 32768,
+    "max_output_tokens": 32768,
+    "thinking": null
+   },
+   "description": "Nano Banana image model for fast generation, edits, and character-consistent assets",
+   "display_name": "Nano Banana",
+   "family": "gemini-flash",
+   "knowledge": "2024-06",
+   "name": "gemini-2.5-flash-image",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.3",
+    "output": "30"
+   },
+   "publisher": "google",
+   "release_date": "2025-08-26",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "max_tokens": 24576,
+     "min_tokens": 512,
+     "modes": [
+      "auto",
+      "limited"
+     ]
+    }
+   },
+   "description": "Lean Gemini 2.5 lane for cheap multimodal traffic and quick agents",
+   "display_name": "Gemini 2.5 Flash-Lite",
+   "family": "gemini-flash-lite",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-flash-lite",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.01",
+    "input": "0.1",
+    "output": "0.4"
+   },
+   "publisher": "google",
+   "release_date": "2025-06-17",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "speech"
+    ],
+    "context_window": 32768,
+    "max_output_tokens": 16384,
+    "thinking": null
+   },
+   "description": "Speech generation model for controllable voice, narration, and audio delivery",
+   "display_name": "Gemini 2.5 Flash TTS",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-flash-tts",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.5",
+    "output": "10"
+   },
+   "publisher": "google",
+   "release_date": "2025-09-30",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "max_tokens": 32768,
+     "min_tokens": 128,
+     "modes": [
+      "limited"
+     ]
+    }
+   },
+   "description": "Google's proven reasoning model for coding, math, and multimodal analysis",
+   "display_name": "Gemini 2.5 Pro",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-pro",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.125",
+    "input": "1.25",
+    "output": "10"
+   },
+   "publisher": "google",
+   "release_date": "2025-06-17",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "speech"
+    ],
+    "context_window": 32768,
+    "max_output_tokens": 16384,
+    "thinking": null
+   },
+   "description": "Speech generation model for controllable voice, narration, and audio delivery",
+   "display_name": "Gemini 2.5 Pro TTS",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-2.5-pro-tts",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "1",
+    "output": "20"
+   },
+   "publisher": "google",
+   "release_date": "2025-09-30",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "New Gemini flash lane bringing frontier-style multimodal reasoning to cheaper runs",
+   "display_name": "Gemini 3 Flash Preview",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3-flash-preview",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.05",
+    "input": "0.5",
+    "output": "3"
+   },
+   "publisher": "google",
+   "release_date": "2025-12-17",
+   "status": "beta"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments",
+     "prompt_caching"
+    ],
+    "context_window": 65536,
+    "max_output_tokens": 32768,
+    "thinking": null
+   },
+   "description": "Nano Banana Pro for higher-fidelity image generation and design-heavy edits",
+   "display_name": "Nano Banana Pro",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-3-pro-image",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "120"
+   },
+   "publisher": "google",
+   "release_date": "2026-05-28",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 131072,
+    "max_output_tokens": 32768,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Image model for prompt-driven generation, editing, and visual design workflows",
+   "display_name": "Nano Banana 2",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-image",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.05",
+    "input": "0.5",
+    "output": "60"
+   },
+   "publisher": "google",
+   "release_date": "2026-05-28",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Low-latency Gemini model for high-volume multimodal and agent workloads",
+   "display_name": "Gemini 3.1 Flash Lite",
+   "family": "gemini-flash-lite",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-lite",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.025",
+    "input": "0.25",
+    "output": "1.5"
+   },
+   "publisher": "google",
+   "release_date": "2026-05-07",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 65536,
+    "max_output_tokens": 4096,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fastest, most cost-efficient Gemini image model for high-volume 1K generation and editing",
+   "display_name": "Nano Banana 2 Lite",
+   "family": "gemini-flash-lite",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-flash-lite-image",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.025",
+    "input": "0.25",
+    "output": "30"
+   },
+   "publisher": "google",
+   "release_date": "2026-06-30",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Reasoning-first Gemini preview for agentic coding and complex problem solving",
+   "display_name": "Gemini 3.1 Pro Preview",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-pro-preview",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "12"
+   },
+   "publisher": "google",
+   "release_date": "2026-02-19",
+   "status": "beta"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Advanced Gemini model for complex reasoning, coding, and multimodal analysis",
+   "display_name": "Gemini 3.1 Pro Preview Custom Tools",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-3.1-pro-preview-customtools",
+   "notes": [
+    "costs more above a context length \u2014 the list price is the lower tier"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.2",
+    "input": "2",
+    "output": "12"
+   },
+   "publisher": "google",
+   "release_date": "2026-02-19",
+   "status": "beta"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+   "display_name": "Gemini 3.5 Flash",
+   "family": "gemini-flash",
+   "knowledge": "2025-01",
+   "name": "gemini-3.5-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.15",
+    "input": "1.5",
+    "output": "9"
+   },
+   "publisher": "google",
+   "release_date": "2026-05-19",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+   "display_name": "Gemini 3.5 Flash Lite",
+   "family": "gemini-flash-lite",
+   "knowledge": "2026-03",
+   "name": "gemini-3.5-flash-lite",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.03",
+    "input": "0.3",
+    "output": "2.5"
+   },
+   "publisher": "google",
+   "release_date": "2026-07-21",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+   "display_name": "Gemini 3.6 Flash",
+   "family": "gemini-flash",
+   "knowledge": "2026-03",
+   "name": "gemini-3.6-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.075",
+    "input": "0.75",
+    "output": "3.75"
+   },
+   "publisher": "google",
+   "release_date": "2026-07-21",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "High-efficiency Gemini model for agentic workflows, coding, and multimodal reasoning",
+   "display_name": "Gemini 3.7 Flash",
+   "family": "gemini-flash",
+   "knowledge": "2026-03",
+   "name": "gemini-3.7-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.075",
+    "input": "0.75",
+    "output": "3.75"
+   },
+   "publisher": "google",
+   "release_date": "2026-08-13",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Google's most intelligent Flash model, engineered for long-horizon software engineering, autonomous agents, and complex enterprise workflows",
+   "display_name": "Gemini 3.8 Flash",
+   "family": "gemini-flash",
+   "knowledge": "",
+   "name": "gemini-3.8-flash",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.075",
+    "input": "0.75",
+    "output": "3.75"
+   },
+   "publisher": "google",
+   "release_date": "2026-09-02",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Google's flagship reasoning model for complex software engineering, deep math and science, and long-horizon autonomous agents",
+   "display_name": "Gemini 4 Argon",
+   "family": "gemini",
+   "knowledge": "2026-03",
+   "name": "gemini-4-argon",
+   "notes": [
+    "audio input is priced apart"
+   ],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.1",
+    "input": "2",
+    "output": "10"
+   },
+   "publisher": "google",
+   "release_date": "2026-10-13",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "embed"
+    ],
+    "context_window": 2048,
+    "max_output_tokens": null,
+    "thinking": null
+   },
+   "description": "Embedding model for semantic search, retrieval, clustering, and ranking pipelines",
+   "display_name": "Gemini Embedding 001",
+   "family": "gemini",
+   "knowledge": "2025-05",
+   "name": "gemini-embedding-001",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.15",
+    "output": null
+   },
+   "publisher": "google",
+   "release_date": "2025-05-20",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 131072,
+    "max_output_tokens": 32768,
+    "thinking": {
+     "levels": [
+      "minimal",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Image model for prompt-driven generation, multi-turn editing, and visual design workflows",
+   "display_name": "Nano Banana 2.1",
+   "family": "gemini-flash",
+   "knowledge": "",
+   "name": "gemini-nano-banana-2.1",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.15",
+    "input": "1.5",
+    "output": "30"
+   },
+   "publisher": "google",
+   "release_date": "2026-10-06",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "prompt_caching"
+    ],
+    "context_window": 262144,
+    "max_output_tokens": 128000,
+    "thinking": null
+   },
+   "description": "Open Gemma instruction model for efficient chat and self-hosted deployments",
+   "display_name": "Gemma 4 26B A4B IT",
+   "family": "gemma",
+   "knowledge": "",
+   "name": "gemma-4-26b-a4b-it-maas",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.015",
+    "input": "0.15",
+    "output": "0.6"
+   },
+   "publisher": "google",
+   "release_date": "2026-04-02",
+   "status": "alpha"
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 200000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "GLM model for coding, tool use, and complex reasoning",
+   "display_name": "GLM-4.7",
+   "family": "glm",
+   "knowledge": "2025-04",
+   "name": "glm-4.7-maas",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.06",
+    "input": "0.6",
+    "output": "2.2"
+   },
+   "publisher": "zai-org",
+   "release_date": "2026-01-06",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 200000,
+    "max_output_tokens": 128000,
+    "thinking": {
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "General GLM flagship for coding, analysis, and tool-heavy engineering workflows",
+   "display_name": "GLM-5",
+   "family": "glm",
+   "knowledge": "",
+   "name": "glm-5-maas",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.1",
+    "input": "1",
+    "output": "3.2"
+   },
+   "publisher": "zai-org",
+   "release_date": "2026-02-12",
+   "status": "deprecated"
+  },
+  {
+   "declaration": {
+    "attachments": null,
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1000000,
+    "max_output_tokens": 64000,
+    "thinking": {
+     "modes": [
+      "disabled",
+      "auto"
+     ]
+    }
+   },
+   "description": "Open flagship GLM for long-horizon coding agents and million-token context work",
+   "display_name": "GLM-5.2",
+   "family": "glm",
+   "knowledge": "",
+   "name": "glm-5.2-maas",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.14",
+    "input": "1.4",
+    "output": "4.4"
+   },
+   "publisher": "zai-org",
+   "release_date": "2026-06-13",
+   "status": "beta"
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "attachments"
+    ],
+    "context_window": 131072,
+    "max_output_tokens": 131072,
+    "thinking": null
+   },
+   "description": "Mistral model for multilingual chat, reasoning, and tool-assisted workflows",
+   "display_name": "Mistral Medium 3",
+   "family": "mistral-medium",
+   "knowledge": "2025-05",
+   "name": "mistral-medium-3",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.4",
+    "output": "2"
+   },
+   "publisher": "google",
+   "release_date": "2025-05-07",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments"
+    ],
+    "context_window": 128000,
+    "max_output_tokens": 16384,
+    "thinking": null
+   },
+   "description": "Efficient multimodal model for instruction following, coding, reasoning, and function calling",
+   "display_name": "Mistral Small 3.1 24B",
+   "family": "mistral-small",
+   "knowledge": "2024-06",
+   "name": "mistral-small-2503",
+   "notes": [],
+   "platform": "vertex",
+   "prices": {
+    "cache_write": null,
+    "cached_input": null,
+    "input": "0.1",
+    "output": "0.3"
+   },
+   "publisher": "google",
+   "release_date": "2025-03-17",
+   "status": ""
+  }
+ ],
+ "source": "https://models.dev/api.json"
+}

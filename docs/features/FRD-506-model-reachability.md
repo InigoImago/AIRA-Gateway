@@ -44,7 +44,9 @@ open models, an **empty conversation**, which the endpoint refuses `400` for a m
 `404` for one it has not, generating nothing. Each probe is recorded as a `diagnostic` row.
 
 **FR-3 — The upstream's error text is not repeated back.** A provider's message can carry the URL it
-was called with, and that URL can carry the key. The exception *type* is diagnostic enough.
+was called with, and that URL can carry the key. The exception *type* was meant to be diagnostic enough;
+it was not, and `FRD-141` reads the provider's *structured* cause instead — a reason word from a
+closed list, never the text.
 
 **FR-4 — Bounded by role, not by use case.** It describes the *installation*, so: Global
 Administrators (who declare models) and IT Security (who investigate why a use case cannot reach

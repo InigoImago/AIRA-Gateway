@@ -5,6 +5,46 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Connecting a model without research, without a key, and with the reason when it fails (2026-10-17)
+
+The owner set up a standalone installation against an external Keycloak and could not catalogue a
+single model by the end of the working day. Read against the code, three things explain it. Every
+reachability check answered *Not reachable (UpstreamError)*: the status, Google's reason word and the
+certificate a proxy presented had reached the gateway and been dropped, because `FRD-506` FR-3 kept
+the provider's text out and its structured fields went with it. The service-account key had to be a
+single environment value, could not be a file, and rotated only with a restart — and an organisation
+created on Google Cloud since May 2024 may not create such a key at all. And Vertex publishes no
+model list, so every limit, capability, thinking option and price had to be looked up by hand.
+
+**Why a provider refused** (`FRD-141`): the cause is read from structured fields only — Google's
+`ErrorInfo.reason` and `error.status`, an OAuth `error` matched against Google's and Keycloak's fixed
+descriptions, Azure's and the OpenAI dialect's `error.code`, the exception chain's certificate, DNS,
+proxy and timeout — and explained in our words. The caller's message gains `Reason: WORD.`; the model
+check carries `reason` and `explanation` per region and the console shows them as a block; `/readyz`
+and the log say the same. A provider's prose is still never repeated (a marker in every test message
+must appear nowhere). `AIRA_VERTEX_CREDENTIALS_FILE` takes the key as a file, re-read when it
+changes; Compose mounts `secrets/vertex` read-only.
+
+**Google without a Google key** (`FRD-142`, `ADR-0037`): workload identity federation in the
+gateway's own token layer. The gateway fetches its identity from Keycloak by client credentials (or
+from a token file or a local URL), exchanges it at Google's STS and impersonates the service account
+for an hour; the configuration is Google's own `external_account` JSON. On Google Cloud,
+`AIRA_VERTEX_METADATA_SERVER`. A configuration that would send a token anywhere but
+`https://*.googleapis.com`, or run an executable source, stops the start. The runbook covers both
+sides, including uploading the realm's JWKS where Google cannot reach Keycloak; it is the documented
+recommendation. **Not tested against Google**: the first real installation follows the runbook.
+
+**A public model list** (`FRD-508`, `ADR-0038`): *Add a model* lists what models.dev states for
+Vertex and AI Studio and fills the editor from it, saying so; prices only where the installation
+counts in US dollars, never the region, never an approval. The release ships the list (83 models,
+MIT notice; `make model-reference`), so nothing new is reached unless `AIRA_MODEL_REFERENCE_URL` is
+set. The first mapping produced 12 drafts the catalog would have refused — speech models whose output
+exceeds their context, budgets without a ceiling — and the test that every shipped draft passes
+`validate_declaration` is what found them. 1914 properties; `PD-1`–`PD-23`, `KG-1`–`KG-19`,
+`RF-1`–`RF-21`; `V8`, `C26`, `FX-G3-22`, `B11` re-anchored.
+
+---
+
 ## Saying what happened to a request, in terms standard clients already read (2026-10-16)
 
 Strict data mode took the prompt and the answer from the people who run a use case and the

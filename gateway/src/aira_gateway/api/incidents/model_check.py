@@ -35,6 +35,7 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.diagnostics import describe_failure
 from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.upstreams.base import ModelNotListed
+from aira_gateway.upstreams.diagnosis import of as diagnosis_of
 
 #: Why a declared model is not served. Two causes — no credential for its platform, or a model the
 #: adapter's configuration does not name (`AIRA_VERTEX_MODELS`, `AIRA_FOUNDRY_DEPLOYMENTS`) — and
@@ -75,6 +76,8 @@ async def check_model(
         "served": upstream is not None,
         "reachable": None,
         "detail": "",
+        "reason": None,
+        "explanation": None,
         "regions": [],
     }
     if upstream is None:
@@ -110,6 +113,8 @@ async def check_model(
     best = reachable[0] if reachable else result["regions"][0]
     result["reachable"] = best["reachable"]
     result["detail"] = best["detail"]
+    result["reason"] = best.get("reason")
+    result["explanation"] = best.get("explanation")
     if reachable and len(reachable) != len(result["regions"]):
         unreachable = [entry["region"] for entry in result["regions"] if not entry["reachable"]]
         result["detail"] += f" Not reachable in: {', '.join(unreachable)}."
@@ -136,6 +141,14 @@ async def _reach(ping: Any, model: str, region: str) -> dict[str, Any]:
         # gateway's own words.
         return {"reachable": False, "detail": str(exc)}
     except Exception as exc:  # noqa: BLE001 — anything else here means "not reachable"
-        # The type, not the message: a provider's error text can carry a URL with a key in it.
-        return {"reachable": False, "detail": f"Not reachable ({describe_failure(exc)})."}
+        # The type, not the message: a provider's error text can carry a URL with a key in it. The
+        # cause the provider stated travels apart as well (`FRD-141`), so the console can lead
+        # with what to do rather than with an exception's name.
+        found = diagnosis_of(exc)
+        return {
+            "reachable": False,
+            "detail": f"Not reachable ({describe_failure(exc)}).",
+            "reason": found.reason if found else None,
+            "explanation": found.explanation if found else None,
+        }
     return {"reachable": True, "detail": str(detail)}

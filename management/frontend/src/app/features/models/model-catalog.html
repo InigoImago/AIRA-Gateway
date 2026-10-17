@@ -319,6 +319,19 @@
         </div>
       }
     }
+    @if (chosenBrowseProvider(); as upstream) {
+      @if (describedByReference(upstream.name)) {
+        <!-- What a public list says about this platform's models (`FRD-508`): for a platform with
+             no list of its own the only list there is, and for one with a list, the prices and
+             limits that list leaves out. -->
+        <h3 class="section-title" style="margin-top: 1rem">From the model reference</h3>
+        <app-reference-models
+          [platform]="upstream.name"
+          [catalogued]="catalogued()"
+          (pick)="catalogueReference($event, upstream)"
+        />
+      }
+    }
     @if (providersError(); as message) {
       <!-- The catalog is Management's: a gateway that cannot be asked degrades to naming the
              model by hand, with the provider typed, rather than to a window with no way in. -->

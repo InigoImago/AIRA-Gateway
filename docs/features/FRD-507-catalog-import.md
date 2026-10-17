@@ -41,6 +41,10 @@ them able to generate. Nobody had approved any of them, and one that the listing
 - Importing **prices**. No endpoint publishes them in a usable form, and an invented price is worse
   than an absent one: `FRD-403`'s rule is that unpriced traffic is counted apart, never as zero.
 
+> **Narrowed by `FRD-508`** (`ADR-0038`): a public model list may *fill the form* with capabilities
+> and list prices, shown as a third party's claim with its source and date, and still decides
+> nothing. A vendor's own listing, this feature's subject, still fills provenance only.
+
 ## 3. Functional Requirements
 
 - **FR-1** The gateway's model listing carries each model's **provenance** — provider, publisher,

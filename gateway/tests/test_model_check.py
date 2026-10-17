@@ -106,6 +106,8 @@ async def test_a_served_model_that_answers_is_reachable() -> None:
         # about the model. Since cataloguing a model became enough to serve it, the one being
         # checked is usually the one *not* in configuration.
         "detail": "gemini-2.0-flash answered",
+        "reason": None,
+        "explanation": None,
     }
 
 

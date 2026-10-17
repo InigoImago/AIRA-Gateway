@@ -1,6 +1,12 @@
 import { formatDate } from '@angular/common';
 import { perMillion } from '../../core/api/me.service';
-import { CatalogModel, GatewayProvider, ModelCheck, readRegions } from '../../core/api/models';
+import {
+  CatalogModel,
+  CheckCause,
+  GatewayProvider,
+  ModelCheck,
+  readRegions,
+} from '../../core/api/models';
 
 /** How a moment is written in this console's tables — the `date` pipe's pattern, in code. */
 const WHEN = 'yyyy-MM-dd HH:mm';
@@ -17,6 +23,30 @@ export function checkVerdict(verdict: ModelCheck): string {
   if (!verdict.served) return 'Declared, but nothing serves it';
   if (verdict.reachable === null) return 'Served — not contacted';
   return verdict.reachable ? 'Reachable' : 'Not reachable';
+}
+
+/**
+ * Why a check failed, one entry per cause (`FRD-141`): the same cause in three regions is one
+ * thing to fix, said once with the three places; a region without a stated cause adds nothing.
+ */
+export function causesOf(verdict: ModelCheck | null): CheckCause[] {
+  if (!verdict) return [];
+  const failed = (verdict.regions ?? []).filter((entry) => !entry.reachable && entry.reason);
+  const entries = failed.length
+    ? failed
+    : verdict.reachable === false && verdict.reason
+      ? [{ region: '', reason: verdict.reason, explanation: verdict.explanation }]
+      : [];
+  const causes = new Map<string, CheckCause>();
+  for (const entry of entries) {
+    const reason = entry.reason ?? '';
+    const explanation = entry.explanation ?? '';
+    const key = `${reason}\n${explanation}`;
+    const cause = causes.get(key) ?? { reason, explanation, regions: [] };
+    if (entry.region) cause.regions.push(entry.region);
+    causes.set(key, cause);
+  }
+  return [...causes.values()];
 }
 
 /**

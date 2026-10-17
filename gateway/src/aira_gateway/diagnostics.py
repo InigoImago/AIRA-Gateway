@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from aira_common.counters import DegradationLog
 from aira_common.logging import get_logger
 from aira_gateway.upstreams.base import ProviderRegistry
+from aira_gateway.upstreams.diagnosis import of as diagnosis_of
 
 #: How often the background prober runs: far more often than the answer changes, far less often
 #: than a readiness probe asks.
@@ -43,10 +44,19 @@ _log = get_logger("aira_gateway.diagnostics")
 def describe_failure(exc: BaseException) -> str:
     """What a failed remote question says about itself wherever its answer is shown: the exception's
     type, never its message — an HTTP client's error text carries the URL it called, and Google AI
-    Studio's carries the installation's key in it (`?key=`). The model check reports through this
-    too, so the two cannot decide it differently.
+    Studio's carries the installation's key in it. The model check reports through this too, so the
+    two cannot decide it differently.
+
+    Where the provider or the connection stated a cause, that is said as well (`FRD-141`): its
+    reason word and our explanation, built from structured fields only (`upstreams.diagnosis`).
+    "UpstreamError" alone left whoever was setting up a model to guess between an API not enabled,
+    a missing role, a model not offered in the region and a proxy that inspects TLS.
     """
-    return type(exc).__name__
+    found = diagnosis_of(exc)
+    if found is None:
+        return type(exc).__name__
+    status = getattr(exc, "status_code", None)
+    return f"{status} {found}" if isinstance(status, int) else str(found)
 
 
 @dataclass(frozen=True, slots=True)

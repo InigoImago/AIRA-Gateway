@@ -28,6 +28,8 @@ from typing import Any
 import httpx
 
 from aira_gateway.upstreams.base import UpstreamError, upstream_reason
+from aira_gateway.upstreams.diagnosis import from_response as diagnosis_of_response
+from aira_gateway.upstreams.diagnosis import from_transport as diagnosis_of_transport
 
 #: How long establishing a connection may take, apart from waiting for the answer. A model may
 #: think for minutes before its first byte; a host that accepts no connection within seconds is
@@ -52,15 +54,25 @@ def refused(response: httpx.Response, name: str) -> UpstreamError:
 
     The provider's reason is carried for a ``400`` only (`upstream_reason`): it names a fault in the
     body *we* built. A 401/403 is about our credentials and a 5xx is the provider's internal noise.
+    For every status the **cause it stated** rides along (`FRD-141`): its reason word in the
+    message, so a caller can report it, and its explanation on the error, for the operator.
     """
     detail = upstream_reason(response) if response.status_code == 400 else ""
-    return UpstreamError(f"{name} returned {response.status_code}.{detail}", response.status_code)
+    diagnosis = diagnosis_of_response(response)
+    said = f" Reason: {diagnosis.reason}." if diagnosis else ""
+    return UpstreamError(
+        f"{name} returned {response.status_code}.{detail}{said}",
+        response.status_code,
+        diagnosis,
+    )
 
 
 def unreachable(exc: httpx.HTTPError, name: str) -> UpstreamError:
     """No answer, or an answer that broke off: the exception's type, never its text, which can
-    carry a URL with a credential in it."""
-    return UpstreamError(f"{name} error: {type(exc).__name__}.")
+    carry a URL with a credential in it — and, where the chain shows it, why (`FRD-141`)."""
+    diagnosis = diagnosis_of_transport(exc)
+    said = f" Reason: {diagnosis.reason}." if diagnosis else ""
+    return UpstreamError(f"{name} error: {type(exc).__name__}.{said}", diagnosis=diagnosis)
 
 
 def json_object(response: httpx.Response, name: str) -> dict[str, Any]:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import URL
 
 from aira_common.config import BaseAiraSettings
@@ -231,6 +231,23 @@ class GatewaySettings(BaseAiraSettings):
     #: at `global` alone (`FRD-115` FR-2a) — without permitting that region for every model.
     allowed_model_regions: str = ""
 
+    @model_validator(mode="after")
+    def _one_vertex_key(self) -> GatewaySettings:
+        """One key in one place: with two, the operator would have to guess which one signs."""
+        if self.vertex_credentials and self.vertex_credentials_file:
+            raise ValueError(
+                "AIRA_VERTEX_CREDENTIALS and AIRA_VERTEX_CREDENTIALS_FILE are both set. Set one: "
+                "the key as a value, or the path of a file holding it."
+            )
+        if self.vertex_metadata_server and (
+            self.vertex_credentials or self.vertex_credentials_file
+        ):
+            raise ValueError(
+                "AIRA_VERTEX_METADATA_SERVER is on and Vertex credentials are set as well. Set "
+                "one: the machine's own identity, or the credentials."
+            )
+        return self
+
     @field_validator("allowed_model_regions")
     @classmethod
     def _model_regions_are_readable(cls, value: str) -> str:
@@ -246,6 +263,19 @@ class GatewaySettings(BaseAiraSettings):
     vertex_project: str = ""
     #: The service-account key, as JSON — from the environment or Vault (`FRD-116`).
     vertex_credentials: str = ""
+    #: The same key as a **file** — a Docker or Kubernetes secret, a Vault agent template — read
+    #: again whenever it changes, so a rotated key takes effect without a restart (`FRD-141`).
+    #: A path, not a credential. Exclusive with the value above.
+    vertex_credentials_file: str = ""
+    #: Federation's identity, fetched by the gateway as a client of an OIDC provider — Keycloak's
+    #: token endpoint, a client id and its secret (`FRD-142`). Used with an `external_account`
+    #: configuration above in place of its `credential_source`. The secret from Vault.
+    vertex_federation_token_url: str = ""
+    vertex_federation_client_id: str = ""
+    vertex_federation_client_secret: str = ""
+    #: On Google Cloud: the machine's own service account, from the metadata server. No key and no
+    #: configuration. Exclusive with the credentials above.
+    vertex_metadata_server: bool = False
     #: An Agent Platform API key, sent as `x-goog-api-key` instead of a bearer token (`FRD-115`
     #: FR-3a). Same locational hosts, so residency is unaffected. The service account wins if both.
     vertex_api_key: str = ""

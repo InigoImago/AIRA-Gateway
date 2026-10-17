@@ -2,7 +2,14 @@ import { Component, OnInit, computed, inject, signal, viewChild } from '@angular
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import { errorMessage } from '../../core/api/error-message';
-import { CatalogModel, Me, ModelCheck, OfferedModel, ServedModel } from '../../core/api/models';
+import {
+  CatalogModel,
+  GatewayProvider,
+  Me,
+  ModelCheck,
+  OfferedModel,
+  ServedModel,
+} from '../../core/api/models';
 import { MeService, perMillion } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { can } from '../../core/auth/roles';
@@ -15,6 +22,7 @@ import { checkVerdict, detailOf, providerLabel } from './catalog-display';
 import { GatewayProviders } from './gateway-providers';
 import { ModelEditor } from './model-editor';
 import { ServedModels } from './served-models';
+import { REFERENCE_PLATFORMS, ReferenceModels, ReferencePick } from './reference-models';
 
 /**
  * Models & prices: the catalog, what is on file for each model, and the ways into the editor
@@ -26,7 +34,7 @@ import { ServedModels } from './served-models';
  */
 @Component({
   selector: 'app-model-catalog',
-  imports: [FormsModule, Modal, TablePager, ModelEditor, ServedModels],
+  imports: [FormsModule, Modal, TablePager, ModelEditor, ServedModels, ReferenceModels],
   templateUrl: './model-catalog.html',
   providers: [PageFeedback, GatewayProviders],
 })
@@ -207,6 +215,23 @@ export class ModelCatalog implements OnInit {
       return;
     }
     this.editor().importServed(model);
+  }
+
+  /** Whether the model reference describes this platform's models (`FRD-508`). */
+  protected describedByReference(platform: string): boolean {
+    return REFERENCE_PLATFORMS.has(platform);
+  }
+
+  /** A reference row: a model the catalog holds is opened as it is, as from a vendor's listing —
+   *  a draft over a declaration somebody measured would replace the measurement. */
+  protected catalogueReference(picked: ReferencePick, upstream: GatewayProvider): void {
+    const existing = this.models().find((m) => m.name === picked.entry.name);
+    this.showBrowse.set(false);
+    if (existing) {
+      this.editor().edit(existing);
+      return;
+    }
+    this.editor().fromReferenceEntry(picked.entry, picked.reference, upstream);
   }
 
   protected remove(model: CatalogModel): void {

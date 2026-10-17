@@ -770,8 +770,8 @@ provider, publisher and region.
 | You provide | Why |
 |---|---|
 | A GCP **project** with the Agent Platform (Vertex AI) API enabled | |
-| **Either** a service account with `roles/aiplatform.user` **or** an API key | Two credentials, one adapter — but **Claude needs the service account**: Vertex refuses an API key for Anthropic models — see below |
-| The credential, from the environment **or Vault** | `AIRA_VERTEX_CREDENTIALS` (JSON) or `AIRA_VERTEX_API_KEY` |
+| A service account with `roles/aiplatform.user` — reached by its key, **without a key** through workload identity federation (D), or as the machine's own on Google Cloud — **or** an API key | One adapter for all of them — but **Claude needs the service account**: Vertex refuses an API key for Anthropic models — see below |
+| The credential, from the environment, **Vault** or a file | `AIRA_VERTEX_CREDENTIALS` (JSON), `AIRA_VERTEX_CREDENTIALS_FILE` (a path to the same JSON) or `AIRA_VERTEX_API_KEY` |
 | The **regions** you are permitted to use | Listed in `AIRA_ALLOWED_REGIONS`; a model outside them refuses to start, and the console refuses one **as it is typed**, naming what is allowed. `global` is not in the shipped default: it names no region and guarantees none, so an installation that wants it says so out loud |
 | **Model Garden access** for the publishers you want | Anthropic models need to be enabled in your project; an open model the project cannot use answers the model check with `404` |
 | For an **open model** (GLM, DeepSeek): a permission by name | They are served only at `global`, which names no region. `AIRA_ALLOWED_MODEL_REGIONS=global=glm-4.7-maas` permits it for that model and no other |
@@ -796,14 +796,14 @@ reasoning is returned only to a use case that asked for it, and there are no emb
 
 #### Which credential — and why it is not a free choice
 
-|  | Service account (**recommended**) | API key |
-|---|---|---|
-| Setting | `AIRA_VERTEX_CREDENTIALS` | `AIRA_VERTEX_API_KEY` |
-| How it authenticates | signed JWT exchanged for a short-lived token | `x-goog-api-key`, sent as-is |
-| Publishers it reaches | all | Google and the open models — **not Anthropic**: Vertex answers `401`, and the caller gets `502` |
-| Rotation | a new JSON key: create it in IAM, store it, restart, then delete the old one | a new key: store it, restart, then revoke the old one |
-| Scope | one IAM role, auditable per principal in Cloud Logging | whatever the key is restricted to |
-| Region | locational host, real residency | **the same** — see the note below |
+|  | Service account key | API key | No key (D, **recommended**) |
+|---|---|---|---|
+| Setting | `AIRA_VERTEX_CREDENTIALS`, or `AIRA_VERTEX_CREDENTIALS_FILE` | `AIRA_VERTEX_API_KEY` | `AIRA_VERTEX_CREDENTIALS(_FILE)` with Google's federation configuration, and `AIRA_VERTEX_FEDERATION_*` — or `AIRA_VERTEX_METADATA_SERVER` on Google Cloud |
+| How it authenticates | signed JWT exchanged for a short-lived token | `x-goog-api-key`, sent as-is | your Keycloak's token, exchanged at Google's STS, acting as the service account for an hour |
+| Publishers it reaches | all | Google and the open models — **not Anthropic**: Vertex answers `401`, and the caller gets `502` | all |
+| Rotation | a new JSON key: create it in IAM, store it, restart, then delete the old one — or, from a file, write it over the file: the next token is signed with it, no restart | a new key: store it, restart, then revoke the old one | your Keycloak client's secret; nothing at Google |
+| Scope | one IAM role, auditable per principal in Cloud Logging | whatever the key is restricted to | the same role, through the binding that lets the client act as the account |
+| Region | locational host, real residency | **the same** — see the note below | the same |
 
 Set both and the **service account wins**: a deployment that has one has made the more deliberate
 choice, and silently preferring a key left in the environment would be a downgrade nobody asked for.
@@ -827,6 +827,14 @@ the service account refreshes its short-lived token by itself, but a new JSON ke
 effect only at the next start. Delete the old service-account key first, and calls fail with `503`
 once the token it issued expires.
 
+**A key in a file is the exception.** `AIRA_VERTEX_CREDENTIALS_FILE` names a file holding the same
+JSON — a Docker or Kubernetes secret, a file a Vault agent renders — and the gateway looks at it
+again each time it fetches a token, about every 48 minutes. Rotation is then: create the new key,
+write it over the file, wait an hour, delete the old key. A file changed into something unusable
+keeps the last key that worked, and the failed refresh is in the log; a file missing at start-up,
+or holding no usable key, stops the start. The value and the file are exclusive: both set stops the
+start.
+
 #### B — the service account, step by step
 
 Console, or the equivalent `gcloud`. Replace `PROJECT` with your project id.
@@ -846,7 +854,11 @@ Console, or the equivalent `gcloud`. Replace `PROJECT` with your project id.
    ```
 4. **Create a JSON key.** *Keys → Add key → Create new key → JSON*. It downloads once.
    `gcloud iam service-accounts keys create key.json --iam-account aira-gateway@PROJECT.iam.gserviceaccount.com`
-5. **Store it** — the whole file, as one line, in Vault (below) or in the environment:
+5. **Store it.** Either leave it a file and name it — the simplest, and the one that rotates
+   without a restart:
+   `AIRA_VERTEX_CREDENTIALS_FILE=/run/secrets/vertex-key.json`
+   (in Compose, a `secrets:` entry or a read-only volume; the gateway's user must be able to read
+   it). Or the whole file, as one line, in Vault (below) or in the environment:
    `AIRA_VERTEX_CREDENTIALS='{"client_email":"…","private_key":"-----BEGIN PRIVATE KEY-----\n…"}'`
 6. **Name the project and the models:**
    ```
@@ -878,6 +890,99 @@ Reference: [Authenticate to Agent Platform](https://docs.cloud.google.com/gemini
    every publisher alike and does not refuse such a model at start-up; to serve Claude, configure
    the service account (B).
 
+#### D — no key at all: workload identity federation through your Keycloak
+
+A service-account key is a private key that is valid until somebody deletes it, and an organisation
+created on Google Cloud since May 2024 may not create one: the policy
+`iam.managed.disableServiceAccountKeyCreation` is on by default. Federation needs none. The gateway
+asks your Keycloak for a token as a client of it, Google's Security Token Service exchanges that
+token for a Google one, and the Google token acts as the service account for an hour. Google holds
+no secret of yours and you hold none of Google's; what is left to protect and rotate is one client
+secret in your own Keycloak.
+
+**In Keycloak** (the realm the console already uses, or another):
+
+1. *Clients → Create client*, id `aira-gateway-gcp`. **Client authentication** on, **Service
+   accounts roles** on, every other flow off. *Credentials* → copy the client secret.
+2. *Client scopes → aira-gateway-gcp-dedicated → Add mapper → By configuration → Audience*:
+   **Included Custom Audience** `aira-gcp`, **Add to access token** on. Google checks the token's
+   `aud` against the provider's allowed audiences, and Keycloak's default `aud` is not one of them.
+
+**At Google** (replace `PROJECT` and `PROJECT_NUMBER`):
+
+3. A pool and a provider that trusts your realm:
+   ```
+   gcloud iam workload-identity-pools create aira --location global --project PROJECT
+   gcloud iam workload-identity-pools providers create-oidc keycloak \
+     --location global --workload-identity-pool aira --project PROJECT \
+     --issuer-uri "https://sso.example.com/realms/aira" \
+     --allowed-audiences aira-gcp \
+     --attribute-mapping "google.subject=assertion.azp" \
+     --attribute-condition "assertion.azp == 'aira-gateway-gcp'"
+   ```
+   The issuer is the realm's URL exactly as it stands in the token's `iss`. **If Google cannot reach
+   your Keycloak** — it lives on the internal network — upload the realm's keys instead, without
+   the certificate fields Google refuses, by adding `--jwk-json-path realm-jwks.json` after:
+   ```
+   curl -s https://sso.example.com/realms/aira/protocol/openid-connect/certs \
+     | jq '{keys: [.keys[] | select(.use == "sig") | del(.x5c, .x5t, ."x5t#S256")]}' \
+     > realm-jwks.json
+   ```
+   Keycloak rotates its realm keys; upload them again when it does
+   (`gcloud iam workload-identity-pools providers update-oidc … --jwk-json-path`), or every
+   exchange fails with `SIGNATURE_NOT_VERIFIED`.
+4. Let the client act as the service account (B, steps 2–3, without step 4's key):
+   ```
+   gcloud iam service-accounts add-iam-policy-binding \
+     aira-gateway@PROJECT.iam.gserviceaccount.com \
+     --role roles/iam.workloadIdentityUser \
+     --member "principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/aira/subject/aira-gateway-gcp"
+   ```
+
+**In AIRA:**
+
+5. The configuration — Google's `external_account` format, which names no secret:
+   ```json
+   {
+     "type": "external_account",
+     "audience": "//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/aira/providers/keycloak",
+     "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+     "token_url": "https://sts.googleapis.com/v1/token",
+     "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/aira-gateway@PROJECT.iam.gserviceaccount.com:generateAccessToken"
+   }
+   ```
+   as `AIRA_VERTEX_CREDENTIALS`, or as a file named by `AIRA_VERTEX_CREDENTIALS_FILE`. `gcloud iam
+   workload-identity-pools create-cred-config` writes the same file; its `credential_source` is not
+   used when the next three settings are set.
+6. ```
+   AIRA_VERTEX_FEDERATION_TOKEN_URL=https://sso.example.com/realms/aira/protocol/openid-connect/token
+   AIRA_VERTEX_FEDERATION_CLIENT_ID=aira-gateway-gcp
+   AIRA_VERTEX_FEDERATION_CLIENT_SECRET=…        # from Vault
+   ```
+   and `AIRA_VERTEX_PROJECT`, `AIRA_VERTEX_MODELS`, `AIRA_ALLOWED_REGIONS` as in B.
+7. **Check reachability** on a model in the console. A refusal names its cause:
+   `AUDIENCE_MISMATCH` (step 2), `ATTRIBUTE_CONDITION_REJECTED` (step 3's condition),
+   `ISSUER_UNREACHABLE` (upload the keys), `IAM_PERMISSION_DENIED` naming
+   `iam.serviceAccounts.getAccessToken` (step 4), `CLIENT_REJECTED` (step 1's secret).
+
+Rotation is Keycloak's: regenerate the client secret, store it, restart the gateway. Disabling the
+client, or removing the binding of step 4, ends the access within the hour a token lives.
+
+**Other sources of the identity.** Instead of the three `FEDERATION` settings, the configuration's
+own `credential_source` may name a **file** that a platform keeps a token in (a Kubernetes projected
+service-account token, plain text or a JSON field) or a **local URL** answered on a GET, with
+headers — Google's format for both. AWS and executable sources are refused at start: an executable
+would be a command a credential file runs. Leaving `service_account_impersonation_url` out uses the
+federated token directly, for an installation that grants `roles/aiplatform.user` to the federated
+principal itself.
+
+**On Google Cloud** — a VM, GKE with workload identity, Cloud Run — `AIRA_VERTEX_METADATA_SERVER=true`
+uses the machine's own service account. Nothing else.
+
+The configuration is checked at start: an audience that is not a provider's full name, a
+`token_url` or impersonation address anywhere but `https://….googleapis.com` (the token sent there
+is a credential), and a lifetime outside 600–43200 seconds each stop the start.
+
 #### Both credentials from Vault
 
 Any `AIRA_*` setting can come from Vault — the settings source is generic — and **Vault wins over
@@ -895,6 +1000,33 @@ vault kv patch secret/aira \
 Verified against a running Vault, not assumed: both arrive, and the multi-line PEM survives the
 round trip intact. The startup log names **which keys** were loaded and never their values
 (`vault_secrets_loaded … keys=[AIRA_VERTEX_API_KEY, AIRA_VERTEX_CREDENTIALS]`).
+
+#### When the model check says no
+
+The console's **Check reachability** asks each region a question that costs nothing, and when the
+answer is no it says why: the cause Google stated, as one word from Google's own list, and what to
+change. Requests that fail the same way carry the word in their error message
+(`Vertex upstream returned 403. Reason: SERVICE_DISABLED.`), so a developer can tell the fault is
+the installation's and say which; the explanation, with project numbers and permissions, is for
+whoever runs the installation — the check, `/readyz` and the gateway's log. Google's own message is
+never repeated: it can quote the address it was called at.
+
+| Word | What it means | What to do |
+|---|---|---|
+| `SERVICE_DISABLED` | the Vertex AI API is not enabled in the project | enable `aiplatform.googleapis.com` (B, step 1), wait a minute |
+| `IAM_PERMISSION_DENIED` | the account lacks a permission — or the model does not exist in that region, which Google reports the same way | grant `roles/aiplatform.user` (B, step 3); check the model's region |
+| `NOT_FOUND` | no such model at that address | the model id, its region (not every model is offered in every region), and for Claude: enabled in Model Garden |
+| `PERMISSION_DENIED`, `FAILED_PRECONDITION` | the call is refused for the project | for a partner model, accept its terms in Model Garden |
+| `CONSUMER_INVALID`, `USER_PROJECT_DENIED` | the project does not exist, or the account may not use it | `AIRA_VERTEX_PROJECT` is the project **id**; grant Service Usage Consumer |
+| `BILLING_DISABLED` | no billing on the project | link a billing account |
+| `API_KEY_INVALID`, `API_KEY_SERVICE_BLOCKED` | the API key is wrong, or restricted to other APIs | C, step 2 |
+| `RATE_LIMIT_EXCEEDED`, `RESOURCE_EXHAUSTED` | a quota or Google's capacity is spent | raise the quota, or add a region |
+| `KEY_NOT_ACCEPTED` | Google does not accept the service account's key: deleted, disabled, or another account's | a new key (B, step 4) |
+| `ACCOUNT_NOT_FOUND` | the service account is deleted or disabled | — |
+| `CLOCK_SKEW` | the token request's time window was refused | synchronise this machine's clock |
+| `AUDIENCE_MISMATCH`, `ATTRIBUTE_CONDITION_REJECTED`, `ISSUER_UNREACHABLE`, `SIGNATURE_NOT_VERIFIED`, `CLIENT_REJECTED`, `SERVICE_ACCOUNTS_DISABLED` | federation (D) refused at one of its steps | D, step 7 names the step for each |
+| `CERTIFICATE_NOT_TRUSTED` | a proxy that inspects TLS presented its own certificate | `SSL_CERT_FILE` ([a private certificate authority](#a-private-certificate-authority)) |
+| `NAME_NOT_RESOLVED`, `CONNECT_TIMEOUT`, `PROXY_REFUSED` | no way out to Google from here | DNS, the firewall, `HTTPS_PROXY` |
 
 ### Microsoft Foundry / Azure OpenAI
 

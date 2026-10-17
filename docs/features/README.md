@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**97 of 101 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**100 of 104 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -51,6 +51,8 @@ status that goes stale in the copy nobody opens.
 | [138](FRD-138-running-a-published-release.md) | Running a published release | 7 | ✅ Built |
 | [139](FRD-139-a-caller-sees-their-own-allowance.md) | A caller sees their own allowance | 1 | ✅ Built |
 | [140](FRD-140-windows-sign-on.md) | Windows sign-on, proven for the console and the gateway | 1 (platform) | ✅ Built |
+| [141](FRD-141-why-a-provider-refused.md) | Why a provider refused, said so that it can be fixed | 3 (catalog) | ✅ Built |
+| [142](FRD-142-google-without-a-google-key.md) | Reaching Google without a Google key | 8 (KIRA parity) | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |
@@ -84,6 +86,7 @@ status that goes stale in the copy nobody opens.
 | [505](FRD-505-requests-and-prompts.md) | The requests view, and reading what was actually sent | 5 (IT Security) | ✅ Done |
 | [506](FRD-506-model-reachability.md) | Is this model reachable, or only written down? | 3 (catalog) | ✅ Done |
 | [507](FRD-507-catalog-import.md) | Importing what the adapters already serve | 6 | ✅ Built |
+| [508](FRD-508-model-reference.md) | Starting a catalog entry from a public model list | 6 (catalog) | ✅ Built |
 | [601](FRD-601-spend-and-usage-reporting.md) | Spend and usage reporting | 6 | ✅ Done |
 | [602](FRD-602-report-export.md) | Exporting the usage report | 8 (KIRA parity) | ✅ Done |
 | [603](FRD-603-use-case-consumption.md) | What a use case consumed, with or without a budget | 6 (Governance & Analytics) | ✅ Done |
