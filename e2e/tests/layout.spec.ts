@@ -356,6 +356,12 @@ test.describe('Form alignment', () => {
           fields[i].top,
           `${tab}: two fields share a line — the row is back`,
         ).toBeGreaterThanOrEqual(fields[i - 1].bottom);
+        // And one stands under the next: the page holds its foot at the viewport's bottom by
+        // growing the form, and on a short tab that growth spread four fields over the screen.
+        expect(
+          fields[i].top - fields[i - 1].bottom,
+          `${tab}: the fields are spread apart instead of standing on one another`,
+        ).toBeLessThan(40);
       }
     }
   });

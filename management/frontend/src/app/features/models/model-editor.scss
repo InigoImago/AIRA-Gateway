@@ -34,6 +34,10 @@
 .editor-page > form {
   flex: 1 0 auto;
   max-width: 44rem;
+  /* The form grows to hold the foot at the viewport's bottom, and a wrapping flex row hands that
+     height to its lines by default: on a tab with four fields each stood a third of a screen from
+     the next. Packed at the top, the growth is empty space below the last field. */
+  align-content: flex-start;
 }
 .editor-page__foot {
   position: sticky;
