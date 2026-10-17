@@ -146,8 +146,10 @@ class BaseAiraSettings(BaseSettings):
     currency: str = "EUR"
     """Currency all prices and cost budgets are expressed in (FRD-403).
 
-    One per installation, because prices come from a single provider contract. Display only; no
-    conversion happens.
+    One per installation, because prices come from a single provider contract. Display only: a
+    stored price is never converted. When a price is *looked up* for the catalog, it is asked for in
+    this currency — Google's billing account answers in it (`FRD-509`), and a public list price in
+    another is converted only at a rate the installation set.
     """
 
     store_payloads: bool = True

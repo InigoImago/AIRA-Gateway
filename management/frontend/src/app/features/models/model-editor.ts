@@ -13,13 +13,16 @@ import {
   EmbeddingDeclaration,
   GatewayProvider,
   ModelCheck,
+  BillingPrices,
   ModelReference,
   OfferedModel,
+  PriceField,
   ReferenceEntry,
   ServedModel,
   ThinkingDeclaration,
   ThinkingModeName,
 } from '../../core/api/models';
+import { errorMessage } from '../../core/api/error-message';
 import { MeService, perMillion } from '../../core/api/me.service';
 import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -59,6 +62,30 @@ export function defaultAttachmentTokens(mediaType: string): number {
     DEFAULT_ATTACHMENT_TOKENS[mediaType.split('/')[0]] ??
     FALLBACK_ATTACHMENT_TOKENS
   );
+}
+
+/** Where a price in the form came from (`FRD-509`), said under its field. */
+interface PriceSource {
+  kind: 'billing' | 'converted' | 'list';
+  text: string;
+}
+
+const PRICE_FIELDS: readonly PriceField[] = ['input', 'output', 'cached_input', 'cache_write'];
+
+/** A list price at the installation's rate, to the catalog's six places. Strings both ways: a
+ *  float would store 2.7600000000000002 for $3 at 0.92. */
+export function convert(price: string, rate: string): string {
+  const scale = 1_000_000_000_000n;
+  const toScaled = (value: string) => {
+    const [whole, fraction = ''] = value.trim().split('.');
+    return BigInt(whole || '0') * scale + BigInt((fraction + '000000000000').slice(0, 12));
+  };
+  const product = (toScaled(price) * toScaled(rate)) / scale;
+  // Rounded half up to six places.
+  const micro = (product + 500_000n) / 1_000_000n;
+  const whole = micro / 1_000_000n;
+  const fraction = (micro % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : `${whole}`;
 }
 
 /** What a reference draft put into the form, and from where (`FRD-508`). */
@@ -239,6 +266,12 @@ export class ModelEditor {
    * filled field reads as a fact somebody checked, and these are a third party's claims.
    */
   protected readonly fromReference = signal<ReferenceFill | null>(null);
+  /** Where each price in the form came from; a field typed by hand has none (`FRD-509`). */
+  protected readonly priceSources = signal<Partial<Record<PriceField, PriceSource>>>({});
+  /** What the billing account said as a whole: why it was not asked, or could not answer. */
+  protected readonly billingNote = signal<string | null>(null);
+  protected readonly askingBilling = signal(false);
+  private billingRequest: Subscription | null = null;
   /** The model reference, once asked (`FRD-508`); `null` until it answers. */
   protected readonly reference = signal<ModelReference | null>(null);
   private referenceRequested = false;
@@ -513,7 +546,7 @@ export class ModelEditor {
    */
   fromReferenceEntry(
     entry: ReferenceEntry,
-    reference: Pick<ModelReference, 'source' | 'as_of' | 'currency'>,
+    reference: Pick<ModelReference, 'source' | 'as_of' | 'currency' | 'conversion'>,
     upstream: GatewayProvider | null,
   ): void {
     this.begin('');
@@ -570,7 +603,7 @@ export class ModelEditor {
 
   private applyReference(
     entry: ReferenceEntry,
-    reference: Pick<ModelReference, 'source' | 'as_of' | 'currency'>,
+    reference: Pick<ModelReference, 'source' | 'as_of' | 'currency' | 'conversion'>,
   ): void {
     this.publisher.set(entry.publisher);
     this.name.set(entry.name);
@@ -599,24 +632,112 @@ export class ModelEditor {
       prices.cached_input && `cached input ${prices.cached_input}`,
       prices.cache_write && `cache write ${prices.cache_write}`,
     ].filter((part): part is string => !!part);
+    // The list's price where the installation counts in its currency; otherwise at the
+    // installation's rate, where one is set (`FRD-509`); otherwise said, not filled.
     const sameCurrency = !!reference.currency && this.currency() === reference.currency;
-    if (sameCurrency) {
-      this.inputPrice.set(prices.input ?? '');
-      this.outputPrice.set(prices.output ?? '');
-      this.cachedPrice.set(prices.cached_input ?? '');
-      this.cacheWritePrice.set(prices.cache_write ?? '');
-      if (listed.length) filled.push('prices');
+    const conversion =
+      !sameCurrency && reference.conversion?.to === this.currency() ? reference.conversion : null;
+    if (sameCurrency || conversion) {
+      const sources: Partial<Record<PriceField, PriceSource>> = {};
+      for (const field of PRICE_FIELDS) {
+        const value = prices[field];
+        if (!value) {
+          this.priceSignal(field).set('');
+          continue;
+        }
+        this.priceSignal(field).set(conversion ? convert(value, conversion.rate) : value);
+        sources[field] = conversion
+          ? {
+              kind: 'converted',
+              text: `list price ${value} ${reference.currency} at ${conversion.rate} ${conversion.to} per ${conversion.from}`,
+            }
+          : { kind: 'list', text: `list price, ${reference.source}` };
+      }
+      this.priceSources.set(sources);
+      if (listed.length) filled.push(conversion ? 'prices (converted)' : 'prices');
     }
     this.fromReference.set({
       source: reference.source,
       asOf: reference.as_of,
       filled,
       listPrices:
-        !sameCurrency && listed.length
+        !sameCurrency && !conversion && listed.length
           ? `${listed.join(', ')} ${reference.currency} per million tokens`
           : '',
       notes: [...entry.notes, ...(entry.status ? [`listed as ${entry.status}`] : [])],
     });
+    // The bill comes before any list: ask the billing account, which overwrites what it knows.
+    this.askBilling();
+  }
+
+  /**
+   * Ask the provider's billing account what this model costs this installation (`FRD-509`), for
+   * the first region in the form. Each price it has replaces the field's value and says which SKU
+   * it is; a field it has none for keeps what is there. Asked again from the price tab, after a
+   * region is added.
+   */
+  protected askBilling(): void {
+    const provider = this.provider().trim();
+    const name = this.name().trim();
+    if (!provider || !name) return;
+    this.billingRequest?.unsubscribe();
+    this.askingBilling.set(true);
+    this.billingRequest = this.service
+      .billingPrices(provider, name, this.regions()[0] ?? '')
+      .subscribe({
+        next: (answer) => {
+          this.askingBilling.set(false);
+          this.applyBilling(answer);
+        },
+        error: (response: unknown) => {
+          this.askingBilling.set(false);
+          this.billingNote.set(errorMessage(response, 'The billing account could not be asked.'));
+        },
+      });
+  }
+
+  private applyBilling(answer: BillingPrices): void {
+    const sources = { ...this.priceSources() };
+    let found = 0;
+    for (const field of PRICE_FIELDS) {
+      const price = answer.prices[field];
+      if (!price) continue;
+      if (price.currency !== this.currency()) continue;
+      found += 1;
+      this.priceSignal(field).set(price.perMillion);
+      sources[field] = {
+        kind: 'billing',
+        text: `${price.contract ? 'contract price' : 'list price'} on billing account ${answer.billingAccount} — ${price.skuName} (${price.region})`,
+      };
+    }
+    this.priceSources.set(sources);
+    const missing = PRICE_FIELDS.filter((field) => !answer.prices[field]).map((field) =>
+      field.replace('_', ' '),
+    );
+    this.billingNote.set(
+      found
+        ? missing.length
+          ? `The billing account has no price for: ${missing.join(', ')}.`
+          : null
+        : `The billing account bills no SKU named ${answer.model}; the prices are as filled before.`,
+    );
+  }
+
+  /** A price typed by hand is the administrator's, and says nothing about where it came from. */
+  protected typePrice(field: PriceField, value: string): void {
+    this.priceSignal(field).set(value);
+    const sources = { ...this.priceSources() };
+    delete sources[field];
+    this.priceSources.set(sources);
+  }
+
+  private priceSignal(field: PriceField) {
+    return {
+      input: this.inputPrice,
+      output: this.outputPrice,
+      cached_input: this.cachedPrice,
+      cache_write: this.cacheWritePrice,
+    }[field];
   }
 
   /**
@@ -1154,6 +1275,11 @@ export class ModelEditor {
     this.imported.set(false);
     this.vendorSaid.set([]);
     this.fromReference.set(null);
+    this.billingRequest?.unsubscribe();
+    this.billingRequest = null;
+    this.askingBilling.set(false);
+    this.priceSources.set({});
+    this.billingNote.set(null);
   }
 
   private clearDeclarations(): void {

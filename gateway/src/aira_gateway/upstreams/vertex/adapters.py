@@ -105,6 +105,9 @@ class _VertexAdapter:
     serves_provider = "vertex"
     serves_publisher: str
     _methods: tuple[str, ...]
+    #: The billing account's prices for a model (`FRD-509`), where one is configured. Set by
+    #: `build_vertex_upstreams`; one lookup shared by every dialect on the platform.
+    billing: Any = None
 
     def __init__(self, transport: VertexTransport, models: list[VertexModel]) -> None:
         self._transport = transport

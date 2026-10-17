@@ -166,6 +166,12 @@ def _google_explanation(reason: str, meta: dict[str, str]) -> str | None:
             )
             if permission and permission.startswith("iam.serviceAccounts.")
             else (
+                f"The gateway's Google identity may not read the billing account ({permission}). "
+                "Grant it Billing Account Viewer (roles/billing.viewer) on that billing account — "
+                "a billing account's own IAM, not the project's."
+            )
+            if permission and permission.startswith("billing.")
+            else (
                 (f"The credential lacks the permission {permission}. " if permission else "")
                 + "Grant the service account the role Vertex AI User (roles/aiplatform.user) on "
                 "the project. A model may also be missing in this region, which Google reports "

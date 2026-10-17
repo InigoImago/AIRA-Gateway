@@ -128,6 +128,12 @@ class VertexTransport:
         async with opened_stream(self._client, url, NAME, json=body, headers=headers) as response:
             yield response
 
+    @property
+    def tokens(self) -> TokenSource | None:
+        """The Google identity's token source, or ``None`` on an API key — shared with the billing
+        lookup (`FRD-509`), which only an OAuth identity may make."""
+        return self._tokens
+
     async def aclose(self) -> None:
         """Close the connection pool. Called once, from the application lifespan."""
         await self._client.aclose()

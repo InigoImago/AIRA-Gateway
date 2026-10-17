@@ -366,7 +366,7 @@ test.describe('Form alignment', () => {
     }
   });
 
-  test('a message in the editor\'s action row never squeezes the buttons', async ({ page }) => {
+  test("a message in the editor's action row never squeezes the buttons", async ({ page }) => {
     /**
      * Reported the moment the model editor's window was narrowed to a form's width: *"when an
      * error is thrown in the interface, the button layout at the bottom breaks when you touch the

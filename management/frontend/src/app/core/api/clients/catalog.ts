@@ -1,6 +1,7 @@
 import { Observable, map } from 'rxjs';
 import { API, GW } from '../prefixes';
 import {
+  BillingPrices,
   CatalogModel,
   GatewayConfiguration,
   KiraModel,
@@ -108,6 +109,13 @@ export function withCatalog<T extends ApiClientClass>(Base: T) {
 
     /** What one provider offers this credential. Asked only when a provider is chosen: one key can
      *  list fifty models, and a round trip per upstream on load fills a dropdown nobody opened. */
+    /** What a model costs this installation, from the provider's billing account (`FRD-509`). */
+    billingPrices(provider: string, model: string, region = ''): Observable<BillingPrices> {
+      return this.http.get<BillingPrices>(`${GW}/v1beta/providers/${seg(provider)}/prices`, {
+        params: { model, region },
+      });
+    }
+
     providerOfferings(provider: string): Observable<OfferedModel[]> {
       return this.http
         .get<{ models: OfferedModel[] }>(`${GW}/v1beta/providers/${seg(provider)}/offerings`)

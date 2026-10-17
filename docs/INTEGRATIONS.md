@@ -1015,6 +1015,43 @@ Verified against a running Vault, not assumed: both arrive, and the multi-line P
 round trip intact. The startup log names **which keys** were loaded and never their values
 (`vault_secrets_loaded … keys=[AIRA_VERTEX_API_KEY, AIRA_VERTEX_CREDENTIALS]`).
 
+#### E — prices from your billing account
+
+What a model costs **you** is on your billing account, not on Google's price list: contract
+discounts, committed use and the surcharge for Claude on a regional endpoint all make the two
+differ. When a model is catalogued, the console can fill its prices from the account — each one
+naming the SKU, the line of the bill, it was read from.
+
+1. **Find the billing account id**: Google Cloud console → *Billing* → the account that pays for the
+   project → *Account ID*, `012345-567890-ABCDEF`.
+2. **Let the gateway's Google identity read its prices**: on the **billing account** (its own IAM,
+   not the project's) grant the service account *Billing Account Viewer*,
+   `roles/billing.viewer` — it shows prices and costs, and changes nothing. Somebody with *Billing
+   Account Administrator* does this. The identity is the one from B or D; an API key cannot read a
+   billing account.
+   ```
+   gcloud billing accounts add-iam-policy-binding 012345-567890-ABCDEF \
+     --member "serviceAccount:aira-gateway@PROJECT.iam.gserviceaccount.com" \
+     --role roles/billing.viewer
+   ```
+3. **Enable the Cloud Billing API** in the project: `gcloud services enable
+   cloudbilling.googleapis.com --project PROJECT`.
+4. `AIRA_VERTEX_BILLING_ACCOUNT=012345-567890-ABCDEF`, restart the gateway.
+
+In the model editor's *What it costs* tab, **Prices from the billing account** asks for the model
+and the form's first region; filling a model from the model reference asks by itself. Prices come
+in `AIRA_CURRENCY` — Google converts — and a contract price is used where your contract has one.
+A field the account has no SKU for keeps what was there, and the editor says which.
+
+**Where the account has no price**, the model reference's US-dollar list price is the fallback. It
+is filled only at a rate you set, `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` (euros per dollar, e.g.
+`0.92`, on Management), and says so under the field; without a rate it is shown and not filled.
+
+The match from a SKU's name to a model is by name, word for word (*Gemini 2.5 Flash Input Text* is
+`gemini-2.5-flash`'s input, *Gemini 2.5 Flash Lite …* is not). Check the SKU named under each price
+before saving: a name Google spells differently from the model id is not matched, and is reported
+as unpriced rather than guessed.
+
 #### When the model check says no
 
 The console's **Check reachability** asks each region a question that costs nothing, and when the

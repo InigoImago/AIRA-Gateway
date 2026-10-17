@@ -28,6 +28,7 @@ from aira_gateway.upstreams.vertex.adapters import (
     VertexOpenModelAdapter,
 )
 from aira_gateway.upstreams.vertex.auth import CredentialsInvalid
+from aira_gateway.upstreams.vertex.billing import BillingPrices
 from aira_gateway.upstreams.vertex.credentials import build_identity, has_identity
 from aira_gateway.upstreams.vertex.regions import VertexModel
 from aira_gateway.upstreams.vertex.transport import VertexTransport
@@ -88,6 +89,19 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     def published_by(publisher: str) -> list[VertexModel]:
         return [model for model in models if model.publisher == publisher]
 
+    # The billing account's prices (`FRD-509`), asked with the same identity. Not with an API key:
+    # a billing account answers only an OAuth identity.
+    billing = (
+        BillingPrices(
+            account=settings.vertex_billing_account,
+            tokens=transport.tokens,
+            client=client,
+            currency=settings.currency,
+        )
+        if settings.vertex_billing_account and transport.tokens is not None
+        else None
+    )
+
     upstreams: list[Upstream] = [
         VertexGeminiAdapter(transport, published_by("google")),
         VertexAnthropicAdapter(
@@ -102,4 +116,6 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
         )
         for publisher, switch in OPEN_MODEL_PUBLISHERS.items()
     )
+    for upstream in upstreams:
+        upstream.billing = billing  # type: ignore[attr-defined]  # every one is a _VertexAdapter
     return upstreams

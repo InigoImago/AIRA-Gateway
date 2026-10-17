@@ -276,6 +276,10 @@ class GatewaySettings(BaseAiraSettings):
     #: On Google Cloud: the machine's own service account, from the metadata server. No key and no
     #: configuration. Exclusive with the credentials above.
     vertex_metadata_server: bool = False
+    #: The Google billing account whose prices the console offers when a model is catalogued
+    #: (`FRD-509`), e.g. `012345-567890-ABCDEF`. An identifier, not a secret; the identity above
+    #: needs Billing Account Viewer on it. Empty: no billing prices are looked up.
+    vertex_billing_account: str = ""
     #: An Agent Platform API key, sent as `x-goog-api-key` instead of a bearer token (`FRD-115`
     #: FR-3a). Same locational hosts, so residency is unaffected. The service account wins if both.
     vertex_api_key: str = ""

@@ -330,7 +330,35 @@ export interface ModelReference {
   source: string;
   as_of: string;
   currency: string;
+  /** The installation's rate for the list's prices (`FRD-509`), or `null` where none is set or
+   *  the installation counts in the list's own currency. */
+  conversion?: { from: string; to: string; rate: string } | null;
   /** Why a configured live list was not used; `null` when it was, or when none is configured. */
   live_error: string | null;
   entries: ReferenceEntry[];
+}
+
+/** The four price fields of a catalog entry, as both the reference and the billing lookup name them. */
+export type PriceField = 'input' | 'output' | 'cached_input' | 'cache_write';
+
+/** One price from the billing account, and the line of the bill it is (`FRD-509`). */
+export interface BillingPrice {
+  perMillion: string;
+  currency: string;
+  skuId: string;
+  skuName: string;
+  region: string;
+  /** A contract price applied, rather than the list price. */
+  contract: boolean;
+}
+
+/** What a model costs this installation, as the gateway read it from the billing account. */
+export interface BillingPrices {
+  model: string;
+  region: string;
+  billingAccount: string;
+  currency: string;
+  prices: Partial<Record<PriceField, BillingPrice>>;
+  /** Why a field has no price: no SKU names it, or its SKU is not priced per token. */
+  unpriced: Partial<Record<PriceField, string>>;
 }

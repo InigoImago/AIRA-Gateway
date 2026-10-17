@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**100 of 104 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**101 of 105 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -87,6 +87,7 @@ status that goes stale in the copy nobody opens.
 | [506](FRD-506-model-reachability.md) | Is this model reachable, or only written down? | 3 (catalog) | ✅ Done |
 | [507](FRD-507-catalog-import.md) | Importing what the adapters already serve | 6 | ✅ Built |
 | [508](FRD-508-model-reference.md) | Starting a catalog entry from a public model list | 6 (catalog) | ✅ Built |
+| [509](FRD-509-what-a-model-costs-this-installation.md) | What a model costs this installation | 6 (catalog) | ✅ Built |
 | [601](FRD-601-spend-and-usage-reporting.md) | Spend and usage reporting | 6 | ✅ Done |
 | [602](FRD-602-report-export.md) | Exporting the usage report | 8 (KIRA parity) | ✅ Done |
 | [603](FRD-603-use-case-consumption.md) | What a use case consumed, with or without a budget | 6 (Governance & Analytics) | ✅ Done |

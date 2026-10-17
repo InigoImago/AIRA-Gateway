@@ -34,6 +34,13 @@ from aira_gateway.upstreams.base import (
 
 router = APIRouter(tags=["providers"])
 
+#: Why a provider has no billing prices to offer — two causes, fixed in two places.
+NO_BILLING = (
+    "'{name}' has no billing account to ask: set AIRA_VERTEX_BILLING_ACCOUNT, and reach the "
+    "platform with a Google identity (a service account, federation or the metadata server) "
+    "rather than an API key, which cannot read a billing account."
+)
+
 
 def _require_catalog_role(principal: Principal) -> None:
     """Only whoever may declare a model may ask a vendor what it offers."""
@@ -203,3 +210,37 @@ async def list_offerings(
         ) from exc
 
     return JSONResponse({"provider": name, "models": [_offered_payload(m) for m in offered]})
+
+
+@router.get("/v1beta/providers/{name}/prices")
+async def provider_prices(
+    request: Request,
+    name: str,
+    model: str,
+    region: str = "",
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    """What ``model`` costs this installation, from the provider's billing account (`FRD-509`).
+
+    Each price names the SKU — the line of the bill — it was read from, so whoever saves it can see
+    what was matched; a field with no SKU says why. Read-only, and for whoever writes the catalogue.
+    """
+    _require_catalog_role(principal)
+    upstreams = _grouped(providers_of(request)).get(name)
+    if not upstreams:
+        raise GeminiHTTPError(404, f"No provider named '{name}' is configured.", "NOT_FOUND")
+    billing = next(
+        (found for found in (getattr(u, "billing", None) for u in upstreams) if found), None
+    )
+    if billing is None:
+        raise GeminiHTTPError(501, NO_BILLING.format(name=name), "UNIMPLEMENTED")
+    try:
+        answer = await billing.prices(model, region)
+    except UpstreamError as exc:
+        found = exc.diagnosis
+        # For the operator who catalogues: the explanation names the account and the role to grant.
+        said = f" {found.reason}: {found.explanation}" if found else ""
+        raise GeminiHTTPError(
+            502, f"The billing account could not be read.{said}", "UNAVAILABLE"
+        ) from exc
+    return JSONResponse(answer)

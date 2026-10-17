@@ -375,3 +375,46 @@ def test_without_a_client_one_is_made_and_closed(monkeypatch: pytest.MonkeyPatch
 
     assert [entry["name"] for entry in found.entries] == ["m"]
     assert made[0].is_closed
+
+
+# ---- FRD-509: the list price in the installation's currency, where a rate is set ----------------
+
+
+@pytest.mark.django_db
+def test_a_set_rate_is_offered_for_converting_the_list_prices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AIRA_MODEL_REFERENCE_EXCHANGE_RATE", "0.92")
+    monkeypatch.setenv("AIRA_CURRENCY", "EUR")
+    get_settings.cache_clear()
+
+    body = _client(_user("admin", "global-admin")).get(URL).json()
+
+    assert body["conversion"] == {"from": "USD", "to": "EUR", "rate": "0.92"}
+
+
+@pytest.mark.django_db
+def test_without_a_rate_or_in_the_lists_own_currency_nothing_is_converted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin = _client(_user("admin", "global-admin"))
+    monkeypatch.setenv("AIRA_CURRENCY", "EUR")
+    get_settings.cache_clear()
+    assert admin.get(URL).json()["conversion"] is None
+
+    monkeypatch.setenv("AIRA_MODEL_REFERENCE_EXCHANGE_RATE", "0.92")
+    monkeypatch.setenv("AIRA_CURRENCY", "USD")
+    get_settings.cache_clear()
+    assert admin.get(URL).json()["conversion"] is None
+
+
+@pytest.mark.parametrize("rate", ["lots", "0", "-1", "NaN", "Infinity"])
+def test_a_rate_that_is_not_a_positive_number_stops_the_start(
+    monkeypatch: pytest.MonkeyPatch, rate: str
+) -> None:
+    from aira_management.config.app_settings import ManagementSettings
+
+    monkeypatch.setenv("AIRA_MODEL_REFERENCE_EXCHANGE_RATE", rate)
+
+    with pytest.raises(ValueError, match="AIRA_MODEL_REFERENCE_EXCHANGE_RATE"):
+        ManagementSettings()

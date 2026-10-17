@@ -10,7 +10,7 @@ export const REFERENCE_PLATFORMS: ReadonlySet<string> = new Set(['vertex', 'gene
 /** What one row of the reference offers to the page: the draft, and where it came from. */
 export interface ReferencePick {
   entry: ReferenceEntry;
-  reference: Pick<ModelReference, 'source' | 'as_of' | 'currency'>;
+  reference: Pick<ModelReference, 'source' | 'as_of' | 'currency' | 'conversion'>;
 }
 
 /**
@@ -85,7 +85,12 @@ export class ReferenceModels {
     if (!reference) return;
     this.pick.emit({
       entry,
-      reference: { source: reference.source, as_of: reference.as_of, currency: reference.currency },
+      reference: {
+        source: reference.source,
+        as_of: reference.as_of,
+        currency: reference.currency,
+        conversion: reference.conversion ?? null,
+      },
     });
   }
 

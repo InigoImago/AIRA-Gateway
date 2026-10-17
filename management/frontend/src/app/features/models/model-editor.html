@@ -807,17 +807,46 @@
         }
       }
       @if (editorTab() === 'price') {
+        <!-- What this installation pays comes from its billing account (`FRD-509`); the list
+             price, converted or not, is what is left where the account has none. -->
+        <div class="field" data-testid="billing-prices">
+          <span class="field__hint">
+            Prices from the provider's billing account are what this installation pays, contract
+            discounts included; a list price is only what the provider publishes.
+            <button
+              type="button"
+              class="btn btn--sm"
+              (click)="askBilling()"
+              [disabled]="askingBilling() || !name().trim() || !provider().trim()"
+              data-testid="ask-billing"
+            >
+              {{
+                askingBilling() ? 'Asking the billing account…' : 'Prices from the billing account'
+              }}
+            </button>
+          </span>
+          @if (billingNote(); as note) {
+            <span class="field__hint" data-testid="billing-note">{{ note }}</span>
+          }
+        </div>
         <div class="field">
           <label for="model-input">Input price {{ perMillion() }}</label>
           <input
             id="model-input"
             name="input_price"
+            data-testid="model-input-price"
             inputmode="decimal"
             [ngModel]="inputPrice()"
-            (ngModelChange)="inputPrice.set($event)"
+            (ngModelChange)="typePrice('input', $event)"
             placeholder="0.075"
             autocomplete="off"
           />
+          @if (priceSources()['input']; as source) {
+            <span class="field__hint" [attr.data-testid]="'price-source-input'">
+              From the {{ source.kind === 'billing' ? 'billing account' : 'model reference' }}:
+              {{ source.text }}
+            </span>
+          }
         </div>
         <div class="field">
           <label for="model-output">Output price {{ perMillion() }}</label>
@@ -826,10 +855,16 @@
             name="output_price"
             inputmode="decimal"
             [ngModel]="outputPrice()"
-            (ngModelChange)="outputPrice.set($event)"
+            (ngModelChange)="typePrice('output', $event)"
             placeholder="0.30"
             autocomplete="off"
           />
+          @if (priceSources()['output']; as source) {
+            <span class="field__hint" [attr.data-testid]="'price-source-output'">
+              From the {{ source.kind === 'billing' ? 'billing account' : 'model reference' }}:
+              {{ source.text }}
+            </span>
+          }
         </div>
         <div class="field">
           <label for="model-cached">
@@ -848,10 +883,16 @@
             name="cached_price"
             inputmode="decimal"
             [ngModel]="cachedPrice()"
-            (ngModelChange)="cachedPrice.set($event)"
+            (ngModelChange)="typePrice('cached_input', $event)"
             placeholder="0.0075"
             autocomplete="off"
           />
+          @if (priceSources()['cached_input']; as source) {
+            <span class="field__hint" [attr.data-testid]="'price-source-cached_input'">
+              From the {{ source.kind === 'billing' ? 'billing account' : 'model reference' }}:
+              {{ source.text }}
+            </span>
+          }
         </div>
         <div class="field">
           <label for="model-cache-write">
@@ -870,10 +911,16 @@
             name="cache_write_price"
             inputmode="decimal"
             [ngModel]="cacheWritePrice()"
-            (ngModelChange)="cacheWritePrice.set($event)"
+            (ngModelChange)="typePrice('cache_write', $event)"
             placeholder="0.09375"
             autocomplete="off"
           />
+          @if (priceSources()['cache_write']; as source) {
+            <span class="field__hint" [attr.data-testid]="'price-source-cache_write'">
+              From the {{ source.kind === 'billing' ? 'billing account' : 'model reference' }}:
+              {{ source.text }}
+            </span>
+          }
         </div>
       }
     </form>

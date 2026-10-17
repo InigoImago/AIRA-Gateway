@@ -193,6 +193,9 @@ directory:
 # to it, at most daily.
 model:
   reference_url: ''
+  # Units of `currency` per US dollar, for the reference's list prices where the billing
+  # account has none. Empty: dollar prices are shown, not filled.
+  reference_exchange_rate: ''
 
 # ---------------------------------------------------------------------------------------------
 # The console, a static bundle behind nginx, configured when its **container starts**
@@ -284,6 +287,8 @@ vertex:
   federation_token_url: ''
   federation_client_id: ''
   metadata_server: false
+  # The Google billing account whose prices the console fills (needs Billing Account Viewer).
+  billing_account: ''
   # credentials / api_key: → Vault.
 
 # Google AI Studio (the public Gemini API). Its region is `global`, which `allowed.regions` would

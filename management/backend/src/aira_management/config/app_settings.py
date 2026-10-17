@@ -8,6 +8,8 @@ Vault in real deployments (see PRD §9).
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 from pydantic import ValidationInfo, field_validator
 
 from aira_common.config import BaseAiraSettings
@@ -139,6 +141,27 @@ class ManagementSettings(BaseAiraSettings):
     #: mirror of it. Empty — the default — answers from the copy this release ships, so an
     #: installation reaches no new address because it was upgraded.
     model_reference_url: str = ""
+    #: How many units of the installation's currency one US dollar is, for the model reference's
+    #: list prices (`FRD-509`): `0.92` fills a $3.00 price as 2.76. The fallback where the billing
+    #: account has no price for a model. Empty — the default — converts nothing, and a dollar price
+    #: is shown beside the field rather than filled into it.
+    model_reference_exchange_rate: str = ""
+
+    @field_validator("model_reference_exchange_rate")
+    @classmethod
+    def _a_rate_is_a_positive_number(cls, value: str) -> str:
+        if not value:
+            return value
+        try:
+            rate = Decimal(value.strip())
+        except InvalidOperation:
+            raise ValueError(
+                f"AIRA_MODEL_REFERENCE_EXCHANGE_RATE: '{value}' is not a number. It is how many "
+                "units of AIRA_CURRENCY one US dollar is, e.g. 0.92."
+            ) from None
+        if not rate.is_finite() or rate <= 0:
+            raise ValueError("AIRA_MODEL_REFERENCE_EXCHANGE_RATE must be a positive number.")
+        return value.strip()
 
     #: Which Keycloak group confers which AIRA role (`ADR-0017`), as
     #: ``role=/path[,/path];role=/path``. Group membership is the **only** source of a role — a

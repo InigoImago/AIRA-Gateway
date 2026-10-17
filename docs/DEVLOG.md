@@ -5,6 +5,30 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## What a model costs this installation, from its billing account (2026-10-17)
+
+The reference filled every field but the prices in a euro installation, deliberately: a dollar list
+price in a euro field is a budget wrong by the exchange rate. The owner asked whether prices could be
+pulled too and chose the billing account first, a converted list price second (`FRD-509`).
+
+**Built.** `AIRA_VERTEX_BILLING_ACCOUNT` and the Google identity the gateway already has — not an API
+key — let `GET /v1beta/providers/{name}/prices` read Google's Cloud Billing **Pricing API** (v1beta):
+the account's services, their SKUs, one SKU's price in `AIRA_CURRENCY`, its contract price where
+the contract has one. A SKU is named in prose, so it is matched to a model by its name up to the
+first word saying what is billed, word for word — *Gemini 2.5 Flash Lite* is not
+`gemini-2.5-flash` — and by its billed words to the field; batch, long context, media, storage and
+grounding SKUs are left out. Every price names its SKU, so a match is checked before it is saved.
+`AIRA_MODEL_REFERENCE_EXCHANGE_RATE` is the fallback for fields the account has none for, converted
+in decimal arithmetic. The editor names the source under every price and drops it when the price is
+typed over. A missing Billing Account Viewer role is explained as one.
+
+**Not measured against Google.** The schema follows the published v1beta reference field by field
+(`billingAccountSkus`, `geoTaxonomy`, `rate.tiers[].contractPrice`, `unitInfo.unitQuantity`); the SKU
+*names* could not be checked without an account, and the matching is the part the first real
+billing account will test. 1947 properties; `BP-1`–`BP-13`, `RF-26`, `RF-27`, `PR-1`–`PR-8`.
+
+---
+
 ## The owner's first look at it: a page, not a window; tokens nobody can know (2026-10-17)
 
 Four answers to the owner trying it. **Keycloak and Google Workspace are separate identity worlds**

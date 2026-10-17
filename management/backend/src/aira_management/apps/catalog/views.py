@@ -189,12 +189,21 @@ class ModelReferenceView(APIView):
         return [IsAuthenticated(), requires(Permission.CATALOG_WRITE)()]
 
     def get(self, request: Request) -> Response:
-        found = reference.current(get_settings().model_reference_url)
+        settings = get_settings()
+        found = reference.current(settings.model_reference_url)
+        # A rate converts only into another currency than the list's, and only where one is set.
+        conversion = (
+            {"from": found.currency, "to": settings.currency, "rate": rate}
+            if (rate := settings.model_reference_exchange_rate)
+            and settings.currency != found.currency
+            else None
+        )
         return Response(
             {
                 "source": found.source,
                 "as_of": found.as_of,
                 "currency": found.currency,
+                "conversion": conversion,
                 "live_error": found.live_error or None,
                 "entries": found.entries,
             }

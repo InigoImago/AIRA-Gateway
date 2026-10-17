@@ -12,6 +12,7 @@ import {
   Me,
   ModelCheck,
   ThinkingLevelCheck,
+  BillingPrices,
   ModelReference,
   OfferedModel,
   ReferenceEntry,
@@ -20,7 +21,7 @@ import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { ModelCatalog } from './model-catalog';
-import { ModelEditor } from './model-editor';
+import { ModelEditor, convert } from './model-editor';
 import { ServedModels } from './served-models';
 
 const FLASH: CatalogModel = {
@@ -217,6 +218,7 @@ interface Editor {
   inputPrice: { set: (v: string) => void; (): string };
   outputPrice: { set: (v: string) => void; (): string };
   cacheWritePrice: { set: (v: string) => void; (): string };
+  cachedPrice: { set: (v: string) => void; (): string };
   formError: () => string | null;
   canSave: () => boolean;
   save: () => void;
@@ -282,6 +284,8 @@ function setup(
     currency?: string;
     /** What Management's model reference answers (`FRD-508`). */
     reference?: Observable<ModelReference>;
+    /** What the gateway's billing lookup answers (`FRD-509`). */
+    billing?: Observable<BillingPrices>;
   } = {},
 ) {
   const checked: string[] = [];
@@ -292,6 +296,7 @@ function setup(
     modes: string[];
   }[] = [];
   const checkedWhere: Provenance[] = [];
+  const billingAsked: { provider: string; model: string; region: string }[] = [];
   const asked: string[] = [];
   TestBed.resetTestingModule();
   const saved: CatalogModel[] = [];
@@ -371,6 +376,16 @@ function setup(
             return options.offerings ?? of([OFFERED_FLASH, OFFERED_EMBED]);
           },
           modelReference: () => options.reference ?? of(REFERENCE),
+          billingPrices: (provider: string, model: string, region = '') => {
+            billingAsked.push({ provider, model, region });
+            return (
+              options.billing ??
+              throwError(() => ({
+                status: 501,
+                error: { error: { message: "'vertex' has no billing account to ask." } },
+              }))
+            );
+          },
           servedModels: () =>
             options.served ??
             of([
@@ -415,6 +430,7 @@ function setup(
     checked,
     askedLevels,
     checkedWhere,
+    billingAsked,
     html: () => fixture.nativeElement as HTMLElement,
     /** Run the reachability check for whatever name is in the editor. Creating a model requires
      *  having *looked* (`FRD-506`), so every case that creates one does this. */
@@ -3708,5 +3724,129 @@ describe('ModelEditor — filling a model named by hand (FRD-508)', () => {
 
     expect(harness.testid('fill-from-reference')).toBeNull();
     expect(harness.editor.name()).toBe('claude-sonnet-9');
+  });
+});
+
+describe('ModelEditor — what a model costs this installation (FRD-509)', () => {
+  const BILLED: BillingPrices = {
+    model: 'claude-sonnet-9',
+    region: 'europe-west1',
+    billingAccount: '012345-567890-ABCDEF',
+    currency: 'EUR',
+    prices: {
+      input: {
+        perMillion: '2.9',
+        currency: 'EUR',
+        skuId: 'C-IN',
+        skuName: 'Claude Sonnet 9 Input Tokens',
+        region: 'europe-west1',
+        contract: true,
+      },
+      output: {
+        perMillion: '14.5',
+        currency: 'EUR',
+        skuId: 'C-OUT',
+        skuName: 'Claude Sonnet 9 Output Tokens',
+        region: 'europe-west1',
+        contract: false,
+      },
+    },
+    unpriced: { cached_input: 'no SKU', cache_write: 'no SKU' },
+  };
+  const AT_RATE: ModelReference = {
+    ...REFERENCE,
+    conversion: { from: 'USD', to: 'EUR', rate: '0.92' },
+  };
+
+  function picked(options: Parameters<typeof setup>[0]) {
+    const harness = setup(options);
+    harness.component.openBrowse();
+    harness.fixture.detectChanges();
+    harness.component.chooseBrowseProvider('vertex');
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="reference-pick-claude-sonnet-9"]');
+    harness.editor.editorTab.set('price');
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  it("converts the list price at the installation's rate, and says so under each field", () => {
+    const harness = picked({ currency: 'EUR', reference: of(AT_RATE) });
+
+    expect(harness.editor.inputPrice()).toBe('2.76');
+    expect(harness.editor.outputPrice()).toBe('13.8');
+    expect(harness.editor.cacheWritePrice()).toBe('3.45');
+    expect(harness.testid('price-source-input')?.textContent).toContain(
+      'list price 3 USD at 0.92 EUR per USD',
+    );
+  });
+
+  it("takes the billing account's price over any list, naming the SKU", () => {
+    const harness = picked({ currency: 'EUR', reference: of(AT_RATE), billing: of(BILLED) });
+
+    expect(harness.editor.inputPrice()).toBe('2.9');
+    expect(harness.editor.outputPrice()).toBe('14.5');
+    expect(harness.testid('price-source-input')?.textContent).toContain(
+      'contract price on billing account 012345-567890-ABCDEF — Claude Sonnet 9 Input Tokens',
+    );
+    expect(harness.testid('price-source-output')?.textContent).toContain('list price on billing');
+    // A field the account bills nothing for keeps the converted list price, and is named.
+    expect(harness.editor.cachedPrice()).toBe('0.276');
+    expect(harness.testid('price-source-cached_input')?.textContent).toContain('0.92 EUR per USD');
+    expect(harness.testid('billing-note')?.textContent).toContain('cached input, cache write');
+  });
+
+  it('asks the billing account for the model and its first region', () => {
+    const harness = picked({ currency: 'EUR', billing: of(BILLED) });
+    expect(harness.billingAsked.at(-1)).toEqual({
+      provider: 'vertex',
+      model: 'claude-sonnet-9',
+      region: '',
+    });
+
+    harness.editor.regions.set(['europe-west4']);
+    harness.click('[data-testid="ask-billing"]');
+
+    expect(harness.billingAsked.at(-1)?.region).toBe('europe-west4');
+  });
+
+  it("never fills a billing price in another currency than the installation's", () => {
+    const inDollars = {
+      ...BILLED,
+      prices: { input: { ...BILLED.prices.input!, currency: 'USD' } },
+    };
+    const harness = picked({ currency: 'EUR', billing: of(inDollars) });
+
+    expect(harness.editor.inputPrice()).toBe('');
+  });
+
+  it('says why the billing account was not asked, and fills what it can without it', () => {
+    const harness = picked({ currency: 'EUR', reference: of(AT_RATE) });
+
+    expect(harness.testid('billing-note')?.textContent).toContain('no billing account to ask');
+    expect(harness.editor.inputPrice()).toBe('2.76');
+  });
+
+  it('forgets where a price came from once it is typed over', async () => {
+    const harness = picked({ currency: 'EUR', reference: of(AT_RATE) });
+    await harness.fixture.whenStable();
+
+    harness.type('model-input-price', '1.5');
+
+    expect(harness.editor.inputPrice()).toBe('1.5');
+    expect(harness.testid('price-source-input')).toBeNull();
+  });
+
+  it("converts only into the installation's own currency", () => {
+    const harness = picked({ currency: 'CHF', reference: of(AT_RATE) });
+
+    expect(harness.editor.inputPrice()).toBe('');
+  });
+
+  it('converts in decimals, not in floats', () => {
+    expect(convert('3', '0.92')).toBe('2.76');
+    expect(convert('0.0375', '0.92')).toBe('0.0345');
+    expect(convert('15', '1')).toBe('15');
+    expect(convert('0.0000005', '1')).toBe('0.000001');
   });
 });
