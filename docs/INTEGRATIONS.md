@@ -921,6 +921,9 @@ it is refused with `Org Policy violated` (`ORG_POLICY_VIOLATED` in the model che
 2. *Client scopes → aira-gateway-gcp-dedicated → Add mapper → By configuration → Audience*:
    **Included Custom Audience** `aira-gcp`, **Add to access token** on. Google checks the token's
    `aud` against the provider's allowed audiences, and Keycloak's default `aud` is not one of them.
+   Keycloak keeps `account` beside it (`aud: ["aira-gcp", "account"]`), from the client's default
+   `roles` scope. Should the exchange answer `AUDIENCE_MISMATCH` with the mapper in place, remove
+   `roles` from the client's *Client scopes*, so `aira-gcp` is the only audience.
 
 **At Google** (replace `PROJECT` and `PROJECT_NUMBER`):
 
@@ -934,7 +937,8 @@ it is refused with `Org Policy violated` (`ORG_POLICY_VIOLATED` in the model che
      --attribute-mapping "google.subject=assertion.azp" \
      --attribute-condition "assertion.azp == 'aira-gateway-gcp'"
    ```
-   The issuer is the realm's URL exactly as it stands in the token's `iss`. **If Google cannot reach
+   The issuer is the realm's URL exactly as it stands in the token's `iss` — the address Keycloak
+   is reached at, `https://sso.example.com/realms/aira`, not an internal container name. **If Google cannot reach
    your Keycloak** — it lives on the internal network — upload the realm's keys instead, without
    the certificate fields Google refuses, by adding `--jwk-json-path realm-jwks.json` after:
    ```

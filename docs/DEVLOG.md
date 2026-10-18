@@ -5,6 +5,22 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The Keycloak half of federation, run against a real Keycloak (2026-10-18)
+
+Asked whether federation had been verified: only against played answers. The Keycloak half was then
+run against the showcase's own Keycloak with a temporary client (deleted afterwards): the gateway's
+client-credentials code obtained an RS256 access token, `iss` the realm, `azp` the client, `aud`
+`["aira-gcp", "account"]` with the audience mapper, five minutes' lifetime; that token was what the
+exchange sent as `subject_token`; a wrong secret and a client with service accounts switched off
+produced Keycloak's real descriptions, and both matched `CLIENT_REJECTED` and
+`SERVICE_ACCOUNTS_DISABLED`. The realm's JWKS carries `x5c`, `x5t` and `x5t#S256` on its signing key,
+so the runbook's `jq` that strips them is needed. Not checkable without a GCP project: whether
+Google accepts an `aud` array whose second value it does not allow; the runbook says how to make
+`aira-gcp` the only one. The Google half — STS, impersonation, Vertex with the resulting token — and
+a service-account key against Google's token endpoint have still only met played answers.
+
+---
+
 ## What a model costs this installation, from its billing account (2026-10-17)
 
 The reference filled every field but the prices in a euro installation, deliberately: a dollar list
