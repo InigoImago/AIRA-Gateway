@@ -20,17 +20,45 @@ import httpx
 from aira_common.tokens import TokenSource
 from aira_gateway.config import GatewaySettings
 from aira_gateway.upstreams.vertex.auth import (
+    UNREADABLE_FILE_HINT,
     CredentialsInvalid,
     GoogleServiceAccountAcquirer,
     KeyFile,
     ServiceAccount,
 )
 from aira_gateway.upstreams.vertex.federation import (
+    METADATA_PROBE_URL,
     ClientCredentialsSubjectToken,
     ExternalAccount,
     FederatedAcquirer,
     MetadataServerAcquirer,
 )
+
+#: How long the start waits to learn whether it runs on Google Cloud.
+METADATA_PROBE_SECONDS = 1.0
+
+
+def on_google_cloud(timeout: float = METADATA_PROBE_SECONDS) -> bool:
+    """Whether this process runs on Google Cloud: the metadata server answers, as Google's.
+
+    Asked directly, never through a proxy — the address only exists on the host — and briefly,
+    because off Google Cloud the name does not resolve and the answer is no.
+    """
+    try:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            response = client.get(METADATA_PROBE_URL, headers={"Metadata-Flavor": "Google"})
+    except httpx.HTTPError:
+        return False
+    return response.status_code == httpx.codes.OK and (
+        response.headers.get("Metadata-Flavor") == "Google"
+    )
+
+
+def configured(settings: GatewaySettings) -> bool:
+    """Whether any credential for the platform is set — a key, a configuration or an API key."""
+    return bool(
+        settings.vertex_credentials or settings.vertex_credentials_file or settings.vertex_api_key
+    )
 
 
 def has_identity(settings: GatewaySettings) -> bool:
@@ -52,7 +80,7 @@ def _read(settings: GatewaySettings) -> tuple[str, dict[str, Any] | None]:
         except OSError as exc:
             raise CredentialsInvalid(
                 f"The credentials file {settings.vertex_credentials_file} cannot be read "
-                f"({type(exc).__name__})."
+                f"({type(exc).__name__}). {UNREADABLE_FILE_HINT}"
             ) from None
     try:
         data = json.loads(raw)

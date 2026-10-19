@@ -54,6 +54,17 @@ Proof of the hermeticity: with the **entire Compose stack stopped**, `uv run pyt
 `test-frontend`. It is the hermetic half of CI, not all of it: the integration and browser jobs run
 on live stacks.
 
+## Real clients (`make test-clients`)
+
+A compatible surface is proven by the clients still in use, older ones included, and not by a test
+written to agree with it. `tools/clients` installs every major of the AI SDK's Google provider — the
+library OpenCode and most TypeScript agents use — each with the `ai` release it ships for, side by
+side; `gateway/tests/test_real_gemini_clients.py` serves the gateway on a socket and has each one run
+a tool call and its result, a structured answer and a stream, then checks which form of the request
+each sent. The same test drives Google's own `google-genai` SDK with its JSON Schema fields.
+`uv run pytest` skips the Node half when `tools/clients` is not installed; `make test-clients` and
+CI's `clients` job install it and fail on a skip.
+
 ## Mutation checks (hermetic, on demand)
 
 `make mutants` (`tools/mutation_check.py`) breaks one property at a time and requires a named test
@@ -200,6 +211,7 @@ Every push to any branch, every pull request, and every release tag runs:
 | --- | --- | --- |
 | `python` | `uv sync --frozen`; `ruff check`, `ruff format --check`, `mypy`; `uv run pytest` with the coverage gate | 20 min |
 | `frontend` | `npm ci`; Prettier over the console and `proxy.conf.cjs`; the production build; the unit tests with the coverage gate; Prettier and `tsc --noEmit` over the browser suite | 20 min |
+| `clients` | `uv sync --frozen`; `npm ci` in `tools/clients`; the real-client test — every major of the AI SDK's Google provider and `google-genai` against the gateway — which fails rather than skips here | 15 min |
 | `stack` | `make up-full`, `make wait-healthy`, `make demo-ready`, then the integration suite; the application logs on failure; `make down-full` | 40 min |
 | `browser` | a stack of its own, made ready the same way; Chromium; the browser suite, then `make test-windows-sso`; the logs and the Playwright report on failure | 30 min |
 
@@ -209,7 +221,7 @@ job installs its toolchain once; `tools/tests/test_ci_runs_what_a_developer_runs
 in step.
 
 A pushed release tag adds two jobs: `described`, which checks the tag's annotation with no
-dependencies so a bad one is refused within a minute, and `publish`, which needs all five and builds
+dependencies so a bad one is refused within a minute, and `publish`, which needs all six and builds
 and pushes the three images ([`DEPLOYMENT.md`](DEPLOYMENT.md) §1b).
 
 ### Running the same elsewhere

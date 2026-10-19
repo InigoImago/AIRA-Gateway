@@ -305,11 +305,13 @@ class VertexAnthropicAdapter(_VertexAdapter):
         models: list[VertexModel],
         *,
         default_max_tokens: int,
+        strict_tools: bool = False,
     ) -> None:
         super().__init__(transport, models)
         # `max_tokens` is required by this API. The catalog's per-model default is resolved before
         # dispatch (`FRD-114` FR-2); this is the backstop for a model that declares none.
         self._default_max_tokens = default_max_tokens
+        self._strict_tools = strict_tools
 
     @staticmethod
     def schema_refusal(schema: ResponseSchema) -> str | None:
@@ -329,7 +331,7 @@ class VertexAnthropicAdapter(_VertexAdapter):
             answer = anthropic_to_canonical(
                 data,
                 request.model,
-                structured=request.response_schema is not None,
+                structured=request.structured,
                 # The use case's switch, carried rather than decided here (`FRD-135` FR-3).
                 include_reasoning=request.include_reasoning,
             )
@@ -356,7 +358,9 @@ class VertexAnthropicAdapter(_VertexAdapter):
 
     def _body(self, request: CanonicalRequest) -> dict[str, object]:
         return canonical_to_anthropic(
-            request, max_tokens=request.max_output_tokens or self._default_max_tokens
+            request,
+            max_tokens=request.max_output_tokens or self._default_max_tokens,
+            strict_tools=self._strict_tools,
         )
 
 

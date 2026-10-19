@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from aira_gateway.core.json_schema import JsonSchemaDocument
 from aira_gateway.core.schema import ResponseSchema
 
 #: The sampling controls a request can carry beyond `temperature` (`FRD-124`). Listed because **no
@@ -130,6 +131,8 @@ class ToolDeclaration(BaseModel):
     name: str
     description: str = ""
     parameters: ResponseSchema | None = None
+    #: The same, written in JSON Schema (`FRD-143`) and carried as written. At most one of the two.
+    parameters_json_schema: JsonSchemaDocument | None = None
 
 
 # == requests =====================================================================================
@@ -261,6 +264,8 @@ class CanonicalRequest(BaseModel):
     #: A schema the answer must conform to (`FRD-112`). **Forwarded, never executed**: validating
     #: the response would run caller-supplied regexes over provider output on the hot path.
     response_schema: ResponseSchema | None = None
+    #: The same, written in JSON Schema (`FRD-143`) and carried as written. At most one of the two.
+    response_json_schema: JsonSchemaDocument | None = None
     #: Functions the caller offers the model (`FRD-131`), carried there and back and **never
     #: executed** (`ADR-0013`).
     tools: tuple[ToolDeclaration, ...] = ()
@@ -292,6 +297,11 @@ class CanonicalRequest(BaseModel):
     def media_types(self) -> frozenset[str]:
         """The distinct media types this request carries. What a model must be able to read."""
         return frozenset(part.media_type for part in self.attachments)
+
+    @property
+    def structured(self) -> bool:
+        """Whether the answer must be a document matching a schema, in either vocabulary."""
+        return self.response_schema is not None or self.response_json_schema is not None
 
     @property
     def sampling_requested(self) -> frozenset[str]:

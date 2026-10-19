@@ -34,6 +34,7 @@ from aira_gateway.core.canonical import (
     ToolDeclaration,
     ToolResultPart,
 )
+from aira_gateway.core.json_schema import parse_json_schema
 from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.thinking import mode_from
@@ -155,6 +156,11 @@ def gemini_to_canonical(
             if config and config.responseSchema is not None
             else None
         ),
+        response_json_schema=(
+            parse_json_schema(config.responseJsonSchema, bounds, what="The response JSON schema")
+            if config and config.responseJsonSchema is not None
+            else None
+        ),
         # Carried, never dropped (`FRD-124`): the dialect either expresses each of these or the
         # candidate is skipped.
         top_p=config.topP if config else None,
@@ -174,6 +180,15 @@ def gemini_to_canonical(
                     if declaration.parameters is not None
                     else None
                 ),
+                parameters_json_schema=(
+                    parse_json_schema(
+                        declaration.parametersJsonSchema,
+                        bounds,
+                        what=f"The JSON schema of '{declaration.name}'",
+                    )
+                    if declaration.parametersJsonSchema is not None
+                    else None
+                ),
             )
             for tool in request.tools
             for declaration in tool.functionDeclarations
@@ -190,6 +205,8 @@ def thinking_of(config: schemas.ThinkingConfig | None) -> Thinking | None:
         mode = _BUDGET_MODES.get(config.thinkingBudget, ThinkingMode.LIMITED)
         tokens = config.thinkingBudget if mode == ThinkingMode.LIMITED else None
         return Thinking(mode=mode, tokens=tokens)
+    if config.thinkingLevel is not None:
+        return Thinking(mode=mode_from(config.thinkingLevel))
     if config.mode is None:
         return None
     return Thinking(mode=mode_from(config.mode), tokens=config.tokens)

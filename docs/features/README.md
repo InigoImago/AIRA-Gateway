@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**101 of 105 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**102 of 106 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -53,6 +53,7 @@ status that goes stale in the copy nobody opens.
 | [140](FRD-140-windows-sign-on.md) | Windows sign-on, proven for the console and the gateway | 1 (platform) | ✅ Built |
 | [141](FRD-141-why-a-provider-refused.md) | Why a provider refused, said so that it can be fixed | 3 (catalog) | ✅ Built |
 | [142](FRD-142-google-without-a-google-key.md) | Reaching Google without a Google key | 8 (KIRA parity) | ✅ Built |
+| [143](FRD-143-current-and-older-gemini-clients.md) | Current Gemini clients, without losing the older ones | 8 (KIRA parity) | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |

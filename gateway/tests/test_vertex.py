@@ -951,6 +951,7 @@ def test_a_schema_and_the_callers_tools_now_travel_together() -> None:
             }
         ),
         max_tokens=1024,
+        strict_tools=True,
     )
 
     assert body["output_config"]["format"]["type"] == "json_schema"
@@ -965,11 +966,29 @@ def test_a_schema_and_the_callers_tools_now_travel_together() -> None:
     }
 
 
-def _tool_body(parameters: dict[str, Any]) -> dict[str, Any]:
-    """The one tool declaration an Anthropic body carries for ``parameters``."""
+def _tool_body(parameters: dict[str, Any], *, strict_tools: bool = True) -> dict[str, Any]:
+    """The one tool declaration an Anthropic body carries for ``parameters``, on an installation
+    that asked for strict tools — the case the schema rules below are about."""
     tool = ToolDeclaration(name="read_file", parameters=parse_schema(parameters))
-    body = canonical_to_anthropic(_request(tools=(tool,)), max_tokens=1024)
+    body = canonical_to_anthropic(
+        _request(tools=(tool,)), max_tokens=1024, strict_tools=strict_tools
+    )
     return body["tools"][0]
+
+
+def test_a_tool_is_not_sent_strict_unless_the_installation_asks() -> None:
+    """On Vertex a strict tool is the partner-model feature `structured_outputs`, which an
+    organisation policy forbids by default, and then every request carrying a tool is refused
+    (`FRD-143`). The guarantee is this gateway's addition, so it is opt-in."""
+    qualified = {
+        "type": "OBJECT",
+        "properties": {"path": {"type": "STRING"}},
+        "required": ["path"],
+        "additionalProperties": False,
+    }
+
+    assert "strict" not in _tool_body(qualified, strict_tools=False)
+    assert _tool_body(qualified)["strict"] is True
 
 
 def test_a_strict_tool_schema_is_one_strict_mode_accepts() -> None:

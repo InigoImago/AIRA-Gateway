@@ -124,7 +124,8 @@ so is a key naming a use case other than its own.
 ### `google-genai` (the official Python SDK)
 
 Generation, SSE streaming, embedding, the error envelope, an attached image, and turning thinking
-off — all unmodified. `gateway/tests/test_google_sdk_speaks_to_us.py` runs ten cases from this SDK
+off — all unmodified; and the JSON Schema fields (`parameters_json_schema`, `response_json_schema`)
+and `thinking_level`. `gateway/tests/test_google_sdk_speaks_to_us.py` runs ten cases from this SDK
 against the gateway in AIRA's own test suite, so the compatibility is asserted by the client rather
 than by us.
 
@@ -148,9 +149,21 @@ response = client.models.generate_content(
 print(response.text, response.usage_metadata.total_token_count)
 ```
 
+### The AI SDK's Google provider (`@ai-sdk/google`), every major
+
+What most TypeScript agents — OpenCode among them — are built on, and it has changed what it sends:
+its first major declares tools in Google's OpenAPI subset and sends a single tool as an object
+rather than a list; its fourth declares every tool in JSON Schema (`parametersJsonSchema`), asks for
+structured output in JSON Schema (`responseJsonSchema`) and sets Gemini 3's `thinkingLevel`. All
+four majors — with the `ai` release each ships for — run a two-step tool call, a structured answer
+and a stream against the gateway in its own test suite (`tools/clients`, `make test-clients`), and
+the test records which form each one sent.
+
 ### OpenCode (`@ai-sdk/google`)
 
-A coding assistant, verified end to end including a real tool call. Two places write its
+A coding assistant, verified end to end including a real tool call — the OpenCode binary itself,
+in its current release and in the last 1.0 release, both reading files through tools against the
+gateway. Two places write its
 configuration, with the key in it — so treat the file as the credential it is:
 
 - the console's **API keys** tab, beside a key it has just issued: **Copy OpenCode config** and
@@ -181,6 +194,18 @@ Both list only the models released to the use case that declare tool calling. Th
 [`tools/opencode/`](../tools/opencode/README.md) has the budget plugin, a `/budget` command, and the
 hand-editable configuration the measurement was made with.
 
+Three things that make OpenCode fail against a Gemini endpoint and are not the gateway's:
+
+- **No OpenAI options on this provider.** `extraBody`, `store`, `drop_params` and similar are
+  OpenAI-provider settings; `@ai-sdk/google` writes them into the request body, and a field Google's
+  API does not have is refused — here as at Google.
+- **The key outside the file**: `opencode auth login --provider aira` keeps it in OpenCode's own
+  credential store (`~/.local/share/opencode/auth.json`), and `apiKey` can be left out of
+  `opencode.json`.
+- **A path prefix instead of the header**, where a client cannot set one: `baseURL`
+  `https://<host>/gw/uc/<use-case>/v1beta` through the console's proxy, or
+  `https://<gateway>/uc/<use-case>/v1beta` directly.
+
 ### Anything else
 
 Any client that lets you override the base URL should work — that is the whole claim of a
@@ -193,7 +218,15 @@ client's own configuration.
 
 ---
 
-## 5. What AIRA refuses, and why
+## 5. What AIRA carries, refuses, and why
+
+**Both of Google's ways to write a schema are carried.** The OpenAPI subset (`parameters`,
+`responseSchema`) is parsed into AIRA's own vocabulary and refused outside it; JSON Schema
+(`parametersJsonSchema`, `responseJsonSchema`) is carried **as written** to whichever model answers
+— Gemini, Claude and OpenAI-dialect servers all take JSON Schema natively — and a schema a provider
+cannot take comes back as its 400, with its reason. Both are bounded alike: 32 KiB, eight levels,
+256 properties. `thinkingLevel` (`low`, `high`, …) is the model's own level word and must be one the
+catalogue declares for the model. `tools` may be a list or a single tool object.
 
 Google's API rejects unknown fields and so does this one. A field accepted and dropped answers with
 a **200** and is wrong in a way nobody can see: a dropped `stopSequences` leaves the output
@@ -210,7 +243,11 @@ So there are three answers, and never a silent one:
     execution is not offered;
   * `responseLogprobs`, `logprobs`, `mediaResolution`, `enableEnhancedCivicAnswers`;
   * a `candidateCount` other than 1;
-  * a `responseMimeType` other than `text/plain`, or `application/json` without a `responseSchema`;
+  * a `responseMimeType` other than `text/plain`, or `application/json` without a `responseSchema`
+    or `responseJsonSchema`;
+  * a declaration made twice — a function with both `parameters` and `parametersJsonSchema`, an
+    answer with both `responseSchema` and `responseJsonSchema`, a `thinkingLevel` beside a
+    `thinkingBudget` — which Google refuses as well;
   * a `responseModalities` other than text, or speech alone — it would return prose where images
     were asked for;
   * a `toolConfig` mode other than `AUTO`;

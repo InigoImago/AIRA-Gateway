@@ -1055,7 +1055,7 @@ describe('TracesTab — answers that arrive late', () => {
     const feedback = harness.fixture.debugElement.injector.get(PageFeedback);
 
     held[0].error({ status: 502 });
-    expect(feedback.error()).toBe('Could not load the requests.');
+    expect(feedback.error()).toContain('Could not load the requests.');
 
     harness.click('refusals-only');
     held[1].next({ traces: [trace()], next_cursor: null, scope: 'all' });

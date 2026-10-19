@@ -54,6 +54,8 @@ DEFAULT_LIFETIME_SECONDS = 3600
 METADATA_TOKEN_URL = (
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 )
+#: What the start asks to learn whether it runs on Google Cloud at all.
+METADATA_PROBE_URL = "http://metadata.google.internal/computeMetadata/v1/instance/id"
 
 #: Hosts a credential configuration may send a token to. The subject token is a credential of the
 #: installation's own identity provider, and a configuration that pointed `token_url` elsewhere

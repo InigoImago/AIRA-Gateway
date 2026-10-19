@@ -244,10 +244,13 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     checks = await installation_requirements(request)
     if canonical is not None and canonical.media_types:
         checks.append(MediaTypesSupported(catalog, canonical.media_types))
-    if canonical is not None and canonical.response_schema is not None:
+    if canonical is not None and canonical.structured:
         # Whether the *model* offers structured output and whether the *dialect* can carry this
         # schema are separate questions (`ADR-0011` rule 3).
         checks.append(StructuredOutputSupported(catalog))
+    if canonical is not None and canonical.response_schema is not None:
+        # A JSON Schema document is carried as written, and a provider that cannot take it says so
+        # in a 400 the caller reads (`FRD-143`); the OpenAPI subset is ours, so it is ours to check.
         checks.append(SchemaExpressible(registry, canonical.response_schema, catalog))
     if canonical is not None and canonical.thinking is not None:
         checks.append(ThinkingHonoured(catalog, canonical.thinking))
@@ -304,11 +307,12 @@ def describe_on_the_span(
             attributes["aira.request.attachment_bytes"] = sum(
                 len(part.data) for part in attachments
             )
-        if canonical.response_schema is not None:
+        schema = canonical.response_schema or canonical.response_json_schema
+        if schema is not None:
             attributes["aira.response_schema"] = True
             # The schema's own fingerprint, so the span and anything else that names a schema
-            # name it alike (`FRD-112` §6).
-            attributes["aira.response_schema.digest"] = canonical.response_schema.digest()
+            # name it alike (`FRD-112` §6) — in whichever vocabulary it was written.
+            attributes["aira.response_schema.digest"] = schema.digest()
     if embed is not None:
         attributes["aira.embedding.batch_size"] = embed.size
         attributes["aira.embedding.task_type"] = embed.task_type

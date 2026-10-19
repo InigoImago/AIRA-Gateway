@@ -1739,7 +1739,7 @@ describe('SmokeTests', () => {
         error: { error: { message: 'Invalid request.', details: { contents: ['required'] } } },
       }),
     ).toBe('Invalid request. contents: required');
-    expect(describeFailure({ status: 502 })).toBe('request failed (502)');
+    expect(describeFailure({ status: 502 })).toContain('request failed (502)');
     expect(
       describeFailure({ status: 400, error: { error: { message: 'x'.repeat(500) } } }),
     ).toHaveLength(240);

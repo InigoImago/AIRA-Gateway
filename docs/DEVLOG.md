@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Current Gemini clients, without losing the older ones (2026-10-19)
+
+The owner's integration on Google Cloud found three things and patched them locally: OpenCode's
+tools in `parametersJsonSchema` were refused, Claude's tools went `strict` and broke the organisation
+policy on partner features, and a gateway whose key file was missing crash-looped while the console
+said it "could not ask the gateway which providers it has". The owner's constraint: older CLIs must
+keep working.
+
+**What the clients actually send was measured, not assumed.** All four majors of the AI SDK's Google
+provider were installed side by side: the first declares tools in the OpenAPI subset and sends a
+single tool as an **object** — which the gateway refused with "Input should be a valid list", so
+older agents on that major could not call a tool at all; the second and third use `parameters`, and
+`parametersJsonSchema` only for recursive schemas; the fourth declares every tool in JSON Schema,
+asks for structured output with `responseJsonSchema` and sets `thinkingLevel`.
+
+**Built** (`FRD-143`): JSON Schema carried as written to all three dialects and bounded like any
+schema; `responseJsonSchema`; `thinkingLevel` as the canonical level word; `tools` as one object;
+Claude's strict tools behind `AIRA_VERTEX_PARTNER_STRICT_TOOLS` (default off); the metadata server
+used when **nothing** is configured, never in place of a configured key that is missing; the console
+naming a proxy's 502–504 as the service not answering. The local patch also left the JSON Schema out
+of the reservation, which now counts it.
+
+**Tested with the real clients**: `tools/clients` runs every provider major with its `ai` release and
+`google-genai` against the app on a socket — a two-step tool call, a structured answer, a stream — and
+records which form each sent; a new `clients` CI job runs it and gates a release. The OpenCode binary
+itself, 1.19.3 and 1.0.142, completed a tool call and its answer against the app. One flake on the way
+was the test's SQLite refusing a commit while another request's statement was open; the scenarios now
+run one after another. Also on the way: an ad-hoc gateway started for the flake hunt, without the test
+configuration, used its default database address — the showcase's Postgres — and wrote 206 audit rows
+for `mock-1` there; reported to the owner, not deleted. 1969 properties; `MG-1`–`MG-22`; `S5a`, `S6a`,
+`FXG2-20`, `PB7`, `PB8` re-anchored.
+
+---
+
 ## What a model costs this installation, from its billing account (2026-10-17)
 
 The reference filled every field but the prices in a euro installation, deliberately: a dollar list

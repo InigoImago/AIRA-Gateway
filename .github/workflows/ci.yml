@@ -112,6 +112,36 @@ jobs:
           npx prettier --check "**/*.ts"
           npx tsc --noEmit -p tsconfig.json
 
+  # **Real Gemini clients** (`FRD-143`): every major of the AI SDK's Google provider, with the `ai`
+  # release it ships for, and Google's own `google-genai`, against the gateway on a socket. The
+  # python job skips the Node half for want of an install; this job installs it and fails on a skip.
+  clients:
+    name: Clients — every AI SDK major against the gateway
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: management/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: tools/clients/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen
+          cd tools/clients && npm ci --no-audit --no-fund
+
+      - name: Real clients
+        run: AIRA_REQUIRE_REAL_CLIENTS=1 uv run pytest --no-cov gateway/tests/test_real_gemini_clients.py
+
   # **Two stacks, side by side.** Each suite starts a stack of its own, so the longer of the two sets
   # the time and neither waits for the other: one after the other on one stack, they outgrew a
   # forty-minute job. The browser suite makes what it reads, so it needs nothing the integration
@@ -351,9 +381,9 @@ jobs:
 
   publish:
     name: Publish versioned images to GHCR
-    # Every gate, plus the description check — so a published version is one that five jobs agreed
+    # Every gate, plus the description check — so a published version is one that six jobs agreed
     # about, on this commit, in this run.
-    needs: [python, frontend, stack, browser, described]
+    needs: [python, frontend, clients, stack, browser, described]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 30

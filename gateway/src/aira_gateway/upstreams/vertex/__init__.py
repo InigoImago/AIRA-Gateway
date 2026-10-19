@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import httpx
 
+from aira_common.logging import get_logger
 from aira_gateway.config import GatewaySettings
 from aira_gateway.residency import (
     RegionNotAllowed,
@@ -29,7 +30,12 @@ from aira_gateway.upstreams.vertex.adapters import (
 )
 from aira_gateway.upstreams.vertex.auth import CredentialsInvalid
 from aira_gateway.upstreams.vertex.billing import BillingPrices
-from aira_gateway.upstreams.vertex.credentials import build_identity, has_identity
+from aira_gateway.upstreams.vertex.credentials import (
+    build_identity,
+    configured,
+    has_identity,
+    on_google_cloud,
+)
 from aira_gateway.upstreams.vertex.regions import VertexModel
 from aira_gateway.upstreams.vertex.transport import VertexTransport
 
@@ -45,6 +51,9 @@ __all__ = [
 ]
 
 
+_log = get_logger("aira_gateway.upstreams.vertex")
+
+
 def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     """Build the Vertex adapters from settings, or an empty list when unconfigured.
 
@@ -53,6 +62,17 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     gateway that starts and quietly serves a non-EU region is worse than one that will not start,
     and one that starts without a configured model answers "not found" for it.
     """
+    if (
+        settings.vertex_project
+        and not configured(settings)
+        and not settings.vertex_metadata_server
+        and on_google_cloud()
+    ):
+        # Nothing configured, and running on Google Cloud: the machine's own account, as Google's
+        # libraries do. Only when **nothing** is set — a configured key that is missing stays an
+        # error rather than quietly becoming another identity (`FRD-143`).
+        _log.info("vertex_identity_from_metadata_server")
+        settings = settings.model_copy(update={"vertex_metadata_server": True})
     has_account = has_identity(settings)
     if not settings.vertex_project or not (has_account or settings.vertex_api_key):
         return []
@@ -108,6 +128,7 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
             transport,
             published_by("anthropic"),
             default_max_tokens=settings.vertex_default_max_tokens,
+            strict_tools=settings.vertex_partner_strict_tools,
         ),
     ]
     upstreams.extend(

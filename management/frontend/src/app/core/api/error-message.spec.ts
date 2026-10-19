@@ -38,6 +38,23 @@ describe('errorMessage', () => {
     expect(errorMessage(response, 'fallback')).toBe('Set at least one limit.');
   });
 
+  it("says the service behind the console did not answer, on a proxy's 502, 503 or 504", () => {
+    /** A gateway in a crash loop answered every console request with the proxy's 502, which read
+     *  as "could not ask which providers it has" — a failure of the question, not of the service. */
+    for (const status of [502, 503, 504]) {
+      const message = errorMessage(
+        { status, error: '<html>Bad Gateway</html>' },
+        'Could not load.',
+      );
+      expect(message).toContain('Could not load.');
+      expect(message).toContain(`did not answer (${status})`);
+    }
+    // The service's own envelope still wins: it said why itself.
+    expect(
+      errorMessage({ status: 503, error: { error: { message: 'Vault is sealed.' } } }, 'x'),
+    ).toBe('Vault is sealed.');
+  });
+
   it('explains an unreachable server rather than echoing status 0', () => {
     expect(errorMessage({ status: 0 }, 'fallback')).toContain('could not be reached');
   });

@@ -109,7 +109,7 @@ class MockProvider:
             return self._speech(request)
         if request.tools:
             return self._tool_call(request)
-        if request.response_schema is not None:
+        if request.structured:
             return self._structured(request)
 
         prompt = request.last_user_text().strip().replace("\n", " ")[:120]
@@ -175,7 +175,13 @@ class MockProvider:
             )
 
         tool = request.tools[0]
-        properties = (tool.parameters.properties or {}) if tool.parameters is not None else {}
+        properties: Any = (
+            (tool.parameters.properties or {})
+            if tool.parameters is not None
+            else (tool.parameters_json_schema.document.get("properties") or {})
+            if tool.parameters_json_schema is not None
+            else {}
+        )
         prompt = request.last_user_text().strip()[:60]
         arguments = dict.fromkeys(properties, prompt)
         usage = CanonicalUsage(prompt_tokens=self._prompt_tokens(request), completion_tokens=8)
@@ -193,8 +199,14 @@ class MockProvider:
         Truncated at the output cap the way a real provider stops mid-document, because that is the
         failure `FRD-112` FR-6 refuses, and a mock that always finished would never exercise it.
         """
-        assert request.response_schema is not None
-        document = synthesise(request.response_schema, request.last_user_text())
+        document = (
+            synthesise(request.response_schema, request.last_user_text())
+            if request.response_schema is not None
+            else synthesise_json(
+                request.response_json_schema.document if request.response_json_schema else {},
+                request.last_user_text(),
+            )
+        )
         text = json.dumps(document, separators=(",", ":"))
         limit = request.max_output_tokens
         truncated = limit is not None and limit < max(1, len(text) // 4)
@@ -321,3 +333,27 @@ def synthesise(schema: ResponseSchema, prompt: str = "") -> Any:
             return bool(len(prompt) % 2)
         case _:
             return schema.title or schema.description or f"mock:{prompt[:40]}"
+
+
+def synthesise_json(schema: Any, text: str) -> Any:
+    """A document matching a JSON Schema's shape, for the mock's structured answers (`FRD-143`):
+    every declared property, the first of a choice, the prompt for every string."""
+    if not isinstance(schema, dict):
+        return text
+    if "enum" in schema and isinstance(schema["enum"], list) and schema["enum"]:
+        return schema["enum"][0]
+    for choice in ("anyOf", "oneOf"):
+        if isinstance(schema.get(choice), list) and schema[choice]:
+            return synthesise_json(schema[choice][0], text)
+    kind = schema.get("type")
+    if isinstance(kind, list):
+        kind = next((entry for entry in kind if entry != "null"), "null")
+    if kind == "object" or "properties" in schema:
+        properties = schema.get("properties")
+        return {
+            name: synthesise_json(value, text)
+            for name, value in (properties.items() if isinstance(properties, dict) else ())
+        }
+    if kind == "array":
+        return [synthesise_json(schema.get("items", {}), text)]
+    return {"integer": 1, "number": 1.0, "boolean": True, "null": None}.get(str(kind), text)

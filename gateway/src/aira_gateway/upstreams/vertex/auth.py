@@ -29,6 +29,13 @@ SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 #: anything over an hour.
 ASSERTION_LIFETIME_SECONDS = 3600
 
+#: What to do about a key file that is configured and not there. Said rather than worked around:
+#: falling back to another identity would run the gateway as an account nobody configured.
+UNREADABLE_FILE_HINT = (
+    "Mount the file at that path, or unset the setting: with no credential set at all, a gateway "
+    "on Google Cloud uses the machine's own service account."
+)
+
 
 class CredentialsInvalid(Exception):
     """The configured service-account credentials cannot be used.
@@ -110,7 +117,8 @@ class KeyFile:
             stat = self._path.stat()
         except OSError as exc:
             raise CredentialsInvalid(
-                f"The service-account key file {self._path} cannot be read ({type(exc).__name__})."
+                f"The service-account key file {self._path} cannot be read "
+                f"({type(exc).__name__}). {UNREADABLE_FILE_HINT}"
             ) from None
         stamp = (stat.st_mtime_ns, stat.st_size)
         if self._account is None or stamp != self._seen:

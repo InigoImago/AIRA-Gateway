@@ -1718,6 +1718,13 @@ reading code.
   never a generation — a "does this work" button must not be what wakes a scaled-to-zero model.
 - **Refusal, not best effort.** `seed` on a candidate that cannot express it answers perfectly and
   simply is not reproducible, and nothing in the response says so.
+- **A compatible surface is proven by the clients of every generation, not by the current one.**
+  The gateway was tested with the `google-genai` SDK and the AI SDK as it was then, and refused the
+  first major of the AI SDK's Google provider — still run by older agents — because it sends one
+  tool as an object where the schema said list; and it refused the fourth, which declares tools in
+  JSON Schema. Both are Google's API. Install every major still in use side by side, run them as an
+  application does, and record what each one sent, so a client that happened to send the old form
+  does not stand in for the new.
 - **Keeping a provider's text out must not keep its cause out.** The model check reported the
   exception's type, rightly refusing to repeat a message that can quote a URL with a key in it — and
   so answered *Not reachable (UpstreamError)* to an API not enabled, a missing role, a model not in

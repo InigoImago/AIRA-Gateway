@@ -44,11 +44,14 @@ _DOCUMENT_TYPES = frozenset({"application/pdf"})
 _EPHEMERAL = {"type": "ephemeral"}
 
 
-def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dict[str, Any]:
+def canonical_to_anthropic(
+    request: CanonicalRequest, *, max_tokens: int, strict_tools: bool = False
+) -> dict[str, Any]:
     """Build an Anthropic Messages body.
 
     ``max_tokens`` is required by the API and optional on the canonical request, so the caller
     resolves it: the request's value, else the model's declared default (`FRD-114` FR-2).
+    ``strict_tools`` is the installation's choice (`AIRA_VERTEX_PARTNER_STRICT_TOOLS`, `FRD-143`).
     """
     messages: list[dict[str, Any]] = []
     system_parts: list[str] = []
@@ -85,19 +88,25 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
     elif request.thinking is not None:
         body["thinking"] = _thinking(request, max_tokens)
     if request.tools:
-        body["tools"] = [_tool(tool) for tool in request.tools]
+        body["tools"] = [_tool(tool, strict_tools=strict_tools) for tool in request.tools]
         if request.cache_prefix:
             # On the last tool only: a breakpoint caches everything before it, and a request may
             # carry only four.
             body["tools"][-1]["cache_control"] = _cache_control(request)
         # No `tool_choice`: the model decides, and the surface accepts nothing else.
-    if request.response_schema is not None:
+    if request.response_schema is not None or request.response_json_schema is not None:
         # A first-class parameter beside `tools`, so both travel together; `stop_reason` says
-        # whether the model called a function or answered with the document.
+        # whether the model called a function or answered with the document. A JSON Schema
+        # document goes as written (`FRD-143`); a schema this dialect cannot take is the
+        # provider's 400, with its reason.
         body["output_config"] = {
             "format": {
                 "type": "json_schema",
-                "schema": schema_for_anthropic(request.response_schema),
+                "schema": (
+                    schema_for_anthropic(request.response_schema)
+                    if request.response_schema is not None
+                    else request.response_json_schema.to_wire()  # type: ignore[union-attr]
+                ),
             }
         }
     return body
@@ -153,16 +162,27 @@ def _continues_a_tool_call(request: CanonicalRequest) -> bool:
     return bool(model_turns and model_turns[-1].tool_calls)
 
 
-def _tool(declaration: ToolDeclaration) -> dict[str, Any]:
-    """One declared function. `strict` — the provider guaranteeing the arguments match — only
-    where the schema can be sent strict without changing the tool (`tool_input_schema`)."""
-    schema, strict = tool_input_schema(declaration.parameters)
+def _tool(declaration: ToolDeclaration, *, strict_tools: bool) -> dict[str, Any]:
+    """One declared function.
+
+    A JSON Schema declaration goes as written (`FRD-143`). `strict` — the provider guaranteeing the
+    arguments match — is sent only where the installation asked for it and the schema can be sent
+    strict without changing the tool (`tool_input_schema`). **Off by default**: the caller asked for
+    no such guarantee, and on Vertex a strict tool is the partner-model feature
+    `structured_outputs`, which an organisation policy
+    (`constraints/vertexai.allowedPartnerModelFeatures`) forbids by default, which would refuse
+    every request carrying a tool.
+    """
+    if declaration.parameters_json_schema is not None:
+        schema, strict = declaration.parameters_json_schema.to_wire(), False
+    else:
+        schema, strict = tool_input_schema(declaration.parameters)
     tool: dict[str, Any] = {
         "name": declaration.name,
         "description": declaration.description,
         "input_schema": schema,
     }
-    if strict:
+    if strict and strict_tools:
         tool["strict"] = True
     return tool
 

@@ -125,6 +125,12 @@ export function errorMessage(response: unknown, fallback: string): string {
   if (failure.status === 401) {
     return 'Your session is not valid (any more). Reload the page to sign in again.';
   }
+  // A 502, 503 or 504 with no envelope of ours is the proxy speaking: the service behind it did not
+  // answer at all. Said as that, not as a failure of whatever the page was asking for — a gateway in
+  // a crash loop otherwise reads as "could not ask which providers it has".
+  if (failure.status === 502 || failure.status === 503 || failure.status === 504) {
+    return `${fallback} The service behind the console did not answer (${failure.status}): it is starting, restarting or down, and its log says why.`;
+  }
   if (failure.status === 403) {
     return 'You do not have permission to do that.';
   }

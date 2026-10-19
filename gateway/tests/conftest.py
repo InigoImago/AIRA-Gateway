@@ -115,3 +115,14 @@ def instrumentation_restored() -> Iterator[None]:
         yield
     finally:
         _clear()
+
+
+@pytest.fixture(autouse=True)
+def _not_on_google_cloud(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """No test asks the network whether it runs on Google Cloud (`FRD-143`): the answer would
+    depend on the machine running the suite. A test about the detection asks for it by name."""
+    if "real_metadata_probe" in request.keywords:
+        return
+    import aira_gateway.upstreams.vertex as vertex
+
+    monkeypatch.setattr(vertex, "on_google_cloud", lambda: False)

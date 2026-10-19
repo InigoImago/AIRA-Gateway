@@ -73,7 +73,7 @@ class StreamAccounting:
         canonical = prepared.canonical
         self._notice = StreamedNotice(
             prepared.notices,
-            structured=canonical is not None and canonical.response_schema is not None,
+            structured=canonical is not None and canonical.structured,
         )
         self._parts: list[str] = []
         self._tool_calls: list[str] = []

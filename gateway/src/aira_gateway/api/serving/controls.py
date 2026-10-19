@@ -331,8 +331,12 @@ def prompt_texts(canonical: CanonicalRequest) -> Iterator[str]:
         yield tool.description
         if tool.parameters is not None:
             yield tool.parameters.model_dump_json(exclude_none=True)
+        if tool.parameters_json_schema is not None:
+            yield tool.parameters_json_schema.to_json()
     if canonical.response_schema is not None:
         yield canonical.response_schema.model_dump_json(exclude_none=True)
+    if canonical.response_json_schema is not None:
+        yield canonical.response_json_schema.to_json()
 
 
 def text_tokens(texts: Iterable[str]) -> int:

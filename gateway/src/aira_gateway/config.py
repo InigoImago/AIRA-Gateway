@@ -288,6 +288,13 @@ class GatewaySettings(BaseAiraSettings):
     vertex_timeout_seconds: float = Field(default=120.0, gt=0, allow_inf_nan=False)
     #: Backstop for Anthropic's required ``max_tokens`` when the catalog declares no default.
     vertex_default_max_tokens: int = 4096
+    #: Send a partner model's (Claude's) tools **strict** where the schema allows it — the
+    #: provider then guarantees the arguments match (`FRD-143`). Off by default: on Vertex a
+    #: strict tool is the
+    #: partner-model feature `structured_outputs`, which
+    #: `constraints/vertexai.allowedPartnerModelFeatures` forbids unless an administrator allowed
+    #: it, and every request carrying a tool would then be refused.
+    vertex_partner_strict_tools: bool = False
 
     # Servers speaking the OpenAI dialect (FRD-123), each configured, priced and audited under its
     # own name so "which machine served this" has an answer:

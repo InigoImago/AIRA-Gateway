@@ -136,7 +136,10 @@ def _wire_tools(request: CanonicalRequest) -> list[dict[str, Any]]:
                 "name": tool.name,
                 "description": tool.description,
                 "parameters": (
-                    to_json_schema(tool.parameters)
+                    # JSON Schema is this dialect's own vocabulary (`FRD-143`).
+                    tool.parameters_json_schema.to_wire()
+                    if tool.parameters_json_schema is not None
+                    else to_json_schema(tool.parameters)
                     if tool.parameters is not None
                     # Several implementations reject a function declared without a schema.
                     else {"type": "object", "properties": {}}
@@ -172,6 +175,17 @@ def canonical_to_openai(
         body["reasoning_effort"] = _reasoning_effort(request.thinking)
     if request.response_schema is not None:
         body["response_format"] = _response_format(request.response_schema)
+    elif request.response_json_schema is not None:
+        # As written and **not strict** (`FRD-143`): strict mode refuses most schemas a client
+        # writes by hand, and rewriting the caller's JSON Schema to suit it would change it.
+        body["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": SCHEMA_NAME,
+                "strict": False,
+                "schema": request.response_json_schema.to_wire(),
+            },
+        }
     _add_sampling(body, request)
     if stream:
         body["stream"] = True

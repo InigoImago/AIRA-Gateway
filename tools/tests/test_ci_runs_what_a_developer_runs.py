@@ -24,7 +24,11 @@ MAKEFILE = ROOT / "Makefile"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 #: Which job stands for which local targets.
-JOBS = {"python": ("lint-py", "test-py"), "frontend": ("lint-frontend", "test-frontend")}
+JOBS = {
+    "python": ("lint-py", "test-py"),
+    "frontend": ("lint-frontend", "test-frontend"),
+    "clients": ("test-clients",),
+}
 
 
 def _commands(text: str) -> set[str]:

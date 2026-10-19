@@ -1,0 +1,19 @@
+{
+  "name": "aira-client-compatibility",
+  "private": true,
+  "description": "Real Gemini clients, each major of the AI SDK's Google provider, run against the gateway by gateway/tests/test_real_gemini_clients.py",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ai-v4": "npm:ai@4",
+    "ai-v5": "npm:ai@5",
+    "ai-v6": "npm:ai@6",
+    "ai-v7": "npm:ai@7",
+    "google-v1": "npm:@ai-sdk/google@1",
+    "google-v2": "npm:@ai-sdk/google@2",
+    "google-v3": "npm:@ai-sdk/google@3",
+    "google-v4": "npm:@ai-sdk/google@4"
+  }
+}

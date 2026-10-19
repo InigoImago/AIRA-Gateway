@@ -169,7 +169,7 @@ thins every span. The guides say the rest.
 | --------- | ------------ | ------- |
 | `GET /v1beta/models` | any credential | The models this gateway has an upstream for, as Google's `Model` resource with the verbs each answers and what the catalogue declares about it (`airaCapabilities`, `airaDeclared`, …). One the catalogue holds and has not approved is left out. |
 | `GET /v1beta/models/{model}` | any credential | One model of that list; `404` for any other. |
-| `POST /v1beta/models/{model}:generateContent` | a grant on the use case it is attributed to | The whole answer in one response. |
+| `POST /v1beta/models/{model}:generateContent` | a grant on the use case it is attributed to | The whole answer in one response. Google's request body: a function's parameters as `parameters` (the OpenAPI subset) or `parametersJsonSchema` (JSON Schema, carried as written), not both; an answer's schema as `responseSchema` or `responseJsonSchema`, with `responseMimeType` `application/json`; thinking as `thinkingBudget` or `thinkingLevel`; `tools` as a list or one tool object. |
 | `POST /v1beta/models/{model}:streamGenerateContent` | the same | The answer in chunks: a JSON array, or server-sent events with `?alt=sse`. |
 | `POST /v1beta/models/{model}:embedContent` | the same | `{embedding: {values}}`. |
 | `POST /v1beta/models/{model}:batchEmbedContents` | the same | `{embeddings: [{values}]}`, one per entry of the body's `requests`. |

@@ -97,6 +97,7 @@ testpaths = [
 addopts = "-q --import-mode=importlib -m 'not integration' --cov=aira_gateway --cov=aira_common --cov=aira_management --cov-report=term-missing --cov-fail-under=90"
 markers = [
     "integration: requires the live Docker Compose stack (excluded from the default run)",
+    "real_metadata_probe: lets the test reach the Google Cloud detection itself",
 ]
 filterwarnings = ["ignore::DeprecationWarning:starlette.*"]
 

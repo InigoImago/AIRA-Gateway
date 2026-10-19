@@ -24,6 +24,7 @@ from aira_gateway.core.canonical import (
     TextPart,
     Thinking,
     ToolCallPart,
+    ToolDeclaration,
     ToolResultPart,
 )
 from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError, stream_failure
@@ -117,6 +118,15 @@ def _result_object(content: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {"result": parsed}
 
 
+def _declared_parameters(tool: ToolDeclaration) -> dict[str, Any]:
+    """A function's parameters in the field matching the vocabulary they were written in."""
+    if tool.parameters_json_schema is not None:
+        return {"parametersJsonSchema": tool.parameters_json_schema.to_wire()}
+    if tool.parameters is not None:
+        return {"parameters": tool.parameters.to_wire()}
+    return {}
+
+
 def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
     """Build a Gemini ``generateContent`` request body from a canonical request."""
     contents: list[dict[str, Any]] = []
@@ -141,11 +151,7 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
                     {
                         "name": tool.name,
                         "description": tool.description,
-                        **(
-                            {"parameters": tool.parameters.to_wire()}
-                            if tool.parameters is not None
-                            else {}
-                        ),
+                        **_declared_parameters(tool),
                     }
                     for tool in request.tools
                 ]
@@ -172,6 +178,10 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         # and would return prose to a caller expecting a document.
         generation_config["responseMimeType"] = "application/json"
         generation_config["responseSchema"] = request.response_schema.to_wire()
+    elif request.response_json_schema is not None:
+        # In the vocabulary it was written in (`FRD-143`): Google takes JSON Schema as such.
+        generation_config["responseMimeType"] = "application/json"
+        generation_config["responseJsonSchema"] = request.response_json_schema.to_wire()
     _add_sampling(generation_config, request)
     if request.speech is not None:
         # Both, always together (`FRD-624`): the modality without a voice is refused without a

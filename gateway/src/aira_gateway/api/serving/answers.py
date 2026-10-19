@@ -35,7 +35,7 @@ def check_structured_result(canonical: CanonicalRequest, response: CanonicalResp
     turn, whatever the vendor calls its ending. Read through `FinishReason`, so a call is one word
     on every dialect.
     """
-    if canonical.response_schema is None or response.finish_reason == "stop":
+    if not canonical.structured or response.finish_reason == "stop":
         return
     if response.finish_reason == FinishReason.TOOL_USE and response.tool_calls:
         return
@@ -106,7 +106,7 @@ def annotate(
         trail.served_region = response.served_region
     if not prepared.notices:
         return response
-    structured = canonical is not None and canonical.response_schema is not None
+    structured = canonical is not None and canonical.structured
     note = notice_outcome(response, prepared.notices, structured=structured)
     if note is not None:
         trail.decisions.append(note)

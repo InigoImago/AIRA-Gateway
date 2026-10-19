@@ -277,6 +277,8 @@ vertex:
   project: ''
   models: ''
   default_max_tokens: 4096
+  # Claude's tools strict: only where the organisation policy allows structured_outputs.
+  partner_strict_tools: false
   timeout_seconds: 120
   # The key as a file the gateway reads (a Compose or Kubernetes secret), re-read when it
   # changes. A path, not a secret; the key itself never goes in this file.

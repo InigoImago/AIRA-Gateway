@@ -237,8 +237,11 @@ _GOOGLE_STATUS: dict[str, str] = {
         "the quota, or add another region."
     ),
     "FAILED_PRECONDITION": (
-        "The platform refused because something must be set up first — for a partner model, "
-        "accepting its terms in Model Garden; otherwise billing or the project's location."
+        "The platform refused because something must be set up or allowed first: for a partner "
+        "model, accepting its terms in Model Garden, or an organisation policy such as "
+        "constraints/vertexai.allowedPartnerModelFeatures that forbids a feature the request "
+        "used (structured output and strict tools are such features); otherwise billing or the "
+        "project's location."
     ),
 }
 

@@ -146,7 +146,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
         run-frontend up-full demo-ready down-full logs-apps build-images next-version \
-        current-version model-reference release-tag release-check release-notes release-subject ci wait-healthy \
+        current-version model-reference test-clients release-tag release-check release-notes release-subject ci wait-healthy \
         prune mutants \
         ui-audit release-pull up-integrated kafka-topics-external \
         windows-sso-up windows-sso-down test-windows-sso \
@@ -678,6 +678,13 @@ test-py: ## Run Python test suites with coverage gate
 
 test-frontend: ## Run Angular unit tests (Vitest, single run) with the coverage gate
 	cd $(FRONTEND_DIR) && npx ng test --watch=false
+
+test-clients: ## Run real Gemini clients — every AI SDK major, google-genai — against the gateway
+	@# Real clients send what they send, not what a test of the gateway thinks they send: the
+	@# AI SDK's first major sends a single tool as an object, its fourth declares tools in JSON
+	@# Schema. Required here, so a missing install fails rather than skips.
+	cd tools/clients && npm ci --no-audit --no-fund
+	AIRA_REQUIRE_REAL_CLIENTS=1 uv run pytest --no-cov gateway/tests/test_real_gemini_clients.py
 
 mutants: ## Break each guarded property on purpose and check the tests notice (see tools/mutation_check.py)
 	uv run python tools/mutation_check.py

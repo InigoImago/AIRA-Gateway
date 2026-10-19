@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 #: Request models forbid what they do not model. Response models keep ignoring extras — a provider
 #: adding a field must never break a caller, which is the opposite direction and the opposite rule.
@@ -203,6 +203,10 @@ class ThinkingConfig(BaseModel):
     #: (`FRD-135` FR-3/FR-4) and refused wherever reasoning is off — a 200 with no thoughts is the
     #: silent drop `FRD-124` is against.
     includeThoughts: bool | None = Field(default=None, alias="include_thoughts")
+    #: Gemini 3's level word (`low`, `high`, …), which current SDKs send for it (`FRD-143`). It is
+    #: the model's own vocabulary, so it is the canonical `mode` — checked against the levels the
+    #: catalog declares for the model, like any level word (`ADR-0021`).
+    thinkingLevel: str | None = Field(default=None, alias="thinking_level")
     mode: str | None = None
     tokens: int | None = None
 
@@ -211,6 +215,13 @@ class ThinkingConfig(BaseModel):
         if self.thinkingBudget is not None and (self.mode is not None or self.tokens is not None):
             raise ValueError(
                 "send either 'thinkingBudget' or 'mode'/'tokens' in thinkingConfig, not both"
+            )
+        if self.thinkingLevel is not None and (
+            self.thinkingBudget is not None or self.mode is not None or self.tokens is not None
+        ):
+            raise ValueError(
+                "send either 'thinkingLevel' or a budget ('thinkingBudget', 'mode'/'tokens') in "
+                "thinkingConfig, not both — Google refuses the pair as well"
             )
         return self
 
@@ -304,6 +315,9 @@ class GenerationConfig(BaseModel):
     thinkingConfig: ThinkingConfig | None = None
     responseMimeType: str | None = None
     responseSchema: dict[str, Any] | None = None
+    #: The same in JSON Schema (`FRD-143`), which current SDKs send for structured output. One or
+    #: the other, as at Google.
+    responseJsonSchema: dict[str, Any] | None = None
     # Sampling controls (`FRD-124`): carried to the dialect, which either expresses them or refuses
     # the candidate — never drops them.
     topP: float | None = None
@@ -360,7 +374,7 @@ class GenerationConfig(BaseModel):
                 "'speechConfig' sets the voice of a spoken answer; send it with "
                 "'responseModalities': ['AUDIO']."
             )
-        if self.speaks and self.responseSchema is not None:
+        if self.speaks and (self.responseSchema is not None or self.responseJsonSchema is not None):
             raise ValueError("A spoken answer cannot conform to a 'responseSchema'.")
         if self.speaks and self.thinkingConfig is not None and self.thinkingConfig.includeThoughts:
             raise ValueError(
@@ -373,9 +387,20 @@ class GenerationConfig(BaseModel):
         """Text, or JSON **with** a schema (`FRD-112`): any other type would be answered in prose,
         and JSON without a schema has no counterpart on every supported dialect."""
         mime = self.responseMimeType
+        if self.responseSchema is not None and self.responseJsonSchema is not None:
+            raise ValueError(
+                "'responseSchema' and 'responseJsonSchema' are both set. Send one: it is not clear "
+                "which the answer should match."
+            )
+        schema = self.responseSchema if self.responseSchema is not None else self.responseJsonSchema
+        if self.responseJsonSchema is not None and mime != "application/json":
+            raise ValueError(
+                "'responseJsonSchema' needs 'responseMimeType' application/json, as Google's API "
+                "requires; without it the answer would arrive as prose."
+            )
         if mime is None or mime == "text/plain":
             return self
-        if mime == "application/json" and self.responseSchema is not None:
+        if mime == "application/json" and schema is not None:
             return self
         if mime == "application/json":
             raise ValueError(
@@ -393,13 +418,27 @@ class FunctionDeclaration(BaseModel):
     """A function the caller offers the model (`FRD-131`).
 
     ``parameters`` stays raw JSON here and is parsed by `core.schema` in the mapper — the same
-    parser, bounds and error vocabulary a `responseSchema` gets.
+    parser, bounds and error vocabulary a `responseSchema` gets. ``parametersJsonSchema`` is the
+    same declaration in JSON Schema, which current SDKs send (`FRD-143`): bounded alike and carried
+    as written. Google takes one or the other, never both, and so does this surface.
     """
 
-    model_config = _STRICT
+    model_config = _BOTH_SPELLINGS
     name: str
     description: str = ""
     parameters: dict[str, Any] | None = None
+    parametersJsonSchema: dict[str, Any] | None = Field(
+        default=None, alias="parameters_json_schema"
+    )
+
+    @model_validator(mode="after")
+    def _one_way_to_declare_parameters(self) -> FunctionDeclaration:
+        if self.parameters is not None and self.parametersJsonSchema is not None:
+            raise ValueError(
+                f"'{self.name}' declares its parameters twice, in 'parameters' and in "
+                "'parametersJsonSchema'. Send one: it is not clear which the model should follow."
+            )
+        return self
 
     @model_validator(mode="after")
     def _usable_name(self) -> FunctionDeclaration:
@@ -456,6 +495,14 @@ class GenerateContentRequest(BaseModel):
     #: is decided by the layer before dispatch — the shape is valid, the permission is separate.
     tools: list[Tool] = []
     toolConfig: ToolConfig | None = None
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _one_tool_is_a_list_of_one(cls, value: Any) -> Any:
+        """A single tool object is a list of one (`FRD-143`). Google's API takes both, and the AI
+        SDK's Google provider sent the object in its first major — which older agents still run,
+        and which a strict list refused with "Input should be a valid list"."""
+        return [value] if isinstance(value, dict) else value
 
     @model_validator(mode="after")
     def _distinct_tool_names(self) -> GenerateContentRequest:
