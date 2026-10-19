@@ -163,8 +163,11 @@ class MockProvider:
     def _tool_call(self, request: CanonicalRequest) -> CanonicalResponse:
         """Answer a request that declares tools by **calling the first one** (`FRD-131`).
 
-        Deterministic: each declared property is filled from the caller's prompt. A request that
-        already carries a tool result gets prose instead, or a tool loop would never end.
+        Deterministic: each declared property gets a value of its declared type, a string being
+        the caller's prompt. Typed, because a real client validates the arguments against the
+        schema it declared, and a `"true"` for a boolean fails there before the loop it tests runs.
+        A request that already carries a tool result gets prose instead, or a tool loop would never
+        end.
         """
         if any(message.tool_results for message in request.messages):
             usage = CanonicalUsage(prompt_tokens=self._prompt_tokens(request), completion_tokens=6)
@@ -183,7 +186,7 @@ class MockProvider:
             else {}
         )
         prompt = request.last_user_text().strip()[:60]
-        arguments = dict.fromkeys(properties, prompt)
+        arguments = {name: _argument(child, prompt) for name, child in properties.items()}
         usage = CanonicalUsage(prompt_tokens=self._prompt_tokens(request), completion_tokens=8)
         return CanonicalResponse(
             model=request.model,
@@ -333,6 +336,14 @@ def synthesise(schema: ResponseSchema, prompt: str = "") -> Any:
             return bool(len(prompt) % 2)
         case _:
             return schema.title or schema.description or f"mock:{prompt[:40]}"
+
+
+def _argument(schema: Any, prompt: str) -> Any:
+    """One tool argument of the declared type: the prompt for a string, a minimal value otherwise,
+    from either way a tool may declare it — Google's subset or JSON Schema."""
+    if isinstance(schema, ResponseSchema):
+        return prompt if schema.type in (None, SchemaType.STRING) else synthesise(schema, prompt)
+    return synthesise_json(schema, prompt)
 
 
 def synthesise_json(schema: Any, text: str) -> Any:

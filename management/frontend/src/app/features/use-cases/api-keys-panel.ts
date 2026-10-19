@@ -166,18 +166,19 @@ export class ApiKeysPanel {
   }
 
   /**
-   * The budget plugin, as the file a developer drops into `.opencode/plugin/` (`FRD-139` §5).
+   * The budget plugin, as the file a developer saves into `.opencode/plugins/aira-budget/`
+   * (`FRD-144`).
    *
    * Offered **here** because this is where somebody gets their key, and a feature whose discovery
    * depends on reading a README in this repository is one most people never meet. The plugin shows
-   * what is left of the allowance by itself — at session start and after every turn — which is the
-   * difference between a figure a developer has and a command they would have to know about.
+   * what is left of the allowance in OpenCode's sidebar by itself, which is the difference between
+   * a figure a developer has and a command they would have to know about.
    *
-   * No key is written into it: it reads the one in the `opencode.json` above, or `AIRA_API_KEY`.
-   * So this file, unlike that one, is not a credential.
+   * No key is written into it: it uses the key OpenCode already sends to the gateway. So this file,
+   * unlike the configuration, is not a credential.
    */
   protected downloadBudgetPlugin(): void {
-    saveBlob(new Blob([OPENCODE_BUDGET_PLUGIN], { type: 'text/javascript' }), 'aira-budget.js');
+    saveBlob(new Blob([OPENCODE_BUDGET_PLUGIN], { type: 'text/plain' }), 'tui.tsx');
   }
 
   protected copyOpenCodeConfig(issued: IssuedApiKey): void {

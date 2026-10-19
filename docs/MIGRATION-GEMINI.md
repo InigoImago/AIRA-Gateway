@@ -159,20 +159,26 @@ four majors — with the `ai` release each ships for — run a two-step tool cal
 and a stream against the gateway in its own test suite (`tools/clients`, `make test-clients`), and
 the test records which form each one sent.
 
-### OpenCode (`@ai-sdk/google`)
+### OpenCode, both generations
 
-A coding assistant, verified end to end including a real tool call — the OpenCode binary itself,
-in its current release and in the last 1.0 release, both reading files through tools against the
-gateway. Two places write its
-configuration, with the key in it — so treat the file as the credential it is:
+Two products under one name, and they send different requests: **OpenCode 1** (npm `opencode-ai`)
+talks to Gemini through the AI SDK's Google provider above; **OpenCode 2** (npm `@opencode/cli`) is a
+rewrite with a Gemini client of its own, which streams with `streamGenerateContent?alt=sse` and
+declares every tool in JSON Schema (`parametersJsonSchema`). Both are run against the gateway in its
+own test suite (`make test-clients`): a coding turn with a real tool call and its answer, and the
+terminal interface with the budget plugin, read back from the screen. OpenCode 2 is run with its own
+configuration and with the one the console hands out, which is OpenCode 1's shape and which it
+still reads.
+
+Two places write the configuration, with the key in it — so treat the file as the credential it is:
 
 - the console's **API keys** tab, beside a key it has just issued: **Copy OpenCode config** and
-  **Download opencode.json**, and **Download budget plugin**, which shows what is left of the
-  allowance inside the session (it reads `GET /v1beta/me/budget`);
+  **Download opencode.json**, and **Download budget plugin**;
 - `make showcase`, or `make showcase-agent` alone, which writes `opencode.showcase.json` for the
   showcase's `coding-assistant` use case.
 
-Both list only the models released to the use case that declare tool calling. The shape:
+Both list only the models released to the use case that declare tool calling. The shape, which both
+generations read:
 
 ```json
 {
@@ -191,17 +197,43 @@ Both list only the models released to the use case that declare tool calling. Th
 }
 ```
 
-[`tools/opencode/`](../tools/opencode/README.md) has the budget plugin, a `/budget` command, and the
-hand-editable configuration the measurement was made with.
+OpenCode 2's own shape for the same provider, with the key taken from the environment or from its
+credential store:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "aira": {
+      "name": "AIRA",
+      "env": ["AIRA_API_KEY"],
+      "package": "@opencode/ai/providers/google",
+      "settings": { "baseURL": "https://<host>/gw/uc/<use-case>/v1beta" },
+      "models": { "gemini-3.5-flash": { "capabilities": { "tools": true } } }
+    }
+  },
+  "model": "aira/gemini-3.5-flash"
+}
+```
+
+**The budget in the session.** The budget plugin adds an *AIRA budget* section to OpenCode's session
+sidebar — the limit that will refuse first, as a bar and a sentence, then what you spent today, this
+week and this month — and a `/budget` dialog with every allowance. One file serves both generations:
+save it as `.opencode/plugins/aira-budget/tui.tsx` (or under `~/.config/opencode/plugins/` for
+every project). OpenCode 2 finds it there; OpenCode 1, from 1.4, also needs `.opencode/tui.json`
+with `{"plugin": ["./plugins/aira-budget/tui.tsx"]}`. It uses the key OpenCode already sends to the
+gateway and stores none. [`tools/opencode/`](../tools/opencode/README.md) has the plugin and the
+hand-editable configuration the first measurement was made with.
 
 Three things that make OpenCode fail against a Gemini endpoint and are not the gateway's:
 
 - **No OpenAI options on this provider.** `extraBody`, `store`, `drop_params` and similar are
-  OpenAI-provider settings; `@ai-sdk/google` writes them into the request body, and a field Google's
-  API does not have is refused — here as at Google.
-- **The key outside the file**: `opencode auth login --provider aira` keeps it in OpenCode's own
-  credential store (`~/.local/share/opencode/auth.json`), and `apiKey` can be left out of
-  `opencode.json`.
+  OpenAI-provider settings; written into a Gemini request body, a field Google's API does not have
+  is refused — here as at Google.
+- **The key outside the file**: OpenCode 1 keeps it with `opencode auth login --provider aira`
+  (`~/.local/share/opencode/auth.json`), OpenCode 2 with `opencode auth login aira`, which asks for
+  it. Then `apiKey` can be left out of the configuration. Do not pass the key on OpenCode 2's command
+  line (`--answer`): it writes its command line into its log.
 - **A path prefix instead of the header**, where a client cannot set one: `baseURL`
   `https://<host>/gw/uc/<use-case>/v1beta` through the console's proxy, or
   `https://<gateway>/uc/<use-case>/v1beta` directly.

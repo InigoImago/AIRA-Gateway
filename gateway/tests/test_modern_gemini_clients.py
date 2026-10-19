@@ -26,10 +26,11 @@ from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, ToolDeclaration
 from aira_gateway.core.json_schema import parse_json_schema
-from aira_gateway.core.schema import SchemaBounds, SchemaRejected
+from aira_gateway.core.schema import SchemaBounds, SchemaRejected, parse
 from aira_gateway.db.models import ModelRead, UseCaseRead
 from aira_gateway.upstreams.diagnosis import from_body
 from aira_gateway.upstreams.gemini_mapping import canonical_to_gemini_request
+from aira_gateway.upstreams.mock import MockProvider
 from aira_gateway.upstreams.openai.mapping import canonical_to_openai
 from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
 
@@ -414,3 +415,39 @@ def test_a_single_tool_object_is_a_list_of_one() -> None:
     )
 
     assert [tool.name for tool in canonical.tools] == ["read_file"]
+
+
+# ---- the mock answers a tool call a real client accepts (`FRD-144`) ------------------------------
+
+
+@pytest.mark.parametrize("dialect", ["parameters", "parametersJsonSchema"])
+async def test_the_mocks_tool_arguments_have_the_declared_types(dialect: str) -> None:
+    """A real client validates the arguments against the schema it declared.
+
+    OpenCode 2 refused the mock's call to its `edit` tool — *"replaceAll: Expected boolean"* — when
+    every argument was the prompt as a string, and a test of the tool loop then ran on an error.
+    """
+    declared = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "replaceAll": {"type": "boolean"},
+            "limit": {"type": "integer"},
+            "paths": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+    tool = (
+        ToolDeclaration(name="edit", parameters=parse(declared))
+        if dialect == "parameters"
+        else ToolDeclaration(name="edit", parameters_json_schema=parse_json_schema(declared))
+    )
+    request = CanonicalRequest(
+        model="mock-1", messages=[CanonicalMessage(role=Role.USER, text="hi")], tools=(tool,)
+    )
+
+    (call,) = (await MockProvider("mock-1").generate(request)).tool_calls
+
+    assert isinstance(call.arguments["path"], str)
+    assert isinstance(call.arguments["replaceAll"], bool)
+    assert isinstance(call.arguments["limit"], int)
+    assert isinstance(call.arguments["paths"], list)

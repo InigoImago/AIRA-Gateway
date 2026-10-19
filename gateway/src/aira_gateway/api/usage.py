@@ -14,7 +14,7 @@ Two endpoints, one question asked from two sides:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -93,6 +93,9 @@ async def my_budget(
       whether or not any budget exists. A use case with no budget still answers the question the
       feature was asked for ("what have I used"), and a client can show a figure without inventing
       a limit to put beside it.
+    - ``today`` and ``this_week`` — the same record over the current UTC day and the week since
+      Monday (`FRD-144`): a developer reading a sidebar asks how today went before they ask about
+      the month, and a client cannot work either out from a monthly total.
     - ``currency`` — the unit the amounts are in, because the caller cannot work it out and a
       client that guesses puts a wrong unit beside a right number.
     - ``enforced`` — whether budgets refuse at all in this installation
@@ -114,12 +117,14 @@ async def my_budget(
     # (`BudgetService.usage`). `subject=person` is what makes an `each_member` row this caller's.
     allowances = await service.usage(use_case or "", subject=person) if use_case else []
 
-    start, end = _this_month(datetime.now(UTC))
+    windows = _windows(datetime.now(UTC))
     reporting: ReportingService = request.app.state.reporting
-    # Scoped to this caller's own traffic in their own use case: `person` narrows the whole report
+    # Scoped to this caller's own traffic in their own use case: `person` narrows every figure
     # (`FRD-626` FR-15), so nothing here can carry a colleague's figures whatever the use case's
     # visibility says (`FRD-622` FR-1c).
-    spent = await reporting.report((use_case,) if use_case else (), start, end, person=person or "")
+    today, week, month = await reporting.totals(
+        (use_case,) if use_case else (), windows, person=person or ""
+    )
 
     return JSONResponse(
         {
@@ -132,20 +137,32 @@ async def my_budget(
             # (`FRD-132` §11.7). No conversion happens anywhere — display only (`FRD-403`).
             "currency": settings_of(request).currency,
             "allowances": allowances,
-            "this_period": {
-                "from": start.isoformat(),
-                "to": end.isoformat(),
-                **spent["totals"],
+            **{
+                name: {"from": start.isoformat(), "to": end.isoformat(), **figures}
+                for name, (start, end), figures in zip(
+                    ("today", "this_week", "this_period"),
+                    windows,
+                    (today, week, month),
+                    strict=True,
+                )
             },
         }
     )
 
 
-def _this_month(now: datetime) -> tuple[datetime, datetime]:
-    """The current calendar month, half-open and UTC — the window the console's figures use.
+def _windows(now: datetime) -> tuple[tuple[datetime, datetime], ...]:
+    """Today, this week and this month — calendar windows, half-open and UTC.
 
-    Not the budget's period: a budget may count by day, and this block is the record rather than
-    the counter. Said in the docstring above rather than inferred from a date in the payload. Where
-    a month begins and ends is `budgets.keys`' to say, once.
+    Not the budget's periods: a budget counts by day or month, and these blocks are the record
+    rather than the counter. UTC because every counter and every reset time this endpoint reports
+    is UTC, and a "today" in another zone would disagree with the reset beside it. The week starts
+    on Monday (ISO 8601), and may begin in the previous month. Where a day and a month begin and
+    end is `budgets.keys`' to say, once.
     """
-    return keys.period_starts("month", now), keys.period_ends("month", now)
+    day = keys.period_starts("day", now), keys.period_ends("day", now)
+    week_starts = day[0] - timedelta(days=day[0].weekday())
+    return (
+        day,
+        (week_starts, week_starts + timedelta(days=7)),
+        (keys.period_starts("month", now), keys.period_ends("month", now)),
+    )

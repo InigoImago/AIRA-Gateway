@@ -69,4 +69,7 @@ cannot change a configured identity. Nothing new is stored or transmitted about 
 
 `gateway/tests/test_modern_gemini_clients.py` (hermetic), `gateway/tests/test_real_gemini_clients.py`
 (the real clients). The OpenCode binary, 1.19.3 and 1.0.142, was run by hand against the app with the
-mock model: a tool call, its result and the answer. Mutations `MG-1`–`MG-22`.
+mock model: a tool call, its result and the answer. Those are both **OpenCode 1**; the owner's
+rollout was OpenCode 2 (`@opencode/cli`), a different package with a Gemini client of its own, which
+`FRD-144` measured and put in the suite — it declares tools in `parametersJsonSchema`, the case FR-1
+built. Mutations `MG-1`–`MG-22`.

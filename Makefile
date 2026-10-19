@@ -679,12 +679,14 @@ test-py: ## Run Python test suites with coverage gate
 test-frontend: ## Run Angular unit tests (Vitest, single run) with the coverage gate
 	cd $(FRONTEND_DIR) && npx ng test --watch=false
 
-test-clients: ## Run real Gemini clients — every AI SDK major, google-genai — against the gateway
+test-clients: ## Run real clients — every AI SDK major, google-genai, OpenCode 1 and 2 — against the gateway
 	@# Real clients send what they send, not what a test of the gateway thinks they send: the
 	@# AI SDK's first major sends a single tool as an object, its fourth declares tools in JSON
-	@# Schema. Required here, so a missing install fails rather than skips.
+	@# Schema, OpenCode 2 runs a Gemini client of its own. The OpenCode budget plugin is tested
+	@# here too, under the Bun its host runs it on, and in both OpenCodes' interfaces (tmux).
+	@# Required here, so a missing install fails rather than skips.
 	cd tools/clients && npm ci --no-audit --no-fund
-	AIRA_REQUIRE_REAL_CLIENTS=1 uv run pytest --no-cov gateway/tests/test_real_gemini_clients.py
+	AIRA_REQUIRE_REAL_CLIENTS=1 uv run pytest --no-cov gateway/tests/test_real_gemini_clients.py tools/tests/test_the_opencode_plugin_holds_its_properties.py
 
 mutants: ## Break each guarded property on purpose and check the tests notice (see tools/mutation_check.py)
 	uv run python tools/mutation_check.py

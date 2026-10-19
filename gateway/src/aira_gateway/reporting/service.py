@@ -13,6 +13,7 @@ The caller resolves visibility (`api.reporting.visible_scope`) and passes it in 
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -258,6 +259,26 @@ class ReportingService:
                     person=person,
                 )
             return report
+
+    async def totals(
+        self,
+        scope: Scope,
+        windows: Sequence[tuple[datetime, datetime]],
+        *,
+        person: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Only the totals, for each of several windows, in one session.
+
+        What a client's summary needs — *today, this week, this month* — without the breakdowns
+        `report` builds for a screen: three reports would be three times every grouping, read by
+        nobody, on an endpoint a coding assistant calls after every turn. The figures are the same
+        `_totals` the report starts from, so the two cannot disagree about a window.
+        """
+        async with self._sessionmaker() as session:
+            return [
+                (await self._totals(session, scope, start, end, person)).as_dict()
+                for start, end in windows
+            ]
 
     async def _series(
         self,

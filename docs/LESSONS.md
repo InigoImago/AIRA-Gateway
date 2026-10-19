@@ -1724,7 +1724,11 @@ reading code.
   tool as an object where the schema said list; and it refused the fourth, which declares tools in
   JSON Schema. Both are Google's API. Install every major still in use side by side, run them as an
   application does, and record what each one sent, so a client that happened to send the old form
-  does not stand in for the new.
+  does not stand in for the new. **And find out which product a version names before testing it**:
+  asked about "OpenCode v2", the round tested the newest `opencode-ai` — 1.19.3, an OpenCode 1 —
+  and reported OpenCode verified, while OpenCode 2 is another npm package with its own Gemini
+  client and a plugin API that runs nothing written for the first. The client's own update notice
+  said so; read what the vendor publishes before naming a version tested.
 - **Keeping a provider's text out must not keep its cause out.** The model check reported the
   exception's type, rightly refusing to repeat a message that can quote a URL with a key in it — and
   so answered *Not reachable (UpstreamError)* to an API not enabled, a missing role, a model not in

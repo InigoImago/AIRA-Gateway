@@ -2,14 +2,19 @@
 
 Two things live here, and they have different standing:
 
-- **The budget plugin and the `/budget` command** (§3 and §4 below) are how a developer sees their
-  allowance inside OpenCode — the figure `GET /v1beta/me/budget` answers. The plugin is the main
-  route, because it shows that figure without being asked. The console hands out the same plugin
-  beside a key it issues.
+- **The budget plugin** (§3 below) is how a developer sees their allowance inside OpenCode — a
+  section of the session sidebar and a `/budget` dialog, from `GET /v1beta/me/budget`. One file
+  serves OpenCode 2 and OpenCode 1 from 1.4. The console hands out the same file beside a key it
+  issues.
 - **`opencode.json` is a measurement harness.** The question it was built to answer: *can a real
   coding assistant be served by the surface AIRA already has, or does it need a new one?* Choosing
   that from documentation is how a contract gets built on a guess and maintained forever — so the
   answer came from a client that actually sends requests. It could: no new surface is needed.
+
+**OpenCode 1 and OpenCode 2 are different products.** OpenCode 1 is the npm package `opencode-ai`
+and reaches Gemini through the AI SDK (`@ai-sdk/google`); OpenCode 2 is `@opencode/cli`, a rewrite
+with a Gemini client and a plugin API of its own. Both are run against the gateway in
+`gateway/tests/test_real_gemini_clients.py` (`make test-clients`).
 
 ## Why the Gemini surface, and why `@ai-sdk/google`
 
@@ -77,25 +82,6 @@ Two different figures with two different owners:
 | *what did this session cost?* | **OpenCode** | `cost` in its configuration file — never an API |
 | *what is left of my budget?* | **AIRA** | `GET /v1beta/me/budget` |
 
-### What this version of OpenCode actually has
-
-Checked against the installed binary (`opencode 1.18.15`) rather than the project's documentation,
-because the two disagree:
-
-| | |
-| --- | --- |
-| `plugin: [...]` | yes — a module that hooks the session |
-| `command/*.md` | yes — prompt templates, run as `opencode run --command <name>` or `/<name>` |
-| `mcp: {...}` | yes — local or remote tool servers |
-| `permission.bash` | yes — glob patterns, and **the last matching rule wins** |
-| a status line running a shell command | **no** — an open pull request, not a feature |
-| what a plugin may export | **one function, and nothing else** — every export is called as a plugin factory, and a string `id` makes the loader refuse the file |
-| `tui` plugins from that directory | **no** — the server loader takes the file anyway and the session hangs; the way in is `client.tui.showToast` |
-
-The status-line row is why there is no one-liner that paints a budget into the chrome. The two
-plugin rows are why §3's file looks the way it does: a plugin file that breaks either of them stops
-the client from working.
-
 ### 1. The session cost: prices in the configuration
 
 Without a `cost` block OpenCode prints **`$0.00` forever**, whatever was spent. The console's
@@ -113,11 +99,6 @@ a run reproduces the figure:
 `qwen2.5:3b` deliberately has none: there is no catalog entry to take it from, and a price invented
 in a harness is the same wrong number as a price invented in the console.
 
-Measured, same instruction twice, read out of OpenCode's own store
-(`~/.local/share/opencode/opencode.db`): `cost: 0` with no block against `cost: 0.0002102` with it,
-against `0.0002` in AIRA's audit row. `opencode stats` still shows `$0.00` — it rounds to two
-decimals, so a fifth of a thousandth of a euro has nowhere to go.
-
 ### 2. The remaining budget: one endpoint, one `curl`
 
 The figure a developer actually needs is the one that will **refuse** them, which is AIRA's counter:
@@ -130,95 +111,74 @@ curl -s http://localhost:8001/v1beta/me/budget -H "x-goog-api-key: $AIRA_API_KEY
   // "spent \(.this_period.cost) this month"'
 ```
 
-Under a cost budget that prints `<remaining> of <limit> left (resets <date>)`. The showcase's
-`coding-assistant` has a budget of requests, not of money, so there it prints the second line,
-`spent <cost> this month`; the plugin below shows whichever dimension binds. Put the command in a
-shell prompt, a tmux `status-right`, or an alias beside the editor. It lives *next to* OpenCode,
-which is why it needs nothing from OpenCode.
-
-Three things the answer says that a tally cannot:
+Put it in a shell prompt, a tmux `status-right`, or an alias beside the editor — it needs nothing
+from OpenCode. What the answer says that a tally cannot:
 
 - `remaining_*` is `null` where that dimension is **not capped** — not a large number, so a bar
   drawn from it cannot invent a limit nobody set;
 - `period_ends` is when the counter resets, which is the question that follows a refusal;
 - `enforced: false` means the limits are **figures and not stops** in this installation
-  (`AIRA_ENFORCE_BUDGETS`), so a full-looking bar would be a lie.
+  (`AIRA_ENFORCE_BUDGETS`), so a full-looking bar would be a lie;
+- `today`, `this_week` and `this_period` are what the audit trail says you spent today, since Monday
+  and this month, in UTC — with or without a budget.
 
-### 3. Inside the session, unasked: the budget plugin
+### 3. Inside the session: the budget plugin
 
-[`plugin/aira-budget.js`](plugin/aira-budget.js) is **the route this feature is delivered by**.
-Everything above still has to be *asked for*, and a figure nobody asks for is a figure nobody sees:
+[`plugins/aira-budget/tui.tsx`](plugins/aira-budget/tui.tsx) adds an **AIRA budget** section to the
+session sidebar, under the context gauge:
+
+```
+AIRA budget
+█████████████████░░░ 85%
+6 of 40 requests left
+use case · per day · resets 20 Oct
+Today               0.37 EUR · 35 req
+This week           3.10 EUR · 88 req
+This month         7.87 EUR · 310 req
+```
+
+— the limit that will refuse **first** across every budget that binds you, whose counter it is and
+when it resets, then the three periods. Where the terminal is too narrow for the sidebar (120
+columns and below) one line takes its place in the prompt footer, `AIRA · 85% used · 0.37 EUR
+today`. **`/budget`** (or *AIRA budget* in the command palette) opens every allowance with requests
+and tokens. It reads at start, at the end of every turn and every five minutes; it toasts only when
+a limit is crossed — four fifths, then the limit — and once when the budget cannot be read. Nothing
+goes through the model and nothing into the conversation.
+
+**Install** — the same file for both generations:
 
 ```bash
-mkdir -p .opencode/plugin
-cp /path/to/AIRA/tools/opencode/plugin/aira-budget.js .opencode/plugin/
-#   …or ~/.config/opencode/plugin/ for every project. The AIRA console offers the same file
-#   beside the key it issues: "Download budget plugin".
+mkdir -p .opencode/plugins/aira-budget
+cp /path/to/AIRA/tools/opencode/plugins/aira-budget/tui.tsx .opencode/plugins/aira-budget/
+#   …or ~/.config/opencode/plugins/aira-budget/ for every project. OpenCode 2 finds it there.
+
+# OpenCode 1 (from 1.4) loads a TUI plugin only from tui.json, beside it in .opencode/:
+echo '{ "plugin": ["./plugins/aira-budget/tui.tsx"] }' > .opencode/tui.json
 ```
 
-That is the whole installation. It reads the key from the `opencode.json` OpenCode has already
-loaded — so the console's generated configuration needs nothing added — or from `AIRA_API_KEY` and
-`AIRA_BASE_URL` when you prefer the environment. It carries no credential and guesses no address.
+It finds the gateway in the `aira` provider OpenCode has loaded — the configuration the console
+generates names it so — and uses the key OpenCode sends to it: from the configuration, from the
+environment variable the configuration names, or from OpenCode's credential store
+(`opencode auth login`). `AIRA_BASE_URL` and `AIRA_API_KEY` override both. It stores nothing and
+guesses no address.
 
-What it does, and what it deliberately does not:
+**What the file obeys, each rule measured against a client:**
 
-| | |
-| --- | --- |
-| when it speaks | at load, when a session starts, and after a turn that moved the counters |
-| when it stays quiet | an unchanged figure, a counter that went *down*, and anything less than a tenth of the limit since the last notice |
-| what it shows | the dimension that will **refuse first** across every budget that binds you, whose counter it is, and when it resets |
-| how loudly | `info`, `warning` from four fifths spent, `error` at the limit — with the warning on screen for twice as long |
-| when it complains | no key, no address, or a gateway that refuses: said **once**, naming the place to fix |
+1. **One file in a directory of its own.** OpenCode 1 loads every `*.ts`/`*.js` directly in
+   `.opencode/plugin/` or `plugins/` as a *server* plugin, and a TUI module loaded that way hangs the
+   session; it does not look into sub-directories. OpenCode 2 loads a sub-directory's `tui` entry.
+2. **One default export with both generations' entry points.** OpenCode 2 reads `{ id, setup }`,
+   OpenCode 1 `{ id, tui }`; each ignores the other's key, and OpenCode 1 refuses a module that also
+   exports `server`.
+3. **Only `solid-js` and `@opentui/solid` are imported** — OpenCode resolves both to its own copies.
+   Anything else would have to be installed beside the file.
+4. **Loading does not wait on the network.** The first reading is started, not awaited.
 
-Measured against a live stack, which is also what it looks like:
+**After editing the plugin**, run `uv run python tools/opencode_plugin_asset.py --write`: the
+console hands out a generated copy, and `tools/tests/test_the_console_hands_out_the_plugin_it_ships.py`
+fails while the two differ. Its tests are `tools/clients/opencode-budget-plugin.test.ts`, run under
+Bun by `make test-clients`.
 
-```
-┃  hi           ┃                                                          ┃
-┃               ┃  AIRA budget                                             ┃
-                ┃                                                          ┃
-   ▣  Build · qw┃  AIRA: 489 of 500 requests left · use case, per day ·    ┃
-```
-
-**Three rules the file obeys, each one having broken the client first** — they are in its header
-too, because the next person to tidy it will not have measured them:
-
-1. **One file in the plugin directory.** OpenCode loads *every* file there as a plugin, so a helper
-   module beside it is handed to the plugin API and `opencode run` dies with `UnknownError`.
-2. **One export, and it is a function.** The loader calls every export as a plugin factory. An
-   `export const id = "…"` — valid according to the published types — makes it refuse the file with
-   *"Plugin export is not a function"*, and the display then silently never appears.
-3. **Loading may not block.** Awaiting the first reading waits on the gateway *and* on the TUI's
-   own server, which is not serving yet; the interface drew nothing at all until it was killed.
-
-**After editing the plugin**, run `uv run python tools/opencode_plugin_asset.py --write`. The
-console hands out a generated copy of this file, and
-`tools/tests/test_the_console_hands_out_the_plugin_it_ships.py` fails while the two differ.
-
-### 4. Inside the session, on request: the `/budget` command
-
-[`command/budget.md`](command/budget.md) is a **prompt template**, not code. Copy it next to a
-project (`.opencode/command/budget.md`) or into `~/.config/opencode/command/`, then:
-
-```bash
-opencode run --command budget      # or type /budget in the TUI
-```
-
-The agent runs the `curl` above with its own shell tool and reports one line. Two things it needs:
-
-```json
-"permission": { "bash": { "*": "ask", "curl -s *": "allow" } }
-```
-
-(the last matching rule wins, so the specific `allow` must come after the general `ask`), and
-`AIRA_API_KEY` in the environment the agent inherits. The key is never written into a file in this
-repository — that is the one way a shipped recipe leaks a credential into version control.
-
-**Why this is not the main route.** It depends on the model calling a shell tool, and that was
-measured rather than assumed: `qwen3:0.6b` never attempted it, and `qwen3:4b` — a model this
-catalogue records as one that *does* emit tool calls — declared ten tools and called none, twice,
-taking 90 seconds each time. The smaller model's first answer *invented* a budget that contradicted
-the live stack, in the template's own bullet shape, which is why the template orders
-`I could not read the budget.` instead of a guess.
-
-A transparency feature whose reliability depends on a model's mood is not one. The plugin in §3
-does not involve the model at all; this command is for somebody who wants to ask.
+**Retired**: the OpenCode 1 server plugin that showed the figure as a toast, and the `/budget`
+prompt template that asked the model to `curl` it — the second wrote its template, a tool call, a
+permission dialog and the answer into the chat, when a model ran it at all.

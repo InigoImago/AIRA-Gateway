@@ -1,4 +1,4 @@
-"""The console's copy of the OpenCode plugin is the plugin (`FRD-139` §5).
+"""The console's copy of the OpenCode plugin is the plugin (`FRD-144`).
 
 The panel that issues a key offers the plugin for download, which needs the file's text inside the
 Angular bundle. That is a second copy of a file, and a second copy is a second thing that can
@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = ROOT / "tools" / "opencode_plugin_asset.py"
 TARGET = ROOT / "management/frontend/src/app/features/use-cases/opencode-plugin.generated.ts"
-PLUGIN = ROOT / "tools" / "opencode" / "plugin" / "aira-budget.js"
+PLUGIN = ROOT / "tools" / "opencode" / "plugins" / "aira-budget" / "tui.tsx"
 
 
 def test_the_generated_copy_is_current() -> None:

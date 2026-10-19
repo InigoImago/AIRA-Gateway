@@ -209,7 +209,7 @@ a model name may contain one; any other verb, `:countTokens` among them, is `400
 | Operation                     | Who may call | Answers |
 | ----------------------------- | ------------ | ------- |
 | `GET /v1beta/usage/{use_case}` | `report.read_all`, or a grant on the use case | `200 {use_case, usage, enforced}`: one entry per budget with its limits, `used_*`, `remaining_*` and `period_ends`; a budget for each member shows the caller's own counter. `enforced` says whether budgets refuse at all (`AIRA_ENFORCE_BUDGETS`). |
-| `GET /v1beta/me/budget`       | any credential; the use case comes from the key, the header or `/uc/<slug>` | `200 {use_case, person, enforced, currency, allowances, this_period}`: `allowances` are the counters enforcement reads, one per budget that binds this caller; `this_period` is what the audit trail says the caller spent this calendar month, with or without a budget. |
+| `GET /v1beta/me/budget`       | any credential; the use case comes from the key, the header or `/uc/<slug>` | `200 {use_case, person, enforced, currency, allowances, today, this_week, this_period}`: `allowances` are the counters enforcement reads, one per budget that binds this caller; `today`, `this_week` (since Monday) and `this_period` (the calendar month) are what the audit trail says the caller spent, in UTC, with or without a budget — each `{from, to}` with the reporting totals. |
 
 ### 2.5 Figures, requests and findings
 

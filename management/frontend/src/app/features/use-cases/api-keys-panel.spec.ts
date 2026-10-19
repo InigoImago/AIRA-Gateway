@@ -583,24 +583,25 @@ describe('ApiKeysPanel — the budget plugin', () => {
     component.downloadBudgetPlugin();
 
     expect(clicked).toHaveBeenCalled();
-    // The file name is not cosmetic: OpenCode loads every file in `.opencode/plugin/`, so what is
-    // saved there has to be the plugin and nothing else.
-    expect(link.download).toBe('aira-budget.js');
+    // The file name is not cosmetic: OpenCode 2 loads a plugin directory's `tui` entry, so the file
+    // is saved as `.opencode/plugins/aira-budget/tui.tsx` under exactly this name.
+    expect(link.download).toBe('tui.tsx');
     expect(created).toHaveBeenCalled();
     expect(revoked).toHaveBeenCalledWith('blob:plugin');
-    expect(blobbed[0].type).toBe('text/javascript');
+    expect(blobbed[0].type).toBe('text/plain');
   });
 
   it('hands out the plugin that ships, asking the gateway for the caller’s own allowance', async () => {
-    // Not a paraphrase: the constant is generated from `tools/opencode/plugin/aira-budget.js`, and
+    // Not a paraphrase: the constant is generated from `tools/opencode/plugins/aira-budget/tui.tsx`, and
     // a Python test fails when the two disagree. What is asserted here is that the console offers
     // *that* file — a plugin a version behind does not announce itself, it just shows a figure.
     const { OPENCODE_BUDGET_PLUGIN } = await import('./opencode-plugin.generated');
 
     expect(OPENCODE_BUDGET_PLUGIN).toContain('/v1beta/me/budget');
-    expect(OPENCODE_BUDGET_PLUGIN).toContain('export const server');
+    // Both OpenCode generations' entry points, in the one default export each loader reads.
+    expect(OPENCODE_BUDGET_PLUGIN).toContain('export default { id: "aira.budget", setup, tui }');
     // No credential travels in this file; the key comes from the configuration or the environment.
-    expect(OPENCODE_BUDGET_PLUGIN).not.toContain('aira_');
+    expect(OPENCODE_BUDGET_PLUGIN).not.toMatch(/aira_[A-Za-z0-9]/);
   });
 
   it('says where the file goes and that it carries no credential', () => {
@@ -611,7 +612,8 @@ describe('ApiKeysPanel — the budget plugin', () => {
     fixture.detectChanges();
 
     const hint = html().querySelector('[data-testid="budget-plugin-hint"]');
-    expect(hint?.textContent).toContain('.opencode/plugin/');
+    expect(hint?.textContent).toContain('.opencode/plugins/aira-budget/tui.tsx');
+    expect(hint?.textContent).toContain('"plugin": ["./plugins/aira-budget/tui.tsx"]');
     expect(hint?.textContent).toContain('no credential');
   });
 });

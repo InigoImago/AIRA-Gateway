@@ -77,7 +77,7 @@ Edit the source and regenerate; never edit the copy. Each guard fails when the c
 | Generated | From | Regenerate with | Guard |
 |---|---|---|---|
 | `docs/features/README.md` | each FRD's header | `uv run python tools/features_index.py --write` | `tools/tests/test_features_index.py` |
-| `management/frontend/src/app/features/use-cases/opencode-plugin.generated.ts` | `tools/opencode/plugin/aira-budget.js` | `uv run python tools/opencode_plugin_asset.py --write` | `tools/tests/test_the_console_hands_out_the_plugin_it_ships.py` |
+| `management/frontend/src/app/features/use-cases/opencode-plugin.generated.ts` | `tools/opencode/plugins/aira-budget/tui.tsx` | `uv run python tools/opencode_plugin_asset.py --write` | `tools/tests/test_the_console_hands_out_the_plugin_it_ships.py` |
 | `management/frontend/public/favicon.ico` | `management/frontend/public/aira-mark.svg` | `uv run python tools/make_favicon.py --write` | `tools/tests/test_favicon_is_the_aira_mark.py` |
 
 ## Database migrations

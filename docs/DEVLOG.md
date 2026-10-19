@@ -5,6 +5,43 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The budget in OpenCode's own interface, and OpenCode 2 (2026-10-19)
+
+The owner asked for a budget display that works in OpenCode 2, which they had rolled out: the
+figure in the right-hand sidebar, what is left on a command, and today, this week and this month.
+`/budget` there wrote its template into the chat, made a tool call, raised a permission dialog and
+answered as chat text.
+
+**"OpenCode v2" was a product, not a release.** The previous round had reported OpenCode verified
+after running 1.19.3, the newest `opencode-ai` — which is OpenCode 1. OpenCode 1.19.3's own home
+screen says *"/update to upgrade to OpenCode 2.0"*: OpenCode 2 is `@opencode/cli` 2.0.32, a rewrite
+with its own Gemini client and a plugin API that runs no OpenCode 1 plugin — which is why only the
+prompt template was left for the owner. Measured now against the app with the mock model: OpenCode
+2 streams `streamGenerateContent?alt=sse` and declares its twelve tools in `parametersJsonSchema`,
+also when its configuration is the console's OpenCode 1 shape (it maps `@ai-sdk/google` onto its own
+client). Two first runs hung for minutes and did not recur with fresh homes; noted, not explained.
+
+**Built** (`FRD-144`): `/v1beta/me/budget` answers `today` and `this_week` beside the month, from
+one session and three totals queries. One TUI plugin file for both generations — OpenCode 2's
+`{ id, setup }` and OpenCode 1's `{ id, tui }` in one default export, each loader ignoring the
+other's key — with a sidebar section, a footer line where the sidebar is hidden, a `/budget` dialog
+and toasts only on crossing four fifths and the limit. It reads the key wherever OpenCode keeps it:
+OpenCode 1 resolves it into `state.provider[].key`, OpenCode 2 exposes stored credentials through
+`client.credential.list`. A first version asked for a missing key and kept it in OpenCode 2's plugin
+storage; the file it wrote was world-readable, and the question was unnecessary once every place a
+key lives was readable — removed. OpenCode 2 ends a turn with `session.execution.succeeded`, not
+`session.idle`; listening for the latter left the sidebar a turn behind until the tmux run showed
+it. The mock now types tool arguments: OpenCode 2 validated its `edit` tool's `replaceAll` and
+refused the prompt-as-string. Retired: the OpenCode 1 toast plugin and the prompt template.
+
+**Tested**: the plugin under Bun, loaded as OpenCode loads it and drawn by OpenTUI's test renderer
+(32 cases); OpenCode 1.19.3 and 2.0.32 from `tools/clients`, each a coding turn headless and its
+interface in `tmux` with the sidebar and the dialog read from the screen, in the `clients` CI job;
+OpenCode 1.4.0, the oldest with a sidebar slot and before the keymap API, by hand. 1977 properties;
+`OB1`–`OB18`, `AL9`, `AL10`, `MG-23` new, `AL6` re-anchored, the old plugin's and command's removed.
+
+---
+
 ## Current Gemini clients, without losing the older ones (2026-10-19)
 
 The owner's integration on Google Cloud found three things and patched them locally: OpenCode's

@@ -10,8 +10,14 @@ on a real socket, through a tool call and its result, a structured answer and a 
 What the gateway received is recorded, so a passing client that happened to send the old form does
 not stand in for the new one.
 
-The Node clients need `npm ci` in `tools/clients` (`make test-clients`). Without it they are
-skipped — except where `AIRA_REQUIRE_REAL_CLIENTS` is set, as in CI, which makes a skip a failure.
+And **OpenCode itself**, both generations in use (`FRD-144`): OpenCode 1 runs the AI SDK, OpenCode
+2 its own Gemini runtime, and neither is what a test of the gateway would think to send. Each runs a
+coding turn headless, and each runs its terminal interface in `tmux` with the budget plugin
+installed, read back from the screen.
+
+The Node clients need `npm ci` in `tools/clients` (`make test-clients`), the interface tests `tmux`.
+Without them they are skipped — except where `AIRA_REQUIRE_REAL_CLIENTS` is set, as in CI, which
+makes a skip a failure.
 """
 
 from __future__ import annotations
@@ -23,7 +29,9 @@ import os
 import shutil
 import subprocess
 import threading
-from collections.abc import Iterator
+import time
+import uuid
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -35,9 +43,18 @@ from google.genai import types
 
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
-from aira_gateway.db.models import ModelRead, UseCaseRead
+from aira_gateway.db.models import BudgetRead, ModelRead, UseCaseRead
 
-CLIENTS = Path(__file__).resolve().parents[2] / "tools" / "clients"
+ROOT = Path(__file__).resolve().parents[2]
+CLIENTS = ROOT / "tools" / "clients"
+BUDGET_PLUGIN = ROOT / "tools" / "opencode" / "plugins" / "aira-budget" / "tui.tsx"
+
+#: The OpenCode binaries `tools/clients` installs, by generation: `opencode-ai` is OpenCode 1,
+#: `@opencode/cli` OpenCode 2 — two packages, because the second is a rewrite.
+OPENCODE = {
+    "1": CLIENTS / "node_modules" / "opencode-ai" / "bin" / "opencode.exe",
+    "2": CLIENTS / "node_modules" / "@opencode" / "cli" / "bin" / "opencode.exe",
+}
 
 #: What `run.mjs` should see a provider major send: the vocabulary of its tool declarations, and
 #: of its structured output.
@@ -80,8 +97,14 @@ class _Recorder:
 
 
 @contextmanager
-def _served() -> Iterator[tuple[str, _Recorder]]:
-    app = create_app(GatewaySettings(auth_required=False, enforce_budgets=False, log_queue_size=0))
+def _served(*, daily_requests: int | None = None) -> Iterator[tuple[str, _Recorder]]:
+    """The app on a real socket, with a model and a use case — and, given ``daily_requests``, a
+    budget on that use case that is enforced, for what a budget display has to show."""
+    app = create_app(
+        GatewaySettings(
+            auth_required=False, enforce_budgets=daily_requests is not None, log_queue_size=0
+        )
+    )
     recorder = _Recorder(app)
     config = uvicorn.Config(recorder, host="127.0.0.1", port=0, log_level="error")
     server = uvicorn.Server(config)
@@ -101,6 +124,12 @@ def _served() -> Iterator[tuple[str, _Recorder]]:
                 )
             )
             session.add(UseCaseRead(slug="uc", name="uc", tools_enabled=True))
+            if daily_requests is not None:
+                session.add(
+                    BudgetRead(
+                        use_case="uc", scope="use_case", period="day", limit_requests=daily_requests
+                    )
+                )
             await session.commit()
 
     asyncio.run(_seed())
@@ -231,3 +260,226 @@ def test_google_genai_sends_json_schema_and_a_thinking_level() -> None:
         {"thinkingLevel": "HIGH"},
         {"thinking_level": "HIGH"},
     )
+
+
+# == OpenCode, both generations (`FRD-144`) ======================================================
+
+
+@pytest.fixture
+def opencode(node_clients: None) -> None:
+    missing = [generation for generation, binary in OPENCODE.items() if not binary.exists()]
+    if missing:
+        pytest.fail(f"OpenCode {missing} not installed by tools/clients: run make test-clients")
+
+
+@pytest.fixture(scope="module")
+def opencode_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One package cache for every OpenCode run here: OpenCode 1 installs its AI SDK provider on
+    first use, and a fresh cache per test would download it every time."""
+    return tmp_path_factory.mktemp("opencode-cache")
+
+
+def _project(root: Path, base: str, *, configuration: str, plugin: str | None = None) -> Path:
+    """A git project with one file, an AIRA provider, and optionally the budget plugin.
+
+    ``configuration`` is ``"v1"`` — the shape the AIRA console generates, `provider`, `npm` and
+    `options`, which OpenCode 2 still reads — or ``"v2"``, OpenCode 2's own `providers`, `package`
+    and `settings`.
+    """
+    project = root / "project"
+    (project / ".opencode").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(project)], check=True)  # noqa: S603, S607
+    (project / "hello.py").write_text('print("hello")\n')
+    model = {"name": "mock-1 via AIRA (EUR)", "limit": {"context": 128000, "output": 8192}}
+    if configuration == "v1":
+        provider = {
+            "provider": {
+                "aira": {
+                    "npm": "@ai-sdk/google",
+                    "name": "AIRA",
+                    "options": {"baseURL": f"{base}/uc/uc/v1beta", "apiKey": "{env:AIRA_API_KEY}"},
+                    "models": {"mock-1": {**model, "tool_call": True}},
+                }
+            }
+        }
+    else:
+        provider = {
+            "providers": {
+                "aira": {
+                    "name": "AIRA",
+                    "env": ["AIRA_API_KEY"],
+                    "package": "@opencode/ai/providers/google",
+                    "settings": {"baseURL": f"{base}/uc/uc/v1beta"},
+                    "models": {"mock-1": {**model, "capabilities": {"tools": True}}},
+                }
+            }
+        }
+    config = {"$schema": "https://opencode.ai/config.json", "model": "aira/mock-1", **provider}
+    (project / "opencode.json").write_text(json.dumps(config, indent=2))
+    if plugin is not None:
+        # Where each generation finds the one file: OpenCode 2 discovers the directory, OpenCode 1
+        # is told in `tui.json`.
+        target = project / ".opencode" / "plugins" / "aira-budget"
+        target.mkdir(parents=True)
+        shutil.copy(BUDGET_PLUGIN, target / "tui.tsx")
+        if plugin == "1":
+            (project / ".opencode" / "tui.json").write_text(
+                json.dumps({"plugin": ["./plugins/aira-budget/tui.tsx"]})
+            )
+    return project
+
+
+def _environment(root: Path, project: Path, cache: Path) -> dict[str, str]:
+    """A home of its own, so nothing of the developer's OpenCode is read or written."""
+    home = root / "home"
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+        "XDG_STATE_HOME": str(home / ".local" / "state"),
+        "XDG_CACHE_HOME": str(cache),
+        # OpenCode 1 takes its directory from `PWD`, not from the process's working directory.
+        "PWD": str(project),
+        "TERM": "xterm-256color",
+        "AIRA_API_KEY": "not-checked-here",
+        **{
+            key: value
+            for key in (
+                "HTTPS_PROXY",
+                "HTTP_PROXY",
+                "NO_PROXY",
+                "https_proxy",
+                "http_proxy",
+                "no_proxy",
+            )
+            if (value := os.environ.get(key))
+        },
+    }
+
+
+def _command(generation: str) -> list[str]:
+    # OpenCode 2 otherwise connects to a background service shared with the developer's sessions.
+    return [str(OPENCODE[generation]), *(["--standalone"] if generation == "2" else [])]
+
+
+@pytest.mark.parametrize(
+    ("generation", "configuration"),
+    [("1", "v1"), ("2", "v2"), ("2", "v1")],
+    ids=["opencode-1", "opencode-2", "opencode-2-console-config"],
+)
+def test_opencode_carries_a_coding_turn(
+    opencode: None, opencode_cache: Path, tmp_path: Path, generation: str, configuration: str
+) -> None:
+    """A tool call, its result, and the answer after it — through the client developers run.
+
+    The third case is the configuration the AIRA console hands out, which is OpenCode 1's shape:
+    OpenCode 2 must still read it, or every key issued before the rollout needs a new file.
+    """
+    with _served() as (base, recorder):
+        project = _project(tmp_path, base, configuration=configuration)
+        run = [*_command(generation)[:1], "run", *_command(generation)[1:], "read hello.py"]
+        completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
+            run,
+            cwd=project,
+            env=_environment(tmp_path, project, opencode_cache),
+            capture_output=True,
+            text=True,
+            timeout=240,
+            check=False,
+        )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output[-3000:]
+    assert "acted on the tool result" in output, output[-3000:]
+    declared = set().union(*(_declared_with(body) for body in recorder.bodies))
+    # OpenCode 2's own runtime declares in JSON Schema whichever configuration shape it read.
+    if generation == "2":
+        assert declared == {"parametersJsonSchema"}, declared
+    else:
+        assert declared, "OpenCode 1 declared no tools"
+
+
+def _tmux(socket: str, *arguments: str) -> str:
+    return subprocess.run(  # noqa: S603 — tmux with fixed arguments
+        ["tmux", "-L", socket, *arguments],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+
+
+def _screen_until(socket: str, found: Callable[[str], bool], seconds: float) -> str:
+    deadline = time.monotonic() + seconds
+    screen = ""
+    while time.monotonic() < deadline:
+        screen = _tmux(socket, "capture-pane", "-p", "-t", "oc")
+        if found(screen):
+            return screen
+        time.sleep(0.5)
+    raise AssertionError(f"not on screen after {seconds}s:\n{screen}")
+
+
+@pytest.fixture
+def tmux() -> None:
+    if shutil.which("tmux"):
+        return
+    if os.environ.get("AIRA_REQUIRE_REAL_CLIENTS"):
+        pytest.fail("tmux is required here and not installed")
+    pytest.skip("tmux is not installed")
+
+
+@pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
+def test_the_budget_plugin_shows_in_opencodes_own_interface(
+    opencode: None, tmux: None, opencode_cache: Path, tmp_path: Path, generation: str
+) -> None:
+    """The plugin as a developer meets it: the terminal interface, read back from the screen.
+
+    The sidebar section after a turn, with the use case's limit and the three periods, and the
+    `/budget` dialog — the same file in both generations, installed where each one looks.
+    """
+    socket = f"aira-{uuid.uuid4().hex[:8]}"
+    with _served(daily_requests=50) as (base, _recorder):
+        project = _project(tmp_path, base, configuration="v1", plugin=generation)
+        env = _environment(tmp_path, project, opencode_cache)
+        command = " ".join(
+            [
+                "env",
+                "-i",
+                *(f"{key}={value}" for key, value in env.items()),
+                *_command(generation),
+                "; sleep 30",
+            ]
+        )
+        _tmux(
+            socket,
+            "new-session",
+            "-d",
+            "-s",
+            "oc",
+            "-x",
+            "170",
+            "-y",
+            "48",
+            "-c",
+            str(project),
+            command,
+        )
+        try:
+            _screen_until(socket, lambda screen: "mock-1 via AIRA" in screen, 120)
+            _tmux(socket, "send-keys", "-t", "oc", "read hello.py", "Enter")
+            sidebar = _screen_until(
+                socket,
+                lambda screen: "AIRA budget" in screen and "of 50 requests left" in screen,
+                120,
+            )
+            assert "use case · per day · resets" in sidebar
+            assert "This month" in sidebar
+            _tmux(socket, "send-keys", "-t", "oc", "/budget")
+            time.sleep(1)
+            _tmux(socket, "send-keys", "-t", "oc", "Enter")
+            dialog = _screen_until(socket, lambda screen: "Allowances" in screen, 30)
+            assert "limits enforced" in dialog
+            assert "From the audit trail" in dialog
+        finally:
+            subprocess.run(["tmux", "-L", socket, "kill-server"], check=False, timeout=30)  # noqa: S603, S607

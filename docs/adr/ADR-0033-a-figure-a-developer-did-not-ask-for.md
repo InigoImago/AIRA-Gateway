@@ -91,3 +91,15 @@ it ever needs to do more than read and show, that is a different decision.
   client was in front of us, and the next one gets its own decision rather than a framework.
 - **Follow-ups:** rate limits are not in the figure (`FRD-405`, `FRD-139` §6); the console still
   says nothing when `AIRA_ENFORCE_BUDGETS` is off (`FRD-610` §3.3), although the plugin now does.
+
+## Revisited (2026-10-19, `FRD-144`)
+
+**D stays; its form changes, and B goes.** OpenCode 2 runs no plugin written for OpenCode 1, and
+there `/budget` produced the flow this record rejects B for — the template in the chat, a tool call,
+a permission dialog, the answer as chat text. Both OpenCode generations now offer a plugin a place
+in the session sidebar, so the figure is drawn there by a TUI plugin: one file whose default export
+carries both generations' entry points, discovered by OpenCode 2 and listed in `tui.json` for
+OpenCode 1. The toast-only server plugin and the command template are retired. The three rules
+above were the server loader's; the TUI plugin keeps their substance — one file, nothing beside
+it, loading that does not wait on the network — under its own loaders.
+

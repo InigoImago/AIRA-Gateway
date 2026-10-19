@@ -18,7 +18,7 @@ a client that showed one as the other would be showing a number nobody enforces.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import anyio
 import pytest_asyncio
@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.money import to_nanos
+from aira_gateway.api.usage import _windows
 from aira_gateway.app import create_app
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -34,7 +35,9 @@ from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import BudgetRead, RequestLog
 
 URL = "/v1beta/me/budget"
-NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
+#: When the seeded spend happened: **now**, because the endpoint reads the current month. A fixed
+#: date here passed for the month it was written in and failed every month after.
+NOW = datetime.now(UTC)
 
 #: An API key's subject **is** its owner's username (`scopes.person`), which is why a key and a
 #: login land on the same allowance. Spelled out in the doubles so the test cannot pass by using
@@ -106,7 +109,15 @@ async def _budget(
         return int(row.id)
 
 
-async def _spent(sessions, *, subject: str, username: str | None, cost: str, use_case="coding"):
+async def _spent(
+    sessions,
+    *,
+    subject: str,
+    username: str | None,
+    cost: str,
+    use_case="coding",
+    at: datetime | None = None,
+):
     async with sessions() as session:
         session.add(
             RequestLog(
@@ -123,7 +134,7 @@ async def _spent(sessions, *, subject: str, username: str | None, cost: str, use
                 completion_tokens=200,
                 total_tokens=300,
                 cost_nanos=to_nanos(cost),
-                created_at=NOW,
+                created_at=at or NOW,
             )
         )
         await session.commit()
@@ -152,7 +163,8 @@ def test_a_key_is_told_its_own_limit_and_what_is_left() -> None:
     assert allowance["scope"] == "use_case"
     assert allowance["limit_cost"] == "50.00"
     assert allowance["period"] == "month"
-    assert allowance["period_ends"] == "2026-11-01T00:00:00+00:00"
+    next_month = (NOW.replace(day=28) + timedelta(days=4)).replace(day=1)
+    assert allowance["period_ends"] == f"{next_month:%Y-%m-01}T00:00:00+00:00"
     # Nothing has been booked against the counter yet, so what is left is the whole limit — and
     # the audit trail already records the spend. Two sources, and this is the difference they are
     # labelled apart for.
@@ -427,3 +439,68 @@ async def test_a_settle_past_the_limit_is_reported_as_it_is(sessions) -> None:
     assert allowance["used_cost"] == "1.50"
     assert allowance["remaining_cost_nanos"] == to_nanos("1.00") - to_nanos("1.50")
     assert allowance["remaining_cost"] == "-0.50"
+
+
+# == today, this week, this month (`FRD-144`) ====================================================
+
+
+def test_today_and_this_week_are_windows_of_the_same_record() -> None:
+    """A sidebar shows *today · this week · this month*; each must count exactly its window.
+
+    Spend is seeded on both sides of every boundary — the first moment of a window counts, the
+    moment before it does not — and the expectation is worked out here from the calendar, not from
+    the code under test, so the test holds on whatever day it runs: on a Monday the week and the
+    day start together, and early in a month the week reaches back into the previous one.
+    """
+    day = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
+    week = day - timedelta(days=day.weekday())
+    month = day.replace(day=1)
+    moments = sorted(
+        {NOW, day, week, month} | {m - timedelta(seconds=1) for m in (day, week, month)}
+    )
+
+    with _client(KEY) as client:
+        for moment in moments:
+            _seed(
+                client,
+                lambda s, at=moment: _spent(s, subject="erika", username=None, cost="1.00", at=at),
+            )
+        body = client.get(URL).json()
+
+    def counted(since: datetime) -> int:
+        return sum(1 for moment in moments if moment >= since)
+
+    assert body["today"]["requests"] == counted(day)
+    assert body["this_week"]["requests"] == counted(week)
+    assert body["this_period"]["requests"] == counted(month)
+    assert body["today"]["cost"] == f"{counted(day)}.00"
+    assert body["today"]["from"] == day.isoformat()
+    assert body["this_week"]["from"] == week.isoformat()
+    # Each window says where it ends, and ends where the next one of its kind begins.
+    assert body["today"]["to"] == (day + timedelta(days=1)).isoformat()
+    assert body["this_week"]["to"] == (week + timedelta(days=7)).isoformat()
+
+
+def test_the_daily_and_weekly_figures_are_the_callers_own_too() -> None:
+    """The same narrowing as the month: a colleague's spend today is not in my *today*."""
+    with _client(KEY) as client:
+        _seed(client, lambda s: _spent(s, subject="erika", username=None, cost="1.00"))
+        _seed(client, lambda s: _spent(s, subject="max", username=None, cost="99.00"))
+        body = client.get(URL).json()
+
+    assert (body["today"]["cost"], body["this_week"]["cost"]) == ("1.00", "1.00")
+
+
+def test_a_week_starts_on_monday_in_utc_and_may_begin_last_month() -> None:
+    """ISO weeks, UTC: Sunday 1 November 2026 is in the week that began on Monday 26 October."""
+    today, week, month = _windows(datetime(2026, 11, 1, 23, 30, tzinfo=UTC))
+
+    assert today == (datetime(2026, 11, 1, tzinfo=UTC), datetime(2026, 11, 2, tzinfo=UTC))
+    assert week == (datetime(2026, 10, 26, tzinfo=UTC), datetime(2026, 11, 2, tzinfo=UTC))
+    assert month == (datetime(2026, 11, 1, tzinfo=UTC), datetime(2026, 12, 1, tzinfo=UTC))
+
+
+def test_on_a_monday_the_week_and_the_day_begin_together() -> None:
+    today, week, _ = _windows(datetime(2026, 10, 19, 0, 0, tzinfo=UTC))
+
+    assert week[0] == today[0] == datetime(2026, 10, 19, tzinfo=UTC)

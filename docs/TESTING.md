@@ -62,8 +62,22 @@ library OpenCode and most TypeScript agents use — each with the `ai` release i
 side; `gateway/tests/test_real_gemini_clients.py` serves the gateway on a socket and has each one run
 a tool call and its result, a structured answer and a stream, then checks which form of the request
 each sent. The same test drives Google's own `google-genai` SDK with its JSON Schema fields.
-`uv run pytest` skips the Node half when `tools/clients` is not installed; `make test-clients` and
-CI's `clients` job install it and fail on a skip.
+
+**OpenCode, both generations.** `tools/clients` also installs OpenCode 1 (`opencode-ai`) and
+OpenCode 2 (`@opencode/cli`), two products with different Gemini clients. Each runs a coding turn
+headless — a tool call, its result and the answer — OpenCode 2 also with the configuration the
+console hands out. Each then runs its terminal interface in a `tmux` pane with the budget plugin
+installed, and the test reads the sidebar section and the `/budget` dialog back from the screen.
+Every OpenCode run has a home directory of its own, so nothing of the developer's OpenCode is read
+or written.
+
+**The budget plugin's own tests** run under Bun, installed by `tools/clients` too, because Bun is
+what OpenCode runs plugins on: `tools/clients/opencode-budget-plugin.test.ts` loads the shipped file
+as OpenCode does and has OpenTUI's test renderer draw the sidebar, the footer line and the dialog,
+compared line by line. `tools/tests/test_the_opencode_plugin_holds_its_properties.py` runs it.
+
+`uv run pytest` skips all of this when `tools/clients` or `tmux` is not installed; `make
+test-clients` and CI's `clients` job install them and fail on a skip.
 
 ## Mutation checks (hermetic, on demand)
 
@@ -211,7 +225,7 @@ Every push to any branch, every pull request, and every release tag runs:
 | --- | --- | --- |
 | `python` | `uv sync --frozen`; `ruff check`, `ruff format --check`, `mypy`; `uv run pytest` with the coverage gate | 20 min |
 | `frontend` | `npm ci`; Prettier over the console and `proxy.conf.cjs`; the production build; the unit tests with the coverage gate; Prettier and `tsc --noEmit` over the browser suite | 20 min |
-| `clients` | `uv sync --frozen`; `npm ci` in `tools/clients`; the real-client test — every major of the AI SDK's Google provider and `google-genai` against the gateway — which fails rather than skips here | 15 min |
+| `clients` | `uv sync --frozen`; `npm ci` in `tools/clients`; `tmux`; the real-client test — every major of the AI SDK's Google provider, `google-genai`, OpenCode 1 and 2 headless and in their terminal interface — and the budget plugin's own tests, which fail rather than skip here | 20 min |
 | `stack` | `make up-full`, `make wait-healthy`, `make demo-ready`, then the integration suite; the application logs on failure; `make down-full` | 40 min |
 | `browser` | a stack of its own, made ready the same way; Chromium; the browser suite, then `make test-windows-sso`; the logs and the Playwright report on failure | 30 min |
 

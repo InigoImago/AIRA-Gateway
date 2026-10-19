@@ -122,8 +122,12 @@ assumed. It is wrong for this version, and finding that out is what produced the
 
 ### 5.2 What ships
 
-1. **The plugin** — [`tools/opencode/plugin/aira-budget.js`](../../tools/opencode/plugin/aira-budget.js),
-   one file, dropped into `.opencode/plugin/`. It reads this endpoint when it loads, when a session
+> **Items 1 and 3 are replaced by `FRD-144`** (2026-10-19): OpenCode 2 runs no OpenCode 1 plugin,
+> and there the command produced exactly the chat-borne flow item 3 warns about. A TUI plugin now
+> shows the figure in the session sidebar of both OpenCode generations. Kept below as what was
+> built and measured then.
+
+1. **The plugin** — `tools/opencode/plugin/aira-budget.js` (retired), one file, dropped into `.opencode/plugin/`. It reads this endpoint when it loads, when a session
    starts and after every finished turn, and shows one line as a toast. **Nobody has to know it is
    there**, which is the requirement. Four properties decide whether it is bearable rather than
    merely present:
@@ -149,8 +153,7 @@ assumed. It is wrong for this version, and finding that out is what produced the
    regenerates is the one somebody installs, and a plugin a version behind does not announce
    itself, it just shows a figure.
 
-3. **The `/budget` command** — [`tools/opencode/command/budget.md`](../../tools/opencode/command/budget.md),
-   a prompt template OpenCode expands (`opencode run --command budget`, or `/budget` in the TUI).
+3. **The `/budget` command** — `tools/opencode/command/budget.md` (retired), a prompt template OpenCode expands (`opencode run --command budget`, or `/budget` in the TUI).
    Kept for anybody who wants to *ask*, and demoted from the main route for a measured reason: it
    depends on the model calling a shell tool. Against this gateway, `qwen3:0.6b` never attempted it
    and `qwen3:4b` declared ten tools and called none — twice, taking 90 seconds each time — while

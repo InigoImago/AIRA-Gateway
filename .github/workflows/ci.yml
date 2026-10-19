@@ -116,9 +116,9 @@ jobs:
   # release it ships for, and Google's own `google-genai`, against the gateway on a socket. The
   # python job skips the Node half for want of an install; this job installs it and fails on a skip.
   clients:
-    name: Clients — every AI SDK major against the gateway
+    name: Clients — every AI SDK major and OpenCode 1 and 2 against the gateway
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -138,9 +138,11 @@ jobs:
         run: |
           uv sync --frozen
           cd tools/clients && npm ci --no-audit --no-fund
+          # OpenCode's terminal interface is read back from a tmux pane.
+          sudo apt-get install -y --no-install-recommends tmux
 
       - name: Real clients
-        run: AIRA_REQUIRE_REAL_CLIENTS=1 uv run pytest --no-cov gateway/tests/test_real_gemini_clients.py
+        run: AIRA_REQUIRE_REAL_CLIENTS=1 uv run pytest --no-cov gateway/tests/test_real_gemini_clients.py tools/tests/test_the_opencode_plugin_holds_its_properties.py
 
   # **Two stacks, side by side.** Each suite starts a stack of its own, so the longer of the two sets
   # the time and neither waits for the other: one after the other on one stack, they outgrew a

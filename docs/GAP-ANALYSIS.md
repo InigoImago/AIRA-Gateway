@@ -170,8 +170,10 @@ use case. Nothing sends it anywhere: no mail, no webhook. Who gets told is a dec
 blast radius, and `FRD-503` leaves it unmade.
 
 Budgets have the same shape. The console colours a bar from 80 %, and a caller can read its own
-allowance (`GET /v1beta/me/budget`, `FRD-139`), but nobody is told before a limit refuses. A use
-case learns it is over budget when its traffic starts failing with a 429.
+allowance (`GET /v1beta/me/budget`, `FRD-139`). A developer in OpenCode with the budget plugin sees
+it in the session sidebar and is warned at four fifths and at the limit (`FRD-144`); every other
+caller is told nothing before a limit refuses, and a use case learns it is over budget when its
+traffic starts failing with a 429.
 
 ---
 
