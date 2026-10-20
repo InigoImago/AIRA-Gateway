@@ -196,6 +196,21 @@ def test_the_notes_put_the_prose_before_the_evidence() -> None:
     assert "`ghcr.io/x/aira-gateway:v1.2.3`" in rendered
 
 
+def test_an_attached_file_is_named_after_the_images() -> None:
+    """A file on the Release is evidence like an image: after the prose, and said how to check."""
+    notes = _read("Tag-driven releases\n\nWhat it means for you.\n")
+
+    rendered = notes.markdown(
+        version="v1.2.3",
+        commits=[],
+        images=["ghcr.io/x/aira-gateway:v1.2.3"],
+        assets=["opencode-aira-budget-v1.2.3.tar.gz"],
+    )
+    assert rendered.index("## Images") < rendered.index("## Attached")
+    assert "- `opencode-aira-budget-v1.2.3.tar.gz`" in rendered
+    assert "sha256sum -c" in rendered
+
+
 def test_notes_with_nothing_to_add_are_just_the_description() -> None:
     """A first release has no previous tag to compare against, and listing four hundred commit
     subjects would not improve it. An empty section is worse than no section.

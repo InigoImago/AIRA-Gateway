@@ -65,6 +65,9 @@ RUNNING IT
   ghcr.io/inigoimago/aira-management:vX.Y.Z
   ghcr.io/inigoimago/aira-frontend:vX.Y.Z
 
+  opencode-aira-budget-vX.Y.Z.tar.gz   the OpenCode budget plugin, attached to this release;
+                                       unpack into ~/.config/opencode (tools/opencode/README.md)
+
 <One or two lines: what else a deployment needs, and where the runbook is —
 docs/deployment/integrated.md for your own infrastructure, `make up-full
 RELEASE=vX.Y.Z` for one machine. Keep it short; the page is the page.>

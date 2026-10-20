@@ -146,7 +146,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
         otlp-inspector otlp-inspector-down \
         verify-up verify-down test-verify \
         run-frontend up-full demo-ready down-full logs-apps build-images next-version \
-        current-version model-reference test-clients release-tag release-check release-notes release-subject ci wait-healthy \
+        current-version model-reference test-clients release-tag release-check release-notes release-subject opencode-plugin-archive ci wait-healthy \
         prune mutants \
         ui-audit release-pull up-integrated kafka-topics-external \
         windows-sso-up windows-sso-down test-windows-sso \
@@ -574,6 +574,12 @@ release-check: ## Check that a release tag's annotation is a real description (V
 
 release-notes: ## Print the release notes a tag would publish (VERSION=v0.1.1)
 	@uv run python tools/release_notes.py "$(VERSION)"
+
+opencode-plugin-archive: ## Pack the OpenCode budget plugin as the release attaches it (VERSION=v0.1.8)
+	@# The same tool the release job runs, so the archive a rollout is tested with is the one it
+	@# will download. Into `dist/`, which is ignored.
+	@test -n "$(VERSION)" || { echo "VERSION is required, e.g.  make opencode-plugin-archive VERSION=v0.1.8"; exit 1; }
+	@uv run python tools/opencode_plugin_archive.py "$(VERSION)" --out dist
 
 release-subject: ## Print a tag's subject line — the GitHub Release's title (VERSION=v0.1.1)
 	@# The same function the workflow titles a Release with, so the two cannot disagree. It goes

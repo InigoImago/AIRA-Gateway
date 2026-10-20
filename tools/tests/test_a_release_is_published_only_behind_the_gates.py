@@ -352,3 +352,26 @@ def test_the_tag_message_is_written_from_the_template() -> None:
     assert "release_notes.py --check" in recipe and "git tag -d" in recipe, (
         "a rejected annotation leaves the tag behind, so the version number is spent"
     )
+
+
+def test_the_release_attaches_the_opencode_plugin_and_its_checksum() -> None:
+    """A rollout downloads the plugin from the Release by a name that carries the version
+    (`tools/opencode_plugin_archive.py`). Packed by that tool, attached with its checksum, and named
+    in the notes — an archive the notes do not mention is one nobody finds."""
+    pack = str(_step("publish", "Pack the OpenCode plugin")["run"])
+    publish = str(_step("publish", "Publish the release notes")["run"])
+
+    assert 'tools/opencode_plugin_archive.py "$VERSION" --out "$RUNNER_TEMP/assets"' in pack
+    create = publish[publish.index("gh release create") :]
+    assert '"$RUNNER_TEMP/assets/opencode-aira-budget-$version.tar.gz"' in create
+    assert '"$RUNNER_TEMP/assets/opencode-aira-budget-$version.tar.gz.sha256"' in create
+    assert '--asset "opencode-aira-budget-$version.tar.gz"' in publish
+
+
+def test_the_plugin_is_packed_before_the_release_is_created() -> None:
+    """`gh release create` with a file that does not exist fails after nothing — but a Release
+    created without its asset, and the asset added later, is a window in which a rollout pinned to
+    the version finds no file."""
+    names = [str(step.get("name", step.get("uses", ""))) for step in _job("publish")["steps"]]
+
+    assert names.index("Pack the OpenCode plugin") < names.index("Publish the release notes")

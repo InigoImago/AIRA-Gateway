@@ -98,6 +98,31 @@ The OpenCode 1 server plugin (`aira-budget.js`, toasts only) and the `/budget` p
 first does not run in OpenCode 2 and, beside the new plugin, would toast twice in OpenCode 1; the
 second is the flow the owner described, and `FRD-139` §5 had measured a model ignoring it.
 
+## 6. Distribution to workstations
+
+Added after v0.1.7, which shipped the plugin; v0.1.8 is the first release to carry the archive.
+The owner rolls it out to workstations with Terraform, which needs a fixed address that requires
+no credentials.
+
+- **FR-8 — an archive on every release.** The release job packs the plugin
+  (`tools/opencode_plugin_archive.py`) as `opencode-aira-budget-<version>.tar.gz` and attaches it to
+  the GitHub Release beside its `.sha256`. The notes list it. Its only member is
+  `plugins/aira-budget/tui.tsx`, laid out relative to OpenCode's configuration directory, so
+  unpacking into `~/.config/opencode` installs it for every project. It carries no `tui.json`:
+  that file is the developer's own, and OpenCode 1's one entry is merged in by the rollout. The
+  file is mode 0644 and owned by uid 0. The archive is reproducible (fixed time, no gzip name or
+  time), so the published checksum can be recomputed from a checkout.
+- **Why not a package.** Both generations install npm packages (`opencode plugin -g <spec>`,
+  `opencode plugin add <spec>`). A trial against a local registry loaded the plugin in both. But
+  GitHub's npm registry requires a token even to install a public package, unlike GHCR's anonymous
+  pulls. npmjs.org would need an account and a scope outside this repository. A file on the Release
+  needs neither.
+- Tested by `tools/tests/test_the_opencode_plugin_ships_as_an_archive.py`, by the workflow's shape
+  in `tools/tests/test_a_release_is_published_only_behind_the_gates.py`, and by
+  `test_the_release_archive_unpacked_for_every_project_shows_the_budget`: OpenCode 1 and 2 with the
+  archive unpacked into their configuration directory, sidebar and dialog read from the screen.
+  Mutations `PA1`–`PA11`.
+
 ## 8. Security & Privacy
 
 The plugin stores nothing. It reads a key OpenCode already holds for the gateway and sends it only

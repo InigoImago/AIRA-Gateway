@@ -5,6 +5,27 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The OpenCode plugin as a release archive (2026-10-20)
+
+The owner rolls the budget plugin out to workstations with Terraform. The first question was an npm
+package on GitHub. Both OpenCode generations install plugins from npm. Measured against a local
+Verdaccio registry: OpenCode 1 (`opencode plugin -g`) wrote the entry into `tui.json` by itself,
+OpenCode 2 (`opencode plugin add`) into `cli.json`, and both showed the sidebar and the dialog.
+OpenCode 2 refuses a `file:` specifier. GitHub's npm registry is the obstacle: its documentation
+requires a token "to publish, install, and delete private, internal, and public packages", while
+GHCR serves a public image anonymously. GitHub Support has said there are no plans for anonymous
+access where an ecosystem has a public registry. The owner chose a plain archive instead.
+
+From v0.1.8 on, every release attaches `opencode-aira-budget-<version>.tar.gz` and its `.sha256`
+(`FRD-144` §6). The archive is laid out relative to `~/.config/opencode` and is reproducible. Two
+builds within one second would match even if gzip recorded the time, so the test reads the gzip
+header instead of only comparing two builds. It carries no `tui.json`, so the developer's own is never
+overwritten. The client test unpacks it with `tar` into each generation's configuration directory
+and reads the budget off the screen. OpenCode 1 resolves `./plugins/…` in the global `tui.json`
+relative to that directory.
+
+---
+
 ## The upstream structures, held to what Anthropic and Google document (2026-10-20)
 
 After the integration trouble with the Gemini interface and the Anthropic adapter, the owner asked

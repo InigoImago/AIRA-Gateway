@@ -28,6 +28,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -48,6 +49,7 @@ from aira_gateway.db.models import BudgetRead, ModelRead, UseCaseRead
 ROOT = Path(__file__).resolve().parents[2]
 CLIENTS = ROOT / "tools" / "clients"
 BUDGET_PLUGIN = ROOT / "tools" / "opencode" / "plugins" / "aira-budget" / "tui.tsx"
+ARCHIVE_TOOL = ROOT / "tools" / "opencode_plugin_archive.py"
 
 #: The OpenCode binaries `tools/clients` installs, by generation: `opencode-ai` is OpenCode 1,
 #: `@opencode/cli` OpenCode 2 — two packages, because the second is a rewrite.
@@ -471,57 +473,88 @@ def tmux() -> None:
     pytest.skip("tmux is not installed")
 
 
+def _shows_the_budget(generation: str, project: Path, env: dict[str, str]) -> None:
+    """The sidebar section after a turn, with the use case's limit and the three periods, and the
+    `/budget` dialog, read back from a `tmux` pane."""
+    socket = f"aira-{uuid.uuid4().hex[:8]}"
+    command = " ".join(
+        [
+            "env",
+            "-i",
+            *(f"{key}={value}" for key, value in env.items()),
+            *_command(generation),
+            "; sleep 30",
+        ]
+    )
+    _tmux(
+        socket,
+        "new-session",
+        "-d",
+        "-s",
+        "oc",
+        "-x",
+        "170",
+        "-y",
+        "48",
+        "-c",
+        str(project),
+        command,
+    )
+    try:
+        _screen_until(socket, lambda screen: "mock-1 via AIRA" in screen, 120)
+        _tmux(socket, "send-keys", "-t", "oc", "read hello.py", "Enter")
+        sidebar = _screen_until(
+            socket,
+            lambda screen: "AIRA budget" in screen and "of 50 requests left" in screen,
+            120,
+        )
+        assert "use case · per day · resets" in sidebar
+        assert "This month" in sidebar
+        _tmux(socket, "send-keys", "-t", "oc", "/budget")
+        time.sleep(1)
+        _tmux(socket, "send-keys", "-t", "oc", "Enter")
+        dialog = _screen_until(socket, lambda screen: "Allowances" in screen, 30)
+        assert "limits enforced" in dialog
+        assert "From the audit trail" in dialog
+    finally:
+        subprocess.run(["tmux", "-L", socket, "kill-server"], check=False, timeout=30)  # noqa: S603, S607
+
+
 @pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
 def test_the_budget_plugin_shows_in_opencodes_own_interface(
     opencode: None, tmux: None, opencode_cache: Path, tmp_path: Path, generation: str
 ) -> None:
     """The plugin as a developer meets it: the terminal interface, read back from the screen.
 
-    The sidebar section after a turn, with the use case's limit and the three periods, and the
-    `/budget` dialog — the same file in both generations, installed where each one looks.
+    The same file in both generations, installed in the project where each one looks.
     """
-    socket = f"aira-{uuid.uuid4().hex[:8]}"
     with _served(daily_requests=50) as (base, _recorder):
         project = _project(tmp_path, base, configuration="v1", plugin=generation)
+        _shows_the_budget(generation, project, _environment(tmp_path, project, opencode_cache))
+
+
+@pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
+def test_the_release_archive_unpacked_for_every_project_shows_the_budget(
+    opencode: None, tmux: None, opencode_cache: Path, tmp_path: Path, generation: str
+) -> None:
+    """The plugin as a rollout installs it: the release's archive (`opencode_plugin_archive.py`)
+    unpacked into the user's OpenCode configuration directory with `tar`, and for OpenCode 1 the one
+    `tui.json` entry the runbook gives, relative to that directory. Nothing in the project."""
+    with _served(daily_requests=50) as (base, _recorder):
+        project = _project(tmp_path, base, configuration="v1")
         env = _environment(tmp_path, project, opencode_cache)
-        command = " ".join(
-            [
-                "env",
-                "-i",
-                *(f"{key}={value}" for key, value in env.items()),
-                *_command(generation),
-                "; sleep 30",
-            ]
+        config = Path(env["XDG_CONFIG_HOME"]) / "opencode"
+        config.mkdir(parents=True)
+        # The command the release job runs, so this unpacks what a release attaches.
+        subprocess.run(  # noqa: S603
+            [sys.executable, str(ARCHIVE_TOOL), "v0.0.1", "--out", str(tmp_path / "release")],
+            check=True,
+            capture_output=True,
         )
-        _tmux(
-            socket,
-            "new-session",
-            "-d",
-            "-s",
-            "oc",
-            "-x",
-            "170",
-            "-y",
-            "48",
-            "-c",
-            str(project),
-            command,
-        )
-        try:
-            _screen_until(socket, lambda screen: "mock-1 via AIRA" in screen, 120)
-            _tmux(socket, "send-keys", "-t", "oc", "read hello.py", "Enter")
-            sidebar = _screen_until(
-                socket,
-                lambda screen: "AIRA budget" in screen and "of 50 requests left" in screen,
-                120,
+        built = tmp_path / "release" / "opencode-aira-budget-v0.0.1.tar.gz"
+        subprocess.run(["tar", "-xzf", str(built), "-C", str(config)], check=True)  # noqa: S603, S607
+        if generation == "1":
+            (config / "tui.json").write_text(
+                json.dumps({"plugin": ["./plugins/aira-budget/tui.tsx"]})
             )
-            assert "use case · per day · resets" in sidebar
-            assert "This month" in sidebar
-            _tmux(socket, "send-keys", "-t", "oc", "/budget")
-            time.sleep(1)
-            _tmux(socket, "send-keys", "-t", "oc", "Enter")
-            dialog = _screen_until(socket, lambda screen: "Allowances" in screen, 30)
-            assert "limits enforced" in dialog
-            assert "From the audit trail" in dialog
-        finally:
-            subprocess.run(["tmux", "-L", socket, "kill-server"], check=False, timeout=30)  # noqa: S603, S607
+        _shows_the_budget(generation, project, env)

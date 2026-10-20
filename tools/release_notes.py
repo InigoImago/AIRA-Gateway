@@ -41,6 +41,7 @@ import argparse
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -80,7 +81,9 @@ class Notes:
     subject: str
     body: str
 
-    def markdown(self, *, version: str, commits: list[str], images: list[str]) -> str:
+    def markdown(
+        self, *, version: str, commits: list[str], images: list[str], assets: Sequence[str] = ()
+    ) -> str:
         """The GitHub Release body: what the tagger wrote, then what the range contains.
 
         The prose comes first and the generated part second, on purpose. A commit list is evidence,
@@ -95,6 +98,12 @@ class Notes:
                 "## Images\n\n"
                 + "\n".join(f"- `{image}`" for image in images)
                 + f"\n\nEach is also tagged `latest` and `sha-<commit>`. Pin `{version}`."
+            )
+        if assets:
+            sections.append(
+                "## Attached\n\n"
+                + "\n".join(f"- `{asset}`" for asset in assets)
+                + "\n\nEach beside its `.sha256`, checked by `sha256sum -c`."
             )
         return "\n\n".join(sections) + "\n"
 
@@ -257,6 +266,12 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="a published image reference to list in the notes; repeatable",
     )
+    parser.add_argument(
+        "--asset",
+        action="append",
+        default=[],
+        help="a file attached to the release, to list in the notes; repeatable",
+    )
     arguments = parser.parse_args(argv)
 
     if parse(arguments.version) is None:
@@ -281,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
             version=arguments.version,
             commits=commits_since(previous(arguments.version), arguments.version),
             images=arguments.image,
+            assets=arguments.asset,
         ),
         end="",
     )

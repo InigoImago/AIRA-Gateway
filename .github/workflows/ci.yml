@@ -514,6 +514,14 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
 
+      # The OpenCode budget plugin as an archive, attached to the Release: an address that does not
+      # move and needs no credentials, for a rollout that puts it on workstations. GitHub's npm
+      # registry would need a token even to install a public package.
+      - name: Pack the OpenCode plugin
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: uv run python tools/opencode_plugin_archive.py "$VERSION" --out "$RUNNER_TEMP/assets"
+
       # **After the images, never before**, and it is what makes a release legible: the tag's own
       # message, then the commits since the previous release, then the three image references. A
       # failed build therefore leaves a tag with no Release against it — visibly unfinished, rather
@@ -530,6 +538,7 @@ jobs:
             --image "ghcr.io/$owner/aira-gateway:$version" \
             --image "ghcr.io/$owner/aira-management:$version" \
             --image "ghcr.io/$owner/aira-frontend:$version" \
+            --asset "opencode-aira-budget-$version.tar.gz" \
             > "$RUNNER_TEMP/notes.md"
           # **The title comes from the same tool as the body.** It was a second
           # `git tag --format` here, and that one was never checked — so when the tag arrived
@@ -537,7 +546,9 @@ jobs:
           # like a mistake worth noticing. One place asks Git what the tag says.
           gh release create "$version" \
             --title "$version — $(uv run python tools/release_notes.py --subject "$version")" \
-            --notes-file "$RUNNER_TEMP/notes.md"
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "$RUNNER_TEMP/assets/opencode-aira-budget-$version.tar.gz" \
+            "$RUNNER_TEMP/assets/opencode-aira-budget-$version.tar.gz.sha256"
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "Packages are **private** until made public in each package's settings." \
