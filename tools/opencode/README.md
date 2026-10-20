@@ -157,12 +157,12 @@ echo '{ "plugin": ["./plugins/aira-budget/tui.tsx"] }' > .opencode/tui.json
 ```
 
 **On many workstations**, take the file from the release instead of a checkout. Every GitHub Release
-from v0.1.8 on carries `opencode-aira-budget-<version>.tar.gz` and its `.sha256`, downloadable
+from v0.1.7 on carries `opencode-aira-budget-<version>.tar.gz` and its `.sha256`, downloadable
 without an account. The archive holds one file, laid out relative to OpenCode's configuration
 directory, so unpacking it there is the installation for every project:
 
 ```bash
-v=v0.1.8
+v=v0.1.7
 base=https://github.com/InigoImago/AIRA-Gateway/releases/download/$v
 curl -fsSLO "$base/opencode-aira-budget-$v.tar.gz" -O "$base/opencode-aira-budget-$v.tar.gz.sha256"
 sha256sum -c "opencode-aira-budget-$v.tar.gz.sha256"
@@ -175,7 +175,7 @@ The archive carries no `tui.json`, because that file is the developer's own and 
 would erase their settings. OpenCode 1 needs `"./plugins/aira-budget/tui.tsx"` in the `plugin`
 list of `~/.config/opencode/tui.json`. A rollout tool should merge that entry into the file, not
 overwrite it. Two builds of one version are the same bytes, so a rollout that compares checksums
-does not reinstall an unchanged plugin. `make opencode-plugin-archive VERSION=v0.1.8` builds the
+does not reinstall an unchanged plugin. `make opencode-plugin-archive VERSION=v0.1.7` builds the
 same archive from a checkout.
 
 It finds the gateway in the `aira` provider OpenCode has loaded — the configuration the console

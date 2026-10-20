@@ -100,7 +100,8 @@ second is the flow the owner described, and `FRD-139` §5 had measured a model i
 
 ## 6. Distribution to workstations
 
-Added after v0.1.7, which shipped the plugin; v0.1.8 is the first release to carry the archive.
+Added once the plugin was built, before v0.1.7 was republished with it; v0.1.7 is the first release
+to carry the archive.
 The owner rolls it out to workstations with Terraform, which needs a fixed address that requires
 no credentials.
 

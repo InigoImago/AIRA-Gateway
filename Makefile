@@ -575,10 +575,10 @@ release-check: ## Check that a release tag's annotation is a real description (V
 release-notes: ## Print the release notes a tag would publish (VERSION=v0.1.1)
 	@uv run python tools/release_notes.py "$(VERSION)"
 
-opencode-plugin-archive: ## Pack the OpenCode budget plugin as the release attaches it (VERSION=v0.1.8)
+opencode-plugin-archive: ## Pack the OpenCode budget plugin as the release attaches it (VERSION=v0.1.7)
 	@# The same tool the release job runs, so the archive a rollout is tested with is the one it
 	@# will download. Into `dist/`, which is ignored.
-	@test -n "$(VERSION)" || { echo "VERSION is required, e.g.  make opencode-plugin-archive VERSION=v0.1.8"; exit 1; }
+	@test -n "$(VERSION)" || { echo "VERSION is required, e.g.  make opencode-plugin-archive VERSION=v0.1.7"; exit 1; }
 	@uv run python tools/opencode_plugin_archive.py "$(VERSION)" --out dist
 
 release-subject: ## Print a tag's subject line — the GitHub Release's title (VERSION=v0.1.1)

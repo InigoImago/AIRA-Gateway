@@ -222,7 +222,7 @@ week and this month — and a `/budget` dialog with every allowance. One file se
 save it as `.opencode/plugins/aira-budget/tui.tsx` (or under `~/.config/opencode/plugins/` for
 every project). OpenCode 2 finds it there; OpenCode 1, from 1.4, also needs `.opencode/tui.json`
 with `{"plugin": ["./plugins/aira-budget/tui.tsx"]}`. It uses the key OpenCode already sends to the
-gateway and stores none. For many workstations, every release from v0.1.8 on carries the file as
+gateway and stores none. For many workstations, every release from v0.1.7 on carries the file as
 `opencode-aira-budget-<version>.tar.gz` with its checksum. Unpack it into `~/.config/opencode`; for
 OpenCode 1, add the same entry to `~/.config/opencode/tui.json`. The archive brings no `tui.json`
 of its own, so a developer's settings are never overwritten. [`tools/opencode/`](../tools/opencode/README.md) has the plugin and the

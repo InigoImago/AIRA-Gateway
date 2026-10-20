@@ -19,7 +19,7 @@ Writing that one entry is the rollout's job, and the runbook says what it is.
 gzip header without a timestamp or name — so the published checksum can be recomputed from a
 checkout, and a rollout that compares checksums does not reinstall an unchanged file.
 
-    uv run python tools/opencode_plugin_archive.py v0.1.8 --out dist/
+    uv run python tools/opencode_plugin_archive.py v0.1.7 --out dist/
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ def build(version: str, out: Path) -> tuple[Path, Path]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("version", help="the release tag, e.g. v0.1.8")
+    parser.add_argument("version", help="the release tag, e.g. v0.1.7")
     parser.add_argument("--out", type=Path, default=ROOT / "dist", help="directory to write into")
     arguments = parser.parse_args(argv)
     try:

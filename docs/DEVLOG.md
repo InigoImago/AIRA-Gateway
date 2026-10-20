@@ -16,13 +16,18 @@ requires a token "to publish, install, and delete private, internal, and public 
 GHCR serves a public image anonymously. GitHub Support has said there are no plans for anonymous
 access where an ecosystem has a public registry. The owner chose a plain archive instead.
 
-From v0.1.8 on, every release attaches `opencode-aira-budget-<version>.tar.gz` and its `.sha256`
+From v0.1.7 on, every release attaches `opencode-aira-budget-<version>.tar.gz` and its `.sha256`
 (`FRD-144` §6). The archive is laid out relative to `~/.config/opencode` and is reproducible. Two
 builds within one second would match even if gzip recorded the time, so the test reads the gzip
 header instead of only comparing two builds. It carries no `tui.json`, so the developer's own is never
 overwritten. The client test unpacks it with `tar` into each generation's configuration directory
 and reads the budget off the screen. OpenCode 1 resolves `./plugins/…` in the global `tui.json`
 relative to that directory.
+
+v0.1.7 had been published an hour earlier without the archive. The owner chose to republish it
+rather than wait for v0.1.8: its GitHub Release is deleted, the tag moves to the commit that adds
+the archive, and the release job rebuilds the three images at `v0.1.7`. The application code is
+the same; the rebuilt images carry new digests.
 
 ---
 
