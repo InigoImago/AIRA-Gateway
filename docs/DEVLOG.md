@@ -5,6 +5,49 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The upstream structures, held to what Anthropic and Google document (2026-10-20)
+
+After the integration trouble with the Gemini interface and the Anthropic adapter, the owner asked
+for the structures to be checked again. They were read field by field against Anthropic's Messages,
+thinking, structured-output and pricing references; Vertex `v1`'s and the Gemini API `v1beta`'s
+discovery documents; and the bodies OpenCode 1.19.3 and 2.0.32 and the AI SDK's Google provider
+send. `FRD-145` has the tables.
+
+**The Claude side was the worse half.** Claude Opus 4.7 and every later model refuse
+`thinking: {type: "enabled"}` and accept only `adaptive`, steered by `output_config.effort`. The
+dialect knew only `enabled` with a budget. So the five effort words the reference list declares
+for every current Claude were each refused by the dialect, and a budget declared by hand was
+Anthropic's 400. The same models refuse `top_k` and any `temperature` but 1. Each rule was in
+Anthropic's documentation, and none had been read since the adapter was written. Now:
+- a level word is `adaptive` plus its effort, and `auto` is `adaptive`;
+- a model the catalogue marks `fixed_sampling` (models.dev's `temperature: false`) is skipped by
+  name for a request that sets one;
+- empty text blocks, Google-only schema formats, non-image media and the hour's cache price are
+  each mapped as documented.
+
+**The Gemini side sent nothing Vertex refuses**, and refused four things current clients send.
+- `includeThoughts` on a stream: OpenCode sends it on every stream to a thinking model, so streams
+  now carry reasoning, revising `FRD-135` §5.4.
+- Media in a function's result.
+- A union parameter without a `type`.
+- `functionCallingConfig` other than `AUTO`, which is now mapped to all three dialects.
+
+**Measured against Vertex**, `europe-west1`, `gemini-2.5-flash`, sending the bodies the mapping
+builds. Each answered `200`:
+- a paired call and result carrying ids;
+- an image in a function result beside a typeless `anyOf` parameter (258 image tokens counted);
+- `toolConfig` `ANY` with an allowed name, `NONE` and `VALIDATED`;
+- a stream with thoughts.
+
+**Not measured against Claude.** Vertex refuses an API key for Anthropic models (`401`, checked
+again), and the sandbox has no service account. The Anthropic half rests on the vendor's reference
+and the hermetic tests until the owner runs *Ask the model* on a current Claude's level words.
+
+Mutations `ST-1`–`ST-41` and `FS-1`–`FS-8`, all caught. Four existing anchors moved with the code
+(`V7`, `U2`, `FX-G3-2b`), and `RS3` now guards the opposite of what it did: the thought is delivered.
+
+---
+
 ## The budget in OpenCode's own interface, and OpenCode 2 (2026-10-19)
 
 The owner asked for a budget display that works in OpenCode 2, which they had rolled out: the

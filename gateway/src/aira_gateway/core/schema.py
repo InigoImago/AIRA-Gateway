@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 #: Fields that exist with the same meaning in our OpenAPI-3.0 vocabulary and in JSON Schema — what
 #: Anthropic's ``input_schema`` and OpenAI's ``response_format`` want — so translating them is
@@ -59,7 +59,7 @@ class SchemaBounds:
 
 
 class SchemaType(StrEnum):
-    """The predecessor's type set, which is Google's."""
+    """Google's type set: the predecessor's six, and `NULL`, which a union with null needs."""
 
     STRING = "STRING"
     INTEGER = "INTEGER"
@@ -67,6 +67,7 @@ class SchemaType(StrEnum):
     BOOLEAN = "BOOLEAN"
     ARRAY = "ARRAY"
     OBJECT = "OBJECT"
+    NULL = "NULL"
 
 
 class ResponseSchema(BaseModel):
@@ -79,7 +80,10 @@ class ResponseSchema(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    type: SchemaType
+    #: Absent only on a union: `{"anyOf": [...]}` states its types in its variants, which is how
+    #: every JSON-Schema-generating library writes an optional or a union argument, and Google
+    #: accepts it so.
+    type: SchemaType | None = None
     properties: dict[str, ResponseSchema] | None = None
     items: ResponseSchema | None = None
     property_ordering: list[str] | None = Field(default=None, alias="propertyOrdering")
@@ -110,6 +114,12 @@ class ResponseSchema(BaseModel):
     def _accept_either_case(cls, value: Any) -> Any:
         """``"string"`` and ``"STRING"`` are the same request; the type set is identical."""
         return value.upper() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _typed_unless_a_union(self) -> ResponseSchema:
+        if self.type is None and not self.any_of:
+            raise ValueError("type: Field required (only an 'anyOf' may leave it out)")
+        return self
 
     def to_wire(self) -> dict[str, Any]:
         """The Gemini/OpenAPI form: camelCase aliases, nothing that was not set."""
@@ -196,10 +206,12 @@ def to_json_schema(schema: ResponseSchema) -> dict[str, Any]:
     Two fields are not carried, and neither is a constraint: ``example`` is documentation, and
     ``propertyOrdering`` is a hint about key order in a format where key order means nothing.
     """
-    out: dict[str, Any] = {"type": str(schema.type).lower()}
-    if schema.nullable:
-        # JSON Schema expresses nullability as a type union, not as a flag.
-        out["type"] = [out["type"], "null"]
+    out: dict[str, Any] = {}
+    if schema.type is not None:
+        out["type"] = str(schema.type).lower()
+        if schema.nullable:
+            # JSON Schema expresses nullability as a type union, not as a flag.
+            out["type"] = [out["type"], "null"]
     if schema.format:
         out["format"] = schema.format
     for field in _JSON_SCHEMA_FIELDS:

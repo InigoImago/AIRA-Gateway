@@ -53,6 +53,7 @@ from aira_gateway.pipeline.dispatch import Fit, NoCapableModel, Permits, Skipped
 from aira_gateway.requirements import (
     MediaTypesSupported,
     OutputCapAccepted,
+    SamplingAccepted,
     SamplingExpressible,
     SchemaExpressible,
     SpeechSupported,
@@ -60,6 +61,7 @@ from aira_gateway.requirements import (
     ThinkingHonoured,
     ToolsSupported,
     permits,
+    set_sampling,
 )
 from aira_gateway.state import providers_of
 from aira_gateway.thinking import ThinkingRejected, check_budget_fits, reserved_tokens
@@ -258,6 +260,8 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
         checks.append(OutputCapAccepted(catalog, canonical.max_output_tokens))
     if canonical is not None and canonical.sampling_requested:
         checks.append(SamplingExpressible(registry, canonical.sampling_requested, catalog))
+    if canonical is not None and set_sampling(canonical):
+        checks.append(SamplingAccepted(catalog, canonical))
     if canonical is not None and canonical.tools:
         checks.append(ToolsSupported(catalog))
     if canonical is not None and canonical.speech is not None:

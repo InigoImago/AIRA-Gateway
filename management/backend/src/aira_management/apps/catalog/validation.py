@@ -81,6 +81,14 @@ def validate_hosting(value: Any) -> list[str]:
     return []
 
 
+def validate_fixed_sampling(value: Any) -> list[str]:
+    """A yes or a no, never a word that reads as one: the gateway branches on it per request, and
+    `"false"` is a string that is true."""
+    if value is None or isinstance(value, bool):
+        return []
+    return ["fixed_sampling must be true or false."]
+
+
 def validate_thinking(block: Any, *, max_output_tokens: int | None) -> list[str]:
     """The declaration a request is validated against, checked against itself first."""
     if block is None:
@@ -319,6 +327,7 @@ def validate_declaration(data: dict[str, Any]) -> list[str]:
         *validate_thinking(data.get("thinking"), max_output_tokens=max_output),
         *validate_embedding(data.get("embedding")),
         *validate_attachments(data.get("attachments")),
+        *validate_fixed_sampling(data.get("fixed_sampling")),
     ]
     # Positive like every other token figure here: a window or a cap of zero is a model that can
     # never answer, and a default cap of zero answers every caller who sets none with nothing.

@@ -4,6 +4,10 @@
 > Origin: confirmed — Model Garden serves **Gemini and Anthropic** models.
 > Programme: `ADR-0010`. Requires `FRD-115` (transport, auth, region). Amends `FRD-110`–`FRD-114`.
 
+*Revised by `FRD-145`:* thinking takes Anthropic's two shapes — `enabled` with a budget for Claude
+4.5 and earlier, `adaptive` with an effort word for Opus 4.7 and later — and the content, schemas,
+sampling and cache prices are held to Anthropic's current reference.
+
 ## 1. Problem
 
 Model Garden makes two vendors available through one platform, one project and one credential. It

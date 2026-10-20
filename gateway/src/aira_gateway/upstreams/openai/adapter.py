@@ -183,7 +183,7 @@ class OpenAIAdapter:
         body = self._named(self._body(request, stream=True), request.model)
         # Tool calls arrive in fragments and are assembled across the stream: assembling is
         # stateful, and the per-chunk mapper is not (`FRD-131` FR-6).
-        assembler = StreamAssembler()
+        assembler = StreamAssembler(include_reasoning=request.include_reasoning)
         async with (
             self._transport.stream(self._routes.chat(request.model), body) as response,
             aclosing(sse_payloads(response, NAME)) as payloads,

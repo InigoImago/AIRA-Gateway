@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**103 of 107 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**104 of 108 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -55,6 +55,7 @@ status that goes stale in the copy nobody opens.
 | [142](FRD-142-google-without-a-google-key.md) | Reaching Google without a Google key | 8 (KIRA parity) | ✅ Built |
 | [143](FRD-143-current-and-older-gemini-clients.md) | Current Gemini clients, without losing the older ones | 8 (KIRA parity) | ✅ Built |
 | [144](FRD-144-the-budget-in-opencodes-own-interface.md) | The budget in OpenCode's own interface | 8 (KIRA parity) | ✅ Built |
+| [145](FRD-145-the-upstream-structures-as-documented.md) | The upstream structures, held to what Anthropic and Google document | 8 (KIRA parity) | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |

@@ -39,6 +39,17 @@ export const CAPABILITY_HELP: Record<Capability, string> = {
 };
 
 /**
+ * What "fixed sampling" commits the platform to. The control is one checkbox, and what it costs a
+ * caller — a refusal or another model — cannot fit in its label.
+ */
+export const FIXED_SAMPLING_HELP = `The model chooses how it samples and accepts no setting for it:
+  a temperature other than 1, a top_p below 1, or any top_k is refused by the provider. With this
+  ticked, the gateway never sends such a request to the model — it goes to the next model in the
+  chain, or is refused with a message naming the setting. A request that leaves sampling alone, or
+  sets the neutral values, is served as usual. The model reference fills this in where its list
+  says so; leave it off for a model that accepts these settings.`;
+
+/**
  * What a thinking mode means, for somebody configuring one.
  *
  * Every box declares an **instruction this model accepts**, not a state of the model — `disabled`

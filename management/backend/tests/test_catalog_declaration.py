@@ -167,6 +167,64 @@ def test_the_default_output_cap_may_not_exceed_the_maximum() -> None:
     assert any("must not exceed max_output_tokens" in error for error in errors)
 
 
+# -- fixed sampling ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [None, True, False])
+def test_fixed_sampling_is_a_yes_a_no_or_unsaid(value: Any) -> None:
+    assert validate_declaration(_declaration(fixed_sampling=value)) == []
+
+
+@pytest.mark.parametrize("value", ["false", "yes", 0, 1, [], {}])
+def test_fixed_sampling_that_only_reads_as_a_boolean_is_refused(value: Any) -> None:
+    assert validate_declaration(_declaration(fixed_sampling=value)) == [
+        "fixed_sampling must be true or false."
+    ]
+
+
+def test_fixed_sampling_is_stored_and_published_with_the_declaration(monkeypatch: Any) -> None:
+    """The gateway decides per request whether a sampling control may reach the model, from its
+    own read-model — so the flag travels in every model event, off as well as on."""
+    published: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "aira_management.apps.catalog.views.emit",
+        lambda event, payload: published.append(payload),
+    )
+    client = _client(_user("admin", "global-admin"))
+
+    created = client.post(BASE, {"name": "claude-opus-4-7", "fixed_sampling": True}, format="json")
+    assert created.status_code == 201, created.json()
+    assert created.json()["fixed_sampling"] is True
+    assert Model.objects.get(name="claude-opus-4-7").fixed_sampling is True
+    assert published[-1]["fixed_sampling"] is True
+
+    # A save that does not mention it keeps it, and turning it off is published as off.
+    client.patch(f"{BASE}claude-opus-4-7/", {"display_name": "Opus"}, format="json")
+    assert published[-1]["fixed_sampling"] is True
+    client.patch(f"{BASE}claude-opus-4-7/", {"fixed_sampling": False}, format="json")
+    assert published[-1]["fixed_sampling"] is False
+
+
+def test_a_model_that_never_says_samples_freely() -> None:
+    response = _client(_user("admin", "global-admin")).post(
+        BASE, {"name": "older-1"}, format="json"
+    )
+    assert response.status_code == 201
+    assert response.json()["fixed_sampling"] is False
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None])
+def test_fixed_sampling_that_only_reads_as_a_boolean_is_a_400_naming_it(value: Any) -> None:
+    """DRF would take `"false"` and `0` as no and `"true"` and `1` as yes: a guess at a setting
+    that decides whether a request is refused."""
+    response = _client(_user("admin", "global-admin")).post(
+        BASE, {"name": "loose-1", "fixed_sampling": value}, format="json"
+    )
+    assert response.status_code == 400
+    assert "fixed_sampling" in str(response.json())
+    assert not Model.objects.filter(name="loose-1").exists()
+
+
 # -- through the API ------------------------------------------------------------------------
 
 

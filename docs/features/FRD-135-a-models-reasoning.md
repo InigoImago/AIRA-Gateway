@@ -151,6 +151,10 @@ asked got nothing from them, under a 200. The mapper reads either, behind the sa
 **Streams return no reasoning on any dialect** and that is unchanged: `CanonicalChunk` has no
 channel for it, so there is nothing dialect-specific to state.
 
+*Revised by `FRD-145` FR-8:* streams carry it now (`CanonicalChunk.reasoning_delta`, from all three
+dialects under the same switch), because OpenCode sends `includeThoughts` on every stream to a
+thinking model and the refusal broke it. FR-4's stream clause no longer applies.
+
 ### 5.5 What this revises
 
 `FRD-119` §5.4 said reasoning is never returned, logged or persisted. It is now returned and stored

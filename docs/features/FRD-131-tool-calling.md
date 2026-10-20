@@ -5,6 +5,9 @@
 > conditions), `FRD-110` (ordered parts), `FRD-112` (structured output), `FRD-122` (audit),
 > `FRD-124` (nothing is silently dropped), `FRD-125` (the injection filter)
 
+*Revised by `FRD-145`:* the function-calling modes (`ANY`, `NONE`, `VALIDATED`, allowed names) and
+media in a function's result are carried.
+
 ## 1. Summary
 
 A coding assistant's entire loop is tool calling. It asks the model *"which file should I read"*,

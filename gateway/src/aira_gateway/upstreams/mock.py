@@ -26,11 +26,16 @@ from aira_gateway.core.canonical import (
     DataPart,
     FinishReason,
     ToolCallPart,
+    ToolMode,
 )
 from aira_gateway.core.schema import ResponseSchema, SchemaType
 from aira_gateway.upstreams.base import OfferedModel, UpstreamModel
 
 _STREAM_WORDS_PER_CHUNK = 3
+
+#: What the mock streams as its thought, where one was asked for.
+_MOCK_THOUGHT = "[mock thought] "
+
 _DEFAULT_DIMENSIONS = 8
 
 #: What the mock's speech sounds like, in the numbers Google's speech models use (`FRD-624`):
@@ -107,7 +112,9 @@ class MockProvider:
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         if request.speech is not None:
             return self._speech(request)
-        if request.tools:
+        choice = request.tool_choice.mode if request.tool_choice else ToolMode.AUTO
+        # `none` forbids a call, and is answered in prose like a request with no functions.
+        if request.tools and choice is not ToolMode.NONE:
             return self._tool_call(request)
         if request.structured:
             return self._structured(request)
@@ -167,9 +174,12 @@ class MockProvider:
         the caller's prompt. Typed, because a real client validates the arguments against the
         schema it declared, and a `"true"` for a boolean fails there before the loop it tests runs.
         A request that already carries a tool result gets prose instead, or a tool loop would never
-        end.
+        end — unless a call is required (`any`), which also names the function where it narrows
+        them, as a model held to `allowedFunctionNames` would.
         """
-        if any(message.tool_results for message in request.messages):
+        choice = request.tool_choice
+        required = choice is not None and choice.mode is ToolMode.ANY
+        if not required and any(message.tool_results for message in request.messages):
             usage = CanonicalUsage(prompt_tokens=self._prompt_tokens(request), completion_tokens=6)
             return CanonicalResponse(
                 model=request.model,
@@ -177,7 +187,8 @@ class MockProvider:
                 usage=usage,
             )
 
-        tool = request.tools[0]
+        allowed = choice.allowed if choice is not None else ()
+        tool = next((t for t in request.tools if t.name in allowed), request.tools[0])
         properties: Any = (
             (tool.parameters.properties or {})
             if tool.parameters is not None
@@ -234,6 +245,10 @@ class MockProvider:
                     media_type=SPEECH_MEDIA_TYPE, data=audio[start : start + _SPEECH_CHUNK_BYTES]
                 ),
             )
+        if _thinks_aloud(request):
+            # A thought ahead of the answer, as a thinking model streams one where it was asked
+            # for — so a client's handling of a streamed thought is testable without a cloud.
+            yield CanonicalChunk(text_delta="", reasoning_delta=_MOCK_THOUGHT)
         words = full.text.split()
         for start in range(0, len(words), _STREAM_WORDS_PER_CHUNK):
             delta = " ".join(words[start : start + _STREAM_WORDS_PER_CHUNK])
@@ -268,6 +283,16 @@ class MockProvider:
         attachment_tokens = sum(part.size // 4 for part in request.attachments)
         words = sum(len(message.text.split()) for message in request.messages)
         return words + attachment_tokens
+
+
+def _thinks_aloud(request: CanonicalRequest) -> bool:
+    """Whether a thought is streamed: the use case wants reasoning, and the model is thinking."""
+    thinking = request.thinking
+    return (
+        request.include_reasoning
+        and thinking is not None
+        and thinking.mode != ThinkingMode.DISABLED
+    )
 
 
 def _thinking(request: CanonicalRequest) -> str:
@@ -334,6 +359,8 @@ def synthesise(schema: ResponseSchema, prompt: str = "") -> Any:
             return float(len(prompt))
         case SchemaType.BOOLEAN:
             return bool(len(prompt) % 2)
+        case SchemaType.NULL:
+            return None
         case _:
             return schema.title or schema.description or f"mock:{prompt[:40]}"
 

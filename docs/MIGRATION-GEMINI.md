@@ -260,6 +260,21 @@ cannot take comes back as its 400, with its reason. Both are bounded alike: 32 K
 256 properties. `thinkingLevel` (`low`, `high`, …) is the model's own level word and must be one the
 catalogue declares for the model. `tools` may be a list or a single tool object.
 
+**Functions, as current clients write them.**
+
+- A parameter may be a union without a `type` (`{"anyOf": [{"type": "string"}, {"type": "null"}]}`)
+  and may be `type: null`: that is how JSON Schema generators write an optional argument.
+- `toolConfig` takes Google's four modes — `AUTO`, `ANY` (a call is required), `NONE` (no call) and
+  `VALIDATED` — and `allowedFunctionNames` with `ANY` or `VALIDATED`. A model whose provider cannot
+  say the mode is skipped by name. Claude and the OpenAI dialect have no `VALIDATED`, and Claude
+  refuses `ANY` with a thinking budget.
+- A function's result may carry media in `functionResponse.parts` (an image a tool looked at, a PDF
+  it read). It is checked like any attachment and goes to a model that reads it there: Gemini, or
+  Claude. The OpenAI dialect's tool messages take text only, so such a model is skipped.
+- A call and its result are paired by `id` where both carry one; without an id they are paired by
+  name, as Google pairs them.
+- `usageMetadata.cachedContentTokenCount` reports what a provider's prompt cache served.
+
 Google's API rejects unknown fields and so does this one. A field accepted and dropped answers with
 a **200** and is wrong in a way nobody can see: a dropped `stopSequences` leaves the output
 unbounded, a dropped `seed` gives a different answer every call, and a dropped `safetySettings`
@@ -282,17 +297,16 @@ So there are three answers, and never a silent one:
     `thinkingBudget` — which Google refuses as well;
   * a `responseModalities` other than text, or speech alone — it would return prose where images
     were asked for;
-  * a `toolConfig` mode other than `AUTO`;
   * a `thinkingConfig` at the top level rather than inside `generationConfig`;
 * **the candidate is skipped** — the model or its dialect has no word for it, so a fallback chain
   moves on rather than answering with less than was asked for.
 
 Three that surprise people:
 
-* **`includeThoughts`** follows the use case. On `:generateContent`, a thinking model's reasoning
-  comes back by default and is stored with the answer; `false` withholds it. A stream carries no
-  reasoning, so `true` on `:streamGenerateContent` is refused by name — and so is `true` where the
-  use case has turned reasoning off, rather than answering without the thoughts.
+* **`includeThoughts`** follows the use case. A thinking model's reasoning comes back by default,
+  buffered or streamed, as `thought: true` parts before the answer, and is stored with it; `false`
+  withholds it. `true` where the use case has turned reasoning off is refused by name, rather than
+  answered without the thoughts.
 * **speech is carried.** `responseModalities: ["AUDIO"]` with a `speechConfig` returns one
   `inlineData` part of audio from a model the catalogue declares as speaking, buffered or streamed.
   The audit trail keeps the audio's description and hash, not the audio.

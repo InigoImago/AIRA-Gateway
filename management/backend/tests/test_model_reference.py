@@ -100,6 +100,7 @@ def test_a_list_entry_becomes_the_editors_fields() -> None:
                 "application/pdf": None,
             }
         },
+        "fixed_sampling": False,
     }
     assert made["prices"] == {
         "input": "0.3",
@@ -138,6 +139,58 @@ def test_a_floor_above_zero_drops_disabled() -> None:
     (made,) = normalize.drafts(_listing(m=entry))
 
     assert "disabled" not in made["declaration"]["thinking"]["modes"]
+
+
+@pytest.mark.parametrize(
+    ("stated", "fixed"),
+    [(False, True), (True, False), (None, False), ("false", False), (0, False)],
+)
+def test_only_an_explicit_temperature_false_fixes_the_sampling(stated: Any, fixed: bool) -> None:
+    """The list's `temperature: false` is the newer Claude models, which answer 400 to any sampling
+    control; anything short of an explicit `false` is not a claim that they do."""
+    entry = _entry() if stated is None else _entry(temperature=stated)
+
+    (made,) = normalize.drafts({"google-vertex-anthropic": {"models": {"claude-x@default": entry}}})
+
+    assert made["declaration"]["fixed_sampling"] is fixed
+
+
+def test_an_embedding_model_never_fixes_the_sampling() -> None:
+    entry = _entry(limit={"context": 2048, "output": 1}, temperature=False)
+
+    (made,) = normalize.drafts(_listing(**{"gemini-embedding-001": entry}))
+
+    assert made["declaration"]["fixed_sampling"] is False
+
+
+def test_the_shipped_copy_fixes_the_sampling_of_exactly_the_models_the_list_says() -> None:
+    """The shipped drafts carry the field: set for the Claude models that refuse sampling controls,
+    and for none of the older ones that accept them."""
+    fixed = {
+        entry["name"]: entry["declaration"]["fixed_sampling"]
+        for entry in snapshot.shipped().entries
+        if entry["name"].startswith("claude")
+    }
+
+    assert {name for name, value in fixed.items() if value} >= {
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+        "claude-fable-5",
+    }
+    assert {name for name, value in fixed.items() if not value} == {
+        "claude-haiku-4-5@20251001",
+        "claude-opus-4@20250514",
+        "claude-opus-4-1@20250805",
+        "claude-opus-4-5@20251101",
+        "claude-opus-4-6",
+        "claude-sonnet-4@20250514",
+        "claude-sonnet-4-5@20250929",
+        "claude-sonnet-4-6",
+    }
 
 
 def test_an_embedding_model_embeds_and_has_no_output_price() -> None:

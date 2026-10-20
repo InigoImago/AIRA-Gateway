@@ -116,6 +116,9 @@ class ToolResultPart(BaseModel):
     call_id: str
     name: str
     content: str
+    #: Media the tool produced — a screenshot, a PDF it read (`FRD-145`). Checked like any other
+    #: attachment, and carried to a dialect that has a place for media in a tool result.
+    attachments: tuple[DataPart, ...] = ()
 
 
 CanonicalPart = TextPart | DataPart | ToolCallPart | ToolResultPart
@@ -133,6 +136,29 @@ class ToolDeclaration(BaseModel):
     parameters: ResponseSchema | None = None
     #: The same, written in JSON Schema (`FRD-143`) and carried as written. At most one of the two.
     parameters_json_schema: JsonSchemaDocument | None = None
+
+
+class ToolMode(StrEnum):
+    """Whether the model must, may or must not call a function (`FRD-145`) — Google's four modes.
+
+    ``validated`` is ``auto`` with the provider guaranteeing the arguments match the declaration.
+    """
+
+    AUTO = "auto"
+    ANY = "any"
+    NONE = "none"
+    VALIDATED = "validated"
+
+
+class ToolChoice(BaseModel):
+    """How a request steers the model toward its functions. Absent from a request means ``auto``.
+
+    ``allowed`` narrows which functions a call may name, and only where a call is made at all:
+    with ``any`` or ``validated``, as Google defines it.
+    """
+
+    mode: ToolMode = ToolMode.AUTO
+    allowed: tuple[str, ...] = ()
 
 
 # == requests =====================================================================================
@@ -269,6 +295,9 @@ class CanonicalRequest(BaseModel):
     #: Functions the caller offers the model (`FRD-131`), carried there and back and **never
     #: executed** (`ADR-0013`).
     tools: tuple[ToolDeclaration, ...] = ()
+    #: Whether a call is required, allowed or forbidden (`FRD-145`). ``None`` is ``auto`` and
+    #: leaves the body as it was before the field existed.
+    tool_choice: ToolChoice | None = None
     #: Mark the stable prefix — tool declarations and system instruction — as cacheable
     #: (`FRD-133`). Set from the use case's configuration, never by the caller. False leaves a
     #: request byte-identical on every dialect.
@@ -290,8 +319,20 @@ class CanonicalRequest(BaseModel):
 
     @property
     def attachments(self) -> list[DataPart]:
-        """Every attachment in the request, in order."""
-        return [part for message in self.messages for part in message.attachments]
+        """Every attachment in the request, in order — a tool result's included, so the limits
+        and the model's media types hold for those too."""
+        return [
+            attachment
+            for message in self.messages
+            for part in message.parts
+            for attachment in (
+                (part,)
+                if isinstance(part, DataPart)
+                else part.attachments
+                if isinstance(part, ToolResultPart)
+                else ()
+            )
+        ]
 
     @property
     def media_types(self) -> frozenset[str]:
@@ -384,6 +425,9 @@ class CanonicalUsage(BaseModel):
     #: or 2x). Zero also on a provider that reports nothing.
     cached_input_tokens: int = 0
     cache_write_tokens: int = 0
+    #: **Of which** written for an hour rather than five minutes (`FRD-133`), a subset of
+    #: `cache_write_tokens`: a provider that offers both lifetimes prices the hour higher.
+    long_cache_write_tokens: int = 0
 
     #: **Of which** the model spent thinking (`FRD-135`), a subset of `completion_tokens`. Counted
     #: unconditionally: an installation decides whether to *see* reasoning, not whether it is
@@ -433,6 +477,9 @@ class CanonicalChunk(BaseModel):
     """
 
     text_delta: str
+    #: A piece of the model's reasoning, where the use case asked for it (`FRD-135`, `FRD-145`).
+    #: Apart from ``text_delta`` for the reason `CanonicalResponse.reasoning` is apart from `text`.
+    reasoning_delta: str = ""
     finish_reason: FinishReason | None = None
     usage: CanonicalUsage | None = None
     tool_calls: tuple[ToolCallPart, ...] = ()

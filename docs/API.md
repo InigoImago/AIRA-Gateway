@@ -352,8 +352,11 @@ the four prices (`input_price_per_million`, `output_price_per_million`,
 `cached_input_price_per_million`, `cache_write_price_per_million`, decimal strings), `is_priced`,
 its declaration (`capabilities`, `publisher`, `platform`, `addressing`, `underlying_model`,
 `context_window`, `max_output_tokens`, `default_max_output_tokens`, `thinking`, `embedding`,
-`attachments`, `hosting`, `deprecated`, `numeric_id`), `is_declared` and `updated_at`. The list is
-not paged.
+`attachments`, `fixed_sampling`, `hosting`, `deprecated`, `numeric_id`), `is_declared` and
+`updated_at`. The list is not paged. `fixed_sampling` is `true` for a model that samples at its own
+settings: the gateway never sends it a request that sets `temperature` other than 1, `top_p` other
+than 1 or any `top_k`, and tries the next model in the chain or refuses naming the control. It
+defaults to `false`, no restriction, and accepts only a JSON `true` or `false`.
 
 | Operation | Who may call | Answers |
 | --------- | ------------ | ------- |
@@ -363,7 +366,7 @@ not paged.
 | `PUT /api/v1/models/{name}/` | `catalog.write` | `200`. A model's name cannot change. Emits `model.upserted`. |
 | `PATCH /api/v1/models/{name}/` | `catalog.write` | As `PUT`, with only the fields sent. |
 | `DELETE /api/v1/models/{name}/` | `catalog.write` | `204`. Emits `model.deleted`, and `usecase.upserted` for every live use case it was released to. |
-| `GET /api/v1/model-reference/` | `catalog.write` | `{source, as_of, currency, conversion, live_error, entries}`: drafts of catalog entries from a public model list, for the console's *Add a model*. Each entry is `{platform, name, display_name, publisher, family, status, release_date, knowledge, description, declaration: {capabilities, context_window, max_output_tokens, thinking, attachments}, prices: {input, output, cached_input, cache_write}, notes}`, prices per million tokens in `currency` (US dollars). From the copy the release ships, or from `AIRA_MODEL_REFERENCE_URL` where set; `live_error` says why that list was not used; `conversion` is `{from, to, rate}` where `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` is set and the installation does not count in the list's currency, otherwise `null`. Writes nothing. |
+| `GET /api/v1/model-reference/` | `catalog.write` | `{source, as_of, currency, conversion, live_error, entries}`: drafts of catalog entries from a public model list, for the console's *Add a model*. Each entry is `{platform, name, display_name, publisher, family, status, release_date, knowledge, description, declaration: {capabilities, context_window, max_output_tokens, thinking, attachments, fixed_sampling}, prices: {input, output, cached_input, cache_write}, notes}`, prices per million tokens in `currency` (US dollars). From the copy the release ships, or from `AIRA_MODEL_REFERENCE_URL` where set; `live_error` says why that list was not used; `conversion` is `{from, to, rate}` where `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` is set and the installation does not count in the list's currency, otherwise `null`. Writes nothing. |
 
 ### 3.7 The installation's own budget, and global rules
 
@@ -558,7 +561,7 @@ same function (`apps/usecases/views/payloads.py`, `catalog/views.py` `_payload`,
 | `ratelimit.deleted` | `id`, `use_case` | |
 | `anomaly_rule.upserted` | `id`, `use_case`, `name`, `kind`, `window_minutes`, `threshold`, `parameter`, `min_sample`, `action`, `target`, `action_minutes`, `throttle_rpm`, `enabled` | `use_case` null is a global rule. |
 | `anomaly_rule.deleted` | `id`, `use_case` | `use_case` is left out when a rule is deleted through `/api/v1/anomaly-rules/`. |
-| `model.upserted` | `name`, `display_name`, `approved`, `provider`, `input_price_per_million`, `output_price_per_million`, `cached_input_price_per_million`, `cache_write_price_per_million`, `capabilities`, `publisher`, `platform`, `addressing`, `underlying_model`, `context_window`, `max_output_tokens`, `default_max_output_tokens`, `thinking`, `embedding`, `attachments`, `hosting`, `deprecated`, `numeric_id` | Prices are decimal strings, or null for none on file. |
+| `model.upserted` | `name`, `display_name`, `approved`, `provider`, `input_price_per_million`, `output_price_per_million`, `cached_input_price_per_million`, `cache_write_price_per_million`, `capabilities`, `publisher`, `platform`, `addressing`, `underlying_model`, `context_window`, `max_output_tokens`, `default_max_output_tokens`, `thinking`, `embedding`, `attachments`, `hosting`, `fixed_sampling`, `deprecated`, `numeric_id` | Prices are decimal strings, or null for none on file. `fixed_sampling` is a boolean, `false` for no restriction. |
 | `model.deleted` | `name` | |
 | `role.upserted` | `slug`, `label`, `group_path`, `permissions`, `builtin` | |
 | `role.removed` | `slug` | |

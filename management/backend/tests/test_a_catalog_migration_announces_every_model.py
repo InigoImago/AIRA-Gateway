@@ -24,6 +24,15 @@ MIGRATION = importlib.import_module(
     "aira_management.apps.catalog.migrations.0009_announce_every_model"
 )
 
+#: Fields catalogued after `0009`, which it cannot read: the column does not exist when it runs.
+#: Leaving them out resets nothing — when `0009` runs every row would hold the column's default,
+#: which is also what the gateway holds for a model whose events never named the field.
+ADDED_AFTER = frozenset({"fixed_sampling"})
+
+
+def _as_at_0009(payload: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in payload.items() if key not in ADDED_AFTER}
+
 
 def test_every_model_is_announced_as_the_views_announce_it(settings) -> None:
     settings.AIRA_KAFKA_STAGE = "t"
@@ -48,7 +57,8 @@ def test_every_model_is_announced_as_the_views_announce_it(settings) -> None:
     # Field for field what the views send: a partial event would reset what it leaves out.
     unapproved.refresh_from_db()
     older.refresh_from_db()
-    assert events[0].payload == _payload(unapproved)
-    assert events[1].payload == _payload(older)
+    assert events[0].payload == _as_at_0009(_payload(unapproved))
+    assert events[1].payload == _as_at_0009(_payload(older))
+    assert not ADDED_AFTER & events[0].payload.keys()
     # And the shape the gateway reads levels in.
     assert events[1].payload["thinking"]["levels"] == ["low", "high"]

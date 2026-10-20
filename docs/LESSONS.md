@@ -1694,6 +1694,13 @@ reading code.
 - **A capability belongs to a model — not to a family, a vendor or a runtime.** A seed writing one
   declaration for "whatever is configured" is the mechanism that turns a measurement into an
   assumption. It has produced two defects here (`minimal`, then `tools`).
+  **The same holds for a wire format.** The Anthropic dialect was written against the Claude models
+  of its day, and Anthropic then changed the rules per model. From Opus 4.7 on, `enabled` thinking
+  and every sampling control but the neutral one are refused. Meanwhile the reference list declared
+  effort words for exactly those models, and the dialect refused every one of them. So a mapping is
+  correct only for the models it was checked against. Re-read the vendor's reference when a new
+  family is catalogued. Hold the dialect to every shape the reference list can declare. And where a
+  rule differs per model, make it a declaration (`fixed_sampling`), not a branch.
 - **Listed is not usable.** `gemini-2.5-flash` is listed and refuses every request from a new key —
   hence *declared · served · reachable* as three separate answers, and `reachable: null` is never
   reported as healthy.

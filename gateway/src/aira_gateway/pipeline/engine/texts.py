@@ -54,6 +54,7 @@ def _total(calls: list[ModelCall]) -> CanonicalUsage:
         completion_tokens=sum(call.usage.completion_tokens for call in calls),
         cached_input_tokens=sum(call.usage.cached_input_tokens for call in calls),
         cache_write_tokens=sum(call.usage.cache_write_tokens for call in calls),
+        long_cache_write_tokens=sum(call.usage.long_cache_write_tokens for call in calls),
         reasoning_tokens=sum(call.usage.reasoning_tokens for call in calls),
     )
 

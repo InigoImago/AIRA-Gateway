@@ -132,6 +132,9 @@ export interface CatalogModel {
   embedding?: EmbeddingDeclaration | null;
   attachments?: AttachmentDeclaration | null;
   hosting?: '' | 'managed' | 'self_deployed';
+  /** The model samples at its own settings: a request setting temperature, top_p or top_k to
+   *  anything but the neutral value is never sent to it. Absent or false is no restriction. */
+  fixed_sampling?: boolean;
   /** Warns, never blocks — blocking is what revocation is for. */
   deprecated?: boolean;
   numeric_id?: number | null;
@@ -314,6 +317,8 @@ export interface ReferenceEntry {
     max_output_tokens: number | null;
     thinking: ThinkingDeclaration | null;
     attachments: { media_types: Record<string, { tokens?: number } | null> } | null;
+    /** Set where the list says the model takes no temperature at all. */
+    fixed_sampling: boolean;
   };
   /** Per million tokens, in the reference's currency (US dollars), as decimal strings. */
   prices: {

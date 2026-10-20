@@ -151,7 +151,9 @@ def openai_to_canonical(
     )
 
 
-def openai_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk | None:
+def openai_chunk_to_canonical(
+    data: dict[str, Any], *, include_reasoning: bool = False
+) -> CanonicalChunk | None:
     """One SSE payload → a canonical chunk, or ``None`` for one that carries nothing.
 
     The final chunk has an empty ``choices`` array and only ``usage``; indexing ``choices[0]``
@@ -169,9 +171,10 @@ def openai_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk | None:
     first = choices[0]
     delta = first.get("delta") or {}
     reason = first.get("finish_reason")
-    # The reasoning fields are discarded, exactly as `answer_of` ignores them.
     return CanonicalChunk(
         text_delta=str(delta.get("content") or ""),
+        # Sent whether or not it was asked for, so read only where the use case asked for it.
+        reasoning_delta=reasoning_of(delta, wanted=include_reasoning),
         finish_reason=finish_reason(reason) if reason else None,
         usage=usage,
     )
@@ -226,14 +229,17 @@ class StreamAssembler:
     place: half a tool call from the first must never be finished by the second.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, include_reasoning: bool = False) -> None:
         self._calls = StreamedToolCalls()
+        #: The use case's switch (`FRD-135` FR-3), off unless passed: this dialect streams its
+        #: reasoning whether or not it was asked for.
+        self._include_reasoning = include_reasoning
 
     def feed(self, payload: dict[str, Any]) -> CanonicalChunk | None:
         choices = payload.get("choices") or []
         if choices and isinstance(choices[0], dict):
             self._calls.add((choices[0].get("delta") or {}).get("tool_calls"))
-        chunk = openai_chunk_to_canonical(payload)
+        chunk = openai_chunk_to_canonical(payload, include_reasoning=self._include_reasoning)
         if chunk is None:
             return None
         if chunk.finish_reason is not None and self._calls.pending:

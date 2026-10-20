@@ -172,6 +172,11 @@ def draft(name: str, entry: dict[str, Any], platform: str, publisher: str) -> di
     if _price(cost.get("cache_read")) is not None and not embeds:
         capabilities.append("prompt_caching")
 
+    # The list's `temperature: false` is a model that refuses sampling controls outright (the newer
+    # Claude models answer 400). Only an explicit `false` says so: an entry that does not mention it
+    # is not a claim of a restriction, and an embedding model samples nothing.
+    fixed_sampling = entry.get("temperature") is False and not embeds
+
     name = name.removesuffix(DEFAULT_VERSION_SUFFIX)
     if cost.get("context_over_200k") or cost.get("tiers"):
         notes.append("costs more above a context length — the list price is the lower tier")
@@ -193,6 +198,7 @@ def draft(name: str, entry: dict[str, Any], platform: str, publisher: str) -> di
             "max_output_tokens": None if embeds else max_output,
             "thinking": thinking,
             "attachments": attachments,
+            "fixed_sampling": fixed_sampling,
         },
         "prices": {
             "input": _price(cost.get("input")),

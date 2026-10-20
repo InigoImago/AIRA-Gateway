@@ -25,6 +25,8 @@ the rule changed; one field changed rows, and the cases below moved with it.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -71,9 +73,8 @@ def _base(**config: object) -> dict:
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
-        # `AUTO` is carried — it is the default, and a real client sends it on every request.
-        # `ANY` changes the answer, is spelled differently by each dialect, and is not built.
-        ("toolConfig", {"functionCallingConfig": {"mode": "ANY"}}, "not served"),
+        # Google's four modes are carried now (`FRD-145`); a word outside them is refused by name.
+        ("toolConfig", {"functionCallingConfig": {"mode": "SOMETIMES"}}, "not a function-calling"),
         ("cachedContent", "cachedContents/abc", "context caching"),
         ("safetySettings", [{"category": "HARM_CATEGORY_HARASSMENT"}], "safety"),
     ],
@@ -83,9 +84,9 @@ def test_a_field_this_gateway_does_not_serve_is_refused_and_says_why(
 ) -> None:
     """All of these were served with a 200 and dropped.
 
-    `toolConfig` stays refused now that `tools` is carried, and for a reason of its own: its modes
-    hold on one vendor and silently do not on another, so a caller who forced a function call would
-    sometimes get a suggestion instead — with nothing in the response to say which they got.
+    `toolConfig`'s modes are each carried to every dialect or refused there by name, so a caller
+    who forced a function call never gets a suggestion instead; a mode Google does not have is
+    refused here.
     """
     status, message = _post({**_base(), field: value})
     assert status == 400
@@ -669,8 +670,9 @@ def test_the_thinking_declarations_differ_which_is_the_reason_they_are_declared(
     # and no way to say "you decide" either, since `reasoning_effort` is always a level.
     assert ThinkingMode.LIMITED not in OpenAIAdapter.thinking_modes
     assert ThinkingMode.AUTO not in OpenAIAdapter.thinking_modes
-    # No "decide for yourself" value in this one.
-    assert ThinkingMode.AUTO not in VertexAnthropicAdapter.thinking_modes
+    # Anthropic says all three since its `adaptive` thinking: "you decide" is that type, a budget
+    # is `enabled`. Which one a model takes is its declaration, not the dialect's.
+    assert VertexAnthropicAdapter.thinking_modes == frozenset(ThinkingMode)
     # And the budget-shaped Gemini dialect can say all three.
     assert VertexGeminiAdapter.thinking_modes == frozenset(ThinkingMode)
 
@@ -678,7 +680,8 @@ def test_the_thinking_declarations_differ_which_is_the_reason_they_are_declared(
     # its own declaration rather than something read off the mode set.
     assert OpenAIAdapter.expresses_thinking_levels is True
     assert VertexGeminiAdapter.expresses_thinking_levels is True
-    assert VertexAnthropicAdapter.expresses_thinking_levels is False
+    # A level word is Anthropic's `output_config.effort`.
+    assert VertexAnthropicAdapter.expresses_thinking_levels is True
 
     # The same OpenAI body on another platform says something else again: Agent Platform's open
     # models take a template switch, so `auto` exists there and neither a budget nor a level does.
@@ -689,27 +692,31 @@ def test_the_thinking_declarations_differ_which_is_the_reason_they_are_declared(
     assert VertexOpenModelAdapter.expresses_thinking_levels is False
 
 
-def test_a_mode_a_dialect_cannot_express_is_refused_and_never_omitted() -> None:
+def test_a_mode_without_a_budget_is_said_and_never_omitted() -> None:
     """The defect itself, on the dialect that had it.
 
-    Measured before the fix: `auto`, `high` and `low` with no resolved budget each produced **no
-    `thinking` block at all** — the same body as `disabled`. Silence is the one answer a control
-    plane cannot give about a control.
+    Measured before the first fix: `auto`, `high` and `low` with no resolved budget each produced
+    **no `thinking` block at all** — the same body as `disabled`. Silence is the one answer a
+    control plane cannot give about a control. They were refused until Anthropic's `adaptive`
+    thinking gave both a field; now each is on the wire, and never as the body `disabled` makes.
     """
     from aira_gateway.core.canonical import Thinking
-    from aira_gateway.upstreams.base import DialectUnsupported
     from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
 
-    asked = CanonicalRequest(
-        model="claude",
-        messages=[CanonicalMessage(role=Role.USER, text="hi")],
-        thinking=Thinking(mode="high"),
-    )
+    def asked(mode: str) -> dict[str, Any]:
+        return canonical_to_anthropic(
+            CanonicalRequest(
+                model="claude",
+                messages=[CanonicalMessage(role=Role.USER, text="hi")],
+                thinking=Thinking(mode=mode),
+            ),
+            max_tokens=4096,
+        )
 
-    with pytest.raises(DialectUnsupported) as caught:
-        canonical_to_anthropic(asked, max_tokens=4096)
-
-    assert "budget" in str(caught.value)
+    assert asked("auto")["thinking"] == {"type": "adaptive"}
+    assert "output_config" not in asked("auto")
+    high = asked("high")
+    assert (high["thinking"], high["output_config"]) == ({"type": "adaptive"}, {"effort": "high"})
 
 
 def test_a_candidate_that_cannot_be_addressed_is_skipped_not_a_server_error() -> None:

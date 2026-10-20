@@ -18,6 +18,7 @@
      "prompt_caching"
     ],
     "context_window": 131072,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": null
    },
@@ -57,6 +58,7 @@
      "prompt_caching"
     ],
     "context_window": 131072,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": null
    },
@@ -94,6 +96,7 @@
      "attachments"
     ],
     "context_window": 128000,
+    "fixed_sampling": false,
     "max_output_tokens": 64000,
     "thinking": null
    },
@@ -135,6 +138,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "max_tokens": 24576,
@@ -179,6 +183,7 @@
      "prompt_caching"
     ],
     "context_window": 32768,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": null
    },
@@ -218,6 +223,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "max_tokens": 24576,
@@ -254,6 +260,7 @@
      "speech"
     ],
     "context_window": 8192,
+    "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
    },
@@ -293,6 +300,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "max_tokens": 32768,
@@ -328,6 +336,7 @@
      "speech"
     ],
     "context_window": 8192,
+    "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
    },
@@ -367,6 +376,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -412,6 +422,7 @@
      "thinking"
     ],
     "context_window": 65536,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": {
      "levels": [
@@ -452,6 +463,7 @@
      "attachments"
     ],
     "context_window": 131072,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": null
    },
@@ -488,6 +500,7 @@
      "thinking"
     ],
     "context_window": 131072,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": {
      "levels": [
@@ -530,6 +543,7 @@
      "thinking"
     ],
     "context_window": 65536,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -575,6 +589,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -621,6 +636,7 @@
      "thinking"
     ],
     "context_window": 65536,
+    "fixed_sampling": false,
     "max_output_tokens": 4096,
     "thinking": {
      "levels": [
@@ -666,6 +682,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -712,6 +729,7 @@
      "thinking"
     ],
     "context_window": 131072,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -749,6 +767,7 @@
      "speech"
     ],
     "context_window": 8192,
+    "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
    },
@@ -788,6 +807,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -836,6 +856,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -884,6 +905,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -933,6 +955,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -968,6 +991,7 @@
      "generate"
     ],
     "context_window": 16384,
+    "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
    },
@@ -1009,6 +1033,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -1058,6 +1083,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -1106,6 +1132,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -1154,6 +1181,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": {
      "levels": [
@@ -1190,6 +1218,7 @@
      "embed"
     ],
     "context_window": 2048,
+    "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
    },
@@ -1225,6 +1254,7 @@
      "attachments"
     ],
     "context_window": 8192,
+    "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
    },
@@ -1266,6 +1296,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -1314,6 +1345,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -1359,6 +1391,7 @@
      "thinking"
     ],
     "context_window": 262144,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": {
      "modes": [
@@ -1401,6 +1434,7 @@
      "thinking"
     ],
     "context_window": 262144,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": {
      "modes": [
@@ -1440,6 +1474,7 @@
      "attachments"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": null
    },
@@ -1474,6 +1509,7 @@
      "attachments"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": null
    },
@@ -1512,6 +1548,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -1560,6 +1597,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -1607,6 +1645,7 @@
      "prompt_caching"
     ],
     "context_window": 200000,
+    "fixed_sampling": false,
     "max_output_tokens": 64000,
     "thinking": {
      "max_tokens": 63999,
@@ -1654,6 +1693,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -1706,6 +1746,7 @@
      "prompt_caching"
     ],
     "context_window": 200000,
+    "fixed_sampling": false,
     "max_output_tokens": 32000,
     "thinking": {
      "max_tokens": 31999,
@@ -1752,6 +1793,7 @@
      "prompt_caching"
     ],
     "context_window": 200000,
+    "fixed_sampling": false,
     "max_output_tokens": 64000,
     "thinking": {
      "levels": [
@@ -1803,6 +1845,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": false,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -1856,6 +1899,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -1905,6 +1949,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -1954,6 +1999,7 @@
      "prompt_caching"
     ],
     "context_window": 200000,
+    "fixed_sampling": false,
     "max_output_tokens": 32000,
     "thinking": {
      "max_tokens": 31999,
@@ -2000,6 +2046,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -2048,6 +2095,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -2095,6 +2143,7 @@
      "prompt_caching"
     ],
     "context_window": 200000,
+    "fixed_sampling": false,
     "max_output_tokens": 64000,
     "thinking": {
      "max_tokens": 63999,
@@ -2141,6 +2190,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": false,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -2194,6 +2244,7 @@
      "prompt_caching"
     ],
     "context_window": 200000,
+    "fixed_sampling": false,
     "max_output_tokens": 64000,
     "thinking": {
      "max_tokens": 63999,
@@ -2240,6 +2291,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -2291,6 +2343,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": true,
     "max_output_tokens": 128000,
     "thinking": {
      "levels": [
@@ -2329,6 +2382,7 @@
      "structured_output"
     ],
     "context_window": 128000,
+    "fixed_sampling": false,
     "max_output_tokens": 8192,
     "thinking": null
    },
@@ -2360,6 +2414,7 @@
      "prompt_caching"
     ],
     "context_window": 163840,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": {
      "modes": [
@@ -2396,6 +2451,7 @@
      "prompt_caching"
     ],
     "context_window": 163840,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "modes": [
@@ -2440,6 +2496,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "max_tokens": 24576,
@@ -2484,6 +2541,7 @@
      "attachments"
     ],
     "context_window": 32768,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": null
    },
@@ -2523,6 +2581,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "max_tokens": 24576,
@@ -2559,6 +2618,7 @@
      "speech"
     ],
     "context_window": 32768,
+    "fixed_sampling": true,
     "max_output_tokens": 16384,
     "thinking": null
    },
@@ -2598,6 +2658,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "max_tokens": 32768,
@@ -2633,6 +2694,7 @@
      "speech"
     ],
     "context_window": 32768,
+    "fixed_sampling": true,
     "max_output_tokens": 16384,
     "thinking": null
    },
@@ -2672,6 +2734,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -2718,6 +2781,7 @@
      "prompt_caching"
     ],
     "context_window": 65536,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": null
    },
@@ -2755,6 +2819,7 @@
      "prompt_caching"
     ],
     "context_window": 131072,
+    "fixed_sampling": false,
     "max_output_tokens": 32768,
     "thinking": {
      "levels": [
@@ -2800,6 +2865,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -2847,6 +2913,7 @@
      "prompt_caching"
     ],
     "context_window": 65536,
+    "fixed_sampling": false,
     "max_output_tokens": 4096,
     "thinking": {
      "levels": [
@@ -2892,6 +2959,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -2940,6 +3008,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -2988,6 +3057,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -3037,6 +3107,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -3084,6 +3155,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -3133,6 +3205,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -3181,6 +3254,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": false,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -3229,6 +3303,7 @@
      "prompt_caching"
     ],
     "context_window": 1048576,
+    "fixed_sampling": true,
     "max_output_tokens": 65536,
     "thinking": {
      "levels": [
@@ -3265,6 +3340,7 @@
      "embed"
     ],
     "context_window": 2048,
+    "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
    },
@@ -3301,6 +3377,7 @@
      "prompt_caching"
     ],
     "context_window": 131072,
+    "fixed_sampling": true,
     "max_output_tokens": 32768,
     "thinking": {
      "levels": [
@@ -3345,6 +3422,7 @@
      "prompt_caching"
     ],
     "context_window": 262144,
+    "fixed_sampling": false,
     "max_output_tokens": 128000,
     "thinking": null
    },
@@ -3376,6 +3454,7 @@
      "prompt_caching"
     ],
     "context_window": 200000,
+    "fixed_sampling": false,
     "max_output_tokens": 128000,
     "thinking": {
      "modes": [
@@ -3412,6 +3491,7 @@
      "prompt_caching"
     ],
     "context_window": 200000,
+    "fixed_sampling": false,
     "max_output_tokens": 128000,
     "thinking": {
      "modes": [
@@ -3448,6 +3528,7 @@
      "prompt_caching"
     ],
     "context_window": 1000000,
+    "fixed_sampling": false,
     "max_output_tokens": 64000,
     "thinking": {
      "modes": [
@@ -3488,6 +3569,7 @@
      "attachments"
     ],
     "context_window": 131072,
+    "fixed_sampling": false,
     "max_output_tokens": 131072,
     "thinking": null
    },
@@ -3524,6 +3606,7 @@
      "attachments"
     ],
     "context_window": 128000,
+    "fixed_sampling": false,
     "max_output_tokens": 16384,
     "thinking": null
    },

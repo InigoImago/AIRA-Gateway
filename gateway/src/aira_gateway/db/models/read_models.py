@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -222,6 +223,8 @@ class ModelRead(Base):
     attachments: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     hosting: Mapped[str] = mapped_column(String(16), default="")
     deprecated: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: The model takes no sampling control but at its neutral value (`FRD-145`).
+    fixed_sampling: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     numeric_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
 

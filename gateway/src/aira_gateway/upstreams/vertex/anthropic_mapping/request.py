@@ -14,6 +14,7 @@ from aira_gateway.core.canonical import (
     TextPart,
     ToolCallPart,
     ToolDeclaration,
+    ToolMode,
     ToolResultPart,
     paired_tool_results,
 )
@@ -39,6 +40,21 @@ _UNSUPPORTED_SAMPLING = {
 #: Anthropic distinguishes an image block from a document block, and refuses a PDF in an image.
 _DOCUMENT_TYPES = frozenset({"application/pdf"})
 
+#: The image formats an `image` block takes. Anything else sent as one is the provider's 400, so it
+#: is refused here by name — a chain moves on to a model that reads it.
+_IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
+
+#: Plain text goes as a document whose source is the text itself, not base64.
+_TEXT_DOCUMENT = "text/plain"
+
+#: Anthropic's floor for a `budget_tokens`, on every model that takes one. The catalogue's declared
+#: minimum is the first line; this is the dialect's own, for a declaration that states none.
+MIN_THINKING_BUDGET = 1024
+
+#: How a thinking block's text comes back. The newest models default to `omitted` — the block
+#: arrives empty — so a use case that asks for the reasoning has to ask for the summary by name.
+_SHOWN = "summarized"
+
 #: The cache marker. Without a `ttl` it is the five-minute lifetime, the default and the cheap one
 #: (a write costs 1.25x base input, against 2x for an hour).
 _EPHEMERAL = {"type": "ephemeral"}
@@ -63,7 +79,13 @@ def canonical_to_anthropic(
             system_parts.append(message.text)
             continue
         role = "assistant" if message.role is Role.MODEL else "user"
-        messages.append({"role": role, "content": _content_blocks(message)})
+        blocks = _content_blocks(message)
+        if not blocks:
+            # A turn with nothing left to say — a model turn that was only its thoughts, which no
+            # surface carries in — is refused by Anthropic as empty content. Left out, the turns
+            # either side of it are joined, which is how Anthropic reads two turns of one role.
+            continue
+        messages.append({"role": role, "content": blocks})
 
     body: dict[str, Any] = {
         "anthropic_version": ANTHROPIC_VERSION,
@@ -81,56 +103,85 @@ def canonical_to_anthropic(
     if request.temperature is not None:
         body["temperature"] = request.temperature
     _add_sampling(body, request)
+    output_config: dict[str, Any] = {}
     if request.thinking is not None and request.thinking.mode == ThinkingMode.DISABLED:
         # **Said, not omitted**: a model that thinks by default thinks whenever the parameter is
         # absent — and bills for it — so "off" is a value on the wire, as on every other dialect.
         body["thinking"] = {"type": "disabled"}
     elif request.thinking is not None:
-        body["thinking"] = _thinking(request, max_tokens)
+        body["thinking"], effort = _thinking(request, max_tokens)
+        if effort is not None:
+            output_config["effort"] = effort
     if request.tools:
-        body["tools"] = [_tool(tool, strict_tools=strict_tools) for tool in request.tools]
+        offered = _offered(request)
+        body["tools"] = [_tool(tool, strict_tools=strict_tools) for tool in offered]
         if request.cache_prefix:
             # On the last tool only: a breakpoint caches everything before it, and a request may
             # carry only four.
             body["tools"][-1]["cache_control"] = _cache_control(request)
-        # No `tool_choice`: the model decides, and the surface accepts nothing else.
+        choice = _tool_choice(request)
+        if choice is not None:
+            body["tool_choice"] = choice
     if request.response_schema is not None or request.response_json_schema is not None:
         # A first-class parameter beside `tools`, so both travel together; `stop_reason` says
         # whether the model called a function or answered with the document. A JSON Schema
         # document goes as written (`FRD-143`); a schema this dialect cannot take is the
         # provider's 400, with its reason.
-        body["output_config"] = {
-            "format": {
-                "type": "json_schema",
-                "schema": (
-                    schema_for_anthropic(request.response_schema)
-                    if request.response_schema is not None
-                    else request.response_json_schema.to_wire()  # type: ignore[union-attr]
-                ),
-            }
+        output_config["format"] = {
+            "type": "json_schema",
+            "schema": (
+                schema_for_anthropic(request.response_schema)
+                if request.response_schema is not None
+                else request.response_json_schema.to_wire()  # type: ignore[union-attr]
+            ),
         }
+    if output_config:
+        # One object for both: the effort a level word names and the document a schema asks for.
+        body["output_config"] = output_config
     return body
 
 
-def _thinking(request: CanonicalRequest, max_tokens: int) -> dict[str, Any]:
-    """The `thinking` block for a request that asks the model to think.
+def _thinking(request: CanonicalRequest, max_tokens: int) -> tuple[dict[str, Any], str | None]:
+    """The `thinking` block for a request that asks the model to think, and the effort to send.
+
+    Two shapes, by what the catalogue offers for the model (`ADR-0021`):
+
+        limited      {"type": "enabled", "budget_tokens": N}       the models that take a budget
+        auto         {"type": "adaptive"}                          the model decides
+        a level      {"type": "adaptive"} + output_config.effort   the vendor's own word
+
+    Claude Opus 4.7 and every later model refuse `enabled` and take only `adaptive`; Claude 4.5
+    and earlier refuse `adaptive`. Which a model accepts is the catalogue's declaration — a budget
+    range or level words — so a new model is a catalogue entry, not a branch here.
 
     Every refusal here is `DialectUnsupported`, a named refusal the dispatch chain skips the
     candidate for: each is a request this wire format cannot carry, which a fallback on another
     dialect may well serve.
     """
     assert request.thinking is not None
+    mode = request.thinking.mode
+    if mode == ThinkingMode.LIMITED:
+        return _budget(request, max_tokens), None
+    block: dict[str, Any] = {"type": "adaptive"}
+    if request.include_reasoning:
+        # Without it the newest models return their thinking blocks empty, and a use case that
+        # turned reasoning on would get none.
+        block["display"] = _SHOWN
+    return block, (None if mode == ThinkingMode.AUTO else str(mode))
+
+
+def _budget(request: CanonicalRequest, max_tokens: int) -> dict[str, Any]:
+    """`enabled` with a token budget, refused where Anthropic would refuse it."""
+    assert request.thinking is not None
     budget = request.thinking.tokens
     if budget is None:
-        # **Refused, not omitted**: this dialect says "think" only by naming a budget, and a
-        # body without one is the `disabled` body — a 200 with no thinking and no word said.
-        # Reached by a level word or `auto`; the fix is not offering that mode for this model,
-        # never an invented budget (`ADR-0021`).
+        # `thinking.resolve` refuses `limited` without a count first; a request built past it
+        # would otherwise be sent as a body Anthropic refuses.
+        raise DialectUnsupported("The 'limited' thinking mode needs a token budget.")
+    if budget < MIN_THINKING_BUDGET:
         raise DialectUnsupported(
-            f"This model was asked to think in mode '{request.thinking.mode}', and the "
-            "Anthropic dialect requests thinking only by naming a token budget: it has no "
-            "field for a level and no way to say 'you decide'. Use the 'limited' mode with a "
-            "token count, or do not offer this level for this model."
+            f"A thinking budget of {budget} tokens is below the {MIN_THINKING_BUDGET} Anthropic "
+            "accepts. Raise the budget, or declare that minimum for this model in the catalogue."
         )
     # Thinking tokens are drawn from `max_tokens`, so a budget at or above it can never answer.
     # The catalogue refuses that where it is authored; this is the backstop for a request whose own
@@ -142,18 +193,56 @@ def _thinking(request: CanonicalRequest, max_tokens: int) -> dict[str, Any]:
             "allowance, so the budget must be below it. Raise maxOutputTokens or lower the budget."
         )
     if _continues_a_tool_call(request):
-        # Anthropic requires the model's own `thinking` block, signature and all, in front of a
-        # call it is continuing, and refuses the turn without one. This gateway never hands those
-        # blocks to a caller — their text is the model's reasoning, withheld unless a use case
-        # enables it — so it has none to send back.
+        # With a budget, Anthropic requires the model's own `thinking` block, signature and all, in
+        # front of a call it is continuing, and refuses the turn without one. This gateway never
+        # hands those blocks to a caller — their text is the model's reasoning, withheld unless a
+        # use case enables it — so it has none to send back. `adaptive` has no such rule.
         raise DialectUnsupported(
-            "This turn continues a function call on a Claude model with thinking enabled. "
+            "This turn continues a function call on a Claude model with a thinking budget. "
             "Anthropic requires the model's own thinking block in front of the call it continues, "
             "and this gateway does not carry thinking blocks to the caller, so it cannot send one "
-            "back. Send this turn with thinking disabled, or use a model that does not think by "
-            "default for tool loops."
+            "back. Send this turn with thinking disabled, or use a level word or 'auto' on a "
+            "model that thinks adaptively."
         )
-    return {"type": "enabled", "budget_tokens": budget}
+    block: dict[str, Any] = {"type": "enabled", "budget_tokens": budget}
+    return block
+
+
+def _offered(request: CanonicalRequest) -> tuple[ToolDeclaration, ...]:
+    """The functions to declare: all of them, unless a required call may name only some.
+
+    Anthropic has no list of allowed names. A call it is made to make can only name a function it
+    was offered, so offering only those is the same instruction.
+    """
+    choice = request.tool_choice
+    if choice is None or choice.mode is not ToolMode.ANY or not choice.allowed:
+        return request.tools
+    return tuple(tool for tool in request.tools if tool.name in choice.allowed)
+
+
+def _tool_choice(request: CanonicalRequest) -> dict[str, Any] | None:
+    """Google's function-calling mode as Anthropic's `tool_choice`, or nothing for `auto`."""
+    choice = request.tool_choice
+    if choice is None or choice.mode is ToolMode.AUTO:
+        return None
+    if choice.mode is ToolMode.NONE:
+        return {"type": "none"}
+    if choice.mode is ToolMode.VALIDATED:
+        # The guarantee is a strict tool here, which the installation decides and an organisation
+        # policy may forbid; answering `auto` without it would drop what was asked.
+        raise DialectUnsupported(
+            "'VALIDATED' asks the provider to guarantee that a call's arguments match the "
+            "declaration. Anthropic gives that guarantee only for strict tools, which this request "
+            "is not sent with. Use 'AUTO', or a model that can."
+        )
+    if request.thinking is not None and request.thinking.mode == ThinkingMode.LIMITED:
+        raise DialectUnsupported(
+            "'ANY' requires a function call, and Anthropic refuses a required call with a "
+            "thinking budget. Use a level word or 'auto' for thinking, or 'AUTO' for the call."
+        )
+    if len(choice.allowed) == 1:
+        return {"type": "tool", "name": choice.allowed[0]}
+    return {"type": "any"}
 
 
 def _continues_a_tool_call(request: CanonicalRequest) -> bool:
@@ -208,7 +297,10 @@ def _content_blocks(message: CanonicalMessage) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     for part in message.parts:
         if isinstance(part, TextPart):
-            blocks.append({"type": "text", "text": part.text})
+            if part.text.strip():
+                # An empty or whitespace text block is refused outright ("text content blocks
+                # must contain non-whitespace text"), and says nothing.
+                blocks.append({"type": "text", "text": part.text})
             continue
         if isinstance(part, ToolCallPart):
             blocks.append(
@@ -217,24 +309,50 @@ def _content_blocks(message: CanonicalMessage) -> list[dict[str, Any]]:
             continue
         if isinstance(part, ToolResultPart):
             # `tool_result` belongs to the **user** turn on this dialect and names the call by id.
-            blocks.append(
-                {"type": "tool_result", "tool_use_id": part.call_id, "content": part.content}
+            # Media goes inside it as blocks beside the text, which is where the model reads it.
+            content: str | list[dict[str, Any]] = (
+                [{"type": "text", "text": part.content}, *map(_attachment, part.attachments)]
+                if part.attachments
+                else part.content
             )
+            blocks.append({"type": "tool_result", "tool_use_id": part.call_id, "content": content})
             continue
         if not isinstance(part, DataPart):  # pragma: no cover - the union is closed above
             raise DialectUnsupported(f"Unsupported part {type(part).__name__}.")
-        kind = "document" if part.media_type in _DOCUMENT_TYPES else "image"
-        blocks.append(
-            {
-                "type": kind,
-                "source": {
-                    "type": "base64",
-                    "media_type": part.media_type,
-                    "data": base64.b64encode(part.data).decode("ascii"),
-                },
-            }
-        )
+        blocks.append(_attachment(part))
     return blocks
+
+
+def _attachment(part: DataPart) -> dict[str, Any]:
+    """An attachment as the block its media type needs: an image, a PDF, or plain text."""
+    if part.media_type == _TEXT_DOCUMENT:
+        try:
+            text = part.data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DialectUnsupported(
+                "A text/plain attachment that is not UTF-8 cannot be sent to a Claude model."
+            ) from exc
+        return {
+            "type": "document",
+            "source": {"type": "text", "media_type": _TEXT_DOCUMENT, "data": text},
+        }
+    if part.media_type in _DOCUMENT_TYPES:
+        kind = "document"
+    elif part.media_type in _IMAGE_TYPES:
+        kind = "image"
+    else:
+        raise DialectUnsupported(
+            f"A Claude model reads images ({', '.join(sorted(_IMAGE_TYPES))}), PDF and plain "
+            f"text; an attachment of type {part.media_type} has no block to go in."
+        )
+    return {
+        "type": kind,
+        "source": {
+            "type": "base64",
+            "media_type": part.media_type,
+            "data": base64.b64encode(part.data).decode("ascii"),
+        },
+    }
 
 
 def _cache_control(request: CanonicalRequest) -> dict[str, str]:

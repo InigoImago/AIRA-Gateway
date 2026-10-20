@@ -31,9 +31,9 @@ from aira_gateway.upstreams.gemini_mapping import (
     SAMPLING as GEMINI_SAMPLING,
 )
 from aira_gateway.upstreams.gemini_mapping import (
+    GeminiStreamAssembler,
     canonical_to_gemini_request,
     count_tokens_body,
-    gemini_chunk_to_canonical,
     gemini_response_to_canonical,
 )
 from aira_gateway.upstreams.openai.mapping import (
@@ -254,7 +254,11 @@ class VertexGeminiAdapter(_VertexAdapter):
                 method="streamGenerateContent",
             )
             return await _open_stream(
-                self._transport, f"{url}?alt=sse", body, lambda: gemini_chunk_to_canonical, region
+                self._transport,
+                f"{url}?alt=sse",
+                body,
+                lambda: GeminiStreamAssembler().feed,
+                region,
             )
 
         return attempt
@@ -293,11 +297,11 @@ class VertexAnthropicAdapter(_VertexAdapter):
     sampling_controls = ANTHROPIC_SAMPLING
     #: Anthropic's API has no speech output (`FRD-624`).
     speaks = False
-    #: **No `auto`**: this dialect takes only `budget_tokens`, so `auto` resolves to the model's
-    #: declared default budget (`FRD-111` §5.2), and without one there is nothing to send.
-    thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.AUTO}
-    #: No field for a level word: it has nowhere to go and is refused rather than dropped.
-    expresses_thinking_levels = False
+    #: All three: `limited` is a `budget_tokens`, `auto` is `adaptive` thinking, `disabled` is said.
+    #: Which a model accepts is its declaration — Claude 4.7 and later take no budget.
+    thinking_modes = frozenset(ThinkingMode)
+    #: A level word is `output_config.effort` beside `adaptive` thinking (`low` … `max`).
+    expresses_thinking_levels = True
 
     def __init__(
         self,
@@ -351,7 +355,11 @@ class VertexAnthropicAdapter(_VertexAdapter):
             )
             # A fresh assembler per attempt: it accumulates tool calls across events.
             return await _open_stream(
-                self._transport, url, body, lambda: StreamAssembler().feed, region
+                self._transport,
+                url,
+                body,
+                lambda: StreamAssembler(include_reasoning=request.include_reasoning).feed,
+                region,
             )
 
         return attempt
@@ -436,7 +444,7 @@ class VertexOpenModelAdapter(_VertexAdapter):
                 self._transport,
                 url,
                 _named(body, publisher, request.model),
-                lambda: OpenAIStreamAssembler().feed,
+                lambda: OpenAIStreamAssembler(include_reasoning=request.include_reasoning).feed,
                 region,
             )
 

@@ -150,14 +150,6 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     if method in GENERATION_METHODS:
         gemini_request = _validated(schemas.GenerateContentRequest, body)
         canonical = gemini_to_canonical(model, gemini_request, bounds=schema_bounds(request))
-        if method == "streamGenerateContent" and _asked_for_reasoning(gemini_request):
-            raise GeminiHTTPError(
-                400,
-                "'includeThoughts' is not served on a stream: streamed answers carry no reasoning "
-                "(FRD-135), and a stream without the thoughts asked for would look complete. Use "
-                "generateContent, or omit it.",
-                "INVALID_ARGUMENT",
-            )
     elif method in EMBEDDING_METHODS:
         embed_request = _embedding_request(model, method, body)
     else:
@@ -295,6 +287,7 @@ async def _stream_response(
         api="gemini",
         operation="streamGenerateContent",
         started=started,
+        shows_reasoning=True,
     )
     served = streamed.model
 

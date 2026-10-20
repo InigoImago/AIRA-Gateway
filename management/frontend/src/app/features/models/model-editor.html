@@ -479,6 +479,23 @@
           </span>
         </fieldset>
 
+        <fieldset class="field bare" data-testid="sampling-block">
+          <legend class="field__legend">Sampling</legend>
+          <label class="checkline">
+            <input
+              type="checkbox"
+              name="fixed_sampling"
+              [ngModel]="fixedSampling()"
+              (ngModelChange)="fixedSampling.set($event)"
+              data-testid="model-fixed-sampling"
+            />
+            Fixed sampling — the model takes no temperature, top_p or top_k
+            <app-info-hint label="Fixed sampling" testid="fixed-sampling" [wide]="true">
+              {{ fixedSamplingHelp }}
+            </app-info-hint>
+          </label>
+        </fieldset>
+
         <!--
             The three declaration blocks (`FRD-114`). Each appears only when its capability is
             ticked: a thinking budget on a model that does not reason is a declaration the

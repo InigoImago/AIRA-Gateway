@@ -59,6 +59,7 @@ class StreamAccounting:
         api: str,
         operation: str,
         started: float,
+        shows_reasoning: bool = False,
     ) -> None:
         self.model = streamed.model
         self.chunks = streamed.chunks
@@ -76,6 +77,10 @@ class StreamAccounting:
             structured=canonical is not None and canonical.structured,
         )
         self._parts: list[str] = []
+        #: Whether the surface sends the reasoning on: what the row keeps is what the caller got,
+        #: and a surface with no field for thoughts drops them (`FRD-145`).
+        self._shows_reasoning = shows_reasoning
+        self._reasoning: list[str] = []
         self._tool_calls: list[str] = []
         # What the vendor produced, apart from what this gateway added to it — the material for a
         # count when the caller leaves before the vendor says what it used (`counting`).
@@ -119,6 +124,8 @@ class StreamAccounting:
             self._calls.extend(chunk.tool_calls)
             self._notice.saw_tool_call()
         self._answer.append(chunk.text_delta)
+        if self._shows_reasoning and chunk.reasoning_delta:
+            self._reasoning.append(chunk.reasoning_delta)
         if chunk.audio_delta is not None:
             self._audio.add(chunk.audio_delta)
         # The audit row accumulates exactly what the caller receives.
@@ -145,6 +152,9 @@ class StreamAccounting:
     def stored(self) -> dict[str, Any]:
         """What the audit row keeps of the answer: what the caller received."""
         stored: dict[str, Any] = {"text": self.text}
+        if self._reasoning:
+            # Stored like the answer it came with (`FRD-135` FR-5), under the same gates.
+            stored["reasoning"] = "".join(self._reasoning)
         if not self._audio.empty:
             # Described, never kept (`ADR-0026`); the hash covers every chunk.
             stored["audio"] = self._audio.describe()

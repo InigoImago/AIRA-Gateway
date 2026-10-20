@@ -777,10 +777,26 @@ provider, publisher and region.
 | For an **open model** (GLM, DeepSeek): a permission by name | They are served only at `global`, which names no region. `AIRA_ALLOWED_MODEL_REGIONS=global=glm-4.7-maas` permits it for that model and no other |
 
 One transport, three dialects. Anthropic on Vertex uses `:rawPredict` with the Messages API:
-`max_tokens` is always sent, cache tokens count as input, and there are no embeddings. Its
-`thinking` blocks — sent when a thinking budget is set — are returned, and stored with the answer
-under the same `store_payloads` gate, when the use case's `include_reasoning` is on, which is the
-default; a streamed answer carries none. The managed open models speak the **OpenAI**
+`max_tokens` is always sent, cache tokens count as input, and there are no embeddings.
+
+- **Thinking** takes the shape the catalogue declares for the model. A token budget (`limited`,
+  1024 tokens at least) is the `enabled` thinking Claude 4.5 and earlier take. A level word (`low`,
+  `medium`, `high`, `xhigh`, `max`) or `auto` is the `adaptive` thinking that Claude Opus 4.7 and
+  every later model require, with the level as its effort. The reference list declares each Claude
+  model this way.
+- **Its reasoning** is returned, buffered or streamed, and stored with the answer under the same
+  `store_payloads` gate when the use case's `include_reasoning` is on, which is the default.
+- **Sampling.** The same models answer `400` to `top_k`, to a `temperature` other than 1 and to a
+  `top_p` below 0.99. Their catalogue entry says *fixed sampling*, and the gateway sends them no
+  request that sets one: it moves on to the next model in the chain, or refuses naming the control.
+- **Structured output** takes the formats Anthropic lists (`date-time`, `date`, `time`,
+  `duration`, `email`, `hostname`, `uri`, `ipv4`, `ipv6`, `uuid`). A number's width (`int32`,
+  `double`) is left out of the schema it is sent. A constraint it cannot take — a length, a
+  minimum, `minItems` above 1 — skips the model by name.
+- **A cache write for an hour** is billed at twice the input price, a five-minute one at the
+  model's cache-write price.
+
+The managed open models speak the **OpenAI**
 dialect at one endpoint, `endpoints/openapi/chat/completions`, with the model named in the body as
 `publisher/model` — catalogue one under provider `vertex`, its publisher (`zai-org`,
 `deepseek-ai`) and region `global`. Thinking is a switch there (on or off, no budget), their

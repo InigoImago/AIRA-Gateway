@@ -104,6 +104,11 @@ export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
     { key: 'embedding', label: 'Embedding', value: json(model.embedding) },
     { key: 'attachments', label: 'Attachments', value: json(model.attachments) },
     {
+      key: 'fixed_sampling',
+      label: 'Fixed sampling',
+      value: model.fixed_sampling ? 'yes — temperature, top_p and top_k are not sent' : 'no',
+    },
+    {
       key: 'input_price',
       label: `Input ${perMillion(currency)}`,
       value: model.is_priced ? dash(model.input_price_per_million) : 'no price',

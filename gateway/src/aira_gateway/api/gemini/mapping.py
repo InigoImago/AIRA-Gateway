@@ -31,7 +31,9 @@ from aira_gateway.core.canonical import (
     TextPart,
     Thinking,
     ToolCallPart,
+    ToolChoice,
     ToolDeclaration,
+    ToolMode,
     ToolResultPart,
 )
 from aira_gateway.core.json_schema import parse_json_schema
@@ -112,16 +114,35 @@ def _canonical_parts(content: schemas.Content, limits: Limits, offset: int) -> l
                     # Serialised once, here: dialects disagree on string vs. object, and the round
                     # trip has to be stable.
                     content=json.dumps(result.response, ensure_ascii=False),
+                    attachments=tuple(
+                        _attachment(media.inlineData, limits, index) for media in result.parts
+                    ),
                 )
             )
             continue
         assert part.inlineData is not None  # the schema validator guarantees one of the shapes
-        media_type = part.inlineData.mimeType
-        check_media_type(media_type, limits, index=index)
-        data = decode(part.inlineData.data, index=index)
-        check_signature(media_type, data, index=index)
-        parts.append(DataPart(media_type=media_type, data=data))
+        parts.append(_attachment(part.inlineData, limits, index))
     return parts
+
+
+def _attachment(inline: schemas.InlineData, limits: Limits, index: int) -> DataPart:
+    """One attachment, through every check an attachment gets, wherever in the prompt it sits."""
+    media_type = inline.mimeType
+    check_media_type(media_type, limits, index=index)
+    data = decode(inline.data, index=index)
+    check_signature(media_type, data, index=index)
+    return DataPart(media_type=media_type, data=data)
+
+
+def _tool_choice(config: schemas.ToolConfig | None) -> ToolChoice | None:
+    """Google's function-calling mode, canonically; `AUTO` naming no functions is no choice at all,
+    so a body that says it is the body that does not."""
+    calling = config.functionCallingConfig if config else None
+    if calling is None or (calling.mode == "AUTO" and not calling.allowedFunctionNames):
+        return None
+    return ToolChoice(
+        mode=ToolMode(calling.mode.lower()), allowed=tuple(calling.allowedFunctionNames or ())
+    )
 
 
 def gemini_to_canonical(
@@ -142,6 +163,10 @@ def gemini_to_canonical(
         role = _ROLE_FROM_GEMINI[content.role or "user"]
         parts = _canonical_parts(content, limits, counted)
         counted += len(parts)
+        if not parts and content.parts:
+            # A turn that was only the model's thoughts, replayed: with them left out it says
+            # nothing, and every provider refuses an empty turn. Left out whole, like its thoughts.
+            continue
         messages.append(CanonicalMessage(role=role, parts=parts))
 
     config = request.generationConfig
@@ -193,6 +218,7 @@ def gemini_to_canonical(
             for tool in request.tools
             for declaration in tool.functionDeclarations
         ),
+        tool_choice=_tool_choice(request.toolConfig),
         speech=speech_of(config) if config else None,
     )
 
@@ -308,6 +334,7 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
             ),
             totalTokenCount=response.usage.total_tokens,
             thoughtsTokenCount=response.usage.reasoning_tokens or None,
+            cachedContentTokenCount=response.usage.cached_input_tokens or None,
         ),
         modelVersion=response.model,
     )
@@ -364,7 +391,10 @@ def chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConten
     """
     usage = chunk.usage
     parts: list[schemas.Part] = []
-    if chunk.text_delta or not (chunk.tool_calls or chunk.audio_delta):
+    if chunk.reasoning_delta:
+        # Before the text, marked as Google marks it, as on `canonical_to_gemini`.
+        parts.append(schemas.Part(text=chunk.reasoning_delta, thought=True))
+    if chunk.text_delta or not (chunk.tool_calls or chunk.audio_delta or chunk.reasoning_delta):
         parts.append(schemas.Part(text=chunk.text_delta))
     if chunk.audio_delta is not None:
         parts.append(_audio_part(chunk.audio_delta))
@@ -384,6 +414,7 @@ def chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConten
             ),
             totalTokenCount=usage.total_tokens if usage else 0,
             thoughtsTokenCount=(usage.reasoning_tokens or None) if usage else None,
+            cachedContentTokenCount=(usage.cached_input_tokens or None) if usage else None,
         ),
         modelVersion=model,
     )

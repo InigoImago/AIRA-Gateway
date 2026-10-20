@@ -18,6 +18,11 @@ from aira_common.money import cost_nanos, request_cost_nanos
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.models import ModelRead
 
+#: What writing a prefix into a cache for **an hour** costs, as a multiple of the ordinary input
+#: price. Anthropic's rule, the one provider that offers the hour: twice the input price, against
+#: 1.25x for five minutes, which is what a model's single cache-write price states.
+LONG_CACHE_WRITE_MULTIPLIER = 2
+
 
 @dataclass(frozen=True, slots=True)
 class Price:
@@ -47,6 +52,14 @@ class Price:
             self.cache_write_per_million_nanos
             if self.cache_write_per_million_nanos is not None
             else self.input_per_million_nanos
+        )
+
+    @property
+    def long_cache_write_rate(self) -> int:
+        """An hour's cache write: the provider's fixed multiple of input, and never below the
+        five-minute rate the catalogue states."""
+        return max(
+            self.input_per_million_nanos * LONG_CACHE_WRITE_MULTIPLIER, self.cache_write_rate
         )
 
 
@@ -93,5 +106,12 @@ class PricingService:
                 price.output_per_million_nanos,
             )
             + cost_nanos(usage.cached_input_tokens, price.cached_input_rate)
-            + cost_nanos(usage.cache_write_tokens, price.cache_write_rate)
+            + cost_nanos(usage.cache_write_tokens - long_writes(usage), price.cache_write_rate)
+            + cost_nanos(long_writes(usage), price.long_cache_write_rate)
         )
+
+
+def long_writes(usage: CanonicalUsage) -> int:
+    """The hour's cache writes, clamped into the writes they are part of: a provider reporting more
+    of them than writes cannot make the five-minute share negative."""
+    return min(max(0, usage.long_cache_write_tokens), max(0, usage.cache_write_tokens))

@@ -75,6 +75,7 @@ const SONNET: ReferenceEntry = {
     max_output_tokens: 64000,
     thinking: { modes: ['limited'], min_tokens: 1024, max_tokens: 63999, levels: ['low', 'high'] },
     attachments: { media_types: { 'application/pdf': null, 'image/png': null } },
+    fixed_sampling: true,
   },
   prices: { input: '3', output: '15', cached_input: '0.3', cache_write: '3.75' },
   notes: ['the thinking ceiling is the output cap less one; the list states none'],
@@ -192,6 +193,12 @@ interface Editor {
   editorTab: { set: (v: string) => void; (): string };
   defaultOutput: { set: (v: number | null) => void; (): number | null };
   deprecated: { set: (v: boolean) => void; (): boolean };
+  fixedSampling: { set: (v: boolean) => void; (): boolean };
+  fromReferenceEntry: (
+    entry: ReferenceEntry,
+    reference: ModelReference,
+    upstream: GatewayProvider | null,
+  ) => void;
   thinkingModes: { set: (v: string[]) => void; (): string[] };
   modeVerdicts: () => Record<string, { ok: boolean; detail: string }>;
   thinkingMin: { set: (v: number | null) => void; (): number | null };
@@ -1141,6 +1148,7 @@ describe('ModelCatalog — finding one among many', () => {
       // refuses a list.
       attachments: { media_types: { 'application/pdf': { tokens: 258 } } },
       hosting: 'self_deployed',
+      fixed_sampling: true,
       deprecated: true,
       numeric_id: 9001,
       is_declared: true,
@@ -1171,6 +1179,7 @@ describe('ModelCatalog — finding one among many', () => {
       embedding: { testid: 'embedding', shows: 'supports_batch' },
       attachments: { testid: 'attachments', shows: 'application/pdf' },
       hosting: { testid: 'hosting', shows: 'self_deployed' },
+      fixed_sampling: { testid: 'fixed_sampling', shows: 'yes' },
       deprecated: { testid: 'deprecated', shows: 'yes' },
       numeric_id: { testid: 'numeric_id', shows: '9001' },
       is_declared: null, // said by the capabilities, which read "undeclared" without it
@@ -3586,7 +3595,10 @@ describe('ModelCatalog — the model reference (FRD-508)', () => {
 
     const banner = harness.testid('reference-filled')?.textContent ?? '';
     expect(banner).toContain('https://models.dev/api.json, as of 2026-10-17');
-    expect(banner).toContain('capabilities, thinking, documents and images, prices');
+    expect(banner).toContain(
+      'capabilities, thinking, documents and images, fixed sampling, prices',
+    );
+    expect(editor.fixedSampling()).toBe(true);
     expect(banner).toContain('the thinking ceiling is the output cap less one');
   });
 
@@ -3848,5 +3860,107 @@ describe('ModelEditor — what a model costs this installation (FRD-509)', () =>
     expect(convert('0.0375', '0.92')).toBe('0.0345');
     expect(convert('15', '1')).toBe('15');
     expect(convert('0.0000005', '1')).toBe('0.000001');
+  });
+});
+
+describe('ModelEditor — a model that samples at its own settings', () => {
+  function onCapabilities(options: Parameters<typeof setup>[0] = {}) {
+    const harness = setup(options);
+    harness.editor.showAdd.set(true);
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    return harness;
+  }
+  const box = (harness: ReturnType<typeof setup>) =>
+    harness.testid('model-fixed-sampling') as HTMLInputElement | null;
+
+  it('offers the setting unticked, with what it does to a request beside it', async () => {
+    const harness = onCapabilities();
+    await harness.fixture.whenStable();
+
+    expect(harness.testid('sampling-block')?.textContent).toContain('Fixed sampling');
+    expect(box(harness)?.checked).toBe(false);
+
+    harness.click('[data-testid="info-fixed-sampling"]');
+    const help = (harness.testid('help-fixed-sampling')?.textContent ?? '').replace(/\s+/g, ' ');
+    expect(help).toContain('temperature other than 1');
+    expect(help).toContain('next model in the chain');
+    expect(help).toContain('refused with a message naming the setting');
+    expect(help).toContain('model reference fills this in');
+  });
+
+  it('sends what the box says, off as well as on', async () => {
+    const harness = onCapabilities();
+    harness.editor.name.set('claude-opus-9');
+    harness.editor.toggleCapability('generate', true);
+    harness.lookFirst();
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+
+    harness.editor.save();
+    expect(harness.saved.at(-1)?.fixed_sampling).toBe(false);
+
+    harness.editor.showAdd.set(true);
+    harness.editor.name.set('claude-opus-9');
+    harness.editor.toggleCapability('generate', true);
+    harness.lookFirst();
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    const input = box(harness)!;
+    input.click();
+    harness.fixture.detectChanges();
+    expect(harness.editor.fixedSampling()).toBe(true);
+
+    harness.editor.save();
+    expect(harness.saved.at(-1)?.fixed_sampling).toBe(true);
+  });
+
+  it('loads the setting with the declaration, and forgets it with the form', async () => {
+    const fixed: CatalogModel = { ...DECLARED, fixed_sampling: true };
+    const harness = setup({ models: of([fixed]) });
+    harness.component.edit(fixed);
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+
+    expect(box(harness)?.checked).toBe(true);
+
+    harness.editor.add();
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    expect(box(harness)?.checked).toBe(false);
+  });
+
+  it('reads a row that never said as free sampling', () => {
+    const harness = setup({ models: of([DECLARED]) });
+    harness.component.edit(DECLARED);
+
+    expect(harness.editor.fixedSampling()).toBe(false);
+  });
+
+  it('fills from a draft that does not fix the sampling as off, over a tick in the form', async () => {
+    /** Filling a model named by hand keeps the form it fills, so a tick somebody set before
+     *  asking would otherwise survive a draft that says the model samples freely. */
+    const free: ReferenceEntry = {
+      ...SONNET,
+      declaration: { ...SONNET.declaration, fixed_sampling: false },
+    };
+    const harness = setup({ currency: 'USD', reference: of({ ...REFERENCE, entries: [free] }) });
+    const editor = harness.editor as unknown as Editor & {
+      startOn: (upstream: GatewayProvider | null) => void;
+    };
+    editor.startOn(VERTEX);
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    editor.fixedSampling.set(true);
+
+    harness.type('model-name-input', 'claude-sonnet-9');
+    harness.click('[data-testid="fill-from-reference"]');
+
+    expect(editor.fixedSampling()).toBe(false);
+    expect(harness.testid('reference-filled')?.textContent).not.toContain('fixed sampling');
   });
 });

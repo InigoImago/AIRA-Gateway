@@ -113,6 +113,12 @@ class Model(models.Model):
 
     hosting = models.CharField(max_length=16, blank=True)
 
+    #: The model samples at its own settings: a request that sets temperature, top_p or top_k to
+    #: anything but the neutral value is not sent to it, because the vendor refuses it with a 400
+    #: (Anthropic's newer Claude models). False is no restriction, so a row or an event that never
+    #: names it keeps today's behaviour.
+    fixed_sampling = models.BooleanField(default=False)
+
     #: Warns, never blocks — blocking is FRD-307's revocation, so a retirement can be announced
     #: before it is performed.
     deprecated = models.BooleanField(default=False)

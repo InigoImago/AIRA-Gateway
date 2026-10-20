@@ -16,11 +16,16 @@ from typing import Protocol
 
 from aira_common.models import Capability
 from aira_gateway.catalog import ModelCatalog
-from aira_gateway.core.canonical import Thinking
+from aira_gateway.core.canonical import CanonicalRequest, Thinking
 from aira_gateway.core.schema import ResponseSchema
 from aira_gateway.residency import RegionNotAllowed, check_region
 from aira_gateway.thinking import permitted_by
 from aira_gateway.upstreams.base import ProviderRegistry
+
+#: The values that leave a model's sampling as it is: no scaling, the whole distribution. A model
+#: that samples at its own settings accepts these and nothing else (`SamplingAccepted`).
+NEUTRAL_TEMPERATURE = 1.0
+NEUTRAL_TOP_P = 1.0
 
 
 class Requirement(Protocol):
@@ -372,6 +377,41 @@ class SamplingExpressible:
             f"the dialect serving this model cannot express {', '.join(missing)}, and a request "
             "answered without them differs only in the answer"
         )
+
+
+class SamplingAccepted:
+    """The model must take the sampling this request sets (`FRD-145`).
+
+    The *model's* half of `SamplingExpressible`: a dialect can have the field and a model still
+    refuse every value but one. Anthropic's Claude from Opus 4.7 on answers 400 to `top_k`, to a
+    `temperature` other than 1 and to a `top_p` below 0.99, and the catalogue says which models
+    those are (`fixed_sampling`). A neutral value asks for nothing and passes — KIRA sends
+    `temperature: 1` on every request.
+    """
+
+    def __init__(self, catalog: ModelCatalog, request: CanonicalRequest) -> None:
+        self._catalog = catalog
+        self._set = set_sampling(request)
+
+    async def refusal(self, model: str) -> str | None:
+        if not self._set or not (await self._catalog.declaration(model)).fixed_sampling:
+            return None
+        return (
+            f"samples at its own settings and refuses {', '.join(self._set)}; this request sets "
+            "them, and an answer without them differs only in the answer"
+        )
+
+
+def set_sampling(request: CanonicalRequest) -> list[str]:
+    """The sampling controls ``request`` sets to something other than their neutral value."""
+    controls = []
+    if request.temperature is not None and request.temperature != NEUTRAL_TEMPERATURE:
+        controls.append(f"temperature {request.temperature:g}")
+    if request.top_p is not None and request.top_p != NEUTRAL_TOP_P:
+        controls.append(f"top_p {request.top_p:g}")
+    if request.top_k is not None:
+        controls.append(f"top_k {request.top_k}")
+    return controls
 
 
 class SchemaExpressible:

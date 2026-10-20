@@ -2,7 +2,7 @@
 
 Three gaps a live round against Gemini found: an explicit `includeThoughts: false` was ignored where
 the use case allows reasoning; thoughts were asked for with thinking switched off, which Google
-refuses; and a stream asking for thoughts answered 200 without them.
+refuses; and a stream asking for thoughts answered 200 without them, until streams carried them.
 """
 
 from __future__ import annotations
@@ -58,7 +58,10 @@ def test_thoughts_are_not_asked_for_while_thinking_is_off() -> None:
     assert auto["generationConfig"]["thinkingConfig"]["includeThoughts"] is True
 
 
-def test_a_stream_asking_for_thoughts_is_refused_rather_than_answered_without_them() -> None:
+def test_a_stream_asking_for_thoughts_answers_to_the_same_switch_as_a_buffered_answer() -> None:
+    """Streams carry reasoning now (`FRD-145`), so `includeThoughts` on one is no longer refused for
+    being a stream: OpenCode sends it on every stream to a thinking model. It is refused where the
+    buffered answer would be refused — no use case allows it here — and for that reason."""
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     url = "/v1beta/models/mock-1:streamGenerateContent"
 
@@ -73,7 +76,6 @@ def test_a_stream_asking_for_thoughts_is_refused_rather_than_answered_without_th
         declined = client.post(url, json=body(False))
 
     assert asked.status_code == 400
-    assert asked.json()["error"]["status"] == "INVALID_ARGUMENT"
-    assert "includeThoughts" in asked.json()["error"]["message"]
-    assert "stream" in asked.json()["error"]["message"]
+    assert asked.json()["error"]["status"] == "FAILED_PRECONDITION"
+    assert "names no use case" in asked.json()["error"]["message"]
     assert declined.status_code == 200, declined.text

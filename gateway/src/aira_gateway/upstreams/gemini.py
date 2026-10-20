@@ -36,11 +36,11 @@ from aira_gateway.upstreams.gemini_mapping import (
     SAMPLING as GEMINI_SAMPLING,
 )
 from aira_gateway.upstreams.gemini_mapping import (
+    GeminiStreamAssembler,
     batch_embedding_body,
     canonical_to_gemini_embedding,
     canonical_to_gemini_request,
     embedding_values,
-    gemini_chunk_to_canonical,
     gemini_response_to_canonical,
 )
 
@@ -215,8 +215,9 @@ class GeminiUpstream:
             ) as response,
             aclosing(sse_payloads(response, NAME)) as payloads,
         ):
+            assembler = GeminiStreamAssembler()
             async for payload in payloads:
-                yield gemini_chunk_to_canonical(payload)
+                yield assembler.feed(payload)
 
     def _headers(self) -> dict[str, str]:
         return {"x-goog-api-key": self._api_key}

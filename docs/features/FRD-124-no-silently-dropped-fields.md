@@ -4,6 +4,9 @@
 > Related: `docs/PRD.md` §1.2, `docs/adr/ADR-0011.md`, `docs/adr/ADR-0012.md`, `docs/adr/ADR-0013.md`,
 > supersedes `FRD-100` FR-7
 
+*Revised by `FRD-145` FR-9:* `toolConfig` is no longer refused — Google's four modes are carried,
+or the candidate is skipped where its dialect cannot say one.
+
 ## 1. Summary
 
 Twelve fields that a legitimate Google client can send were posted at a running AIRA gateway.

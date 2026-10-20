@@ -1064,12 +1064,14 @@ def test_a_signature_on_a_replayed_call_reaches_the_canonical_call() -> None:
     assert request.messages[1].tool_calls[0].signature == "c2ln"
 
 
-def test_a_signature_anywhere_but_on_a_call_is_refused_rather_than_dropped() -> None:
+def test_a_signature_where_google_puts_none_is_refused_rather_than_dropped() -> None:
+    """On a call and on text Google puts one (`FRD-145`); on an attachment it never does."""
     import pydantic
 
+    image = {"inlineData": {"mimeType": "image/png", "data": "iVBORw0KGgo="}}
     with pytest.raises(pydantic.ValidationError, match="thoughtSignature"):
         _gemini_request(
-            contents=[{"role": "user", "parts": [{"text": "go", "thoughtSignature": "c2ln"}]}]
+            contents=[{"role": "user", "parts": [{**image, "thoughtSignature": "c2ln"}]}]
         )
 
 

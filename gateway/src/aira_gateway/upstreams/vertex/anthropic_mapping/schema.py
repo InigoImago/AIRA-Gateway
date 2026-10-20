@@ -11,10 +11,34 @@ from typing import Any
 from aira_gateway.core.schema import ResponseSchema, SchemaType, to_json_schema
 
 #: Constraints this API's structured output does **not** support. A schema using one skips the
-#: candidate by name rather than being sent with the constraint dropped.
+#: candidate by name rather than being sent with the constraint dropped. `min_items` is checked
+#: apart: 0 and 1 are supported, anything above is not.
 UNSUPPORTED_SCHEMA_FIELDS = frozenset(
-    {"minimum", "maximum", "min_length", "max_length", "min_items", "max_items", "pattern"}
+    {
+        "minimum",
+        "maximum",
+        "min_length",
+        "max_length",
+        "max_items",
+        "min_properties",
+        "max_properties",
+        "pattern",
+    }
 )
+
+#: The `minItems` values this API supports.
+SUPPORTED_MIN_ITEMS = frozenset({0, 1})
+
+#: The string formats this API's structured output supports; any other is its 400.
+SUPPORTED_STRING_FORMATS = frozenset(
+    {"date-time", "time", "date", "duration", "email", "hostname", "uri", "ipv4", "ipv6", "uuid"}
+)
+
+#: Formats our OpenAPI vocabulary uses that state no constraint JSON Schema could check: the width
+#: of a number, and `enum` on a string, whose values are the `enum` beside it. Left out of the
+#: schema sent here, which refuses any format outside its list — nothing the answer must satisfy is
+#: lost with them.
+_DESCRIPTIVE_FORMATS = frozenset({"int32", "int64", "float", "double", "enum"})
 
 #: A tool that declares no parameters: an object with nothing in it.
 _NO_PARAMETERS: dict[str, Any] = {"type": "object", "properties": {}}
@@ -77,6 +101,8 @@ def _tighten(node: Any) -> Any:
     if not isinstance(node, dict):
         return node
     out = {key: _tighten(value) for key, value in node.items()}
+    if out.get("format") in _DESCRIPTIVE_FORMATS:
+        del out["format"]
     if _is_object(out.get("type")):
         properties = out.get("properties") or {}
         out["additionalProperties"] = False
@@ -97,6 +123,14 @@ def schema_refusal(schema: ResponseSchema) -> str | None:
     used = sorted(
         field for field in UNSUPPORTED_SCHEMA_FIELDS if getattr(schema, field, None) is not None
     )
+    if schema.min_items is not None and schema.min_items not in SUPPORTED_MIN_ITEMS:
+        used.append(f"min_items of {schema.min_items} (only 0 and 1)")
+    if (
+        schema.format
+        and schema.format not in _DESCRIPTIVE_FORMATS
+        and schema.format not in SUPPORTED_STRING_FORMATS
+    ):
+        used.append(f"the format '{schema.format}'")
     nested = list((schema.properties or {}).values())
     if schema.items is not None:
         nested.append(schema.items)

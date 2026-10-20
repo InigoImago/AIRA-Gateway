@@ -16,6 +16,7 @@ from aira_gateway.core.canonical import (
     TextPart,
     Thinking,
     ToolCallPart,
+    ToolMode,
     ToolResultPart,
     paired_tool_results,
 )
@@ -111,6 +112,14 @@ def _wire_messages(request: CanonicalRequest) -> list[dict[str, Any]]:
             ]
             out.append(entry)
         for result in results:
+            if result.attachments:
+                # A tool message is text in this dialect; media sent there is refused, and dropped
+                # it would leave the model describing an image it never saw.
+                raise DialectUnsupported(
+                    f"The result of '{result.name}' carries "
+                    f"{', '.join(sorted({media.media_type for media in result.attachments}))}, "
+                    "and this dialect's tool messages take text only."
+                )
             out.append({"role": "tool", "tool_call_id": result.call_id, "content": result.content})
         said = [
             part for part in message.parts if not isinstance(part, ToolCallPart | ToolResultPart)
@@ -147,7 +156,37 @@ def _wire_tools(request: CanonicalRequest) -> list[dict[str, Any]]:
             },
         }
         for tool in request.tools
+        # A required call may name only the allowed functions; this dialect has no list of them
+        # beside `tools`, so offering only those is the same instruction.
+        if _offered(tool.name, request)
     ]
+
+
+def _offered(name: str, request: CanonicalRequest) -> bool:
+    choice = request.tool_choice
+    if choice is None or choice.mode is not ToolMode.ANY or not choice.allowed:
+        return True
+    return name in choice.allowed
+
+
+def _tool_choice(request: CanonicalRequest) -> str | dict[str, Any] | None:
+    """Google's function-calling mode as this dialect's `tool_choice`, or nothing for `auto`."""
+    choice = request.tool_choice
+    if choice is None or choice.mode is ToolMode.AUTO:
+        return None
+    if choice.mode is ToolMode.NONE:
+        return "none"
+    if choice.mode is ToolMode.VALIDATED:
+        # A `strict` function is the guarantee here, and strict mode refuses most schemas a client
+        # writes; answering `auto` without it would drop what was asked.
+        raise DialectUnsupported(
+            "'VALIDATED' asks the provider to guarantee that a call's arguments match the "
+            "declaration, and this dialect is not sent strict functions. Use 'AUTO', or a model "
+            "that can."
+        )
+    if len(choice.allowed) == 1:
+        return {"type": "function", "function": {"name": choice.allowed[0]}}
+    return "required"
 
 
 def canonical_to_openai(
@@ -167,6 +206,9 @@ def canonical_to_openai(
     }
     if request.tools:
         body["tools"] = _wire_tools(request)
+        choice = _tool_choice(request)
+        if choice is not None:
+            body["tool_choice"] = choice
     if request.temperature is not None:
         body["temperature"] = request.temperature
     if request.max_output_tokens is not None:

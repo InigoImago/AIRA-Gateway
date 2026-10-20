@@ -279,7 +279,14 @@ def opencode_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("opencode-cache")
 
 
-def _project(root: Path, base: str, *, configuration: str, plugin: str | None = None) -> Path:
+def _project(
+    root: Path,
+    base: str,
+    *,
+    configuration: str,
+    plugin: str | None = None,
+    reasoning: bool = False,
+) -> Path:
     """A git project with one file, an AIRA provider, and optionally the budget plugin.
 
     ``configuration`` is ``"v1"`` — the shape the AIRA console generates, `provider`, `npm` and
@@ -291,6 +298,8 @@ def _project(root: Path, base: str, *, configuration: str, plugin: str | None = 
     subprocess.run(["git", "init", "-q", str(project)], check=True)  # noqa: S603, S607
     (project / "hello.py").write_text('print("hello")\n')
     model = {"name": "mock-1 via AIRA (EUR)", "limit": {"context": 128000, "output": 8192}}
+    # Only where it is true, which is how the console writes it.
+    thinks = {"reasoning": True} if reasoning else {}
     if configuration == "v1":
         provider = {
             "provider": {
@@ -298,7 +307,7 @@ def _project(root: Path, base: str, *, configuration: str, plugin: str | None = 
                     "npm": "@ai-sdk/google",
                     "name": "AIRA",
                     "options": {"baseURL": f"{base}/uc/uc/v1beta", "apiKey": "{env:AIRA_API_KEY}"},
-                    "models": {"mock-1": {**model, "tool_call": True}},
+                    "models": {"mock-1": {**model, "tool_call": True, **thinks}},
                 }
             }
         }
@@ -397,6 +406,39 @@ def test_opencode_carries_a_coding_turn(
         assert declared == {"parametersJsonSchema"}, declared
     else:
         assert declared, "OpenCode 1 declared no tools"
+
+
+@pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
+def test_opencode_streams_a_turn_to_a_thinking_model(
+    opencode: None, opencode_cache: Path, tmp_path: Path, generation: str
+) -> None:
+    """A model declared as reasoning: OpenCode asks for its thoughts on the stream (`FRD-145`),
+    which this surface refused until streams carried them."""
+    with _served() as (base, recorder):
+        # The console's configuration for both: OpenCode 2 reads its `reasoning` flag, and has no
+        # such field among its own `capabilities`.
+        project = _project(tmp_path, base, configuration="v1", reasoning=True)
+        run = [*_command(generation)[:1], "run", *_command(generation)[1:], "read hello.py"]
+        completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
+            run,
+            cwd=project,
+            env=_environment(tmp_path, project, opencode_cache),
+            capture_output=True,
+            text=True,
+            timeout=240,
+            check=False,
+        )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output[-3000:]
+    assert "acted on the tool result" in output, output[-3000:]
+    asked = [
+        body
+        for body in recorder.bodies
+        if ((body.get("generationConfig") or {}).get("thinkingConfig") or {}).get("includeThoughts")
+    ]
+    # OpenCode 2 asks only once a thinking setting is chosen for the model; OpenCode 1 always.
+    if generation == "1":
+        assert asked, "OpenCode 1 asked a reasoning model for no thoughts"
 
 
 def _tmux(socket: str, *arguments: str) -> str:

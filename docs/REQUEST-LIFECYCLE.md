@@ -160,7 +160,7 @@ From here on a request is attributed, and every refusal writes a row.
 
 **Before it, each surface does its own part.** The Gemini surface refuses a model nothing serves
 (**404**, before the body is read), a body that is not JSON or carries a field Google's API does not
-define (**400**, naming the field), and `includeThoughts` on a stream (**400**). The KIRA surface
+define (**400**, naming the field). The KIRA surface
 turns the predecessor's numeric model id into a model (**422** `MODEL_NOT_FOUND`; **503** when the
 id is assigned to two models), applies the contract's own checks (**422** `NO_CHAT_CAPABILITIES`,
 `INVALID_MAX_TOKENS`, `MAX_TOKENS_EXCEEDS_CAP`), and accepts a field it does not model, naming it in

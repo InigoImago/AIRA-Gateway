@@ -28,7 +28,7 @@ import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { causesOf, checkVerdict, providerLabel } from './catalog-display';
-import { CAPABILITY_HELP, thinkingModeMeans } from './declaration-help';
+import { CAPABILITY_HELP, FIXED_SAMPLING_HELP, thinkingModeMeans } from './declaration-help';
 import { GatewayProviders } from './gateway-providers';
 
 /** An amount as people type it: "0.075", "10", "10,50". Kept as text end to end. */
@@ -333,6 +333,13 @@ export class ModelEditor {
   protected readonly approved = signal(false);
   protected readonly deprecated = signal(false);
 
+  // ---- how it samples -------------------------------------------------------------------------
+
+  /** The model refuses temperature, top_p and top_k other than neutral, so the gateway never sends
+   *  it a request that sets them. Off is no restriction, which is what an older row means. */
+  protected readonly fixedSampling = signal(false);
+  protected readonly fixedSamplingHelp = FIXED_SAMPLING_HELP;
+
   // ---- is it reachable? (`FRD-506`) ---------------------------------------------------------
 
   /** The verdict for the model in the form. Cleared whenever the form turns to another model. */
@@ -489,6 +496,7 @@ export class ModelEditor {
     this.storedKiraId.set(model.numeric_id ?? null);
     this.defaultOutput.set(model.default_max_output_tokens ?? null);
     this.deprecated.set(model.deprecated ?? false);
+    this.fixedSampling.set(model.fixed_sampling ?? false);
     this.approved.set(model.approved ?? false);
     this.loadDeclarations(model);
   }
@@ -612,6 +620,9 @@ export class ModelEditor {
     this.contextWindow.set(declared.context_window);
     this.maxOutput.set(declared.max_output_tokens);
     this.capabilities.set([...declared.capabilities]);
+    // Set either way: a draft that does not fix the sampling says so, rather than leaving a tick
+    // from whatever was in the form before.
+    this.fixedSampling.set(declared.fixed_sampling === true);
     this.loadDeclarations({
       name: entry.name,
       thinking: declared.thinking,
@@ -624,6 +635,7 @@ export class ModelEditor {
     if (declared.capabilities.length) filled.push('capabilities');
     if (declared.thinking) filled.push('thinking');
     if (declared.attachments) filled.push('documents and images');
+    if (declared.fixed_sampling) filled.push('fixed sampling');
 
     const prices = entry.prices;
     const listed = [
@@ -1209,6 +1221,7 @@ export class ModelEditor {
         numeric_id: this.kiraId(),
         default_max_output_tokens: this.defaultOutput(),
         deprecated: this.deprecated(),
+        fixed_sampling: this.fixedSampling(),
         approved: this.approved(),
         ...this.declarations(),
       })
@@ -1268,6 +1281,7 @@ export class ModelEditor {
     this.storedKiraId.set(null);
     this.defaultOutput.set(null);
     this.deprecated.set(false);
+    this.fixedSampling.set(false);
     this.approved.set(false);
     this.clearDeclarations();
     this.providerIsCustom.set(false);

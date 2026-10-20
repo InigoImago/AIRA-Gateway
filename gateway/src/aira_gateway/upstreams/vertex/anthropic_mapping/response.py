@@ -40,6 +40,9 @@ _STOP_REASONS = {
     "refusal": FinishReason.REFUSAL,
 }
 
+#: Finishes that already say why an answer is not the document asked for.
+_SAYS_WHY_THERE_IS_NO_DOCUMENT = frozenset({FinishReason.MAX_TOKENS, FinishReason.REFUSAL})
+
 #: The usage fields this API reports, each a **running total** in every event that carries it
 #: (`message_start`, then `message_delta`) — the vendor's SDK assigns them, it does not add them.
 _USAGE_FIELDS = (
@@ -48,6 +51,15 @@ _USAGE_FIELDS = (
     "cache_creation_input_tokens",
     "output_tokens",
 )
+
+#: Breakdowns nested in the usage object, held whole like the counts above.
+_USAGE_BLOCKS = ("cache_creation", "output_tokens_details")
+
+#: The hour's share of `cache_creation_input_tokens`.
+_LONG_WRITES = "ephemeral_1h_input_tokens"
+
+#: Of `output_tokens`, those spent thinking — counted whether or not the text is shown.
+_THINKING_TOKENS = "thinking_tokens"
 
 
 def answer_text(content: Any) -> str:
@@ -83,14 +95,27 @@ def usage_of(payload: Any) -> CanonicalUsage:
     everything the request was charged input for; the parts ride along beside the total.
     """
     usage = payload if isinstance(payload, dict) else {}
-    cached = int(usage.get("cache_read_input_tokens", 0) or 0)
-    created = int(usage.get("cache_creation_input_tokens", 0) or 0)
+    cached = _count(usage.get("cache_read_input_tokens"))
+    created = _count(usage.get("cache_creation_input_tokens"))
     return CanonicalUsage(
-        prompt_tokens=int(usage.get("input_tokens", 0) or 0) + cached + created,
+        prompt_tokens=_count(usage.get("input_tokens")) + cached + created,
         cached_input_tokens=cached,
         cache_write_tokens=created,
-        completion_tokens=int(usage.get("output_tokens", 0) or 0),
+        # The hour's writes cost more than the five minutes' (`pricing`), and only this breakdown
+        # tells them apart.
+        long_cache_write_tokens=_count(_nested(usage, "cache_creation", _LONG_WRITES)),
+        completion_tokens=_count(usage.get("output_tokens")),
+        reasoning_tokens=_count(_nested(usage, "output_tokens_details", _THINKING_TOKENS)),
     )
+
+
+def _nested(usage: dict[str, Any], block: str, field: str) -> Any:
+    inner = usage.get(block)
+    return inner.get(field) if isinstance(inner, dict) else None
+
+
+def _count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
 def finish_reason(stop_reason: Any) -> FinishReason:
@@ -168,12 +193,16 @@ def anthropic_to_canonical(
                     usage=usage_of(data.get("usage")),
                     tool_calls=calls,
                 )
-            # An abnormal finish rather than text, so the surface refuses it.
+            # An abnormal finish rather than text, so the surface refuses it — under the reason the
+            # model gave where it gave one: a truncated or refused answer is not a document the
+            # model failed to shape, and the caller's remedy differs.
             return CanonicalResponse(
                 model=model,
                 text="",
                 reasoning=reasoning,
-                finish_reason=SCHEMA_UNSATISFIED,
+                finish_reason=(
+                    reason if reason in _SAYS_WHY_THERE_IS_NO_DOCUMENT else SCHEMA_UNSATISFIED
+                ),
                 usage=usage_of(data.get("usage")),
             )
         text = document
@@ -207,8 +236,10 @@ class StreamAssembler:
     failing mid-stream and is raised (`stream_failure`), never read as the end of the answer.
     """
 
-    def __init__(self) -> None:
-        self._usage: dict[str, int] = {}
+    def __init__(self, *, include_reasoning: bool = False) -> None:
+        #: The use case's switch (`FRD-135` FR-3), off unless passed, as on the buffered mapper.
+        self._include_reasoning = include_reasoning
+        self._usage: dict[str, Any] = {}
         self._finish: FinishReason | None = None
         #: The open `tool_use` block, if any: its id, its name, and the argument fragments so far.
         self._open_call: dict[str, str] | None = None
@@ -240,7 +271,15 @@ class StreamAssembler:
 
         if kind == "content_block_delta":
             delta = event.get("delta") or {}
-            # `thinking_delta` is discarded, as `answer_text` drops the block.
+            if delta.get("type") == "thinking_delta":
+                thought = str(delta.get("thinking") or "") if self._include_reasoning else ""
+                if not thought:
+                    return None
+                return CanonicalChunk(
+                    text_delta="",
+                    reasoning_delta=thought,
+                    usage=self._running() if self._usage else None,
+                )
             if delta.get("type") == "input_json_delta" and self._open_call is not None:
                 self._open_call["arguments"] += str(delta.get("partial_json") or "")
                 return None
@@ -280,6 +319,9 @@ class StreamAssembler:
             value = reported.get(field)
             if isinstance(value, int) and not isinstance(value, bool):
                 self._usage[field] = value
+        for block in _USAGE_BLOCKS:
+            if isinstance(reported.get(block), dict):
+                self._usage[block] = reported[block]
 
     def _running(self) -> CanonicalUsage:
         """The usage so far, read exactly as a finished answer's is (`usage_of`)."""

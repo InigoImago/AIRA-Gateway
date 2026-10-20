@@ -12,7 +12,7 @@ Every difference from the Gemini dialect is a mapping this package owns:
     system prompt  a content             → a top-level parameter (concatenated when several)
     output cap     optional              → **required**
     usage          usageMetadata.*       → usage.input_tokens / output_tokens, plus cache counts
-    thinking       a budget or a level   → a budget only; thinking blocks returned only on request
+    thinking       a budget or a level   → `enabled` with a budget, or `adaptive` with an effort
     stop reason    finishReason          → stop_reason, with `max_tokens` meaning truncation
 """
 

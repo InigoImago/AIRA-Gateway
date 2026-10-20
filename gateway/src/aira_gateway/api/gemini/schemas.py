@@ -107,6 +107,13 @@ class FunctionCall(BaseModel):
     id: str | None = None
 
 
+class FunctionResponsePart(BaseModel):
+    """Media a function produced — a screenshot, a document it read — as Google carries it."""
+
+    model_config = _STRICT
+    inlineData: InlineData
+
+
 class FunctionResponse(BaseModel):
     """What running it produced, on its way back to the model."""
 
@@ -115,6 +122,8 @@ class FunctionResponse(BaseModel):
     #: An object, as Google defines it; a plain string is refused rather than stringified.
     response: dict[str, Any] = {}
     id: str | None = None
+    #: Media beside the object (`FRD-145`): what current clients send when a tool returns an image.
+    parts: list[FunctionResponsePart] = []
 
 
 class Part(BaseModel):
@@ -136,6 +145,8 @@ class Part(BaseModel):
     thought: bool | None = None
     #: The opaque signature a thinking model puts beside a function call, and refuses that call
     #: replayed without (`ToolCallPart.signature`). Returned with the call, accepted back on it.
+    #: On a text part it is accepted and not forwarded: Google requires it only on a call, and
+    #: this gateway returns none on text, so one there was issued to another conversation.
     thoughtSignature: str | None = None
 
     @model_validator(mode="before")
@@ -161,12 +172,12 @@ class Part(BaseModel):
                 "a part must carry exactly one of 'text', 'inlineData', 'functionCall' or "
                 f"'functionResponse' (got {len(present)}: {present or 'none'})"
             )
-        if self.thoughtSignature is not None and self.functionCall is None:
-            # Carried where a model validates it — on the call it continues — and refused anywhere
-            # else rather than dropped (`FRD-124`).
+        if self.thoughtSignature is not None and self.functionCall is None and self.text is None:
+            # A function call carries one, and so does text: Gemini 3 signs its first text part,
+            # and google-genai replays the turn as it came. Nowhere else does Google put one.
             raise ValueError(
-                "'thoughtSignature' is carried on a 'functionCall' part only, where the model that "
-                "issued it checks it"
+                "'thoughtSignature' is carried on a 'functionCall' or a 'text' part, where the "
+                "model that issued it put it"
             )
         return self
 
@@ -414,6 +425,11 @@ class GenerationConfig(BaseModel):
         )
 
 
+#: Google's function-calling modes, and those that make a call `allowedFunctionNames` can narrow.
+_TOOL_MODES = frozenset({"AUTO", "ANY", "NONE", "VALIDATED"})
+_MODES_THAT_CALL = frozenset({"ANY", "VALIDATED"})
+
+
 class FunctionDeclaration(BaseModel):
     """A function the caller offers the model (`FRD-131`).
 
@@ -459,24 +475,34 @@ class Tool(BaseModel):
 
 
 class FunctionCallingConfig(BaseModel):
-    """How the model is steered toward calling a function — **`AUTO` only**.
+    """How the model is steered toward calling a function: Google's four modes.
 
-    `AUTO` is the default, what happens when nothing is sent, and real clients send it on every
-    request. `ANY` (must call) and `NONE` (must not) change the answer, each dialect spells them
-    differently, and that mapping is not built — so they are refused by name, with that reason.
+    `AUTO` is the default and what most clients send. `ANY` requires a call — OpenCode asks for one
+    when it wants a structured answer through a tool —, `NONE` forbids one — sent on the last step
+    of a bounded agent run —, and `VALIDATED` is `AUTO` with the arguments guaranteed to match.
+    `allowedFunctionNames` narrows which functions a call may name, with `ANY` and `VALIDATED`.
+    Each provider spells them differently, and a provider that cannot say one is skipped by name.
     """
 
-    model_config = _STRICT
+    model_config = _BOTH_SPELLINGS
     mode: str = "AUTO"
+    allowedFunctionNames: list[str] | None = Field(default=None, alias="allowed_function_names")
 
     @model_validator(mode="after")
-    def _only_auto(self) -> FunctionCallingConfig:
-        if self.mode.strip().upper() != "AUTO":
+    def _a_mode_google_has(self) -> FunctionCallingConfig:
+        mode = self.mode.strip().upper()
+        if mode == "MODE_UNSPECIFIED":
+            mode = "AUTO"
+        if mode not in _TOOL_MODES:
             raise ValueError(
-                f"'{self.mode}' is not served: this gateway carries tool declarations and lets the "
-                "model decide ('AUTO'). Forcing or forbidding a call is expressed differently by "
-                "each provider and is not implemented, so it is refused rather than accepted and "
-                "quietly downgraded to 'AUTO'."
+                f"'{self.mode}' is not a function-calling mode. Google's are "
+                f"{', '.join(sorted(_TOOL_MODES))}."
+            )
+        self.mode = mode
+        if self.allowedFunctionNames and mode not in _MODES_THAT_CALL:
+            raise ValueError(
+                f"'allowedFunctionNames' narrows which function a call may name, and mode "
+                f"'{mode}' makes no call it could narrow. Send it with 'ANY' or 'VALIDATED'."
             )
         return self
 
@@ -518,6 +544,26 @@ class GenerateContentRequest(BaseModel):
                         "first."
                     )
                 seen.add(declaration.name)
+        return self
+
+    @model_validator(mode="after")
+    def _steers_toward_declared_functions(self) -> GenerateContentRequest:
+        """A mode that requires a call, or names the functions it may be, needs those functions
+        declared: otherwise the model is told to call something it was never offered."""
+        calling = self.toolConfig.functionCallingConfig if self.toolConfig else None
+        if calling is None:
+            return self
+        declared = {d.name for tool in self.tools for d in tool.functionDeclarations}
+        if calling.mode == "ANY" and not declared:
+            raise ValueError(
+                "'functionCallingConfig' mode 'ANY' requires a call, and no function is declared."
+            )
+        unknown = sorted(set(calling.allowedFunctionNames or ()) - declared)
+        if unknown:
+            raise ValueError(
+                f"'allowedFunctionNames' names {', '.join(unknown)}, which this request does not "
+                "declare."
+            )
         return self
 
     @model_validator(mode="after")
@@ -600,6 +646,9 @@ class UsageMetadata(BaseModel):
     #: **Not gated by `include_reasoning`** (`FRD-135`): that decides whether reasoning *text* is
     #: returned; a token count is about money, and the tokens are billed either way.
     thoughtsTokenCount: int | None = None
+    #: Of the prompt, what a provider's cache served (`FRD-133`) — what a client reads to show the
+    #: cache working and to price the turn. Omitted when zero, as Google does.
+    cachedContentTokenCount: int | None = None
 
 
 class GenerateContentResponse(BaseModel):

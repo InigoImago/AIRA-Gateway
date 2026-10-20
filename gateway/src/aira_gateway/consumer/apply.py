@@ -62,6 +62,7 @@ _DECLARATION_DEFAULTS: dict[str, Any] = {
     "attachments": None,
     "hosting": "",
     "deprecated": False,
+    "fixed_sampling": False,
     "numeric_id": None,
 }
 

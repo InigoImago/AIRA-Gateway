@@ -9,7 +9,10 @@ from rest_framework import serializers
 
 from aira_common.model_names import name_problem
 from aira_management.apps.catalog.models import Model
-from aira_management.apps.catalog.validation import validate_declaration
+from aira_management.apps.catalog.validation import (
+    validate_declaration,
+    validate_fixed_sampling,
+)
 
 #: The fields the declaration rules (`validation.validate_declaration`) are asked about.
 DECLARATION_FIELDS = (
@@ -18,6 +21,7 @@ DECLARATION_FIELDS = (
     "thinking",
     "embedding",
     "attachments",
+    "fixed_sampling",
     "context_window",
     "max_output_tokens",
     "default_max_output_tokens",
@@ -35,8 +39,20 @@ MAX_REGIONS = 16
 MAX_REGION_LENGTH = 64
 
 
+class StrictBooleanField(serializers.BooleanField):
+    """A JSON `true` or `false` and nothing that DRF would coerce into one: `"no"` or `0` taken as
+    a declaration is a guess about what the caller meant (`validation.validate_fixed_sampling`)."""
+
+    def to_internal_value(self, data: Any) -> bool:
+        errors = validate_fixed_sampling(data)
+        if data is None or errors:
+            raise serializers.ValidationError(errors or ["fixed_sampling must be true or false."])
+        return bool(data)
+
+
 class ModelSerializer(serializers.ModelSerializer[Model]):
     is_priced = serializers.BooleanField(read_only=True)
+    fixed_sampling = StrictBooleanField(required=False)
     is_declared = serializers.BooleanField(read_only=True)
 
     #: Where auto-assigned KIRA ids start: above every id this repository ships or documents (the
@@ -70,6 +86,7 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
             "embedding",
             "attachments",
             "hosting",
+            "fixed_sampling",
             "deprecated",
             "numeric_id",
             "is_declared",

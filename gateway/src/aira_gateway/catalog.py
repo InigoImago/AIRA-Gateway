@@ -106,6 +106,9 @@ class ModelDeclaration:
     platform: str = ""
     hosting: str = ""
     deprecated: bool = False
+    #: The model samples at its own settings: it refuses `top_k`, and `temperature` or `top_p`
+    #: other than their neutral values (`FRD-145`). Anthropic's Claude from Opus 4.7 on.
+    fixed_sampling: bool = False
     #: The KIRA-style integer alias, when one is assigned (`FRD-114` FR-6, `FRD-107` FR-4).
     numeric_id: int | None = None
 
@@ -384,5 +387,6 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
         platform=record.platform or "",
         hosting=record.hosting or "",
         deprecated=bool(record.deprecated),
+        fixed_sampling=bool(record.fixed_sampling),
         numeric_id=record.numeric_id,
     )

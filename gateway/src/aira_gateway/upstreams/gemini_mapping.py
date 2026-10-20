@@ -26,6 +26,7 @@ from aira_gateway.core.canonical import (
     ToolCallPart,
     ToolDeclaration,
     ToolResultPart,
+    paired_tool_results,
 )
 from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError, stream_failure
 
@@ -58,6 +59,8 @@ _FINISH_REASONS = {
     "IMAGE_SAFETY": FinishReason.REFUSAL,
     "IMAGE_PROHIBITED_CONTENT": FinishReason.REFUSAL,
     "IMAGE_RECITATION": FinishReason.REFUSAL,
+    # Vertex's Model Armor, a screening policy an organisation sets on the project.
+    "MODEL_ARMOR": FinishReason.REFUSAL,
 }
 
 #: The fields of `usageMetadata` that count tokens; one of them is what makes it a report.
@@ -71,38 +74,63 @@ _SIGNATURE_FIELD = "thoughtSignature"
 # == canonical → Gemini ===========================================================================
 
 
-def _wire_parts(message: CanonicalMessage) -> list[dict[str, Any]]:
+def _wire_parts(
+    message: CanonicalMessage, answered: frozenset[str] = frozenset()
+) -> list[dict[str, Any]]:
     """Canonical parts → Gemini parts, **in order**: "this image, then this question" and the
-    reverse are different prompts."""
+    reverse are different prompts.
+
+    ``answered`` holds the ids that pair a call with its result in this conversation. Google pairs
+    by id where both carry one — which is how two parallel calls of one function are told apart —
+    and by name where neither does; an id on one half only is a pair it cannot make, so an id is
+    sent only on both halves of a pair.
+    """
     wire: list[dict[str, Any]] = []
     for part in message.parts:
         if isinstance(part, TextPart):
             wire.append({"text": part.text})
             continue
         if isinstance(part, ToolCallPart):
-            # Google matches a result to a call by name and carries no call id, so none is sent.
-            call: dict[str, Any] = {"functionCall": {"name": part.name, "args": part.arguments}}
+            function_call: dict[str, Any] = {"name": part.name, "args": part.arguments}
+            if part.id in answered:
+                function_call["id"] = part.id
+            call: dict[str, Any] = {"functionCall": function_call}
             if part.signature:
                 # Back on the part it came from: the model validates it on the call it continues.
                 call[_SIGNATURE_FIELD] = part.signature
             wire.append(call)
             continue
         if isinstance(part, ToolResultPart):
-            wire.append(
-                {"functionResponse": {"name": part.name, "response": _result_object(part.content)}}
-            )
+            response: dict[str, Any] = {
+                "name": part.name,
+                "response": _result_object(part.content),
+            }
+            if part.call_id in answered:
+                response["id"] = part.call_id
+            if part.attachments:
+                response["parts"] = [_inline(media) for media in part.attachments]
+            wire.append({"functionResponse": response})
             continue
         if not isinstance(part, DataPart):  # pragma: no cover - the union is closed above
             raise DialectUnsupported(f"Unsupported part {type(part).__name__}.")
-        wire.append(
-            {
-                "inlineData": {
-                    "mimeType": part.media_type,
-                    "data": base64.b64encode(part.data).decode("ascii"),
-                }
-            }
-        )
+        wire.append(_inline(part))
     return wire
+
+
+def _inline(part: DataPart) -> dict[str, Any]:
+    return {
+        "inlineData": {
+            "mimeType": part.media_type,
+            "data": base64.b64encode(part.data).decode("ascii"),
+        }
+    }
+
+
+def _pairs(messages: list[CanonicalMessage]) -> frozenset[str]:
+    """The ids carried by both a call and a result that answers it."""
+    calls = {call.id for message in messages for call in message.tool_calls}
+    results = {result.call_id for message in messages for result in message.tool_results}
+    return frozenset(calls & results)
 
 
 def _result_object(content: str) -> dict[str, Any]:
@@ -134,12 +162,15 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
     # a `system` turn, say: every one is kept, in order. Keeping the last would discard an
     # instruction the caller gave, with nothing in the answer to show it.
     system_parts: list[dict[str, Any]] = []
-    for message in request.messages:
+    # Results named by the id of the call they answer, as on every other dialect.
+    messages = paired_tool_results(request.messages)
+    answered = _pairs(messages)
+    for message in messages:
         if message.role is Role.SYSTEM:
             system_parts.extend(_wire_parts(message))
         else:
             role = "model" if message.role is Role.MODEL else "user"
-            contents.append({"role": role, "parts": _wire_parts(message)})
+            contents.append({"role": role, "parts": _wire_parts(message, answered)})
 
     body: dict[str, Any] = {"contents": contents}
     if system_parts:
@@ -157,6 +188,12 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
                 ]
             }
         ]
+    if request.tool_choice is not None:
+        # Google's own modes, spelled as Google spells them.
+        calling: dict[str, Any] = {"mode": request.tool_choice.mode.upper()}
+        if request.tool_choice.allowed:
+            calling["allowedFunctionNames"] = list(request.tool_choice.allowed)
+        body["toolConfig"] = {"functionCallingConfig": calling}
 
     generation_config: dict[str, Any] = {}
     if request.temperature is not None:
@@ -342,14 +379,17 @@ def _usage_of(data: dict[str, Any]) -> CanonicalUsage:
     )
 
 
-def _calls_of(candidate: dict[str, Any]) -> tuple[ToolCallPart, ...]:
+def _calls_of(candidate: dict[str, Any], first: int = 0) -> tuple[ToolCallPart, ...]:
     """The function calls in one candidate, in order.
 
-    Google sends no id, so one is derived from name and position — deterministically, so a caller
-    echoing it back still matches, and the other dialects get the id they require.
+    Where Google sends no id, one is derived from name and position — deterministically, so a
+    caller echoing it back still matches, and the other dialects get the id they require. On a
+    stream the position counts from ``first``, the calls earlier chunks carried: two calls of one
+    function in two chunks are two calls, and the same id would answer both.
     """
     calls: list[ToolCallPart] = []
-    for index, part in enumerate(candidate.get("content", {}).get("parts", []) or []):
+    for offset, part in enumerate(candidate.get("content", {}).get("parts", []) or []):
+        index = first + offset
         call = part.get("functionCall")
         if not call:
             continue
@@ -412,7 +452,7 @@ def gemini_response_to_canonical(data: dict[str, Any], model: str) -> CanonicalR
     )
 
 
-def gemini_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk:
+def gemini_chunk_to_canonical(data: dict[str, Any], first_call: int = 0) -> CanonicalChunk:
     """Parse one Gemini stream chunk into a canonical chunk.
 
     Google sends a function call whole inside one chunk, so, unlike the OpenAI dialect, there is
@@ -429,12 +469,32 @@ def gemini_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk:
             finish_reason=FinishReason.REFUSAL if _blocked(data) else None,
             usage=usage,
         )
-    calls = _calls_of(candidates[0])
+    calls = _calls_of(candidates[0], first_call)
     finish = candidates[0].get("finishReason")
     return CanonicalChunk(
         text_delta=_text_of(candidates[0]),
+        # Present only where `includeThoughts` was sent, which the use case's switch decides.
+        reasoning_delta=_reasoning_of(candidates[0]),
         finish_reason=_finish_of(finish, calls) if finish else None,
         usage=usage,
         tool_calls=calls,
         audio_delta=_audio_of(candidates[0]),
     )
+
+
+class GeminiStreamAssembler:
+    """One stream's chunks → canonical, numbering the calls that carry no id across the stream.
+
+    Google sends a call whole inside one chunk, so nothing else needs assembling; one per stream,
+    and one per attempt where a stream may be opened in a second place.
+    """
+
+    def __init__(self) -> None:
+        self._parts_seen = 0
+
+    def feed(self, data: dict[str, Any]) -> CanonicalChunk:
+        chunk = gemini_chunk_to_canonical(data, self._parts_seen)
+        candidates = data.get("candidates") or []
+        if candidates and isinstance(candidates[0], dict):
+            self._parts_seen += len((candidates[0].get("content") or {}).get("parts") or [])
+        return chunk
