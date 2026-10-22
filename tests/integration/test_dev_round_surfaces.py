@@ -297,18 +297,30 @@ async def test_an_impossible_output_cap_is_refused_before_anything_is_spent(
     assert expected in message.lower()
 
 
+#: Attempts at a structured answer. A model this small, held to a JSON grammar, now and then writes
+#: whitespace until any cap runs out — its behaviour, not the gateway's, which refuses the
+#: incomplete document by name.
+STRUCTURED_ATTEMPTS = 3
+
+
 @pytest.mark.model_output
 async def test_a_structured_answer_comes_back_as_a_document(governed: Governed) -> None:
     """`FRD-112`. What is asserted is that the answer parses and the row is `served` — never the
-    document's contents, which is the model's business."""
-    response = await governed.generate(
-        _gemini(
-            "Give me an object with a field 'a'.",
-            maxOutputTokens=64,
-            responseMimeType="application/json",
-            responseSchema={"type": "object", "properties": {"a": {"type": "string"}}},
+    document's contents, which is the model's business. An attempt that ran out of tokens must be
+    the gateway's named refusal of an incomplete document, never a truncated one passed on."""
+    for _ in range(STRUCTURED_ATTEMPTS):
+        response = await governed.generate(
+            _gemini(
+                "Give me an object with a field 'a'.",
+                maxOutputTokens=64,
+                responseMimeType="application/json",
+                responseSchema={"type": "object", "properties": {"a": {"type": "string"}}},
+            )
         )
-    )
+        if response.status_code == 200:
+            break
+        assert response.status_code == 502, response.text[:300]
+        assert "did not return a complete document" in _envelope(response, "gemini")
 
     assert response.status_code == 200, response.text[:300]
     text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
