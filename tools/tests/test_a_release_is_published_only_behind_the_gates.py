@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 import sys
 
 import yaml
@@ -354,18 +355,70 @@ def test_the_tag_message_is_written_from_the_template() -> None:
     )
 
 
-def test_the_release_attaches_the_opencode_plugin_and_its_checksum() -> None:
+def test_the_plugin_is_packed_into_the_directory_the_release_attaches() -> None:
     """A rollout downloads the plugin from the Release by a name that carries the version
-    (`tools/opencode_plugin_archive.py`). Packed by that tool, attached with its checksum, and named
-    in the notes — an archive the notes do not mention is one nobody finds."""
+    (`tools/opencode_plugin_archive.py`)."""
     pack = str(_step("publish", "Pack the OpenCode plugin")["run"])
-    publish = str(_step("publish", "Publish the release notes")["run"])
 
     assert 'tools/opencode_plugin_archive.py "$VERSION" --out "$RUNNER_TEMP/assets"' in pack
-    create = publish[publish.index("gh release create") :]
-    assert '"$RUNNER_TEMP/assets/opencode-aira-budget-$version.tar.gz"' in create
-    assert '"$RUNNER_TEMP/assets/opencode-aira-budget-$version.tar.gz.sha256"' in create
-    assert '--asset "opencode-aira-budget-$version.tar.gz"' in publish
+
+
+def _published(tmp_path: pathlib.Path, files: list[str]) -> tuple[list[str], list[str]]:
+    """Run the step that creates the Release, with `uv` and `gh` replaced by stand-ins that
+    record their arguments, over an asset directory holding ``files``. Returns what
+    `release_notes.py` and `gh release create` were given."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    for name in files:
+        (assets / name).write_text(name)
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for tool in ("uv", "gh"):
+        stub = bin_ / tool
+        stub.write_text(
+            f'#!/bin/bash\nprintf "%s\\n" "$@" > "{tmp_path}/{tool}.$RANDOM$RANDOM"\n'
+            'echo "subject"\n'
+        )
+        stub.chmod(0o755)
+    step = _step("publish", "Publish the release notes")
+    subprocess.run(  # noqa: S603
+        ["bash", "-e", "-o", "pipefail", "-c", str(step["run"])],  # noqa: S607
+        check=True,
+        capture_output=True,
+        env={
+            "PATH": f"{bin_}:/usr/bin:/bin",
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+            "OWNER": "x",
+            "VERSION": "v1.2.3",
+        },
+    )
+    calls = [path.read_text().splitlines() for path in tmp_path.glob("*.[0-9]*")]
+    (notes,) = [c for c in calls if c[:2] == ["run", "python"] and "--subject" not in c]
+    (create,) = [c for c in calls if c[:2] == ["release", "create"]]
+    return notes, create
+
+
+def test_every_file_the_release_job_wrote_is_attached_and_named(tmp_path: pathlib.Path) -> None:
+    """**Run, not read.** The plugin, each SBOM and every checksum are attached; each file but a
+    checksum is named in the notes — a file the notes do not mention is one nobody finds. Taken
+    from the directory rather than listed, so a document for an image added later is published
+    without a second edit (`FRD-148` FR-6)."""
+    files = [
+        "opencode-aira-budget-v1.2.3.tar.gz",
+        "opencode-aira-budget-v1.2.3.tar.gz.sha256",
+        "aira-gateway-v1.2.3.cdx.json",
+        "aira-gateway-v1.2.3.cdx.json.sha256",
+        "aira-source-v1.2.3.cdx.json",
+        "aira-source-v1.2.3.cdx.json.sha256",
+    ]
+
+    notes, create = _published(tmp_path, files)
+
+    attached = sorted(pathlib.Path(arg).name for arg in create if "/assets/" in arg)
+    assert attached == sorted(files)
+    named = [notes[i + 1] for i, arg in enumerate(notes) if arg == "--asset"]
+    assert sorted(named) == sorted(name for name in files if not name.endswith(".sha256"))
 
 
 def test_the_plugin_is_packed_before_the_release_is_created() -> None:
@@ -375,3 +428,62 @@ def test_the_plugin_is_packed_before_the_release_is_created() -> None:
     names = [str(step.get("name", step.get("uses", ""))) for step in _job("publish")["steps"]]
 
     assert names.index("Pack the OpenCode plugin") < names.index("Publish the release notes")
+
+
+# == what a release contains (FRD-148) ============================================================
+
+
+def _pushes() -> list[dict]:
+    return [
+        s for s in _job("publish")["steps"] if str(s.get("name", "")).startswith("Build and push")
+    ]
+
+
+def test_every_image_carries_its_sbom_and_provenance_in_the_registry() -> None:
+    """An image pushed without them is an image whose contents only a fresh scan can tell — the
+    property is per step, so a fourth image added without it is caught."""
+    for step in _pushes():
+        assert step["with"].get("sbom") is True, f"{step['name']} pushes no SBOM attestation"
+        assert step["with"].get("provenance") == "mode=max", f"{step['name']}: no full provenance"
+
+
+def test_every_pushed_image_is_described_by_the_digest_its_own_step_pushed() -> None:
+    """**A tag can be moved after the scan; a digest cannot.** Each image the release pushes is
+    named in the SBOM step with the digest output of the step that pushed *it* — crossing two
+    would publish the gateway's inventory under the console's name."""
+    describe = _step("publish", "Describe what the release contains")
+    run, env = str(describe["run"]), describe["env"]
+    pushed = {
+        re.search(r"/(aira-[a-z]+):", str(step["with"]["tags"])).group(1): step["id"]
+        for step in _pushes()
+    }
+
+    assert len(pushed) == len(_pushes()) >= 3
+    for image, step_id in pushed.items():
+        found = re.search(rf'--image "{image}=ghcr\.io/\$OWNER/{image}@\$(\w+)"', run)
+        assert found, f"{image} is pushed and not described by digest"
+        assert env[found.group(1)] == f"${{{{ steps.{step_id}.outputs.digest }}}}", (
+            f"{image} is described by another step's digest"
+        )
+    assert "--source ." in run, "the console's npm packages are described nowhere"
+    assert '--out "$RUNNER_TEMP/assets"' in run, "the documents are not where the release looks"
+    assert '--syft "$SYFT"' in run and env["SYFT"] == "${{ steps.syft.outputs.cmd }}"
+
+
+def test_the_contents_are_described_after_the_last_push_and_before_the_release() -> None:
+    """Before the last push there is no digest to scan; after the Release, a window in which the
+    version is published without its inventory."""
+    names = [str(step.get("name", step.get("uses", ""))) for step in _job("publish")["steps"]]
+    pushes = [i for i, name in enumerate(names) if name.startswith("Build and push")]
+    describe = names.index("Describe what the release contains")
+
+    assert max(pushes) < describe < names.index("Publish the release notes")
+    assert names.index("Install Syft") < describe
+
+
+def test_syft_is_pinned_to_an_exact_version() -> None:
+    """A scanner that changes under the release changes what the inventory says, unannounced."""
+    install = _step("publish", "Install Syft")
+
+    assert re.fullmatch(r"anchore/sbom-action/download-syft@v\d+\.\d+\.\d+", install["uses"])
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", install["with"]["syft-version"])

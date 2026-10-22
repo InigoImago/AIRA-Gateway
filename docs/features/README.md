@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**106 of 110 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**107 of 111 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -58,6 +58,7 @@ status that goes stale in the copy nobody opens.
 | [145](FRD-145-the-upstream-structures-as-documented.md) | The upstream structures, held to what Anthropic and Google document | 8 (KIRA parity) | ✅ Built |
 | [146](FRD-146-kira-parity-functions-embeddings-values.md) | KIRA parity: function calling, the predecessor's vectors, and its values | 8 (KIRA parity) | ✅ Built |
 | [147](FRD-147-reranking.md) | Reranking, on both surfaces | 8 (KIRA parity) | ✅ Built |
+| [148](FRD-148-a-release-says-what-it-contains.md) | A release says what it contains | 7 | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |

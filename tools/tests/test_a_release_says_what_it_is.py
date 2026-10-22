@@ -194,6 +194,8 @@ def test_the_notes_put_the_prose_before_the_evidence() -> None:
     assert rendered.index("## Commits") < rendered.index("## Images")
     assert "- feat: something" in rendered
     assert "`ghcr.io/x/aira-gateway:v1.2.3`" in rendered
+    # The attestations are in the registry, where nobody looks unless told how (`FRD-148`).
+    assert "imagetools inspect" in rendered and ".SBOM" in rendered
 
 
 def test_an_attached_file_is_named_after_the_images() -> None:

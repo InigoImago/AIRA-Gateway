@@ -98,6 +98,8 @@ class Notes:
                 "## Images\n\n"
                 + "\n".join(f"- `{image}`" for image in images)
                 + f"\n\nEach is also tagged `latest` and `sha-<commit>`. Pin `{version}`."
+                + " Each carries its SBOM and provenance as attestations: "
+                + "`docker buildx imagetools inspect <image> --format '{{ json .SBOM }}'`."
             )
         if assets:
             sections.append(

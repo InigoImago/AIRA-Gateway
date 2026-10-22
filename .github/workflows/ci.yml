@@ -475,7 +475,10 @@ jobs:
       # (`deploy/compose/docker-compose.apps.yml`). Three tags each: the version, which never
       # moves and is what a deployment pins; `sha-<commit>`, which ties an image to the commit a
       # rolling update is advancing to (`FRD-127`); and `latest`, for a reader trying it out.
+      # `sbom` and `provenance` put BuildKit's SBOM (SPDX) and how the image was built beside it in
+      # the registry, as attestations of the digest a deployment pulls (`FRD-148`).
       - name: Build and push the gateway
+        id: gateway
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -487,8 +490,11 @@ jobs:
             ghcr.io/${{ steps.release.outputs.owner }}/aira-gateway:latest
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,scope=gateway,mode=max
+          sbom: true
+          provenance: mode=max
 
       - name: Build and push the management backend
+        id: management
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -500,8 +506,11 @@ jobs:
             ghcr.io/${{ steps.release.outputs.owner }}/aira-management:latest
           cache-from: type=gha,scope=management
           cache-to: type=gha,scope=management,mode=max
+          sbom: true
+          provenance: mode=max
 
       - name: Build and push the console
+        id: frontend
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -513,6 +522,34 @@ jobs:
             ghcr.io/${{ steps.release.outputs.owner }}/aira-frontend:latest
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
+          sbom: true
+          provenance: mode=max
+
+      # What the release contains, as CycloneDX files on the Release (`FRD-148`): one per image,
+      # scanned back from the registry **by the digest just pushed**, and one of the source's lock
+      # files — the console's image holds a compiled bundle in which no scanner finds its npm
+      # packages. A document that lists nothing stops the release here.
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@v0.24.3
+        with:
+          syft-version: v1.54.1
+
+      - name: Describe what the release contains
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+          OWNER: ${{ steps.release.outputs.owner }}
+          VERSION: ${{ steps.release.outputs.version }}
+          GATEWAY: ${{ steps.gateway.outputs.digest }}
+          MANAGEMENT: ${{ steps.management.outputs.digest }}
+          FRONTEND: ${{ steps.frontend.outputs.digest }}
+        run: |
+          uv run python tools/release_sbom.py "$VERSION" --syft "$SYFT" \
+            --image "aira-gateway=ghcr.io/$OWNER/aira-gateway@$GATEWAY" \
+            --image "aira-management=ghcr.io/$OWNER/aira-management@$MANAGEMENT" \
+            --image "aira-frontend=ghcr.io/$OWNER/aira-frontend@$FRONTEND" \
+            --source . \
+            --out "$RUNNER_TEMP/assets"
 
       # The OpenCode budget plugin as an archive, attached to the Release: an address that does not
       # move and needs no credentials, for a rollout that puts it on workstations. GitHub's npm
@@ -534,11 +571,17 @@ jobs:
         run: |
           owner="$OWNER"
           version="$VERSION"
+          # Every file the steps above wrote is attached and named, each beside its checksum — so a
+          # document for an image added later is published without a second edit here.
+          assets=()
+          for file in "$RUNNER_TEMP"/assets/*; do
+            [[ "$file" == *.sha256 ]] || assets+=(--asset "$(basename "$file")")
+          done
           uv run python tools/release_notes.py "$version" \
             --image "ghcr.io/$owner/aira-gateway:$version" \
             --image "ghcr.io/$owner/aira-management:$version" \
             --image "ghcr.io/$owner/aira-frontend:$version" \
-            --asset "opencode-aira-budget-$version.tar.gz" \
+            "${assets[@]}" \
             > "$RUNNER_TEMP/notes.md"
           # **The title comes from the same tool as the body.** It was a second
           # `git tag --format` here, and that one was never checked — so when the tag arrived
@@ -547,8 +590,7 @@ jobs:
           gh release create "$version" \
             --title "$version — $(uv run python tools/release_notes.py --subject "$version")" \
             --notes-file "$RUNNER_TEMP/notes.md" \
-            "$RUNNER_TEMP/assets/opencode-aira-budget-$version.tar.gz" \
-            "$RUNNER_TEMP/assets/opencode-aira-budget-$version.tar.gz.sha256"
+            "$RUNNER_TEMP"/assets/*
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "Packages are **private** until made public in each package's settings." \

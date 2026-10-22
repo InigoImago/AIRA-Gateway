@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A release says what it contains (2026-10-22)
+
+The owner asked for SBOMs on releases; CycloneDX, from the next release on (`FRD-148`).
+
+**Measured before building, with Syft 1.54.1 against this repository's images.** The gateway's image
+lists 159 packages (97 Debian, 61 Python, the interpreter), the management backend's 154. The
+console's lists 68, all Alpine: nginx and its libraries. Its Angular and npm packages are compiled
+into one bundle, and no scanner reading the image can recover them — so an inventory of the images
+alone would have said the console contains no JavaScript. That is why the release also describes the
+source: the console's `package-lock.json` (Syft reads its runtime dependencies only, 12 packages),
+`uv.lock` (98, its development group included, since uv locks the workspace whole) and the seven
+GitHub Actions the workflow uses. The browser suite and the client harnesses are left out.
+
+What it took:
+
+- **Two places for two readers.** Each `Build and push` step sets `sbom: true` and
+  `provenance: mode=max`, so the registry holds BuildKit's SPDX SBOM and SLSA provenance as
+  attestations of the digest a deployment pulls. The Release carries CycloneDX 1.6 files from
+  `tools/release_sbom.py`, one per image and one of the source, each beside its `.sha256`.
+- **By digest, from the registry.** The tool refuses an image reference that is not
+  `…@sha256:…`; the workflow hands it each build step's own `digest` output, and a test checks that
+  no image is described by another step's digest. Checked by hand against a local registry: a
+  BuildKit push with both attestations is an image index with an `attestation-manifest`, and Syft
+  scans it by index digest and describes the `linux/amd64` image.
+- **A document that lists nothing stops the release.** Not CycloneDX, not 1.6, naming another
+  component, or no package — each refused before its checksum is written.
+- **Attached from the directory, not from a list.** The step that creates the Release attaches every
+  file in the asset directory and names every one but a checksum. Its test now *runs* that step with
+  `gh` and `uv` replaced, rather than reading the script for the archive's name.
+
+Mutations: `BOM1`–`BOM16`, and `PA8`–`PA10` re-anchored onto the directory. Not verifiable before a
+release: GHCR's handling of the attestation manifests, and the job itself — the next tag is the
+first run. Signing is open.
+
 ## KIRA parity: functions, the predecessor's vectors, reranking (2026-10-21)
 
 The owner compared the predecessor against this gateway's KIRA layer and brought the report: seven

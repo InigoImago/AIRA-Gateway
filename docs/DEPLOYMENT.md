@@ -453,7 +453,8 @@ Pushing the tag runs the whole workflow. The three images are published only if 
 browser job (with the Windows sign-on) *and* the description check all pass on the tagged commit —
 the publish job declares `needs` on all five, so a green release is a green commit by construction.
 A **GitHub Release** is created last, carrying your words, then the commits since the previous
-release, then the image references.
+release, then the image references, then the files attached to it: the OpenCode budget plugin as an
+archive, and the software bills of materials below — each beside its `.sha256`.
 
 Each image lands under three tags:
 
@@ -467,6 +468,38 @@ Each image lands under three tags:
 ghcr.io/<owner>/aira-gateway:vX.Y.Z
 ghcr.io/<owner>/aira-management:vX.Y.Z
 ghcr.io/<owner>/aira-frontend:vX.Y.Z
+```
+
+### What a release contains — the SBOMs
+
+Every release describes its contents twice, for two kinds of reader:
+
+| Where | Format | Describes |
+| --- | --- | --- |
+| beside each image in the registry | SPDX, written by BuildKit, with the build's provenance | exactly the digest you pulled |
+| on the GitHub Release, `aira-<image>-vX.Y.Z.cdx.json` | CycloneDX 1.6 JSON | each image, scanned back from the registry by the digest just pushed |
+| on the GitHub Release, `aira-source-vX.Y.Z.cdx.json` | CycloneDX 1.6 JSON | the locked dependencies of the tagged commit |
+
+```bash
+docker buildx imagetools inspect ghcr.io/<owner>/aira-gateway:vX.Y.Z --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/<owner>/aira-gateway:vX.Y.Z --format '{{ json .Provenance }}'
+sha256sum -c aira-gateway-vX.Y.Z.cdx.json.sha256     # a downloaded file, beside its checksum
+```
+
+Read the console's own dependencies in the **source** document, not in `aira-frontend`'s: the console
+image holds a compiled bundle, in which no scanner finds the Angular and npm packages it was built
+from, so its document lists nginx and the Alpine packages and nothing else. The source document
+reads the console's runtime dependencies from its lock file, and Python's from `uv.lock` — which
+includes the development tools (`pytest`, `ruff`), because uv locks the workspace whole. The images'
+documents are what runs.
+
+The two formats come from two scanners (BuildKit's and Syft), so they can differ slightly in what
+each counts as a package. The documents are not signed beyond the registry's own integrity, and
+releases up to `v0.1.7` have none. Feeding one to a scanner — Dependency-Track, Trivy, Grype — and
+deciding what a finding means for an installation is the reader's step:
+
+```bash
+grype sbom:aira-gateway-vX.Y.Z.cdx.json
 ```
 
 ### Four things worth knowing before the next release
