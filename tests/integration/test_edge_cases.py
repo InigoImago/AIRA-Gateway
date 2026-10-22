@@ -706,8 +706,11 @@ VALIDATION = kira_errors.VALIDATION_ERROR
         pytest.param(
             {"request": {"parts": [{"text": "hi"}]}, "model_id": "nine"}, VALIDATION, id="a word"
         ),
+        # An id no entry can carry is one nothing has, as the predecessor answers it.
         pytest.param(
-            {"request": {"parts": [{"text": "hi"}]}, "model_id": -1}, VALIDATION, id="negative"
+            {"request": {"parts": [{"text": "hi"}]}, "model_id": -1},
+            kira_errors.MODEL_NOT_FOUND,
+            id="negative",
         ),
         pytest.param(
             {"request": {"parts": [{}]}, "model_id": LOCAL_CHAT_MODEL_ID},
