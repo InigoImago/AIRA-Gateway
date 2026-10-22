@@ -237,7 +237,18 @@ None of these is an accident, and each has a reason a migrating client can act o
 | **Attachment signatures** | checked | a file declared `application/pdf` that is not one is refused rather than sent |
 | **`responseSchema`** | bounded (32 KiB, 8 levels, 256 properties) and unknown fields refused | an unbounded schema from a caller is an input nobody bounded |
 | **`thinking`** | checked against the model | see below |
-| **Error codes** | more specific where the predecessor had no word (`EMBEDDING_BOUND_EXCEEDED`, `EMPTY_EMBEDDING_INPUT` for a text of blanks, …) | the predecessor's codes are all still produced where it produces them, with its statuses: an upstream failure is `502 EXTERNAL_KI_API_ERROR` and a provider's `429` stays `429`; an attachment type nobody accepts, a schema it cannot read and a `temperature` outside 0–2 are `422`; `maxTokens` of 0 or less, an unknown `task_type` and an empty embedding text are `VALIDATION_ERROR` |
+| **Error codes** | more specific where the predecessor had no word (`EMBEDDING_BOUND_EXCEEDED`, …) | the predecessor's codes are all still produced where it produces them, with its statuses: an upstream failure is `502 EXTERNAL_KI_API_ERROR` and a provider's `429` stays `429`; an attachment type nobody accepts, a schema it cannot read and a `temperature` outside 0–2 are `422`; `maxTokens` of 0 or less, an unknown `task_type` and an empty or blank embedding text are `VALIDATION_ERROR`; a `model_id` nothing has — zero and negative ones included — is always `422 MODEL_NOT_FOUND`. Two keep their own answer: a thinking word the model does not offer is `INVALID_THINKING_MODE` naming what it offers, because the words are the model's, not a fixed list; and an id the catalogue assigns twice is `503`, because the installation is misconfigured, not the request |
+| **A function result** | answers a call of the model turn **directly before** it | Anthropic and OpenAI refuse a conversation whose result is separated from its call, and Gemini reads it as the result of whichever call has its name — an answer to the wrong question. Here it is `422 INVALID_FUNCTION_RESPONSE` before anything is spent |
+| **Function parts without `tools`** | refused, `422 INVALID_TOOL_CONFIGURATION`, for a call in the history as well as for a result | a conversation carrying a call is continued by a model that must know the function, and Anthropic refuses a conversation with a call whose function it was not given |
+| **`opaque_metadata`** | only `thoughtSignature` is read back | the predecessor copies every key onto the provider's part, so a caller could set any field of it — a file reference among them. Nothing but the signature reaches the provider |
+| **An empty answer** | `502 EXTERNAL_KI_API_ERROR` naming why the model stopped, when it has no text, no call and no output token | a blocked prompt, or a cap spent on thinking, served as `parts: []` reads as *the model had nothing to say*. As the predecessor answers it |
+| **A structured answer that did not finish** | `502 EXTERNAL_KI_API_ERROR`; on the stream, no `completed` | a document cut off at the cap still looks like JSON up to where it stops. The predecessor returns it with `200` |
+| **A structured answer on the stream** | no `update` events: the document comes whole, in `completed` | a fragment of JSON is not a message. As the predecessor sends it |
+| **`responseSchema`** | (above) — unknown keywords refused, not dropped | a constraint dropped silently is an answer that breaks it |
+| **An embedding text too long for the model** | refused by the provider, `502` with its reason | the predecessor lets Google cut the text off; a vector of part of a document is filed under the whole of it |
+| **`/rerank`** | `model_id`, `query` and `records` required | a ranking billed to a model nobody named is a cost nobody chose |
+| **A budget's `429`** | no `Retry-After`; when the budget resets is in the message | a client that honours the header would sleep until the period ends |
+| **CORS** | no origin unless `AIRA_CORS_ORIGINS` names it | the predecessor allows every origin with credentials, which lets any website a user visits call the API as that user |
 | **`INVALID_TOKEN` vs `NOT_AUTHENTICATED`** | kept apart | a rejected credential is a security signal, an absent one is a deployment slip |
 | **What happened** | headers only: `X-AIRA-Request-Id` on every response, `X-AIRA-Reason` on a refusal, `X-AIRA-Model` and `X-AIRA-Pipeline` on an answer | the envelope and the stream events stay the predecessor's — a client that parses them strictly keeps working — and the request id finds the request's details in the console, which say what the pipeline did and which models were tried. A stream that breaks off still ends without `completed`; its reason is in those details |
 | **Messages** | English | AIRA is English throughout |
@@ -266,23 +277,43 @@ first and the text after them, as the predecessor sends a turn. An attachment in
 `system_instruction` is ignored, as the predecessor ignores it, and named in
 `X-AIRA-Unmodelled-Fields`.
 
-**Functions.** A request offers functions in `tools` — `{"name", "description", "parameters"}`, the
-parameters a JSON Schema object — and only where the use case has tool calling enabled; otherwise,
-and for a declaration the gateway cannot take, the answer is `422 INVALID_TOOL_CONFIGURATION`. The
-model's call comes back as a part:
+**Functions.** A request offers functions in `tools` — `{"type": "function", "name", "description",
+"parameters"}`, `type` optional, the other three required — and only where the use case has tool
+calling enabled; otherwise the answer is `422 INVALID_TOOL_CONFIGURATION`. A missing or empty field
+is `422 VALIDATION_ERROR`; a filled one the predecessor would refuse — a description of blanks, a
+name declared twice, a `parameters` schema outside its rule — is `422 INVALID_TOOL_CONFIGURATION`.
+The rule, at every level of the schema: the keywords `$ref`, `additionalProperties`, `anyOf`,
+`default`, `description`, `enum`, `format`, `items`, `maxItems`, `maxLength`, `maxProperties`,
+`maximum`, `minItems`, `minLength`, `minProperties`, `minimum`, `nullable`, `pattern`,
+`properties`, `required`, `title` and `type` only; `type` always, one of `object`, `array`,
+`string`, `number`, `integer`, `boolean`; `required` naming only properties; `items` on an array
+and nowhere else; `anyOf` and `enum` never empty. The root is an `object` — a function that takes
+nothing declares `{"type": "object"}`. The model's call comes back as a part:
 
 ```json
 {"type": "function_call", "id": "…", "name": "get_weather", "arguments": {"city": "Bonn"},
- "opaque_metadata": {"thought_signature": "…"}}
+ "opaque_metadata": {"thoughtSignature": "…"}}
 ```
 
-The client runs the function, puts the call into `conversation_history` as a `model` turn — with its
-`opaque_metadata` unchanged, which a thinking model needs to continue — and sends the outcome in the
-next request as `{"type": "function_result", "id": "…", "name": "get_weather", "result": …}`. A
-result that answers no call of the turn before it, or answers it under another name, is
-`422 INVALID_FUNCTION_RESPONSE`. A call belongs only in a `model` turn and a result only in a `user`
-turn or the request; anywhere else is `422 VALIDATION_ERROR`. On the stream every call is its own
-`function_call` event, and `completed` carries them too. The gateway never runs a function.
+`opaque_metadata` is always there, `null` when the model sent no signature. The client runs the
+function, puts the call into `conversation_history` as a `model` turn — with its `opaque_metadata`
+unchanged, which a thinking model needs to continue — and sends the outcome in the next request:
+
+```json
+{"type": "function_result", "call_id": "…", "name": "get_weather", "result": {"temperature": 14}}
+```
+
+`type` may be left out on both parts: a part with `call_id` or `result` is a result, a part with a
+`name` and no text or attachment is a call. A result may add `"error": {…}`; the model then reads
+`{"result": …, "error": …}`. A call without an `id` may be replayed and cannot be answered.
+
+Refused with the predecessor's codes, all `422`: a call to a function the request's `tools` do not
+declare is `INVALID_TOOL_CONFIGURATION`; a call whose name is not a function name, two calls with
+one `id`, a result without `name`, a result that answers no call of the model turn directly before
+it, or answers it under another name, are `INVALID_FUNCTION_RESPONSE`. A call belongs only in a
+`model` turn and a result only in a `user` turn or the request; anywhere else is `VALIDATION_ERROR`.
+On the stream every call is its own `function_call` event, and `completed` carries them too. The
+gateway never runs a function.
 
 **Embeddings of `gemini-embedding-2`.** For a model whose name at Google begins with
 `gemini-embedding-2`, each text is sent inside its task's prompt — `task: search result | query: …`

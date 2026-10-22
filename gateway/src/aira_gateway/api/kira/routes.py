@@ -28,6 +28,7 @@ from aira_gateway.api.kira.embedding_prompts import is_prompted
 from aira_gateway.api.kira.headers import note_unmodelled, surface_headers
 from aira_gateway.api.kira.keepalive import PING, STREAM_HEADERS, TICK, with_pings
 from aira_gateway.api.kira.mapping import (
+    check_answered,
     completed_event,
     function_call_event,
     stored,
@@ -116,7 +117,8 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             # paid for all the same.
             acct.spent(answer.model, answer.usage)
             check_structured_result(canonical, answer)
-            payload = to_chat_response(answer).model_dump(exclude_none=True)
+            check_answered(answer)
+            payload = to_chat_response(answer).model_dump()
             acct.served(
                 answer.model,
                 answer.usage,
@@ -180,9 +182,11 @@ async def streaming_chat(
                         continue
                     assert isinstance(chunk, CanonicalChunk)
                     led = stream.take(chunk).text_delta
-                    if not led:
+                    if not led or asked.structured:
                         # No event without text: an empty one is the synthetic heartbeat `FRD-111`
-                        # §5.4 refused.
+                        # §5.4 refused. And none for a document: a fragment of JSON is not a
+                        # message, and the predecessor sends a constrained answer whole, in
+                        # `completed` alone.
                         continue
                     yield f"data: {json.dumps(update_event(led))}\n\n"
             except KIRA_REFUSALS as exc:
@@ -204,6 +208,7 @@ async def streaming_chat(
                 # is already sent, so the terminal event is withheld instead: a client waiting for
                 # `completed` never treats half a document as whole.
                 check_structured_result(asked, answer)
+                check_answered(answer)
             except KIRA_REFUSALS as exc:
                 stream.broke_off(exc)
                 return
@@ -385,6 +390,12 @@ def _parse[Model: BaseModel](schema: type[Model], body: dict[str, Any]) -> Model
 
 async def _resolve_model(request: Request, model_id: int) -> str:
     """The catalogue name for the predecessor's numeric model id."""
+    if model_id not in schemas.MODEL_IDS:
+        raise errors.KiraError(
+            422,
+            errors.MODEL_NOT_FOUND,
+            f"No model with id {model_id}. Ids are assigned in the model catalog.",
+        )
     try:
         name = await catalog_of(request).by_numeric_id(model_id)
     except AmbiguousModelId as exc:

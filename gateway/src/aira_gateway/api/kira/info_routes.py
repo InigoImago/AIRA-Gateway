@@ -246,12 +246,14 @@ def _window(request: Request) -> tuple[datetime, datetime]:
         if not value:
             raise errors.KiraError(400, errors.MISSING_QUERY_PARAM, f"'{name}' is required.")
     try:
-        start = datetime.fromisoformat(str(start_raw))
-        end = datetime.fromisoformat(str(end_raw))
-    except ValueError as exc:
+        start = _instant(str(start_raw))
+        end = _instant(str(end_raw))
+    except (ValueError, OverflowError, OSError) as exc:
         # 422, the predecessor's status: its dates are typed parameters, and a value that does not
         # parse reaches its validation handler (`FRD-146` FR-15).
-        raise errors.KiraError(422, errors.VALIDATION_ERROR, "Dates must be ISO-8601.") from exc
+        raise errors.KiraError(
+            422, errors.VALIDATION_ERROR, "Dates are ISO-8601 or seconds since 1970 (UTC)."
+        ) from exc
     if end <= start:
         raise errors.KiraError(
             400, errors.INVALID_TIME_RANGE, "'endDatum' must be after 'startDatum'."
@@ -260,6 +262,14 @@ def _window(request: Request) -> tuple[datetime, datetime]:
         start if start.tzinfo else start.replace(tzinfo=UTC),
         end if end.tzinfo else end.replace(tzinfo=UTC),
     )
+
+
+def _instant(raw: str) -> datetime:
+    """An ISO-8601 date or time, or whole seconds since 1970 — both of which the predecessor
+    takes. Seconds are UTC by definition."""
+    if raw.isdigit():
+        return datetime.fromtimestamp(int(raw), UTC)
+    return datetime.fromisoformat(raw)
 
 
 def _csv(rows: list[dict[str, Any]]) -> str:

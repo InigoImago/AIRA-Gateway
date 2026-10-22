@@ -78,8 +78,9 @@ def refusal_response(exc: Exception) -> JSONResponse:
         # would send the client looking for a different id.
         return errors.kira_error_response(400, errors.VALIDATION_ERROR, str(exc))
     if isinstance(exc, AmbiguousModel | RegionNotAllowed):
-        # Nowhere this installation may send the model: the name serves nothing here.
-        return errors.kira_error_response(400, errors.MODEL_NOT_FOUND, str(exc))
+        # Nowhere this installation may send the model: the name serves nothing here, and the
+        # predecessor's `MODEL_NOT_FOUND` is always `422`.
+        return errors.kira_error_response(422, errors.MODEL_NOT_FOUND, str(exc))
     if isinstance(exc, UpstreamError):
         # **One status for every provider failure but one**, as the predecessor answers: `502`, and
         # `429` where the provider asked the caller to slow down, which is the one a client acts on

@@ -5,6 +5,49 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## KIRA parity, the second comparison (2026-10-22)
+
+The owner ran the comparison again, in more depth this time, and brought the
+findings with one instruction: keep everything secure and take over no odd behaviour — this is
+enterprise software. So no finding was taken whole; each was decided on that line (`FRD-146` §14).
+
+**Two of the four assumed shapes were wrong.** A result names its call in `call_id`, not `id`, and
+the signature's key is `thoughtSignature`, not `thought_signature` — so the predecessor's own
+documented example failed here with `422`. Neither shape had been released. `result` and the CSV
+column order were right.
+
+**Taken over**, because a client of the predecessor fails without it and nothing is loosened:
+
+- the function parts as the predecessor writes them — `type` optional and read from the fields, a
+  call's `id` optional, `error` on a result, `opaque_metadata` always present;
+- its stricter checks, in its codes — `description` and `parameters` required, its schema rule for
+  `parameters` (`api/kira/tool_schema.py`), a call to a function not offered, duplicate call ids, a
+  result without a name;
+- `502` naming the finish reason for an answer with nothing in it, where `parts: []` let a blocked
+  prompt read as a model with nothing to say; `422 MODEL_NOT_FOUND` for an id no entry can carry
+  and for a model with nowhere it may be sent; `VALIDATION_ERROR` for a blank embedding text;
+- no `update` events for a streamed `responseSchema` answer — a JSON fragment is not a message;
+- `WWW-Authenticate: Bearer` on every `401`, both surfaces — the RFCs require it;
+- Unix seconds as a `/ki-usage` window.
+
+**Declined, and why** — each now a row in the migration guide's §4:
+
+- **`opaque_metadata` copied onto the provider's part.** The predecessor does this with every key.
+  A caller could then write any field of a Gemini part — a `fileData` reference to a bucket the
+  gateway's service account can read is the obvious one. Only the signature is read; a test sends
+  `fileData` and `text` beside it and checks that neither reaches the body Google would receive.
+- A result answering any earlier call, and calls in the history without `tools`: Anthropic and
+  OpenAI refuse such a conversation, and Gemini reads a misplaced result against whichever call has
+  its name. `422` before anything is spent beats the predecessor's `502` after.
+- `200` for a structured answer that did not finish, unknown `responseSchema` keywords dropped,
+  Google truncating an embedding text, a default `model_id` on `/rerank`, `Retry-After` on a
+  budget, an unknown thinking word as `VALIDATION_ERROR` — each hands a client something other
+  than what it asked for, or a cost nobody chose.
+- `/models` without a credential, every CORS origin with credentials, other people's rows in
+  `/ki-usage`, Live — the owner's earlier decisions stand.
+
+Mutations `KP39`–`KP64`; `TC31` and `KP31` re-anchored.
+
 ## A release says what it contains (2026-10-22)
 
 The owner asked for SBOMs on releases; CycloneDX, from the next release on (`FRD-148`).

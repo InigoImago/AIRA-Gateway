@@ -12,11 +12,13 @@ from __future__ import annotations
 import copy
 import json
 import re
+import uuid
 from typing import Any
 
 from aira_common.models import ThinkingMode
-from aira_gateway.api.kira import embedding_prompts, schemas
+from aira_gateway.api.kira import embedding_prompts, schemas, tool_schema
 from aira_gateway.api.kira.errors import (
+    EXTERNAL_KI_API_ERROR,
     INVALID_FUNCTION_RESPONSE,
     INVALID_TOOL_CONFIGURATION,
     VALIDATION_ERROR,
@@ -43,15 +45,18 @@ from aira_gateway.core.canonical import (
 from aira_gateway.core.json_schema import parse_json_schema
 from aira_gateway.core.schema import SchemaBounds, SchemaRejected
 from aira_gateway.core.schema import parse as parse_schema
-from aira_gateway.embedding import DEFAULT_TASK_TYPE, EMPTY_EMBEDDING_INPUT, EmbeddingRejected
+from aira_gateway.embedding import DEFAULT_TASK_TYPE
 from aira_gateway.thinking import mode_from
 
 #: What the predecessor puts between two text parts of one message: it sends them as one string.
 #: Kept as separate parts, each adapter would render them differently ("HalloWelt" on one).
 TEXT_PART_SEPARATOR = "\n"
 
-#: Where a call's signature travels in ``opaque_metadata``, there and back.
-SIGNATURE_KEY = "thought_signature"
+#: Where a call's signature travels in ``opaque_metadata``, there and back — the predecessor's key,
+#: Gemini's own field name. **The only key read.** The predecessor copies every key of
+#: ``opaque_metadata`` onto the provider's part beside the call; here a caller's object never
+#: becomes provider fields, or it could write any field of a part — a file reference among them.
+SIGNATURE_KEY = "thoughtSignature"
 
 #: A function name as every dialect this gateway reaches accepts one: Gemini's rule, the narrowest.
 TOOL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]{0,63}")
@@ -106,7 +111,9 @@ def _in_order(content: schemas.RequestContent, limits: Limits, offset: int) -> l
             signature = metadata.get(SIGNATURE_KEY)
             parts.append(
                 ToolCallPart(
-                    id=str(raw["id"]),
+                    # A call without an id can be replayed and never answered, as in the
+                    # predecessor; every dialect needs one, so it gets one nobody can name.
+                    id=str(raw.get("id") or f"unanswerable-{uuid.uuid4().hex}"),
                     name=str(raw["name"]),
                     arguments=dict(raw.get("arguments") or {}),
                     signature=signature if isinstance(signature, str) else None,
@@ -115,9 +122,13 @@ def _in_order(content: schemas.RequestContent, limits: Limits, offset: int) -> l
         elif kind == schemas.FUNCTION_RESULT:
             _flush()
             result = raw["result"]
+            if raw.get("error") is not None:
+                # What running it reported, beside what it returned, as the predecessor sends it:
+                # the model reads a failed call as failed rather than as an odd result.
+                result = {"result": result, "error": raw["error"]}
             parts.append(
                 ToolResultPart(
-                    call_id=str(raw["id"]),
+                    call_id=str(raw["call_id"]),
                     name=str(raw["name"]),
                     # Serialised once, here, as the Gemini surface does: dialects disagree on string
                     # versus object, and a text result is sent as the text it is.
@@ -179,18 +190,22 @@ def tools_of(
         if spec.name in seen:
             raise _tool_fault(f"tools[{index}]: '{spec.name}' is declared twice.")
         seen.add(spec.name)
+        if not spec.description.strip():
+            raise _tool_fault(
+                f"tools[{index}]: the description of '{spec.name}' is blank. The model chooses a "
+                "function by what its description says."
+            )
         parameters = spec.parameters
-        if parameters is not None and parameters.get("type", "object") != "object":
+        rule = tool_schema.fault(parameters)
+        if rule:
+            raise _tool_fault(f"tools[{index}]: '{spec.name}': {rule}.")
+        if parameters.get("type") != "object":
             raise _tool_fault(
                 f"tools[{index}]: the parameters of '{spec.name}' are a JSON Schema of type "
                 f"'{parameters.get('type')}'; a function takes an object."
             )
         try:
-            schema = (
-                parse_json_schema(parameters, bounds, what=f"The parameters of '{spec.name}'")
-                if parameters is not None
-                else None
-            )
+            schema = parse_json_schema(parameters, bounds, what=f"The parameters of '{spec.name}'")
         except SchemaRejected as exc:
             raise _tool_fault(f"tools[{index}]: {exc}") from exc
         declarations.append(
@@ -231,6 +246,47 @@ def check_results_answer_calls(messages: list[CanonicalMessage]) -> None:
                 )
 
 
+def check_function_parts(request: schemas.ChatRequest, tools: tuple[ToolDeclaration, ...]) -> None:
+    """Each call and result as the predecessor checks it, oldest turn first (`FRD-146` FR-3).
+
+    A call names a function by a function's name, one of those offered, and an id no other call
+    in the conversation has; a result names the function it reports on. Whether a result answers
+    a call is `check_results_answer_calls`, over the mapped conversation.
+    """
+    offered = {tool.name for tool in tools}
+    ids: set[str] = set()
+    contents = [*(turn.content for turn in request.conversation_history or []), request.request]
+    for content in contents:
+        for raw in content.parts:
+            kind = raw.get("type")
+            if kind == schemas.FUNCTION_CALL:
+                name = str(raw["name"])
+                if not TOOL_NAME.fullmatch(name):
+                    raise _function_fault(f"The function call names '{name[:80]}', not a function.")
+                if name not in offered:
+                    raise _tool_fault(
+                        f"The conversation carries a call to '{name}', which the request's tools "
+                        "do not declare. Send the tools with every request of the conversation."
+                    )
+                call_id = raw.get("id")
+                if call_id is not None:
+                    if call_id in ids:
+                        raise _function_fault(
+                            f"Two function calls carry the id '{call_id}'; a result could answer "
+                            "either."
+                        )
+                    ids.add(call_id)
+            elif kind == schemas.FUNCTION_RESULT and not raw.get("name"):
+                raise _function_fault(
+                    f"The function result '{raw['call_id']}' names no function; it names the one "
+                    "its call was to."
+                )
+
+
+def _function_fault(message: str) -> KiraError:
+    return KiraError(422, INVALID_FUNCTION_RESPONSE, message)
+
+
 def _carries_function_parts(request: schemas.ChatRequest) -> bool:
     contents = [request.request, *(turn.content for turn in request.conversation_history or [])]
     return any(content.kinds() for content in contents)
@@ -266,6 +322,10 @@ def to_canonical(
     expects.
     """
     limits = limits or Limits()
+    # The declarations first, then the conversation oldest-first, as the predecessor checks them:
+    # a request with several faults is refused for the one a client of it would be told about.
+    tools = tools_of(request, bounds)
+    check_function_parts(request, tools)
     messages: list[CanonicalMessage] = []
     counted = 0
 
@@ -282,7 +342,6 @@ def to_canonical(
 
     parts = _parts(request.request, limits, counted)
     messages.append(CanonicalMessage(role=Role.USER, parts=parts))
-    tools = tools_of(request, bounds)
     check_results_answer_calls(messages)
 
     return CanonicalRequest(
@@ -322,6 +381,26 @@ def to_chat_response(response: CanonicalResponse) -> schemas.ChatResponse:
     )
 
 
+def check_answered(response: CanonicalResponse) -> None:
+    """An answer with nothing in it — no text, no call, no output token — is the provider's
+    failure, as the predecessor reports it: `502` naming why the model stopped.
+
+    A prompt the provider blocked, or a model that spent its whole cap thinking, comes back as an
+    empty answer; served as ``parts: []`` it reads as *the model had nothing to say*, and nobody
+    learns that the prompt was refused or the cap too small. An answer that is empty but cost
+    output tokens is still served as ``parts: []`` (`FRD-146` FR-17).
+    """
+    if response.text or response.tool_calls:
+        return
+    if response.usage.completion_tokens - response.usage.reasoning_tokens > 0:
+        return
+    raise KiraError(
+        502,
+        EXTERNAL_KI_API_ERROR,
+        f"The model returned no answer (it stopped with '{response.finish_reason}').",
+    )
+
+
 def function_call_part(call: ToolCallPart) -> schemas.FunctionCallPart:
     """A call the model made, as the predecessor returns it; its signature rides in
     ``opaque_metadata`` and comes back with the call (`FRD-146` FR-4)."""
@@ -351,7 +430,7 @@ def stored(payload: dict[str, Any]) -> dict[str, Any]:
 
 def completed_event(response: CanonicalResponse) -> dict[str, Any]:
     """The predecessor's terminal SSE event."""
-    return {"status": "completed", "data": to_chat_response(response).model_dump(exclude_none=True)}
+    return {"status": "completed", "data": to_chat_response(response).model_dump()}
 
 
 def update_event(message: str) -> dict[str, Any]:
@@ -370,10 +449,9 @@ def to_embedding(
       text as its own part, inside the task's prompt, as **one** embedding (`FRD-146` FR-7) — the
       predecessor always names a task, `RETRIEVAL_QUERY` when the caller does not. The task stays
       on the request, so the catalogue still decides whether the model takes it.
-    - **A blank entry is refused**, because the join would otherwise absorb it without trace. An
-      *empty* text — `""`, `[]`, `[""]` — is `VALIDATION_ERROR`, the predecessor's code for a field
-      that breaks its length constraint (`FRD-146` FR-15); one that is only whitespace passes that
-      constraint and is the contract's own `EMPTY_EMBEDDING_INPUT`.
+    - **A blank entry is refused**, because the join would otherwise absorb it without trace — as
+      `VALIDATION_ERROR`, the predecessor's code, whether it is empty (`""`, `[]`, `[""]`) or only
+      whitespace (`FRD-146` FR-15).
     - Otherwise the default task type is the route's to pass (it applies only where the model
       declares it), and dimensionality is part of a model's identity in the predecessor (one
       catalogue row per width) — so neither is set here.
@@ -384,9 +462,7 @@ def to_embedding(
         blanks = [index for index, entry in enumerate(entries) if not entry.strip()]
         where = f" at position(s) {', '.join(str(i) for i in blanks)}" if blanks else ""
         message = f"Embedding input must be a non-empty text, or a list of them{where}."
-        if not entries or any(not entry for entry in entries):
-            raise KiraError(422, VALIDATION_ERROR, message)
-        raise EmbeddingRejected(EMPTY_EMBEDDING_INPUT, message)
+        raise KiraError(422, VALIDATION_ERROR, message)
 
     if prompted:
         task = request.task_type or DEFAULT_TASK_TYPE

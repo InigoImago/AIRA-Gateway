@@ -52,16 +52,19 @@ confirm or correct it.
 ## 4. Functional Requirements
 
 ### Function calling
-- **FR-1 Declaring functions.** `tools` on a chat request: a list of `{name, description?,
-  parameters?}`, `parameters` a JSON Schema object. Validated before anything is spent; a fault is
-  `422 INVALID_TOOL_CONFIGURATION` naming it (§5.1).
-- **FR-2 Parts by role.** A `function_call` part (`{"type":"function_call","id","name","arguments",
+- **FR-1 Declaring functions.** `tools` on a chat request: a list of `{type?: "function", name,
+  description, parameters}`, `parameters` a JSON Schema object under the predecessor's rule (§14).
+  Validated before anything is spent; a missing or empty field is `422 VALIDATION_ERROR`, a filled
+  one it cannot take `422 INVALID_TOOL_CONFIGURATION`, naming it (§5.1).
+- **FR-2 Parts by role.** A `function_call` part (`{"type"?,"id"?,"name","arguments",
   "opaque_metadata"?}`) only in a `role: model` turn of the history; a `function_result` part
-  (`{"type":"function_result","id","name","result"}`) only in the request or a `role: user` turn.
-  Anything else is `422 VALIDATION_ERROR`.
+  (`{"type"?,"call_id","name","result","error"?}`) only in the request or a `role: user` turn. An
+  untyped part is read by its fields. Anything else is `422 VALIDATION_ERROR`.
 - **FR-3 Pairing.** A `function_result` answers a `function_call` of the model turn before it, by
-  `id`, and names the same function. A result that answers nothing, or answers a call under another
-  name, is `422 INVALID_FUNCTION_RESPONSE`.
+  `call_id`, and names the same function. A result that answers nothing, answers a call under
+  another name or names none, a call whose name is not a function name, and two calls with one id
+  are `422 INVALID_FUNCTION_RESPONSE`; a call to a function the request does not offer is
+  `422 INVALID_TOOL_CONFIGURATION`.
 - **FR-4 The answer.** A function call the model makes is a part of the answer,
   `{"type":"function_call","id","name","arguments","opaque_metadata"}`. `opaque_metadata` carries
   the model's `thoughtSignature` there and back, unread; a client returns it with the call.
@@ -130,14 +133,15 @@ The KIRA layer only parses and maps:
   text and attachments. The role rules (FR-2) are model validators on the turn types.
 - `mapping.py`: `tools` → `ToolDeclaration` with `parameters_json_schema` (carried as written, as the
   Gemini surface does for `parametersJsonSchema`); `function_call` → `ToolCallPart`, its
-  `opaque_metadata.thought_signature` → `signature`; `function_result` → `ToolResultPart`, a
+  `opaque_metadata.thoughtSignature` → `signature`, and no other key; `function_result` → `ToolResultPart`, a
   non-string `result` serialised as JSON.
 - The pairing rule (FR-3) is checked in the mapper, over the mapped conversation.
 - The use case's switch is the shared `check_tools_permitted`. Its refusal becomes its own type,
   `ToolsNotPermitted`, so this surface can give it the predecessor's code without reading a message.
 
 Validation rules (FR-1), each with a test: a name matches `^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`; names are
-unique; `parameters`, when sent, is a JSON object whose `type` is `object`; at most 128 functions;
+unique; the description says something; `parameters` passes the predecessor's rule
+(`tool_schema.fault`) and its root `type` is `object`; at most 128 functions;
 `function_call`/`function_result` parts without `tools` on the request are refused.
 
 ### 5.2 The predecessor's embedding
@@ -189,13 +193,10 @@ therefore a separate release: approving `gemini-embedding-2` approves nothing ab
 
 ## 7. API / Interface Contract
 
-Assumed rather than read off the predecessor — to be confirmed by the live comparison:
-- the `tools` entry shape `{name, description, parameters}`;
-- the `function_result` field `result`;
-- `opaque_metadata` as `{"thought_signature": "…"}`;
-- the CSV column order of `/ki-usage` (that of the JSON row).
-
-Everything else is as the comparison report states it.
+First built from the report, with four shapes assumed. The second comparison (§14) read them off the
+predecessor: `result` and the CSV order were right; the result names its call in `call_id`, not
+`id`, and the signature's key is `thoughtSignature`, not `thought_signature`. Both are corrected;
+neither shape had been released.
 
 ## 8. Security & Privacy
 - Functions stay behind the use case's switch (FR-6) and are never executed (`ADR-0013`).
@@ -243,8 +244,8 @@ Everything else is as the comparison report states it.
   `aggregate` (`DialectUnsupported`).
 - **Aliases** — `core.canonical.wire_name`; `VertexTransport.url(wire_model=…)` for Gemini and
   Claude on Vertex. Agent Platform's open models name the model in the body and take no alias.
-- **Empty embedding text** — `""`, `[]` and `[""]` are `VALIDATION_ERROR`; a text of blanks stays
-  `EMPTY_EMBEDDING_INPUT`, the code the contract has for it.
+- **Empty embedding text** — `""`, `[]`, `[""]` and a text of blanks are `VALIDATION_ERROR`
+  (a text of blanks was `EMPTY_EMBEDDING_INPUT` until the second comparison, §14).
 - **Turn order** — documents first in a turn without function parts; an earlier test pinned the
   opposite and was turned round.
 - **Stream** — `api/kira/keepalive.py` reads the model's chunks in one task of its own and sends a
@@ -254,3 +255,49 @@ Everything else is as the comparison report states it.
 - **Sampling defaults** — `model_catalog.default_sampling` on both planes (Management migration
   `0011`, gateway `0054`), validated against `fixed_sampling`, applied in `prepare.fitted` only for
   the controls the routed adapter expresses; two fields in the console's model editor.
+
+## 14. The second comparison
+
+The owner ran the comparison again, in more depth this time, and brought the
+findings. The owner's line for the round: **keep everything secure, and take over no odd behaviour**
+— this is enterprise software. So each finding was decided on that line rather than taken whole.
+
+**Taken over** — a client of the predecessor fails without it, and nothing is loosened:
+
+- **The function parts' fields** (FR-2, FR-3): `call_id` on a result; `type` optional on both
+  parts, read from the fields; a call's `id` optional (such a call is replayed and cannot be
+  answered); `error` on a result, sent as `{"result", "error"}`; `opaque_metadata` always present,
+  `null` when empty, its key `thoughtSignature`.
+- **Stricter checks** (FR-1, FR-3), in the predecessor's codes: `tools[].type` modelled;
+  `description` and `parameters` required; the predecessor's schema rule for `parameters`
+  (`api/kira/tool_schema.py`); a call to a function not offered, a call's name, duplicate call ids,
+  a result without a name.
+- **Errors that say what happened**: an answer with no text, no call and no output token is
+  `502 EXTERNAL_KI_API_ERROR` naming the finish reason (`mapping.check_answered`), not `parts: []`;
+  a `model_id` nothing can have — zero, negative, past the column — is `422 MODEL_NOT_FOUND`, and
+  so is a model with nowhere it may be sent; a blank embedding text is `VALIDATION_ERROR`.
+- **On the stream**, a `responseSchema` answer sends no `update` events: the document comes whole,
+  in `completed`.
+- **A `401` names its scheme** — `WWW-Authenticate: Bearer`, on both surfaces (RFC 9110, RFC 6750).
+- **`/ki-usage`** takes seconds since 1970 as well as ISO 8601.
+
+**Declined**, each because the predecessor's behaviour is the odd one, and said so in the migration
+guide's §4:
+
+- **Copying `opaque_metadata` onto the provider's part.** A caller could write any field of a
+  Gemini part — a `fileData` reference to a bucket the gateway's account can read among them. Only
+  the signature is read.
+- **A result answering any earlier call**, and **function parts without `tools`**: providers other
+  than Gemini refuse such a conversation, and Gemini answers a misplaced result against the wrong
+  call. Refused here before anything is spent.
+- **`200` for a structured answer that did not finish**, and **dropping unknown `responseSchema`
+  keywords**: both hand an application a document that breaks what it asked for.
+- **Letting Google truncate an embedding text**: the vector of part of a document is filed under
+  the whole of it.
+- **A default `model_id` on `/rerank`**: a cost nobody chose.
+- **`Retry-After` on a budget's `429`**: a client would sleep until the period ends.
+- **An unknown thinking word as `VALIDATION_ERROR`**: the words are the model's, and
+  `INVALID_THINKING_MODE` names what it offers.
+- **`/models` without a credential, every CORS origin with credentials, `/ki-usage` across
+  people, Live** — the owner's earlier decisions stand; CORS is configuration
+  (`AIRA_CORS_ORIGINS`), and the attachment bounds stay as they are.

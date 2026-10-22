@@ -25,9 +25,15 @@ _ALIASED = ConfigDict(populate_by_name=True, extra="ignore")
 #: before, and the Gemini surface keeps `FRD-124`'s strict rule — that is Google's contract.
 _TOLERANT_ALIASED = ConfigDict(populate_by_name=True, extra="allow")
 
-#: The predecessor's numeric model handle, bounded to what the `INTEGER` column holds: an unbounded
-#: value reached Postgres as `NumericValueOutOfRange`, a 500 for a number the caller chose.
-ModelId = Annotated[int, Field(ge=1, le=2_147_483_647)]
+#: The predecessor's numeric model handle: any whole number, as the predecessor types it. One no
+#: catalogue entry can hold — zero, negative, past the `INTEGER` column — is `MODEL_NOT_FOUND` like
+#: any other id nothing has, decided before the catalogue is asked (`routes._resolve_model`): an
+#: unbounded value reached Postgres as `NumericValueOutOfRange`, a 500 for a number the caller
+#: chose.
+ModelId = int
+
+#: The ids a catalogue entry can carry.
+MODEL_IDS = range(1, 2_147_483_648)
 
 #: The predecessor's health vocabulary: a title-cased string, not a boolean.
 HealthState = Literal["Healthy", "Unhealthy"]
@@ -130,6 +136,12 @@ class RequestContent(TolerantRequest):
     def _parts_are_one_kind_or_the_other(self) -> RequestContent:
         for index, part in enumerate(self.parts):
             kind = part.get("type")
+            if kind is None:
+                # The predecessor defaults ``type`` on a function part, so a part is read by its
+                # fields. Written back, so everything downstream reads one field.
+                kind = _function_kind(part)
+                if kind is not None:
+                    part["type"] = kind
             if kind in FUNCTION_PART_TYPES:
                 _check_function_part(index, str(kind), part)
                 continue
@@ -176,21 +188,53 @@ FUNCTION_RESULT = "function_result"
 FUNCTION_PART_TYPES = frozenset({FUNCTION_CALL, FUNCTION_RESULT})
 
 
+def _function_kind(part: dict[str, Any]) -> str | None:
+    """Which function part an untyped part is, by its fields; ``None`` for text or an attachment.
+
+    A result is the part that names a call or carries a result; a call is a part with a name and
+    neither text nor an attachment. Whether it stands where it may is the role's question
+    (`ConversationContent`), so a call in a user's turn is refused there, by name.
+    """
+    if "text" in part or "mime_type" in part or "mimeType" in part:
+        return None
+    if "call_id" in part or "result" in part:
+        return FUNCTION_RESULT
+    if "name" in part:
+        return FUNCTION_CALL
+    return None
+
+
 def _check_function_part(index: int, kind: str, part: dict[str, Any]) -> None:
-    """A function part's fields, typed: a name or an id that is not a string would be converted
-    and the model would be told about the conversion, which `FRD-124` forbids."""
-    for field in ("id", "name"):
-        value = part.get(field)
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"parts[{index}]: a {kind} part needs '{field}' as a non-empty string")
+    """A function part's fields, typed: a value that is not what the field holds would be
+    converted, and the model told about the conversion, which `FRD-124` forbids.
+
+    Only the *types* are the parser's: whether a name is a function name, whether a result answers
+    a call and whether ids repeat are the contract's `INVALID_FUNCTION_RESPONSE`, decided in the
+    mapper over the whole conversation.
+    """
     if kind == FUNCTION_CALL:
+        call_id = part.get("id")
+        if call_id is not None and (not isinstance(call_id, str) or not call_id.strip()):
+            raise ValueError(f"parts[{index}]: a {kind} part's 'id' is a non-empty string")
+        if not isinstance(part.get("name"), str):
+            raise ValueError(f"parts[{index}]: a {kind} part needs 'name' as a string")
         if not isinstance(part.get("arguments", {}), dict):
             raise ValueError(f"parts[{index}]: 'arguments' must be an object")
         metadata = part.get("opaque_metadata")
         if metadata is not None and not isinstance(metadata, dict):
             raise ValueError(f"parts[{index}]: 'opaque_metadata' must be an object")
-    elif "result" not in part:
-        raise ValueError(f"parts[{index}]: a {FUNCTION_RESULT} part needs 'result'")
+        return
+    call_id = part.get("call_id")
+    if not isinstance(call_id, str) or not call_id.strip():
+        raise ValueError(f"parts[{index}]: a {kind} part needs 'call_id' as a non-empty string")
+    name = part.get("name")
+    if name is not None and not isinstance(name, str):
+        raise ValueError(f"parts[{index}]: a {kind} part's 'name' is a string")
+    if "result" not in part:
+        raise ValueError(f"parts[{index}]: a {kind} part needs 'result'")
+    error = part.get("error")
+    if error is not None and not isinstance(error, dict):
+        raise ValueError(f"parts[{index}]: 'error' must be an object")
 
 
 class ConversationContent(TolerantRequest):
@@ -209,14 +253,18 @@ class ConversationContent(TolerantRequest):
 
 
 class ToolSpec(TolerantRequest):
-    """A function offered to the model (`FRD-146` FR-1). ``parameters`` is a JSON Schema object,
-    carried as written; what makes a declaration acceptable is checked in the mapper, which owns
-    the contract's `INVALID_TOOL_CONFIGURATION`."""
+    """A function offered to the model (`FRD-146` FR-1), every field the predecessor requires.
+
+    A missing or empty field is the parser's `VALIDATION_ERROR`, as there; what makes a filled one
+    acceptable — a name, a description that says something, a schema the predecessor would take —
+    is the mapper's `INVALID_TOOL_CONFIGURATION`.
+    """
 
     model_config = _TOLERANT_ALIASED
-    name: str
-    description: str = ""
-    parameters: dict[str, Any] | None = None
+    type: Literal["function"] = "function"
+    name: Annotated[str, Field(min_length=1, max_length=64)]
+    description: Annotated[str, Field(min_length=1)]
+    parameters: dict[str, Any]
 
 
 class ThinkingSetting(TolerantRequest):
@@ -308,7 +356,8 @@ class FunctionCallPart(BaseModel):
     name: str
     arguments: dict[str, Any]
     #: The model's proof of the reasoning behind the call, carried there and back unread — a
-    #: thinking model refuses its own call replayed without it.
+    #: thinking model refuses its own call replayed without it. Always present, ``null`` when
+    #: there is none, as the predecessor writes it.
     opaque_metadata: dict[str, Any] | None = None
 
 

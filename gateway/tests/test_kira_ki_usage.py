@@ -145,3 +145,25 @@ def test_a_window_it_cannot_read_is_refused_in_the_predecessors_words(
 
     assert response.status_code == status
     assert response.json()["code"] == code
+
+
+async def test_seconds_since_1970_are_a_window_too() -> None:
+    """The predecessor takes Unix time as well as ISO 8601; seconds are UTC by definition, so the
+    window is the same one."""
+    start = int(datetime(2026, 10, 1, tzinfo=UTC).timestamp())
+    end = int(datetime(2026, 11, 1, tzinfo=UTC).timestamp())
+    with _client(ADA) as client:
+        await _seed(client)
+        iso = client.get(URL).json()
+        unix = client.get(f"/kira/api/external/ki-usage?startDatum={start}&endDatum={end}")
+
+    assert unix.status_code == 200, unix.text
+    assert _by_model(unix.json()) == _by_model(iso)
+
+
+def test_seconds_no_clock_can_hold_are_a_validation_error() -> None:
+    with _client(ADA) as client:
+        response = client.get("/kira/api/external/ki-usage?startDatum=1&endDatum=" + "9" * 30)
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"

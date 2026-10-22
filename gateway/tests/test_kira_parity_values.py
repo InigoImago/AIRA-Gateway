@@ -319,3 +319,122 @@ def test_the_ping_is_a_comment_and_not_an_event() -> None:
     assert PING.startswith(":")
     assert PING.endswith("\n\n")
     assert "data:" not in PING
+
+
+# == the second comparison (FRD-146 §14) ==========================================================
+
+
+class _Silent:
+    """A provider that answers with nothing: a blocked prompt, or a cap spent on thinking."""
+
+    @staticmethod
+    def provider(completion: int = 0, reasoning: int = 0):  # noqa: ANN205
+        from aira_gateway.core.canonical import CanonicalRequest
+        from aira_gateway.upstreams.mock import MockProvider
+
+        class Silent(MockProvider):
+            async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+                return CanonicalResponse(
+                    model=request.model,
+                    text="",
+                    usage=CanonicalUsage(
+                        prompt_tokens=3, completion_tokens=completion, reasoning_tokens=reasoning
+                    ),
+                    finish_reason="refusal",
+                )
+
+        return Silent("mock-1")
+
+
+def _silent_app(**usage: int):  # noqa: ANN202
+    from aira_gateway.upstreams.base import ProviderRegistry
+
+    app = _app()
+    app.state.providers = ProviderRegistry([_Silent.provider(**usage)])
+    return app
+
+
+@pytest.mark.parametrize(
+    "usage", [{}, {"completion": 40, "reasoning": 40}], ids=["blocked", "all-thinking"]
+)
+async def test_an_answer_with_nothing_in_it_is_the_providers_failure(usage: dict[str, int]) -> None:
+    """Served as `parts: []`, a blocked prompt reads as *the model had nothing to say*; the
+    predecessor answers `502` and so does this surface, naming why the model stopped."""
+    app = _silent_app(**usage)
+    with TestClient(app) as client:
+        await _catalogue(app)
+        response = client.post(f"{BASE}/chat", json=_chat())
+
+    assert response.status_code == 502, response.text
+    assert response.json()["code"] == "EXTERNAL_KI_API_ERROR"
+    assert "refusal" in response.json()["message"]
+
+
+async def test_an_empty_answer_that_cost_output_is_still_an_empty_answer() -> None:
+    app = _silent_app(completion=2)
+    with TestClient(app) as client:
+        await _catalogue(app)
+        response = client.post(f"{BASE}/chat", json=_chat())
+
+    assert response.status_code == 200, response.text
+    assert response.json()["parts"] == []
+
+
+async def test_a_stream_with_nothing_in_it_ends_without_completed() -> None:
+    app = _silent_app()
+    with TestClient(app) as client:
+        await _catalogue(app)
+        with client.stream("POST", f"{BASE}/streaming-chat", json=_chat()) as stream:
+            body = "".join(stream.iter_text())
+
+    assert '"completed"' not in body
+
+
+async def test_a_streamed_document_is_sent_whole_in_completed_alone() -> None:
+    """A fragment of JSON is not a message; the predecessor sends a constrained answer only in
+    `completed`."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["generate", "structured_output"])
+        with client.stream(
+            "POST",
+            f"{BASE}/streaming-chat",
+            json=_chat(responseSchema={"type": "object", "properties": {"a": {"type": "string"}}}),
+        ) as stream:
+            assert stream.status_code == 200
+            body = "".join(stream.iter_text())
+
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in body.split("\n\n")
+        if line.startswith("data: ")
+    ]
+    assert [event["status"] for event in events] == ["completed"]
+    assert isinstance(json.loads(events[0]["data"]["parts"][0]["text"]), dict)
+
+
+@pytest.mark.parametrize("model_id", [0, -1, 2_147_483_648])
+async def test_an_id_no_entry_can_carry_is_model_not_found(model_id: int) -> None:
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app)
+        response = client.post(f"{BASE}/chat", json=_chat(model_id=model_id))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "MODEL_NOT_FOUND"
+
+
+@pytest.mark.parametrize(
+    "path", [f"{BASE}/models", "/v1beta/models/mock-1:generateContent"], ids=["kira", "gemini"]
+)
+async def test_a_401_names_the_scheme_that_would_succeed(path: str) -> None:
+    app = create_app(GatewaySettings(auth_required=True, log_queue_size=0))
+    with TestClient(app) as client:
+        response = (
+            client.get(path)
+            if path.endswith("/models")
+            else client.post(path, json={"contents": [{"parts": [{"text": "x"}]}]})
+        )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"

@@ -86,7 +86,7 @@ async def test_a_model_with_nowhere_to_be_sent_is_refused_and_recorded() -> None
 
     assert gemini.status_code == 400, gemini.text
     assert gemini.json()["error"]["status"] == "FAILED_PRECONDITION"
-    assert kira.status_code == 400, kira.text
+    assert kira.status_code == 422, kira.text
     assert kira.json()["code"] == "MODEL_NOT_FOUND"
     assert [(row.api, row.outcome) for row in rows] == [
         ("gemini", "no_capable_model"),

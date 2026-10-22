@@ -260,7 +260,7 @@ def test_a_lone_surrogate_is_a_caller_error_on_both_surfaces(
 
 
 @pytest.mark.parametrize(
-    ("label", "body", "names"),
+    ("label", "body", "names", "code"),
     [
         (
             "a number JSON has no literal for",
@@ -270,16 +270,19 @@ def test_a_lone_surrogate_is_a_caller_error_on_both_surfaces(
             # status passed with the fix removed, and the mutation harness said so. What changes is
             # *where* it is refused and therefore whether the audit row can be written at all.
             "Infinity",
+            "VALIDATION_ERROR",
         ),
         (
             "a model id wider than the column",
             {"request": {"parts": [{"text": "hi"}]}, "model_id": 999_999_999_999_999_999_999},
-            "model_id",
+            # An id no entry can carry is one nothing has, as the predecessor answers it.
+            "999999999999999999999",
+            "MODEL_NOT_FOUND",
         ),
     ],
 )
 def test_a_value_the_database_cannot_take_is_refused_at_the_boundary(
-    label: str, body: dict[str, object], names: str
+    label: str, body: dict[str, object], names: str, code: str
 ) -> None:
     """Both were **500**s produced by a caller's own number, and one of them went unrecorded.
 
@@ -302,5 +305,5 @@ def test_a_value_the_database_cannot_take_is_refused_at_the_boundary(
         )
 
     assert response.status_code in (400, 422), f"{label}: {response.status_code} {response.text}"
-    assert response.json()["code"] == "VALIDATION_ERROR", response.text
+    assert response.json()["code"] == code, response.text
     assert names in response.text, f"{label}: the refusal does not name the value:\n{response.text}"

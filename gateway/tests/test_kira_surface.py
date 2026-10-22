@@ -845,11 +845,11 @@ async def test_an_ambiguous_model_id_is_refused_rather_than_resolved_by_luck() -
     ("text", "why", "code"),
     [
         (["ok", ""], "an empty element disappears into the join", "VALIDATION_ERROR"),
-        (["ok", "   "], "whitespace contributes nothing either", "EMPTY_EMBEDDING_INPUT"),
+        (["ok", "   "], "whitespace contributes nothing either", "VALIDATION_ERROR"),
         ([""], "a single blank is the same thing with one element", "VALIDATION_ERROR"),
         ([], "an empty list asks for an embedding of nothing", "VALIDATION_ERROR"),
         ("", "and so does a bare empty string", "VALIDATION_ERROR"),
-        ("  ", "a bare blank one too", "EMPTY_EMBEDDING_INPUT"),
+        ("  ", "a bare blank one too", "VALIDATION_ERROR"),
     ],
 )
 async def test_a_blank_embedding_text_is_refused(text: object, why: str, code: str) -> None:
@@ -873,10 +873,9 @@ async def test_a_blank_embedding_text_is_refused(text: object, why: str, code: s
 
     assert response.status_code == 422, f"{why}: {response.text[:200]}"
 
-    # **Each in the predecessor's code** (`FRD-146` FR-15): an *empty* text breaks its field's
-    # length constraint, so the generic `VALIDATION_ERROR`; one that is only whitespace passes that
-    # and is the contract's own `EMPTY_EMBEDDING_INPUT`. A migrating client switches on both, so
-    # asking only whether *some* code is present — as this assertion first did — proves neither.
+    # **In the predecessor's code** (`FRD-146` FR-15): `VALIDATION_ERROR`, empty or only
+    # whitespace, as the predecessor refuses both. Asking only whether *some* code is present — as
+    # this assertion first did — would prove nothing a migrating client switches on.
     assert response.json()["code"] == code, response.text[:200]
 
 

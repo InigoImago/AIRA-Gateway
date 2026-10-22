@@ -51,7 +51,9 @@ CREDENTIAL_METHODS = frozenset({"oidc", "api_key", "demo"})
 
 
 def _unauthenticated(message: str) -> GeminiHTTPError:
-    return GeminiHTTPError(401, message, "UNAUTHENTICATED")
+    # A 401 names the scheme that would succeed (RFC 9110 §15.5.2, RFC 6750 §3); a client library
+    # that reads the header knows to fetch a token rather than to give up.
+    return GeminiHTTPError(401, message, "UNAUTHENTICATED", headers={"WWW-Authenticate": "Bearer"})
 
 
 async def resolve_principal(request: Request) -> Principal | None:

@@ -479,7 +479,7 @@ async def test_a_kira_list_is_one_embedding_and_the_surfaces_differ_deliberately
         ),
         pytest.param(
             {"text": ["ok", "   "], "model_id": LOCAL_EMBED_MODEL_ID},
-            "EMPTY_EMBEDDING_INPUT",
+            "VALIDATION_ERROR",
             id="a-text-of-blanks",
         ),
         pytest.param(
@@ -499,12 +499,11 @@ async def test_kira_embedding_refuses_in_the_predecessors_vocabulary(
 ) -> None:
     """The codes are the predecessor's, so a migrating client keeps switching on the same strings.
 
-    An empty text and a task type that does not exist fail the request's validation there, so they
-    are `VALIDATION_ERROR` here too; a text of blanks passes it and is refused by this surface's
-    own `EMPTY_EMBEDDING_INPUT`. The last case is the interesting one: `RETRIEVAL_QUERY` is a
-    perfectly real task type and this model declares none, so it is refused rather than sent as a
-    field the endpoint would ignore (`FRD-113`). Undeclared means unsupported — absence of
-    information is not permission.
+    An empty or blank text and a task type that does not exist fail the request's validation
+    there, so they are `VALIDATION_ERROR` here too. The last case is the interesting one:
+    `RETRIEVAL_QUERY` is a perfectly real task type and this model declares none, so it is refused
+    rather than sent as a field the endpoint would ignore (`FRD-113`). Undeclared means
+    unsupported — absence of information is not permission.
     """
     response = await governed.kira("/embed", body)
 
