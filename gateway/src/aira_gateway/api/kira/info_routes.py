@@ -7,6 +7,8 @@ only to an operator; `/models` and `/ki-usage` are authenticated.
 
 from __future__ import annotations
 
+import csv
+import io
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -14,8 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
-from aira_common.models import Capability
-from aira_common.permissions import Permission
+from aira_common.models import Capability, ThinkingMode
 from aira_gateway.api.kira import BASE, errors, schemas
 from aira_gateway.api.kira.headers import surface_headers
 from aira_gateway.api.serving import catalog_of, served_models
@@ -27,6 +28,16 @@ from aira_gateway.reporting.service import ReportingService
 from aira_gateway.routes.health import may_see_diagnosis
 
 router = APIRouter(tags=["kira"], prefix=BASE)
+
+#: The predecessor's word for each capability on `/models`, in the order it lists them.
+CAPABILITY_WORDS = (
+    (Capability.GENERATE, "Chat"),
+    (Capability.EMBED, "Embedding"),
+    (Capability.RERANK, "Reranker"),
+)
+
+#: What starts the predecessor's CSV, so a spreadsheet reads it as UTF-8 and not as Latin-1.
+CSV_BOM = "\ufeff"
 
 
 @router.get("/models")
@@ -45,11 +56,9 @@ async def models(request: Request, principal: Principal = Depends(require_princi
         if declaration.numeric_id is None:
             # A KIRA client addresses models by id; without one it cannot call this model.
             continue
-        capabilities = []
-        if declaration.can(Capability.GENERATE):
-            capabilities.append("CHAT")
-        if declaration.can(Capability.EMBED):
-            capabilities.append("EMBEDDING")
+        capabilities = [
+            word for capability, word in CAPABILITY_WORDS if declaration.can(capability)
+        ]
         listed.append(
             schemas.KiModel(
                 id=declaration.numeric_id,
@@ -66,30 +75,43 @@ async def models(request: Request, principal: Principal = Depends(require_princi
                 ),
             )
         )
-    return JSONResponse(
-        [model.model_dump(exclude_none=True) for model in listed], headers=surface_headers(request)
-    )
+    return JSONResponse([_listed(model) for model in listed], headers=surface_headers(request))
+
+
+def _listed(model: schemas.KiModel) -> dict[str, Any]:
+    """One entry as the predecessor writes it: fields that do not apply to the kind are left out,
+    and the thinking block keeps its nulls — a bound nobody declared is ``null`` there, not absent.
+    """
+    entry = model.model_dump(exclude_none=True)
+    if model.thinkingConfig is not None:
+        entry["thinkingConfig"] = model.thinkingConfig.model_dump()
+    return entry
 
 
 def _thinking_config(declaration: ModelDeclaration) -> schemas.ThinkingConfig | None:
     """What `/models` says about a model's thinking.
 
     ``None`` when nothing is declared: an empty config would claim "thinking exists and nothing is
-    allowed" instead of "nobody has said".
+    allowed" instead of "nobody has said". Otherwise every setting the model takes — the control
+    modes and its level words, as the predecessor lists them in one array — and always a default:
+    the declared one, else ``auto``, because a request that names none leaves the model to decide,
+    which is what ``auto`` means.
     """
-    modes = declaration.thinking_modes
-    if not modes:
+    if not declaration.offers_thinking:
         return None
     minimum, maximum = declaration.thinking_bounds
     default = declaration.thinking_default
     return schemas.ThinkingConfig(
-        mode=sorted(str(mode) for mode in modes),
+        mode=[
+            *sorted(str(mode) for mode in declaration.thinking_modes),
+            *declaration.thinking_levels,
+        ],
         minTokens=minimum,
         maxTokens=maximum,
         defaultThinking=(
             schemas.ThinkingSetting(mode=str(default.get("mode")), tokens=default.get("tokens"))
             if default and default.get("mode")
-            else None
+            else schemas.ThinkingSetting(mode=str(ThinkingMode.AUTO))
         ),
     )
 
@@ -176,18 +198,48 @@ async def version_info(request: Request) -> Response:
 
 @router.get("/ki-usage")
 async def ki_usage(request: Request, principal: Principal = Depends(require_principal)) -> Response:
-    """Token consumption per user, from `FRD-601`'s report.
+    """**The caller's own** consumption in a window, one row per model (`FRD-146` FR-21).
 
-    For `report.read_all`, the same visibility rule reporting applies — a second
-    entry point to the same data must not have a second rule (`FRD-602` §5.3).
+    The predecessor's rows — `(user, model)` — narrowed to the one user asking, whatever their role.
+    Another person's figures are the console's reports to show, under their own visibility rules;
+    a second entry point to them would need a second copy of those rules. So nobody needs a
+    permission here beyond being authenticated, and strict data mode has nothing to withhold: it
+    governs who sees *another* person (`FRD-627`). The figures are the record `/v1beta/me/budget`
+    already gives the same caller.
+
+    ``Accept: text/csv`` answers the same rows as CSV with a byte-order mark, as the predecessor's
+    download does, so a spreadsheet opens it as UTF-8.
     """
-    if not principal.allows(Permission.REPORT_READ_ALL):
-        raise errors.KiraError(
-            403,
-            errors.ADMIN_PERMISSION_REQUIRED,
-            "This endpoint needs the permission to read every figure (report.read_all).",
+    start, end = _window(request)
+    person = principal.person
+    rows: list[dict[str, Any]] = []
+    if person:
+        # **Narrowed to this person, or nothing.** `person=None` is the whole installation to the
+        # report, so a credential without a person answers an empty list rather than everybody.
+        service: ReportingService = request.app.state.reporting
+        report = await service.report(None, start, end, person=person)
+        catalog = catalog_of(request)
+        for figures in report["by_model"]:
+            declared = await catalog.declaration(str(figures["key"]))
+            rows.append(
+                schemas.KiUsageRow(
+                    user_id=person,
+                    # 0 for a row no id names — a refusal before any model, a model since removed.
+                    model_id=declared.numeric_id or 0,
+                    entry_count=figures["requests"],
+                    token_input_sum=figures["prompt_tokens"],
+                    token_output_sum=figures["completion_tokens"],
+                ).model_dump()
+            )
+    if "text/csv" in request.headers.get("accept", ""):
+        return Response(
+            _csv(rows), media_type="text/csv; charset=utf-8", headers=surface_headers(request)
         )
+    return JSONResponse(rows, headers=surface_headers(request))
 
+
+def _window(request: Request) -> tuple[datetime, datetime]:
+    """``startDatum``/``endDatum`` as a half-open UTC window, or the predecessor's refusal."""
     start_raw = request.query_params.get("startDatum")
     end_raw = request.query_params.get("endDatum")
     for name, value in (("startDatum", start_raw), ("endDatum", end_raw)):
@@ -197,33 +249,25 @@ async def ki_usage(request: Request, principal: Principal = Depends(require_prin
         start = datetime.fromisoformat(str(start_raw))
         end = datetime.fromisoformat(str(end_raw))
     except ValueError as exc:
-        raise errors.KiraError(400, errors.VALIDATION_ERROR, "Dates must be ISO-8601.") from exc
+        # 422, the predecessor's status: its dates are typed parameters, and a value that does not
+        # parse reaches its validation handler (`FRD-146` FR-15).
+        raise errors.KiraError(422, errors.VALIDATION_ERROR, "Dates must be ISO-8601.") from exc
     if end <= start:
         raise errors.KiraError(
             400, errors.INVALID_TIME_RANGE, "'endDatum' must be after 'startDatum'."
         )
-
-    service: ReportingService = request.app.state.reporting
-    report = await service.report(
-        None,
+    return (
         start if start.tzinfo else start.replace(tzinfo=UTC),
         end if end.tzinfo else end.replace(tzinfo=UTC),
     )
 
-    # The predecessor keys usage by (user, model); the report aggregates the two separately. Rows
-    # are therefore per user with model id 0, rather than a fabricated cross-tabulation. Under
-    # strict data mode a row is a **use case**, its slug in `user_id`, for every caller: usage per
-    # person is what the mode withholds, and the shape stays the one a KIRA client parses
-    # (`FRD-627` FR-6).
-    per = "by_use_case" if request.app.state.settings.strict_data_mode else "by_member"
-    rows: list[dict[str, Any]] = [
-        schemas.KiUsageRow(
-            user_id=str(member["key"] or ""),
-            model_id=0,
-            entry_count=member["requests"],
-            token_input_sum=member["prompt_tokens"],
-            token_output_sum=member["completion_tokens"],
-        ).model_dump()
-        for member in report[per]
-    ]
-    return JSONResponse(rows, headers=surface_headers(request))
+
+def _csv(rows: list[dict[str, Any]]) -> str:
+    """The rows as the predecessor's CSV: a byte-order mark, a header, one line per row."""
+    buffer = io.StringIO()
+    writer = csv.DictWriter(
+        buffer, fieldnames=list(schemas.KiUsageRow.model_fields), lineterminator="\r\n"
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+    return CSV_BOM + buffer.getvalue()

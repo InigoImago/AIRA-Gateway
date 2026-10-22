@@ -105,6 +105,7 @@ def _payload(model: Model) -> dict[str, Any]:
         "attachments": model.attachments,
         "hosting": model.hosting,
         "fixed_sampling": model.fixed_sampling,
+        "default_sampling": model.default_sampling,
         "deprecated": model.deprecated,
         "numeric_id": model.numeric_id,
     }

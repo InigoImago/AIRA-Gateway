@@ -90,6 +90,34 @@ BODIES_ELSEWHERE: dict[str, str] = {
 #: list against the document; a concrete path would never match `{model}` and the comparison would
 #: report every entry as stale.
 BODIES: dict[str, tuple[str, list[Any]]] = {
+    "/kira/api/external/rerank": (
+        "/kira/api/external/rerank",
+        [
+            {},
+            {"model_id": "x"},
+            {"model_id": 1, "query": None, "records": "x"},
+            {"model_id": 1, "query": "q", "records": [None]},
+            {"model_id": 1, "query": "q", "records": [{"id": 1, "title": [], "content": {}}]},
+            {"model_id": 10**30, "query": "q", "records": []},
+            {
+                "model_id": 1,
+                "query": "\x00",
+                "records": [{"id": "a", "title": "t", "content": "c"}],
+            },
+        ],
+    ),
+    "/v1/projects/{project}/locations/{location}/rankingConfigs/{config}:rank": (
+        "/v1/projects/p/locations/global/rankingConfigs/c:rank",
+        [
+            {},
+            {"model": 5},
+            {"model": "m", "query": "q", "records": [{}]},
+            {"model": "m", "query": "q", "records": [], "topN": "x"},
+            {"model": "m", "query": "q", "records": [{"id": "a"}], "topN": -1},
+            {"model": "\x00", "query": "q", "records": [{"id": "a", "title": "t"}]},
+            {"model": "m" * 4000, "query": "q", "records": [{"id": "a", "title": "t"}]},
+        ],
+    ),
     "/v1beta/suspensions": (
         "/v1beta/suspensions",
         [

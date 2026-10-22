@@ -17,7 +17,9 @@ from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalEmbeddingRequest,
     CanonicalRequest,
+    CanonicalRerankRequest,
     CanonicalResponse,
+    RankedRecords,
 )
 from aira_gateway.upstreams.diagnosis import Diagnosis
 
@@ -269,6 +271,22 @@ class Countable(Protocol):
 def can_count(upstream: object) -> TypeIs[Countable]:
     """Whether ``upstream``'s vendor can be asked for a count rather than left unknown."""
     return isinstance(upstream, Countable)
+
+
+@runtime_checkable
+class Ranks(Protocol):
+    """An adapter that can order records against a query (`FRD-147`).
+
+    Its own protocol, not a method every adapter carries: ranking is one platform's API, and an
+    adapter without it is refused by name before anything is spent rather than asked and failing.
+    """
+
+    async def rerank(self, request: CanonicalRerankRequest) -> RankedRecords: ...
+
+
+def can_rank(upstream: object) -> TypeIs[Ranks]:
+    """Whether ``upstream`` can be sent a ranking request at all."""
+    return isinstance(upstream, Ranks)
 
 
 @runtime_checkable

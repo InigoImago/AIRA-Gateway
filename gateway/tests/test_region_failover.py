@@ -141,8 +141,10 @@ async def test_the_answer_carries_the_region_that_produced_it() -> None:
         def __init__(self) -> None:
             self.posted: list[str] = []
 
-        def url(self, *, region: str, publisher: str, model: str, method: str) -> str:
-            return f"https://{region}/{model}:{method}"
+        def url(
+            self, *, region: str, publisher: str, model: str, method: str, wire_model: str = ""
+        ) -> str:
+            return f"https://{region}/{wire_model or model}:{method}"
 
         async def post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
             self.posted.append(url)
@@ -167,8 +169,10 @@ async def test_one_region_still_reports_where_it_was_served() -> None:
     requests that failed over — which reads as *"everything else went to the default"*."""
 
     class _Answers:
-        def url(self, *, region: str, publisher: str, model: str, method: str) -> str:
-            return f"https://{region}/{model}:{method}"
+        def url(
+            self, *, region: str, publisher: str, model: str, method: str, wire_model: str = ""
+        ) -> str:
+            return f"https://{region}/{wire_model or model}:{method}"
 
         async def post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
             return {

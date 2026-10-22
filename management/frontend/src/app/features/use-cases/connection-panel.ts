@@ -108,8 +108,8 @@ export class ConnectionPanel {
         name,
         // `?? null` rather than `?? 0`: a model without a number has none, and zero is a number.
         kiraId: entry?.id ?? null,
-        kiraGenerates: capabilities.includes('CHAT'),
-        kiraEmbeds: capabilities.includes('EMBEDDING'),
+        kiraGenerates: capabilities.includes('Chat'),
+        kiraEmbeds: capabilities.includes('Embedding'),
         generates: own ? own.includes('generate') : null,
         embeds: own ? own.includes('embed') : null,
       };

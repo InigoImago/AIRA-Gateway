@@ -47,6 +47,8 @@ from aira_gateway.api.serving.context import (
 )
 from aira_gateway.api.serving.controls import (
     EMBEDDING_METHODS,
+    NotAReranker,
+    ToolsNotPermitted,
     check_declaration,
     enforce_pre_dispatch,
     estimate,
@@ -64,6 +66,7 @@ from aira_gateway.api.serving.prepare import (
     Prepared,
     fitting,
     prepare_for_dispatch,
+    rank,
     requirements_for,
     resolve_direct_target,
 )
@@ -85,7 +88,9 @@ __all__ = [
     "Accounting",
     "Prepared",
     "StreamAccounting",
+    "NotAReranker",
     "StreamedNotice",
+    "ToolsNotPermitted",
     "_rewritten_body",
     "accounting",
     "annotate",
@@ -106,6 +111,7 @@ __all__ = [
     "json_body",
     "notice_outcome",
     "prepare_for_dispatch",
+    "rank",
     "provenance",
     "record_pipeline_calls",
     "record_refusal",

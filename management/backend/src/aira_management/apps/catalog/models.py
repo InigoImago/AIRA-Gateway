@@ -119,6 +119,11 @@ class Model(models.Model):
     #: names it keeps today's behaviour.
     fixed_sampling = models.BooleanField(default=False)
 
+    #: ``{"top_p": x, "top_k": n}``, either or both: applied where the caller sets that control
+    #: itself not at all (`FRD-146` FR-20). Empty means the model's own defaults — nothing is set
+    #: on the caller's behalf unless an administrator decided it here.
+    default_sampling = models.JSONField(null=True, blank=True)
+
     #: Warns, never blocks — blocking is FRD-307's revocation, so a retirement can be announced
     #: before it is performed.
     deprecated = models.BooleanField(default=False)

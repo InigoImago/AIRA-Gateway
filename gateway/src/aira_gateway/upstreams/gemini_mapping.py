@@ -290,9 +290,12 @@ def speech_fields(speech: Speech) -> dict[str, Any]:
 
 
 def canonical_to_gemini_embedding(request: CanonicalEmbeddingRequest) -> dict[str, Any]:
-    """One text → an ``embedContent`` body. Batches wrap these in ``requests``."""
-    body: dict[str, Any] = {"content": {"parts": [{"text": request.texts[0]}]}}
-    if request.task_type is not None:
+    """One embedding → an ``embedContent`` body: one text, or every text as a part of one content
+    where the request is one embedding (``aggregate``, `FRD-146` FR-8). Batches wrap these in
+    ``requests``. A task already written into the text is not sent again as a field."""
+    texts = request.texts if request.aggregate else request.texts[:1]
+    body: dict[str, Any] = {"content": {"parts": [{"text": text} for text in texts]}}
+    if request.task_type is not None and not request.task_in_text:
         body["taskType"] = request.task_type
     if request.dimensions is not None:
         body["outputDimensionality"] = request.dimensions

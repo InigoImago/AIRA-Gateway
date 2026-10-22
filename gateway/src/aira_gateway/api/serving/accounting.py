@@ -25,7 +25,7 @@ from aira_gateway.api.serving.counting import Unreported, count_unreported, floo
 from aira_gateway.api.serving.prepare import Prepared
 from aira_gateway.api.serving.refusals import REFUSALS, caller_message, refusal_outcome
 from aira_gateway.audit import AuditTrail, Outcome, UsageBasis, decision_summary, tool_summary
-from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
+from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage, RankedRecords
 from aira_gateway.embedding import describe_vectors
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import passed_over_by
@@ -110,6 +110,28 @@ class Accounting:
         self.served(model, usage, {"vectors": describe_vectors(vectors)})
         self.requests = units
         region = getattr(vectors, "served_region", "")
+        if region and self.trail is not None:
+            self.trail.served_region = region
+
+    def ranked(self, model: str, *, units: int, records: RankedRecords) -> None:
+        """A ranking, booked in the provider's unit (`FRD-147` FR-7): ``units`` queries of up to a
+        hundred records, as requests and as the input figure the entry's price applies to. The row
+        keeps how many records came back and their scores' range — never the records, whatever the
+        surface sent."""
+        scores = [record.score for record in records]
+        self.served(
+            model,
+            CanonicalUsage(prompt_tokens=units, completion_tokens=0),
+            {
+                "records": {
+                    "count": len(records),
+                    "best": max(scores) if scores else None,
+                    "worst": min(scores) if scores else None,
+                }
+            },
+        )
+        self.requests = units
+        region = getattr(records, "served_region", "")
         if region and self.trail is not None:
             self.trail.served_region = region
 

@@ -27,8 +27,16 @@ Mounted at **`/v1beta`**, with Google's colon-verb convention:
 | `POST /v1beta/models/{model}:embedContent` · `:batchEmbedContents` | vectors |
 | `GET /v1beta/models` · `GET /v1beta/models/{model}` | the catalog |
 | `GET /v1beta/me/budget` | not Google's: what the calling credential is allowed, and what is left of it |
+| `POST /v1/projects/{project}/locations/{location}/rankingConfigs/{config}:rank` | Google's ranking API: records ordered against a query and scored |
 
 Any other verb — `:countTokens`, for one — is answered `400` *"Unknown method"*.
+
+**Ranking** is served on Google's own path, so Google's ranking client works with only its endpoint
+changed, and an API key or token of the gateway as its credential. `model` is required and names a
+catalogue entry declared a reranker; the project, location and configuration in the path select
+nothing — the gateway ranks in its own Google project, at the locations the catalogue gives the
+model, for the use case the request belongs to. A ranking weighs one request per hundred records
+against the use case's rate limit and budget.
 
 The credential goes in `x-goog-api-key`, `?key=` or a bearer header — whichever your client already
 uses. Errors keep Google's envelope, `{"error": {"code": …, "message": …, "status": …}}`, so a

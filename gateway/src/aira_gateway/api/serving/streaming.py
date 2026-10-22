@@ -105,6 +105,11 @@ class StreamAccounting:
         """The text the caller has been sent so far, notice included."""
         return "".join(self._parts)
 
+    @property
+    def calls(self) -> tuple[ToolCallPart, ...]:
+        """The function calls the stream completed so far, in order."""
+        return tuple(self._calls)
+
     def take(self, chunk: CanonicalChunk) -> CanonicalChunk:
         """Account for one chunk, and return it as the caller is to receive it."""
         if chunk.usage is not None:

@@ -14,9 +14,9 @@ describe('ConnectionPanel', () => {
   let fixture: ComponentFixture<ConnectionPanel>;
 
   const KIRA_MODELS: KiraModel[] = [
-    { id: 9001, name: 'chat-model', capabilities: ['CHAT'] },
-    { id: 9002, name: 'embed-model', capabilities: ['EMBEDDING'] },
-    { id: 9003, name: 'not-released', capabilities: ['CHAT'] },
+    { id: 9001, name: 'chat-model', capabilities: ['Chat'] },
+    { id: 9002, name: 'embed-model', capabilities: ['Embedding'] },
+    { id: 9003, name: 'not-released', capabilities: ['Chat'] },
   ];
 
   function build(released: string[]): void {
@@ -37,8 +37,8 @@ describe('ConnectionPanel', () => {
       models.map((model) => ({
         name: model.name,
         capabilities: [
-          ...(model.capabilities.includes('CHAT') ? (['generate'] as const) : []),
-          ...(model.capabilities.includes('EMBEDDING') ? (['embed'] as const) : []),
+          ...(model.capabilities.includes('Chat') ? (['generate'] as const) : []),
+          ...(model.capabilities.includes('Embedding') ? (['embed'] as const) : []),
         ],
       })),
     );
@@ -163,7 +163,7 @@ describe('ConnectionPanel', () => {
 
   it('does not claim a model is unserved when it may simply have no KIRA number', () => {
     build(['chat-model']);
-    answer([{ id: 9001, name: 'somebody-else', capabilities: ['CHAT'] }]);
+    answer([{ id: 9001, name: 'somebody-else', capabilities: ['Chat'] }]);
     open('kira');
 
     // An entry absent from the KIRA listing is either no id or not served; the panel cannot tell.
@@ -323,7 +323,7 @@ describe('ConnectionPanel', () => {
 
   it('puts a model that both generates and embeds into both examples', () => {
     build(['both-model']);
-    answer([{ id: 9005, name: 'both-model', capabilities: ['CHAT', 'EMBEDDING'] }]);
+    answer([{ id: 9005, name: 'both-model', capabilities: ['Chat', 'Embedding'] }]);
 
     expect(testid('connection-gemini-chat')?.textContent).toContain('both-model:generateContent');
     expect(testid('connection-gemini-embed')?.textContent).toContain('both-model:embedContent');
@@ -332,7 +332,7 @@ describe('ConnectionPanel', () => {
 
   it('gives no KIRA embedding example for an embedding model without an id', () => {
     build(['embed-model']);
-    answer([{ id: 0, name: 'other', capabilities: ['CHAT'] }]);
+    answer([{ id: 0, name: 'other', capabilities: ['Chat'] }]);
     open('kira');
 
     // The embedding model is released and the gateway knows nothing about it, so neither example

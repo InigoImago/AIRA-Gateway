@@ -49,6 +49,12 @@ _MULTI_REGION_HOSTS = {
     "global": "aiplatform.googleapis.com",
 }
 
+#: Where Google serves the ranking API (`FRD-147`): the Discovery Engine, not Vertex. `global` has
+#: the bare host; a multi-region has its own, as Google names them.
+RANKING_HOST = "discoveryengine.googleapis.com"
+#: The ranking configuration every project has; the model is named in the body.
+RANKING_CONFIG = "default_ranking_config"
+
 #: Where Agent Platform serves its managed open models (`FRD-115` FR-2a): one OpenAI-compatible path
 #: for every publisher, the model named in the body rather than in the path.
 OPEN_MODELS_PATH = "endpoints/openapi/chat/completions"
@@ -89,11 +95,19 @@ class VertexTransport:
         #: Regions single models are permitted by name (`AIRA_ALLOWED_MODEL_REGIONS`).
         self._model_regions = dict(model_regions or {})
 
-    def url(self, *, region: str, publisher: str, model: str, method: str) -> str:
+    def url(
+        self, *, region: str, publisher: str, model: str, method: str, wire_model: str = ""
+    ) -> str:
+        """``model``'s URL for ``method`` in ``region``.
+
+        ``model`` is the catalogue's name, and residency is checked for it — a region permitted by
+        name is permitted to that entry (`ADR-0034`). ``wire_model`` is the name Google knows, where
+        the entry is an alias of another model (`FRD-146` FR-10); the URL carries that one.
+        """
         self._check(region, model)
         # **Percent-encoded as one segment**, so `/`, `..` or `%2f` in a model name cannot change
         # the path. `@` stays literal for Anthropic's `@version` suffix; RFC 3986 allows it.
-        segment = quote(model, safe="@")
+        segment = quote(wire_model or model, safe="@")
         return (
             f"https://{host_for(region)}/v1/projects/{self._project}"
             f"/locations/{region}/publishers/{publisher}/models/{segment}:{method}"
@@ -108,11 +122,29 @@ class VertexTransport:
             f"/locations/{region}/{OPEN_MODELS_PATH}"
         )
 
+    def ranking_url(self, *, location: str, model: str) -> str:
+        """The ranking API in ``location``. Residency is checked for ``model`` exactly as `url`
+        checks it: the model is named in the body, but the records still go there."""
+        self._check(location, model)
+        host = RANKING_HOST if location == "global" else f"{location}-{RANKING_HOST}"
+        return (
+            f"https://{host}/v1/projects/{self._project}/locations/{location}"
+            f"/rankingConfigs/{RANKING_CONFIG}:rank"
+        )
+
+    @property
+    def project(self) -> str:
+        """The project every call is made in and billed to."""
+        return self._project
+
     def _check(self, region: str, model: str) -> None:
         check_region(region, self._allowed, model=model, for_models=self._model_regions)
 
-    async def post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
-        headers = await self._headers()
+    async def post(
+        self, url: str, body: dict[str, Any], *, headers: Mapping[str, str] | None = None
+    ) -> dict[str, Any]:
+        """POST ``body``, with the credential and any ``headers`` a service asks for besides."""
+        headers = {**await self._headers(), **(headers or {})}
         try:
             response = await self._client.post(url, json=body, headers=headers)
         except httpx.HTTPError as exc:

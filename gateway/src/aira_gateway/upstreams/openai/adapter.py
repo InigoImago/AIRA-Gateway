@@ -22,7 +22,12 @@ from aira_gateway.core.canonical import (
     EmbeddingVectors,
 )
 from aira_gateway.core.schema import ResponseSchema
-from aira_gateway.upstreams.base import ModelNotListed, OfferedModel, UpstreamModel
+from aira_gateway.upstreams.base import (
+    DialectUnsupported,
+    ModelNotListed,
+    OfferedModel,
+    UpstreamModel,
+)
 from aira_gateway.upstreams.exchange import sse_payloads
 from aira_gateway.upstreams.openai.mapping import (
     SAMPLING as OPENAI_SAMPLING,
@@ -194,6 +199,12 @@ class OpenAIAdapter:
                     yield chunk
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> EmbeddingVectors:
+        if request.aggregate and request.size > 1:
+            # OpenAI's `input` is one vector per entry; it has no way to say "these are one".
+            raise DialectUnsupported(
+                f"Model '{request.model}' embeds one text per vector; it cannot embed "
+                f"{request.size} texts as one."
+            )
         body = self._named(canonical_to_openai_embedding(request), request.model)
         data = await self._transport.post(self._routes.embed(request.model), body)
         return embedding_values(data)

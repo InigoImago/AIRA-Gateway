@@ -109,6 +109,11 @@ export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
       value: model.fixed_sampling ? 'yes — temperature, top_p and top_k are not sent' : 'no',
     },
     {
+      key: 'default_sampling',
+      label: 'Sampling defaults',
+      value: model.default_sampling ? json(model.default_sampling) : "none — the model's own",
+    },
+    {
       key: 'input_price',
       label: `Input ${perMillion(currency)}`,
       value: model.is_priced ? dash(model.input_price_per_million) : 'no price',

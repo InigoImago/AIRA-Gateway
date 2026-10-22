@@ -200,7 +200,7 @@ own proxy at `http://localhost:4200/gw/…` if that is easier to reach from wher
 
 | Surface | Base URL | Verbs |
 |---|---|---|
-| KIRA compatibility | `http://localhost:8001/kira/api/external` | `POST /chat`, `POST /streaming-chat`, `POST /embed`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage` |
+| KIRA compatibility | `http://localhost:8001/kira/api/external` | `POST /chat`, `POST /streaming-chat`, `POST /embed`, `POST /rerank`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage` |
 | Gemini dialect | `http://localhost:8001/v1beta` | `GET /models`, `POST /models/{model}:generateContent`, `:streamGenerateContent`, `:embedContent`, `:batchEmbedContents` |
 
 ### With an API key — the quickest test
@@ -328,8 +328,8 @@ Which is what the gateway reads: `usecases_from_group_paths(['/use-cases/entwick
 `AIRA_ROLE_GROUPS` — semicolon-separated, full paths, e.g. `it-security=/aira/it-security` — and a
 role an installation defines through the group bound to it in the console. A caller in
 `/use-cases/entwicklung` and nothing else holds no role, which is correct: use-case membership is
-not oversight. Without the groups mapper there are no roles at all, so `GET /ki-usage`, which needs
-`report.read_all`, refuses even a caller in a group that confers it.
+not oversight. Without the groups mapper there are no roles at all, so a permission such as
+`report.read_all` does not reach even a caller in a group that confers it.
 
 #### Getting a token and calling with it
 

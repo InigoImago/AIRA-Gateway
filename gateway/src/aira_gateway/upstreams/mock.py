@@ -21,10 +21,13 @@ from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalEmbeddingRequest,
     CanonicalRequest,
+    CanonicalRerankRequest,
     CanonicalResponse,
     CanonicalUsage,
     DataPart,
     FinishReason,
+    RankedRecord,
+    RankedRecords,
     ToolCallPart,
     ToolMode,
 )
@@ -268,7 +271,33 @@ class MockProvider:
         produce different vectors without a cloud call.
         """
         dimensions = request.dimensions or _DEFAULT_DIMENSIONS
-        return [self._vector(text, request.task_type, dimensions) for text in request.texts]
+        # A task written into the text is part of the text, as it is to the real model.
+        task = None if request.task_in_text else request.task_type
+        if request.aggregate:
+            # One vector for every part together, as Google combines the parts of one content.
+            return [self._vector("\x1f".join(request.texts), task, dimensions)]
+        return [self._vector(text, task, dimensions) for text in request.texts]
+
+    async def rerank(self, request: CanonicalRerankRequest) -> RankedRecords:
+        """Each record scored by how many of the query's words it contains, best first.
+
+        Deterministic and visibly an ordering, so the demo shows one and a test can name it. Ties
+        keep the order sent.
+        """
+        words = set(request.query.lower().split())
+        scored = sorted(
+            (
+                RankedRecord(
+                    id=record.id,
+                    score=_overlap(words, f"{record.title} {record.content}"),
+                    title=None if request.ids_only else record.title or None,
+                    content=None if request.ids_only else record.content or None,
+                )
+                for record in request.records
+            ),
+            key=lambda record: -record.score,
+        )
+        return RankedRecords(scored[: request.top_n] if request.top_n else scored)
 
     @staticmethod
     def _vector(text: str, task_type: str | None, dimensions: int) -> list[float]:
@@ -283,6 +312,14 @@ class MockProvider:
         attachment_tokens = sum(part.size // 4 for part in request.attachments)
         words = sum(len(message.text.split()) for message in request.messages)
         return words + attachment_tokens
+
+
+def _overlap(words: set[str], text: str) -> float:
+    """The share of ``words`` that ``text`` contains, from 0 to 1."""
+    if not words:
+        return 0.0
+    found = set(text.lower().split())
+    return round(len(words & found) / len(words), 4)
 
 
 def _thinks_aloud(request: CanonicalRequest) -> bool:

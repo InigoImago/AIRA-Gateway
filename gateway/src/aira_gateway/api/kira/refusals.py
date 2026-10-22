@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.kira import errors
-from aira_gateway.api.serving import REFUSALS, upstream_status
+from aira_gateway.api.serving import REFUSALS, NotAReranker, ToolsNotPermitted, upstream_status
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.core.schema import SchemaRejected
@@ -43,7 +43,15 @@ def refusal_response(exc: Exception) -> JSONResponse:
         # These carry the contract's own codes (`INVALID_THINKING_MODE`, …).
         return errors.kira_error_response(422, exc.code, exc.message)
     if isinstance(exc, AttachmentRejected | SchemaRejected):
-        return errors.kira_error_response(400, errors.VALIDATION_ERROR, str(exc))
+        # 422, the predecessor's status for a type nobody accepts and a schema it cannot read: both
+        # are a field of a well-formed body that is wrong (`FRD-146` FR-15).
+        return errors.kira_error_response(422, errors.VALIDATION_ERROR, str(exc))
+    if isinstance(exc, NotAReranker):
+        # The contract's own code for a model that does not rank (`FRD-147` FR-4).
+        return errors.kira_error_response(422, errors.NO_RERANKER_CAPABILITIES, exc.message)
+    if isinstance(exc, ToolsNotPermitted):
+        # The contract's code for a tool configuration it does not accept (`FRD-146` FR-6).
+        return errors.kira_error_response(422, errors.INVALID_TOOL_CONFIGURATION, exc.message)
     if isinstance(exc, GeminiHTTPError) and exc.code == 404:
         # Every 404 of the shared layer is a model nothing serves — the same fact the numeric-id
         # lookup reports, so it answers the same way.
@@ -73,9 +81,12 @@ def refusal_response(exc: Exception) -> JSONResponse:
         # Nowhere this installation may send the model: the name serves nothing here.
         return errors.kira_error_response(400, errors.MODEL_NOT_FOUND, str(exc))
     if isinstance(exc, UpstreamError):
-        code = upstream_status(exc.status_code)[0]
-        name = (
-            errors.EXTERNAL_KI_API_TOO_MANY_REQUEST if code == 429 else errors.EXTERNAL_KI_API_ERROR
-        )
-        return errors.kira_error_response(code, name, exc.message)
+        # **One status for every provider failure but one**, as the predecessor answers: `502`, and
+        # `429` where the provider asked the caller to slow down, which is the one a client acts on
+        # differently (`FRD-146` FR-16). What the provider said stays in the message.
+        if upstream_status(exc.status_code)[0] == 429:
+            return errors.kira_error_response(
+                429, errors.EXTERNAL_KI_API_TOO_MANY_REQUEST, exc.message
+            )
+        return errors.kira_error_response(502, errors.EXTERNAL_KI_API_ERROR, exc.message)
     return errors.kira_error_response(500, errors.INTERNAL_SERVER_ERROR, "Internal server error.")

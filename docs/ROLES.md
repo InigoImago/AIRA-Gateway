@@ -150,7 +150,7 @@ installation setting, not a use case's, so no administrator can lift it. While i
   prompt and response is offered only to the two roles that can read it.
 - **Figures split by person** — on the reporting screen and its export — carry only the reader's
   own row, and the reporting screen does not offer a breakdown by member. KIRA's `ki-usage`
-  reports one row per use case instead of per person, to every caller.
+  answers every caller about themselves only, one row per model.
   `report.read_all` is no exemption: IT Steuerung sees every total and every breakdown, and no
   person. Totals and breakdowns by use case, model and outcome stay for everybody.
 - **No latency per person** is computed for anybody. How fast a model answers stays, per model.

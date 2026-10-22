@@ -168,10 +168,14 @@ def test_they_arrive_as_one_part_not_several() -> None:
     assert len(canonical.messages[-1].parts) == 1
 
 
-def test_an_attachment_keeps_the_prose_in_its_place() -> None:
-    """Only *runs* of text are merged. Joining every text part regardless would pull the prose
-    after a document in front of it, which changes what the model is being asked about — a
-    reordering is a quieter version of the very defect this fix is for."""
+def test_a_turn_is_its_documents_then_its_text_as_the_predecessor_builds_it() -> None:
+    """**The predecessor's order, not the order sent** (`FRD-146` FR-18).
+
+    This test used to pin the opposite — runs of text kept around the document — on the argument
+    that a reordering changes what the model is asked. It does, which is exactly why the
+    predecessor's order is the one to keep: it puts every document first and the text after it,
+    so a migrating client's prompts were written, and tuned, against that order. The texts are
+    still joined with the chat separator."""
     request = schemas.ChatRequest.model_validate(
         {
             "request": {
@@ -187,7 +191,8 @@ def test_an_attachment_keeps_the_prose_in_its_place() -> None:
 
     parts = to_canonical(request, "mock-1").messages[-1].parts
 
-    assert [type(part).__name__ for part in parts] == ["TextPart", "DataPart", "TextPart"]
+    assert [type(part).__name__ for part in parts] == ["DataPart", "TextPart"]
+    assert parts[1].text == "davor\ndanach"  # type: ignore[union-attr]
 
 
 # == a text part carries text, and nothing is converted on the way through =======================
@@ -278,7 +283,7 @@ def test_the_refusal_reaches_the_caller_as_this_surfaces_envelope(client: TestCl
     # `loc` names the field pydantic was validating; the part index rides in the message, which
     # is how the neighbouring "either text or mime_type" rule already reports and what a
     # migrating client's error display already handles.
-    assert body["details"][0]["loc"] == ["request"]
+    assert body["details"][0]["loc"] == ["body", "request"]
     assert "parts[0]" in body["details"][0]["msg"], "the refusal must point at the part"
     # The caller's own value never comes back out. It is their content, this body goes into logs
     # and screens, and echoing it is how a refusal becomes a second copy of the thing refused.

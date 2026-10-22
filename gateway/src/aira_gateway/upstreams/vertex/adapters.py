@@ -21,9 +21,12 @@ from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalEmbeddingRequest,
     CanonicalRequest,
+    CanonicalRerankRequest,
     CanonicalResponse,
     EmbeddingVectors,
+    RankedRecords,
     Thinking,
+    wire_name,
 )
 from aira_gateway.core.schema import ResponseSchema
 from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError, UpstreamModel
@@ -58,10 +61,15 @@ from aira_gateway.upstreams.vertex.anthropic_mapping import (
     schema_refusal as anthropic_schema_refusal,
 )
 from aira_gateway.upstreams.vertex.embedding_mapping import (
+    embed_content_body,
+    embed_content_tokens,
+    embed_content_values,
+    embeds_content,
     predict_body,
     predict_tokens,
     predict_values,
 )
+from aira_gateway.upstreams.vertex.ranking_mapping import rank_body, ranked
 from aira_gateway.upstreams.vertex.regions import (
     VertexModel,
     _across_regions,
@@ -149,7 +157,13 @@ class _VertexAdapter:
     def _url(self, model: str, method: str, addressing: dict[str, Any] | None = None) -> str:
         """That place's URL for ``method``."""
         region, publisher = self._place(model, addressing)
-        return self._transport.url(region=region, publisher=publisher, model=model, method=method)
+        return self._transport.url(
+            region=region,
+            publisher=publisher,
+            model=model,
+            method=method,
+            wire_model=wire_name(model, addressing or {}),
+        )
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
         """**Failover ends at the first chunk**: the chain is walked while opening, and once a chunk
@@ -218,7 +232,11 @@ class VertexGeminiAdapter(_VertexAdapter):
             ((where, who) for where, who in targets if where == region), targets[0]
         )
         url = self._transport.url(
-            region=place, publisher=publisher, model=request.model, method="countTokens"
+            region=place,
+            publisher=publisher,
+            model=request.model,
+            method="countTokens",
+            wire_model=wire_name(request.model, request.addressing),
         )
         data = await self._transport.post(
             url, count_tokens_body(canonical_to_gemini_request(request))
@@ -233,7 +251,11 @@ class VertexGeminiAdapter(_VertexAdapter):
 
         async def attempt(region: str, publisher: str) -> CanonicalResponse:
             url = self._transport.url(
-                region=region, publisher=publisher, model=request.model, method="generateContent"
+                region=region,
+                publisher=publisher,
+                model=request.model,
+                method="generateContent",
+                wire_model=wire_name(request.model, request.addressing),
             )
             data = await self._transport.post(url, body)
             answer = gemini_response_to_canonical(data, request.model)
@@ -252,6 +274,7 @@ class VertexGeminiAdapter(_VertexAdapter):
                 publisher=publisher,
                 model=request.model,
                 method="streamGenerateContent",
+                wire_model=wire_name(request.model, request.addressing),
             )
             return await _open_stream(
                 self._transport,
@@ -264,27 +287,71 @@ class VertexGeminiAdapter(_VertexAdapter):
         return attempt
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
-        """Through `:predict`, one text per call, in the caller's order (`embedding_mapping`).
+        """In the caller's order, by the method the model takes (`embedding_mapping`).
 
-        Embeddings take the regional chain too: a batch refused for want of quota is exactly what
-        failover is for.
+        `:predict`, one text per call, for the models that take a `task_type`; `:embedContent` for
+        those that take their task in the text (`FRD-146` FR-8) — one call with every text as a part
+        of one content where the request is **one** embedding (``aggregate``), one call per text
+        otherwise. Embeddings take the regional chain too: a batch refused for want of quota is
+        exactly what failover is for.
         """
+        wire = wire_name(request.model, request.addressing)
+        method = "embedContent" if embeds_content(wire) else "predict"
 
         async def attempt(region: str, publisher: str) -> EmbeddingVectors:
             url = self._transport.url(
-                region=region, publisher=publisher, model=request.model, method="predict"
+                region=region,
+                publisher=publisher,
+                model=request.model,
+                method=method,
+                wire_model=wire,
             )
-            answers = [
-                await self._transport.post(url, predict_body(request, text))
-                for text in request.texts
-            ]
-            counts = [predict_tokens(answer) for answer in answers]
+            if method == "embedContent":
+                groups = (
+                    [request.texts] if request.aggregate else [[text] for text in request.texts]
+                )
+                answers = [
+                    await self._transport.post(url, embed_content_body(request, group))
+                    for group in groups
+                ]
+                values = [embed_content_values(answer) for answer in answers]
+                counts = [embed_content_tokens(answer) for answer in answers]
+            else:
+                if request.aggregate and request.size > 1:
+                    # `:predict` takes one text and no parts, so several cannot be one embedding;
+                    # embedding one of them would be the wrong vector under a 200.
+                    raise DialectUnsupported(
+                        f"Model '{request.model}' embeds one text per vector; it cannot embed "
+                        f"{request.size} texts as one."
+                    )
+                answers = [
+                    await self._transport.post(url, predict_body(request, text))
+                    for text in request.texts
+                ]
+                values = [predict_values(answer) for answer in answers]
+                counts = [predict_tokens(answer) for answer in answers]
             # Where it was answered and what it cost, for the audit row and the price.
             return EmbeddingVectors(
-                (predict_values(answer) for answer in answers),
+                values,
                 served_region=region,
                 input_tokens=None if None in counts else sum(count or 0 for count in counts),
             )
+
+        return await _across_regions(self._targets_for(request.model, request.addressing), attempt)
+
+    async def rerank(self, request: CanonicalRerankRequest) -> RankedRecords:
+        """Through Google's ranking API (`ranking_mapping`), at the locations the catalogue names,
+        tried in order like any region. The project pays: Google bills the call to the project in
+        `X-Goog-User-Project`, which it requires."""
+        body = rank_body(request, wire_name(request.model, request.addressing))
+
+        async def attempt(location: str, publisher: str) -> RankedRecords:
+            del publisher  # the ranking API is no publisher's
+            url = self._transport.ranking_url(location=location, model=request.model)
+            data = await self._transport.post(
+                url, body, headers={"X-Goog-User-Project": self._transport.project}
+            )
+            return RankedRecords(ranked(data, request), served_region=location)
 
         return await _across_regions(self._targets_for(request.model, request.addressing), attempt)
 
@@ -327,7 +394,11 @@ class VertexAnthropicAdapter(_VertexAdapter):
 
         async def attempt(region: str, publisher: str) -> CanonicalResponse:
             url = self._transport.url(
-                region=region, publisher=publisher, model=request.model, method="rawPredict"
+                region=region,
+                publisher=publisher,
+                model=request.model,
+                method="rawPredict",
+                wire_model=wire_name(request.model, request.addressing),
             )
             data = await self._transport.post(url, body)
             # Told whether a schema was asked for, so an answer that is not the document is
@@ -352,6 +423,7 @@ class VertexAnthropicAdapter(_VertexAdapter):
                 publisher=publisher,
                 model=request.model,
                 method="streamRawPredict",
+                wire_model=wire_name(request.model, request.addressing),
             )
             # A fresh assembler per attempt: it accumulates tool calls across events.
             return await _open_stream(

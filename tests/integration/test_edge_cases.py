@@ -747,8 +747,8 @@ async def test_the_kira_surface_refuses_in_the_predecessors_shape(
 @pytest.mark.parametrize(
     ("extra", "code"),
     [
-        pytest.param({"maxTokens": 0}, kira_errors.INVALID_MAX_TOKENS, id="no tokens"),
-        pytest.param({"maxTokens": -5}, kira_errors.INVALID_MAX_TOKENS, id="negative tokens"),
+        pytest.param({"maxTokens": 0}, kira_errors.VALIDATION_ERROR, id="no tokens"),
+        pytest.param({"maxTokens": -5}, kira_errors.VALIDATION_ERROR, id="negative tokens"),
     ],
 )
 async def test_the_kira_surface_checks_what_the_catalogue_says_about_the_model(

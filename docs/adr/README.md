@@ -49,3 +49,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0036 | [Strict data mode is an installation default, decided on read](ADR-0036-strict-data-mode-is-an-installation-default.md) | **Accepted** | 2026-10-15 |
 | 0037 | [Google is reached without a Google key, through the installation's own identity](ADR-0037-google-without-a-google-key.md) | **Accepted** | 2026-10-17 |
 | 0038 | [A catalog entry starts from a public model list, and is still decided by a person](ADR-0038-the-catalog-starts-from-a-public-model-list.md) | **Accepted** | 2026-10-17 |
+| 0039 | [Reranking is a capability of the core, served on both surfaces](ADR-0039-reranking-is-a-capability-of-the-core.md) | **Accepted** | 2026-10-21 |

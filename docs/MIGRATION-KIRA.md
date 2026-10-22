@@ -25,12 +25,13 @@ field names, response shapes and error codes:
 
 | | |
 |---|---|
-| `POST /kira/api/external/chat` | one answer |
-| `POST /kira/api/external/streaming-chat` | SSE, `status: update` … then `status: completed` |
+| `POST /kira/api/external/chat` | one answer; functions declared in `tools` come back as `function_call` parts |
+| `POST /kira/api/external/streaming-chat` | SSE, `status: update` …, a `status: function_call` per call, then `status: completed` |
 | `POST /kira/api/external/embed` | one vector |
-| `GET /kira/api/external/models` | the catalog, as integer ids |
+| `POST /kira/api/external/rerank` | the records, ordered and scored |
+| `GET /kira/api/external/models` | the catalog, as integer ids, with `Chat`, `Embedding` and `Reranker` |
 | `GET /kira/api/external/health`, `/version-info` | unchanged shapes, no credential needed. Outside a local or demo installation `/health` lists the upstreams only to an operator (`operations.diagnose`, or the break-glass key); anybody else gets the verdict |
-| `GET /kira/api/external/ki-usage` | unchanged shape; needs `report.read_all`, so a key bound to a use case never reaches it. Under strict data mode, the default, a row is a **use case** — its slug in `user_id` — rather than a person |
+| `GET /kira/api/external/ki-usage` | unchanged shape, JSON or CSV — but about **the caller only** (see §4) |
 
 Errors keep the predecessor's envelope — a flat `{"code": …, "message": …}`, never Google's nested
 `error` object — so a client that branches on `code` keeps branching on the same strings.
@@ -231,25 +232,28 @@ None of these is an accident, and each has a reason a migrating client can act o
 
 | | AIRA | why |
 |---|---|---|
-| **Unmodelled request fields** | accepted, and named in an `X-AIRA-Unmodelled-Fields` response header | a client may send fields this surface does not act on; it keeps working, and none is dropped unseen. Only a field that differs from a modelled one in spelling alone — `conversationHistory` for `conversation_history` — is refused, `400 VALIDATION_ERROR` naming the spelling this surface takes, because accepting it would answer without what was sent |
+| **Unmodelled request fields** | accepted, and named in an `X-AIRA-Unmodelled-Fields` response header | a client may send fields this surface does not act on; it keeps working, and none is dropped unseen. Only a field that differs from a modelled one in spelling alone — `conversationHistory` for `conversation_history` — is refused, `422 VALIDATION_ERROR` naming the spelling this surface takes, because accepting it would answer without what was sent |
 | **`GET /models`** | needs a credential | the catalog names what an installation runs and what it costs |
 | **Attachment signatures** | checked | a file declared `application/pdf` that is not one is refused rather than sent |
 | **`responseSchema`** | bounded (32 KiB, 8 levels, 256 properties) and unknown fields refused | an unbounded schema from a caller is an input nobody bounded |
 | **`thinking`** | checked against the model | see below |
-| **Error codes** | more specific (`INVALID_MAX_TOKENS`, `EMBEDDING_BOUND_EXCEEDED`, …) | the predecessor's codes are all still produced where it produces them; the extra ones name cases it had no word for |
+| **Error codes** | more specific where the predecessor had no word (`EMBEDDING_BOUND_EXCEEDED`, `EMPTY_EMBEDDING_INPUT` for a text of blanks, …) | the predecessor's codes are all still produced where it produces them, with its statuses: an upstream failure is `502 EXTERNAL_KI_API_ERROR` and a provider's `429` stays `429`; an attachment type nobody accepts, a schema it cannot read and a `temperature` outside 0–2 are `422`; `maxTokens` of 0 or less, an unknown `task_type` and an empty embedding text are `VALIDATION_ERROR` |
 | **`INVALID_TOKEN` vs `NOT_AUTHENTICATED`** | kept apart | a rejected credential is a security signal, an absent one is a deployment slip |
 | **What happened** | headers only: `X-AIRA-Request-Id` on every response, `X-AIRA-Reason` on a refusal, `X-AIRA-Model` and `X-AIRA-Pipeline` on an answer | the envelope and the stream events stay the predecessor's — a client that parses them strictly keeps working — and the request id finds the request's details in the console, which say what the pipeline did and which models were tried. A stream that breaks off still ends without `completed`; its reason is in those details |
 | **Messages** | English | AIRA is English throughout |
 | **`/health`** | cached background probe | probing every upstream on every call makes readiness as slow as the slowest provider — a health check that can take down a healthy service |
-| **`/ki-usage`** | grouped by user, `model_id: 0` | AIRA reports the model dimension in its own rows rather than fabricating a cross-tabulation. The console's **Reporting** screen and its CSV export are the fuller answer |
+| **`/ki-usage`** | the caller's own rows, one per model; `user_id` is the caller's name and `model_id` the model's id. Any credential may ask, and nobody — whatever their role — gets another person's rows | the endpoint names a person in every row, and another person's figures are shown in the console, under the rules that decide who may see them. The console's **Reporting** screen and its CSV export are the answer for a team or an installation |
 
 **Thinking.** `"thinking": {"mode": …, "tokens": …}` is checked against what the catalogue declares
 for the model: `disabled`, `auto`, `limited` with `tokens` inside the model's bounds, or a level word
 the model is declared to take (`low`, `high`, …), passed upstream untranslated. Anything else is a
 `422` with the contract's own codes — `INVALID_THINKING_MODE`, `MISSING_THINKING_TOKEN_COUNT`,
-`THINKING_TOKEN_COUNT_TOO_LOW`, `THINKING_TOKEN_COUNT_TOO_HIGH`, `UNEXPECTED_THINKING_TOKEN_COUNT`.
+`THINKING_TOKEN_COUNT_TOO_LOW`, `THINKING_TOKEN_COUNT_TOO_HIGH`. A `tokens` beside any mode but
+`limited` is ignored, as the predecessor ignores it, and named in `X-AIRA-Unmodelled-Fields`.
 Without the field the model's catalogued default applies. `GET /models` shows each model's
-`thinkingConfig`: the control modes it takes, its token bounds and its default.
+`thinkingConfig`: the control modes and level words it takes in one list, its token bounds (`null`
+where none is declared) and its default — `auto` where none is declared, because then the model
+decides. `usage_data.token_output` counts the answer without its thinking.
 
 **Attachments.** A part carries either `text` or `mime_type` and base64 `data`. Fifteen media types
 are accepted — `application/pdf`, `application/x-javascript`, `text/javascript`, `text/plain`,
@@ -257,7 +261,63 @@ are accepted — `application/pdf`, `application/x-javascript`, `text/javascript
 `image/webp`, `image/heic`, `image/heif` — at most 16 parts and 6 MiB of them in all. A PDF or an
 image must carry its format's signature bytes; the text types have none to check. A model reads
 only the types its catalogue entry declares: one that cannot read the attachment is skipped by a
-fallback chain, and refused when it is the only candidate.
+fallback chain, and refused when it is the only candidate. In a turn the attachments go to the model
+first and the text after them, as the predecessor sends a turn. An attachment in
+`system_instruction` is ignored, as the predecessor ignores it, and named in
+`X-AIRA-Unmodelled-Fields`.
+
+**Functions.** A request offers functions in `tools` — `{"name", "description", "parameters"}`, the
+parameters a JSON Schema object — and only where the use case has tool calling enabled; otherwise,
+and for a declaration the gateway cannot take, the answer is `422 INVALID_TOOL_CONFIGURATION`. The
+model's call comes back as a part:
+
+```json
+{"type": "function_call", "id": "…", "name": "get_weather", "arguments": {"city": "Bonn"},
+ "opaque_metadata": {"thought_signature": "…"}}
+```
+
+The client runs the function, puts the call into `conversation_history` as a `model` turn — with its
+`opaque_metadata` unchanged, which a thinking model needs to continue — and sends the outcome in the
+next request as `{"type": "function_result", "id": "…", "name": "get_weather", "result": …}`. A
+result that answers no call of the turn before it, or answers it under another name, is
+`422 INVALID_FUNCTION_RESPONSE`. A call belongs only in a `model` turn and a result only in a `user`
+turn or the request; anywhere else is `422 VALIDATION_ERROR`. On the stream every call is its own
+`function_call` event, and `completed` carries them too. The gateway never runs a function.
+
+**Embeddings of `gemini-embedding-2`.** For a model whose name at Google begins with
+`gemini-embedding-2`, each text is sent inside its task's prompt — `task: search result | query: …`
+for `RETRIEVAL_QUERY`, the default, `title: none | text: …` for `RETRIEVAL_DOCUMENT`, and so on for
+all eight — as its own part, and a list is one embedding of all its parts, which is how the
+predecessor embeds them: an index it built keeps matching. The model's catalogue entry must declare
+the task types it takes. Two widths of one model are two catalogue entries, each with its own id and
+`embedding.default`, the second naming the first in `addressing.model` — for example `2003` at 3072
+and `2004` at 768. Each is released, priced and permitted on its own.
+
+**Reranking.** `POST /rerank` takes `{"model_id", "query", "records": [{"id", "title",
+"content"}]}`, every field filled, and answers the records in the reranker's order, each with a
+`score`. A model not declared a reranker is `422 NO_RERANKER_CAPABILITIES`. A ranking is booked in
+the unit Google bills — one query per hundred records — against the use case's rate limit and
+budget, and priced at the entry's input price per million such units. Google documents its ranking
+API at `global`, a location that names no region, so the installation permits the reranker there by
+name:
+`AIRA_ALLOWED_MODEL_REGIONS=global=semantic-ranker-default-004`.
+
+**Speech.** This surface has no text-to-speech endpoint. A client that needs one uses the Gemini
+interface with the same credential and use case:
+
+```bash
+curl -X POST http://localhost:8001/v1beta/models/gemini-2.5-flash-tts:generateContent \
+  -H "x-goog-api-key: $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"contents":[{"role":"user","parts":[{"text":"Guten Morgen"}]}],
+       "generationConfig":{"responseModalities":["AUDIO"],
+         "speechConfig":{"voiceConfig":{"prebuiltVoiceConfig":{"voiceName":"Kore"}}}}}'
+# 200  {"candidates":[{"content":{"parts":[{"inlineData":
+#        {"mimeType":"audio/L16;codec=pcm;rate=24000","data":"…"}}]}, …}], …}
+```
+
+**The stream** sends a `: ping` comment every 15 seconds while the model is quiet, and
+`X-Accel-Buffering: no`, so a proxy neither closes nor buffers it.
 
 ---
 
@@ -266,7 +326,7 @@ fallback chain, and refused when it is the only candidate.
 Everything a migrated client does is visible in the console:
 
 * **Use case → Requests** — every request, which model, how it ended, what it cost; this
-  surface's calls are the operations `chat`, `streaming-chat` and `embed`
+  surface's calls are the operations `chat`, `streaming-chat`, `embed` and `rerank`
 * **Use case → Overview**, the **Consumption** card — tokens and spend, whether or not a budget is
   set
 * **Reporting** — across use cases, with a CSV export

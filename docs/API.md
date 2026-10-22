@@ -159,7 +159,8 @@ each section names the module its routes live in.
 
 ### 2.1 The model surfaces
 
-`api/gemini/routes.py`, `api/kira/routes.py`, `api/kira/info_routes.py`. Every request a surface
+`api/gemini/routes.py`, `api/ranking/routes.py`, `api/kira/routes.py`, `api/kira/info_routes.py`.
+Every request a surface
 attributes to a use case is recorded in the audit trail, served or refused. One refused before it is
 attributed — no valid credential, a use case the caller does not hold, none named — writes no row:
 the request's span is its only record, and an `AIRA_OTEL_SAMPLE_RATIO` below 1 thins those as it
@@ -173,13 +174,19 @@ thins every span. The guides say the rest.
 | `POST /v1beta/models/{model}:streamGenerateContent` | the same | The answer in chunks: a JSON array, or server-sent events with `?alt=sse`. |
 | `POST /v1beta/models/{model}:embedContent` | the same | `{embedding: {values}}`. |
 | `POST /v1beta/models/{model}:batchEmbedContents` | the same | `{embeddings: [{values}]}`, one per entry of the body's `requests`. |
-| `POST /kira/api/external/chat` | a grant on the use case it is attributed to | The whole answer in one response, in the predecessor's shape. |
-| `POST /kira/api/external/streaming-chat` | the same | Server-sent events: an `update` per text chunk, then `completed` with the whole answer and its usage. |
-| `POST /kira/api/external/embed` | the same | One vector; a list of texts is joined into one text. |
-| `GET /kira/api/external/models` | any credential | The served models that have a KIRA id, by that id, with their capabilities, limits, thinking and embedding options. |
+| `POST /v1/projects/{project}/locations/{location}/rankingConfigs/{config}:rank` | a grant on the use case it is attributed to | Google's ranking API: `{model, query, records: [{id, title?, content?}], topN?, ignoreRecordDetailsInResponse?}` answered with `{records: [{id, score, title?, content?}]}` in the reranker's order. `model` is required and names a catalogue entry declared `rerank`; the path's project, location and configuration select nothing — the gateway ranks in its own project, at the locations the catalogue gives the model. At most `AIRA_RERANK_MAX_RECORDS` records. Booked as one ranking unit per hundred records: that many requests against a rate limit, and that many units as the input figure the entry's input price applies to. |
+| `POST /kira/api/external/chat` | a grant on the use case it is attributed to | The whole answer in one response, in the predecessor's shape. `tools` declares functions (`{name, description?, parameters?}`, parameters a JSON Schema object) where the use case enables tool calling; a call comes back as a part `{type: "function_call", id, name, arguments, opaque_metadata?}`, and its result goes back as `{type: "function_result", id, name, result}` in the next request. `usage_data.token_output` leaves out thinking. An empty answer is `parts: []`. |
+| `POST /kira/api/external/streaming-chat` | the same | Server-sent events: an `update` per text chunk, a `function_call` event per call, then `completed` with the whole answer and its usage. A `: ping` comment every 15 seconds while nothing else was sent; `X-Accel-Buffering: no`. |
+| `POST /kira/api/external/embed` | the same | One vector. For a model whose upstream name begins with `gemini-embedding-2`, each text goes as its own part inside its task's prompt (`task: search result \| query: …`), and a list is one embedding of all parts; for any other, a list of texts is joined into one text. |
+| `POST /kira/api/external/rerank` | the same | `{model_id, query, records: [{id, title, content}]}`, every field filled, answered with `{records: [{id, score, title, content}]}` in the reranker's order. `422 NO_RERANKER_CAPABILITIES` for a model not declared `rerank`. Booked as on Google's ranking path. |
+| `GET /kira/api/external/models` | any credential | The served models that have a KIRA id, by that id, with their capabilities (`Chat`, `Embedding`, `Reranker`), limits, thinking (modes and level words, a default, `null` for an undeclared bound) and embedding options. |
 | `GET /kira/api/external/health` | public; the upstreams are listed only to whom `/readyz` shows its diagnosis | The gateway, and each upstream from the background probe's last verdict; `503` when any of them is unhealthy. |
 | `GET /kira/api/external/version-info` | public | Build metadata, `null` where none was set. |
-| `GET /kira/api/external/ki-usage` | `report.read_all` | Requests and tokens per member between `startDatum` and `endDatum`, `model_id` always `0`. Under strict data mode, per **use case**, its slug in `user_id`. |
+| `GET /kira/api/external/ki-usage` | any credential | **The caller's own** requests and tokens between `startDatum` and `endDatum`, one row per model, `user_id` the caller's name and `model_id` the model's KIRA id (`0` where none). Nobody else's figures, whatever the caller's role. CSV with a byte-order mark for `Accept: text/csv`. A date that does not parse is `422`. |
+
+An upstream failure on the KIRA surface is `502 EXTERNAL_KI_API_ERROR`, whatever the provider said,
+except `429`; an attachment type nobody accepts, a schema it cannot read and a `temperature` outside
+0–2 are `422`. Its `422` `details` carry `loc` (beginning with `"body"`), `msg` and `type`.
 
 The four Gemini verbs are one route, `/v1beta/models/{model}:{verb}`, split at the **last** colon so
 a model name may contain one; any other verb, `:countTokens` among them, is `400`.
@@ -352,11 +359,16 @@ the four prices (`input_price_per_million`, `output_price_per_million`,
 `cached_input_price_per_million`, `cache_write_price_per_million`, decimal strings), `is_priced`,
 its declaration (`capabilities`, `publisher`, `platform`, `addressing`, `underlying_model`,
 `context_window`, `max_output_tokens`, `default_max_output_tokens`, `thinking`, `embedding`,
-`attachments`, `fixed_sampling`, `hosting`, `deprecated`, `numeric_id`), `is_declared` and
-`updated_at`. The list is not paged. `fixed_sampling` is `true` for a model that samples at its own
-settings: the gateway never sends it a request that sets `temperature` other than 1, `top_p` other
-than 1 or any `top_k`, and tries the next model in the chain or refuses naming the control. It
-defaults to `false`, no restriction, and accepts only a JSON `true` or `false`.
+`attachments`, `fixed_sampling`, `default_sampling`, `hosting`, `deprecated`, `numeric_id`),
+`is_declared` and `updated_at`. The list is not paged. `fixed_sampling` is `true` for a model that
+samples at its own settings: the gateway never sends it a request that sets `temperature` other than
+1, `top_p` other than 1 or any `top_k`, and tries the next model in the chain or refuses naming the
+control. It defaults to `false`, no restriction, and accepts only a JSON `true` or `false`.
+`default_sampling` is `{top_p, top_k}`, either or both, or `null`: sent where a caller sets that
+control not at all, and only to a dialect that can say it; `top_p` above 0 and at most 1, `top_k` a
+whole number of at least 1, and none for a model with fixed sampling. `capabilities` may include
+`rerank`. An `addressing.model` names the model on the wire where the entry is an alias of another:
+release, approval, residency, price and the KIRA id stay the entry's own.
 
 | Operation | Who may call | Answers |
 | --------- | ------------ | ------- |
@@ -561,7 +573,7 @@ same function (`apps/usecases/views/payloads.py`, `catalog/views.py` `_payload`,
 | `ratelimit.deleted` | `id`, `use_case` | |
 | `anomaly_rule.upserted` | `id`, `use_case`, `name`, `kind`, `window_minutes`, `threshold`, `parameter`, `min_sample`, `action`, `target`, `action_minutes`, `throttle_rpm`, `enabled` | `use_case` null is a global rule. |
 | `anomaly_rule.deleted` | `id`, `use_case` | `use_case` is left out when a rule is deleted through `/api/v1/anomaly-rules/`. |
-| `model.upserted` | `name`, `display_name`, `approved`, `provider`, `input_price_per_million`, `output_price_per_million`, `cached_input_price_per_million`, `cache_write_price_per_million`, `capabilities`, `publisher`, `platform`, `addressing`, `underlying_model`, `context_window`, `max_output_tokens`, `default_max_output_tokens`, `thinking`, `embedding`, `attachments`, `hosting`, `fixed_sampling`, `deprecated`, `numeric_id` | Prices are decimal strings, or null for none on file. `fixed_sampling` is a boolean, `false` for no restriction. |
+| `model.upserted` | `name`, `display_name`, `approved`, `provider`, `input_price_per_million`, `output_price_per_million`, `cached_input_price_per_million`, `cache_write_price_per_million`, `capabilities`, `publisher`, `platform`, `addressing`, `underlying_model`, `context_window`, `max_output_tokens`, `default_max_output_tokens`, `thinking`, `embedding`, `attachments`, `hosting`, `fixed_sampling`, `default_sampling`, `deprecated`, `numeric_id` | Prices are decimal strings, or null for none on file. `fixed_sampling` is a boolean, `false` for no restriction; `default_sampling` an object or null. |
 | `model.deleted` | `name` | |
 | `role.upserted` | `slug`, `label`, `group_path`, `permissions`, `builtin` | |
 | `role.removed` | `slug` | |

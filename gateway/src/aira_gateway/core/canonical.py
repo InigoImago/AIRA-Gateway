@@ -372,6 +372,17 @@ class CanonicalRequest(BaseModel):
         )
 
 
+def wire_name(model: str, addressing: dict[str, Any] | None) -> str:
+    """The name the platform knows a model by: the catalogue entry's ``addressing.model`` where the
+    entry is an alias of another model (`FRD-146` FR-10), its own name otherwise.
+
+    Only the wire carries it. Residency, price, release, approval and the audit row stay the
+    entry's — so one upstream model can be two entries, each decided on its own.
+    """
+    named = (addressing or {}).get("model")
+    return named.strip() if isinstance(named, str) and named.strip() else model
+
+
 class CanonicalEmbeddingRequest(BaseModel):
     """One embedding call, however many texts it carries (`FRD-113` §5.1).
 
@@ -386,10 +397,72 @@ class CanonicalEmbeddingRequest(BaseModel):
     #: vectors that work and retrieve measurably worse.
     task_type: str | None = None
     dimensions: int | None = None
+    #: The texts are **one** embedding — parts of one content, one vector (`FRD-146` FR-8). A
+    #: dialect that cannot combine them refuses; splitting them would answer n vectors, or one of n.
+    aggregate: bool = False
+    #: The task type is already written into the texts, as a prompt (`FRD-146` FR-7): it is
+    #: validated against the model like any other and **not sent** as a field.
+    task_in_text: bool = False
 
     @property
     def size(self) -> int:
         return len(self.texts)
+
+
+class RerankRecord(BaseModel):
+    """One record to be ranked (`FRD-147`). A title, a content, or both."""
+
+    id: str
+    title: str = ""
+    content: str = ""
+
+
+#: How many records the provider bills as one ranking query (`FRD-147` FR-7).
+RECORDS_PER_RANKING_UNIT = 100
+
+
+class CanonicalRerankRequest(BaseModel):
+    """Order ``records`` by how well each answers ``query`` (`FRD-147`)."""
+
+    model: str
+    #: Platform addressing, as on :class:`CanonicalRequest`: the ranking API is placed like a model.
+    addressing: dict[str, Any] = Field(default_factory=dict)
+    query: str
+    records: list[RerankRecord]
+    #: Return only the best ``top_n``; every record is ranked either way.
+    top_n: int | None = None
+    #: Return ids and scores only, without the records' title and content.
+    ids_only: bool = False
+
+    @property
+    def units(self) -> int:
+        """What the provider bills this as: one ranking query per hundred records, rounded up."""
+        return max(1, -(-len(self.records) // RECORDS_PER_RANKING_UNIT))
+
+    def texts(self) -> list[str]:
+        """Everything that is sent, in order — the query, then each record's title and content —
+        for the pipeline and the reservation, which read what a request says."""
+        return [
+            self.query,
+            *(text for record in self.records for text in (record.title, record.content)),
+        ]
+
+
+class RankedRecord(BaseModel):
+    """One record of the answer, with its score: from 0 to 1, higher is a better match."""
+
+    id: str
+    score: float
+    title: str | None = None
+    content: str | None = None
+
+
+class RankedRecords(list[RankedRecord]):
+    """The answer, in the provider's order, and where it was produced (``served_region``)."""
+
+    def __init__(self, records: Iterable[RankedRecord] = (), *, served_region: str = "") -> None:
+        super().__init__(records)
+        self.served_region = served_region
 
 
 class EmbeddingVectors(list[list[float]]):

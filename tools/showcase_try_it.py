@@ -58,7 +58,7 @@ def chat_model(key: str) -> tuple[str, int] | None:
             models = json.loads(response.read())
     except urllib.error.URLError, TimeoutError, ValueError, OSError:
         return None
-    chats = [model for model in models if "CHAT" in (model.get("capabilities") or [])]
+    chats = [model for model in models if "Chat" in (model.get("capabilities") or [])]
     for model in chats:
         if str(model.get("name")) == DEMO_CHAT_MODEL:
             return str(model["name"]), int(model["id"])

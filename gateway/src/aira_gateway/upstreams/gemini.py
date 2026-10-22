@@ -191,7 +191,8 @@ class GeminiUpstream:
         return gemini_response_to_canonical(data, request.model)
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
-        if request.size > 1:
+        # One embedding of several parts is `embedContent` too: Google combines them.
+        if request.size > 1 and not request.aggregate:
             data = await self._post(
                 _model_path(request.model, "batchEmbedContents"),
                 batch_embedding_body(request, request.model),

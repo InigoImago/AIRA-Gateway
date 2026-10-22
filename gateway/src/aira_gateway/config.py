@@ -215,6 +215,10 @@ class GatewaySettings(BaseAiraSettings):
     max_embedding_batch: int = Field(default=256, gt=0)
     max_embedding_chars: int = Field(default=1_000_000, gt=0)
 
+    # How many records one ranking request may carry (FRD-147 FR-2). Each hundred is a ranking
+    # query the provider bills; past this, a request is a corpus rather than a list of candidates.
+    rerank_max_records: int = Field(default=200, gt=0)
+
     # Google AI Studio (FRD-304). Registered only with an API key, and only where `allowed_regions`
     # include `global` — that endpoint names no region and guarantees none.
     google_api_key: str = ""

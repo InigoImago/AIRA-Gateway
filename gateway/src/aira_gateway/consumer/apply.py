@@ -63,6 +63,7 @@ _DECLARATION_DEFAULTS: dict[str, Any] = {
     "hosting": "",
     "deprecated": False,
     "fixed_sampling": False,
+    "default_sampling": None,
     "numeric_id": None,
 }
 

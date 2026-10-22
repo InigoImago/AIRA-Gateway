@@ -36,6 +36,11 @@ export const CAPABILITY_HELP: Record<Capability, string> = {
       and **not** generate, so a text request to it is refused by name rather than sent to a
       provider that refuses it without saying why. A model without it is skipped when a caller asks
       for audio. The audit trail keeps a description and a hash of the audio, not the audio.`,
+  rerank: `The model orders records by how well each answers a query and scores each — the second
+      step of a search, after the candidates are found. A reranker declares this alone, and a
+      ranking request to any other model is refused by name. Its input figure is counted in ranking
+      queries of up to 100 records, the unit the provider bills, so its input price is per million
+      queries.`,
 };
 
 /**
@@ -48,6 +53,13 @@ export const FIXED_SAMPLING_HELP = `The model chooses how it samples and accepts
   chain, or is refused with a message naming the setting. A request that leaves sampling alone, or
   sets the neutral values, is served as usual. The model reference fills this in where its list
   says so; leave it off for a model that accepts these settings.`;
+
+/** What the sampling defaults commit the platform to (`FRD-146`). */
+export const SAMPLING_DEFAULTS_HELP = `Sent with a request that does not set the control itself — a
+  caller's own value always wins. Leave both empty and nothing is sent on anybody's behalf: the
+  model uses its own defaults. Set them where an application was tuned against fixed values, for
+  example top_p 0.8 and top_k 40. A model with fixed sampling takes none, and a provider whose
+  interface has no top_k is simply not sent one.`;
 
 /**
  * What a thinking mode means, for somebody configuring one.

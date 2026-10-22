@@ -163,8 +163,11 @@ From here on a request is attributed, and every refusal writes a row.
 define (**400**, naming the field). The KIRA surface
 turns the predecessor's numeric model id into a model (**422** `MODEL_NOT_FOUND`; **503** when the
 id is assigned to two models), applies the contract's own checks (**422** `NO_CHAT_CAPABILITIES`,
-`INVALID_MAX_TOKENS`, `MAX_TOKENS_EXCEEDS_CAP`), and accepts a field it does not model, naming it in
-`X-AIRA-Unmodelled-Fields` (§8).
+`MAX_TOKENS_EXCEEDS_CAP`, `VALIDATION_ERROR` for a cap of zero or less, `INVALID_TOOL_CONFIGURATION`
+and `INVALID_FUNCTION_RESPONSE` for functions), and accepts a field it does not model, naming it in
+`X-AIRA-Unmodelled-Fields` (§8). A ranking request takes the same seven steps, with its own
+refusals: a model not declared a reranker (**400**, on KIRA **422** `NO_RERANKER_CAPABILITIES`), and
+a weight of one request per hundred records at step 4.
 
 Then seven steps, one owner. The right-hand column is what breaks if the step moves.
 
@@ -603,13 +606,13 @@ off by default, so the audit rows themselves are kept. Each run is recorded in `
 | Unknown model | 404 `NOT_FOUND` | 422 `MODEL_NOT_FOUND` | `model_not_found`; on KIRA an unknown numeric id is `invalid_request` |
 | A numeric model id assigned to two models | — | 503 `MODEL_NOT_FOUND` | `invalid_request` |
 | Malformed body, or a field this surface does not serve | 400 `INVALID_ARGUMENT`, **naming the field** | 422 `VALIDATION_ERROR`, naming it; a field it does not model is accepted and named in `X-AIRA-Unmodelled-Fields` | `invalid_request` |
-| The catalogue's limits: no generation, a cap beyond the model's | 400 `INVALID_ARGUMENT` | 422 `NO_CHAT_CAPABILITIES`, `INVALID_MAX_TOKENS`, `MAX_TOKENS_EXCEEDS_CAP` | `invalid_request` |
+| The catalogue's limits: no generation, not a reranker, a cap beyond the model's | 400 `INVALID_ARGUMENT` | 422 `NO_CHAT_CAPABILITIES`, `NO_RERANKER_CAPABILITIES`, `MAX_TOKENS_EXCEEDS_CAP`; a cap of zero or less `VALIDATION_ERROR` | `invalid_request` |
 | A thinking or embedding option refused | 400 `INVALID_ARGUMENT`, the code in the message | 422 with the contract's code | `invalid_request` |
-| Never servable: empty, too many attachments, sampling out of range, tools or reasoning off | 400 | 400 `VALIDATION_ERROR` | `invalid_request` |
+| Never servable: empty, too many attachments, sampling out of range, tools or reasoning off | 400 | 400 `VALIDATION_ERROR`; an attachment refused or a `temperature` outside 0–2 is 422 `VALIDATION_ERROR`, tools off 422 `INVALID_TOOL_CONFIGURATION` | `invalid_request` |
 | No candidate could serve it | 400 `FAILED_PRECONDITION` | 400 `VALIDATION_ERROR`; no permitted place to send the model: `MODEL_NOT_FOUND` | `no_capable_model` |
 | Declared, but the dialect has no field for it | 400 `FAILED_PRECONDITION`, **naming the reason** | 400 `VALIDATION_ERROR` | `invalid_request` |
-| Upstream said 400 | 400 `FAILED_PRECONDITION`, carrying its reason | 400 `EXTERNAL_KI_API_ERROR` | `upstream_error` |
-| Upstream said 429, 503 or 504 | the same status (`RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`), no `Retry-After` | the same status, `EXTERNAL_KI_API_TOO_MANY_REQUEST` or `EXTERNAL_KI_API_ERROR` | `upstream_error` |
+| Upstream said 400 | 400 `FAILED_PRECONDITION`, carrying its reason | 502 `EXTERNAL_KI_API_ERROR`, carrying its reason | `upstream_error` |
+| Upstream said 429, 503 or 504 | the same status (`RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`), no `Retry-After` | 429 `EXTERNAL_KI_API_TOO_MANY_REQUEST` for a 429; 502 `EXTERNAL_KI_API_ERROR` for the others | `upstream_error` |
 | Upstream 401/403, any other status, or unreachable | 502 `UNAVAILABLE`, **masked** | 502 `EXTERNAL_KI_API_ERROR` | `upstream_error` |
 | Document left incomplete | 502, with what it cost; a stream is not checked | 502 `EXTERNAL_KI_API_ERROR`; a stream ends without `completed` | `upstream_error` |
 | A stream that fails after its first chunk | the 200 stands; Google's error element ends it | the 200 stands; it ends without `completed` | `upstream_error`, with the upstream's status |

@@ -467,6 +467,10 @@ max:
   response_schema_depth: 8
   response_schema_properties: 256
 
+# Records one ranking request may carry. Every hundred is a ranking query the provider bills.
+rerank:
+  max_records: 200
+
 throttle:
   # Management's own per-user ceiling. A browser suite and a person sharing one account share this.
   user: 600/minute

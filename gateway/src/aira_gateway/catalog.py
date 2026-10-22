@@ -22,6 +22,7 @@ from aira_common.models import (
     ThinkingMode,
     parse_capabilities,
 )
+from aira_gateway.core.canonical import wire_name
 from aira_gateway.db.models import ModelRead
 
 #: The widest model name the catalog can hold — `model_catalog.model` and `request_logs.model` are
@@ -109,6 +110,9 @@ class ModelDeclaration:
     #: The model samples at its own settings: it refuses `top_k`, and `temperature` or `top_p`
     #: other than their neutral values (`FRD-145`). Anthropic's Claude from Opus 4.7 on.
     fixed_sampling: bool = False
+    #: ``{"top_p": x, "top_k": n}``: what is sent where the caller sets that control not at all
+    #: (`FRD-146` FR-20). ``None`` leaves the model's own defaults.
+    default_sampling: dict[str, Any] | None = None
     #: The KIRA-style integer alias, when one is assigned (`FRD-114` FR-6, `FRD-107` FR-4).
     numeric_id: int | None = None
 
@@ -138,6 +142,11 @@ class ModelDeclaration:
 
     def can(self, capability: Capability) -> bool:
         return capability in self.capabilities
+
+    @property
+    def wire_name(self) -> str:
+        """The name the platform knows this model by — another model's, for an alias."""
+        return wire_name(self.name, self.addressing)
 
     @property
     def is_self_deployed(self) -> bool:
@@ -250,6 +259,19 @@ class ModelDeclaration:
     def default_dimensions(self) -> int | None:
         value = (self.embedding or {}).get("default")
         return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def sampling_defaults(self) -> dict[str, float | int]:
+        """The declared defaults, each only where it is a value the control can take — a row
+        written before the console validated it must not put a stray value on the wire."""
+        block = self.default_sampling or {}
+        defaults: dict[str, float | int] = {}
+        top_p = block.get("top_p")
+        if isinstance(top_p, int | float) and not isinstance(top_p, bool) and 0 < top_p <= 1:
+            defaults["top_p"] = float(top_p)
+        top_k = block.get("top_k")
+        if isinstance(top_k, int) and not isinstance(top_k, bool) and top_k >= 1:
+            defaults["top_k"] = top_k
+        return defaults
 
     def output_cap(self, requested: int | None) -> int | None:
         """The output token cap to send upstream: the caller's, else the model's default.
@@ -388,5 +410,8 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
         hosting=record.hosting or "",
         deprecated=bool(record.deprecated),
         fixed_sampling=bool(record.fixed_sampling),
+        default_sampling=(
+            record.default_sampling if isinstance(record.default_sampling, dict) else None
+        ),
         numeric_id=record.numeric_id,
     )

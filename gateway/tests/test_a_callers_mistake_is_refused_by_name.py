@@ -168,7 +168,9 @@ async def test_the_kira_surface_refuses_it_too() -> None:
             json={"request": {"parts": [{"text": "hi"}]}, "model_id": 1, "temperature": 5},
         )
 
-    assert response.status_code == 400, response.text
+    # The predecessor's own bound and status, naming the field where its clients look for it
+    # (`FRD-146` FR-15); the shared layer refuses the same range on the Gemini surface.
+    assert response.status_code == 422, response.text
     assert response.json()["code"] == "VALIDATION_ERROR"
-    assert "temperature" in response.json()["message"]
+    assert response.json()["details"][0]["loc"] == ["body", "temperature"]
     assert provider.calls == 0

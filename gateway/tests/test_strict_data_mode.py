@@ -193,14 +193,27 @@ def test_naming_a_colleague_answers_an_empty_report(reader: Principal) -> None:
     assert body["in_scope"] is False
 
 
-@pytest.mark.parametrize("reader", [GOV, SEC], ids=["gov", "even-an-incident-role"])
-def test_ki_usage_reports_each_use_case_and_no_person(reader: Principal) -> None:
+@pytest.mark.parametrize(
+    ("reader", "rows"),
+    [
+        pytest.param(ALICE, [("alice", 1)], id="a-member-sees-themselves"),
+        pytest.param(BOSS, [("boss", 1)], id="so-does-an-administrator"),
+        pytest.param(GOV, [], id="reading-every-figure-is-no-exemption"),
+        pytest.param(SEC, [], id="nor-is-an-incident-role"),
+    ],
+)
+def test_ki_usage_answers_each_reader_about_themselves(
+    reader: Principal, rows: list[tuple[str, int]]
+) -> None:
+    """The compatibility endpoint names a person in every row, so it answers about **the caller**
+    and nobody else (`FRD-146` FR-21) — the mode has nothing to withhold from a reader's own row,
+    and no role turns it into a list of colleagues."""
     url = "/kira/api/external/ki-usage?startDatum=2026-10-01&endDatum=2026-11-01"
 
-    rows = _seeded(reader).get(url).json()
+    answered = _seeded(reader).get(url).json()
 
-    assert [(row["user_id"], row["entry_count"]) for row in rows] == [("uc", 2)]
-    assert rows[0]["token_input_sum"] == 20
+    assert [(row["user_id"], row["entry_count"]) for row in answered] == rows
+    assert all(row["token_input_sum"] == 10 for row in answered)
 
 
 # ---- request rows (FR-7) -----------------------------------------------------------------------

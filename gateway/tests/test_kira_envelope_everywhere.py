@@ -117,27 +117,26 @@ def test_an_unmapped_status_is_named_as_an_internal_error_not_guessed() -> None:
 def test_ki_usage_refuses_in_the_kira_envelope_rather_than_failing() -> None:
     """The defect this section was added for, and the reason the guard below walks every route.
 
-    `/ki-usage` raises `KiraError` for a missing parameter, a backwards time range and — first —
-    a caller without an oversight role. Three of the four routes wrap their body in
+    `/ki-usage` raises `KiraError` for a missing parameter, a backwards time range and a date that
+    does not parse (it once refused a caller without an oversight role too, until it answered only
+    about the caller, `FRD-146` FR-21). Three of the four routes wrap their body in
     `except KIRA_REFUSALS` and render the envelope there; this one did not, and there was no
     application-level handler, so **every** refusal it raises left as `500 internal_error` in
     Google's envelope. Measured against the running gateway on 2026-08-12: four expectable errors,
     four 500s.
 
-    The worst of them is the role check. A permission refusal reported as a server error tells the
-    reader the gateway is broken when the truth is that they lack a role — and in a console built
-    for governance, "the system is broken" is the conclusion that spreads.
+    A refusal reported as a server error tells the reader the gateway is broken when the truth is
+    that they sent the wrong thing — and in a console built for governance, "the system is broken"
+    is the conclusion that spreads.
     """
     app = create_app(GatewaySettings(auth_required=False, environment="local", log_queue_size=0))
     with TestClient(app, raise_server_exceptions=False) as client:
         response = client.get(f"{KIRA}/ki-usage")
 
-    assert response.status_code == 403, response.text
+    assert response.status_code == 400, response.text
     body = response.json()
     assert "error" not in body, "Google's envelope on the compatibility surface"
-    # The sharpest of the four: a *permission* refusal that used to arrive as `500
-    # internal_error`. The caller lacks a role and was told the server had failed.
-    assert body["code"] == "ADMIN_PERMISSION_REQUIRED"
+    assert body["code"] == "MISSING_QUERY_PARAM"
     assert body["message"]
 
 

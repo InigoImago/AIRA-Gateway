@@ -34,6 +34,10 @@ class Capability(StrEnum):
     #: this and not `generate`, so a text request to it is refused by name rather than sent to a
     #: provider that refuses it without saying why.
     SPEECH = "speech"
+    #: The model orders records by how well each answers a query (`FRD-147`). A reranker declares
+    #: this alone: it neither generates nor embeds, and a request of another kind to it is refused
+    #: by name.
+    RERANK = "rerank"
 
 
 class ThinkingMode(StrEnum):

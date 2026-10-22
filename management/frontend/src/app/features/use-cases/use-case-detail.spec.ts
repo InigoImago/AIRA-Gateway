@@ -227,7 +227,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     models: () =>
       overrides.models ?? of([{ name: 'qwen2.5:3b', capabilities: ['generate', 'tools'] }]),
     kiraModels: () =>
-      overrides.kiraModels ?? of([{ id: 9001, name: 'qwen2.5:3b', capabilities: ['CHAT'] }]),
+      overrides.kiraModels ?? of([{ id: 9001, name: 'qwen2.5:3b', capabilities: ['Chat'] }]),
     issueApiKey: (
       _s: string,
       label: string,

@@ -185,7 +185,9 @@ async def test_a_body_that_is_not_json_says_so_in_the_predecessors_code() -> Non
 @pytest.mark.parametrize(
     ("payload", "code", "status"),
     [
-        ({"maxTokens": -1}, "INVALID_MAX_TOKENS", 422),
+        # The predecessor's field constraint, so its generic code (`FRD-146` FR-15).
+        ({"maxTokens": -1}, "VALIDATION_ERROR", 422),
+        ({"maxTokens": 0}, "VALIDATION_ERROR", 422),
         ({"maxTokens": 999_999}, "MAX_TOKENS_EXCEEDS_CAP", 422),
     ],
 )
@@ -331,7 +333,9 @@ async def test_an_unknown_schema_field_is_named_rather_than_dropped() -> None:
             json=_chat(responseSchema={"type": "OBJECT", "unevaluatedItems": False}),
         )
 
-    assert response.status_code == 400
+    # 422, the predecessor's status for a schema it cannot read (`FRD-146` FR-15).
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
     assert "unevaluatedItems" in response.json()["message"]
 
 
@@ -585,7 +589,8 @@ async def test_models_lists_only_addressable_models() -> None:
         listed = client.get(f"{BASE}/models").json()
 
     assert [m["id"] for m in listed] == [1004]
-    assert set(listed[0]["capabilities"]) == {"CHAT", "EMBEDDING"}
+    # The predecessor's spelling, word for word: a client compares strings (`FRD-146` FR-11).
+    assert listed[0]["capabilities"] == ["Chat", "Embedding"]
     assert listed[0]["name"] == "mock-1"
 
 
@@ -680,12 +685,14 @@ async def test_a_refusal_is_logged_by_the_shape_of_its_body_never_its_content(
                 request={
                     "parts": [{"text": marker}, {"mime_type": "application/pdf", "data": encoded}]
                 },
-                temperature=9,
+                temperature=1.5,
+                # Refused after the body parsed, so the unmodelled field is already named.
+                model_id=9999,
                 client_trace="trace-value-0451",
             ),
         )
 
-    assert response.status_code == 400, response.text
+    assert response.status_code == 422, response.text
     lines = [record.getMessage() for record in caplog.records]
     refused = [json.loads(line) for line in lines if "kira_request_refused" in line]
     assert len(refused) == 1, lines
@@ -717,6 +724,9 @@ async def test_a_validation_refusal_logs_which_fields_failed(
         if "kira_request_refused" in record.getMessage()
     ]
     assert line["invalid_fields"] == ["request", "model_id"]
+    # The envelope says where, as the predecessor does: in the body, and of which kind.
+    assert response.json()["details"][0]["loc"] == ["body", "request"]
+    assert response.json()["details"][0]["type"] == "missing"
     assert line["request_shape"] == {"model_id": "str(10)"}
     assert "Mustermann" not in caplog.text
 
@@ -832,16 +842,17 @@ async def test_an_ambiguous_model_id_is_refused_rather_than_resolved_by_luck() -
 
 
 @pytest.mark.parametrize(
-    ("text", "why"),
+    ("text", "why", "code"),
     [
-        (["ok", ""], "an empty element disappears into the join"),
-        (["ok", "   "], "whitespace contributes nothing either"),
-        ([""], "a single blank is the same thing with one element"),
-        ([], "an empty list asks for an embedding of nothing"),
-        ("", "and so does a bare empty string"),
+        (["ok", ""], "an empty element disappears into the join", "VALIDATION_ERROR"),
+        (["ok", "   "], "whitespace contributes nothing either", "EMPTY_EMBEDDING_INPUT"),
+        ([""], "a single blank is the same thing with one element", "VALIDATION_ERROR"),
+        ([], "an empty list asks for an embedding of nothing", "VALIDATION_ERROR"),
+        ("", "and so does a bare empty string", "VALIDATION_ERROR"),
+        ("  ", "a bare blank one too", "EMPTY_EMBEDDING_INPUT"),
     ],
 )
-async def test_a_blank_embedding_text_is_refused(text: object, why: str) -> None:
+async def test_a_blank_embedding_text_is_refused(text: object, why: str, code: str) -> None:
     """**The join is what makes this worth refusing.** A list is one embedding
     (`FRD-113` §11), so `["ok", ""]` embedded exactly like `["ok"]` — 200, a perfectly normal
     vector, and no way for the caller to learn that one of their chunks was empty. A silent drop
@@ -862,12 +873,11 @@ async def test_a_blank_embedding_text_is_refused(text: object, why: str) -> None
 
     assert response.status_code == 422, f"{why}: {response.text[:200]}"
 
-    # **The contract's own code**, not the generic one. This was first written as a schema
-    # validator, which makes any refusal a `VALIDATION_ERROR` — and the contract has a code for
-    # exactly this case, which a migrating client's error handling switches on. Caught by the
-    # integration layer against the running stack, because the hermetic version of this assertion
-    # only asked whether *some* code was present.
-    assert response.json()["code"] == "EMPTY_EMBEDDING_INPUT", response.text[:200]
+    # **Each in the predecessor's code** (`FRD-146` FR-15): an *empty* text breaks its field's
+    # length constraint, so the generic `VALIDATION_ERROR`; one that is only whitespace passes that
+    # and is the contract's own `EMPTY_EMBEDDING_INPUT`. A migrating client switches on both, so
+    # asking only whether *some* code is present — as this assertion first did — proves neither.
+    assert response.json()["code"] == code, response.text[:200]
 
 
 async def test_a_list_of_real_texts_is_still_one_embedding() -> None:

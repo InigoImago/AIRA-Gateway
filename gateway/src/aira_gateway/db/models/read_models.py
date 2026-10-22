@@ -225,6 +225,8 @@ class ModelRead(Base):
     deprecated: Mapped[bool] = mapped_column(Boolean, default=False)
     #: The model takes no sampling control but at its neutral value (`FRD-145`).
     fixed_sampling: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    #: ``{"top_p": x, "top_k": n}`` applied where a caller sets none (`FRD-146` FR-20).
+    default_sampling: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     numeric_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
 

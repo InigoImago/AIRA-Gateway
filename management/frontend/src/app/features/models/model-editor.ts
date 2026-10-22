@@ -18,6 +18,7 @@ import {
   OfferedModel,
   PriceField,
   ReferenceEntry,
+  SamplingDefaults,
   ServedModel,
   ThinkingDeclaration,
   ThinkingModeName,
@@ -28,7 +29,12 @@ import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { causesOf, checkVerdict, providerLabel } from './catalog-display';
-import { CAPABILITY_HELP, FIXED_SAMPLING_HELP, thinkingModeMeans } from './declaration-help';
+import {
+  CAPABILITY_HELP,
+  FIXED_SAMPLING_HELP,
+  SAMPLING_DEFAULTS_HELP,
+  thinkingModeMeans,
+} from './declaration-help';
 import { GatewayProviders } from './gateway-providers';
 
 /** An amount as people type it: "0.075", "10", "10,50". Kept as text end to end. */
@@ -338,6 +344,10 @@ export class ModelEditor {
   /** The model refuses temperature, top_p and top_k other than neutral, so the gateway never sends
    *  it a request that sets them. Off is no restriction, which is what an older row means. */
   protected readonly fixedSampling = signal(false);
+  /** The sampling defaults (`FRD-146`): empty fields send nothing on anybody's behalf. */
+  protected readonly defaultTopP = signal<number | null>(null);
+  protected readonly defaultTopK = signal<number | null>(null);
+  protected readonly samplingDefaultsHelp = SAMPLING_DEFAULTS_HELP;
   protected readonly fixedSamplingHelp = FIXED_SAMPLING_HELP;
 
   // ---- is it reachable? (`FRD-506`) ---------------------------------------------------------
@@ -497,6 +507,8 @@ export class ModelEditor {
     this.defaultOutput.set(model.default_max_output_tokens ?? null);
     this.deprecated.set(model.deprecated ?? false);
     this.fixedSampling.set(model.fixed_sampling ?? false);
+    this.defaultTopP.set(model.default_sampling?.top_p ?? null);
+    this.defaultTopK.set(model.default_sampling?.top_k ?? null);
     this.approved.set(model.approved ?? false);
     this.loadDeclarations(model);
   }
@@ -1222,6 +1234,7 @@ export class ModelEditor {
         default_max_output_tokens: this.defaultOutput(),
         deprecated: this.deprecated(),
         fixed_sampling: this.fixedSampling(),
+        default_sampling: this.samplingDefaults(),
         approved: this.approved(),
         ...this.declarations(),
       })
@@ -1282,6 +1295,8 @@ export class ModelEditor {
     this.defaultOutput.set(null);
     this.deprecated.set(false);
     this.fixedSampling.set(false);
+    this.defaultTopP.set(null);
+    this.defaultTopK.set(null);
     this.approved.set(false);
     this.clearDeclarations();
     this.providerIsCustom.set(false);
@@ -1333,6 +1348,20 @@ export class ModelEditor {
     const specs = model.attachments?.media_types ?? {};
     this.mediaTypes.set(Object.keys(specs));
     this.mediaTypeSpecs.set({ ...specs });
+  }
+
+  /**
+   * The sampling defaults as the API takes them: `null` where neither field is filled, so a model
+   * nobody gave a default keeps the model's own — nothing is sent on anybody's behalf.
+   */
+  private samplingDefaults(): SamplingDefaults | null {
+    const topP = this.defaultTopP();
+    const topK = this.defaultTopK();
+    if (topP === null && topK === null) return null;
+    return {
+      ...(topP === null ? {} : { top_p: topP }),
+      ...(topK === null ? {} : { top_k: topK }),
+    };
   }
 
   /**

@@ -45,7 +45,8 @@ changing a base URL.
 ## 4. Functional Requirements
 
 - **FR-1 Endpoints** under `/kira/api/external`: `POST /chat`, `POST /streaming-chat`,
-  `POST /embed`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage`.
+  `POST /embed`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage` — and, since
+  `FRD-147`, `POST /rerank`.
 - **FR-2 Request and response shapes** exactly as the contract specifies, including the camelCase
   aliases (`maxTokens`, `responseSchema`, `thinkingConfig`, …) and `populate_by_name`.
 - **FR-2a Staged, and never silent** (§5.2). A field the gateway cannot yet honour is **refused**
@@ -65,7 +66,8 @@ changing a base URL.
 - **FR-6 Attribution** resolved per §5.3 — this is the requirement with no counterpart in the
   predecessor and the one that decides whether the surface is governable at all.
 - **FR-7 Authorization levels.** Standard-user endpoints and the admin-only `/ki-usage`, mapped
-  onto AIRA's roles rather than onto a group name from a YAML file (§5.4).
+  onto AIRA's roles rather than onto a group name from a YAML file (§5.4). *Since `FRD-146`, `/ki-usage`
+  answers any credential about itself and so needs no administrative permission.*
 - **FR-8 Deprecation is declared.** `Deprecation` and `Sunset` headers (RFC 8594) on every
   response, and the surface is a dimension in reporting (§5.6). *As built, `Deprecation` is on every
   response and `Sunset` only once an installation sets a date, `AIRA_KIRA_SUNSET`
@@ -171,11 +173,12 @@ Ten differences; four were repaired the same day and are not listed here. These 
 because it is a decision rather than an oversight: *(the list has grown since with differences
 found later, and one entry is withdrawn and struck through)*
 
-- **`GET /ki-usage` groups by member only, reports `model_id: 0`, and does not honour
-  `Accept: text/csv`.** The predecessor groups by `(user_id, model_id)` and offers a CSV download.
-  AIRA answers the same question through the console's own reporting screen and its CSV export
-  (`FRD-602`), which is where a person looks — so this endpoint stays a thin compatibility shim.
-  A reporting client that parses CSV from *this* URL is the one case that must migrate.
+- **`GET /ki-usage` answers about the caller alone** (`FRD-146` FR-21, FR-22). The predecessor
+  groups by `(user_id, model_id)` for everybody; here the rows are the caller's own, one per model,
+  with the model's id and as CSV on `Accept: text/csv`, and no role turns them into a list of
+  colleagues. Another person's figures are the console's reporting screen and its export
+  (`FRD-602`), under the visibility rules that decide who sees a person. *(It grouped by member and
+  reported `model_id: 0`, without CSV, until `FRD-146`.)*
 - **`GET /health` reports fewer entities.** The predecessor lists every checked entity with its
   own runtime; ours reports the gateway and one entry per upstream, from a cached verdict, and
   answers `503` when any of them is unhealthy. It does **not** probe the database per call. The
@@ -203,10 +206,10 @@ found later, and one entry is withdrawn and struck through)*
   `FRD-124` §5.6):* an unmodelled field is accepted and **named** in the
   `X-AIRA-Unmodelled-Fields` response header, unless it is a near-miss of a modelled one
   (`api/kira/schemas.py`); the Gemini surface keeps the strict rule.
-- **`temperature` is unbounded here.** The predecessor enforces `0 ≤ t ≤ 2`. That range is not
-  universal — Anthropic's is `0–1` — so a bound in the canonical core would be a claim that is
-  false for one of the vendors this gateway serves (`ADR-0011`). The provider refuses what it
-  cannot accept, and the refusal names the field.
+- ~~**`temperature` is unbounded here.**~~ **Withdrawn.** `temperature` is bounded to `0–2` on
+  both surfaces before dispatch (`SAMPLING_BOUNDS`, the range every dialect accepts), and on this
+  one as the predecessor bounds it: `422 VALIDATION_ERROR` naming the field (`FRD-146` FR-15). A
+  vendor with a narrower range — Anthropic's `0–1` — still refuses upstream.
 - **Group membership is read from the token, never from `userinfo`.** The predecessor validates the
   JWT and then calls the OIDC `userinfo` endpoint, taking the groups its authorization uses from
   *that* response; the token's groups are only logged. We authorize from the `groups` claim, plus
@@ -237,7 +240,12 @@ found later, and one entry is withdrawn and struck through)*
   strategy, and an installation that wants to absorb it sets the value.
 - **`GET /version-info` carries no `jenkins` object** and `GET /models` uses one shared entry shape
   with `None` fields removed, where the predecessor has separate chat and embedding DTOs with
-  type-specific required fields. A strictly typed client can fail on both.
+  type-specific required fields. A strictly typed client can fail on both. The `jenkins` object
+  stays out on purpose (`FRD-146` §2): the endpoint answers without a credential, and a build
+  server's URL describes internal infrastructure. `thinkingConfig` keeps its `null` bounds and
+  always names a default (`FRD-146` FR-12).
+- **No Live endpoint.** `WS /live/{model_id}` is not served; it needs a transport of its own and
+  decisions on budget, duration and audit first (`FRD-146` §2).
 
 ### 5.6 A surface with an ending
 

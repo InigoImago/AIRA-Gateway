@@ -193,6 +193,7 @@ Every bound here must be above zero: `0`, or `-1` written to mean "unlimited", r
 | `AIRA_MAX_RESPONSE_SCHEMA_PROPERTIES` | `256`             | A caller-supplied schema is parsed and **forwarded, never executed** — re-validating provider output against it would run caller-supplied regexes on the hot path. |
 | `AIRA_MAX_EMBEDDING_BATCH`            | `256`             | A batch of n weighs n against rate limits and budgets.                                                                                                             |
 | `AIRA_MAX_EMBEDDING_CHARS`            | `1000000`         |                                                                                                                                                                    |
+| `AIRA_RERANK_MAX_RECORDS`             | `200`             | Records one ranking request may carry. Every hundred is a ranking unit the provider bills, weighed as a request against rate limits and budgets.                   |
 
 ### Residency and CORS
 

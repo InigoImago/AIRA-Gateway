@@ -51,8 +51,8 @@ def _answer(monkeypatch: pytest.MonkeyPatch, module: Any, models: list[dict[str,
     monkeypatch.setattr(module.urllib.request, "urlopen", lambda *a, **k: _Response())
 
 
-CLOUD = {"id": 9504, "name": "gemini-2.5-flash", "capabilities": ["CHAT"]}
-LOCAL = {"id": 1004, "name": "qwen3:0.6b", "capabilities": ["CHAT"]}
+CLOUD = {"id": 9504, "name": "gemini-2.5-flash", "capabilities": ["Chat"]}
+LOCAL = {"id": 1004, "name": "qwen3:0.6b", "capabilities": ["Chat"]}
 EMBED = {"id": 9002, "name": "all-minilm", "capabilities": ["EMBED"]}
 
 

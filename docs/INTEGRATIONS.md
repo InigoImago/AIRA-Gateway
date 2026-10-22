@@ -1788,8 +1788,9 @@ access one click above and needs none of this; a SIEM filters flat events by fie
 these attributes the model access would say only *somebody POSTed to a host and got a 200* — not
 even which model, since an OpenAI-compatible upstream carries that in the request body.
 
-`aira.model_call.purpose` is one of four: `serve` (answering a caller), `pipeline` (a classifier or
-redactor the pipeline ran), `embed`, `probe` (an operator's thinking check, `:checkThinking`). A
+`aira.model_call.purpose` is one of five: `serve` (answering a caller), `pipeline` (a classifier or
+redactor the pipeline ran), `embed`, `rerank` (a ranking request), `probe` (an operator's thinking
+check, `:checkThinking`). A
 record is one HTTP call: a fallback chain marks **each attempt**, so a chain that tried three models
 leaves three records naming three models, and a regional failover inside one attempt leaves one per
 region it tried.

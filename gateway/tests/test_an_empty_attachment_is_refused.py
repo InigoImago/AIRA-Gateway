@@ -49,5 +49,6 @@ async def test_an_empty_attachment_is_refused_on_both_surfaces() -> None:
 
     assert gemini.status_code == 400, gemini.text
     assert "empty" in gemini.json()["error"]["message"]
-    assert kira.status_code == 400, kira.text
+    # Each in its own surface's status: the predecessor answers a wrong attachment `422`.
+    assert kira.status_code == 422, kira.text
     assert "empty" in kira.json()["message"]

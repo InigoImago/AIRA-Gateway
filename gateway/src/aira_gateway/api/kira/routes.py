@@ -24,12 +24,18 @@ from pydantic import BaseModel, ValidationError
 from aira_common.models import Capability
 from aira_gateway.api.kira import BASE, errors, schemas
 from aira_gateway.api.kira.attribution import resolve as resolve_attribution
+from aira_gateway.api.kira.embedding_prompts import is_prompted
 from aira_gateway.api.kira.headers import note_unmodelled, surface_headers
+from aira_gateway.api.kira.keepalive import PING, STREAM_HEADERS, TICK, with_pings
 from aira_gateway.api.kira.mapping import (
     completed_event,
+    function_call_event,
+    stored,
     to_canonical,
     to_chat_response,
     to_embedding,
+    to_rerank,
+    to_rerank_response,
     update_event,
 )
 from aira_gateway.api.kira.refusals import KIRA_REFUSALS, refusal_response
@@ -46,6 +52,7 @@ from aira_gateway.api.serving import (
     fitting,
     json_body,
     prepare_for_dispatch,
+    rank,
     record_refusal,
     refusal_reason,
     requirements_for,
@@ -56,7 +63,7 @@ from aira_gateway.audit import AuditTrail
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import MAX_ACCOUNTABLE_TOKENS, AmbiguousModelId
-from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
+from aira_gateway.core.canonical import CanonicalChunk, CanonicalResponse, CanonicalUsage
 from aira_gateway.embedding import (
     DEFAULT_TASK_TYPE,
     EMBEDDING_AGGREGATION_NOT_SUPPORTED,
@@ -109,8 +116,13 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             # paid for all the same.
             acct.spent(answer.model, answer.usage)
             check_structured_result(canonical, answer)
-            payload = to_chat_response(answer).model_dump()
-            acct.served(answer.model, answer.usage, payload)
+            payload = to_chat_response(answer).model_dump(exclude_none=True)
+            acct.served(
+                answer.model,
+                answer.usage,
+                stored(payload),
+                [call.name for call in answer.tool_calls],
+            )
         return JSONResponse(payload, headers=surface_headers(request))
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
@@ -160,8 +172,13 @@ async def streaming_chat(
         async with stream.accounted():
             try:
                 # The first chunk is already in hand; the chain marked its model call where the
-                # request was issued.
-                async for chunk in stream.chunks:
+                # request was issued. A quiet model is a comment every fifteen seconds, never an
+                # event (`keepalive`).
+                async for chunk in with_pings(stream.chunks):
+                    if chunk is TICK:
+                        yield PING
+                        continue
+                    assert isinstance(chunk, CanonicalChunk)
                     led = stream.take(chunk).text_delta
                     if not led:
                         # No event without text: an empty one is the synthetic heartbeat `FRD-111`
@@ -180,6 +197,7 @@ async def streaming_chat(
                 text=stream.text,
                 usage=stream.usage or CanonicalUsage(prompt_tokens=0, completion_tokens=0),
                 finish_reason=stream.finish_reason or "stop",
+                tool_calls=stream.calls,
             )
             try:
                 # An unfinished schema-constrained answer is not data (`FRD-112` FR-6). The status
@@ -189,12 +207,19 @@ async def streaming_chat(
             except KIRA_REFUSALS as exc:
                 stream.broke_off(exc)
                 return
+            # One event per call after the text, then `completed`, which carries them too
+            # (`FRD-146` FR-5): a client that reads only the terminal event still sees them.
+            for call in answer.tool_calls:
+                yield f"data: {json.dumps(function_call_event(call))}\n\n"
             event = completed_event(answer)
-            stream.delivered(event["data"])
+            stream.delivered(stored(event["data"]))
             yield f"data: {json.dumps(event)}\n\n"
 
     return AccountedStream(
-        stream, events(), media_type="text/event-stream", headers=surface_headers(request)
+        stream,
+        events(),
+        media_type="text/event-stream",
+        headers={**surface_headers(request), **STREAM_HEADERS},
     )
 
 
@@ -208,14 +233,14 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
         note_unmodelled(request, parsed)
         model = await _resolve_model(request, parsed.model_id)
         trail.requested_model = model
-        embedding = to_embedding(parsed, model)
+        declaration = await catalog_of(request).declaration(model)
+        embedding = to_embedding(parsed, model, prompted=is_prompted(declaration))
 
         # Aggregation is asked here, where `parsed.text` still says whether a list was sent: the
         # mapper joins a list into one text, so the shared batch check can no longer see it. And
         # before the shared sequence, which spends the caller's allowance on its way — a request
         # that can never be served must not (`prepare_for_dispatch`). A model that cannot embed at
         # all is left to that sequence, which names that instead.
-        declaration = await catalog_of(request).declaration(model)
         if (
             isinstance(parsed.text, list)
             and len(parsed.text) > 1
@@ -254,6 +279,33 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
         return await _refused(request, trail, exc, started=started)
 
 
+@router.post("/rerank")
+async def rerank(request: Request, principal: Principal = Depends(require_principal)) -> Response:
+    """Order records against a query (`FRD-147`). Parsed here; everything else is the shared
+    sequence's, as for every other verb — attribution, release, rate limit, pipeline, budget."""
+    started = time.monotonic()
+    trail = AuditTrail(operation="rerank", api="kira")
+    try:
+        body = await _attributed_body(request, principal, trail)
+        parsed = _parse(schemas.RerankRequest, body)
+        note_unmodelled(request, parsed)
+        model = await _resolve_model(request, parsed.model_id)
+        trail.requested_model = model
+        prepared = await prepare_for_dispatch(
+            request, trail, method="rerank", rerank=to_rerank(parsed, model)
+        )
+        assert prepared.rerank is not None
+        async with accounting(
+            request, trail, prepared, api="kira", operation="rerank", started=started
+        ) as acct:
+            ranked = await rank(request, prepared)
+            payload = to_rerank_response(ranked).model_dump()
+            acct.ranked(model, units=prepared.rerank.units, records=ranked)
+        return JSONResponse(payload, headers=surface_headers(request))
+    except KIRA_REFUSALS as exc:
+        return await _refused(request, trail, exc, started=started)
+
+
 # == parsing ======================================================================================
 
 
@@ -266,7 +318,7 @@ async def _prepare(request: Request, principal: Principal, trail: AuditTrail) ->
     """
     body = await _attributed_body(request, principal, trail)
     parsed = _parse(schemas.ChatRequest, body)
-    note_unmodelled(request, parsed)
+    note_unmodelled(request, parsed, ignored=schemas.ignored_values(parsed))
     model = await _resolve_model(request, parsed.model_id)
     trail.requested_model = model
     await _check_chat(request, model, parsed.max_tokens)
@@ -369,7 +421,8 @@ async def _check_chat(request: Request, model: str, max_tokens: int | None) -> N
             422, errors.NO_CHAT_CAPABILITIES, f"Model '{model}' does not support chat."
         )
     if max_tokens is not None and max_tokens <= 0:
-        raise errors.KiraError(422, errors.INVALID_MAX_TOKENS, "maxTokens must be positive.")
+        # The predecessor's field constraint, so its generic code (`FRD-146` FR-15).
+        raise errors.KiraError(422, errors.VALIDATION_ERROR, "maxTokens must be positive.")
     cap = declaration.max_output_tokens
     if max_tokens is not None and cap is not None and max_tokens > cap:
         raise errors.KiraError(
@@ -411,7 +464,8 @@ async def _refused(
         model=trail.served_model or None,
         unmodelled_fields=list(getattr(request.state, "unmodelled", ())),
         request_shape=body_shape(trail.body) if trail.body else None,
-        invalid_fields=[".".join(detail["loc"]) for detail in details[:INVALID_FIELDS_LOGGED]],
+        # Without the envelope's leading `body`: every path here is one into the body.
+        invalid_fields=[".".join(detail["loc"][1:]) for detail in details[:INVALID_FIELDS_LOGGED]],
     )
     await record_refusal(request, trail, exc, status=response.status_code, started=started)
     return response

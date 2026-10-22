@@ -194,6 +194,8 @@ interface Editor {
   defaultOutput: { set: (v: number | null) => void; (): number | null };
   deprecated: { set: (v: boolean) => void; (): boolean };
   fixedSampling: { set: (v: boolean) => void; (): boolean };
+  defaultTopP: { set: (v: number | null) => void; (): number | null };
+  defaultTopK: { set: (v: number | null) => void; (): number | null };
   fromReferenceEntry: (
     entry: ReferenceEntry,
     reference: ModelReference,
@@ -1149,6 +1151,7 @@ describe('ModelCatalog — finding one among many', () => {
       attachments: { media_types: { 'application/pdf': { tokens: 258 } } },
       hosting: 'self_deployed',
       fixed_sampling: true,
+      default_sampling: { top_k: 40 },
       deprecated: true,
       numeric_id: 9001,
       is_declared: true,
@@ -1180,6 +1183,7 @@ describe('ModelCatalog — finding one among many', () => {
       attachments: { testid: 'attachments', shows: 'application/pdf' },
       hosting: { testid: 'hosting', shows: 'self_deployed' },
       fixed_sampling: { testid: 'fixed_sampling', shows: 'yes' },
+      default_sampling: { testid: 'default_sampling', shows: 'top_k' },
       deprecated: { testid: 'deprecated', shows: 'yes' },
       numeric_id: { testid: 'numeric_id', shows: '9001' },
       is_declared: null, // said by the capabilities, which read "undeclared" without it
@@ -3962,5 +3966,74 @@ describe('ModelEditor — a model that samples at its own settings', () => {
 
     expect(editor.fixedSampling()).toBe(false);
     expect(harness.testid('reference-filled')?.textContent).not.toContain('fixed sampling');
+  });
+});
+
+describe('ModelEditor — sampling defaults', () => {
+  function onCapabilities(options: Parameters<typeof setup>[0] = {}) {
+    const harness = setup(options);
+    harness.editor.showAdd.set(true);
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    return harness;
+  }
+  const field = (harness: ReturnType<typeof setup>, which: 'p' | 'k') =>
+    harness.testid(`model-default-top-${which}`) as HTMLInputElement | null;
+
+  async function filled(harness: ReturnType<typeof setup>) {
+    harness.editor.name.set('kira-chat');
+    harness.editor.toggleCapability('generate', true);
+    harness.lookFirst();
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+  }
+
+  it('sends nothing on anybody’s behalf while both fields are empty', async () => {
+    const harness = onCapabilities();
+    await filled(harness);
+
+    expect(field(harness, 'p')?.value).toBe('');
+    expect(field(harness, 'k')?.value).toBe('');
+    harness.editor.save();
+    expect(harness.saved.at(-1)?.default_sampling).toBeNull();
+  });
+
+  it('sends exactly the fields that are filled in', async () => {
+    const harness = onCapabilities();
+    await filled(harness);
+    const topK = field(harness, 'k')!;
+    topK.value = '40';
+    topK.dispatchEvent(new Event('input'));
+    harness.fixture.detectChanges();
+
+    harness.editor.save();
+    expect(harness.saved.at(-1)?.default_sampling).toEqual({ top_k: 40 });
+  });
+
+  it('loads the defaults with the model, and forgets them with the form', async () => {
+    const tuned: CatalogModel = { ...DECLARED, default_sampling: { top_p: 0.8, top_k: 40 } };
+    const harness = setup({ models: of([tuned]) });
+    harness.component.edit(tuned);
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+
+    expect(harness.editor.defaultTopP()).toBe(0.8);
+    expect(harness.editor.defaultTopK()).toBe(40);
+
+    harness.editor.add();
+    expect(harness.editor.defaultTopP()).toBeNull();
+    expect(harness.editor.defaultTopK()).toBeNull();
+  });
+
+  it('says beside the fields that a caller’s own value wins and empty sends nothing', async () => {
+    const harness = onCapabilities();
+    await harness.fixture.whenStable();
+
+    harness.click('[data-testid="info-sampling-defaults"]');
+    const help = (harness.testid('help-sampling-defaults')?.textContent ?? '').replace(/\s+/g, ' ');
+    expect(help).toContain('own value always wins');
+    expect(help).toContain('nothing is sent on anybody');
   });
 });

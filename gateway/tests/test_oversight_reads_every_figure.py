@@ -72,17 +72,13 @@ def test_an_oversight_role_is_never_refused_a_figure(principal: Principal, where
     )
 
 
-@pytest.mark.parametrize("where", ["usage", "ki-usage"])
-def test_a_member_is_still_held_to_their_own_use_case(where: str) -> None:
-    """Widening to oversight must not widen to everybody. `usage` narrows to what a member may act
-    on; `ki-usage` reports the whole installation and stays closed to them entirely."""
+def test_a_member_is_still_held_to_their_own_use_case() -> None:
+    """Widening to oversight must not widen to everybody: `usage` narrows to what a member may act
+    on. (`ki-usage` is answered for everybody, about themselves only — `test_kira_ki_usage.py`.)"""
     with _client(MEMBER) as client:
-        response = client.get(FIGURES[where])
+        response = client.get(FIGURES["usage"])
 
-    if where == "usage":
-        assert response.status_code == 200, "their own use case"
-    else:
-        assert response.status_code == 403
+    assert response.status_code == 200, "their own use case"
 
 
 def test_a_member_may_not_read_another_use_cases_usage() -> None:
@@ -91,34 +87,25 @@ def test_a_member_may_not_read_another_use_cases_usage() -> None:
         assert client.get("/v1beta/usage/uc-somebody-else").status_code == 403
 
 
-def test_the_compatibility_surface_says_the_rule_it_applies() -> None:
-    """The message named `oversight` while the check asked `governance`. Whichever way that is
-    fixed, the two have to agree — a refusal that names a role the caller holds sends them to
-    their directory administrator for a problem that is not there."""
-    with _client(MEMBER) as client:
-        refusal = client.get(FIGURES["ki-usage"]).json()
-
-    assert refusal["code"] == "ADMIN_PERMISSION_REQUIRED"
-    assert "report.read_all" in refusal["message"]
-
-
 async def test_ki_usage_answers_once_there_is_traffic_to_report() -> None:
     """The figures above are asked of an empty installation, where every report is empty — and an
     endpoint that fails as soon as one request exists passes all of them.
 
-    `/ki-usage` reports per user with model id `0` (the report does not cross-tabulate user and
-    model). The response row reused the *request* validator for a model id, which starts at `1`, so
-    the first row ever reported turned the answer into a 500 for an authorised caller.
+    `/ki-usage` reports model id `0` for a model no numeric id names. The response row once reused
+    the *request* validator for a model id, which starts at `1`, so the first row ever reported
+    turned the answer into a 500 for an authorised caller. It answers about the caller alone now
+    (`FRD-146` FR-21), so the row is the member's own.
     """
     from datetime import UTC, datetime
 
     from aira_gateway.db.models import RequestLog
 
-    with _client(GLOBAL_ADMIN) as client:
+    with _client(MEMBER) as client:
         async with client.app.state.db_sessionmaker() as session:
             session.add(
                 RequestLog(
                     subject="ada",
+                    username="ada",
                     auth_method="oidc",
                     use_case="uc-a",
                     api="kira",

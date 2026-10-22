@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## KIRA parity: functions, the predecessor's vectors, reranking (2026-10-21)
+
+The owner compared the predecessor against this gateway's KIRA layer and brought the report: seven
+gaps that break a migrating client and a dozen values that differ. Decided with the owner before
+building: **Live** and `/version-info`'s `jenkins` block are left out (the second answers without a
+credential and would name a build server); strict data mode stays as it is; `/ki-usage` answers
+about the caller; the fields the predecessor ignores are ignored here too. Reranking goes on the
+Gemini side as well, without loosening anything — `ADR-0039`.
+
+**Built from the report.** The owner chose not to make the predecessor's code available here, so the
+shapes come from the report and, where it is silent, from Google's documentation: the eight
+`gemini-embedding-2` task prompts are Google's own table, the `:embedContent` body is Vertex's REST
+reference, the ranking body Google's ranking page. Four shapes are assumed rather than read and are
+listed in `FRD-146` §7 for the live comparison to confirm: the `tools` entry, `function_result`'s
+`result`, `opaque_metadata`'s key, the CSV column order.
+
+What it took, in the order it was built (`FRD-146`, `FRD-147`):
+
+- **Values.** Capabilities are `Chat`/`Embedding`/`Reranker`; `thinkingConfig` lists level words
+  beside modes, always names a default and writes `null` bounds; `token_output` leaves out thinking;
+  an empty answer is `parts: []`; documents go before the text of a turn; an upstream failure is
+  `502` except `429`; a wrong attachment, schema or temperature is `422`, and a `422` names `body`
+  and the error's type. Two earlier tests pinned the opposite of the predecessor — runs of text kept
+  around a document, and `EMPTY_EMBEDDING_INPUT` for every empty text — and were turned round; the
+  second now splits: an *empty* text is the predecessor's `VALIDATION_ERROR`, a text of blanks keeps
+  the contract's own code.
+- **The stream's ping** reads the model's chunks in a task of its own and sends `: ping` after 15
+  quiet seconds. A task per chunk was the first idea and was dropped before it ran: an async
+  generator advanced from several tasks resets a context variable in a context that never set it.
+- **Functions** map onto the core's tool parts, which existed; the KIRA layer only parses, checks
+  the declaration and the pairing of results to calls, and renders calls as parts and stream events.
+  The use case's switch raised a generic Gemini error; it is a type of its own now, so this surface
+  answers `INVALID_TOOL_CONFIGURATION` without reading a message.
+- **Embeddings.** A canonical request can say its texts are one embedding and its task is in the
+  text; Vertex sends `gemini-embedding-2` through `:embedContent` with a part per text. The prefix is
+  the KIRA layer's alone, so the Gemini surface's vectors do not move. An entry's `addressing.model`
+  names the model on the wire — `2003` and `2004` are one model at two widths — while residency,
+  release and price stay the entry's.
+- **Reranking** is a capability with its own pass through `prepare_for_dispatch` (use case, shape,
+  rate limit at one request per hundred records, the pipeline over query and records, declaration,
+  reservation with nothing held for output), served by Google's ranking API and the mock, on the
+  KIRA surface and on Google's own path. The Discovery Engine is a new recipient, so the privacy
+  notice names it and its edition moved.
+- **`/ki-usage`** answers any credential about itself, per model, as JSON or CSV. A credential with
+  no person is answered with nothing: `person=None` is the whole installation to the report.
+- **Sampling defaults** are a catalogue field on both planes, shipped empty; where one is declared it
+  is sent only where the caller set nothing and only to a dialect that can say it.
+
+**Two mistakes caught on the way.** The format of `AIRA_ALLOWED_MODEL_REGIONS` was written backwards
+in the migration guide and the tests (`model=region`; it is `region=model`); the tests passed anyway,
+because the transport they built was permitted the region directly. And the first version of the
+FRDs said where the shapes were *not* read from in words the repository's hygiene test refuses.
+
+---
+
 ## The OpenCode plugin as a release archive (2026-10-20)
 
 The owner rolls the budget plugin out to workstations with Terraform. The first question was an npm

@@ -19,7 +19,13 @@ from aira_gateway.attachments import Limits, check_bounds
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
 from aira_gateway.catalog import MAX_ACCOUNTABLE_TOKENS, ModelDeclaration
-from aira_gateway.core.canonical import CanonicalRequest, TextPart, ToolCallPart, ToolResultPart
+from aira_gateway.core.canonical import (
+    CanonicalRequest,
+    CanonicalRerankRequest,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from aira_gateway.pricing import Price
 from aira_gateway.ratelimit.buckets import per_minute
 from aira_gateway.ratelimit.errors import RateLimited
@@ -34,6 +40,8 @@ from aira_gateway.state import (
 #: Every verb that embeds. A set rather than one name, so a new embedding verb is never asked for
 #: the *generation* capability (`FRD-113` added the batch verb).
 EMBEDDING_METHODS = frozenset({"embedContent", "batchEmbedContents"})
+#: The ranking verb (`FRD-147`): neither generation nor embedding, and decided by its own flag.
+RERANK_METHOD = "rerank"
 
 #: The prompt-cache lifetime a use case gets unless it chose the long one (`FRD-133`).
 DEFAULT_CACHE_TTL = "5m"
@@ -64,6 +72,17 @@ class UseCaseRetired(GeminiHTTPError):
     Its own type so the audit outcome names what happened, rather than inferring it from a status
     another refusal could share.
     """
+
+
+class NotAReranker(GeminiHTTPError):
+    """A ranking request to a model the catalogue does not declare a reranker (`FRD-147` FR-1). Its
+    own type so the KIRA surface answers in its own code, `NO_RERANKER_CAPABILITIES`."""
+
+
+class ToolsNotPermitted(GeminiHTTPError):
+    """Functions declared where the use case has not enabled tool calling (`FRD-131` FR-3). Its own
+    type so a surface can answer in its own code — the KIRA surface's `INVALID_TOOL_CONFIGURATION`
+    (`FRD-146` FR-6) — without reading the message."""
 
 
 class UseCaseUnknown(GeminiHTTPError):
@@ -130,6 +149,30 @@ def check_attachment_bounds(canonical: CanonicalRequest) -> None:
     check_bounds([part.size for part in canonical.attachments], Limits())
 
 
+def check_rerank_shape(rerank: CanonicalRerankRequest, max_records: int) -> None:
+    """The ranking refusals that need no model: nothing to rank, or more than one request may carry.
+
+    Asked before the rate limit, for the reason `embedding.check_shape` is (`FRD-126`): a request
+    that can never be served must not spend an allowance. The surfaces refuse an empty field in
+    their own words; this is the rule both share, and the bound.
+    """
+    if not rerank.query.strip() or not rerank.records:
+        raise GeminiHTTPError(
+            400, "A ranking request needs a query and at least one record.", "INVALID_ARGUMENT"
+        )
+    if len(rerank.records) > max_records:
+        raise GeminiHTTPError(
+            400,
+            f"{len(rerank.records)} records are more than the {max_records} one ranking request "
+            "may carry. Rank the candidates a search returned, not the corpus.",
+            "INVALID_ARGUMENT",
+        )
+    if any(not record.title.strip() and not record.content.strip() for record in rerank.records):
+        raise GeminiHTTPError(
+            400, "Every record needs a title or a content to be ranked by.", "INVALID_ARGUMENT"
+        )
+
+
 def check_sampling(canonical: CanonicalRequest) -> None:
     """Refuse a sampling value outside the range every dialect accepts, naming the field."""
     for attribute, (name, low, high) in SAMPLING_BOUNDS.items():
@@ -153,7 +196,7 @@ async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -
         return
     use_case = getattr(attribution_of(request), "use_case", None)
     if use_case is None:
-        raise GeminiHTTPError(
+        raise ToolsNotPermitted(
             400,
             "Tool calling is configured per use case, and this request names none. Send it with a "
             "use case that has tool calling enabled.",
@@ -161,7 +204,7 @@ async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -
         )
     record = await use_case_record(request, use_case)
     if record is None or not record.tools_enabled:
-        raise GeminiHTTPError(
+        raise ToolsNotPermitted(
             400,
             f"Use case '{use_case}' has not enabled tool calling. An administrator of the use "
             "case can turn it on; it is off by default so that only the use cases which need "
@@ -246,6 +289,17 @@ async def check_declaration(
     Whether a model may *embed* is decided by `embedding.validate` alone — one rule, one place.
     """
     declaration = await catalog_of(request).declaration(model)
+
+    if method == RERANK_METHOD:
+        # Its own flag, and the only one that matters for it: a reranker generates nothing.
+        if not declaration.can(Capability.RERANK):
+            raise NotAReranker(
+                400,
+                f"Model '{model}' is not declared a reranker. Ranking is a capability in the "
+                "model catalog; a model that does not declare it is not sent records to rank.",
+                "INVALID_ARGUMENT",
+            )
+        return declaration
 
     # A spoken answer is the speech capability's question, asked per hop (`SpeechSupported`).
     if method not in EMBEDDING_METHODS and not speech and not declaration.can(Capability.GENERATE):
@@ -355,6 +409,7 @@ async def estimate(
     units: int = 1,
     input_texts: Iterable[str] = (),
     extra_tokens: int = 0,
+    answers_in_tokens: bool = True,
 ) -> Amounts:
     """What this request is expected to consume, for the reservation (FRD-405).
 
@@ -368,6 +423,9 @@ async def estimate(
       reserved what its answer might cost, and twelve such requests in flight all passed a limit
       with room for one.
 
+    ``answers_in_tokens`` is off for a request whose answer is no text — a ranking, billed by the
+    query (`FRD-147` FR-7) — so nothing is held back for output it cannot produce.
+
     Each side is priced at its own rate: one rate for every token reserved nothing against a cost
     limit for a model priced on input alone, an embedding model. An unpriced model estimates zero
     cost: unknown cannot constrain a cost limit. Never negative, whatever a declaration or a
@@ -376,7 +434,11 @@ async def estimate(
     """
     settings = settings_of(request)
     declaration = await catalog_of(request).declaration(model)
-    tokens = declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens
+    tokens = (
+        declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens
+        if answers_in_tokens
+        else 0
+    )
     # A thinking budget is billed as output and is often the largest number on the request.
     tokens += extra_tokens
     output = tokens = max(0, tokens)
@@ -407,6 +469,7 @@ async def enforce_pre_dispatch(
     units: int = 1,
     input_texts: Iterable[str] = (),
     extra_tokens: int = 0,
+    answers_in_tokens: bool = True,
 ) -> Reservation:
     """Reserve budget against the model **routing** chose — so it runs after the pipeline.
 
@@ -435,6 +498,7 @@ async def enforce_pre_dispatch(
         units=units,
         input_texts=input_texts,
         extra_tokens=extra_tokens,
+        answers_in_tokens=answers_in_tokens,
     )
     reservation = await budgets_of(request).guard(use_case, caller, estimated=expected)
     # Kept on the request as well as returned, so that a refusal raised **after** the reservation

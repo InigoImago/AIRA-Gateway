@@ -486,3 +486,62 @@ async def test_a_batch_answered_by_two_models_leaves_a_row_for_each_priced_in_fu
         assert (usage.prompt_tokens, usage.cached_input_tokens) == (100, 80)
         assert (usage.cache_write_tokens, usage.reasoning_tokens) == (10, 5)
     assert {call.step for call in outcome.model_calls} == {"pii_filter"}
+
+
+# == and a ranking (FRD-147 FR-6) =================================================================
+
+
+class _Ranker(_Provider):
+    """The redactor's model, and a reranker that records what it was sent."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ranked: list[list[str]] = []
+
+    def models(self) -> list[UpstreamModel]:
+        return [*super().models(), UpstreamModel("ranker", "ranker", ())]
+
+    async def rerank(self, request):  # noqa: ANN001, ANN201
+        from aira_gateway.core.canonical import RankedRecord, RankedRecords
+
+        self.ranked.append(request.texts())
+        return RankedRecords(
+            RankedRecord(id=record.id, score=0.5, title=record.title, content=record.content)
+            for record in request.records
+        )
+
+
+@pytest.mark.parametrize("surface", ["kira", "google"])
+async def test_a_redactor_reaches_every_record_before_the_reranker_does(surface: str) -> None:
+    """The query and every record's title and content are text sent to a provider, so a use case
+    with redaction on redacts them first — on both ranking routes."""
+    provider = _Ranker()
+    app = _app(provider, _redactor())
+    with TestClient(app) as client:
+        await _seed(app)
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                ModelRead(model="ranker", approved=True, numeric_id=3001, capabilities=["rerank"])
+            )
+            record = await session.get(UseCaseRead, "uc")
+            assert record is not None
+            record.allowed_models = ["trusted", "ranker"]
+            await session.commit()
+        records = [{"id": "r1", "title": "Brief", "content": PERSONAL}]
+        if surface == "kira":
+            response = client.post(
+                "/kira/api/external/rerank",
+                json={"model_id": 3001, "query": "Max Mustermann", "records": records},
+                headers=HEADERS,
+            )
+        else:
+            response = client.post(
+                "/v1/projects/p/locations/global/rankingConfigs/default_ranking_config:rank",
+                json={"model": "ranker", "query": "Max Mustermann", "records": records},
+                headers=HEADERS,
+            )
+
+    assert response.status_code == 200, response.text
+    (sent,) = provider.ranked
+    assert not any("Max Mustermann" in text for text in sent), sent
+    assert "<PERSON>" in sent[0]

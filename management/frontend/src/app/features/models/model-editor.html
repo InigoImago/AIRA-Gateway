@@ -494,6 +494,43 @@
               {{ fixedSamplingHelp }}
             </app-info-hint>
           </label>
+          <div class="field">
+            <label for="model-default-top-p">
+              Default top_p
+              <app-info-hint label="Sampling defaults" testid="sampling-defaults" [wide]="true">
+                {{ samplingDefaultsHelp }}
+              </app-info-hint>
+            </label>
+            <input
+              id="model-default-top-p"
+              type="number"
+              min="0"
+              max="1"
+              step="0.05"
+              name="default_top_p"
+              [ngModel]="defaultTopP()"
+              (ngModelChange)="defaultTopP.set($event)"
+              placeholder="—"
+              data-testid="model-default-top-p"
+            />
+          </div>
+          <div class="field">
+            <label for="model-default-top-k">Default top_k</label>
+            <input
+              id="model-default-top-k"
+              type="number"
+              min="1"
+              step="1"
+              name="default_top_k"
+              [ngModel]="defaultTopK()"
+              (ngModelChange)="defaultTopK.set($event)"
+              placeholder="—"
+              data-testid="model-default-top-k"
+            />
+            <span class="field__hint"
+              >Sent only where the caller sets none. Empty sends nothing.</span
+            >
+          </div>
         </fieldset>
 
         <!--

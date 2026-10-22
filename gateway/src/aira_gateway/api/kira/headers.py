@@ -33,15 +33,16 @@ MAX_NAMED_FIELDS = 20
 MAX_NAMED_CHARACTERS = 512
 
 
-def note_unmodelled(request: Request, *models: Any) -> None:
+def note_unmodelled(request: Request, *models: Any, ignored: Sequence[str] = ()) -> None:
     """Record the fields a caller sent that this surface does not model (`FRD-124`).
 
     Accepted and **named** rather than refused: real clients send fields the predecessor tolerated,
     and refusing them made the surface unusable. They are named in the response header, the log
     line and — where payloads are stored — the stored body. A near-miss of a field this surface
-    *does* model is still refused (`schemas.TolerantRequest`).
+    *does* model is still refused (`schemas.TolerantRequest`). ``ignored`` names values sent in a
+    modelled field that this surface does not use (`schemas.ignored_values`).
     """
-    names = schemas.ignored_fields(*models)
+    names = (*schemas.ignored_fields(*models), *ignored)
     if names:
         request.state.unmodelled = names
 

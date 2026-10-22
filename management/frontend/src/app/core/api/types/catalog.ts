@@ -15,7 +15,14 @@ export type Capability =
   | 'attachments'
   | 'tools'
   | 'prompt_caching'
-  | 'speech';
+  | 'speech'
+  | 'rerank';
+
+/** A model's sampling defaults (`FRD-146`): either, both, or none. */
+export interface SamplingDefaults {
+  top_p?: number;
+  top_k?: number;
+}
 
 /** The closed capability vocabulary — `aira_common.models.Capability`. */
 export const CAPABILITIES: readonly Capability[] = [
@@ -27,6 +34,7 @@ export const CAPABILITIES: readonly Capability[] = [
   'tools',
   'prompt_caching',
   'speech',
+  'rerank',
 ];
 
 /**
@@ -135,6 +143,8 @@ export interface CatalogModel {
   /** The model samples at its own settings: a request setting temperature, top_p or top_k to
    *  anything but the neutral value is never sent to it. Absent or false is no restriction. */
   fixed_sampling?: boolean;
+  /** Sent where a caller sets that control not at all; absent or null leaves the model's own. */
+  default_sampling?: SamplingDefaults | null;
   /** Warns, never blocks — blocking is what revocation is for. */
   deprecated?: boolean;
   numeric_id?: number | null;

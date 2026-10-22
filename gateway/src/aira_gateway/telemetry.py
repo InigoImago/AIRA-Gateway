@@ -32,7 +32,7 @@ from aira_common.observability import model_call, model_call_attributes, redact_
 
 #: Why the gateway is talking to a model. A closed set, because it is what a reader groups by —
 #: "what share of my spend is the pipeline" — and two spellings of one purpose would split it.
-MODEL_CALL_PURPOSES = frozenset({"serve", "pipeline", "embed", "probe"})
+MODEL_CALL_PURPOSES = frozenset({"serve", "pipeline", "embed", "rerank", "probe"})
 
 _log = get_logger("aira_gateway.telemetry")
 

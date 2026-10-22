@@ -25,6 +25,7 @@ from aira_gateway.api.kira.info_routes import router as kira_info_router
 from aira_gateway.api.kira.routes import router as kira_router
 from aira_gateway.api.pipeline import router as pipeline_router
 from aira_gateway.api.providers import router as providers_router
+from aira_gateway.api.ranking.routes import router as ranking_router
 from aira_gateway.api.reporting import router as reporting_router
 from aira_gateway.api.usage import router as usage_router
 from aira_gateway.auth.dependencies import require_attribution
@@ -301,6 +302,8 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(kira_router)
     app.include_router(kira_info_router)
     app.include_router(gemini_router, dependencies=[Depends(require_attribution)])
+    # Google's ranking path (`FRD-147`): attributed and authenticated like every model call.
+    app.include_router(ranking_router, dependencies=[Depends(require_attribution)])
 
 
 def redact_span_query(span: Any, scope: MutableMapping[str, Any]) -> None:

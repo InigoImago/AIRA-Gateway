@@ -89,6 +89,37 @@ def validate_fixed_sampling(value: Any) -> list[str]:
     return ["fixed_sampling must be true or false."]
 
 
+def validate_default_sampling(block: Any, *, fixed_sampling: Any = False) -> list[str]:
+    """``{"top_p": 0 < x <= 1, "top_k": n >= 1}``, either or both, or nothing (`FRD-146` FR-20).
+
+    A model with fixed sampling takes neither: the default would be refused by the model it is
+    the default of, on every request that sets nothing.
+    """
+    if block is None:
+        return []
+    if not isinstance(block, dict):
+        return ["default_sampling must be an object with top_p and/or top_k."]
+    problems = [
+        f"default_sampling.{key} is not a sampling default; top_p and top_k are."
+        for key in block
+        if key not in ("top_p", "top_k")
+    ]
+    top_p = block.get("top_p")
+    if top_p is not None and (
+        isinstance(top_p, bool) or not isinstance(top_p, int | float) or not 0 < top_p <= 1
+    ):
+        problems.append("default_sampling.top_p must be a number above 0 and at most 1.")
+    top_k = block.get("top_k")
+    if top_k is not None and (isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1):
+        problems.append("default_sampling.top_k must be a whole number of at least 1.")
+    if fixed_sampling is True and (top_p is not None or top_k is not None):
+        problems.append(
+            "A model with fixed sampling takes no sampling default: it refuses top_k, and top_p "
+            "other than 1."
+        )
+    return problems
+
+
 def validate_thinking(block: Any, *, max_output_tokens: int | None) -> list[str]:
     """The declaration a request is validated against, checked against itself first."""
     if block is None:
@@ -328,6 +359,9 @@ def validate_declaration(data: dict[str, Any]) -> list[str]:
         *validate_embedding(data.get("embedding")),
         *validate_attachments(data.get("attachments")),
         *validate_fixed_sampling(data.get("fixed_sampling")),
+        *validate_default_sampling(
+            data.get("default_sampling"), fixed_sampling=data.get("fixed_sampling")
+        ),
     ]
     # Positive like every other token figure here: a window or a cap of zero is a model that can
     # never answer, and a default cap of zero answers every caller who sets none with nothing.

@@ -14,16 +14,17 @@ from pydantic import ValidationError
 # The contract's codes this surface emits. A code nothing raises is not declared here.
 NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
 INVALID_TOKEN = "INVALID_TOKEN"
-ADMIN_PERMISSION_REQUIRED = "ADMIN_PERMISSION_REQUIRED"
 STANDARD_USER_PERMISSION_REQUIRED = "STANDARD_USER_PERMISSION_REQUIRED"
 MISSING_QUERY_PARAM = "MISSING_QUERY_PARAM"
 INVALID_TIME_RANGE = "INVALID_TIME_RANGE"
 MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
 NO_CHAT_CAPABILITIES = "NO_CHAT_CAPABILITIES"
 NO_EMBEDDING_CAPABILITIES = "NO_EMBEDDING_CAPABILITIES"
-INVALID_MAX_TOKENS = "INVALID_MAX_TOKENS"
+NO_RERANKER_CAPABILITIES = "NO_RERANKER_CAPABILITIES"
 MAX_TOKENS_EXCEEDS_CAP = "MAX_TOKENS_EXCEEDS_CAP"
 VALIDATION_ERROR = "VALIDATION_ERROR"
+INVALID_TOOL_CONFIGURATION = "INVALID_TOOL_CONFIGURATION"
+INVALID_FUNCTION_RESPONSE = "INVALID_FUNCTION_RESPONSE"
 EXTERNAL_KI_API_TOO_MANY_REQUEST = "EXTERNAL_KI_API_TOO_MANY_REQUEST"
 EXTERNAL_KI_API_ERROR = "EXTERNAL_KI_API_ERROR"
 INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
@@ -94,7 +95,10 @@ def code_for_unauthenticated(credential_presented: bool) -> str:
 
 
 def validation_details(exc: ValidationError) -> list[dict[str, Any]]:
-    """The predecessor's ``details`` array: location and message, nothing else.
+    """The predecessor's ``details`` array: location, message and type, nothing else.
+
+    The location begins with ``"body"``, as the predecessor's framework writes it for a field of
+    the request body — every field this surface validates is one.
 
     `errors()` can carry the raising exception in ``ctx``, which does not serialise (a custom
     validator's refusal became a 500), and echoing ``input`` back can reflect a prompt or a
@@ -102,6 +106,10 @@ def validation_details(exc: ValidationError) -> list[dict[str, Any]]:
     belt and braces.
     """
     return [
-        {"loc": [str(part) for part in error.get("loc", ())], "msg": str(error.get("msg", ""))}
+        {
+            "loc": ["body", *(str(part) for part in error.get("loc", ()))],
+            "msg": str(error.get("msg", "")),
+            "type": str(error.get("type", "")),
+        }
         for error in exc.errors(include_url=False, include_context=False, include_input=False)
     ]

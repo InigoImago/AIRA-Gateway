@@ -225,6 +225,60 @@ def test_fixed_sampling_that_only_reads_as_a_boolean_is_a_400_naming_it(value: A
     assert not Model.objects.filter(name="loose-1").exists()
 
 
+@pytest.mark.parametrize(
+    "value", [None, {}, {"top_p": 0.8}, {"top_k": 40}, {"top_p": 1, "top_k": 1}]
+)
+def test_sampling_defaults_are_top_p_and_top_k_or_nothing(value: Any) -> None:
+    assert validate_declaration(_declaration(default_sampling=value)) == []
+
+
+@pytest.mark.parametrize(
+    ("value", "named"),
+    [
+        ([0.8], "must be an object"),
+        ({"temperature": 0.5}, "default_sampling.temperature"),
+        ({"top_p": 0}, "top_p"),
+        ({"top_p": 1.5}, "top_p"),
+        ({"top_p": "0.8"}, "top_p"),
+        ({"top_p": True}, "top_p"),
+        ({"top_k": 0}, "top_k"),
+        ({"top_k": 4.5}, "top_k"),
+        ({"top_k": True}, "top_k"),
+    ],
+)
+def test_a_sampling_default_no_model_takes_is_refused(value: Any, named: str) -> None:
+    problems = validate_declaration(_declaration(default_sampling=value))
+    assert any(named in problem for problem in problems), problems
+
+
+def test_a_model_with_fixed_sampling_takes_no_default() -> None:
+    """It would refuse its own default on every request that sets nothing."""
+    problems = validate_declaration(
+        _declaration(fixed_sampling=True, default_sampling={"top_k": 40})
+    )
+    assert any("fixed sampling" in problem for problem in problems), problems
+
+
+def test_sampling_defaults_are_stored_and_published(monkeypatch: Any) -> None:
+    """Shipped empty: a model nobody set a default for publishes `null`."""
+    published: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "aira_management.apps.catalog.views.emit",
+        lambda event, payload: published.append(payload),
+    )
+    client = _client(_user("admin", "global-admin"))
+
+    plain = client.post(BASE, {"name": "plain-1"}, format="json")
+    assert plain.json()["default_sampling"] is None
+    assert published[-1]["default_sampling"] is None
+
+    set_ = client.post(
+        BASE, {"name": "kira-1", "default_sampling": {"top_p": 0.8, "top_k": 40}}, format="json"
+    )
+    assert set_.status_code == 201, set_.json()
+    assert published[-1]["default_sampling"] == {"top_p": 0.8, "top_k": 40}
+
+
 # -- through the API ------------------------------------------------------------------------
 
 

@@ -20,10 +20,12 @@ from aira_gateway.embedding import EmbeddingBounds
 from aira_gateway.pipeline.dispatch import Routing, RoutingOf
 from aira_gateway.requirements import ModelApproved
 from aira_gateway.state import providers_of, sessionmaker_of, settings_of
-from aira_gateway.upstreams.base import UpstreamModel
+from aira_gateway.upstreams.base import UpstreamModel, can_rank
 
 #: The verbs of a model that generates. The embedding verbs follow the declaration's batch flag.
 _GENERATION_VERBS = ("generateContent", "streamGenerateContent")
+#: The ranking verb, as Google's ranking path ends (`FRD-147`).
+RANK_VERB = "rank"
 
 
 def attribution_of(request: Request) -> Attribution | None:
@@ -166,7 +168,11 @@ async def served_models(request: Request) -> list[UpstreamModel]:
         UpstreamModel(
             model.name,
             model.version,
-            _verbs(await catalog.declaration(model.name), model.supported_methods),
+            _verbs(
+                await catalog.declaration(model.name),
+                model.supported_methods,
+                ranks=can_rank(registry.provider_for(model.name)),
+            ),
             model.provider,
             model.publisher,
             model.region,
@@ -187,7 +193,7 @@ async def served_models(request: Request) -> list[UpstreamModel]:
             UpstreamModel(
                 declaration.name,
                 declaration.name,
-                _verbs(declaration, (*_GENERATION_VERBS, "embedContent")),
+                _verbs(declaration, (*_GENERATION_VERBS, "embedContent"), ranks=can_rank(adapter)),
                 declaration.provider,
                 declaration.publisher,
                 declaration.regions[0] if declaration.regions else "",
@@ -207,9 +213,12 @@ async def _withheld(catalog: ModelCatalog, registry: object, model: str) -> bool
     return await ModelApproved(catalog, registry).refusal(model) is not None
 
 
-def _verbs(declaration: ModelDeclaration, offered: tuple[str, ...]) -> tuple[str, ...]:
+def _verbs(
+    declaration: ModelDeclaration, offered: tuple[str, ...], *, ranks: bool = False
+) -> tuple[str, ...]:
     """The verbs an adapter offers, narrowed to what the model is declared to do — an undeclared
-    model has the baseline — plus the batch verb where the declaration allows one."""
+    model has the baseline — plus the batch verb where the declaration allows one, and `rank`
+    where the model is declared a reranker and its adapter can rank (`FRD-147`)."""
     allowed: set[str] = set()
     # A speech model answers the same two verbs, with audio (`FRD-624`).
     if declaration.can(Capability.GENERATE) or declaration.can(Capability.SPEECH):
@@ -221,6 +230,8 @@ def _verbs(declaration: ModelDeclaration, offered: tuple[str, ...]) -> tuple[str
     verbs = [verb for verb in offered if verb in allowed]
     if "embedContent" in verbs and "batchEmbedContents" in allowed - set(verbs):
         verbs.append("batchEmbedContents")
+    if ranks and declaration.can(Capability.RERANK):
+        verbs.append(RANK_VERB)
     return tuple(verbs)
 
 

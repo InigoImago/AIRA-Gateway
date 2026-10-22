@@ -27,7 +27,7 @@ MIGRATION = importlib.import_module(
 #: Fields catalogued after `0009`, which it cannot read: the column does not exist when it runs.
 #: Leaving them out resets nothing — when `0009` runs every row would hold the column's default,
 #: which is also what the gateway holds for a model whose events never named the field.
-ADDED_AFTER = frozenset({"fixed_sampling"})
+ADDED_AFTER = frozenset({"fixed_sampling", "default_sampling"})
 
 
 def _as_at_0009(payload: dict[str, object]) -> dict[str, object]:

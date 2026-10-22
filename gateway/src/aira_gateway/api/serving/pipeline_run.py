@@ -20,7 +20,11 @@ from aira_common.observability import set_span_attributes
 from aira_gateway.api.serving.conditions import installation_requirements
 from aira_gateway.api.serving.context import attribution_of, declared_model, provenance
 from aira_gateway.audit import PIPELINE_OPERATION_PREFIX, AuditTrail, Outcome, redaction_failed
-from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
+from aira_gateway.core.canonical import (
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+    CanonicalRerankRequest,
+)
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.store import PipelineStore
@@ -90,18 +94,42 @@ async def run_pipeline_over_texts(
     notice, so it returns the request with its texts replaced. Without it, a use case with
     redaction switched on embedded and stored its callers' text unredacted.
     """
+    texts = await run_pipeline_over_strings(request, embed.texts, embed.model, trail)
+    return embed if texts is None else embed.model_copy(update={"texts": texts})
+
+
+async def run_pipeline_over_rerank(
+    request: Request, rerank: CanonicalRerankRequest, trail: AuditTrail
+) -> CanonicalRerankRequest:
+    """The same steps over a ranking request (`FRD-147` FR-6): the query and every record's title
+    and content are text a redactor must see before Google does."""
+    texts = await run_pipeline_over_strings(request, rerank.texts(), rerank.model, trail)
+    if texts is None:
+        return rerank
+    query, *fields = texts
+    records = [
+        record.model_copy(update={"title": fields[2 * index], "content": fields[2 * index + 1]})
+        for index, record in enumerate(rerank.records)
+    ]
+    return rerank.model_copy(update={"query": query, "records": records})
+
+
+async def run_pipeline_over_strings(
+    request: Request, texts: list[str], model: str, trail: AuditTrail
+) -> list[str] | None:
+    """The texts as the use case's text steps leave them, or ``None`` where it has no pipeline."""
     store: PipelineStore = request.app.state.pipeline_store
     engine: PipelineEngine = request.app.state.pipeline_engine
     use_case = getattr(attribution_of(request), "use_case", None)
     pipeline = await store.get(use_case)
     if pipeline is None:
-        return embed
+        return None
     rewrites: list[tuple[str, str]] = []
     try:
         outcome = await engine.run_over_texts(
             pipeline,
-            embed.texts,
-            model=embed.model,
+            texts,
+            model=model,
             decisions=trail.decisions,
             model_calls=trail.model_calls,
             rewrites=rewrites,
@@ -115,10 +143,10 @@ async def run_pipeline_over_texts(
         _log.info(
             "pipeline_applied",
             use_case=use_case,
-            model=embed.model,
+            model=model,
             decisions=outcome.decisions,
         )
-    return embed.model_copy(update={"texts": list(outcome.texts)})
+    return list(outcome.texts)
 
 
 async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:

@@ -416,7 +416,8 @@ async def test_each_surface_refuses_more_attachments_than_a_request_may_carry(su
         async with app.state.db_sessionmaker() as session:
             rows = list((await session.execute(select(RequestLog))).scalars())
 
-    assert response.status_code == 400, response.text
+    # Each in its own surface's status: the predecessor answers a wrong attachment `422`.
+    assert response.status_code == (400 if surface == "gemini" else 422), response.text
     assert f"at most {MAX_PARTS} attachments" in response.text
     assert [row.outcome for row in rows] == ["invalid_request"]
 

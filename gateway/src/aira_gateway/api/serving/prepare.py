@@ -28,11 +28,13 @@ from aira_gateway.api.serving.context import (
     use_case_of,
 )
 from aira_gateway.api.serving.controls import (
+    RERANK_METHOD,
     cache_prefix_wanted,
     cache_ttl_for,
     check_attachment_bounds,
     check_declaration,
     check_not_empty,
+    check_rerank_shape,
     check_sampling,
     check_tools_permitted,
     enforce_pre_dispatch,
@@ -41,11 +43,20 @@ from aira_gateway.api.serving.controls import (
     refuse_unless_live,
     resolve_reasoning,
 )
-from aira_gateway.api.serving.pipeline_run import run_pipeline, run_pipeline_over_texts
+from aira_gateway.api.serving.pipeline_run import (
+    run_pipeline,
+    run_pipeline_over_rerank,
+    run_pipeline_over_texts,
+)
 from aira_gateway.audit import AuditTrail
 from aira_gateway.budgets.service import Reservation
 from aira_gateway.catalog import ModelDeclaration
-from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
+from aira_gateway.core.canonical import (
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+    CanonicalRerankRequest,
+    RankedRecords,
+)
 from aira_gateway.embedding import check_shape as check_embedding_shape
 from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.explaining import TRAIL_STATE
@@ -63,10 +74,11 @@ from aira_gateway.requirements import (
     permits,
     set_sampling,
 )
-from aira_gateway.state import providers_of
+from aira_gateway.state import providers_of, settings_of
+from aira_gateway.telemetry import model_call_span
 from aira_gateway.thinking import ThinkingRejected, check_budget_fits, reserved_tokens
 from aira_gateway.thinking import resolve as resolve_thinking
-from aira_gateway.upstreams.base import Upstream
+from aira_gateway.upstreams.base import DialectUnsupported, Upstream, can_rank
 
 
 @dataclass(slots=True)
@@ -85,12 +97,16 @@ class Prepared:
     #: chain starts from and its conditions ask about; ``canonical`` is this fitted to the model
     #: routing chose, and every other candidate is fitted the same way (`fitting`).
     asked: CanonicalRequest | None = None
+    #: A ranking request (`FRD-147`), after the pipeline, with the model's addressing.
+    rerank: CanonicalRerankRequest | None = None
 
     @property
     def model(self) -> str:
         """The model that will actually serve this — after routing, not as the caller spelled it."""
         if self.canonical is not None:
             return self.canonical.model
+        if self.rerank is not None:
+            return self.rerank.model
         assert self.embed is not None
         return str(self.embed.model)
 
@@ -105,6 +121,7 @@ async def prepare_for_dispatch(
     embed: CanonicalEmbeddingRequest | None = None,
     requested_output: int | None = None,
     default_task_type: str | None = None,
+    rerank: CanonicalRerankRequest | None = None,
 ) -> Prepared:
     """Run the whole pre-dispatch sequence, in order (see the module docstring)."""
     # Kept where the response can read it: its headers say which model answered and what the
@@ -113,6 +130,8 @@ async def prepare_for_dispatch(
     # First: a use case that is unknown here or retired must not spend an allowance or reach a
     # classifier.
     await refuse_unless_live(request, use_case_of(request))
+    if rerank is not None:
+        return await _prepare_rerank(request, trail, rerank)
     if canonical is not None:
         # Recorded before anything can refuse, so a refused request still shows it offered tools.
         trail.tools_declared = len(canonical.tools)
@@ -185,6 +204,36 @@ async def prepare_for_dispatch(
     return Prepared(canonical, embed, fallbacks, declaration, reservation, notices, asked)
 
 
+async def _prepare_rerank(
+    request: Request, trail: AuditTrail, rerank: CanonicalRerankRequest
+) -> Prepared:
+    """The same sequence for a ranking request (`FRD-147` FR-6), in the same order.
+
+    Use case, then the refusals that need no model, then the rate limit at the request's weight —
+    one per ranking unit, the provider's — then the pipeline over every text, the declaration, and
+    the reservation last. Nothing is reserved for output: a ranking answers no text. Called once
+    the use case is known to be live, as every verb is.
+    """
+    check_rerank_shape(rerank, settings_of(request).rerank_max_records)
+    await guard_before_work(request, units=rerank.units)
+    rerank = await run_pipeline_over_rerank(request, rerank, trail)
+    declaration = await check_declaration(
+        request, model=rerank.model, method=RERANK_METHOD, requested=None
+    )
+    rerank = rerank.model_copy(update={"addressing": declaration.addressing})
+    held = await enforce_pre_dispatch(
+        request,
+        model=rerank.model,
+        max_output_tokens=None,
+        units=rerank.units,
+        # The input figure is the ranking unit (FR-7), so that is what is held back for it.
+        extra_tokens=rerank.units,
+        answers_in_tokens=False,
+    )
+    set_span_attributes({"aira.rerank.records": len(rerank.records)})
+    return Prepared(None, None, (), declaration, held, rerank=rerank)
+
+
 async def fitted(
     request: Request, asked: CanonicalRequest, declaration: ModelDeclaration
 ) -> CanonicalRequest:
@@ -198,6 +247,7 @@ async def fitted(
     """
     return asked.model_copy(
         update={
+            **sampling_defaults(request, asked, declaration),
             "thinking": resolve_thinking(asked.thinking, declaration),
             "cache_prefix": await cache_prefix_wanted(request, declaration),
             "cache_ttl": await cache_ttl_for(request),
@@ -207,6 +257,29 @@ async def fitted(
             "max_output_tokens": declaration.output_cap(asked.max_output_tokens),
         }
     )
+
+
+def sampling_defaults(
+    request: Request, asked: CanonicalRequest, declaration: ModelDeclaration
+) -> dict[str, float | int]:
+    """The model's sampling defaults for the controls the caller left unset (`FRD-146` FR-20).
+
+    Only where the model's dialect can say the control: a default is the installation's choice
+    and not the caller's request, so a dialect without `top_k` is sent none rather than refused
+    over a value nobody asked it for.
+    """
+    defaults = declaration.sampling_defaults()
+    if not defaults:
+        return {}
+    adapter = providers_of(request).provider_for(
+        declaration.name, declaration.provider, declaration.publisher
+    )
+    expressed: frozenset[str] = getattr(adapter, "sampling_controls", frozenset())
+    return {
+        control: value
+        for control, value in defaults.items()
+        if getattr(asked, control) is None and control in expressed
+    }
 
 
 def fitting(request: Request) -> Fit:
@@ -293,6 +366,24 @@ async def resolve_direct_target(
     if provider is None:
         raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
     return provider
+
+
+async def rank(request: Request, prepared: Prepared) -> RankedRecords:
+    """Send a prepared ranking request to its model, with every condition a chain applies.
+
+    Through `resolve_direct_target`, as an embedding is: another model's ranking is no substitute,
+    so there is nothing to fall back to — and an adapter that cannot rank is refused by name, as a
+    dialect that cannot say a request is (`FRD-147` FR-1).
+    """
+    rerank = prepared.rerank
+    assert rerank is not None
+    provider = await resolve_direct_target(request, rerank.model)
+    if not can_rank(provider):
+        raise DialectUnsupported(
+            f"Model '{rerank.model}' is served by an adapter that cannot rank."
+        )
+    with model_call_span(rerank.model, purpose="rerank"):
+        return await provider.rerank(rerank)
 
 
 def describe_on_the_span(
