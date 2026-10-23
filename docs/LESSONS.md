@@ -2378,6 +2378,11 @@ reading code.
   instead of merely being fast. Where a timing assertion is really an assertion about **order**,
   make the double refuse to go on until the order has happened — the only clock left is then a
   liveness bound, which a slow machine makes *less* likely to fire rather than more.
+
+  *Typed into a terminal, the same.* The run that was to publish v0.1.8 typed `/budget` into
+  OpenCode a second after the sidebar showed a budget — which the first reading puts there while
+  the turn is still running — and the command stayed in the prompt. Waiting for the turn's last
+  word and for the command list to offer the entry is the handshake; the second was a sleep.
 - **A comparison that answers the same for both sides proves neither.** A test written as *"the
   administrator may, the plain member may not"* read "may not" for both — twice, and for two
   different reasons: `option[value=…]` asks about the attribute where Angular's `[value]` binding

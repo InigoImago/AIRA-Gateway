@@ -25,6 +25,11 @@ once; the `auth.json` key said missing after the turn that failed for want of it
 `OB19`–`OB27`; `OB12` re-anchored. The console's copy is regenerated, and a workstation gets it
 with the next release's archive.
 
+The run that was to publish v0.1.8 failed its clients job once: the terminal test typed `/budget`
+a second after the sidebar showed a budget, which the first reading puts there while the turn is
+still running, and the command stayed in the prompt. It waits for the turn's last word and for the
+command list to offer the entry now.
+
 While measuring, the sandbox's disk filled to the last byte: 302 native libraries of 14 MB each
 that OpenCode's runs had left in `/tmp`, 2.4 GB, beside the scratch installs. They were removed,
 and the local stack's containers had logged no write failure.

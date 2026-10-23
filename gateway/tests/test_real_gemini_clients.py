@@ -503,15 +503,24 @@ def _shows_the_budget(generation: str, project: Path, env: dict[str, str]) -> No
     try:
         _screen_until(socket, lambda screen: "mock-1 via AIRA" in screen, 120)
         _tmux(socket, "send-keys", "-t", "oc", "read hello.py", "Enter")
+        # The turn is over before anything else is typed: a command entered while a turn runs stays
+        # in the prompt, and the dialog it would open never comes. The sidebar can show the budget
+        # from the first reading while the turn is still running; the mock's answer to the tool
+        # result is its last word.
         sidebar = _screen_until(
             socket,
-            lambda screen: "AIRA budget" in screen and "of 50 requests left" in screen,
+            lambda screen: (
+                "acted on the tool result" in screen
+                and "AIRA budget" in screen
+                and "of 50 requests left" in screen
+            ),
             120,
         )
         assert "use case · per day · resets" in sidebar
         assert "This month" in sidebar
         _tmux(socket, "send-keys", "-t", "oc", "/budget")
-        time.sleep(1)
+        # Entered once the command list offers it, not after a guess at how long that takes.
+        _screen_until(socket, lambda screen: "What is left, and what you spent" in screen, 30)
         _tmux(socket, "send-keys", "-t", "oc", "Enter")
         dialog = _screen_until(socket, lambda screen: "Allowances" in screen, 30)
         assert "limits enforced" in dialog
