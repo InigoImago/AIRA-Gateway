@@ -5,6 +5,30 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The budget plugin waits for OpenCode's first turn before it calls a setup broken (2026-10-23)
+
+The owner, on OpenCode 2.1.3: the plugin toasted *No AIRA gateway configured* at every start, and
+the sidebar said *Unavailable* until the first answer came back — from then on it worked. The
+plugin read once at start and took what OpenCode listed then as its setup; the next reading came
+when the turn ended. Measured in `tmux` with 2.1.3, against a gateway that checks the key and a
+model that takes 12 s: what OpenCode lists before a turn depends on where the key is kept. A key in
+the credential store (`opencode auth import`) was there from the start, in a project and in the
+global configuration alike; a key only in OpenCode 1's `auth.json` was there for neither the
+plugin nor OpenCode, whose turn failed before reaching the gateway. The repository pins 2.0.32 and
+1.19.3, and neither showed the toast.
+
+Until a reading has succeeded or a turn has ended, a missing gateway or key is now *not yet*
+(`FRD-144` FR-13): the sidebar says *Reading…*, nothing is toasted, and OpenCode is asked again
+after 1, 2, 4, 8, 15 and then every 30 seconds, and in OpenCode 2 when a turn starts. After a turn,
+what is still missing is said once. Against 2.1.3 again: no toast at start; the store's key read at
+once; the `auth.json` key said missing after the turn that failed for want of it. Mutations
+`OB19`–`OB27`; `OB12` re-anchored. The console's copy is regenerated, and a workstation gets it
+with the next release's archive.
+
+While measuring, the sandbox's disk filled to the last byte: 302 native libraries of 14 MB each
+that OpenCode's runs had left in `/tmp`, 2.4 GB, beside the scratch installs. They were removed,
+and the local stack's containers had logged no write failure.
+
 ## The security check's findings, fixed (2026-10-22)
 
 A second security check, with the owner's weight on the KIRA surface and on money that leaves

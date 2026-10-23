@@ -191,7 +191,16 @@ It finds the gateway in the `aira` provider OpenCode has loaded — the configur
 generates names it so — and uses the key OpenCode sends to it: from the configuration, from the
 environment variable the configuration names, or from OpenCode's credential store
 (`opencode auth login`). `AIRA_BASE_URL` and `AIRA_API_KEY` override both. It stores nothing and
-guesses no address.
+guesses no address. A rollout that hands out the key puts it where OpenCode 2 reads it: its
+credential store, with `opencode auth import` and a file shaped like `opencode auth export` prints.
+OpenCode 2.1.3 reads no key from OpenCode 1's `auth.json`, for its model calls or for the plugin.
+
+**Before OpenCode's first turn, a missing gateway is not yet missing.** OpenCode loads its
+providers and their keys beside the plugin, and what it lists before its first turn can lack the
+gateway's entry or its key. Until a reading has succeeded or a turn has ended, the sidebar says
+*Reading…*, nothing is toasted, and the plugin asks OpenCode again after 1, 2, 4, 8 and 15 seconds,
+then every 30. In OpenCode 2 it also asks when a turn starts. Once a turn has ended, what is still
+missing is said, once.
 
 **The key goes to that address and nowhere else.** The budget read carries the same key as every
 model call, so the plugin sends it over **https**, or over plain http only to this machine
@@ -213,6 +222,8 @@ sign-in proxy that redirects shows *answered with a redirect* instead of a figur
 4. **Loading does not wait on the network.** The first reading is started, not awaited.
 5. **The key reaches the gateway alone**: over https or on this machine, never after a redirect,
    and an answer from another origin is not read — the sidebar says which of them it met.
+6. **Nothing is called broken before OpenCode's first turn**: a missing gateway or key is asked
+   for again until a reading succeeds or a turn ends, and an unloaded plugin leaves no try behind.
 
 **After editing the plugin**, run `uv run python tools/opencode_plugin_asset.py --write`: the
 console hands out a generated copy, and `tools/tests/test_the_console_hands_out_the_plugin_it_ships.py`

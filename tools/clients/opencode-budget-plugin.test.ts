@@ -414,30 +414,134 @@ function openCode2(options: { infos?: any[]; config?: any[]; credentials?: any[]
   return { context, seen }
 }
 
+describe("while OpenCode is still loading its providers", () => {
+  const entry = { id: "aira", base: "https://gw.example/v1beta", key: "aira_key", headers: {} }
+
+  function counted(shown: (asked: number) => any[] | undefined, toasts: any[] = []) {
+    let asked = 0
+    const watched = host({
+      providers: async () => shown(asked++),
+      toast: (variant: string, title: string, message: string) => toasts.push([variant, title, message]),
+    })
+    return { watched, asked: () => asked, toasts }
+  }
+
+  test("a gateway OpenCode has not shown yet is asked for again, not reported, and read once it appears", async () => {
+    answers = [budget({ allowances: [] })] // nothing to warn about: any toast would be about the setup
+    const { watched, asked, toasts } = counted((n) => (n < 2 ? [] : [entry]))
+    const budgetOf = plugin.budgetPlugin(watched, {}, [5, 5])
+    await budgetOf.again()
+    expect(budgetOf.reading()).toMatchObject({ budget: null, problem: null })
+    await settle(80)
+    expect(asked()).toBe(3)
+    expect(toasts).toEqual([])
+    expect(fetched.map((call) => call.url)).toEqual(["https://gw.example/v1beta/me/budget"])
+    expect(budgetOf.reading().budget).not.toBeNull()
+    budgetOf.dispose()
+  })
+
+  test("once a turn has ended, a gateway still missing is said, once", async () => {
+    const { watched, toasts } = counted(() => [])
+    const budgetOf = plugin.budgetPlugin(watched, {}, [5])
+    await budgetOf.again()
+    expect(toasts).toEqual([])
+    await budgetOf.ended()
+    await budgetOf.ended()
+    expect(toasts).toEqual([["warning", "AIRA budget unavailable", plugin.advice("address and key")]])
+    expect(budgetOf.reading().problem).toBe(plugin.advice("address and key"))
+    budgetOf.dispose()
+  })
+
+  test("a reading that succeeds ends the asking, a try already due included", async () => {
+    const { watched, asked } = counted((n) => (n < 1 ? [] : [entry]))
+    const budgetOf = plugin.budgetPlugin(watched, {}, [40])
+    await budgetOf.again() // nothing yet: a try is due in 40 ms
+    await budgetOf.again() // a turn started, and the gateway is there now
+    await settle(120)
+    expect(asked()).toBe(2)
+    expect(fetched.length).toBe(1)
+    budgetOf.dispose()
+  })
+
+  test("an unloaded plugin leaves no try behind", async () => {
+    const { watched, asked } = counted(() => [])
+    const budgetOf = plugin.budgetPlugin(watched, {}, [5])
+    await budgetOf.again()
+    budgetOf.dispose()
+    await settle(60)
+    expect(asked()).toBe(1)
+  })
+})
+
+/** The glue's own tries, sooner: `SETTLING_MS` is what both generations' glue passes on. */
+async function withSettling<T>(delays: number[], run: () => Promise<T>): Promise<T> {
+  const original = [...plugin.SETTLING_MS]
+  plugin.SETTLING_MS.splice(0, original.length, ...delays)
+  try {
+    return await run()
+  } finally {
+    plugin.SETTLING_MS.splice(0, plugin.SETTLING_MS.length, ...original)
+  }
+}
+
 describe("OpenCode 2", () => {
-  test("adds to the sidebar and the prompt footer, offers /budget, and listens for the end of a turn", async () => {
+  test("adds to the sidebar and the prompt footer, offers /budget, and listens for a turn's start and end", async () => {
     const { context, seen } = openCode2()
     const cleanup = await plugin.default.setup(context)
     await settle()
     expect(seen.slots.map((slot) => slot.append)).toEqual(["sidebar.content", "prompt.footer.status"])
     const [command] = seen.layers[0].commands
     expect([command.id, command.palette, command.slash.name]).toEqual(["aira.budget", true, "budget"])
-    expect(seen.on.sort()).toEqual([...plugin.TURN_ENDED].sort())
+    expect(seen.on.sort()).toEqual([...plugin.TURN_STARTED, ...plugin.TURN_ENDED].sort())
     command.run()
     expect(seen.dialogs).toBe(1)
     cleanup()
-    expect(seen.off.sort()).toEqual([...plugin.TURN_ENDED].sort())
+    expect(seen.off.sort()).toEqual([...plugin.TURN_STARTED, ...plugin.TURN_ENDED].sort())
   })
 
-  test("asks with the key OpenCode keeps for the provider, and reads again when a turn ends", async () => {
+  test("asks with the key OpenCode keeps for the provider, and reads again when a turn starts and ends", async () => {
     const { context, seen } = openCode2()
     const cleanup = await plugin.default.setup(context)
     await settle()
     expect(fetched).toEqual([{ url: "https://gw.example/gw/uc/coding/v1beta/me/budget", headers: { "x-goog-api-key": "aira_from_store" } }])
-    seen.handlers["session.execution.succeeded"]()
+    seen.handlers["session.execution.started"]()
     await settle()
     expect(fetched.length).toBe(2)
+    seen.handlers["session.execution.succeeded"]()
+    await settle()
+    expect(fetched.length).toBe(3)
     cleanup()
+  })
+
+  const listedLater = { id: "aira", integrationID: "aira", settings: { baseURL: "https://gw.example/v1beta" }, headers: {} }
+
+  test("a provider OpenCode lists only later is read without a word in between", async () => {
+    answers = [budget({ allowances: [] })]
+    await withSettling([10], async () => {
+      const infos: any[] = []
+      const { context, seen } = openCode2({ infos })
+      const cleanup = await plugin.default.setup(context)
+      await settle()
+      expect(fetched).toEqual([])
+      infos.push(listedLater)
+      await settle(60)
+      expect(fetched.map((call) => call.url)).toEqual(["https://gw.example/v1beta/me/budget"])
+      expect(seen.toasts).toEqual([])
+      cleanup()
+    })
+  })
+
+  test("unloading leaves no try behind", async () => {
+    await withSettling([10], async () => {
+      const infos: any[] = []
+      const { context } = openCode2({ infos })
+      const cleanup = await plugin.default.setup(context)
+      await settle()
+      cleanup()
+      infos.push(listedLater)
+      await settle(60)
+      expect(fetched).toEqual([])
+    })
   })
 
   test("the configuration's own key comes before the environment variable it names, which comes before the store", async () => {
@@ -464,7 +568,11 @@ describe("OpenCode 2", () => {
     const cleanup = await plugin.default.setup(context)
     await settle()
     expect(fetched).toEqual([])
-    // Said once: the same broken setup at the end of every later turn is not news.
+    // Not before a turn has ended: until then the key may only not be loaded yet.
+    expect(seen.toasts).toEqual([])
+    // Then said once: the same broken setup at the end of every later turn is not news.
+    seen.handlers["session.execution.succeeded"]()
+    await settle()
     seen.handlers["session.execution.succeeded"]()
     await settle()
     expect(seen.toasts).toEqual([{ variant: "warning", title: "AIRA budget unavailable", message: plugin.advice("key"), duration: 8000 }])
@@ -558,5 +666,33 @@ describe("OpenCode 1", () => {
     await settle()
     expect(fetched.length).toBe(2)
     dispose()
+  })
+
+  test("says a missing key only once a turn has ended", async () => {
+    await withSettling([10], async () => {
+      const { api, seen, dispose } = openCode1()
+      api.state.provider = [{ id: "aira", options: {} }]
+      await plugin.default.tui(api)
+      await settle(300)
+      expect(seen.toasts).toEqual([])
+      seen.events["session.idle"]()
+      await settle()
+      expect(seen.toasts.map((toast) => toast.message)).toEqual([plugin.advice("key")])
+      dispose()
+    })
+  })
+
+  test("leaves no try behind when unloaded", async () => {
+    await withSettling([10], async () => {
+      const { api, dispose } = openCode1()
+      const resolved = api.state.provider
+      api.state.provider = [{ id: "aira", options: {} }]
+      await plugin.default.tui(api)
+      await settle(300)
+      dispose()
+      api.state.provider = resolved
+      await settle(60)
+      expect(fetched).toEqual([])
+    })
   })
 })

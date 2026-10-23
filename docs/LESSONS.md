@@ -1767,6 +1767,15 @@ reading code.
   and reported OpenCode verified, while OpenCode 2 is another npm package with its own Gemini
   client and a plugin API that runs nothing written for the first. The client's own update notice
   said so; read what the vendor publishes before naming a version tested.
+
+  *And the version a workstation runs is a generation of its own.* The budget plugin passed in
+  2.0.32 and 1.19.3, the pinned ones, and toasted *no gateway configured* at every start on the
+  owner's workstation, which runs 2.1.3: what OpenCode listed there before its first turn lacked the
+  gateway, and a first reading that took that list for the setup said so until the turn was over.
+  The repair was the rule OpenCode 1 had already taught the same file — its first reading waits for
+  the configuration — written for a host that never says when it is ready: **what a host shows
+  before it has done anything is not yet its answer; ask again, and say nothing until it has had
+  its turn.**
 - **Keeping a provider's text out must not keep its cause out.** The model check reported the
   exception's type, rightly refusing to repeat a message that can quote a URL with a key in it — and
   so answered *Not reachable (UpstreamError)* to an API not enabled, a missing role, a model not in

@@ -21,6 +21,10 @@
  * - A toast only when a limit is **crossed** (four fifths, then the limit itself) or when the
  *   budget cannot be read at all. The sidebar already shows the figure; a toast after every turn
  *   would be noise.
+ * - Nothing about a missing gateway or key **before OpenCode's first turn has ended**, unless a
+ *   reading has succeeded: OpenCode loads its providers and their keys beside the plugin, and what
+ *   it shows in that time is not yet its setup. The sidebar says *Reading…*, and the plugin asks
+ *   again (`SETTLING_MS`).
  *
  * **One file, two plugin generations.** OpenCode 2 loads a default export `{ id, setup }` and
  * OpenCode 1 a default export `{ id, tui }`; each loader ignores the other's key, so the object
@@ -61,6 +65,19 @@ export const REFRESH_MS = 5 * 60_000
 
 /** OpenCode 2's ends of a turn: the counters have moved by exactly the work just done. */
 export const TURN_ENDED = ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"]
+
+/**
+ * OpenCode 2's start of a turn. Before the first one ends, what OpenCode lists can lack the provider
+ * that turn is about to use, so its start is a moment to ask again as well.
+ */
+export const TURN_STARTED = ["session.execution.started"]
+
+/**
+ * When a missing gateway or key is asked about again while it may only be *not yet* — until a
+ * reading has succeeded or a turn has ended: soon, then less often, then every half minute. Each try
+ * asks OpenCode, not the gateway, which is asked only once there is a gateway to ask.
+ */
+export const SETTLING_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000]
 
 /** A budget read must never be what makes the interface wait. */
 export const TIMEOUT_MS = 5_000
@@ -554,14 +571,24 @@ export function Details(props: { host: Host; reading: () => Reading; where: () =
 
 /**
  * Reads, remembers and announces the budget. Returns what a generation's glue registers: the
- * sidebar, the footer line, the `/budget` action and the refresh to call on events.
+ * sidebar, the footer line, the `/budget` action, the refreshes to call on events, and what stops
+ * it when the plugin is unloaded.
  */
-export function budgetPlugin(host: Host, env: Record<string, string | undefined> = process.env) {
+export function budgetPlugin(
+  host: Host,
+  env: Record<string, string | undefined> = process.env,
+  delays: ReadonlyArray<number> = SETTLING_MS,
+) {
   const [reading, setReading] = createSignal<Reading>({ budget: null, problem: null, at: null, busy: false })
   const [where, setWhere] = createSignal("")
   let inFlight: Promise<void> | null = null
   /** The problem last toasted, so a broken setup is said once and not every minute. */
   let complained: string | null = null
+  /** Whether what OpenCode shows is its setup: a reading has succeeded, or a turn has ended. */
+  let settled = false
+  /** The next try while it is not, and how many tries came before it. */
+  let retry: ReturnType<typeof setTimeout> | null = null
+  let tries = 0
 
   function trouble(problem: string) {
     setReading((now) => ({ ...now, problem, busy: false }))
@@ -569,18 +596,41 @@ export function budgetPlugin(host: Host, env: Record<string, string | undefined>
     complained = problem
   }
 
+  /** Ask again after the next of `delays`, unless a try is already due. */
+  function later() {
+    if (retry !== null) return
+    retry = setTimeout(() => {
+      retry = null
+      void again()
+    }, delays[Math.min(tries, delays.length - 1)])
+    tries += 1
+  }
+
+  function stopTrying() {
+    if (retry !== null) clearTimeout(retry)
+    retry = null
+  }
+
   async function refresh(): Promise<void> {
     const providers = await host.providers().catch(() => [])
     const found = locate(env, providers ?? [])
-    setWhere(found.base || "no gateway configured")
-    if (found.missing) {
-      // Before OpenCode has its providers, "no key" means "not yet".
-      if (providers !== undefined) trouble(advice(found.missing))
+    if (found.missing && (providers === undefined || !settled)) {
+      // Not yet: OpenCode has no providers to show, or has not had a turn — what it lists before
+      // its first can lack the gateway's own entry or key. Said as "Reading…", and asked again.
+      setWhere(found.base || "waiting for OpenCode's providers")
+      later()
       return
     }
+    setWhere(found.base || "no gateway configured")
+    if (found.missing) {
+      trouble(advice(found.missing))
+      return
+    }
+    stopTrying()
     setReading((now) => ({ ...now, busy: true }))
     try {
       const budget = await read(found)
+      settled = true
       const crossing = crossed(reading().budget, budget)
       setReading({ budget, problem: null, at: new Date(), busy: false })
       complained = null
@@ -604,13 +654,32 @@ export function budgetPlugin(host: Host, env: Record<string, string | undefined>
     return inFlight
   }
 
+  /** A turn ended: the counters moved, and what OpenCode shows from now on is its setup. */
+  function ended(): Promise<void> {
+    settled = true
+    return again()
+  }
+
   /** `/budget`: the details, read again as they open. */
   function open() {
     void again()
     host.show(() => <Details host={host} reading={reading} where={where} />)
   }
 
-  return { reading, again, open, sidebar: () => <Sidebar host={host} reading={reading} />, footer: () => <Brief host={host} reading={reading} /> }
+  /** The plugin is unloaded: no try is left behind it. */
+  function dispose() {
+    stopTrying()
+  }
+
+  return {
+    reading,
+    again,
+    ended,
+    open,
+    dispose,
+    sidebar: () => <Sidebar host={host} reading={reading} />,
+    footer: () => <Brief host={host} reading={reading} />,
+  }
 }
 
 const COMMAND = { id: "aira.budget", title: "AIRA budget", description: "What is left, and what you spent" }
@@ -688,13 +757,17 @@ async function setup(context: any) {
     ],
   }))
 
-  const stops = TURN_ENDED.map((type) => context.data.on(type, () => void plugin.again()))
+  const stops = [
+    ...TURN_STARTED.map((type) => context.data.on(type, () => void plugin.again())),
+    ...TURN_ENDED.map((type) => context.data.on(type, () => void plugin.ended())),
+  ]
   const timer = setInterval(() => void plugin.again(), REFRESH_MS)
   // Started, not awaited: the interface draws whether or not the gateway answers.
   void plugin.again()
   return () => {
     for (const stop of stops) stop()
     clearInterval(timer)
+    plugin.dispose()
   }
 }
 
@@ -770,7 +843,7 @@ async function tui(api: any) {
       },
     ])
   }
-  api.event.on("session.idle", () => void plugin.again())
+  api.event.on("session.idle", () => void plugin.ended())
   const timer = setInterval(() => void plugin.again(), REFRESH_MS)
   // Not awaited: the interface draws whether or not the gateway answers. Until OpenCode has synced
   // its configuration there is no gateway to ask, so the first reading waits for that, briefly.
@@ -782,6 +855,7 @@ async function tui(api: any) {
   api.lifecycle.onDispose(() => {
     clearInterval(timer)
     clearInterval(ready)
+    plugin.dispose()
   })
 }
 

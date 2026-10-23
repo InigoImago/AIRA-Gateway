@@ -79,11 +79,13 @@ interface.
 - **FR-4 — `/budget`.** A slash command and a palette entry opening a dialog with every allowance,
   each with its bar, and the three windows with cost, requests and tokens; read again as it opens;
   the reason where the gateway could not be read.
-- **FR-5 — when it reads.** At start (not awaited), at the end of every turn, and every five minutes
-  for spend from elsewhere — another session, a colleague on a shared pot. Five minutes and not one
-  because each read sums three windows of the audit trail. One read at a time.
+- **FR-5 — when it reads.** At start (not awaited), at the end of every turn — in OpenCode 2 also
+  at its start — and every five minutes for spend from elsewhere — another session, a colleague on
+  a shared pot. Five minutes and not one because each read sums three windows of the audit trail.
+  One read at a time. While the gateway is *not yet* shown (FR-13), OpenCode is asked again sooner.
 - **FR-6 — when it interrupts.** A toast only when a limit is crossed upwards — into four fifths,
-  into the limit — and once per distinct reason the budget cannot be read.
+  into the limit — and once per distinct reason the budget cannot be read; a missing gateway or key
+  only once a reading has succeeded or a turn has ended (FR-13).
 - **FR-7 — where the gateway is.** The `aira` provider; another only if it is the one provider with
   both an address and a key; the address without `/v1beta`; `AIRA_BASE_URL`/`AIRA_API_KEY` override
   and never pair with another provider's half. The key OpenCode sends: OpenCode 1's resolved provider
@@ -91,6 +93,15 @@ interface.
   active credential stored for it. Of the provider's headers, only the use-case selector is sent.
 - **FR-8 — one file.** `tools/opencode/plugins/aira-budget/tui.tsx`, importing only `solid-js` and
   `@opentui/solid`, which OpenCode provides; the console hands out the same file.
+- **FR-13 — not yet, before the first turn** (2026-10-23, found by the owner on OpenCode 2.1.3).
+  OpenCode loads its providers and their keys beside the plugin, and what it lists before its first
+  turn can lack the gateway's entry or its key. The plugin read once at start, toasted *No AIRA
+  gateway configured*, and asked again only when that turn ended. Until a reading has succeeded or a
+  turn has ended, a missing gateway or key is *not yet*: the sidebar says *Reading…*, nothing is
+  toasted, and OpenCode — not the gateway, which is asked once there is a gateway to ask — is asked
+  again after 1, 2, 4, 8, 15 and then every 30 seconds (`SETTLING_MS`). A reading that succeeds ends
+  the asking, a try already due included, and so does unloading the plugin. After a turn has ended,
+  what is still missing is said, once (FR-6).
 
 ## 5. What is retired
 
@@ -175,3 +186,11 @@ model calls as well, so the plugin adds no exposure there.
 - FR-10–FR-12 in the same Bun suite, against real loopback sockets for the redirect (the other
   origin must see no request at all), a stand-in for an answer from elsewhere, and OpenCode 2's glue
   for the refusal's wording. Mutations `SUP-23`–`SUP-28`.
+- FR-13 in the same Bun suite, against the plugin and both generations' glue: a gateway listed only
+  later is read without a toast, a missing one is said once a turn has ended, a success and an
+  unload stop the asking. Mutations `OB19`–`OB27`; `OB12` re-anchored. Measured by hand with
+  OpenCode 2.1.3 in `tmux`, against a gateway that checks the key and a model that takes 12 s: a key
+  in the credential store (`opencode auth import`) reads at once, before and after the change; a key
+  only in OpenCode 1's `auth.json` is neither listed nor sent by OpenCode 2.1.3 — its turn fails
+  before anything reaches the gateway — and the plugin, which toasted at start before, now says so
+  after that turn.
