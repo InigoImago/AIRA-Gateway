@@ -2351,7 +2351,9 @@ reading code.
   test.**
 - **A harness that configures a service differently from production tests a different service.**
 - **Assert behaviour, not wire bodies**, and never assert the *model's* answer — that tests the
-  model and flakes.
+  model and flakes. *Its length is its answer too:* a check that the billed tokens exceed the
+  answer's characters read "say hello in one word", answered with a 270-character paragraph after a
+  short thought, as no thinking at all. Bound the answer in tokens, generously, or not at all.
 - **A test whose verdict turns on how fast something answered is measuring the machine.** A refill
   rate half a second wide is a coin toss under load.
 

@@ -383,7 +383,14 @@ async def _billed_and_withheld(engine: AsyncEngine, fixture: Fixture) -> None:
     reported = usage["candidatesTokenCount"] + usage.get("thoughtsTokenCount", 0)
 
     # The billed output is far larger than the answer: that *is* the thinking, counted as output.
-    assert reported > max(1, len(answer)), "thinking does not appear in the output token count"
+    # Bounded in tokens, not characters: a token of English is rarely shorter than two characters,
+    # so an answer of n characters is at most n/2 of them — and a small model asked for one word
+    # can answer with a paragraph, which a bound of n characters reads as no thinking at all.
+    answer_at_most = max(1, len(answer) // 2)
+    assert reported > answer_at_most, (
+        f"thinking does not appear in the output token count: {reported} tokens billed for an "
+        f"answer of {len(answer)} characters"
+    )
 
     row = await _latest_row(engine, CHAT_MODEL, use_case=fixture.slug)
     assert row is not None
