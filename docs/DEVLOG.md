@@ -5,6 +5,35 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The real-client tests serve the gateway on a database that takes requests at once (2026-10-23)
+
+The second run that was to publish v0.1.8 failed its clients job on
+`test_opencode_carries_a_coding_turn[opencode-2]`: OpenCode reported `ECONNRESET` after the tool
+result, and the gateway logged `cannot commit transaction - SQL statements in progress` on the
+audit write. The run on `main`, same commit, had passed; nothing was published, because the jobs
+that publish wait for every gate.
+
+The harness served the gateway on the hermetic suite's in-memory SQLite, which is one connection
+that every session shares. OpenCode 2 asks for a title while its turn streams, so two requests'
+sessions met on that connection: one's commit ran between another's statement and the fetch of its
+rows, the exception left the stream after its last chunk and before its end, and OpenCode saw the
+connection drop. A second defect sat in the same place, silent: a session's rollback, which every
+read-only session issues when it closes, discarded another session's uncommitted audit row.
+
+Measured with forty requests sent together, half streamed and half whole: on the shared connection,
+7 to 29 of the 40 failed in each of five rounds, and rows were missing beyond the failures — 8 rows
+for 33 answers in one round. On a SQLite file with a connection per session: none of 40 failed in
+five rounds, none of 200 in ten, and every row was there.
+
+`_served()` now builds the app on a SQLite file of its own — a connection per session, WAL, a 30 s
+busy timeout — as a deployment has a connection per session on Postgres. The new test sends the
+forty requests and requires every answer whole and every row written; mutation `RCH-1` puts the
+shared connection back and is caught. No product code changed. The hermetic suite stays on the
+shared connection, where `TestClient` sends one request at a time.
+
+This failure had shown before, in a local `make ci` during the security round, with its cause
+written down — and was set aside because the test passed when run alone (`LESSONS.md` §7).
+
 ## The budget plugin waits for OpenCode's first turn before it calls a setup broken (2026-10-23)
 
 The owner, on OpenCode 2.1.3: the plugin toasted *No AIRA gateway configured* at every start, and

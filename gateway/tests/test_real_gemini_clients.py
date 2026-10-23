@@ -29,6 +29,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -36,15 +37,21 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
+import httpx
 import pytest
 import uvicorn
 from google import genai
 from google.genai import types
+from sqlalchemy import event, func, select
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
-from aira_gateway.db.models import BudgetRead, ModelRead, UseCaseRead
+from aira_gateway.db.base import watch_connections
+from aira_gateway.db.models import BudgetRead, ModelRead, RequestLog, UseCaseRead
 
 ROOT = Path(__file__).resolve().parents[2]
 CLIENTS = ROOT / "tools" / "clients"
@@ -98,48 +105,83 @@ class _Recorder:
         await self.app(scope, replay, send)
 
 
+def _on_a_file(path: Path) -> AsyncEngine:
+    """The database for clients that send at once: a SQLite file, one connection per session.
+
+    The hermetic suite's in-memory database is a single connection every session shares, which
+    holds while requests come one at a time, as `TestClient` sends them. Real clients send several:
+    OpenCode 2 asks for a title while its turn streams, and the budget plugin reads beside both. On
+    one shared connection a session's commit fails on another's unfinished statement, which ends a
+    stream without its last chunk, and a session's rollback discards another's audit row. On a
+    file every session has its own connection and transaction, as on Postgres, and SQLite takes
+    the writes one at a time.
+    """
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{path}",
+        poolclass=NullPool,
+        connect_args={"timeout": 30},
+        hide_parameters=True,
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _readers_beside_a_writer(connection: Any, _record: object) -> None:
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.close()
+
+    return watch_connections(engine)
+
+
 @contextmanager
 def _served(*, daily_requests: int | None = None) -> Iterator[tuple[str, _Recorder]]:
     """The app on a real socket, with a model and a use case — and, given ``daily_requests``, a
     budget on that use case that is enforced, for what a budget display has to show."""
-    app = create_app(
-        GatewaySettings(
-            auth_required=False, enforce_budgets=daily_requests is not None, log_queue_size=0
-        )
-    )
-    recorder = _Recorder(app)
-    config = uvicorn.Config(recorder, host="127.0.0.1", port=0, log_level="error")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    while not server.started:  # noqa: ASYNC110 — a thread, not a coroutine
-        threading.Event().wait(0.02)
-    port = server.servers[0].sockets[0].getsockname()[1]
-
-    async def _seed() -> None:
-        async with app.state.db_sessionmaker() as session:
-            session.add(
-                ModelRead(
-                    model="mock-1",
-                    capabilities=["generate", "tools", "structured_output", "thinking"],
-                    thinking={"modes": [], "levels": ["low", "high"]},
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+        engine = _on_a_file(Path(directory) / "gateway.db")
+        with mock.patch("aira_gateway.app.build_engine", return_value=engine):
+            app = create_app(
+                GatewaySettings(
+                    auth_required=False,
+                    enforce_budgets=daily_requests is not None,
+                    log_queue_size=0,
                 )
             )
-            session.add(UseCaseRead(slug="uc", name="uc", tools_enabled=True))
-            if daily_requests is not None:
+        recorder = _Recorder(app)
+        config = uvicorn.Config(recorder, host="127.0.0.1", port=0, log_level="error")
+        server = uvicorn.Server(config)
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        while not server.started:  # noqa: ASYNC110 — a thread, not a coroutine
+            threading.Event().wait(0.02)
+        port = server.servers[0].sockets[0].getsockname()[1]
+
+        async def _seed() -> None:
+            async with app.state.db_sessionmaker() as session:
                 session.add(
-                    BudgetRead(
-                        use_case="uc", scope="use_case", period="day", limit_requests=daily_requests
+                    ModelRead(
+                        model="mock-1",
+                        capabilities=["generate", "tools", "structured_output", "thinking"],
+                        thinking={"modes": [], "levels": ["low", "high"]},
                     )
                 )
-            await session.commit()
+                session.add(UseCaseRead(slug="uc", name="uc", tools_enabled=True))
+                if daily_requests is not None:
+                    session.add(
+                        BudgetRead(
+                            use_case="uc",
+                            scope="use_case",
+                            period="day",
+                            limit_requests=daily_requests,
+                        )
+                    )
+                await session.commit()
 
-    asyncio.run(_seed())
-    try:
-        yield f"http://127.0.0.1:{port}", recorder
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10)
+        asyncio.run(_seed())
+        try:
+            yield f"http://127.0.0.1:{port}", recorder
+        finally:
+            server.should_exit = True
+            thread.join(timeout=10)
 
 
 def _clients_installed() -> bool:
@@ -169,6 +211,42 @@ def _declared_with(body: dict[str, Any]) -> set[str]:
 def _answered_with(body: dict[str, Any]) -> set[str]:
     config = body.get("generationConfig") or {}
     return {key for key in ("responseSchema", "responseJsonSchema") if key in config}
+
+
+#: Requests sent together below, half streamed and half whole: enough that, on one shared
+#: connection, some commit meets another session's unfinished statement every time.
+AT_ONCE = 40
+
+
+def test_the_served_gateway_answers_and_records_requests_sent_at_once() -> None:
+    """What every OpenCode test below relies on: requests that arrive together are each answered,
+    a stream to its last chunk, and each recorded once."""
+    body = {"contents": [{"role": "user", "parts": [{"text": "read hello.py"}]}]}
+    with _served() as (base, recorder):
+        models = f"{base}/uc/uc/v1beta/models"
+
+        async def streamed(client: httpx.AsyncClient) -> int:
+            url = f"{models}/mock-1:streamGenerateContent?alt=sse"
+            async with client.stream("POST", url, json=body) as response:
+                await response.aread()
+            return response.status_code
+
+        async def whole(client: httpx.AsyncClient) -> int:
+            return (await client.post(f"{models}/mock-1:generateContent", json=body)).status_code
+
+        async def together() -> list[int | BaseException]:
+            async with httpx.AsyncClient(timeout=60) as client:
+                calls = [streamed(client) if n % 2 else whole(client) for n in range(AT_ONCE)]
+                return await asyncio.gather(*calls, return_exceptions=True)
+
+        async def recorded() -> int:
+            async with recorder.app.state.db_sessionmaker() as session:
+                return await session.scalar(select(func.count()).select_from(RequestLog)) or 0
+
+        answered = asyncio.run(together())
+        rows = asyncio.run(recorded())
+    assert answered == [200] * AT_ONCE
+    assert rows == AT_ONCE
 
 
 @pytest.mark.parametrize("major", sorted(SENDS))

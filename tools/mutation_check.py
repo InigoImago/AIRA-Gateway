@@ -17892,6 +17892,15 @@ MUTATIONS = [
         '  api.event.on("session.idle", () => void plugin.again())',
         "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
     ),
+    # The gateway the real clients meet (2026-10-23): OpenCode sends more than one request at once.
+    Mutation(
+        "RCH-1",
+        "the gateway the real clients meet gives every session its own connection",
+        "gateway/tests/test_real_gemini_clients.py",
+        '        with mock.patch("aira_gateway.app.build_engine", return_value=engine):',
+        "        with contextlib.nullcontext():",
+        "gateway/tests/test_real_gemini_clients.py",
+    ),
     # Where the key goes (2026-10-22): the budget read carries the same key as every model call.
     Mutation(
         "SUP-23",

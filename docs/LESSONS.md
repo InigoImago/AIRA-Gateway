@@ -2359,6 +2359,22 @@ reading code.
   in the one place that publishes. **State of the working copy is input, and input belongs to the
   test.**
 - **A harness that configures a service differently from production tests a different service.**
+  The real-client tests ran the gateway on the hermetic suite's in-memory SQLite: one connection
+  that every session shares, which holds while requests come one at a time, as `TestClient` sends
+  them. OpenCode sends several — a title request while the turn streams, the budget plugin's
+  reading beside both — and on one connection a session's commit meets another's unfinished
+  statement, the stream loses its last chunk and OpenCode reports `ECONNRESET`; a session's
+  rollback discards another's audit row, so forty requests sent together once left eight rows for
+  thirty-three answers. No deployment shares one connection, so every one of those failures was
+  the harness's own, and one of them stopped the run that was to publish v0.1.8.
+
+  *And a failure that passes alone has not been explained.* The same failure had already shown in
+  a local `make ci`, with its cause named, and was set aside because the test passed when run by
+  itself. A lone run lacks exactly what the full one had — other requests, other load, another
+  order — so its green says only which condition is missing. **Make the condition on purpose**:
+  forty requests sent together failed five rounds out of five on the shared connection and none of
+  ten rounds of two hundred on a file. A failure seen once is a defect until that is done, and a
+  release waits for it.
 - **Assert behaviour, not wire bodies**, and never assert the *model's* answer — that tests the
   model and flakes. *Its length is its answer too:* a check that the billed tokens exceed the
   answer's characters read "say hello in one word", answered with a 270-character paragraph after a

@@ -62,6 +62,11 @@ library OpenCode and most TypeScript agents use — each with the `ai` release i
 side; `gateway/tests/test_real_gemini_clients.py` serves the gateway on a socket and has each one run
 a tool call and its result, a structured answer and a stream, then checks which form of the request
 each sent. The same test drives Google's own `google-genai` SDK with its JSON Schema fields.
+The gateway there runs on a SQLite file of its own with a connection per session, as a deployment
+has one per session on Postgres, and not on the hermetic suite's in-memory database: that is one
+connection every session shares, and real clients send at once — OpenCode asks for a title while
+its turn streams — so one request's commit or rollback would land in another's transaction. A test
+sends forty requests together and requires every answer whole and every one recorded.
 
 **OpenCode, both generations.** `tools/clients` also installs OpenCode 1 (`opencode-ai`) and
 OpenCode 2 (`@opencode/cli`), two products with different Gemini clients. Each runs a coding turn
