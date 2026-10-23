@@ -2076,6 +2076,12 @@ reading code.
   model. The helper refuses now when a pipeline row is present. **A warning in a docstring is a rule
   only a reviewer enforces; put it in the code path that would break.**
 
+  *And a feature can move the second event.* Reading a left stream to its end put a hung-up
+  request's row after the vendor's last chunk instead of after the hang-up. The integration test
+  that waited 12 seconds for it — a wait sized for the writer — went red on CI's CPU model, while
+  two siblings waiting 30 and 40 seconds for the same answer stayed green. **A wait is sized by
+  what the row waits for, and a change to the request path changes that.**
+
   *The same two-events shape, one plane further apart, and this one accuses the product of a
   breach.* A browser test set a use case's content visibility to oversight-only and then, in a
   second identity, opened the trace: the content came back, and the screenshot read exactly like a

@@ -45,7 +45,9 @@ upstream is read by a task of its own, every chunk is taken down as it is read, 
 is read to the vendor's end (`AIRA_DRAIN_LEFT_STREAMS_SECONDS`, 600) and booked at its last report.
 The answer is then billed whole. A stopping server cuts the reads short and still writes their rows;
 the image passes `--timeout-graceful-shutdown 5`. The privacy notice says the rest is received and
-not stored.
+not stored. The first run on `main` found the integration suite's walk-away test waiting 12 s for a
+row that now lands when the vendor has finished — on CI's CPU model the rest of a 400-token answer
+takes longer — and the three walk-away tests on that model wait for the model now (2026-10-23).
 
 **Supply chain.** OpenTelemetry 1.45.1 (its `tracestate` parse was quadratic before
 authentication: 32 KB, 1.76 s), certifi without the compromised emSign intermediates, DRF 3.18.3,

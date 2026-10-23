@@ -584,7 +584,9 @@ async def test_a_caller_who_hangs_up_mid_stream_is_still_recorded(
         async for _ in response.aiter_bytes():
             break
 
-    row = await governed.last_row(timeout=30.0)
+    # Written once the vendor has finished: a stream whose caller left is read to its end so that
+    # the vendor's own figure is booked (`ADR-0041`), so the wait is the rest of the model's answer.
+    row = await governed.last_row(timeout=90.0)
 
     # **The status as well as the outcome, and both surfaces the same.** This asserted only the
     # outcome for a day, because the two disagreed: measured 2026-08-13, `gemini` recorded
@@ -632,7 +634,8 @@ async def test_both_streams_record_a_hang_up_with_the_same_status(governed: Gove
             async for _ in response.aiter_bytes():
                 break
 
-    rows = await governed.wait_for_rows(2, timeout=40.0)
+    # Each row waits for the rest of its model's answer (`ADR-0041`), as in the case above.
+    rows = await governed.wait_for_rows(2, timeout=90.0)
     by_api = {str(row["api"]): row for row in rows}
     assert {"gemini", "kira"} == set(by_api), sorted(by_api)
 

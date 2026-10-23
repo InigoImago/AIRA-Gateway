@@ -217,6 +217,10 @@ async def test_a_client_that_walks_away_mid_stream_is_still_recorded(fixture, en
     A client dropping a real socket **cancels** the response task, and an unshielded `await` in the
     exit loses the settle and the row. No hermetic test can tell that from an in-process generator
     close, which is why this assertion lives here and why the shield has no mutation.
+
+    The row is written once the **vendor** has finished: a stream whose caller left is read to its
+    end, so that what the vendor reports is what is booked (`ADR-0041`). The wait is therefore the
+    model's — the rest of a 400-token answer on the stack's CPU model — not the audit writer's.
     """
     async with (
         httpx.AsyncClient(timeout=300.0) as client,
@@ -231,11 +235,13 @@ async def test_a_client_that_walks_away_mid_stream_is_still_recorded(fixture, en
         async for _ in response.aiter_bytes():
             break  # one chunk, then walk away
 
-    rows = await _settled_rows(engine, fixture.slug, 1)
+    rows = await _settled_rows(engine, fixture.slug, 1, timeout=90.0)
     assert rows[0]["operation"] == "streamGenerateContent"
     # The status and the outcome agree, as on the KIRA surface: served (200), or the caller left
     # (499). A row that recorded a hang-up as served-with-nothing is the lost settle, half found.
     assert (rows[0]["outcome"], rows[0]["status"]) in {("served", 200), ("client_gone", 499)}
+    # Read to its end, the answer is booked at the vendor's own figure rather than as nothing.
+    assert rows[0]["total_tokens"], "a stream its caller left was booked as free"
 
 
 async def test_a_kira_stream_completes_and_is_recorded(fixture, engine) -> None:
