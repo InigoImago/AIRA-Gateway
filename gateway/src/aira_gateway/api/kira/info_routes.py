@@ -10,7 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from aira_common.models import Capability, ThinkingMode
 from aira_gateway.api.kira import BASE, errors, schemas
 from aira_gateway.api.kira.headers import surface_headers
+from aira_gateway.api.reporting.common import MAX_WINDOW_DAYS
 from aira_gateway.api.serving import catalog_of, served_models
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -200,12 +201,15 @@ async def version_info(request: Request) -> Response:
 async def ki_usage(request: Request, principal: Principal = Depends(require_principal)) -> Response:
     """**The caller's own** consumption in a window, one row per model (`FRD-146` FR-21).
 
-    The predecessor's rows — `(user, model)` — narrowed to the one user asking, whatever their role.
+    The predecessor's rows — `(user, model)` — narrowed to the one user asking, whatever their role,
+    **in the use cases this credential may act in**: a key's one use case, a person's memberships.
     Another person's figures are the console's reports to show, under their own visibility rules;
     a second entry point to them would need a second copy of those rules. So nobody needs a
     permission here beyond being authenticated, and strict data mode has nothing to withhold: it
     governs who sees *another* person (`FRD-627`). The figures are the record `/v1beta/me/budget`
-    already gives the same caller.
+    already gives the same caller — which is also why the use case bounds them: a key an
+    administrator issued in a member's name answers for that member, and must not answer for the
+    member's traffic in use cases the administrator has no part in.
 
     ``Accept: text/csv`` answers the same rows as CSV with a byte-order mark, as the predecessor's
     download does, so a spreadsheet opens it as UTF-8.
@@ -213,22 +217,23 @@ async def ki_usage(request: Request, principal: Principal = Depends(require_prin
     start, end = _window(request)
     person = principal.person
     rows: list[dict[str, Any]] = []
-    if person:
-        # **Narrowed to this person, or nothing.** `person=None` is the whole installation to the
-        # report, so a credential without a person answers an empty list rather than everybody.
+    # **This person, in these use cases, or nothing.** `person=None` is every person to the report
+    # and `None` every use case, so neither may come from a credential that lacks one: no name or
+    # no use case answers an empty list rather than everybody.
+    if person and principal.use_cases:
         service: ReportingService = request.app.state.reporting
-        report = await service.report(None, start, end, person=person)
+        figures = await service.by_model(principal.use_cases, start, end, person=person)
         catalog = catalog_of(request)
-        for figures in report["by_model"]:
-            declared = await catalog.declaration(str(figures["key"]))
+        for row in figures:
+            declared = await catalog.declaration(row.key)
             rows.append(
                 schemas.KiUsageRow(
                     user_id=person,
                     # 0 for a row no id names — a refusal before any model, a model since removed.
                     model_id=declared.numeric_id or 0,
-                    entry_count=figures["requests"],
-                    token_input_sum=figures["prompt_tokens"],
-                    token_output_sum=figures["completion_tokens"],
+                    entry_count=row.requests,
+                    token_input_sum=row.prompt_tokens,
+                    token_output_sum=row.completion_tokens,
                 ).model_dump()
             )
     if "text/csv" in request.headers.get("accept", ""):
@@ -258,18 +263,25 @@ def _window(request: Request) -> tuple[datetime, datetime]:
         raise errors.KiraError(
             400, errors.INVALID_TIME_RANGE, "'endDatum' must be after 'startDatum'."
         )
-    return (
-        start if start.tzinfo else start.replace(tzinfo=UTC),
-        end if end.tzinfo else end.replace(tzinfo=UTC),
-    )
+    if end - start > timedelta(days=MAX_WINDOW_DAYS):
+        # The console's bound: anybody holding a credential may ask this, and a window over all of
+        # history makes one request aggregate a person's every row since the first.
+        raise errors.KiraError(
+            400,
+            errors.INVALID_TIME_RANGE,
+            f"The window spans more than {MAX_WINDOW_DAYS} days. Ask for a year at a time.",
+        )
+    return start, end
 
 
 def _instant(raw: str) -> datetime:
     """An ISO-8601 date or time, or whole seconds since 1970 — both of which the predecessor
-    takes. Seconds are UTC by definition."""
+    takes — **in UTC**. Seconds are UTC by definition, and a time without an offset is read as UTC;
+    one with an offset is converted, so the two ends of a window can always be compared."""
     if raw.isdigit():
         return datetime.fromtimestamp(int(raw), UTC)
-    return datetime.fromisoformat(raw)
+    parsed = datetime.fromisoformat(raw)
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _csv(rows: list[dict[str, Any]]) -> str:

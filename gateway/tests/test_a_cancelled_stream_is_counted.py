@@ -147,10 +147,14 @@ async def _no_more_chunks() -> AsyncIterator[CanonicalChunk]:
     yield  # pragma: no cover - makes this an async generator
 
 
-def test_a_notice_put_before_the_answer_is_not_counted_as_the_models_output() -> None:
+async def test_a_notice_put_before_the_answer_is_not_counted_as_the_models_output() -> None:
     """A routing step's notice leads the first text the caller sees (`FRD-309`). It is this
     gateway's sentence, not the vendor's output — counted as the answer, it would be booked as
     tokens the vendor never produced."""
+
+    async def hello() -> AsyncIterator[CanonicalChunk]:
+        yield CanonicalChunk(text_delta="Hello")
+
     stream = StreamAccounting(
         None,  # type: ignore[arg-type]  # the request is only held, never read, by these methods
         AuditTrail(operation="streamGenerateContent", api="gemini"),
@@ -159,7 +163,7 @@ def test_a_notice_put_before_the_answer_is_not_counted_as_the_models_output() ->
         Streaming(
             model="g",
             candidate_index=0,
-            chunks=_no_more_chunks(),
+            chunks=hello(),
             provider=_Counter(),  # type: ignore[arg-type]
             sent=_sent(),
             region="europe-west4",
@@ -169,7 +173,8 @@ def test_a_notice_put_before_the_answer_is_not_counted_as_the_models_output() ->
         started=0.0,
     )
 
-    delivered = stream.take(CanonicalChunk(text_delta="Hello"))
+    # Through the reader, which is where the vendor's words are taken down as they arrive.
+    delivered = [stream.take(chunk) async for chunk in stream.chunks][0]
     left = stream._unreported()  # noqa: SLF001 - what the exit hands to the count
 
     assert delivered.text_delta.startswith("Answered by g."), "the caller is told"

@@ -300,9 +300,14 @@ async def _disconnected(
     outcome, prompt, completion, cached input, usage basis, cost)`.
     """
     provider = provider or _Streams(usage_first=usage_first)
+    # Reading a left stream on is off unless a case asks for it: these cases are about what is
+    # booked when the stream is closed with the caller — read on, it ends when the vendor's does.
     app = create_app(
         GatewaySettings(
-            auth_required=False, log_queue_size=0, allowed_regions="eu", **(settings or {})
+            auth_required=False,
+            log_queue_size=0,
+            allowed_regions="eu",
+            **{"drain_left_streams_seconds": 0, **(settings or {})},
         )
     )
     app.state.providers = ProviderRegistry([provider])
@@ -456,6 +461,166 @@ async def test_a_stream_cancelled_while_its_response_starts_is_recorded_and_rele
     assert counters == [{"tokens": "0", "requests": "0", "cost": "0"}]
     assert booked == []
     assert rows == [(499, "client_gone", None, None, None, None, None)]
+
+
+# == a stream its caller left is read to its end (`ADR-0041`) ====================================
+
+#: What these cases read on for: long enough for an answer that is already on its way.
+_READ_ON = {"drain_left_streams_seconds": 5}
+
+
+@pytest.mark.parametrize("gone_at", ["after-frame", "during-frame", "start"])
+@pytest.mark.parametrize(("path", "query", "body"), STREAMS)
+async def test_a_stream_its_caller_left_is_read_to_its_end_and_booked_at_the_vendors_figure(
+    path: str, query: bytes, body: dict, gone_at: str
+) -> None:
+    """The vendor reports usage only with its last chunk, and the caller left before it.
+
+    Closed with the caller, the stream booked nothing the vendor said — a reservation handed back
+    on a dialect with no counting endpoint, and on every dialect a request anyone could make free
+    by hanging up before the last chunk. Read to its end, the answer the vendor finished and
+    billed is booked at the vendor's own figure, and the row still says the caller left.
+    """
+    provider = _Streams(usage_first=False)
+    provider.finish.set()  # the rest of the answer is on its way, whether or not anyone reads it
+    calls, counters, rows, booked = await _disconnected(
+        path, query, body, gone_at=gone_at, provider=provider, settings=_READ_ON
+    )
+
+    assert calls == ["reserve", "adjust"], "one reservation, resolved exactly once"
+    assert counters == [{"tokens": "7", "requests": "1", "cost": "0"}]
+    assert booked == [(7, 1)]
+    # The vendor's final report — not a floor, so no basis is named.
+    assert rows == [(499, "client_gone", 3, 4, 0, None, None)]
+
+
+@pytest.mark.parametrize(("path", "query", "body"), STREAMS)
+async def test_reading_on_is_bounded_and_falls_back_to_what_can_be_known(
+    path: str, query: bytes, body: dict
+) -> None:
+    """A vendor that goes quiet holds no request for ever: past the bound, the stream is closed and
+    booked as one closed with its caller — here, a dialect that reports nothing and cannot count."""
+    calls, counters, rows, booked = await asyncio.wait_for(
+        _disconnected(
+            path, query, body, usage_first=False, settings={"drain_left_streams_seconds": 0.05}
+        ),
+        timeout=10,
+    )
+
+    assert calls == ["reserve", "adjust"]
+    assert counters == [{"tokens": "0", "requests": "0", "cost": "0"}]
+    assert booked == []
+    assert rows == [(499, "client_gone", None, None, None, None, None)]
+
+
+def _left_stream_app(provider: _Streams):  # noqa: ANN202
+    app = create_app(
+        GatewaySettings(
+            auth_required=False,
+            log_queue_size=0,
+            allowed_regions="eu",
+            drain_left_streams_seconds=600,
+        )
+    )
+    app.state.providers = ProviderRegistry([provider])
+    return app
+
+
+def _left_stream(app, path: str, query: bytes, body: dict) -> asyncio.Task:  # noqa: ANN001
+    """Serve one stream whose caller leaves after the first frame, as a task."""
+    gone = asyncio.Event()
+    sent = False
+
+    async def receive():  # noqa: ANN202
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": json.dumps(body).encode()}
+        await gone.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):  # noqa: ANN001, ANN202
+        if message["type"] == "http.response.body" and message.get("body"):
+            gone.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": query,
+        "headers": [(b"content-type", b"application/json"), (b"x-aira-use-case", b"demo")],
+        "client": ("127.0.0.1", 1),
+        "server": ("test", 80),
+    }
+    return asyncio.create_task(app(scope, receive, send))
+
+
+async def _reading_on(app) -> None:  # noqa: ANN001
+    for _ in range(200):
+        if app.state.drains._active:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the stream was never read on")
+
+
+async def _seed_left_stream(app) -> None:  # noqa: ANN001
+    async with app.state.db_sessionmaker() as session:
+        session.add(ModelRead(model="slow-1", numeric_id=1, capabilities=["generate"]))
+        session.add(UseCaseRead(slug="demo", name="demo"))
+        await session.commit()
+
+
+async def test_a_stopping_server_cuts_reading_on_short_and_still_writes_the_row() -> None:
+    """A redeploy must not wait out every left stream, nor lose its row: stopping cuts the read
+    short, the request books what it knows, and its row reaches the writer before it closes."""
+    path, query, body = STREAMS[0].values
+    provider = _Streams(usage_first=True)  # reports a running total, then goes quiet
+    app = _left_stream_app(provider)
+    async with app.router.lifespan_context(app):
+        await _seed_left_stream(app)
+        served = _left_stream(app, path, query, body)
+        await _reading_on(app)
+
+        await asyncio.wait_for(app.state.drains.stop(), timeout=5)
+        await asyncio.wait_for(served, timeout=5)
+
+        async with app.state.db_sessionmaker() as session:
+            rows = [
+                (row.status, row.outcome, row.completion_tokens, row.usage_basis)
+                for row in (await session.execute(select(RequestLog))).scalars()
+            ]
+    assert rows == [(499, "client_gone", 2, "partial")], "cut short: the running total, a floor"
+
+
+async def test_the_applications_shutdown_is_what_stops_the_reads() -> None:
+    """Nothing but the application's own shutdown stops a read here — before its writer closes, so
+    the row is handed over rather than lost with the process."""
+    path, query, body = STREAMS[0].values
+    app = _left_stream_app(_Streams(usage_first=True))
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+    await _seed_left_stream(app)
+    writer = app.state.log_writer
+    handed: list[int] = []
+    submit = writer.submit
+
+    async def recording(entry):  # noqa: ANN001, ANN202
+        handed.append(entry.status)
+        await submit(entry)
+
+    writer.submit = recording
+    served = _left_stream(app, path, query, body)
+    await _reading_on(app)
+
+    await asyncio.wait_for(lifespan.__aexit__(None, None, None), timeout=10)
+
+    assert served.done(), "the shutdown returned with the stream still being read"
+    assert handed == [499], "the left stream's row never reached the writer"
 
 
 async def test_shielded_work_finishes_through_repeated_native_cancellations() -> None:

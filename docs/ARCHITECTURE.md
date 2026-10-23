@@ -1076,7 +1076,7 @@ sequenceDiagram
     participant K as Keycloak (signing keys only)
 
     X->>G: request with a credential
-    Note over G: from Authorization: Bearer, else x-goog-api-key, else ?key=
+    Note over G: from Authorization: Bearer, else x-goog-api-key, else ?key= (not on KIRA)
     alt starts with aira_ (API key)
         G->>R: find the key by its prefix, compare the hash
         R-->>G: use case, owner, active, expiry
@@ -1100,7 +1100,9 @@ sequenceDiagram
 
 1. **Find the credential.** `Authorization: Bearer …` first, then the `x-goog-api-key` header, then
    `?key=`. The last two exist so that clients written for Google's Gemini API work against AIRA
-   unchanged.
+   unchanged — and the URL is read on the Gemini surface only: a key there lands in every proxy's
+   log, and the KIRA surface's clients send theirs in a header, so that surface refuses a key in
+   its URL by name.
 2. **Decide what it is by its shape.** A credential beginning with `aira_` is an API key; anything
    else is treated as a token. Nothing else distinguishes them, and no caller can choose the path.
 3. **Check it.** A key is looked up by its prefix and its hash compared in constant time; the row

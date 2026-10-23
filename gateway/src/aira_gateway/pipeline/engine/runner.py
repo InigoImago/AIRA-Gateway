@@ -158,13 +158,16 @@ class PipelineEngine:
         model_calls: list[ModelCall] | None = None,
         declaration_of: DeclarationOf | None = None,
         past_blocks: bool = False,
+        permits: StepPermits | None = None,
     ) -> DryRunResult:
         """Evaluate the pipeline without dispatching the caller's own generation.
 
         ``past_blocks`` keeps evaluating after a step refuses, which **production never does**, so
         an operator can test the steps behind a blocking filter. Off by default: the default answer
         must be production's, and every step past a block spends real tokens. Entries after the
-        block are marked so the screen can label them a simulation.
+        block are marked so the screen can label them a simulation. ``permits`` are production's
+        conditions on a step's model — release, approval, residency, price — so a dry run reaches
+        no model a request could not.
         """
         trace: list[TraceEntry] = []
         calls: list[ModelCall] = model_calls if model_calls is not None else []
@@ -172,7 +175,7 @@ class PipelineEngine:
         blocked = False
         reason: str | None = None
         for step in pipeline.steps:
-            evaluation = await self._steps.evaluate(step, current, declaration_of)
+            evaluation = await self._steps.evaluate(step, current, declaration_of, permits)
             if evaluation.call is not None:
                 calls.append(evaluation.call)
             if evaluation.request is not None:

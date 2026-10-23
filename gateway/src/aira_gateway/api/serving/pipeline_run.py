@@ -27,6 +27,7 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.engine import PipelineEngine
+from aira_gateway.pipeline.engine.texts import TEXT_ONLY_STEPS
 from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.requirements import permits
 from aira_gateway.state import budgets_of, pricing_of
@@ -112,6 +113,17 @@ async def run_pipeline_over_rerank(
         for index, record in enumerate(rerank.records)
     ]
     return rerank.model_copy(update={"query": query, "records": records})
+
+
+async def reads_each_text(request: Request) -> bool:
+    """Whether the use case's pipeline runs a step **once per text** (`TEXT_ONLY_STEPS`).
+
+    Such a step calls a model for every text a request carries, so the request weighs what it
+    makes the pipeline do: a ranking of 200 records is the query and 400 fields, each one call.
+    """
+    store: PipelineStore = request.app.state.pipeline_store
+    pipeline = await store.get(getattr(attribution_of(request), "use_case", None))
+    return pipeline is not None and any(step.type in TEXT_ONLY_STEPS for step in pipeline.steps)
 
 
 async def run_pipeline_over_strings(

@@ -4,9 +4,11 @@ What a stream's ending means is the same on every surface, so it is decided here
 
     the upstream broke off      settled at what it had reported, recorded with its failure
     the answer was delivered    served — whether or not the upstream ever reported usage
-    the caller left             settled at what had been reported, recorded as `499`; with
-                                nothing reported, counted at the vendor where it can be and settled
-                                at that floor — otherwise unknown, and the reservation goes back
+    the caller left             read to its end first (`ADR-0041`), so the vendor says what the
+                                answer cost; settled at what it reported, recorded as `499`. Cut
+                                short or never reported: counted at the vendor where it can be and
+                                settled at that floor — otherwise unknown, and the reservation goes
+                                back
 
 A surface writes only its wire format. Inside :meth:`StreamAccounting.accounted` it passes each
 chunk through :meth:`~StreamAccounting.take` and says whether the stream was
@@ -20,7 +22,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from typing import Any
 
 from fastapi import Request
@@ -32,6 +34,7 @@ from aira_gateway.api.serving.accounting import Accounting, accounting
 from aira_gateway.api.serving.answers import StreamedNotice
 from aira_gateway.api.serving.counting import Unreported
 from aira_gateway.api.serving.prepare import Prepared
+from aira_gateway.api.serving.pump import Pump
 from aira_gateway.api.serving.refusals import (
     caller_message,
     refusal_outcome,
@@ -42,6 +45,7 @@ from aira_gateway.audit import AuditTrail
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalUsage, ToolCallPart
 from aira_gateway.pipeline.dispatch import Streaming
 from aira_gateway.shielding import uninterrupted
+from aira_gateway.state import drains_of, settings_of
 
 _log = get_logger("aira_gateway")
 
@@ -62,7 +66,9 @@ class StreamAccounting:
         shows_reasoning: bool = False,
     ) -> None:
         self.model = streamed.model
-        self.chunks = streamed.chunks
+        #: The upstream's chunks, read by a task of their own (`pump`): what the vendor sends is
+        #: observed as it arrives, and a stream whose caller left can be read to its end.
+        self.chunks = Pump(streamed.chunks, self._observe)
         self.usage: CanonicalUsage | None = None
         self.finish_reason: str | None = None
         self._request = request
@@ -110,8 +116,8 @@ class StreamAccounting:
         """The function calls the stream completed so far, in order."""
         return tuple(self._calls)
 
-    def take(self, chunk: CanonicalChunk) -> CanonicalChunk:
-        """Account for one chunk, and return it as the caller is to receive it."""
+    def _observe(self, chunk: CanonicalChunk) -> None:
+        """What the vendor sent, as it is **read** — whether or not the caller receives it."""
         if chunk.usage is not None:
             # A running total on some dialects, the final figure on others: the last one is it.
             self.usage = chunk.usage
@@ -123,12 +129,15 @@ class StreamAccounting:
             # evidence.
             self._region_seen = True
             self._trail.served_region = chunk.served_region
+        self._calls.extend(chunk.tool_calls)
+        self._answer.append(chunk.text_delta)
+
+    def take(self, chunk: CanonicalChunk) -> CanonicalChunk:
+        """Account for a chunk the caller is sent, and return it as the caller is to receive it."""
         if chunk.tool_calls:
             # The names, so a streamed tool call reaches the audit row like a buffered one.
             self._tool_calls.extend(call.name for call in chunk.tool_calls)
-            self._calls.extend(chunk.tool_calls)
             self._notice.saw_tool_call()
-        self._answer.append(chunk.text_delta)
         if self._shows_reasoning and chunk.reasoning_delta:
             self._reasoning.append(chunk.reasoning_delta)
         if chunk.audio_delta is not None:
@@ -167,39 +176,70 @@ class StreamAccounting:
 
     @asynccontextmanager
     async def accounted(self) -> AsyncIterator[None]:
-        """The body runs inside this, and the request is accounted for however the body ends."""
-        async with accounting(
-            self._request,
-            self._trail,
-            self._prepared,
-            api=self._api,
-            operation=self._operation,
-            started=self._started,
-        ) as acct:
-            try:
-                yield
-            finally:
-                self._report(acct)
-                await uninterrupted(_close(self.chunks, self.model))
+        """The body runs inside this, and the request is accounted for however the body ends.
+
+        A caller who left before the upstream's end leaves the upstream to be read to it first,
+        so the vendor's own figure is what is booked (`ADR-0041`).
+        """
+        # Held from the drain until the row is written — past the accounting's own exit — so a
+        # stopping server waits for this request's row rather than closing the writer under it.
+        with ExitStack() as held:
+            async with accounting(
+                self._request,
+                self._trail,
+                self._prepared,
+                api=self._api,
+                operation=self._operation,
+                started=self._started,
+            ) as acct:
+                try:
+                    yield
+                finally:
+                    try:
+                        if self._caller_left():
+                            held.enter_context(drains_of(self._request).held())
+                            await uninterrupted(self._drain())
+                    finally:
+                        self._report(acct)
+                        await uninterrupted(self.chunks.aclose())
 
     async def never_started(self) -> None:
         """Account for a response whose body never ran: cancelled while its headers were sent.
 
         The upstream had produced the first chunk — that is what opened the stream — so the request
-        reached a model and leaves its row. Nothing reached the caller and nothing of the chunk was
-        read, so nothing is settled: the row says the caller left, and the reservation goes back.
+        reached a model and leaves its row. Nothing reached the caller, and the upstream is read to
+        its end as for any caller who left; what it reported is settled, and with nothing reported
+        the row says the caller left and the reservation goes back.
         """
-        async with accounting(
-            self._request,
-            self._trail,
-            self._prepared,
-            api=self._api,
-            operation=self._operation,
-            started=self._started,
-        ) as acct:
-            # The first chunk opened the stream, so the prompt was read: that much is countable.
-            acct.left_unreported(self.model, self._unreported(), self.stored())
-        await _close(self.chunks, self.model)
+        with ExitStack() as held:
+            async with accounting(
+                self._request,
+                self._trail,
+                self._prepared,
+                api=self._api,
+                operation=self._operation,
+                started=self._started,
+            ) as acct:
+                try:
+                    held.enter_context(drains_of(self._request).held())
+                    await self._drain()
+                finally:
+                    self._left(acct, self.stored())
+            await self.chunks.aclose()
+
+    def _caller_left(self) -> bool:
+        """Whether the body ended with the upstream still sending, and nobody to send it to."""
+        return not self._delivered and self._failure is None and not self.chunks.finished
+
+    async def _drain(self) -> None:
+        """Read the upstream to its end, for the vendor's own figure — bounded by
+        `AIRA_DRAIN_LEFT_STREAMS_SECONDS`, and by a stopping server."""
+        seconds = settings_of(self._request).drain_left_streams_seconds
+        if seconds <= 0:
+            return
+        ended = await self.chunks.drain(seconds, drains_of(self._request).stopping)
+        if not ended:
+            _log.info("left_stream_not_read_to_its_end", model=self.model)
 
     def _report(self, acct: Accounting) -> None:
         """How the stream ended, in the one vocabulary both surfaces record (module docstring)."""
@@ -222,7 +262,12 @@ class StreamAccounting:
             # may ignore `stream_options` — or a delivered answer would read as a caller who left
             # and would weigh nothing against a request limit.
             acct.served(self.model, self.usage, stored, self._tool_calls)
-        elif self.usage is not None:
+        else:
+            self._left(acct, stored)
+
+    def _left(self, acct: Accounting, stored: dict[str, Any]) -> None:
+        """A caller who left: what the vendor reported, or else what can be counted."""
+        if self.usage is not None:
             # A report that came with the end of the answer is the vendor's last word; one before
             # it is a running total, short of what the answer went on to cost.
             acct.abandoned(
@@ -283,17 +328,3 @@ class AccountedStream(StreamingResponse):
         await self._body.aclose()
         if never_started:
             await self._stream.never_started()
-
-
-async def _close(chunks: AsyncIterator[CanonicalChunk], model: str) -> None:
-    """Hand the upstream's connection back now, not when the collector reaches the stream.
-
-    A failure to close is logged and never raised: it must not cost the request its row.
-    """
-    close = getattr(chunks, "aclose", None)
-    if close is None:
-        return
-    try:
-        await close()
-    except Exception:  # noqa: BLE001 — see above
-        _log.warning("stream_not_closed", model=model, exc_info=True)

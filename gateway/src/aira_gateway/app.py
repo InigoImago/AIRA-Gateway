@@ -27,6 +27,7 @@ from aira_gateway.api.pipeline import router as pipeline_router
 from aira_gateway.api.providers import router as providers_router
 from aira_gateway.api.ranking.routes import router as ranking_router
 from aira_gateway.api.reporting import router as reporting_router
+from aira_gateway.api.serving.pump import Drains
 from aira_gateway.api.usage import router as usage_router
 from aira_gateway.auth.dependencies import require_attribution
 from aira_gateway.auth.grants import GroupGrantResolver
@@ -214,6 +215,8 @@ def _assemble_services(
         enabled=settings.detect_anomalies,
         suspensions=app.state.suspensions,
     )
+    # Streams read on after their caller left, so a stopping server can cut them short (`ADR-0041`).
+    app.state.drains = Drains()
     # The audit write happens after the response goes out (FRD-405 §4.4): persistence stays off
     # the request path.
     app.state.log_writer = RequestLogWriter(
@@ -252,6 +255,9 @@ def _lifespan(
         probe.start()
         await app.state.anomalies.start()
         yield
+        # First: a stream still read after its caller left stops reading and books what it knows,
+        # and its row reaches the writer before the writer closes.
+        await app.state.drains.stop()
         await app.state.anomalies.stop()
         await probe.stop()
         # Drained, not dropped: a redeploy must not discard audit rows still in the queue.

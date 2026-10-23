@@ -45,6 +45,16 @@ feature is observable by default.
   `service.version`, `deployment.environment` (`local`).
 - **FR-5 Context propagation**: W3C Trace Context over HTTP; inject/extract `traceparent` on **Kafka**
   message headers (producer injects, consumer extracts) so async flows stay linked.
+  **And only that** (2026-10-22): `configure_observability` sets each process's propagator to W3C
+  trace context alone — whether or not anything exports, because the control plane instruments
+  Django on `otel_enabled` by itself — unless `OTEL_PROPAGATORS` names others. OpenTelemetry's
+  default adds `baggage`, which nothing here reads: its parser takes quadratic time inside its 8 KB
+  bound, the server instrumentation runs it before authentication (8 KB of tabs cost 0.106 s
+  through the ASGI middleware, a request without it 0.0002 s), and the httpx instrumentation would
+  pass a caller's baggage on to every upstream. A `tracestate` over 8192 characters is dropped
+  unread by the API itself from 1.45.1 on (GHSA-xcq7-p3pf-p88h; 32 KB of tabs cost 1.78 s on
+  1.44.0). Tests: `libs/tests/test_trace_headers_are_read_within_bounds.py` and
+  `test_configure_observability_is_what_restricts_the_propagators`; mutations `SUP-5`, `SUP-6`.
 - **FR-6 Correlation in logs**: structured logs carry `trace_id`/`span_id`; logs shipped via OTLP.
   *Half of this was true for a year* — see §5a.
 - **FR-7 Sampling**: a ratio sampler by trace id (default 1.0). A local parent is followed; a

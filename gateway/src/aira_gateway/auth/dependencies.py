@@ -29,7 +29,7 @@ from aira_gateway.auth.attribution import (
     mark_refused,
     resolve_use_case,
 )
-from aira_gateway.auth.credentials import extract_token
+from aira_gateway.auth.credentials import KEY_IN_URL, extract_token, key_in_url_not_read
 from aira_gateway.auth.grants import GroupGrantResolver
 from aira_gateway.auth.keys import is_aira_key
 from aira_gateway.auth.oidc import OidcValidator
@@ -139,6 +139,10 @@ async def require_principal(request: Request) -> Principal:
         # bounds a caller who has none.
         await record_failed_authentication(request)
         mark_refused(UNAUTHENTICATED, 401)
+        if key_in_url_not_read(request) and extract_token(request) is None:
+            # Named, because "missing" is false to somebody who sent a key — only not where this
+            # surface reads one.
+            raise _unauthenticated(KEY_IN_URL)
         raise _unauthenticated("Missing or invalid credentials.")
     request.state.principal = principal
     return principal

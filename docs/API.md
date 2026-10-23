@@ -41,7 +41,9 @@ through the console's origin.
 ### 1.2 Credentials, and naming a use case
 
 **On the gateway** a credential is read from `Authorization: Bearer …`, then `x-goog-api-key`, then
-`?key=` (`auth/credentials.py`). It is a Keycloak access token, or an API key: one Management issued
+`?key=` (`auth/credentials.py`) — the last on every path but the KIRA surface's, whose clients send
+their credential in a header and which answers a key in its URL with `401 NOT_AUTHENTICATED` naming
+the headers it reads. It is a Keycloak access token, or an API key: one Management issued
 for a single use case, or the break-glass key an operator mints with the gateway's CLI, which is
 bound to none. A token's permissions are those of the roles its groups confer; **an API key holds
 no permission at all**, so every route below that asks for one needs a token. The break-glass key
@@ -94,8 +96,12 @@ try an unsaved pipeline as an administrator could.
 | Management                                  | `{"error": {"code": "permission_denied", "message": "…", "details": …}}` — a `400` carries the field errors in `details` |
 
 The gateway answers a parameter it cannot accept with `400` naming it, never `422`, and a body
-larger than `AIRA_MAX_REQUEST_BYTES` with `413` before reading it, naming the limit. A traced
-response carries its trace id in `x-trace-id`, failures included; the health probes are not traced.
+larger than `AIRA_MAX_REQUEST_BYTES` with `413` before reading it, naming the limit. Both planes
+also refuse a body unread when it nests deeper than 64 levels or holds more than 250 000 JSON values
+— `400` naming the bound, on the KIRA surface `422 VALIDATION_ERROR` — and both model surfaces
+refuse a request of more than 10 000 turns or 20 000 parts before parsing them, and one offering
+more than 128 functions. A traced response carries its trace id in `x-trace-id`, failures
+included; the health probes are not traced.
 
 **Which control refused.** A Gemini refusal's `details` holds one Google `ErrorInfo` —
 `{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "BLOCKED_BY_PIPELINE", "domain":
@@ -182,7 +188,7 @@ thins every span. The guides say the rest.
 | `GET /kira/api/external/models` | any credential | The served models that have a KIRA id, by that id, with their capabilities (`Chat`, `Embedding`, `Reranker`), limits, thinking (modes and level words, a default, `null` for an undeclared bound) and embedding options. |
 | `GET /kira/api/external/health` | public; the upstreams are listed only to whom `/readyz` shows its diagnosis | The gateway, and each upstream from the background probe's last verdict; `503` when any of them is unhealthy. |
 | `GET /kira/api/external/version-info` | public | Build metadata, `null` where none was set. |
-| `GET /kira/api/external/ki-usage` | any credential | **The caller's own** requests and tokens between `startDatum` and `endDatum`, one row per model, `user_id` the caller's name and `model_id` the model's KIRA id (`0` where none). Nobody else's figures, whatever the caller's role. CSV with a byte-order mark for `Accept: text/csv`. A date that does not parse is `422`. |
+| `GET /kira/api/external/ki-usage` | any credential | **The caller's own** requests and tokens between `startDatum` and `endDatum`, one row per model, `user_id` the caller's name and `model_id` the model's KIRA id (`0` where none) — counted **in the use cases the credential may act in**: an API key's own use case, a signed-in person's memberships. Nobody else's figures, whatever the caller's role, and none from a use case the credential has no part in. CSV with a byte-order mark for `Accept: text/csv`. A date that does not parse is `422`; a window of more than 366 days is `400 INVALID_TIME_RANGE`. A date without an offset is read as UTC. |
 
 An upstream failure on the KIRA surface is `502 EXTERNAL_KI_API_ERROR`, whatever the provider said,
 except `429`; an attachment type nobody accepts, a schema it cannot read and a `temperature` outside
@@ -207,7 +213,7 @@ a model name may contain one; any other verb, `:countTokens` among them, is `400
 
 | Operation                    | Who may call | Answers |
 | ---------------------------- | ------------ | ------- |
-| `POST /v1beta/pipeline:dryRun` | a grant on the use case named in the body; an unsaved pipeline, or `past_blocks`, only its admins, `usecase.manage_all` and the break-glass key | Body `{use_case, system, user, model, pipeline, past_blocks}`, each sample at most 8,000 characters. `200 {blocked, block_reason, effective_model, fallback_models, trace: [{type, action, detail, after_block}]}`; to a member, `detail` leaves out what a step's model wrote (`output`, `after`). `400` for a model the use case was not released or the installation has not approved; `403` for another use case, one this gateway does not hold or holds retired, or a member trying an unsaved pipeline; before any step runs, the refusals a request meets — a suspension, a rate limit, an exhausted budget. **It runs the real engine**: a step that asks a model spends tokens, billed and audited. |
+| `POST /v1beta/pipeline:dryRun` | a grant on the use case named in the body; an unsaved pipeline, or `past_blocks`, only its admins, `usecase.manage_all` and the break-glass key | Body `{use_case, system, user, model, pipeline, past_blocks}`, each sample at most 8,000 characters. `200 {blocked, block_reason, effective_model, fallback_models, trace: [{type, action, detail, after_block}]}`; to a member, `detail` leaves out what a step's model wrote (`output`, `after`). `400` for a model the use case was not released or the installation has not approved; `403` for another use case, one this gateway does not hold or holds retired, or a member trying an unsaved pipeline; before any step runs, the refusals a request meets — a suspension, a rate limit (a run weighs one per step, each of which may call a model), an exhausted budget. Each step's model meets the conditions it meets in production — release, approval, residency, and a price where spend is capped — so a dry run reaches no model a request could not. **It runs the real engine**: a step that asks a model spends tokens, billed and audited. |
 
 ### 2.4 Budgets
 
@@ -501,9 +507,16 @@ are compacted (`cleanup.policy=compact`): the last event per key survives, and a
 group rebuilds the read-model by replaying them. Kafka orders events within a partition; events on
 **different** topics have no order between them, so a key may arrive before its use case. The
 gateway therefore reads a use case it has not heard of as unknown, never as retired — and an upsert
-of something inside a **retired** use case is ignored (a key is written deactivated), so a replay
-cannot bring back what retirement removed. What a broker must provide is in
-[`INTEGRATIONS.md`](INTEGRATIONS.md).
+of something inside a **retired** use case is ignored (a key is written deactivated). And because
+the retirement lives on the use case's own key, which a purge later replaces, **retiring also ends
+each child on the child's own key**: every active key is revoked, and every member, group grant,
+budget, rate limit, rule and the pipeline get their removal event; a purge sends them once more, for
+a use case retired before retirement did. So the last record of every key of a retired use case
+ends it, and no replay in any order — a rebuild, or a consumer group whose offsets were reset —
+brings a retired or purged use case's access back, even onto a use case created later under the
+same slug. A use case purged by an earlier version is the exception: its children's last records
+still grant, and Management no longer holds the rows that would end them. What a broker must
+provide is in [`INTEGRATIONS.md`](INTEGRATIONS.md).
 
 ### 4.2 One record
 
@@ -528,8 +541,8 @@ names the payload field or fields the record key is made of (§4.2).
 | Event type | Topic | Key | Management sends | Gateway applies | Meaning |
 | ---------- | ----- | --- | :--------------: | :-------------: | ------- |
 | `usecase.upserted` | `aira.usecases` | `slug` | ✓ | ✓ | A use case was created or changed. Also sent, without the model, for every live use case a deleted model was released to. The gateway upserts its row. |
-| `usecase.deleted` | `aira.usecases` | `slug` | ✓ | ✓ | A use case was retired. The gateway deactivates its keys; deletes its members, group grants, budgets and their counters, rate limits, rules and pipeline; and keeps the row as a tombstone that grants nothing. |
-| `usecase.purged` | `aira.usecases` | `slug` | ✓ | ✓ | A retired use case was purged. The gateway drops the tombstone; its `request_logs` stay. |
+| `usecase.deleted` | `aira.usecases` | `slug` | ✓ | ✓ | A use case was retired. The gateway deactivates its keys; deletes its members, group grants, budgets and their counters, rate limits, rules and pipeline; and keeps the row as a tombstone that grants nothing. Management follows it with each child's own removal event (§4.1). |
+| `usecase.purged` | `aira.usecases` | `slug` | ✓ | ✓ | A retired use case was purged, after each child's removal event once more (§4.1). The gateway drops the tombstone; its `request_logs` stay. |
 | `membership.upserted` | `aira.memberships` | `slug\|username` | ✓ | ✓ | A person was granted the use case by name, or given another role in it. |
 | `membership.removed` | `aira.memberships` | `slug\|username` | ✓ | ✓ | A person's membership ended. |
 | `use_case_group.granted` | `aira.memberships` | `slug\|group` | ✓ | ✓ | A Keycloak group was granted the use case, or given another role in it. |
@@ -537,7 +550,7 @@ names the payload field or fields the record key is made of (§4.2).
 | `api_key.created` | `aira.api-keys` | `prefix` | ✓ | ✓ | A key was issued. A key once revoked is never reactivated by a late redelivery, and one for a retired use case is written deactivated. |
 | `api_key.revoked` | `aira.api-keys` | `prefix` | ✓ | ✓ | A key was revoked — by hand, or because its owner's last grant on the use case ended. The gateway stamps `revoked_at` when it learns of it. |
 | `pipeline.upserted` | `aira.pipelines` | `use_case` | ✓ | ✓ | A use case's pipeline was saved; one with no steps is cleared. |
-| `pipeline.deleted` | — | — | — | ✓ | Never sent: Management has no route that deletes a pipeline. The gateway keeps the handler so that an older gateway survives a newer Management that sends it. |
+| `pipeline.deleted` | `aira.pipelines` | `use_case` | ✓ | ✓ | A use case was retired or purged, and its pipeline ended with it. No route deletes a pipeline: clearing one is a save with no steps. |
 | `budget.upserted` | `aira.budgets` | `id` | ✓ | ✓ | A budget was set on a use case, or the installation's own (`use_case` empty). |
 | `budget.deleted` | `aira.budgets` | `id` | ✓ | ✓ | A budget was removed. Its counters stay, so a budget set again within the same period starts from what was already spent. |
 | `ratelimit.upserted` | `aira.rate-limits` | `id` | ✓ | ✓ | A rate limit was set. |
@@ -566,7 +579,7 @@ same function (`apps/usecases/views/payloads.py`, `catalog/views.py` `_payload`,
 | `api_key.created` | `prefix`, `key_hash`, `subject`, `issued_by`, `use_case`, `label`, `status`, `expires_at` | The hash, never the key. `subject` is the owner's username; `expires_at` is ISO 8601. |
 | `api_key.revoked` | `prefix`, `use_case`, `status` | |
 | `pipeline.upserted` | `use_case`, `steps`, `fallback_models` | |
-| `pipeline.deleted` | `use_case` | Never sent; the field its handler reads. |
+| `pipeline.deleted` | `use_case` | Sent when its use case is retired or purged. |
 | `budget.upserted` | `id`, `use_case`, `scope`, `subject`, `period`, `limit_cost`, `limit_tokens`, `limit_requests`, `enabled` | `limit_cost` is a decimal string. |
 | `budget.deleted` | `id`, `use_case`, `period` | `period` is sent for the installation's budget only. |
 | `ratelimit.upserted` | `id`, `use_case`, `scope`, `subject`, `limit_rpm`, `burst`, `enabled` | |
@@ -584,8 +597,10 @@ same function (`apps/usecases/views/payloads.py`, `catalog/views.py` `_payload`,
 change:
 
 - `tools/tests/test_the_two_planes_agree_on_the_event_vocabulary.py` — every event type Management
-  emits has a handler on the gateway, and every handler an emitter or a stated reason
-  (`pipeline.deleted`);
+  emits has a handler on the gateway, and every handler an emitter or a stated reason;
+- `tools/tests/test_a_purged_use_case_stays_purged_under_every_replay.py` — retiring, purging and
+  creating the slug again, then the topics replayed in every order: nothing of the old use case
+  grants, whether it was retired now or before retirement ended its children;
 - `management/backend/tests/test_outbox_routing.py` — every event emitted has a topic, each kind of
   entity its own compaction key, and each event its one builder;
 - `tools/tests/test_a_model_event_is_applied_whole.py` — every field of `model.upserted` is one the

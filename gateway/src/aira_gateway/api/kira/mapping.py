@@ -18,7 +18,6 @@ from typing import Any
 from aira_common.models import ThinkingMode
 from aira_gateway.api.kira import embedding_prompts, schemas, tool_schema
 from aira_gateway.api.kira.errors import (
-    EXTERNAL_KI_API_ERROR,
     INVALID_FUNCTION_RESPONSE,
     INVALID_TOOL_CONFIGURATION,
     VALIDATION_ERROR,
@@ -26,6 +25,7 @@ from aira_gateway.api.kira.errors import (
 )
 from aira_gateway.attachments import Limits, check_media_type, check_signature, decode
 from aira_gateway.core.canonical import (
+    MAX_TOOLS,
     CanonicalEmbeddingRequest,
     CanonicalMessage,
     CanonicalPart,
@@ -47,6 +47,7 @@ from aira_gateway.core.schema import SchemaBounds, SchemaRejected
 from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.embedding import DEFAULT_TASK_TYPE
 from aira_gateway.thinking import mode_from
+from aira_gateway.upstreams.base import UpstreamError
 
 #: What the predecessor puts between two text parts of one message: it sends them as one string.
 #: Kept as separate parts, each adapter would render them differently ("HalloWelt" on one).
@@ -60,10 +61,6 @@ SIGNATURE_KEY = "thoughtSignature"
 
 #: A function name as every dialect this gateway reaches accepts one: Gemini's rule, the narrowest.
 TOOL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]{0,63}")
-
-#: How many functions one request may offer. Each is a schema the model reads with every turn and
-#: the reservation counts; past this, a request is a catalogue rather than a conversation.
-MAX_TOOLS = 128
 
 
 def _parts(
@@ -389,15 +386,18 @@ def check_answered(response: CanonicalResponse) -> None:
     empty answer; served as ``parts: []`` it reads as *the model had nothing to say*, and nobody
     learns that the prompt was refused or the cap too small. An answer that is empty but cost
     output tokens is still served as ``parts: []`` (`FRD-146` FR-17).
+
+    Raised as the shared :class:`UpstreamError`, never as this surface's own error: it is raised
+    while the request is being accounted for, where only a shared refusal is recorded as one — by
+    the surface, with the spend on it. Any other exception there is the gateway failing and writes
+    a `500` row of its own, so the request would be counted, and its cost reported, twice.
     """
     if response.text or response.tool_calls:
         return
     if response.usage.completion_tokens - response.usage.reasoning_tokens > 0:
         return
-    raise KiraError(
-        502,
-        EXTERNAL_KI_API_ERROR,
-        f"The model returned no answer (it stopped with '{response.finish_reason}').",
+    raise UpstreamError(
+        f"The model returned no answer (it stopped with '{response.finish_reason}')."
     )
 
 

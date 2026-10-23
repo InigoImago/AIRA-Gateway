@@ -95,6 +95,21 @@ and the guarantee is the *order*, exactly as before. Two of the six were right.
   report, so such a stream is unknown rather than booked at zero.
   Counting sends the request and the received answer to the same vendor and region a second time;
   the privacy notice says so (`FRD-625`, edition 2026-10-13).
+- **FR-7** A stream whose caller left is **read to its end first** (`ADR-0041`). The upstream's
+  chunks are read by a task of their own (`api/serving/pump.py`), and each is observed for the
+  accounting as it is read — before it is handed on, and whether or not it ever is. When the caller
+  leaves before the vendor's end, the gateway reads on, for at most
+  `AIRA_DRAIN_LEFT_STREAMS_SECONDS` (600), and settles at the vendor's **last** report: a whole
+  answer, not a floor, so no basis is recorded. Without it, on every dialect that reports usage only
+  in its last chunk and offers no count — OpenAI-compatible servers, Azure and Foundry, the open
+  models on Vertex — a stream closed with its caller booked nothing at all, which made any request
+  free to a caller who read the answer and hung up before the last chunk (security check,
+  2026-10-22). The trade, decided by the owner for real figures: the vendor finishes and bills the
+  whole answer, where it might have stopped. A stopping server cuts every read short
+  (`Drains.stop`, first in the application's shutdown), and each request then books what it knows
+  — FR-2 or FR-6 — and writes its row before the audit writer closes; the image passes
+  `--timeout-graceful-shutdown 5` so that shutdown begins inside Docker's ten seconds. `0` closes a
+  stream with its caller as before, and FR-6 applies.
 
 ## 4. Design notes worth keeping
 
@@ -126,6 +141,10 @@ does: `test_cancelled_requests.py` sees one adjust where an unshielded build mak
   four of four paths.
 - `gateway/tests/test_kira_streaming_disconnect.py` — the streaming window.
 - Mutations `Z17`–`Z20`; `Z17`/`Z18` re-anchored from the finisher this change deleted.
+- FR-7: `gateway/tests/test_a_left_stream_is_read_to_its_end.py` (the reader: every chunk observed,
+  read to the end, bounded, stopped, closed where opened) and `test_cancelled_requests.py` (both
+  surfaces, every way of leaving, booked at the vendor's figure; bounded; a stopping server writes
+  the row); mutations `SPD-21`–`SPD-28`.
 - FR-6: `gateway/tests/test_a_cancelled_stream_is_counted.py` (the count itself),
   `test_cancelled_requests.py` (booked once, priced at the floor, both surfaces, every way of
   leaving), `test_vertex.py` (where and what is counted), `test_gemini_upstream_mapping.py` (a usage

@@ -8,6 +8,11 @@ and still publishes. That is the definition of a rule only a reviewer enforces.
 
 Asserted against the parsed YAML wherever the structure carries the meaning, because a grep for
 `needs:` passes on a `needs:` that names the wrong jobs.
+
+**And what a release is built from, and who could have changed it** (`ADR-0043`): every action is
+pinned to a commit, no checkout leaves the token in the clone, a job that can write runs only code
+it has to trust, no release job restores a cache, and every file and image a release names is
+signed before the release exists.
 """
 
 from __future__ import annotations
@@ -28,7 +33,7 @@ MAKEFILE = ROOT / "Makefile"
 ON = True
 
 #: The jobs that release a version, as opposed to the jobs that check a commit.
-RELEASE_JOBS = {"described", "publish"}
+RELEASE_JOBS = {"described", "publish", "inventory", "release"}
 
 
 def _workflow() -> dict:
@@ -73,12 +78,15 @@ def test_nothing_is_published_that_the_gates_and_the_description_check_did_not_p
     assert set(needs) == checks | {"described"}, (
         f"the release depends on {needs}; every check job and the description check must gate it"
     )
+    # The jobs after the push wait for it, and so for everything it waited for.
+    for job in ("inventory", "release"):
+        assert "publish" in _job(job)["needs"], f"{job} can run before the gates have passed"
 
 
 def test_only_a_tag_publishes() -> None:
-    """Both release jobs are gated on the ref being a tag. Without it, `described` would fail every
-    ordinary push — and `publish` would run on one."""
-    for job in ("described", "publish"):
+    """Every release job is gated on the ref being a tag. Without it, `described` would fail every
+    ordinary push — and the others would run on one."""
+    for job in sorted(RELEASE_JOBS):
         assert "refs/tags/v" in str(_job(job)["if"]), (
             f"the {job} job is not gated on a tag ref, so it takes part in ordinary pushes"
         )
@@ -127,14 +135,14 @@ def test_no_script_has_a_value_the_pusher_chooses_written_into_it() -> None:
     assert not spliced, "an event's value is written into a script:\n  " + "\n  ".join(spliced)
 
 
-def test_a_tag_that_is_not_a_release_version_stops_both_jobs_before_anything_runs() -> None:
+def test_a_tag_that_is_not_a_release_version_stops_every_release_job_before_anything_runs() -> None:
     """Quoting makes a hostile name inert; refusing it first means no step ever sees one. The
     spelling is `tools/release_version.py`'s, so CI and `make release-check` agree on what a
     release tag is."""
     sys.path.insert(0, str(ROOT / "tools"))
     import release_version
 
-    for job in ("described", "publish"):
+    for job in sorted(RELEASE_JOBS):
         first = _job(job)["steps"][0]
         assert first.get("name") == "Refuse a tag name that is not a release version", (
             f"{job} runs something before it has looked at the tag's name"
@@ -191,18 +199,30 @@ def test_a_version_that_is_already_released_is_refused_rather_than_republished()
     assert "exit 1" in str(guard["run"])
 
 
+def _names(job: str) -> list[str]:
+    return [str(step.get("name", step.get("uses", ""))) for step in _job(job)["steps"]]
+
+
 def test_the_notes_are_published_after_the_images_and_not_before() -> None:
     """A Release created first and then a failed build claims images that do not exist. In this
     order a failed build leaves a tag with **no Release against it** — visibly unfinished, rather
-    than a version that silently names nothing."""
-    names = [str(step.get("name", step.get("uses", ""))) for step in _job("publish")["steps"]]
-    pushes = [i for i, name in enumerate(names) if name.startswith("Build and push")]
-    notes = names.index("Publish the release notes")
-
-    assert pushes, "nothing in the release job pushes an image"
-    assert max(pushes) < notes, (
-        "the release notes are published before the last image, so a failed build can leave a "
-        "Release claiming images that were never pushed"
+    than a version that silently names nothing. The images are pushed by `publish` and the Release
+    is created by `release`, which needs it — so the order is a job's dependency, and no other job
+    may publish notes of its own."""
+    assert any(name.startswith("Build and push") for name in _names("publish")), (
+        "nothing in the publish job pushes an image"
+    )
+    assert "publish" in _job("release")["needs"], "the Release can be created before the images"
+    creating = [
+        job
+        for job, body in _workflow()["jobs"].items()
+        for step in body.get("steps", [])
+        if "gh release create" in str(step.get("run", ""))
+        or step.get("name") == "Publish the release notes"
+    ]
+    assert creating == ["release"], (
+        f"{creating} publish release notes; only the job behind the images may, or a failed build "
+        "can leave a Release claiming images that were never pushed"
     )
 
 
@@ -210,7 +230,7 @@ def test_the_notes_are_the_tagger_s_own_words_and_not_a_generated_list() -> None
     """The tag's own message is the description (`ADR-0030`). A commit list is evidence, not a
     description: it answers *what moved* and never *why it matters*, which is the whole reason this
     mechanism replaced one that wrote `Release v0.1.0` by itself."""
-    publish = _step("publish", "release_notes.py")
+    publish = _step("release", "release_notes.py")
 
     assert "--notes-file" in str(publish["run"]), (
         "the Release body does not come from the rendered notes"
@@ -220,11 +240,11 @@ def test_the_notes_are_the_tagger_s_own_words_and_not_a_generated_list() -> None
     )
 
 
-def test_both_release_jobs_check_out_the_history_the_notes_need() -> None:
+def test_both_jobs_that_read_the_tag_check_out_the_history_the_notes_need() -> None:
     """The notes quote the commits since the previous release, and the forward-only check compares
     against every tag. `--depth 1` sees no tags at all, which makes every release look like the
     first one."""
-    for job in ("described", "publish"):
+    for job in ("described", "release"):
         checkout = _step(job, "actions/checkout")
         assert checkout["with"]["fetch-depth"] == 0, f"{job} checks out shallowly"
 
@@ -256,14 +276,30 @@ def test_every_published_image_carries_the_commit_it_was_built_from() -> None:
         )
 
 
-def test_the_release_job_asks_for_exactly_the_two_permissions_it_needs() -> None:
-    """Named rather than inherited, and no more than two. `packages: write` is what GHCR accepts
-    `GITHUB_TOKEN` for in this repository's own namespace — which is why no personal access token is
-    configured anywhere. `contents: write` is for the GitHub Release."""
-    assert _job("publish")["permissions"] == {"contents": "write", "packages": "write"}
+#: What each release job may do, and nothing more. `packages: write` is what GHCR accepts
+#: `GITHUB_TOKEN` for in this repository's own namespace — which is why no personal access token is
+#: configured anywhere; `contents: write` is for the GitHub Release; `id-token` and `attestations`
+#: sign it. Every other job inherits the workflow's read-only default.
+RELEASE_PERMISSIONS = {
+    "publish": {"contents": "read", "packages": "write"},
+    "inventory": {"contents": "read", "packages": "read"},
+    "release": {"contents": "write", "id-token": "write", "attestations": "write"},
+}
+
+
+def test_each_release_job_asks_for_exactly_what_it_uses() -> None:
+    """Named rather than inherited, and split by job: a permission granted to a job is granted to
+    every step in it, so the token that can push images is not in the job that writes the Release,
+    and neither is in the job that runs Syft."""
+    jobs = _workflow()["jobs"]
+    for job, expected in RELEASE_PERMISSIONS.items():
+        granted = jobs[job].get("permissions")
+        assert granted == expected, f"{job} asks for {granted}, not {expected}"
     assert _workflow()["permissions"] == {"contents": "read"}, (
-        "the workflow's default permissions widened; only the release job may write"
+        "the workflow's default permissions widened; only the release jobs may write"
     )
+    others = sorted(j for j, body in jobs.items() if "permissions" in body)
+    assert others == sorted(RELEASE_PERMISSIONS), f"{others} ask for permissions of their own"
 
 
 def test_no_personal_access_token_is_referenced() -> None:
@@ -284,7 +320,7 @@ def test_a_release_run_is_never_cancelled_by_a_newer_one() -> None:
     assert "refs/tags/" in cancel, "a release run can be cancelled between two image pushes"
 
 
-def test_both_release_jobs_restore_the_tag_object_before_reading_it() -> None:
+def test_both_jobs_that_read_the_tag_restore_its_object_first() -> None:
     """**What `v0.1.1` was published with.** `actions/checkout` creates `refs/tags/<name>` pointing
     at the *commit* it checked out, so the annotated tag object — the thing that carries the notes —
     is not in the clone. `%(contents)` of a ref pointing at a commit is the commit's message, which
@@ -295,7 +331,7 @@ def test_both_release_jobs_restore_the_tag_object_before_reading_it() -> None:
     success, which is worse than not checking at all — it is a gate that says the thing it did not
     look at is fine.
     """
-    for job in ("described", "publish"):
+    for job in ("described", "release"):
         restore = _step(job, "Restore the annotated tag object")
         run = str(restore["run"])
 
@@ -311,7 +347,7 @@ def test_the_release_title_comes_from_the_tool_that_checks_the_annotation() -> N
     """The title was a second `git tag --format` in the workflow, unchecked — so when the tag
     arrived flattened, the body and the title were both the commit's and only the body looked like
     a mistake. One owner for *what the tag says*, and it goes through the rules."""
-    publish = _step("publish", "gh release create")
+    publish = _step("release", "gh release create")
     run = str(publish["run"])
 
     assert "release_notes.py --subject" in run, "the title does not come from the checked tool"
@@ -358,13 +394,13 @@ def test_the_tag_message_is_written_from_the_template() -> None:
 def test_the_plugin_is_packed_into_the_directory_the_release_attaches() -> None:
     """A rollout downloads the plugin from the Release by a name that carries the version
     (`tools/opencode_plugin_archive.py`)."""
-    pack = str(_step("publish", "Pack the OpenCode plugin")["run"])
+    pack = str(_step("release", "Pack the OpenCode plugin")["run"])
 
     assert 'tools/opencode_plugin_archive.py "$VERSION" --out "$RUNNER_TEMP/assets"' in pack
 
 
 def _published(tmp_path: pathlib.Path, files: list[str]) -> tuple[list[str], list[str]]:
-    """Run the step that creates the Release, with `uv` and `gh` replaced by stand-ins that
+    """Run the step that creates the Release, with `python` and `gh` replaced by stand-ins that
     record their arguments, over an asset directory holding ``files``. Returns what
     `release_notes.py` and `gh release create` were given."""
     assets = tmp_path / "assets"
@@ -373,14 +409,14 @@ def _published(tmp_path: pathlib.Path, files: list[str]) -> tuple[list[str], lis
         (assets / name).write_text(name)
     bin_ = tmp_path / "bin"
     bin_.mkdir()
-    for tool in ("uv", "gh"):
+    for tool in ("python", "gh"):
         stub = bin_ / tool
         stub.write_text(
             f'#!/bin/bash\nprintf "%s\\n" "$@" > "{tmp_path}/{tool}.$RANDOM$RANDOM"\n'
             'echo "subject"\n'
         )
         stub.chmod(0o755)
-    step = _step("publish", "Publish the release notes")
+    step = _step("release", "Publish the release notes")
     subprocess.run(  # noqa: S603
         ["bash", "-e", "-o", "pipefail", "-c", str(step["run"])],  # noqa: S607
         check=True,
@@ -394,7 +430,7 @@ def _published(tmp_path: pathlib.Path, files: list[str]) -> tuple[list[str], lis
         },
     )
     calls = [path.read_text().splitlines() for path in tmp_path.glob("*.[0-9]*")]
-    (notes,) = [c for c in calls if c[:2] == ["run", "python"] and "--subject" not in c]
+    (notes,) = [c for c in calls if c[:1] == ["tools/release_notes.py"] and "--subject" not in c]
     (create,) = [c for c in calls if c[:2] == ["release", "create"]]
     return notes, create
 
@@ -425,7 +461,7 @@ def test_the_plugin_is_packed_before_the_release_is_created() -> None:
     """`gh release create` with a file that does not exist fails after nothing — but a Release
     created without its asset, and the asset added later, is a window in which a rollout pinned to
     the version finds no file."""
-    names = [str(step.get("name", step.get("uses", ""))) for step in _job("publish")["steps"]]
+    names = _names("release")
 
     assert names.index("Pack the OpenCode plugin") < names.index("Publish the release notes")
 
@@ -449,9 +485,10 @@ def test_every_image_carries_its_sbom_and_provenance_in_the_registry() -> None:
 
 def test_every_pushed_image_is_described_by_the_digest_its_own_step_pushed() -> None:
     """**A tag can be moved after the scan; a digest cannot.** Each image the release pushes is
-    named in the SBOM step with the digest output of the step that pushed *it* — crossing two
-    would publish the gateway's inventory under the console's name."""
-    describe = _step("publish", "Describe what the release contains")
+    named in the SBOM step with the digest the step that pushed *it* produced, handed on as one of
+    the publish job's outputs — crossing two would publish the gateway's inventory under the
+    console's name."""
+    describe = _step("inventory", "Describe what the release contains")
     run, env = str(describe["run"]), describe["env"]
     pushed = {
         re.search(r"/(aira-[a-z]+):", str(step["with"]["tags"])).group(1): step["id"]
@@ -462,28 +499,190 @@ def test_every_pushed_image_is_described_by_the_digest_its_own_step_pushed() -> 
     for image, step_id in pushed.items():
         found = re.search(rf'--image "{image}=ghcr\.io/\$OWNER/{image}@\$(\w+)"', run)
         assert found, f"{image} is pushed and not described by digest"
-        assert env[found.group(1)] == f"${{{{ steps.{step_id}.outputs.digest }}}}", (
+        assert _handed_on(env[found.group(1)]) == f"${{{{ steps.{step_id}.outputs.digest }}}}", (
             f"{image} is described by another step's digest"
         )
+    assert _handed_on(env["OWNER"]) == "${{ steps.release.outputs.owner }}"
     assert "--source ." in run, "the console's npm packages are described nowhere"
     assert '--out "$RUNNER_TEMP/assets"' in run, "the documents are not where the release looks"
     assert '--syft "$SYFT"' in run and env["SYFT"] == "${{ steps.syft.outputs.cmd }}"
 
 
+def _handed_on(expression: str) -> str:
+    """What a later job's `${{ needs.publish.outputs.<key> }}` is, in the publish job's terms."""
+    key = re.fullmatch(r"\$\{\{ needs\.publish\.outputs\.(\w+) \}\}", expression)
+    assert key, f"`{expression}` is not a value the publish job handed on"
+    return str(_job("publish")["outputs"][key.group(1)])
+
+
 def test_the_contents_are_described_after_the_last_push_and_before_the_release() -> None:
     """Before the last push there is no digest to scan; after the Release, a window in which the
-    version is published without its inventory."""
-    names = [str(step.get("name", step.get("uses", ""))) for step in _job("publish")["steps"]]
-    pushes = [i for i, name in enumerate(names) if name.startswith("Build and push")]
-    describe = names.index("Describe what the release contains")
+    version is published without its inventory. The inventory waits for the push, the Release for
+    the inventory, and the Release attaches the documents the inventory wrote."""
+    names = _names("inventory")
 
-    assert max(pushes) < describe < names.index("Publish the release notes")
-    assert names.index("Install Syft") < describe
+    assert "publish" in _job("inventory")["needs"]
+    assert "inventory" in _job("release")["needs"]
+    assert names.index("Install Syft") < names.index("Describe what the release contains")
+    handed = _step("inventory", "actions/upload-artifact")["with"]
+    taken = _step("release", "actions/download-artifact")["with"]
+    assert handed["name"] == taken["name"]
+    assert handed["path"] == taken["path"] == "${{ runner.temp }}/assets"
 
 
 def test_syft_is_pinned_to_an_exact_version() -> None:
     """A scanner that changes under the release changes what the inventory says, unannounced."""
-    install = _step("publish", "Install Syft")
+    install = _step("inventory", "Install Syft")
 
-    assert re.fullmatch(r"anchore/sbom-action/download-syft@v\d+\.\d+\.\d+", install["uses"])
+    assert re.fullmatch(r"anchore/sbom-action/download-syft@[0-9a-f]{40}", install["uses"])
     assert re.fullmatch(r"v\d+\.\d+\.\d+", install["with"]["syft-version"])
+
+
+# == what a release is built from, and who could have changed it (`ADR-0043`) ====================
+
+#: A `uses:` line as written: the reference, and the release noted beside a commit.
+_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(?P<ref>\S+)(?:\s+#\s*(?P<tag>\S+))?\s*$")
+_PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}$")
+
+
+def _uses_lines() -> list[tuple[str, str | None]]:
+    return [
+        (match["ref"], match["tag"])
+        for line in WORKFLOW.read_text().splitlines()
+        if (match := _USES.match(line))
+    ]
+
+
+def test_every_action_is_pinned_to_the_commit_of_a_release() -> None:
+    """A tag is a pointer that whoever holds the action's repository can move, and the next run
+    executes whatever it points at with this workflow's token — the push of the images included.
+    A commit cannot be moved. The release it is noted beside, so raising it is a decision somebody
+    reads, and one action is pinned once: two commits of it would be two reviews."""
+    uses = _uses_lines()
+    parsed = [
+        str(step["uses"])
+        for body in _workflow()["jobs"].values()
+        for step in body.get("steps", [])
+        if "uses" in step
+    ]
+    # Every action the jobs run, as written: a `uses:` this pattern missed would be unchecked.
+    assert sorted(ref for ref, _ in uses) == sorted(parsed) and len(parsed) >= 10
+
+    pins: dict[str, set[tuple[str, str | None]]] = {}
+    for ref, tag in uses:
+        assert _PINNED.match(ref), f"`{ref}` is not pinned to a commit"
+        assert tag and re.fullmatch(r"v\d+\.\d+\.\d+", tag), f"`{ref}` names no release beside it"
+        action, _, commit = ref.partition("@")
+        pins.setdefault("/".join(action.split("/")[:2]), set()).add((commit, tag))
+    twice = {action: sorted(found) for action, found in pins.items() if len(found) > 1}
+    assert not twice, f"pinned to more than one commit: {twice}"
+
+
+def test_no_checkout_leaves_the_token_in_the_clone() -> None:
+    """`actions/checkout` writes the job's token into `.git/config` unless told not to, where every
+    later step can read it — the scripts `npm ci` runs for each package among them. Nothing in this
+    workflow pushes to the repository, so no checkout keeps it."""
+    checkouts = [
+        (job, step)
+        for job, body in _workflow()["jobs"].items()
+        for step in body.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+
+    assert len(checkouts) >= len(_workflow()["jobs"]), "a job checks out without the action"
+    for job, step in checkouts:
+        assert step.get("with", {}).get("persist-credentials") is False, (
+            f"{job} leaves the token in its clone, for every later step to read"
+        )
+
+
+#: Whose actions may run beside each permission that can write. GitHub's own are part of the
+#: platform the token already trusts; Docker's push the images, which needs the registry token by
+#: its nature. Nothing else from outside GitHub runs where anything can be written.
+TRUSTED_BESIDE = {
+    "packages": {"actions", "docker"},
+    "contents": {"actions"},
+    "id-token": {"actions"},
+    "attestations": {"actions"},
+}
+
+
+def test_a_job_that_can_write_runs_only_code_it_has_to_trust() -> None:
+    """**A step can read the token of every step in its job**, so a permission is granted to every
+    action beside it. The job that pushes images runs Docker's actions and nothing else from outside
+    GitHub; the job that writes the Release and can mint the workflow's identity runs GitHub's
+    alone; Syft's installer and uv's run only where nothing can be written."""
+    default = _workflow()["permissions"]
+    for job, body in _workflow()["jobs"].items():
+        granted = body.get("permissions", default)
+        owners = {
+            str(step["uses"]).split("/")[0] for step in body.get("steps", []) if "uses" in step
+        }
+        for scope in (scope for scope, level in granted.items() if level == "write"):
+            allowed = TRUSTED_BESIDE.get(scope, {"actions"})
+            assert owners <= allowed, (
+                f"{job} holds {scope}: write beside {sorted(owners - allowed)}, which can read it"
+            )
+
+
+def test_no_release_job_restores_a_cache() -> None:
+    """Caches are written by ordinary pushes — any branch, and every pull request that runs here —
+    so a release that restores one is built partly from whatever the last of them left. A release
+    builds from its own commit: no layer cache for an image, no package cache for a tool."""
+    for job in sorted(RELEASE_JOBS):
+        for step in _job(job)["steps"]:
+            uses, given = str(step.get("uses", "")), step.get("with", {})
+            name = step.get("name", uses)
+            assert not uses.startswith("actions/cache"), f"{job}: {name} restores a cache"
+            if uses.startswith("astral-sh/setup-uv@"):
+                assert given.get("enable-cache") is False, (
+                    f"{job}: {name} restores uv's cache, which is on by default on GitHub's runners"
+                )
+            if uses.startswith(("actions/setup-node@", "actions/setup-python@")):
+                assert "cache" not in given, f"{job}: {name} restores a package cache"
+            if uses.startswith("docker/build-push-action@"):
+                assert not {"cache-from", "cache-to"} & set(given), f"{job}: {name} uses a cache"
+
+
+def test_every_file_and_image_a_release_names_is_signed_before_it_exists() -> None:
+    """A checksum beside a file proves the download is the file that was uploaded, not who made it.
+    Each file a rollout downloads and each image a deployment pulls is **signed** — a statement of
+    which run, commit and workflow produced it — before the Release that names them exists, so no
+    version is ever downloadable unsigned. `gh attestation verify` checks one."""
+    steps = _job("release")["steps"]
+    names = _names("release")
+    signing = [
+        (index, step["with"])
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("actions/attest-build-provenance@")
+    ]
+
+    assert signing, "the release signs nothing"
+    assert max(index for index, _ in signing) < names.index("Publish the release notes"), (
+        "the Release can exist before its signatures"
+    )
+
+    files = [(index, given) for index, given in signing if "subject-path" in given]
+    assert files, "the files a rollout downloads are signed by nobody"
+    paths = " ".join(str(given["subject-path"]) for _, given in files)
+    for pattern in ("${{ runner.temp }}/assets/*.tar.gz", "${{ runner.temp }}/assets/*.cdx.json"):
+        assert pattern in paths, f"`{pattern}` is attached and not signed"
+    made = max(names.index("Pack the OpenCode plugin"), names.index(_names_of_download()))
+    assert made < min(index for index, _ in files), "files are signed before they exist"
+
+    signed = {
+        (str(given.get("subject-name")), _handed_on(str(given["subject-digest"])))
+        for _, given in signing
+        if "subject-digest" in given
+    }
+    for step in _pushes():
+        image = re.search(r"/(aira-[a-z]+):", str(step["with"]["tags"])).group(1)
+        subject = (
+            f"ghcr.io/${{{{ needs.publish.outputs.owner }}}}/{image}",
+            f"${{{{ steps.{step['id']}.outputs.digest }}}}",
+        )
+        assert subject in signed, f"{image} is published without a signature over its digest"
+
+
+def _names_of_download() -> str:
+    return str(_step("release", "actions/download-artifact").get("name"))

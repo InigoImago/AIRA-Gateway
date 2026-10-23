@@ -48,7 +48,7 @@ from django.core.cache import cache
 from django.urls import get_resolver
 from rest_framework.test import APIClient
 
-from aira_common.nesting import MAX_JSON_DEPTH
+from aira_common.nesting import MAX_JSON_DEPTH, MAX_JSON_VALUES
 
 from .conftest import role_claims
 
@@ -571,6 +571,30 @@ def test_a_body_within_the_bound_is_still_read() -> None:
     assert response.status_code == 400
     assert b"nests deeper than" not in response.content
     assert b"slug" in response.content
+
+
+def test_a_body_holding_more_values_than_the_bound_is_refused_by_name() -> None:
+    """The gateway's second structural bound, on this plane too: a body is work in proportion to
+    the values it holds, and the bound is the same constant, so a body one plane takes is one the
+    other takes. Refused unread, by name — and one value fewer is read and refused for what it
+    says instead."""
+    fixture = Fixture()
+
+    def numbers(count: int) -> bytes:
+        return b'{"x":[' + b",".join([b"0"] * (count - 2)) + b"]}"
+
+    over = fixture.client.post(
+        "/api/v1/use-cases/", numbers(MAX_JSON_VALUES + 1), content_type="application/json"
+    )
+    at = fixture.client.post(
+        "/api/v1/use-cases/", numbers(MAX_JSON_VALUES), content_type="application/json"
+    )
+
+    assert over.status_code == 400, over.content[:300]
+    assert f"holds more than {MAX_JSON_VALUES} values".encode() in over.content
+    assert at.status_code == 400
+    assert b"values" not in at.content
+    assert b"slug" in at.content
 
 
 def test_only_json_is_parsed() -> None:

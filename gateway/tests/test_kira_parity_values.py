@@ -370,6 +370,29 @@ async def test_an_answer_with_nothing_in_it_is_the_providers_failure(usage: dict
     assert "refusal" in response.json()["message"]
 
 
+async def test_an_empty_answer_is_recorded_once_as_the_providers_failure() -> None:
+    """One request, one row: the refusal's, with what the model cost on it.
+
+    The empty answer is refused while the request is being accounted for, and a refusal there that
+    the accounting does not know as one is the gateway failing — a `500` row beside the refusal's,
+    so every report, rule and `/ki-usage` counted the request and its cost twice.
+    """
+    from sqlalchemy import select
+
+    from aira_gateway.db.models import RequestLog
+
+    app = _silent_app()
+    with TestClient(app) as client:
+        await _catalogue(app)
+        response = client.post(f"{BASE}/chat", json=_chat())
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    assert response.status_code == 502, response.text
+    assert [(row.status, row.outcome) for row in rows] == [(502, "upstream_error")]
+    assert rows[0].prompt_tokens == 3, "the refusal's row carries what the model was paid for"
+
+
 async def test_an_empty_answer_that_cost_output_is_still_an_empty_answer() -> None:
     app = _silent_app(completion=2)
     with TestClient(app) as client:

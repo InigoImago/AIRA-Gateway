@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from aira_gateway.core.canonical import MAX_MESSAGES, too_long_a_conversation
 from aira_gateway.embedding import TASK_TYPES
 
 #: Response shapes: aliases accepted, extras ignored.
@@ -41,6 +42,14 @@ HealthState = Literal["Healthy", "Unhealthy"]
 
 def _normalise(name: str) -> str:
     return name.replace("_", "").replace("-", "").lower()
+
+
+def _entries(content: Any) -> int:
+    """How many parts a raw content holds — before anything validated it, so a content that is not
+    an object, or parts that are not a list, count for nothing and are the validation's to
+    refuse."""
+    parts = content.get("parts") if isinstance(content, dict) else None
+    return len(parts) if isinstance(parts, list) else 0
 
 
 class TolerantRequest(BaseModel):
@@ -136,6 +145,12 @@ class RequestContent(TolerantRequest):
     def _parts_are_one_kind_or_the_other(self) -> RequestContent:
         for index, part in enumerate(self.parts):
             kind = part.get("type")
+            if kind is not None and not isinstance(kind, str):
+                # Asked first: the checks below look the word up in a set, which cannot hold a list
+                # or an object — the caller's value would be a server error rather than their 422.
+                raise ValueError(
+                    f"parts[{index}]: 'type' must be a string, not {type(kind).__name__}"
+                )
             if kind is None:
                 # The predecessor defaults ``type`` on a function part, so a part is read by its
                 # fields. Written back, so everything downstream reads one field.
@@ -186,6 +201,26 @@ class RequestContent(TolerantRequest):
 FUNCTION_CALL = "function_call"
 FUNCTION_RESULT = "function_result"
 FUNCTION_PART_TYPES = frozenset({FUNCTION_CALL, FUNCTION_RESULT})
+
+#: The fields a part carries in this contract — a text, an attachment or one of the two function
+#: parts. A part is a plain mapping its validator reads (`RequestContent`), so the vocabulary is
+#: named here, for what has to tell the contract's names from the caller's (`log_shape`).
+PART_FIELDS = frozenset(
+    {
+        "type",
+        "text",
+        "mime_type",
+        "mimeType",
+        "data",
+        "id",
+        "name",
+        "arguments",
+        "opaque_metadata",
+        "call_id",
+        "result",
+        "error",
+    }
+)
 
 
 def _function_kind(part: dict[str, Any]) -> str | None:
@@ -289,6 +324,31 @@ class ChatRequest(TolerantRequest):
     thinking: ThinkingSetting | None = None
     response_schema: dict[str, Any] | None = Field(default=None, alias="responseSchema")
     tools: list[ToolSpec] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _counted_before_validated(cls, values: Any) -> Any:
+        """The turns and their parts, counted on the raw body before any of them is validated —
+        the bound shared with the Gemini surface (`core.canonical`), refused as this contract's
+        `VALIDATION_ERROR`. Validating them first is the cost the bound is there to refuse."""
+        if not isinstance(values, dict):
+            return values
+        history = values.get("conversation_history")
+        turns: list[Any] = history if isinstance(history, list) else []
+        own = [values.get("request"), values.get("system_instruction")]
+        messages = len(turns) + sum(content is not None for content in own)
+        # Not counted past the turns' own bound: the refusal is decided, and the count would walk
+        # the very list it refuses.
+        parts = (
+            0
+            if messages > MAX_MESSAGES
+            else sum(_entries(content) for content in own)
+            + sum(_entries(turn.get("content")) for turn in turns if isinstance(turn, dict))
+        )
+        problem = too_long_a_conversation(messages, parts)
+        if problem is not None:
+            raise ValueError(problem)
+        return values
 
     @model_validator(mode="after")
     def _function_parts_where_they_belong(self) -> ChatRequest:

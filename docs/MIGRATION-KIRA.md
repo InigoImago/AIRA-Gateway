@@ -181,12 +181,17 @@ INVALID_TOKEN`. A retired use case answers `403` for good.
 
 ### 3.2 The credential
 
-A KIRA bearer token is replaced by the API key — in either header AIRA reads, `x-goog-api-key` or
-`authorization: Bearer`, or in a `?key=` query parameter:
+A KIRA bearer token is replaced by the API key — in either header this surface reads,
+`x-goog-api-key` or `authorization: Bearer`:
 
 ```
 x-goog-api-key: aira_a69e58c1_68d4…
 ```
+
+Not in the URL. A `?key=` query parameter is Google's convention, read on the Gemini interface for
+the clients that follow it; a KIRA client always sent its credential in a header, and a key in a
+URL is written into the log of every proxy it passes. Here such a request is answered
+`401 NOT_AUTHENTICATED`, saying where to put the key instead — and that one is best replaced.
 
 An OIDC bearer token also works, and is the better choice for a client that acts *as a person*.
 
@@ -236,6 +241,7 @@ None of these is an accident, and each has a reason a migrating client can act o
 | **`GET /models`** | needs a credential | the catalog names what an installation runs and what it costs |
 | **Attachment signatures** | checked | a file declared `application/pdf` that is not one is refused rather than sent |
 | **`responseSchema`** | bounded (32 KiB, 8 levels, 256 properties) and unknown fields refused | an unbounded schema from a caller is an input nobody bounded |
+| **How much a request holds** | at most 10 000 turns and 20 000 parts across them, and a body of at most 250 000 JSON values nesting at most 64 levels; past one, `422 VALIDATION_ERROR` naming it, before the request is validated | what a body costs is its structure, and all of it is paid before a rate limit can refuse anything. No chatbot's conversation comes near these, and a long document travels as text — one value, however long |
 | **`thinking`** | checked against the model | see below |
 | **Error codes** | more specific where the predecessor had no word (`EMBEDDING_BOUND_EXCEEDED`, …) | the predecessor's codes are all still produced where it produces them, with its statuses: an upstream failure is `502 EXTERNAL_KI_API_ERROR` and a provider's `429` stays `429`; an attachment type nobody accepts, a schema it cannot read and a `temperature` outside 0–2 are `422`; `maxTokens` of 0 or less, an unknown `task_type` and an empty or blank embedding text are `VALIDATION_ERROR`; a `model_id` nothing has — zero and negative ones included — is always `422 MODEL_NOT_FOUND`. Two keep their own answer: a thinking word the model does not offer is `INVALID_THINKING_MODE` naming what it offers, because the words are the model's, not a fixed list; and an id the catalogue assigns twice is `503`, because the installation is misconfigured, not the request |
 | **A function result** | answers a call of the model turn **directly before** it | Anthropic and OpenAI refuse a conversation whose result is separated from its call, and Gemini reads it as the result of whichever call has its name — an answer to the wrong question. Here it is `422 INVALID_FUNCTION_RESPONSE` before anything is spent |
@@ -253,7 +259,7 @@ None of these is an accident, and each has a reason a migrating client can act o
 | **What happened** | headers only: `X-AIRA-Request-Id` on every response, `X-AIRA-Reason` on a refusal, `X-AIRA-Model` and `X-AIRA-Pipeline` on an answer | the envelope and the stream events stay the predecessor's — a client that parses them strictly keeps working — and the request id finds the request's details in the console, which say what the pipeline did and which models were tried. A stream that breaks off still ends without `completed`; its reason is in those details |
 | **Messages** | English | AIRA is English throughout |
 | **`/health`** | cached background probe | probing every upstream on every call makes readiness as slow as the slowest provider — a health check that can take down a healthy service |
-| **`/ki-usage`** | the caller's own rows, one per model; `user_id` is the caller's name and `model_id` the model's id. Any credential may ask, and nobody — whatever their role — gets another person's rows | the endpoint names a person in every row, and another person's figures are shown in the console, under the rules that decide who may see them. The console's **Reporting** screen and its CSV export are the answer for a team or an installation |
+| **`/ki-usage`** | the caller's own rows, one per model, in the use cases the credential may act in (a key: its own use case); `user_id` is the caller's name and `model_id` the model's id. Any credential may ask, and nobody — whatever their role — gets another person's rows. A window spans at most 366 days | the endpoint names a person in every row, and another person's figures are shown in the console, under the rules that decide who may see them. The console's **Reporting** screen and its CSV export are the answer for a team or an installation |
 
 **Thinking.** `"thinking": {"mode": …, "tokens": …}` is checked against what the catalogue declares
 for the model: `disabled`, `auto`, `limited` with `tokens` inside the model's bounds, or a level word
@@ -286,9 +292,11 @@ The rule, at every level of the schema: the keywords `$ref`, `additionalProperti
 `default`, `description`, `enum`, `format`, `items`, `maxItems`, `maxLength`, `maxProperties`,
 `maximum`, `minItems`, `minLength`, `minProperties`, `minimum`, `nullable`, `pattern`,
 `properties`, `required`, `title` and `type` only; `type` always, one of `object`, `array`,
-`string`, `number`, `integer`, `boolean`; `required` naming only properties; `items` on an array
-and nowhere else; `anyOf` and `enum` never empty. The root is an `object` — a function that takes
-nothing declares `{"type": "object"}`. The model's call comes back as a part:
+`string`, `number`, `integer`, `boolean` — or one of them beside `"null"`, `["string", "null"]`,
+which is how JSON Schema and its generators write an optional argument, carried to the model as
+written; `required` naming only properties; `items` on an array and nowhere else; `anyOf` and
+`enum` never empty. The root is an `object` — a function that takes nothing declares
+`{"type": "object"}`. The model's call comes back as a part:
 
 ```json
 {"type": "function_call", "id": "…", "name": "get_weather", "arguments": {"city": "Bonn"},

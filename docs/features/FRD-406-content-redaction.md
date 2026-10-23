@@ -51,8 +51,9 @@ keys, which is exactly what a replacing setting would do the first time anybody 
 Patterns are compiled at construction. An invalid regex raises `RedactionMisconfigured` and the
 gateway does not start — a rule that silently compiles to nothing is an absent control wearing a
 present one's badge, which is the failure `FRD-125` fixed in the injection filter. A **nested
-quantifier** is refused for the ReDoS reason `ADR-0007` refuses one in a pipeline config: these run
-over caller-supplied text on the write path.
+quantifier**, two repeats that can trade characters and a reference back to what a group matched
+are refused for the ReDoS reason `ADR-0007` refuses them in a pipeline config: these run over
+caller-supplied text on the write path.
 
 ## 4. What is deliberately not done
 

@@ -21,6 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from aira_gateway.anomalies.suspensions import SuspensionService
+    from aira_gateway.api.serving.pump import Drains
     from aira_gateway.budgets.service import BudgetService
     from aira_gateway.config import GatewaySettings
     from aira_gateway.persistence.writer import RequestLogWriter
@@ -48,6 +49,12 @@ def budgets_of(request: Request) -> BudgetService:
     """Reservations, settlement, and the "already over budget" refusal (`FRD-401`, `FRD-405`)."""
     budgets: BudgetService = request.app.state.budgets
     return budgets
+
+
+def drains_of(request: Request) -> Drains:
+    """The streams still being read after their caller left, and what stops them (`ADR-0041`)."""
+    drains: Drains = request.app.state.drains
+    return drains
 
 
 def rate_limits_of(request: Request) -> RateLimitService:

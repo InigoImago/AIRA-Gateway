@@ -78,14 +78,23 @@ with the capability and corrects the message.
 
 - **FR-1** `CanonicalRequest` carries a list of **tool declarations** (name, description, parameter
   schema). The schema reuses `FRD-112`'s parser and its bounds — it is caller-supplied structure
-  with caller-controlled recursion, and the same ceilings apply for the same reason.
+  with caller-controlled recursion, and the same ceilings apply for the same reason. *Since
+  2026-10-22, at most 128 declarations a request on both surfaces (`core.canonical.MAX_TOOLS`,
+  Google's own maximum) — on the Gemini surface counted before any is parsed, where there had been
+  no bound and one request carried 78 000 (`FRD-122` §14).*
 - **FR-2** `CanonicalMessage` carries two further part kinds: a **tool call** (assistant → caller:
   name + arguments + id) and a **tool result** (caller → assistant: id + content). `FRD-110` made
   parts ordered; this is the second tenant of that structure and must not need a third shape.
 - **FR-3** A **use-case toggle**, `tools_enabled`, **default `false`**. A request declaring tools
   against a use case that has not enabled them is refused **400 FAILED_PRECONDITION**, naming the
   use case and who can change it. Absence of configuration is not permission — the same rule as
-  `FRD-114`'s catalog.
+  `FRD-114`'s catalog. *Since 2026-10-22, a request **carrying** a function call or a function's
+  result is held to the same switch, declarations or not.* A security audit found the toggle asked
+  about declarations alone, so a conversation replaying a call and its result — media included —
+  was served in a use case with tool calling off, and the result, which no pipeline step reads
+  (FR-9), reached the model unscanned in the one use case that had said it should not
+  (`serving.controls.check_tools_permitted`). The KIRA surface already refused function parts
+  without `tools`; both now refuse them without the switch.
 - **FR-4** A **catalog capability** `tools`. Undeclared means unsupported (`ADR-0012`). A candidate
   that cannot do tool calling is **skipped** by the dispatch chain with its reason kept, and an
   exhausted chain raises `NoCapableModel` → **400 FAILED_PRECONDITION**. Checked **per hop**, for

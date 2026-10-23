@@ -52,6 +52,12 @@ _SPEECH_CHUNK_BYTES = 4800
 #: unbounded prompt would be an unbounded buffer of fiction built in memory, on the event loop.
 _SPEECH_MAX_SECONDS = 60.0
 
+#: How much of the prompt a string the mock makes up repeats, in a structured answer and a tool's
+#: arguments alike. A schema's answer holds up to 256 strings, so the prompt copied whole into each
+#: is an answer 256 times the prompt, built in memory on the event loop — and the mock serves
+#: every demo deployment, which the published demo key reaches.
+ECHOED = 40
+
 
 class MockProvider:
     """A deterministic, offline provider; ``mock-1`` unless a test names its models."""
@@ -399,7 +405,7 @@ def synthesise(schema: ResponseSchema, prompt: str = "") -> Any:
         case SchemaType.NULL:
             return None
         case _:
-            return schema.title or schema.description or f"mock:{prompt[:40]}"
+            return schema.title or schema.description or f"mock:{prompt[:ECHOED]}"
 
 
 def _argument(schema: Any, prompt: str) -> Any:
@@ -412,7 +418,9 @@ def _argument(schema: Any, prompt: str) -> Any:
 
 def synthesise_json(schema: Any, text: str) -> Any:
     """A document matching a JSON Schema's shape, for the mock's structured answers (`FRD-143`):
-    every declared property, the first of a choice, the prompt for every string."""
+    every declared property, the first of a choice, the prompt's first `ECHOED` characters for
+    every string."""
+    text = text[:ECHOED]
     if not isinstance(schema, dict):
         return text
     if "enum" in schema and isinstance(schema["enum"], list) and schema["enum"]:

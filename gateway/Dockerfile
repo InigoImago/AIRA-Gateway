@@ -14,7 +14,11 @@
 # ---- build ---------------------------------------------------------------------------------
 FROM python:3.14-slim-bookworm AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# **The installer is pinned to one release and to its digest.** It reads the lock and writes every
+# package into the image, so a tag that can be moved is a way to change what ships — and a moving
+# tag builds with whichever installer a machine happened to pull last. Raised by hand, in both
+# Python images at once (`tools/tests/test_every_image_a_build_starts_from_is_pinned.py`).
+COPY --from=ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a /uv /uvx /bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -68,4 +72,7 @@ EXPOSE 8001
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
     CMD ["python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8001/healthz').read()"]
 
-CMD ["uvicorn", "aira_gateway.main:app", "--host", "0.0.0.0", "--port", "8001"]
+# A stopping container waits this long for running requests, then lets the application's shutdown
+# cut short the streams still read after their callers left, so they book and record what they
+# know — inside Docker's own ten seconds before it kills the process.
+CMD ["uvicorn", "aira_gateway.main:app", "--host", "0.0.0.0", "--port", "8001", "--timeout-graceful-shutdown", "5"]

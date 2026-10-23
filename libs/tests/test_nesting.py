@@ -18,7 +18,14 @@ from collections.abc import Callable
 import pytest
 
 from aira_common import nesting
-from aira_common.nesting import MAX_JSON_DEPTH, SCAN_WINDOW, nests_deeper_than
+from aira_common.nesting import (
+    MAX_JSON_DEPTH,
+    MAX_JSON_VALUES,
+    SCAN_WINDOW,
+    Exceeded,
+    exceeded,
+    nests_deeper_than,
+)
 
 
 def _nested(depth: int) -> bytes:
@@ -201,3 +208,86 @@ def test_a_multibyte_body_is_scanned_as_it_arrived() -> None:
     """
     raw = json.dumps({"prompt": "Grüße 日本語 🎉 [[[[["}).encode("utf-8")
     assert not nests_deeper_than(raw, 2)
+
+
+# =================================================================================================
+# How many values a body holds — the same scan, the other bound
+# =================================================================================================
+
+
+def _numbers(count: int) -> bytes:
+    """A flat list of ``count`` numbers: ``count + 1`` values in one level, so only the values can
+    refuse it — the depth never comes near its bound."""
+    return b"[" + b",".join([b"0"] * count) + b"]"
+
+
+def test_a_body_holding_more_values_than_the_bound_is_refused_for_its_values() -> None:
+    """The shape the depth could not see: 8 MiB of minimal parts is six bytes a value, and every
+    one of them an object for the parser and a walk for the writer — seconds of the shared event
+    loop and most of a gigabyte, before the rate limit or a suspension could refuse anything."""
+    assert exceeded(_numbers(MAX_JSON_VALUES)) is Exceeded.VALUES
+    parts = b'{"contents":[{"parts":[' + b",".join([b'{"text":"a"}'] * MAX_JSON_VALUES) + b"]}]}"
+    assert exceeded(parts) is Exceeded.VALUES
+
+
+def test_the_value_bound_is_inclusive() -> None:
+    """``MAX_JSON_VALUES`` values are allowed and one more is not — asked of the shortcut and of
+    the scan alike: a flat list of numbers takes the shortcut, a list of objects the scan."""
+    assert exceeded(_numbers(MAX_JSON_VALUES - 1)) is None
+    assert exceeded(_numbers(MAX_JSON_VALUES)) is Exceeded.VALUES
+    # Counted, `n` empty objects in a list are `2n + 1`: each one's bracket and the comma before it,
+    # the list's bracket and the document — an upper bound, high by one for each empty container.
+    pairs = (MAX_JSON_VALUES - 1) // 2
+    assert exceeded(b"[" + b",".join([b"{}"] * pairs) + b"]") is None
+    assert exceeded(b"[" + b",".join([b"{}"] * (pairs + 1)) + b"]") is Exceeded.VALUES
+
+
+def test_commas_inside_a_string_are_text() -> None:
+    """A prompt of prose has a comma every few words, and a source file more: counted, the bound
+    would refuse a long document, which is exactly the traffic it must leave alone."""
+    raw = json.dumps({"contents": [{"parts": [{"text": "a, b, " * MAX_JSON_VALUES}]}]}).encode()
+    assert raw.count(b",") > MAX_JSON_VALUES, "the fixture has to need the scan"
+
+    assert exceeded(raw) is None
+
+
+def test_a_body_past_both_bounds_is_too_deep_whichever_window_comes_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The verdict is the body's, never the scan's: values reached early and depth reached late
+    is the case where an early exit on values would name a different bound per window size."""
+    raw = b"[" + b",".join([b"0"] * 50) + b"," + _nested(10) + b"]"
+    for window in (1, 7, 64, 1 << 16):
+        monkeypatch.setattr(nesting, "SCAN_WINDOW", window)
+        assert exceeded(raw, depth=5, values=20) is Exceeded.DEPTH
+        assert exceeded(raw, depth=64, values=20) is Exceeded.VALUES
+
+
+def _values_in_one_pass(raw: bytes) -> int:
+    """The count over the whole body at once: the oracle for the windowed scan."""
+    cleaned = raw.replace(b"\\\\", b"").replace(b'\\"', b"")
+    outside = b"".join(cleaned.split(b'"')[0::2])
+    return 1 + outside.count(b",") + outside.count(b"{") + outside.count(b"[")
+
+
+@pytest.mark.parametrize("window", [1, 2, 3, 5, 8, 64])
+def test_every_window_counts_values_as_one_pass_would(
+    monkeypatch: pytest.MonkeyPatch, window: int
+) -> None:
+    """The depth's oracle test, for the count: escapes, quotes, commas and brackets in every
+    arrangement, split at every possible place, and every bound around the true count."""
+    monkeypatch.setattr(nesting, "SCAN_WINDOW", window)
+    rng = random.Random(window)
+    alphabet = b'{}[]""\\\\a,,'
+    for _ in range(3000):
+        raw = bytes(rng.choice(alphabet) for _ in range(rng.randrange(0, 60)))
+        held = _values_in_one_pass(raw)
+        for limit in (held - 1, held, held + 1, 0, 3):
+            expected = Exceeded.VALUES if held > limit else None
+            assert exceeded(raw, depth=10_000, values=limit) is expected, (raw, limit, held)
+
+
+def test_the_depth_alone_is_still_asked_by_its_own_name() -> None:
+    """`nests_deeper_than` is the depth half, and a body of many values is not deep."""
+    assert not nests_deeper_than(_numbers(MAX_JSON_VALUES * 2))
+    assert nests_deeper_than(_nested(MAX_JSON_DEPTH + 1))

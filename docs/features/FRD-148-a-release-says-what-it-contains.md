@@ -38,8 +38,9 @@ Every release now carries a **software bill of materials** in two places:
 
 **Non-Goals**
 
-- **Signing** (cosign, Sigstore). The attestations are BuildKit's, unsigned beyond the registry's
-  own integrity. Signing is a feature of its own, with its own key or identity question.
+- **Signing** (cosign, Sigstore) — *answered since by `ADR-0043`*: the Release's files and each
+  image's digest carry a signed build provenance from GitHub's attestation store. BuildKit's own
+  SBOM and provenance stay as they were, unsigned beyond the registry's own integrity.
 - **A vulnerability report.** An SBOM is the inventory a scanner reads; scanning it, and deciding
   what a finding means for an installation, is the reader's.
 - **Reproducible SBOMs.** Syft writes a timestamp and a serial number into each document, so two
@@ -72,7 +73,8 @@ Every release now carries a **software bill of materials** in two places:
 - **FR-5** Each document has a `.sha256` beside it, in `sha256sum` format.
 - **FR-6** Every file in the release's asset directory is attached to the GitHub Release and named in
   its notes, so an SBOM for an image added later is attached without a second edit.
-- **FR-7** Syft is pinned to an exact version, as is the action that installs it.
+- **FR-7** Syft is pinned to an exact version, and the action that installs it to the commit of a
+  release (`ADR-0043`). It runs in a job of its own that can read the packages and write nothing.
 - **FR-8** The tool refuses an image reference that is not pinned by digest and a version that is
   not a release version, before running anything.
 
@@ -110,7 +112,8 @@ checksum. It takes the Syft command as an argument, which is what the workflow p
 
 ## 6. Open
 
-- Signing the images and attestations.
+- ~~Signing the images and attestations.~~ The images and the Release's files are signed
+  (`ADR-0043`); BuildKit's attestations beside them are not.
 - Whether the Release files should also be attached as attestations of their own (CycloneDX in the
   registry), so one place answers both readers.
 - `v0.1.7` and earlier have no SBOM.
@@ -130,4 +133,6 @@ checksum. It takes the Syft command as an argument, which is what the workflow p
 
 ## 13. As built
 
-As specified. Syft 1.54.1 through `anchore/sbom-action/download-syft@v0.24.3`.
+As specified. Syft 1.54.1 through `anchore/sbom-action/download-syft` v0.24.3 — pinned to its
+commit since 2026-10-22, in the `inventory` job, which hands the documents to the `release` job
+as an artifact (`ADR-0043`).

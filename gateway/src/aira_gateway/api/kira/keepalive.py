@@ -36,7 +36,8 @@ async def with_pings[Item](
     one. Not by a fresh task per item: a generator advanced from several tasks resets a context
     variable in a context that never set it. And never by cancelling a slow read, which would close
     the model's answer at its first quiet moment. Closing this iterator — a caller who left —
-    cancels the reader, which closes ``items`` as closing it directly would have.
+    cancels the reader and leaves ``items`` as it is: whether the upstream is then read to its end
+    or closed is the stream's accounting to decide (`api.serving.pump`).
     """
     queue: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue(maxsize=1)
 

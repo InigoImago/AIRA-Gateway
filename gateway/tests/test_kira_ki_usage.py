@@ -7,11 +7,14 @@ them would need a second copy of those rules.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
 from aira_gateway.app import create_app
 from aira_gateway.auth.dependencies import require_principal
@@ -23,18 +26,23 @@ URL = "/kira/api/external/ki-usage?startDatum=2026-10-01&endDatum=2026-11-01"
 WHEN = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
 
 ADA = Principal(subject="ada", method="oidc", username="ada", use_cases=("uc",))
-#: Every figure in the console, and still only their own here.
-ADMIN = Principal(subject="root", method="oidc", username="root", roles=("global-admin",))
-#: A credential that names no person: answered with nothing, never with everybody.
-NOBODY = Principal(subject="", method="oidc", username="")
+#: Every figure in the console, and still only their own here — in the use cases they act in.
+ADMIN = Principal(
+    subject="root", method="oidc", username="root", roles=("global-admin",), use_cases=("uc",)
+)
+#: A credential that names no person: answered with nothing, never with everybody — even where it
+#: may act in a use case full of other people's traffic.
+NOBODY = Principal(subject="", method="oidc", username="", use_cases=("uc",))
 
 
-def _row(person: str, model: str, prompt: int, completion: int) -> RequestLog:
+def _row(
+    person: str, model: str, prompt: int, completion: int, *, use_case: str = "uc"
+) -> RequestLog:
     return RequestLog(
         subject=person,
         username=person,
         auth_method="oidc",
-        use_case="uc",
+        use_case=use_case,
         api="kira",
         operation="chat",
         model=model,
@@ -167,3 +175,124 @@ def test_seconds_no_clock_can_hold_are_a_validation_error() -> None:
 
     assert response.status_code == 422
     assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+#: A key an administrator of `uc` issued in ada's name (`FRD-604` FR-5): it acts as ada, in `uc`.
+ADAS_KEY_IN_UC = Principal(
+    subject="ada", method="api_key", username="ada", credential="k-uc", use_cases=("uc",)
+)
+
+
+async def test_a_key_answers_for_its_own_use_case_and_no_other() -> None:
+    """A key issued in a member's name answers for that member — in the key's use case only.
+
+    Whoever holds it (the administrator who issued it has the plaintext) must not read what the
+    member did in use cases they have no part in: the console would not show it to them, and
+    `/v1beta/me/budget` does not either.
+    """
+    with _client(ADAS_KEY_IN_UC) as client:
+        await _seed(client)
+        async with client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
+            session.add(_row("ada", "chat-model", 4000, 6000, use_case="hr-confidential"))
+            await session.commit()
+        rows = _by_model(client.get(URL).json())
+
+    assert rows[1004]["token_input_sum"] == 11, "hr-confidential leaked into a key bound to uc"
+    assert rows[1004]["entry_count"] == 2
+
+
+async def test_a_person_sees_their_own_figures_in_each_use_case_they_act_in() -> None:
+    """A person signed in reads their traffic in every use case they belong to — and not in one
+    they have left."""
+    both = Principal(subject="ada", method="oidc", username="ada", use_cases=("uc", "lab"))
+    with _client(both) as client:
+        await _seed(client)
+        async with client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
+            session.add(_row("ada", "chat-model", 100, 200, use_case="lab"))
+            session.add(_row("ada", "chat-model", 9000, 9000, use_case="left-long-ago"))
+            await session.commit()
+        rows = _by_model(client.get(URL).json())
+
+    assert rows[1004]["token_input_sum"] == 111
+    assert rows[1004]["entry_count"] == 3
+
+
+async def test_a_credential_that_may_act_nowhere_is_answered_with_nothing() -> None:
+    """No use case is no scope, never every scope: an unbound key reads nothing here."""
+    unbound = Principal(subject="ada", method="api_key", username="ada", credential="k")
+    with _client(unbound) as client:
+        await _seed(client)
+        response = client.get(URL)
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "status"),
+    [
+        ("2025-10-01", "2026-10-02", 200),  # 366 days: a leap year's worth
+        ("2025-10-01", "2026-10-03", 400),
+        ("0001-01-01", "9999-12-31", 400),
+        ("1", str(int(datetime(2026, 1, 1, tzinfo=UTC).timestamp())), 400),
+    ],
+)
+def test_a_window_is_at_most_a_year(start: str, end: str, status: int) -> None:
+    """The console's bound. Anybody holding a credential may call this, and a window over all of
+    history makes one call aggregate every row a person ever caused."""
+    with _client(ADA) as client:
+        response = client.get(f"/kira/api/external/ki-usage?startDatum={start}&endDatum={end}")
+
+    assert response.status_code == status, response.text
+    if status == 400:
+        assert response.json()["code"] == "INVALID_TIME_RANGE"
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("2026-10-01", "2026-11-01T00:00:00+00:00"),
+        ("2026-10-01T02:00:00+02:00", "2026-11-01"),
+        ("2026-10-01", str(int(datetime(2026, 11, 1, tzinfo=UTC).timestamp()))),
+    ],
+)
+async def test_a_date_and_a_time_with_an_offset_make_one_window(start: str, end: str) -> None:
+    """Seconds since 1970 carry a zone and a plain date does not: the two ends are compared in UTC
+    rather than refused by the comparison itself, which raised a `500` and left no row."""
+    with _client(ADA) as client:
+        await _seed(client)
+        response = client.get(
+            "/kira/api/external/ki-usage", params={"startDatum": start, "endDatum": end}
+        )
+
+    assert response.status_code == 200, response.text
+    assert _by_model(response.json())[1004]["token_input_sum"] == 11
+
+
+@contextmanager
+def _statements_over_the_request_log(client: TestClient) -> Iterator[list[str]]:
+    engine = client.app.state.db_engine.sync_engine  # type: ignore[attr-defined]
+    seen: list[str] = []
+
+    def record(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+        if "request_logs" in statement:
+            seen.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        yield seen
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+
+async def test_the_answer_is_one_query_over_the_request_log() -> None:
+    """Every credential holder may ask this, so it asks the one aggregate it answers with — not the
+    console's whole report, six more aggregates over the same rows that nobody reads."""
+    with _client(ADA) as client:
+        await _seed(client)
+        with _statements_over_the_request_log(client) as seen:
+            assert client.get(URL).status_code == 200
+
+    assert len(seen) == 1, seen
+    # `nullif` is the grouping expression's: compared as a whole, it reaches no index.
+    assert "nullif" not in seen[0].lower(), "the person filter is the expression no index holds"

@@ -50,6 +50,12 @@ MAX_CUSTOM_PATTERNS = MAX_PATTERNS
 #: event loop. Both ends rather than the head alone: a head-only window passes anything placed after
 #: enough filler. **What lies between the two halves is not scanned** — a stated reach limit
 #: (`docs/REQUEST-LIFECYCLE.md`), logged and shown in the dry run whenever a text exceeds it.
+#:
+#: **Not on a worker thread, because that would not help.** `re` holds the GIL for the whole of a
+#: match, so a search moved to a thread stalls the loop exactly as long as one run inline. Neither
+#: can be interrupted: bounding the time would take a process or another regex engine. What keeps a
+#: scan short is therefore what is compiled at all (`aira_common.patterns`) and this bound on what
+#: it reads.
 MAX_SCANNED_CHARS = 20_000
 
 

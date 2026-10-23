@@ -24,6 +24,11 @@ class TestCaseSerializer(serializers.ModelSerializer[TestCase]):
     class Meta:
         model = TestCase
         fields = ["id", "topic", "prompt", "expectation", "position", "retired"]
+        #: **A live position is one field's uniqueness**, refused by name by the field's own
+        #: validator. The constraint's condition names `retired`, which DRF otherwise reads as a
+        #: check over two fields: it fills an omitted position with its default, so the view's
+        #: append never happens, and it refuses under `non_field_errors` instead of `position`.
+        validators: list[Any] = []
 
 
 class TestResultSerializer(serializers.ModelSerializer[TestResult]):

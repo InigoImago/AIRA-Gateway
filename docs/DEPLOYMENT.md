@@ -451,10 +451,17 @@ dependencies, before any image is built.
 Pushing the tag runs the whole workflow. The three images are published only if the Python job
 (lint, types, unit tests), the console job (format, build, unit tests), the integration job, the
 browser job (with the Windows sign-on) *and* the description check all pass on the tagged commit —
-the publish job declares `needs` on all five, so a green release is a green commit by construction.
-A **GitHub Release** is created last, carrying your words, then the commits since the previous
-release, then the image references, then the files attached to it: the OpenCode budget plugin as an
-archive, and the software bills of materials below — each beside its `.sha256`.
+the job that pushes the images declares `needs` on all five, and every later release job waits for
+it, so a green release is a green commit by construction. A **GitHub Release** is created last,
+carrying your words, then the commits since the previous release, then the image references, then
+the files attached to it: the OpenCode budget plugin as an archive, and the software bills of
+materials below — each beside its `.sha256`, and each, like every image, **signed** (below).
+
+The release is four jobs, cut by what each may write: one checks the description and writes
+nothing; one pushes the images and can write packages, running Docker's build actions and nothing
+else from outside GitHub; one describes the images and writes nothing; and the last writes the
+Release and signs what it names, running GitHub's own actions alone. Every action is pinned to the
+commit of a release, no job keeps the token in its clone, and none of them restores a cache.
 
 Each image lands under three tags:
 
@@ -494,16 +501,43 @@ includes the development tools (`pytest`, `ruff`), because uv locks the workspac
 documents are what runs.
 
 The two formats come from two scanners (BuildKit's and Syft), so they can differ slightly in what
-each counts as a package. The documents are not signed beyond the registry's own integrity, and
-releases up to `v0.1.7` have none. Feeding one to a scanner — Dependency-Track, Trivy, Grype — and
-deciding what a finding means for an installation is the reader's step:
+each counts as a package. BuildKit's documents beside the images are not signed beyond the
+registry's own integrity; the files on the Release are, like the images (below). Releases up to
+`v0.1.7` have no documents. Feeding one to a scanner — Dependency-Track, Trivy, Grype — and deciding
+what a finding means for an installation is the reader's step:
 
 ```bash
 grype sbom:aira-gateway-vX.Y.Z.cdx.json
 ```
 
-### Four things worth knowing before the next release
+### Checking where a file or an image came from
 
+A `.sha256` proves that a download is the file that was uploaded — not who uploaded it. Every
+image a release pushes and every file it attaches also carries a **signed build provenance**: a
+statement of which workflow run, commit and tag produced it, signed with a short-lived certificate
+issued to that run and recorded in a public transparency log. The GitHub CLI checks one, signed in
+to GitHub (and, for an image, to the registry while the packages are private):
+
+```bash
+v=vX.Y.Z
+gh attestation verify "opencode-aira-budget-$v.tar.gz" --repo InigoImago/AIRA-Gateway \
+  --signer-workflow InigoImago/AIRA-Gateway/.github/workflows/ci.yml --source-ref "refs/tags/$v"
+gh attestation verify "oci://ghcr.io/inigoimago/aira-gateway:$v" --repo InigoImago/AIRA-Gateway \
+  --signer-workflow InigoImago/AIRA-Gateway/.github/workflows/ci.yml --source-ref "refs/tags/$v"
+```
+
+A file or image that verifies was built by this repository's release workflow from that tag; one
+that does not was not, whatever its checksum says. Releases up to `v0.1.7` are not signed.
+
+### Things worth knowing before the next release
+
+- **The bases are lines, and a line ends.** The console is served by nginx's **stable** line
+  (`nginx:1.30-alpine`), which its maintainers rebuild whenever Alpine ships a fix, so a release
+  build carries the patched OpenSSL and libraries of its day — until nginx publishes the next
+  stable line, once a year in spring, and stops rebuilding this one. Move the `FROM` in
+  `management/frontend/Dockerfile` when that happens: a check refuses a mainline line, and cannot
+  know that a stable one has ended. The installer both Python images are built with is pinned to
+  a uv release **and its digest**, and raised by hand in both Dockerfiles at once.
 - **Nothing to configure.** GHCR accepts the workflow's built-in `GITHUB_TOKEN` for the
   repository's own namespace, so there is no personal access token and no stored registry secret.
 - **The packages start private**, and GitHub does not link them to the repository automatically.
@@ -517,11 +551,14 @@ grype sbom:aira-gateway-vX.Y.Z.cdx.json
   series; or delete the tag locally and on the remote and tag the fixed commit under the same
   number, which moves a ref somebody may already have fetched. `v0.1.2` was released the second
   way.
-- **The images are a rebuild of the tested commit, not the tested bytes.** The publish job builds
-  them again, with a layer cache; with a warm cache they are the same layers, and that is a
-  statement about practice, not a guarantee. It is a known limit. Closing it means handing the
-  images the test jobs built to the publish job, so that the digests published are the digests
-  tested; that is not done.
+- **The images are a rebuild of the tested commit, not the tested bytes.** The release builds
+  them again, from nothing — no cache an earlier run left feeds it — so they are that commit's and
+  nobody else's, and still not the bytes the test jobs ran. It is a known limit. Closing it means
+  handing the images the test jobs built to the release, so that the digests published are the
+  digests tested; that is not done.
+- **Every action the workflow runs is pinned to a commit**, with its release noted beside it. A tag
+  can be moved by whoever holds the action's repository; a commit cannot. Raising one means editing
+  both, and a check refuses a tag where a commit belongs.
 
 Refused on purpose: a tag whose commit is not an ancestor of `main`, and a tag older than the newest
 release — `latest` would move backwards, so releases here go forward only.
@@ -876,7 +913,7 @@ is [`CONFIGURATION.md`](CONFIGURATION.md); this section holds the ones an operat
 | `AIRA_ENFORCE_PRICED_MODELS`         | `true`                              | Refuse a model with no price wherever a cost limit binds the request; a chain skips it for a priced candidate (§3.5). Does nothing while `AIRA_ENFORCE_BUDGETS` is off.                                                                                                                                       |
 | `AIRA_REDIS_URL`                     | `redis://localhost:6379/0`          | Shared counter store for rate-limit buckets and budget reservations. **Set this whenever more than one gateway process runs**: without it each process keeps its own counters, so N processes allow N × the configured rate and a budget can be overshot. Empty disables it — see the degradation table below. With Redis Sentinel set `AIRA_REDIS_SENTINELS` and `AIRA_REDIS_SENTINEL_SERVICE` instead, which replace it ([CONFIGURATION.md](CONFIGURATION.md)). |
 | `AIRA_ENFORCE_RATE_LIMITS`           | `true`                              | Enforce the per-use-case/per-member request rate. A use case with no configured limit stays unlimited either way.                                                                                                                                                                                                           |
-| `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` | `1024`                              | Tokens assumed for a request whose output length the caller did not bound, used to reserve budget before the real usage is known. Corrected the moment the response arrives.                                                                                                                                                |
+| `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` | `1024`                              | Tokens assumed for a request whose output nothing bounds — no cap from the caller, and neither a default nor a maximum in the catalogue — used to reserve budget before the real usage is known. A model with a declared maximum reserves that instead. Corrected the moment the response arrives.                                  |
 | `AIRA_LOG_QUEUE_SIZE`                | `512`                               | Request-log rows buffered off the request path. A full queue writes inline rather than dropping. **`0` writes every row synchronously** — choose it if a request must be durably logged before its response goes out.                                                                                                       |
 | `AIRA_TRUST_FORWARDED_FOR`           | `false`                             | Honour `X-Forwarded-For` for the recorded source IP, read `AIRA_TRUSTED_PROXY_HOPS` entries from the right (§3.7)                                                                                                                                                                                                          |
 | `AIRA_MAX_REQUEST_BYTES`             | `8388608` (8 MiB)                   | Hard ceiling on a request body; larger bodies get 413 before being buffered                                                                                                                                                                                                                                                 |
@@ -1215,6 +1252,9 @@ Operations:
       what the payload is stored for. A use case can replace personal data before the prompt
       leaves with a `pii_filter` step — the rewritten request is then what is stored. For data
       that must not be persisted at all, the control is the per-use-case storage switch below
+- [ ] `AIRA_DRAIN_LEFT_STREAMS_SECONDS` reviewed: a stream whose caller left is read on — 600 s at
+      most — so the vendor's own figure is booked; the answer is then billed whole, and the stream
+      holds its upstream connection until the vendor finishes. `0` closes it with the caller
 - [ ] `AIRA_COUNT_CANCELLED_STREAMS` reviewed: on by default, a stream the caller left before the
       vendor reported its usage is counted at the vendor's own free endpoint — the request and the
       part of the answer received are sent to it a second time (Vertex Gemini).
@@ -1261,6 +1301,12 @@ is two releases. It is stated, not enforced.
 
 A new topic in a release is created before the release's code runs (§3.3); the topic step is
 idempotent, and it creates every topic that release's code uses.
+
+**A stopping gateway waits five seconds for its requests**, then cuts short the streams it is still
+reading for callers who left, books what they used and writes their rows, and closes. The image
+starts uvicorn with `--timeout-graceful-shutdown 5`, inside Docker's default of ten seconds before
+it kills the process; an orchestrator with a shorter grace period than that loses the rows of the
+requests still running when it kills.
 
 ---
 

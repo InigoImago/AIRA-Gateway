@@ -13,6 +13,8 @@ reach a database column, a comparison or a log line unexamined.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from aira_common.access import GrantRole, resolve, strongest, usecases_from_group_paths
@@ -28,17 +30,20 @@ from aira_gateway.auth.oidc import OidcValidator
 
 
 class _Request:
-    """The three things the credential and selector readers touch."""
+    """The four things the credential and selector readers touch — the path among them, since
+    whether `?key=` is read depends on the surface the request is aimed at."""
 
     def __init__(
         self,
         headers: dict[str, str] | None = None,
         query: dict[str, str] | None = None,
         scope: dict[str, object] | None = None,
+        path: str = "/v1beta/models/m:generateContent",
     ) -> None:
         self.headers = headers or {}
         self.query_params = query or {}
         self.scope = scope or {}
+        self.url = SimpleNamespace(path=path)
 
 
 # ═══ 1. what the caller presented ═══════════════════════════════════════════════════════════════
@@ -87,6 +92,18 @@ def test_the_credential_a_request_presents(
     """Precedence is a security property, not a convenience: a client that sends two must get a
     defined answer, or which credential authenticated depends on the server's mood."""
     assert extract_token(_Request(headers, query)) == expected  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"), [({}, None), ({"x-goog-api-key": "b"}, "b")], ids=["alone", "beside"]
+)
+def test_a_key_in_the_url_is_not_read_on_the_kira_surface(
+    headers: dict[str, str], expected: str | None
+) -> None:
+    """The same table, one surface along: there the URL is never a credential, alone or not."""
+    request = _Request(headers, {"key": "q"}, path="/kira/api/external/chat")
+
+    assert extract_token(request) == expected  # type: ignore[arg-type]
 
 
 # ═══ 2. what the caller selected ════════════════════════════════════════════════════════════════

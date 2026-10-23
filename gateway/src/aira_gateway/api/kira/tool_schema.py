@@ -3,8 +3,8 @@
 Stricter than the JSON Schema the Gemini surface forwards, and checked on this surface only: a
 declaration the predecessor refuses is refused here with its code, so a client written against it
 meets the same answer. Every level of the schema is held to the same rule — a known keyword set, a
-``type`` that is one of six, ``items`` exactly where it belongs. The size and depth bounds every
-schema has still apply after this (`core.json_schema`).
+``type`` that is one of six or one of them beside ``"null"``, ``items`` exactly where it belongs.
+The size and depth bounds every schema has still apply after this (`core.json_schema`).
 """
 
 from __future__ import annotations
@@ -42,6 +42,30 @@ KEYWORDS = frozenset(
 
 TYPES = frozenset({"object", "array", "string", "number", "integer", "boolean"})
 
+#: The type a value has that is not there. JSON Schema says *"this, or null"* as a list —
+#: ``["string", "null"]``, in either order — and that is what generators write for an optional
+#: argument. It is carried as written, like the rest of the schema: every dialect this gateway sends
+#: a function's parameters to reads JSON Schema natively, and Google's own documentation spells a
+#: nullable property exactly so.
+NULL = "null"
+
+#: How much of a caller's value a refusal repeats.
+SHOWN = 80
+
+
+def base_type(kind: Any) -> str | None:
+    """The one of `TYPES` that ``kind`` names — alone, or beside `NULL` — or ``None``.
+
+    Asked without hashing the caller's value: a `type` that is a list or an object is a fault to
+    name, and a set lookup with one raises instead.
+    """
+    if isinstance(kind, str):
+        return kind if kind in TYPES else None
+    if isinstance(kind, list) and len(kind) == 2 and NULL in kind:
+        (other,) = [entry for entry in kind if entry != NULL] or [None]
+        return other if isinstance(other, str) and other in TYPES else None
+    return None
+
 
 def fault(schema: Any, where: str = "parameters") -> str | None:
     """What is wrong with ``schema``, or ``None``. The first fault, named by its path."""
@@ -50,9 +74,12 @@ def fault(schema: Any, where: str = "parameters") -> str | None:
     unknown = sorted(set(schema) - KEYWORDS)
     if unknown:
         return f"{where} uses {unknown}, which a function's parameters may not"
-    kind = schema.get("type")
-    if kind not in TYPES:
-        return f"{where}.type is {kind!r}; it is one of {sorted(TYPES)}"
+    kind = base_type(schema.get("type"))
+    if kind is None:
+        return (
+            f"{where}.type is {repr(schema.get('type'))[:SHOWN]}; it is one of {sorted(TYPES)}, "
+            f"or one of them beside '{NULL}'"
+        )
     properties = schema.get("properties")
     if properties is not None:
         if not isinstance(properties, dict):

@@ -793,6 +793,9 @@ async def test_the_gate_hands_the_kill_switch_the_person_as_well_as_the_subject(
 NAMED_COMPARISONS = {
     "payloads.py::is_own_request": "the row's own subject, then the person both credentials share",
     "payloads.py::own_requests": "the same rule as a query: subject or person, never subject alone",
+    "db/models/owned.py::request_person_is": (
+        "REQUEST_PERSON spelled for an index: the subject only where no name was recorded"
+    ),
     "payloads.py::_narrowed": "a membership row is keyed by `_member_key`, Management's alphabet",
     "payloads.py::grant_role_in": "the same membership key",
     "payloads.py::names_this_caller": "a finding's target in either alphabet, as findings match",

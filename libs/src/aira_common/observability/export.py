@@ -51,6 +51,23 @@ def _partial_success(signal: str, body: bytes) -> tuple[int, str]:
         return 0, ""
 
 
+def _body(result: Any) -> bytes:
+    """The body of the exporter's last HTTP result, or ``b""``.
+
+    The exporters' transport answers with a result whose ``content()`` returns the body. Anything
+    else — no result yet, a call that failed before a response — is no body, never an exception:
+    this reads a response the exporter has already judged.
+    """
+    content = getattr(result, "content", None)
+    if not callable(content):
+        return b""
+    try:
+        body = content()
+    except Exception:  # noqa: BLE001 — a diagnostic must never fail the export it is watching
+        return b""
+    return body if isinstance(body, bytes) else b""
+
+
 def _distinct_traces(args: tuple[Any, ...]) -> int | None:
     """How many **requests** a batch of spans came from. ``None`` where that is not a question.
 
@@ -102,13 +119,16 @@ class WatchedExport:
     def _watch_transport(self) -> None:
         """Keep the HTTP response the exporter is about to throw away.
 
-        `export()` reduces the exchange to an enum, so this replaces `_export` **on the instance**
-        (never on the class, which every exporter shares) with a wrapper that records the response
-        and returns it unchanged. A private seam, taken deliberately:
-        `test_the_exporter_still_has_the_seam_we_reach_through` fails on the upgrade that renames
-        it, so this degrades loudly rather than going quiet.
+        `export()` reduces the exchange to an enum, so this wraps the exporter's own transport —
+        `exporter._client._transport.request`, **on the instance**, and every exporter builds a
+        transport of its own — with a function that records each result and returns it unchanged.
+        A retried export is recorded once per attempt, so what is read is the answer that decided.
+        A private seam, taken deliberately: `test_the_exporter_still_has_the_seam_we_reach_through`
+        asks the real exporter for it, so the upgrade that moves it turns that test red rather than
+        making the partial-success reading go quiet.
         """
-        inner = getattr(self._exporter, "_export", None)
+        transport: Any = getattr(getattr(self._exporter, "_client", None), "_transport", None)
+        inner = getattr(transport, "request", None)
         if not callable(inner):
             return
 
@@ -118,7 +138,7 @@ class WatchedExport:
             return response
 
         with contextlib.suppress(AttributeError, TypeError):
-            self._exporter._export = capture  # noqa: SLF001 — the seam, see the docstring
+            transport.request = capture  # the seam, see the docstring
 
     def __getattr__(self, name: str) -> Any:
         # `_exporter` is a slot and arrives here only before `__init__` has run, where forwarding
@@ -152,9 +172,7 @@ class WatchedExport:
             status = getattr(self._last, "status_code", None)
             if status is not None:
                 call.note(http_status=status)
-            rejected, reason = _partial_success(
-                self._signal, getattr(self._last, "content", b"") or b""
-            )
+            rejected, reason = _partial_success(self._signal, _body(self._last))
             if rejected:
                 call.note(rejected=rejected)
                 call.failed(f"the collector rejected {rejected} of them: {reason or 'no reason'}")

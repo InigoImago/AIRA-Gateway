@@ -134,6 +134,75 @@ def test_an_unbounded_request_falls_back_to_the_configured_estimate() -> None:
     assert recorder.estimates[0].tokens == 321 + text_tokens(["hi"])
 
 
+async def _declare(app, **fields) -> None:  # noqa: ANN001
+    from aira_gateway.db.models import ModelRead
+
+    async with app.state.db_sessionmaker() as session:
+        session.add(ModelRead(model="mock-1", **fields))
+        await session.commit()
+
+
+async def test_an_unbounded_request_reserves_the_most_its_model_can_answer() -> None:
+    """No cap from the caller and no default in the catalogue: the model is sent no cap, so it may
+    answer up to its own maximum — and that, not the installation's 1024, is what may be spent.
+
+    Every model the shipped reference lists has a maximum and none has a default, so this is the
+    shape of almost every request an SDK sends. Reserved at the estimate, a hundred of them in
+    flight passed a token budget with room for two, and booked nearly sixty times its limit.
+    """
+    app = create_app(GatewaySettings(auth_required=False, budget_estimate_output_tokens=1024))
+    recorder = _RecordingBudgets()
+    app.state.budgets = recorder
+    with TestClient(app) as client:
+        await _declare(app, capabilities=["generate"], max_output_tokens=65_536)
+        client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+
+    assert recorder.estimates[0].tokens == 65_536 + text_tokens(["hi"])
+
+
+async def test_a_default_cap_is_what_an_unbounded_request_reserves() -> None:
+    """The default is what goes on the wire, so it is the bound, not the model's maximum."""
+    app = create_app(GatewaySettings(auth_required=False))
+    recorder = _RecordingBudgets()
+    app.state.budgets = recorder
+    with TestClient(app) as client:
+        await _declare(
+            app,
+            capabilities=["generate"],
+            max_output_tokens=65_536,
+            default_max_output_tokens=8192,
+        )
+        client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+
+    assert recorder.estimates[0].tokens == 8192 + text_tokens(["hi"])
+
+
+async def test_a_thinking_budget_inside_a_cap_is_not_reserved_twice() -> None:
+    """A thinking budget is drawn from the output allowance it must fit in: the cap bounds both,
+    and reserving the budget on top of it holds back headroom nothing can spend."""
+    app = create_app(GatewaySettings(auth_required=False))
+    recorder = _RecordingBudgets()
+    app.state.budgets = recorder
+    body = {
+        **_BODY,
+        "generationConfig": {
+            "maxOutputTokens": 30_000,
+            "thinkingConfig": {"thinkingBudget": 20_000},
+        },
+    }
+    with TestClient(app) as client:
+        await _declare(
+            app,
+            capabilities=["generate", "thinking"],
+            max_output_tokens=65_536,
+            thinking={"modes": ["limited", "disabled"], "min_tokens": 128, "max_tokens": 32_000},
+        )
+        response = client.post("/v1beta/models/mock-1:generateContent", json=body)
+
+    assert response.status_code == 200, response.text
+    assert recorder.estimates[0].tokens == 30_000 + text_tokens(["hi"])
+
+
 def test_stream_records_usage() -> None:
     app = create_app(GatewaySettings(auth_required=False))
     recorder = _RecordingBudgets()

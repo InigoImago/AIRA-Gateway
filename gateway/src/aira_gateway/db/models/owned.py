@@ -5,7 +5,20 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Index, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    ColumnElement,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    and_,
+    func,
+    or_,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aira_gateway.db.base import Base, new_id
@@ -150,6 +163,25 @@ Index(
 #: one spelling for every query that groups or filters by person: two that differ disagree about a
 #: row.
 REQUEST_PERSON = func.coalesce(func.nullif(RequestLog.username, ""), RequestLog.subject)
+
+
+def request_person_is(person: str) -> ColumnElement[bool]:
+    """``REQUEST_PERSON == person`` as a filter an index can answer.
+
+    The same rows (`test_a_person_filter_is_the_persons_rows.py`): the name where one was recorded,
+    the subject where none was. Written as two disjuncts on indexed columns, because a comparison
+    with the expression reaches no index, and on the largest table here that is a scan of every
+    row in the window for a question about one person. ``person`` is never empty — an empty name is
+    absence, and a caller without one is answered with nothing before any query.
+    """
+    return or_(
+        RequestLog.username == person,
+        and_(
+            # `IS NULL` **or** empty, as `nullif` reads it.
+            or_(RequestLog.username.is_(None), RequestLog.username == ""),
+            RequestLog.subject == person,
+        ),
+    )
 
 
 #: The two things a reader opens, and an access record names (`PayloadAccess.kind`).

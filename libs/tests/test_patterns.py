@@ -285,6 +285,7 @@ def test_the_refusal_says_which_shape_it_found() -> None:
     assert "already repeat" in (catastrophic_reason("(a+)+") or "")
     assert "two ways to match" in (catastrophic_reason("(a|a)+") or "")
     assert "twice in a row" in (catastrophic_reason("a*a*a*a*b") or "")
+    assert "refers back to what a group matched" in (catastrophic_reason(r"(.*)\1!") or "")
     assert catastrophic_reason("ignore previous instructions") is None
 
 
@@ -418,8 +419,6 @@ MEASURED_TRADES = (
     # A repeat that gives nothing back is still run again for every split of the one before it.
     (".*a*+!", "53 ms · 434 ms · 3.4 s at 500 / 1 000 / 2 000"),
     (".*(?>a*)!", "56 ms · 503 ms · 3.6 s at 500 / 1 000 / 2 000"),
-    # A back-reference repeated after the group it names.
-    (r"(a+)\1+b", "108 ms · 814 ms · 7.6 s at 500 / 1 000 / 2 000"),
 )
 
 
@@ -478,9 +477,6 @@ def test_verbose_mode_is_read_the_way_re_reads_it(pattern: str, cost: str) -> No
         # A tempered dot: the lookahead consumes nothing and divides nothing, even with a branch.
         r"(?:(?!x).)*!",
         r"(?:(?!ab|cd).)*",
-        # A back-reference to one character, repeated: one way per length.
-        r"(.)\1{3,}!",
-        r"(\w+)\s*=\s*\1",
         # Sets that cannot share a character — decided member by member, and by category where a
         # set is too large to list.
         r"[A-Za-zÄÖÜäöüß]+\s+[A-Za-zÄÖÜäöüß]+",
@@ -649,3 +645,64 @@ def test_the_gateway_takes_the_pattern_bounds_from_the_rule_rather_than_restatin
 
     assert {"MAX_PATTERNS", "MAX_PATTERN_LENGTH"} <= imported
     assert restated == []
+
+
+# =================================================================================================
+# A reference back to what a group matched: its cost is the text's to decide
+# =================================================================================================
+
+#: Shapes every rule above accepted, with what each was **measured** to cost (`re.search` over a
+#: run of `a`, which none of them matches). The first is cubic: 0.35 s on 1 000 characters, 2.8 s on
+#: 2 000, 22.7 s on 4 000 — and the filter reads twenty thousand.
+REFERS_BACK_SHAPES = (
+    (r"(.*)\1!", "2.8 s on 2 000 characters"),
+    (r"(a|b)*\1c", "accepted, and slow for the same reason"),
+    (r"(?P<x>.*)(?P=x)!", "the named spelling of the first"),
+    (r"(?P<x>a+)(?P=x)+!", "a named reference, repeated"),
+    (r"(a)?(?(1)a*|b*)a*!", "a conditional on what a group matched"),
+    # Refused before as two repeats trading characters, because the walk read a reference as any
+    # one character; it is a reference, and refused as one.
+    (r"(a+)\1+b", "108 ms · 814 ms · 7.6 s at 500 / 1 000 / 2 000"),
+    # Shapes the earlier rule let through as one character, repeated: refused all the same, because
+    # the rule cannot tell a reference to one character from a reference to the whole prompt.
+    (r"(.)\1{3,}!", "a reference to one character, repeated"),
+    (r"(\w+)\s*=\s*\1", "an assignment repeating its own name"),
+)
+
+
+@pytest.mark.parametrize(("pattern", "cost"), REFERS_BACK_SHAPES)
+def test_a_reference_to_what_a_group_matched_is_refused(pattern: str, cost: str) -> None:
+    """A back-reference matches whatever its group captured, and a conditional branches on whether
+    it did — so what either costs is decided by the text, and the analysis this module makes
+    (sets, repeats, the ways to divide a text) has nothing to measure. The walk used to treat a
+    reference as consuming nothing, which let `(.*)\\1!` through as harmless: a use-case
+    administrator's pattern that holds the only event loop for seconds per prompt."""
+    from aira_common.patterns import REFERS_BACK
+
+    assert catastrophic_reason(pattern) == REFERS_BACK, f"{pattern} ({cost}) would be compiled"
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        # Inside the body of a repeat, which the walk judges without descending into…
+        r"(?:(a)\1)+",
+        # …inside an assertion, and inside a group inside an alternative.
+        r"(?=(a+))\1",
+        r"x|(?:y(z)\1)",
+    ],
+)
+def test_a_reference_is_found_wherever_it_sits(pattern: str) -> None:
+    """Asked of every node of the parse rather than of the shapes the walk follows: a check written
+    in the walk's terms answers *safe* for whatever the walk never reaches."""
+    from aira_common.patterns import REFERS_BACK
+
+    assert catastrophic_reason(pattern) == REFERS_BACK
+
+
+@pytest.mark.parametrize("pattern", [r"[\x0b-\x0c]+x", r"[\x0c-\x0e]x", r"\x0b\x0c"])
+def test_a_character_whose_code_equals_an_opcode_is_not_a_reference(pattern: str) -> None:
+    """The parse is made of integers, opcodes among them: `[\\x0c-\\x0e]` is the pair `(12, 14)`,
+    and 12 is the value of `GROUPREF_EXISTS`. Compared by value, a vertical tab or a form feed in a
+    character class would refuse a pattern that refers to nothing."""
+    assert catastrophic_reason(pattern) is None

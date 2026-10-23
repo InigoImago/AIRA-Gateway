@@ -1,9 +1,10 @@
 """How this plane reads a JSON body.
 
-**No deeper than the caller can make the decoder recurse safely.** DRF's `JSONParser` hands the
-document to `json.load`, whose decoder recurses as deep as the **caller** nests, and the resulting
-`RecursionError` is not a `ValueError` — nothing would catch it. The bound is
-`aira_common.nesting`'s, the same constant the gateway reads, so the two planes cannot disagree
+**No deeper than the caller can make the decoder recurse safely, and no larger in structure than
+a request needs.** DRF's `JSONParser` hands the document to `json.load`, whose decoder recurses as
+deep as the **caller** nests, and the resulting `RecursionError` is not a `ValueError` — nothing
+would catch it; and every value it builds is work the caller chose. Both bounds are
+`aira_common.nesting`'s, the same constants the gateway reads, so the two planes cannot disagree
 about what a body may be. Registered as the first `DEFAULT_PARSER_CLASSES` entry, so no endpoint
 has to remember it.
 
@@ -14,10 +15,10 @@ bytes expand to hundreds of megabytes before any bound applies, and garbage rais
 handler expects. RFC 8259 names UTF-8 (and its predecessor UTF-16/32); anything else is a `415`
 naming the charset.
 
-**And no more of it than this plane will hold.** The body is read up to
-`DATA_UPLOAD_MAX_MEMORY_SIZE` — Django's own ceiling for a request body, which DRF's stream
-bypasses — so a body the proxy in front would have let through is still bounded when there is no
-proxy in front.
+**And no more of it than this plane will hold** — but not here. DRF hands this parser the body
+through `request.body`, where Django applies `DATA_UPLOAD_MAX_MEMORY_SIZE` before reading it, so a
+body the proxy in front would have let through is still bounded when there is no proxy in front.
+`apps.api.exceptions` answers that refusal as the `413` it is.
 
 **No NUL character in any string.** PostgreSQL's text and `jsonb` types cannot hold U+0000, so a
 `\u0000` anywhere in a document — a pipeline instruction, a declaration, a key — is a `DataError`
@@ -33,11 +34,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from django.conf import settings
-from rest_framework import status
-from rest_framework.exceptions import APIException, ParseError, UnsupportedMediaType
+from rest_framework.exceptions import ParseError, UnsupportedMediaType
 from rest_framework.parsers import JSONParser
 
-from aira_common.nesting import MAX_JSON_DEPTH, nests_deeper_than
+from aira_common.nesting import MAX_JSON_DEPTH, MAX_JSON_VALUES, Exceeded, exceeded
 
 NUL = "\x00"
 
@@ -48,12 +48,6 @@ NUL_REFUSAL = "The JSON body contains a NUL character (\\u0000), which no stored
 JSON_ENCODINGS = frozenset(
     {"utf-8", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be"}
 )
-
-
-class BodyTooLarge(APIException):
-    status_code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
-    default_detail = "The request body is larger than this service accepts."
-    default_code = "payload_too_large"
 
 
 def json_encoding(declared: str) -> str:
@@ -82,10 +76,7 @@ class BoundedJSONParser(JSONParser):
     ) -> Any:
         context: Mapping[str, Any] = parser_context or {}
         encoding = json_encoding(context.get("encoding", settings.DEFAULT_CHARSET))
-        limit: int | None = settings.DATA_UPLOAD_MAX_MEMORY_SIZE
-        raw = stream.read() if limit is None else stream.read(limit + 1)
-        if limit is not None and len(raw) > limit:
-            raise BodyTooLarge(f"The request body is larger than {limit} bytes.")
+        raw = stream.read()
         try:
             # A test client may hand over `str` already.
             text = raw if isinstance(raw, str) else codecs.decode(raw, encoding)
@@ -96,8 +87,11 @@ class BoundedJSONParser(JSONParser):
         # as a closing quote, after which every bracket counted as string text and a body of any
         # depth passed — to a `RecursionError` in the decoder. Decoding a Unicode text first costs
         # one linear pass and cannot expand it.
-        if nests_deeper_than(text.encode("utf-8", "surrogatepass"), MAX_JSON_DEPTH):
+        bound = exceeded(text.encode("utf-8", "surrogatepass"))
+        if bound is Exceeded.DEPTH:
             raise ParseError(f"JSON body nests deeper than {MAX_JSON_DEPTH} levels.")
+        if bound is Exceeded.VALUES:
+            raise ParseError(f"JSON body holds more than {MAX_JSON_VALUES} values.")
         try:
             document = json.loads(text)
         except ValueError as exc:

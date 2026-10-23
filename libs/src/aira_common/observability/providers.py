@@ -13,6 +13,7 @@ from opentelemetry._logs import set_logger_provider
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.propagate import set_global_textmap
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
@@ -21,6 +22,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, Sampler, TraceIdRatioBased
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.util.types import Attributes
 
 from aira_common.observability.diagnostics import route_sdk_diagnostics
@@ -40,7 +42,28 @@ HEALTH_PATHS = r"^[a-z]+://[^/]+/(healthz|readyz)\??$"
 #: The variable every `opentelemetry.util.http` instrumentation reads, absent a per-library one.
 EXCLUDED_URLS_ENV = "OTEL_PYTHON_EXCLUDED_URLS"
 
+#: The variable that names a process's propagators. OpenTelemetry reads it once, at import.
+PROPAGATORS_ENV = "OTEL_PROPAGATORS"
+
 _configured = False
+
+
+def propagate_trace_context_only() -> bool:
+    """Read a request's W3C trace context, `traceparent` and `tracestate`, and nothing else.
+
+    OpenTelemetry's default also propagates `baggage`, which nothing here reads. Its parser splits
+    the header with a pattern that takes quadratic time inside its 8 KB bound, the server
+    instrumentation runs it on every request **before authentication**, and the HTTP client
+    instrumentation would carry a caller's baggage on to every upstream this process calls. A
+    process that propagates only what it uses parses only that.
+
+    An installation that names its propagators in `OTEL_PROPAGATORS` has decided, and keeps its
+    decision. Returns whether the restriction was applied.
+    """
+    if os.environ.get(PROPAGATORS_ENV, "").strip():
+        return False
+    set_global_textmap(TraceContextTextMapPropagator())
+    return True
 
 
 def exclude_health_probes(paths: str = HEALTH_PATHS) -> str:
@@ -88,6 +111,10 @@ def configure_observability(
     given. Idempotent.
     """
     global _configured
+    # **Before the early return**: an instrumentation can be in place with nothing exporting — the
+    # control plane instruments Django on `AIRA_OTEL_ENABLED` alone — and it parses the headers
+    # either way.
+    propagate_trace_context_only()
     if not enabled or not endpoint:
         return False
     if _configured:

@@ -113,6 +113,12 @@ no credentials.
   that file is the developer's own, and OpenCode 1's one entry is merged in by the rollout. The
   file is mode 0644 and owned by uid 0. The archive is reproducible (fixed time, no gzip name or
   time), so the published checksum can be recomputed from a checkout.
+- **FR-9 — signed** (2026-10-22, `ADR-0043`). The release job packs the archive itself, from the
+  tagged source, among GitHub's own actions only, and signs it before the Release exists: a build
+  provenance in GitHub's attestation store, which `gh attestation verify <archive> --repo
+  InigoImago/AIRA-Gateway` checks. A checksum says the download is the file uploaded; the signature
+  says this workflow made it from that tag — the question a rollout putting code on workstations
+  has to ask. From the first release after v0.1.7.
 - **Why not a package.** Both generations install npm packages (`opencode plugin -g <spec>`,
   `opencode plugin add <spec>`). A trial against a local registry loaded the plugin in both. But
   GitHub's npm registry requires a token even to install a public package, unlike GHCR's anonymous
@@ -132,6 +138,26 @@ for a missing key and kept it in OpenCode 2's plugin storage, which writes a wor
 it was dropped once every place OpenCode keeps a key was readable. The endpoint's new windows are
 the caller's own figures over shorter dates: no new processing.
 
+**Only to that address, and only safely** (2026-10-22, security review N-2). The read went through
+`fetch` with its defaults, so a redirect from the gateway's address — a sign-in front, a misrouted
+proxy — carried `x-goog-api-key`, a header no runtime strips, to wherever it pointed; measured with
+a `302` to another origin, which received the key. And `http://` was accepted for any host.
+
+- **FR-10** The key goes over `https:`, or over plain `http:` only to this machine (`localhost`,
+  `127.0.0.1`, `[::1]`, compared as the URL's host, so `localhost.example.org` is not one). Another
+  address is refused **before** anything is sent, and the sidebar and `/budget` say why in the
+  plugin's own words rather than as a gateway that did not answer.
+- **FR-11** The read never follows a redirect (`redirect: "error"`, which Bun refuses as
+  `UnexpectedRedirect`); a redirect is reported as one.
+- **FR-12** An answer is read only from the origin it was asked of: a response marked
+  `redirected`, or whose URL names another origin, is refused — the second line, for a `fetch` that
+  ignores the option.
+
+The key the model calls carry goes wherever OpenCode's own configuration points, over whatever
+scheme it names; that is OpenCode's, and the console writes the gateway address the deployment
+gives it. A repository's own `opencode.json` can point both elsewhere — OpenCode trusts it for the
+model calls as well, so the plugin adds no exposure there.
+
 ## 10. Testing & Acceptance Criteria
 
 - `gateway/tests/test_a_caller_sees_their_own_allowance.py` — the windows on both sides of every
@@ -146,3 +172,6 @@ the caller's own figures over shorter dates: no new processing.
 - Measured by hand as well: OpenCode 1.4.0 (the oldest supported, before the keymap API) and a key
   kept only in OpenCode 2's credential store.
 - Mutations `OB1`–`OB18`, `AL9`, `AL10`, `MG-23`.
+- FR-10–FR-12 in the same Bun suite, against real loopback sockets for the redirect (the other
+  origin must see no request at all), a stand-in for an answer from elsewhere, and OpenCode 2's glue
+  for the refusal's wording. Mutations `SUP-23`–`SUP-28`.

@@ -43,3 +43,14 @@ default **streamed JSON array** form, and mock honouring of `generationConfig` (
 
 ## 6. Dependencies & Risks
 - Builds on FRD-100/103. Risk: SSE framing mismatch with the SDK → follow `data: … \n\n` exactly.
+
+## 7. Bounded by its schema, not by its prompt (2026-10-22)
+
+The mock is registered in every demo deployment, where the published demo key reaches it, so what
+it builds in memory is a cost anybody can ask for. A security audit found its JSON-schema answers
+(`synthesise_json`, `FRD-143`) put the **whole prompt** into every string of the document, where the
+OpenAPI generator beside it had always cut it to forty characters: a 16 KiB prompt with a schema of
+256 properties came back as 4.2 MB. Every string the mock makes up now repeats at most the prompt's
+first forty characters (`upstreams.mock.ECHOED`), in a structured answer and in a tool call's
+arguments alike, so an answer is bounded by the schema's own bounds — at most 256 properties, eight
+levels — whatever it is sent. Speech was already bounded at a minute.

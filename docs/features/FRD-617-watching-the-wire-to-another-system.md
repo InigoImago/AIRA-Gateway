@@ -192,9 +192,10 @@ own sentence turned back on it: *"no errors" and "it arrived" are different stat
 
 Three changes:
 
-- **The response is read.** `WatchedExport` wraps the exporter's `_export` on the *instance* — the
-  seam where the `requests.Response` still exists — records it, and parses `partial_success` per
-  signal. A rejected count makes the line `failed`, with the collector's own reason.
+- **The response is read.** `WatchedExport` wraps the exporter's transport,
+  `_client._transport.request`, on the *instance* — the seam where the HTTP result still exists —
+  records it, and parses `partial_success` from its `content()` per signal. A rejected count makes
+  the line `failed`, with the collector's own reason.
 - **`http_status` is its own field.** The enum says "2xx"; the code says which, and the two are
   reported beside each other rather than one standing in for the other.
 - **`make otel-status`** answers the hops a service cannot see, out of the collector's own
@@ -211,11 +212,18 @@ Three changes:
      └── AIRA_DEBUG_INTEGRATIONS=otel     (left, took Nms, answered 200, N rejected)
 ```
 
-Reaching for `_export` is a private-API cost taken deliberately: the alternatives are a `requests`
-adapter that would see every call the process makes, or reimplementing the exporter.
-`test_the_exporter_still_has_the_seam_we_reach_through` asks the **real** exporter whether the
-method is still there, so the upgrade that renames it turns something red rather than making the
-partial-success reading quietly vacuous (`LESSONS.md` §7).
+Reaching for the transport is a private-API cost taken deliberately: the alternatives are a
+`requests` adapter that would see every call the process makes, or reimplementing the exporter.
+`test_the_exporter_still_has_the_seam_we_reach_through` asks the **real** exporter whether the seam
+is still there and whether the wrapper took it, so the upgrade that moves it turns something red
+rather than making the partial-success reading quietly vacuous (`LESSONS.md` §7).
+
+*It moved once already.* Up to OpenTelemetry 1.44 the seam was the exporter's own `_export`, which
+returned a `requests.Response`; 1.45 made the exporter a client over a transport whose result
+carries the body behind `content()`. The seam test turned red on the upgrade, as intended — and
+the partial-success tests stayed **green**, because they drove a stand-in shaped like the old
+exporter. They now drive the real `OTLPSpanExporter`, answered in process by a session of their
+own, so a change of shape reaches them too.
 
 ### 3.7 The one system that runs before the switch is read
 

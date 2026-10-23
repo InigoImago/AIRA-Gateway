@@ -49,7 +49,8 @@ Container Registry under that version, once every quality gate has passed on the
   publish before anybody had decided the commit was worth a version.
 - Multi-architecture images. `linux/arm64` needs QEMU and roughly triples the console build; worth
   doing when somebody needs it, not before.
-- A changelog, a GitHub Release body, or signing. §6 keeps them open.
+- A changelog, or a GitHub Release body. §6 keeps them open. Signing was among these until
+  `ADR-0043`; §8 describes it.
 - Consuming the published images. That is the payoff and it is a feature of its own:
   [`FRD-138`](FRD-138-running-a-published-release.md).
 
@@ -94,7 +95,7 @@ Container Registry under that version, once every quality gate has passed on the
   unfinished in the one list a person reads, which is how `ADR-0029`'s objection to a pre-test tag
   is answered: not by preventing it, but by what the failure leaves behind.
 - **FR-10** Authentication is the workflow's built-in `GITHUB_TOKEN`, with `packages: write` scoped
-  to the release job alone. No personal access token exists.
+  to the job that pushes the images alone (§8). No personal access token exists.
 
 - **FR-11** A tag whose message is not a description is refused **before anything is published**.
   Five rules: the ref is an **annotated tag object** (a lightweight one has no message of its own —
@@ -166,7 +167,8 @@ prices.
 | ancestor of `origin/main`? | FR-6 |
 | newest release? | FR-14 — `latest` must not move backwards |
 
-`publish` — a build, **behind all four**:
+`publish` — a build, **behind all four** (as first built; since `ADR-0043` the image push, the
+inventory and the Release are three jobs, §8):
 
 | Step | Why |
 | --- | --- |
@@ -205,10 +207,10 @@ cheap to fix, and only while nobody is waiting yet.
   `make release-notes VERSION=v0.1.1` prints it — but re-publishing it is a `gh release edit`
   somebody runs once, and the already-released guard means the job will not do it. Recorded rather
   than quietly fixed, because the release that was wrong is the evidence for why both rules exist.
-- **The published bytes are a rebuild of the tested commit, not the tested bytes.** With a warm
-  cache they are the same layers in practice, and "in practice" is not a guarantee this project
-  usually accepts. Handing the three images between jobs as artefacts (~1 GB) is the upgrade;
-  stated in `ADR-0029` as a known limit rather than left to be discovered.
+- **The published bytes are a rebuild of the tested commit, not the tested bytes.** Since
+  `ADR-0043` the rebuild takes no layer cache at all, so it is the commit's alone — and still not
+  the bytes the test jobs ran. Handing the three images between jobs as artefacts (~1 GB) is the
+  upgrade; stated in `ADR-0029` as a known limit rather than left to be discovered.
 - ~~**Nothing consumes the images yet.**~~ **Closed** by
   [`FRD-138`](FRD-138-running-a-published-release.md) / `ADR-0031` on 2026-10-11: two overlays —
   `docker-compose.release.yml` takes the three images from the registry and removes their `build:`,
@@ -219,8 +221,8 @@ cheap to fix, and only while nobody is waiting yet.
   pullable is a one-time step per package in GitHub's own settings, outside this repository.
 - **No backports.** A tag older than the newest release is refused (FR-14). Supporting one would
   need a second moving tag per series; named as absent rather than left to be discovered.
-- Multi-architecture images, a generated `CHANGELOG.md`, and image signing or provenance attestation
-  are all absent, deliberately, and each is a small addition when wanted. `v0.1.0`'s own
+- Multi-architecture images and a generated `CHANGELOG.md` are absent, deliberately, and each is
+  a small addition when wanted. Signing and a signed provenance were added by `ADR-0043` (§8). `v0.1.0`'s own
   description cannot be recovered — it was never written.
 
 ## 7. Testing & Acceptance Criteria
@@ -304,3 +306,35 @@ about its caller.**
   and nothing is published.
 - *Given* a release whose console build fails, *when* the run ends, *then* there is no GitHub
   Release for that tag.
+
+## 8. The release jobs, cut by what each may write (2026-10-22, `ADR-0043`)
+
+The security review of 2026-10-22 read the chain for who other than this repository could put code
+into a release: every action named by a moving tag, one job holding `contents: write` and
+`packages: write` beside a third party's action and a full `uv sync`, caches that ordinary pushes
+write restored into the release, the token left in every clone, and nothing a release published
+signed.
+
+- **FR-19** Every action is pinned to the full commit of a release, noted beside it; one action has
+  one pin. No checkout keeps the token (`persist-credentials: false`).
+- **FR-20** Four release jobs: `described` (nothing to write), `publish` (`packages: write`; GitHub's
+  checkout and Docker's actions only), `inventory` (`packages: read`; Syft) and `release`
+  (`contents`, `id-token`, `attestations`; GitHub's actions only). The later two need `publish`, so
+  every gate still stands in front of everything published. The release tools are standard-library
+  Python and run on `actions/setup-python` — nothing from PyPI is installed where the Release can be
+  written — and the plugin archive is packed there, from the tagged source.
+- **FR-21** No release job restores a cache: uv's is off where uv is set up, and the image builds take
+  no layer cache in either direction.
+- **FR-22** The plugin archive, every SBOM and each image by the digest just pushed carry a signed
+  build provenance (`actions/attest-build-provenance`, Sigstore through GitHub's attestation store),
+  made **before** the Release exists. `gh attestation verify` checks one (`DEPLOYMENT.md` §1b).
+- **FR-23** The digests the later jobs describe and sign reach them as the `publish` job's outputs,
+  each from the step that pushed that image.
+
+Tested in `tools/tests/test_a_release_is_published_only_behind_the_gates.py` — the earlier properties
+moved to the job that now holds them, and five new ones: every action pinned to a commit with its
+release noted, no token in any clone, no third party beside a write permission, no cache in a
+release job, everything signed before the Release. Mutations `SUP-14`–`SUP-22`; `PB12`, `PB16`,
+`PB21`, `RT7` and `BOM1`–`BOM3` re-anchored. Linted with `actionlint` 1.7.12, which reports only the
+one style note the previous workflow had. **Not verifiable before a release:** the attestation
+calls and the job split run on the next tag first.

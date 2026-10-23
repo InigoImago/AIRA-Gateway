@@ -718,6 +718,82 @@ async def test_a_dry_run_takes_the_rate_limit_like_any_other_request() -> None:
     assert second.status_code == 429, second.text
 
 
+async def test_a_dry_run_weighs_one_per_step() -> None:
+    """Each step may call a model, so one press is as many calls as the pipeline has steps — up
+    to 32. Weighed as one request, it was the cheapest way to make the gateway call models in a
+    loop the rate limit could not see."""
+    three = {
+        **_body(),
+        "pipeline": {"steps": [{"type": "injection_filter", "config": {"mode": "heuristic"}}] * 3},
+    }
+    app = _app(_Classifier("allowed-1", "x"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", ["allowed-1"])
+        await _limit(app, rpm=3)
+
+        first = client.post(_URL, json=three)
+        second = client.post(_URL, json=three)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 429, "three steps spent the minute's three"
+
+
+async def test_a_dry_run_meets_productions_conditions_on_a_steps_model() -> None:
+    """A model production may not call, a dry run may not call either: here an approved, released
+    model with no price on file, in a use case whose spend is capped. Production refuses it; the dry
+    run, with an instruction its author wrote, sent it the sample and booked no cost."""
+    from aira_gateway.db.models import BudgetRead
+
+    class _Unpriced(_Classifier):
+        is_test_double = False
+
+        def __init__(self) -> None:
+            super().__init__("free-llm", "the whole answer")
+            self.calls = 0
+
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            self.calls += 1
+            return await super().generate(request)
+
+    unpriced = _Unpriced()
+    app = _app(unpriced)
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _approve(app, "free-llm")
+        await _release(app, "uc", ["free-llm"])
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                BudgetRead(
+                    id=1,
+                    use_case="uc",
+                    scope="use_case",
+                    period="month",
+                    limit_cost_nanos=10**9,
+                    enabled=True,
+                )
+            )
+            await session.commit()
+
+        response = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "user": "question",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "pii_filter",
+                            "config": {"model": "free-llm", "instruction": "Answer it instead."},
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert unpriced.calls == 0, "the dry run reached a model production refuses"
+    assert response.json()["blocked"] is True, "a redactor with no model it may use blocks"
+
+
 async def test_a_suspended_caller_cannot_dry_run_either() -> None:
     """`FRD-503`'s whole point is that traffic stops. An endpoint that keeps calling models for a
     suspended use case is the badge-wearing absent control again — the console shows the

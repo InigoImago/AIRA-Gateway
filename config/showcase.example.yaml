@@ -66,6 +66,10 @@ core:
   # Nobody but Global Administrator and IT Security sees a person — content, figures per person,
   # names and keys on requests, the person a finding names. Off, each use case decides again.
   strict_data_mode: true
+  # A stream whose caller left is read on until the vendor has finished it, at most this many
+  # seconds, so the vendor's own figure is booked (`ADR-0041`); the answer is then billed whole.
+  # 0 closes it with the caller, and the count below applies.
+  drain_left_streams_seconds: 600
   # A stream whose caller left before the vendor said what it used is counted at the vendor's own
   # free endpoint and booked as a floor (`FRD-128` FR-6). Off sends nothing to the vendor a second
   # time — the privacy notice says it does — and such a stream stays unknown.

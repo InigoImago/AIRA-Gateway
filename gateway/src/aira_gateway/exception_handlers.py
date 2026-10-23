@@ -19,6 +19,7 @@ from aira_common.logging import get_logger
 from aira_common.observability import trace_context_fields
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.refusals import refusal_response as gemini_refusal
+from aira_gateway.api.kira import is_kira_path
 from aira_gateway.api.kira.errors import VALIDATION_ERROR as KIRA_VALIDATION_ERROR
 from aira_gateway.api.kira.errors import KiraError, kira_error_response
 from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
@@ -34,7 +35,6 @@ from aira_gateway.middleware import (
     RequestTooLarge,
     SecurityHeadersMiddleware,
     TraceIdMiddleware,
-    is_kira_path,
     too_large_response,
 )
 

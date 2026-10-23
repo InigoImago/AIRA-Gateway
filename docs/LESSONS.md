@@ -177,6 +177,13 @@ reading code.
   files most likely to have the defect were the ones checked for nothing. **An early return that
   skips a whole class of file is a check that does not cover its likeliest case.**
 
+  *And a check that reuses an analysis' walk inherits what the walk skips.* The pattern rule that
+  refuses catastrophic regular expressions walked the parse the way its analysis did, and the
+  analysis never entered a repeat body it had already judged — so a back-reference inside one,
+  `(.*)\1!`, cubic in the prompt, passed every path that compiles an operator's pattern. A check
+  for a forbidden node visits every node. (The same walk compared opcodes by value: a character
+  class holding `\x0c` equals the conditional's opcode. Compare them by identity.)
+
 - **Write the reader's command out, and run it.** A debug facility is finished when somebody can
   extract what it produced, not when it produces it. Printing the OTLP payload passed every test
   and was unusable twice over: it was pretty-printed, so one payload was forty lines and no longer
@@ -1233,9 +1240,25 @@ reading code.
   zero; a per-person budget answers `null` to a reader it does not bind, because zero is also what
   an untouched allowance looks like; an empty report says whether it was *allowed* to be full
   (`in_scope`).
+- **A reservation is the bound, where the bound is known.** What is held back for a request in
+  flight is what lets the next request see it, so it must be what the request *can* cost, not what
+  it usually costs: the cap that goes on the wire, else the model's declared maximum. An uncapped
+  request reserved the installation's 1024-token guess for an answer that could be 65 536, and a
+  burst admitted 98 requests against room for two — the reservation existed and saw nothing. The
+  same shape one layer down: a counter rebuilt from the system of record knows what *finished*,
+  and forgot every reservation still open until the open ones were written down beside it.
+- **The caller's connection is not the vendor's.** What a vendor bills is decided by its stream,
+  and several say what only in their last chunk; a stream closed when its caller left booked
+  nothing they said — a request anyone could make free by hanging up before the end, and every
+  cancelled agent turn invisible to the budget. Read the upstream apart from the caller, take each
+  chunk down as it is *read* rather than as it is delivered, and let the vendor finish its
+  sentence (`ADR-0041`).
 - **An allow-list, never a deny-list**, for anything persisted from model output or caller content:
   tool calls keep names and counts, pipeline decisions keep a fixed key set. A deny-list starts
-  storing whatever is added next.
+  storing whatever is added next. *A log line is persisted too:* the KIRA refusal log walked the
+  body and named every key it met, so the keys of a function's arguments — a name, an e-mail
+  address, a diagnosis — reached the log, and one 7 MB body made a 7 MB line. It now describes the
+  request models' own objects and only sizes the caller's.
 - **A row describes what *called*.** The credential's owner is on every row; the human who issued
   it is a separate field, because those are two questions and conflating them puts a colleague's
   name beside an agent's traffic.
@@ -1358,6 +1381,14 @@ reading code.
   it, and an empty page looks identical whether that was done, done wrongly, or not done. It reads
   the collector's own arguments now — not `.env`, not memory, the arguments the running process was
   started with, which is the only form of the answer that cannot be stale.
+
+  *And a fix that needs the installation to change is a change to theirs.* The second security
+  round signed every configuration event and tightened the rule for reaching Kafka, both right in
+  the code and wrong for an installation already running: neither plane would have started again
+  until a key was in Vault, its public half with the gateway and the broker spoke TLS with an
+  identity per service — each a ticket with whoever runs that piece. Both were taken back out. **A
+  fix that adds to what an installation must provide — a secret, a listener, a certificate — is its
+  operator's decision before it is a commit.**
 
 - **A summary sentence overrides the footnote that corrects it.** `make otel-status` printed
   *"undelivered — a give-up, not an attempt: a retrying exporter shows 0 for now"*, and then
@@ -1999,6 +2030,13 @@ reading code.
   for good. **A control whose record has not arrived is not a control that says yes**; refuse
   until it does.
 
+  *And a tombstone ends only the key it is written on.* A retired use case's children live on
+  compaction keys of their own — a key on its prefix, a member on `slug|username` — and only the
+  use case's key ever received an end. The retirement held while it was that key's last record; a
+  purge replaced it, every child's last record still granted, and a rebuild re-admitted the old
+  administrator while a re-created slug inherited the old key. **On a compacted log, end a thing on
+  every key that grants it**: compaction keeps the last word per key, and nothing else.
+
 - **Widening a field from one to many is a search, not an edit.** Making a model's region a list
   meant reading the twelve places that consumed it — and three were **already wrong**, in ways that
   the new feature would have promoted from occasional to systematic: an audit row taking the region
@@ -2159,6 +2197,12 @@ reading code.
   where the real adapter returns a response *with usage* made "the audit row carries what the
   answer reported" a property no test could lose, because the harness never produced one. Both
   times a mutation run found it and no reviewer would have.
+
+  *And a stand-in shaped like a dependency's last release outlives the release.* OpenTelemetry
+  1.45 moved its exporter's HTTP seam; the partial-success tests drove a stand-in shaped like
+  1.44's exporter and stayed green while the real reading had gone quiet. Only the test that drove
+  the real exporter turned red — so after an upgrade, the tests worth trusting are the ones that
+  never replaced the dependency.
 
   *And a hand-written fixture is a stand-in for the thing that produces it.* The usage export's
   `failed` column had been **0 in every file since `FRD-602`** — seven weeks. The renderer read

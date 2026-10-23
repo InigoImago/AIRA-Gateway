@@ -346,7 +346,8 @@ class _ReportsUsageOnEveryChunk:
 
 async def test_a_caller_who_leaves_after_usage_arrived_is_499_and_billed_for_it() -> None:
     """Recorded as served with a 200 before: the first Vertex chunk already carries usage, and
-    "some usage arrived" was read as "the answer was delivered"."""
+    "some usage arrived" was read as "the answer was delivered". The rest of the answer is read
+    after the caller left, so what is billed is the vendor's last figure, not its first."""
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     app.state.providers = ProviderRegistry([_ReportsUsageOnEveryChunk()])
     budgets = _TrackingBudgets()
@@ -367,7 +368,7 @@ async def test_a_caller_who_leaves_after_usage_arrived_is_499_and_billed_for_it(
             rows = list((await session.execute(select(RequestLog))).scalars())
 
     assert [(row.status, row.outcome, row.completion_tokens) for row in rows] == [
-        (499, "client_gone", 1)
+        (499, "client_gone", 3)
     ]
     assert budgets.settled == 1, "what the upstream reported was spent, so it is booked"
 

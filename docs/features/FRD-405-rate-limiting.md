@@ -135,9 +135,18 @@ success  → reconcile: adjust the reservation by (actual − estimate), persist
 failure  → release: undo the reservation entirely
 ```
 
-The estimate uses the caller's `maxOutputTokens` where it was given, otherwise a configured
-default. It is deliberately conservative: for a spend limit, briefly over-reserving is the safe
-direction, and the correction lands within milliseconds.
+The estimate uses what bounds the answer: the caller's `maxOutputTokens` where it was given, else
+the model's declared default — both go on the wire — else the model's declared maximum, which is
+what bounds an answer sent no cap; only a model that declares none falls back to the configured
+`AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS`. It is deliberately conservative: for a spend limit, briefly
+over-reserving is the safe direction, and the correction lands within milliseconds. The fallback
+used to apply to every uncapped request, and the shipped model reference gives every entry a
+maximum and none a default — so nearly every SDK request reserved 1024 tokens for an answer that
+could be 65 536, and a burst in flight booked up to sixty times its limit (DEVLOG, 2026-10-22).
+
+A refusal distinguishes a limit met by what was **settled** from one met by reservations **in
+flight**: the second says the reservations free as the requests finish, because "exhausted until
+the period resets" sends the caller to wait for the wrong thing.
 
 **Redis is a cache, Postgres is the record.** On a cache miss the counter is seeded from
 `budget_usage`, which `record` keeps current. A Redis restart therefore costs the reservations
@@ -148,9 +157,15 @@ minutes). This is what bounds drift: if the correction after a request cannot re
 counter keeps that request's deliberately high estimate, and it cannot be repaired from there —
 the store holding the stale figure is the store that is unreachable. Letting it expire makes the
 drift self-healing, and costs nothing, because every reservation already reads the Postgres figure
-to seed with. The trade is that reservations still in flight when a counter expires are forgotten,
-briefly reopening the race for whatever is in flight at that instant; a rare under-count of one
-estimate is a far better failure than a permanent over-count nobody can clear.
+to seed with. **A rebuild keeps the reservations in flight.** Postgres holds what finished requests
+spent and nothing of what running ones set aside, so a counter rebuilt from it alone forgot every
+open reservation — and each settlement then subtracted a reservation the counter no longer held, so
+a 1000-token budget whose counter expired under one running request admitted three and booked 2970.
+Each reservation is therefore also written beside the counter (`budget:<scope>:<period>:open`),
+under its own id with a deadline of `RESERVATION_LIFETIME_SECONDS` (an hour, longer than any request
+holds one); a rebuild adds those still open, and settling or releasing one removes it. One that can
+never be removed — Redis away when its request settled — over-counts until its deadline, in the
+direction that refuses rather than spends, and is then dropped.
 
 **The expiry is set when the counter is built and never extended.** Refreshed by every reservation
 and every correction, it was an idle timeout: a counter that saw a request every few minutes was

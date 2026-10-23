@@ -44,6 +44,7 @@ from aira_gateway.api.serving import (
     refuse_unless_live,
     released_for,
 )
+from aira_gateway.api.serving.conditions import installation_requirements
 from aira_gateway.audit import AuditTrail
 from aira_gateway.auth.attribution import Attribution, attribute
 from aira_gateway.auth.dependencies import require_principal, use_case_refusal
@@ -53,7 +54,7 @@ from aira_gateway.payloads import grant_role_in
 from aira_gateway.pipeline.config import Pipeline, problem_in
 from aira_gateway.pipeline.engine import DryRunResult, PipelineEngine
 from aira_gateway.pipeline.store import PipelineStore
-from aira_gateway.requirements import ModelApproved
+from aira_gateway.requirements import ModelApproved, permits
 from aira_gateway.state import providers_of, sessionmaker_of
 from aira_gateway.upstreams.base import ProviderRegistry
 
@@ -333,8 +334,10 @@ async def dry_run(
     attribute(request, Attribution.of(principal, payload.use_case))
     # The controls that do not need to know a model — suspension, rate limits, exhausted budget —
     # before anything is spent (`FRD-126`: one bundle, not an order assembled at the call site).
+    # Weighed one per step: each may call a model, so one press is as many calls as the pipeline
+    # has steps — up to `MAX_STEPS` — and must not count as one request against the rate limit.
     try:
-        await guard_before_work(request)
+        await guard_before_work(request, units=max(1, len(pipeline.steps)))
     except REFUSALS as exc:
         return _refusal(exc, request)
 
@@ -346,6 +349,8 @@ async def dry_run(
             model_calls=trail.model_calls,
             declaration_of=await declared_model(request),
             past_blocks=payload.past_blocks,
+            # Production's conditions on each step's model: a dry run is not a way round them.
+            permits=permits(await installation_requirements(request)),
         )
     finally:
         # A filter that blocked still spent the tokens it took to decide that. There is no response

@@ -171,6 +171,15 @@ tar -xzf "opencode-aira-budget-$v.tar.gz" -C ~/.config/opencode
 #   → ~/.config/opencode/plugins/aira-budget/tui.tsx
 ```
 
+**Releases after v0.1.7 also sign the archive.** The checksum proves the download is the file that
+was uploaded; the signature says who made it — this repository's release workflow, from that tag.
+A rollout that installs code on workstations checks both, with the GitHub CLI signed in:
+
+```bash
+gh attestation verify "opencode-aira-budget-$v.tar.gz" --repo InigoImago/AIRA-Gateway \
+  --signer-workflow InigoImago/AIRA-Gateway/.github/workflows/ci.yml --source-ref "refs/tags/$v"
+```
+
 The archive carries no `tui.json`, because that file is the developer's own and unpacking over it
 would erase their settings. OpenCode 1 needs `"./plugins/aira-budget/tui.tsx"` in the `plugin`
 list of `~/.config/opencode/tui.json`. A rollout tool should merge that entry into the file, not
@@ -184,6 +193,13 @@ environment variable the configuration names, or from OpenCode's credential stor
 (`opencode auth login`). `AIRA_BASE_URL` and `AIRA_API_KEY` override both. It stores nothing and
 guesses no address.
 
+**The key goes to that address and nowhere else.** The budget read carries the same key as every
+model call, so the plugin sends it over **https**, or over plain http only to this machine
+(`localhost`, `127.0.0.1`, `[::1]`); a gateway configured as `http://` anywhere else is not asked,
+and the sidebar says why. It never follows a redirect — `fetch` would carry the key to wherever
+the answer points — and it reads an answer only from the address it asked. A gateway behind a
+sign-in proxy that redirects shows *answered with a redirect* instead of a figure.
+
 **What the file obeys, each rule measured against a client:**
 
 1. **One file in a directory of its own.** OpenCode 1 loads every `*.ts`/`*.js` directly in
@@ -195,6 +211,8 @@ guesses no address.
 3. **Only `solid-js` and `@opentui/solid` are imported** — OpenCode resolves both to its own copies.
    Anything else would have to be installed beside the file.
 4. **Loading does not wait on the network.** The first reading is started, not awaited.
+5. **The key reaches the gateway alone**: over https or on this machine, never after a redirect,
+   and an answer from another origin is not read — the sidebar says which of them it met.
 
 **After editing the plugin**, run `uv run python tools/opencode_plugin_asset.py --write`: the
 console hands out a generated copy, and `tools/tests/test_the_console_hands_out_the_plugin_it_ships.py`

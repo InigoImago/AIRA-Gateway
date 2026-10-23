@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings
+from django.core.exceptions import RequestDataTooBig
+from rest_framework import status
 from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
@@ -41,12 +44,25 @@ INTERNAL_ERROR_MESSAGE = "Internal server error."
 _log = get_logger("aira_management")
 
 
+class BodyTooLarge(APIException):
+    status_code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    default_detail = "The request body is larger than this service accepts."
+    default_code = "payload_too_large"
+
+
 def envelope(code: str, message: str, details: Any = None) -> dict[str, Any]:
     """The error body every refusal of this plane carries, built in one place."""
     return {"error": {"code": code, "message": message, "details": details}}
 
 
 def exception_handler(exc: Exception, context: dict[str, Any]) -> Response:
+    if isinstance(exc, RequestDataTooBig):
+        # **A body over the ceiling is the caller's, and a 413.** DRF reads every JSON body through
+        # `request.body`, where Django applies `DATA_UPLOAD_MAX_MEMORY_SIZE` before reading it and
+        # raises an exception DRF does not translate — which would otherwise answer 500.
+        exc = BodyTooLarge(
+            f"The request body is larger than {settings.DATA_UPLOAD_MAX_MEMORY_SIZE} bytes."
+        )
     response = drf_exception_handler(exc, context)
     if response is None:
         return _unexpected(exc, context)

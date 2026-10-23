@@ -54,6 +54,7 @@ SERVICES = frozenset(
         "budgets",
         "catalog",
         "db_sessionmaker",
+        "drains",
         "group_grants",
         "log_writer",
         "oidc_validator",

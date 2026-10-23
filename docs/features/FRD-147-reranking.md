@@ -64,6 +64,11 @@ so Google's client library works against the gateway with its endpoint changed.
   applies the use case, the rate limit, the pipeline over the query and every record, the
   declaration, the release and the reservation, in that order — and the adapter is reached through
   `resolve_direct_target`, which applies approval, release, residency and the price condition.
+- **FR-6a The weight.** The rate limit takes a ranking at its units — or, where the use case's
+  pipeline reads each text (`pii_filter`), at one per text it reads: the query and each record's
+  title and content. A redactor calls a model per text, so 200 records are 401 model calls, and an
+  embedding batch already weighs one per text for the same reason. The units are reserved at the
+  input rate they are booked at.
 - **FR-7 Metering.** Google bills a ranking request per **query of up to 100 records**. A request is
   booked as `ceil(records / 100)` units: that many requests against request-shaped limits, and that
   many units as its input figure, priced at the entry's input price (per million units). An entry

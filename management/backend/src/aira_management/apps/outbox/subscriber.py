@@ -54,8 +54,9 @@ _TOPIC_FOR = {
     "api_key.created": API_KEY_TOPIC,
     "api_key.revoked": API_KEY_TOPIC,
     "pipeline.upserted": PIPELINE_TOPIC,
-    # No `pipeline.deleted`: Management never deletes a pipeline (clearing one is a PUT with no
-    # steps). The gateway keeps its handler for forward compatibility with a Management that will.
+    # Sent when a use case is retired or purged, ending its pipeline on the pipeline's own key
+    # (`FRD-607` §4.1b). No view deletes a pipeline: clearing one is a PUT with no steps.
+    "pipeline.deleted": PIPELINE_TOPIC,
     "budget.upserted": BUDGET_TOPIC,
     "budget.deleted": BUDGET_TOPIC,
     "ratelimit.upserted": RATE_LIMIT_TOPIC,

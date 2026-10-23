@@ -234,9 +234,13 @@ The two stack jobs run side by side, each on its own stack. The first two run th
 job installs its toolchain once; `tools/tests/test_ci_runs_what_a_developer_runs.py` holds the two
 in step.
 
-A pushed release tag adds two jobs: `described`, which checks the tag's annotation with no
-dependencies so a bad one is refused within a minute, and `publish`, which needs all six and builds
-and pushes the three images ([`DEPLOYMENT.md`](DEPLOYMENT.md) §1b).
+A pushed release tag adds four jobs: `described`, which checks the tag's annotation with no
+dependencies so a bad one is refused within a minute; `publish`, which needs all six and builds and
+pushes the three images; `inventory`, which describes them; and `release`, which signs what the
+release names and creates it ([`DEPLOYMENT.md`](DEPLOYMENT.md) §1b). Each holds only the
+permission it uses, and every action the workflow runs is pinned to a commit — both checked by
+`tools/tests/test_a_release_is_published_only_behind_the_gates.py`, like the rest of the
+release's shape.
 
 ### Running the same elsewhere
 

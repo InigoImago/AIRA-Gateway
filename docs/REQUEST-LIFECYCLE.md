@@ -96,7 +96,7 @@ Two credential kinds, one `Principal`, then one use case:
 ```mermaid
 graph LR
     req["Request"] --> which{"credential?"}
-    which -->|"x-goog-api-key<br/>?key= · Bearer aira_…"| key["API key<br/><i>hashed lookup</i>"]
+    which -->|"x-goog-api-key<br/>?key= (Gemini only) · Bearer aira_…"| key["API key<br/><i>hashed lookup</i>"]
     which -->|"Bearer &lt;JWT&gt;"| oidc["OIDC<br/><i>JWKS, issuer, audience</i>"]
     which -->|"none, or one that fails"| anon["401, or 429 past the bound<br/><i>no audit row — a security event,<br/>not a usage row</i>"]
 
@@ -107,7 +107,10 @@ graph LR
     groups --> attr
 ```
 
-- **The credential** is read from `Authorization: Bearer`, then `x-goog-api-key`, then `?key=`.
+- **The credential** is read from `Authorization: Bearer`, then `x-goog-api-key`, then — on the
+  Gemini surface only — `?key=`, the query parameter Google's clients use. A key in a URL is written
+  into every proxy's log, and no KIRA client ever sent one there, so that surface does not read the
+  URL and answers a key found there with a `401` saying where to put it.
   Every refused attempt — none presented, or one that fails — counts against a bound per source
   address: past `AIRA_MAX_AUTH_FAILURES_PER_MINUTE` (60) in a minute, the answer is **429** with
   `Retry-After` instead of the 401, because the credential was not judged. A working credential
@@ -158,9 +161,16 @@ From here on a request is attributed, and every refusal writes a row.
 
 ## 4. The pre-dispatch sequence
 
-**Before it, each surface does its own part.** The Gemini surface refuses a model nothing serves
-(**404**, before the body is read), a body that is not JSON or carries a field Google's API does not
-define (**400**, naming the field). The KIRA surface
+**Before it, each surface does its own part.** Both read the body through one reader, which
+refuses it **unread** when it nests deeper than 64 levels or holds more than 250 000 JSON values —
+counted on the bytes, because the parse is where a body's cost starts, and the parse comes before
+the rate limit and a suspension can be asked. An attachment is one value however long, so the
+bound is about structure, not size. Both then count a request's turns (at most 10 000) and their
+parts (20 000 across them) before validating any of them, and offer the model at most 128
+functions — counted first on the Gemini surface, after parsing on the KIRA one, in its own code.
+The Gemini surface refuses a model nothing serves (**404**, before the body is read), a body that
+is not JSON or carries a field Google's API does not define (**400**, naming the field). The KIRA
+surface
 turns the predecessor's numeric model id into a model (**422** `MODEL_NOT_FOUND`; **503** when the
 id is assigned to two models), applies the contract's own checks (**422** `NO_CHAT_CAPABILITIES`,
 `MAX_TOKENS_EXCEEDS_CAP`, `VALIDATION_ERROR` for a cap of zero or less, `INVALID_TOOL_CONFIGURATION`
@@ -215,14 +225,19 @@ request that names no use case — the break-glass key's — is not this rule's 
 
 A generation with no text and no attachment; more attachments, or more bytes of them, than one
 request may carry; a sampling value outside the range every dialect accepts, named; functions
-declared where the use case has not switched tool calling on; the model's reasoning asked for where
-the use case does not return it. For an embedding, an empty batch or one beyond the bounds. Each is
-the caller's to fix (§8), and each is refused before the rate limit takes its weight.
+declared, or a function call or a function's result carried, where the use case has not switched
+tool calling on — a result is content no pipeline step reads (§5), so a use case with tool calling
+off receives none, whether or not the request declares anything; the model's reasoning asked for
+where the use case does not return it. For an embedding, an empty batch or one beyond the bounds.
+Each is the caller's to fix (§8), and each is refused before the rate limit takes its weight.
 
 ### 3 — the weight
 
 An embedding batch weighs one request per text, against the rate limit and a request budget alike;
-every other request weighs one.
+a ranking weighs one per hundred records, its provider's unit — or one per text where the use
+case's pipeline reads each text (a redactor calls a model for the query and for every record's
+title and content, so 200 records are 401 calls); a pipeline dry run weighs one per step, each of
+which may call a model. Every other request weighs one.
 
 ### 4 — the gate every verb passes
 
@@ -272,7 +287,9 @@ does not know reads them all as well, and an `action` it does not know blocks. N
 **attachments** — the text view of a message excludes them, so an injection inside a PDF is
 invisible to every step here — and none reads **tool results**: a file the assistant read or a page
 it fetched reaches the model unscanned, because the text view leaves out a tool's result as it
-leaves out an attachment, and the two scopes differ only in which messages they read. And the
+leaves out an attachment, and the two scopes differ only in which messages they read. That reach is
+the use case's to grant: a function call or result reaches a model only where tool calling is
+switched on, and is refused at step 2 everywhere else. And the
 **heuristic reads at most `MAX_SCANNED_CHARS` (20 000) characters of a text — its first and last
 10 000** when it is longer: the patterns run on the event loop and one unbounded repeat costs time
 in the square of what it reads. What lies between the two ends is not scanned; the dry run shows
@@ -381,12 +398,21 @@ only reads, and one passes the reservation. Requests in flight see each other's 
 refuses is a counter already at its limit, so a request larger than what is left is still admitted,
 and settling can take a period past its limit.
 
-What is reserved is the request's **whole** expected consumption: the output cap that will be sent
-— the caller's, else the model's declared default, else `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` (1024)
-— and a thinking budget (output), and the prompt — counted at four characters a token — with each
-attachment at what the model declares (input), each side at its own price. A reservation of the
-output alone would let a dozen agentic requests, each carrying a 100 000-token context, all pass a
-50 000-token limit together.
+What is reserved is the request's **whole** expected consumption. For output, what bounds the
+answer: the cap that will be sent — the caller's, else the model's declared default — else, when no
+cap goes on the wire, the most the model can answer (its declared maximum), and only for a model
+that declares none `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` (1024) plus any thinking budget. A thinking
+budget is drawn from the output allowance, so where a cap bounds the answer it bounds the thinking
+too and is not reserved again. For input, the prompt — counted at four characters a token — each
+attachment at what the model declares, and a ranking's billing units; each side at its own price.
+A reservation of the output alone would let a dozen agentic requests, each carrying a 100 000-token
+context, all pass a 50 000-token limit together — and one that assumes a short answer where none
+was asked for lets a hundred requests in flight pass a limit with room for two.
+
+A limit can be met by what finished requests spent or by what requests still in flight have
+reserved. The refusal says which: an exhausted budget names when its period resets; one held by
+requests in flight says their reservations free as they finish — and that a request asking for
+fewer output tokens reserves less.
 
 It is made against the routed model and nothing else. A fallback that costs more, or is sent a
 larger cap of its own, is settled at what it used, and the chain does not widen the reservation to
@@ -519,7 +545,18 @@ for: what it spent is settled, and its row carries the tokens and the cost.
 application's last-resort handler instead: the caller gets a `500` with its trace id, a reservation
 already made is given back, and the failure is logged as `unhandled_error` — with no audit row.
 
-**A stream left before its vendor said everything it used is a floor, and the row says so.**
+**A stream its caller left is read to its end.** The upstream's chunks are read by a task of their
+own, and every chunk is taken down for the accounting as it arrives — before it is handed on, and
+whether or not it ever is. When the caller leaves, the gateway goes on reading until the vendor's
+last chunk, for at most `AIRA_DRAIN_LEFT_STREAMS_SECONDS` (600), and books what the vendor finally
+reported: several vendors report usage only there, and a stream closed with its caller booked
+nothing they said — a request anyone could make free by hanging up before the end. Nothing the
+caller did not receive is stored, and the row says `499` / `client_gone`. The answer is finished
+and billed whole, which can cost more than one closed early. A stopping server cuts every read
+short; each such request books what it knows and writes its row before the audit writer closes.
+
+**A stream left before its vendor said everything it used is a floor, and the row says so** — one
+closed with its caller (`AIRA_DRAIN_LEFT_STREAMS_SECONDS=0`), or read on and cut short.
 `usage_basis` takes one of two values. **`partial`**: the vendor had reported part of its usage when
 the caller left — a Claude stream states its input at the start and its output only at the end —
 and that much is settled. **`counted`**: the vendor had reported nothing — Vertex's Gemini reports
@@ -592,6 +629,8 @@ off by default, so the audit rows themselves are kept. Each run is recorded in `
 | Situation | Gemini surface | KIRA surface | Outcome recorded |
 | --- | --- | --- | --- |
 | Body over the ceiling | 413 `INVALID_ARGUMENT` | 413 `VALIDATION_ERROR` | `request_too_large`, no identity |
+| Body nested deeper than 64 levels, or holding more than 250 000 values | 400 `INVALID_ARGUMENT`, naming the bound | 422 `VALIDATION_ERROR`, naming it | `invalid_request` |
+| More than 10 000 turns, 20 000 parts or 128 functions | 400 `INVALID_ARGUMENT`, naming the bound | 422 `VALIDATION_ERROR`; 129 functions `INVALID_TOOL_CONFIGURATION` | `invalid_request` |
 | No credential, or one that does not verify | 401 `UNAUTHENTICATED` | 401 `NOT_AUTHENTICATED` (none sent) or `INVALID_TOKEN` | _(no row — the span)_ |
 | Too many refused credentials from one address | 429 + `Retry-After` | 429 `EXTERNAL_KI_API_TOO_MANY_REQUEST` + `Retry-After` | _(no row)_ |
 | Use case named in a form that is not an identifier | 400 `INVALID_ARGUMENT` | 400 `VALIDATION_ERROR` | _(no row)_ |
@@ -608,7 +647,7 @@ off by default, so the audit rows themselves are kept. Each run is recorded in `
 | Malformed body, or a field this surface does not serve | 400 `INVALID_ARGUMENT`, **naming the field** | 422 `VALIDATION_ERROR`, naming it; a field it does not model is accepted and named in `X-AIRA-Unmodelled-Fields` | `invalid_request` |
 | The catalogue's limits: no generation, not a reranker, a cap beyond the model's | 400 `INVALID_ARGUMENT` | 422 `NO_CHAT_CAPABILITIES`, `NO_RERANKER_CAPABILITIES`, `MAX_TOKENS_EXCEEDS_CAP`; a cap of zero or less `VALIDATION_ERROR` | `invalid_request` |
 | A thinking or embedding option refused | 400 `INVALID_ARGUMENT`, the code in the message | 422 with the contract's code | `invalid_request` |
-| Never servable: empty, too many attachments, sampling out of range, tools or reasoning off | 400 | 400 `VALIDATION_ERROR`; an attachment refused or a `temperature` outside 0–2 is 422 `VALIDATION_ERROR`, tools off 422 `INVALID_TOOL_CONFIGURATION` | `invalid_request` |
+| Never servable: empty, too many attachments, sampling out of range, tools or reasoning off — tools declared, or a function call or result carried | 400 | 400 `VALIDATION_ERROR`; an attachment refused or a `temperature` outside 0–2 is 422 `VALIDATION_ERROR`, tools off 422 `INVALID_TOOL_CONFIGURATION` | `invalid_request` |
 | No candidate could serve it | 400 `FAILED_PRECONDITION` | 400 `VALIDATION_ERROR`; no permitted place to send the model: `MODEL_NOT_FOUND` | `no_capable_model` |
 | Declared, but the dialect has no field for it | 400 `FAILED_PRECONDITION`, **naming the reason** | 400 `VALIDATION_ERROR` | `invalid_request` |
 | Upstream said 400 | 400 `FAILED_PRECONDITION`, carrying its reason | 502 `EXTERNAL_KI_API_ERROR`, carrying its reason | `upstream_error` |

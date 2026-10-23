@@ -115,16 +115,17 @@ def _client(app: Any) -> TestClient:
 
 #: Every route that reads a hand-written body, and the depth-refusal each surface renders. Two
 #: envelopes, because the KIRA surface's whole contract is the predecessor's error shape — the
-#: check is that *both* say what happened, not that they say it the same way.
+#: check is that *both* say what happened, not that they say it the same way. KIRA answers a body
+#: it cannot read with the `422 VALIDATION_ERROR` its predecessor gives malformed JSON.
 ROUTES: list[tuple[str, int, str]] = [
     ("/v1beta/models/mock-1:generateContent", 400, "nests deeper"),
     ("/v1beta/models/mock-1:embedContent", 400, "nests deeper"),
     ("/v1beta/pipeline:dryRun", 400, "nests deeper"),
     ("/v1beta/suspensions", 400, "nests deeper"),
     ("/v1beta/models/mock-1:checkThinking", 400, "nests deeper"),
-    ("/kira/api/external/chat", 400, "nests deeper"),
-    ("/kira/api/external/embed", 400, "nests deeper"),
-    ("/kira/api/external/streaming-chat", 400, "nests deeper"),
+    ("/kira/api/external/chat", 422, "nests deeper"),
+    ("/kira/api/external/embed", 422, "nests deeper"),
+    ("/kira/api/external/streaming-chat", 422, "nests deeper"),
 ]
 
 

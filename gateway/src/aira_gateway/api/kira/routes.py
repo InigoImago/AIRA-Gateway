@@ -25,8 +25,9 @@ from aira_common.models import Capability
 from aira_gateway.api.kira import BASE, errors, schemas
 from aira_gateway.api.kira.attribution import resolve as resolve_attribution
 from aira_gateway.api.kira.embedding_prompts import is_prompted
-from aira_gateway.api.kira.headers import note_unmodelled, surface_headers
+from aira_gateway.api.kira.headers import nameable, note_unmodelled, surface_headers
 from aira_gateway.api.kira.keepalive import PING, STREAM_HEADERS, TICK, with_pings
+from aira_gateway.api.kira.log_shape import body_shape
 from aira_gateway.api.kira.mapping import (
     check_answered,
     completed_event,
@@ -42,6 +43,7 @@ from aira_gateway.api.kira.mapping import (
 from aira_gateway.api.kira.refusals import KIRA_REFUSALS, refusal_response
 from aira_gateway.api.serving import (
     AccountedStream,
+    BodyTooComplex,
     Prepared,
     StreamAccounting,
     accounting,
@@ -79,11 +81,6 @@ router = APIRouter(tags=["kira"], prefix=BASE)
 
 _log = structlog.get_logger(__name__)
 
-#: How many fields, list entries and parts a refused body's logged *shape* names. The shape grows
-#: with the body, which the caller writes, so it is bounded here; past it the rest is counted.
-SHAPE_ENTRIES = 256
-#: A field name is the caller's string too, and a name longer than this is not one anybody needs.
-SHAPE_NAME_LENGTH = 64
 #: How many of a validation failure's field paths the refusal's log line names.
 INVALID_FIELDS_LOGGED = 32
 
@@ -360,10 +357,13 @@ async def _json(request: Request) -> dict[str, Any]:
 
     `422 VALIDATION_ERROR` rather than `400`: semantically worse, but it is what the predecessor
     answers — its malformed JSON reaches FastAPI's validation handler — and a migrating client
-    switches on the code.
+    switches on the code. A body refused for its structure, nested too deep or holding too many
+    values, is not a request this contract can carry either, and is answered the same way.
     """
     try:
         body = await json_body(request)
+    except BodyTooComplex as exc:
+        raise errors.KiraError(422, errors.VALIDATION_ERROR, exc.message) from exc
     except ValueError as exc:
         raise errors.KiraError(
             422, errors.VALIDATION_ERROR, "Request body is not valid JSON."
@@ -458,12 +458,10 @@ async def _refused(
 ) -> JSONResponse:
     """Render a refusal in this surface's envelope, log it, and record it.
 
-    The log line names what the body *was* — its fields, each value's kind and size, and the paths
-    a validation failure names — so a client's 422 can be diagnosed without a database query. Never
-    what it *said*: a log line is outside every control on stored content (a use case's
-    `store_payloads`, redaction, the retention clock, the recorded read — `ADR-0016`), and the
-    privacy notice promises that no log line carries the content of a request (`FRD-625`). The
-    content itself is in the audit row, where those controls apply.
+    The log line names what the body *was* — the contract's fields, each value's kind and size,
+    the fields it does not model and the paths a validation failure names — so a client's 422 can
+    be diagnosed without a database query. Never what it *said* (`log_shape`): the content itself is
+    in the audit row, where the controls on stored content apply. Every list in it is bounded.
     """
     response = _error_response(request, exc)
     details = exc.details if isinstance(exc, errors.KiraError) and exc.details else []
@@ -473,51 +471,13 @@ async def _refused(
         status=response.status_code,
         error=type(exc).__name__,
         model=trail.served_model or None,
-        unmodelled_fields=list(getattr(request.state, "unmodelled", ())),
-        request_shape=body_shape(trail.body) if trail.body else None,
+        unmodelled_fields=nameable(getattr(request.state, "unmodelled", ())),
+        request_shape=body_shape(trail.body, trail.operation) if trail.body else None,
         # Without the envelope's leading `body`: every path here is one into the body.
         invalid_fields=[".".join(detail["loc"][1:]) for detail in details[:INVALID_FIELDS_LOGGED]],
     )
     await record_refusal(request, trail, exc, status=response.status_code, started=started)
     return response
-
-
-def body_shape(body: Any) -> Any:
-    """``body`` with every value replaced by its kind and size: ``{"text": "str(27)"}``.
-
-    Field names stay, since they are the contract's and name what a refusal is about; strings
-    become their length, numbers, booleans and nulls their kind. Bounded by `SHAPE_ENTRIES`, so a
-    body of a hundred thousand entries does not become a log line of the same size.
-    """
-    remaining = SHAPE_ENTRIES
-
-    def walk(value: Any) -> Any:
-        nonlocal remaining
-        if isinstance(value, dict):
-            fields: dict[str, Any] = {}
-            for index, (name, item) in enumerate(value.items()):
-                if remaining <= 0:
-                    fields["…"] = f"{len(value) - index} more"
-                    break
-                remaining -= 1
-                fields[str(name)[:SHAPE_NAME_LENGTH]] = walk(item)
-            return fields
-        if isinstance(value, list):
-            entries: list[Any] = []
-            for index, item in enumerate(value):
-                if remaining <= 0:
-                    entries.append(f"… {len(value) - index} more")
-                    break
-                remaining -= 1
-                entries.append(walk(item))
-            return entries
-        if isinstance(value, str):
-            return f"str({len(value)})"
-        if isinstance(value, bool):
-            return "bool"
-        return "null" if value is None else "number"
-
-    return walk(body)
 
 
 def _error_response(request: Request, exc: Exception) -> JSONResponse:

@@ -157,6 +157,35 @@ async def test_a_concurrent_cost_budget_is_not_overshot(sessionmaker, runner) ->
     assert sum(outcomes) == 2
 
 
+async def test_a_limit_met_by_requests_in_flight_says_so(sessionmaker, runner) -> None:
+    """Nothing is spent yet, and the limit is met by what two answers in flight may cost: the
+    refusal says their reservations free as they finish — not that the budget is exhausted until
+    the month is over, which sends a caller to wait for a reset that is not what they need."""
+    await _budget(sessionmaker, limit_tokens=100_000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    answer = Amounts(tokens=65_541, requests=1)
+    await service.guard("uc", "alice", NOW, estimated=answer)
+    await service.guard("uc", "alice", NOW, estimated=answer)
+
+    with pytest.raises(BudgetExceeded) as refused:
+        await service.guard("uc", "alice", NOW, estimated=answer)
+
+    assert "held by requests still in flight" in refused.value.message
+    assert "exhausted" not in refused.value.message
+
+
+async def test_a_limit_met_by_what_was_spent_is_exhausted(sessionmaker, runner) -> None:
+    await _budget(sessionmaker, limit_tokens=100_000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    reservation = await service.guard("uc", "alice", NOW, estimated=Amounts(tokens=1, requests=1))
+    await service.settle(reservation, 100_000, now=NOW)
+
+    with pytest.raises(BudgetExceeded) as refused:
+        await service.guard("uc", "alice", NOW, estimated=Amounts(tokens=1, requests=1))
+
+    assert "Token budget exhausted" in refused.value.message
+
+
 # ---- settling and releasing --------------------------------------------------------------
 
 
@@ -480,6 +509,82 @@ async def test_a_rebuilt_counter_takes_the_settled_figure_from_postgres(
 
 
 # ---- unchanged behaviour ------------------------------------------------------------------
+
+
+COUNTER = "budget:uc:uc:2026-08"
+OPEN = "budget:uc:uc:2026-08:open"
+
+
+async def test_a_rebuilt_counter_keeps_the_reservations_still_in_flight(
+    sessionmaker, runner
+) -> None:
+    """The counter expires on a fixed clock and is rebuilt from Postgres — which holds what
+    finished requests spent and nothing of what running ones reserved.
+
+    Rebuilt from Postgres alone, the counter forgot the request in flight, let the next one in
+    beside it, and the first one's settlement then subtracted a reservation the counter no longer
+    held: a third request passed too, and a 1000-token budget booked 2970.
+    """
+    await _budget(sessionmaker, limit_tokens=1000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    answer = Amounts(tokens=990, requests=1)
+
+    first = await service.guard("uc", "bob", NOW, estimated=answer)
+    await runner._client.delete(COUNTER)  # the counter's lifetime is over; the request is not
+    second = await service.guard("uc", "bob", NOW, estimated=answer)
+    await service.settle(first, 990, now=NOW)
+
+    with pytest.raises(BudgetExceeded):
+        await service.guard("uc", "bob", NOW, estimated=answer)
+    await service.settle(second, 990, now=NOW)
+    usage = await _usage(sessionmaker)
+    assert usage is not None and usage.tokens == 1980, "the design's one request over, no more"
+
+
+async def test_a_settled_reservation_is_not_carried_into_a_rebuild(sessionmaker, runner) -> None:
+    """Settled, a request is in Postgres: a rebuild that added its reservation as well would count
+    it twice."""
+    await _budget(sessionmaker, limit_tokens=100_000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    reservation = await service.guard("uc", "bob", NOW, estimated=Amounts(tokens=990, requests=1))
+    await service.settle(reservation, 500, now=NOW)
+
+    await runner._client.delete(COUNTER)
+    await service.guard("uc", "bob", NOW, estimated=Amounts(tokens=10, requests=1))
+
+    assert int(await runner._client.hget(COUNTER, "tokens")) == 510
+    assert await runner._client.hlen(OPEN) == 1, "only the request still running is open"
+
+
+async def test_a_released_reservation_is_closed_too(sessionmaker, runner) -> None:
+    await _budget(sessionmaker, limit_tokens=100_000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    reservation = await service.guard("uc", "bob", NOW, estimated=Amounts(tokens=990, requests=1))
+
+    await service.release(reservation)
+
+    assert await runner._client.hlen(OPEN) == 0
+
+
+async def test_a_reservation_past_its_lifetime_belongs_to_no_running_request(
+    sessionmaker, runner
+) -> None:
+    """One that could never be closed — Redis away when it settled — over-counts for a bounded
+    time, not for the rest of the period."""
+    from datetime import timedelta
+
+    from aira_gateway.budgets.ledger import RESERVATION_LIFETIME_SECONDS
+
+    await _budget(sessionmaker, limit_tokens=100_000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    await service.guard("uc", "bob", NOW, estimated=Amounts(tokens=990, requests=1))
+
+    later = NOW + timedelta(seconds=RESERVATION_LIFETIME_SECONDS + 1)
+    await runner._client.delete(COUNTER)
+    await service.guard("uc", "bob", later, estimated=Amounts(tokens=10, requests=1))
+
+    assert int(await runner._client.hget(COUNTER, "tokens")) == 10
+    assert await runner._client.hlen(OPEN) == 1
 
 
 async def test_a_use_case_without_budgets_reserves_nothing(sessionmaker, runner) -> None:

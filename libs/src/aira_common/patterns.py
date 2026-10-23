@@ -2,12 +2,18 @@
 
 Python's `re` has no timeout, so a catastrophically backtracking pattern stalls a gateway worker —
 on an event loop every use case shares — for as long as it runs. The only defence is not compiling
-it. Two shapes are refused:
+it. Three shapes are refused:
 
 - *a repeated group whose body repeats or branches* — `(a+)+`, `(a*)*`, `(ab|a)+`;
 - *two repeats that can trade characters* — `a*a*b`, `[a-z]*[a-y]*!`, `.*a.*!`, `\\d+(?=\\d*!)`: the
   engine can divide the same text between them in a number of ways that grows with the prompt, so
-  every character added multiplies the work instead of adding to it.
+  every character added multiplies the work instead of adding to it;
+- *a reference back to what a group matched* — `(.*)\\1!`, `(a|b)*\\1c`, `(?P<x>.*)(?P=x)`,
+  `(a)?(?(1)…)`. A back-reference matches whatever its group captured and a conditional branches on
+  whether it captured, so what either costs is decided by the text rather than by the pattern, and
+  nothing below can bound it: `(.*)\\1!` tries every split of the text and compares each, a cost
+  cubic in the prompt, though it holds no repeat the other two rules would call dangerous. Refused
+  wherever it appears, before the analysis runs.
 
 **The pattern is analysed as `re` parses it, not as it is spelled.** The check walks the tree `re`'s
 own parser builds, so verbose mode (`(?x)(a+) +$` *is* `(a+)+$`), a repeat wrapped in a group
@@ -72,6 +78,10 @@ REPEATS_A_CHOICE = "it repeats a group that offers two ways to match the same te
 TRADES_CHARACTERS = (
     "it repeats the same characters twice in a row, which the engine can split many ways"
 )
+REFERS_BACK = (
+    "it refers back to what a group matched (a back-reference or a conditional), so the text "
+    "decides what it costs and no check can bound it"
+)
 UNKNOWN_CONSTRUCT = "it uses a construct this check cannot analyse, so it is refused, not run"
 TOO_COMPLEX = "it is too complex to check within the check's own bound, so it is refused"
 
@@ -99,6 +109,8 @@ _casefix: Any = importlib.import_module("re._casefix")
 _CONSUMES_ONE = (_op.LITERAL, _op.NOT_LITERAL, _op.ANY, _op.IN)
 _REPEATS = (_op.MAX_REPEAT, _op.MIN_REPEAT, _op.POSSESSIVE_REPEAT)
 _ASSERTIONS = (_op.ASSERT, _op.ASSERT_NOT)
+#: The two opcodes that read what a group captured: `\1` / `(?P=x)`, and `(?(1)yes|no)`.
+_GROUP_REFERENCES = (_op.GROUPREF, _op.GROUPREF_EXISTS)
 
 #: A category escape, as the one-character pattern that renders it and as the category it names —
 #: the second with whether it is the complement.
@@ -294,9 +306,9 @@ class _Check:
         for op, av in items:
             if op in _CONSUMES_ONE:
                 run = self._consumed(run, (self._class(op, av, flags),))
-            elif op is _op.AT or op is _op.GROUPREF:
-                # An anchor consumes nothing, and a back-reference matches whatever its group
-                # matched: neither can be shown to separate two loops, so neither does.
+            elif op is _op.AT:
+                # An anchor consumes nothing, so it cannot separate two loops. (A back-reference
+                # never reaches the walk: `catastrophic_reason` refuses it first.)
                 continue
             elif op in _REPEATS:
                 run = self._repeat(op, av, flags, run)
@@ -305,9 +317,6 @@ class _Check:
                 run = self.walk(body, (flags | added) & ~removed, run)
             elif op is _op.BRANCH:
                 run = _joined(self.walk(branch, flags, run) for branch in av[1])
-            elif op is _op.GROUPREF_EXISTS:
-                _, yes, no = av
-                run = _joined((self.walk(yes, flags, run), self.walk(no or (), flags, run)))
             elif op in _ASSERTIONS:
                 # Consumes nothing, but runs at every position the open loops can stop at: a
                 # repeat inside it meets them exactly as one outside would.
@@ -404,14 +413,8 @@ class _Check:
             elif op is _op.BRANCH:
                 for branch in av[1]:
                     found.extend(self._chars(branch, flags))
-            elif op is _op.GROUPREF_EXISTS:
-                found.extend(self._chars(av[1], flags))
-                found.extend(self._chars(av[2] or (), flags))
             elif op is _op.ATOMIC_GROUP:
                 found.extend(self._chars(av, flags))
-            elif op is _op.GROUPREF:
-                # Whatever its group matched — any character at all.
-                found.append(self._class(_op.ANY, None, flags | re.DOTALL))
         return tuple(dict.fromkeys(found))
 
     def _steps(self, items: Sequence[tuple[Any, Any]], flags: int) -> tuple[_Chars, ...]:
@@ -558,11 +561,9 @@ def _set(items: Sequence[tuple[Any, Any]], flags: int) -> _Class:
 
 
 def _alternatives_all_consume(op: Any, av: Any) -> bool:
-    """Whether every alternative of a branch or a conditional must consume a character."""
+    """Whether every alternative of a branch must consume a character."""
     if op is _op.BRANCH:
         return all(branch.getwidth()[0] > 0 for branch in av[1])
-    if op is _op.GROUPREF_EXISTS:
-        return bool(av[2]) and min(av[1].getwidth()[0], av[2].getwidth()[0]) > 0
     return False
 
 
@@ -580,14 +581,13 @@ def _inside_a_repeat(items: Sequence[tuple[Any, Any]], *, in_assertion: bool) ->
             if (int(av[0]), int(av[1])) != (1, 1):
                 return REPEATS_A_REPEAT
             found = _inside_a_repeat(av[2], in_assertion=in_assertion)
-        elif op is _op.BRANCH or op is _op.GROUPREF_EXISTS:
+        elif op is _op.BRANCH:
             if not in_assertion:
                 return REPEATS_A_CHOICE
-            branches = av[1] if op is _op.BRANCH else (av[1], av[2] or ())
             found = next(
                 (
                     reason
-                    for branch in branches
+                    for branch in av[1]
                     if (reason := _inside_a_repeat(branch, in_assertion=True)) is not None
                 ),
                 None,
@@ -627,9 +627,6 @@ def _probes(items: Sequence[tuple[Any, Any]]) -> frozenset[int]:
             elif op is _op.BRANCH:
                 for branch in av[1]:
                     collect(branch)
-            elif op is _op.GROUPREF_EXISTS:
-                collect(av[1])
-                collect(av[2] or ())
             elif op is _op.ATOMIC_GROUP:
                 collect(av)
             elif op in _ASSERTIONS:
@@ -638,6 +635,32 @@ def _probes(items: Sequence[tuple[Any, Any]]) -> frozenset[int]:
     collect(items)
     within = {code for code in named if 0 <= code <= 0x10FFFF}
     return _PROBES | frozenset(variant for code in within for variant in _variants(code))
+
+
+def _refers_back(parsed: Any) -> bool:
+    """Whether anything in the parse, at any depth, reads what a group captured.
+
+    Every node is visited, whatever its opcode, rather than the shapes the walk knows how to follow:
+    the walk does not descend into the body of a repeat it has judged, so a reference there —
+    `(?:(a)\\1)+` — would be invisible to a check written in its terms. A check that walks a
+    structure answers *no* for what it never reaches (`LESSONS.md` §1). An explicit stack, because
+    a parse is as deep as the pattern nests.
+
+    **By identity, never by value.** An opcode is an `int`, and so is much of what sits beside one:
+    `[\\x0c-\\x0e]` parses to the pair `(12, 14)`, and 12 *equals* `GROUPREF_EXISTS`.
+    """
+    pending: list[Any] = [parsed]
+    while pending:
+        node = pending.pop()
+        if (
+            isinstance(node, tuple)
+            and len(node) == 2
+            and any(node[0] is opcode for opcode in _GROUP_REFERENCES)
+        ):
+            return True
+        if isinstance(node, list | tuple | _parser.SubPattern):
+            pending.extend(node)
+    return False
 
 
 @functools.lru_cache(maxsize=4096)
@@ -655,6 +678,8 @@ def catastrophic_reason(pattern: str) -> str | None:
         parsed = _parser.parse(pattern, 0)
     except re.error:
         return None
+    if _refers_back(parsed):
+        return REFERS_BACK
     check = _Check(_probes(parsed))
     try:
         check.walk(parsed, int(parsed.state.flags) | _ASSUMED_FLAGS, ())

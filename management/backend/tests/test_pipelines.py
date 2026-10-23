@@ -223,6 +223,9 @@ def _save(steps=None, fallback_models=None, releases=("strong-1", "cheap-1", "ro
         # Measured at 1 532 ms on 32 characters and over five seconds on a `\\s*` chain, while
         # `is_catastrophic` answered False (2026-09-08). A prompt is far longer than 32 characters.
         ("a*a*a*a*a*a*a*a*b", "same characters twice in a row"),
+        # Cubic in the prompt — 2.8 s on 2 000 characters — and accepted by both rules above,
+        # because a back-reference was read as consuming nothing.
+        (r"(.*)\1!", "refers back to what a group matched"),
     ],
 )
 def test_rejects_catastrophic_backtracking_pattern(pattern: str, shape: str) -> None:

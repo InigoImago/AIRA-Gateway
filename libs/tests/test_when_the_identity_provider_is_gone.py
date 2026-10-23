@@ -156,12 +156,19 @@ class _KeySetServer:
         self.mode = "jwks"
         self.keys: list[dict[str, Any]] = []
         self.fetches = 0
+        #: Where mode ``redirect`` sends the client.
+        self.location = ""
         server = self
 
         class _Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 - the stdlib's spelling
                 server.fetches += 1
-                if server.mode == "html":
+                if server.mode == "redirect":
+                    self.send_response(302)
+                    self.send_header("Location", server.location)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                elif server.mode == "html":
                     body = b"<html><body>Please sign in</body></html>"
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html")
@@ -244,6 +251,34 @@ def test_a_key_set_that_cannot_be_read_is_the_provider_not_the_token(
     emitted = lines(capsys)
     assert [line for line in emitted if line["event"] == "oidc_jwks_unavailable"]
     assert not [line for line in emitted if line["event"] == "oidc_token_rejected"]
+
+
+def test_a_key_set_is_never_read_from_where_a_redirect_points(
+    key_set: _KeySetServer, capsys: Any
+) -> None:
+    """The issuer's own address is the only place its keys come from. An endpoint answering with a
+    redirect — a sign-in front, a misrouted proxy, somebody holding that address for a minute —
+    would otherwise hand the verifier keys from whatever host it names, and every token signed
+    with them would verify. PyJWT followed it before 2.14 (GHSA-9v7f-9g4p-ffgj); refused, it is
+    the provider being unavailable, which is what an operator has to be told."""
+    elsewhere = _KeySetServer()
+    try:
+        private, public = _signing_pair("k1")
+        elsewhere.keys = [public]
+        key_set.mode = "redirect"
+        key_set.location = elsewhere.uri
+        verifier = JwtVerifier(
+            "https://keycloak.internal/realms/aira",
+            "aira-gateway",
+            build_jwks_client(key_set.uri, timeout=2.0),
+        )
+
+        assert verifier.verify(_signed(private, "k1")) is None
+        assert key_set.fetches >= 1, "the endpoint was never asked, so nothing was refused"
+        assert elsewhere.fetches == 0, "the key set was fetched from where the redirect pointed"
+        assert [line for line in lines(capsys) if line["event"] == "oidc_jwks_unavailable"]
+    finally:
+        elsewhere.close()
 
 
 def test_a_token_nested_past_what_the_parser_follows_is_a_rejected_token(capsys: Any) -> None:

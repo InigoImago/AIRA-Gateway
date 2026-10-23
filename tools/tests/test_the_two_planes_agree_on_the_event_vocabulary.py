@@ -36,13 +36,10 @@ APPLY = ROOT / "gateway" / "src" / "aira_gateway" / "consumer" / "apply.py"
 #: **An entry is a decision, not a waiver** — the wrong way to use this set is to add a name to
 #: make a red test green, which is how the exemption lists this project has rejected elsewhere
 #: (`ADR-0015`'s "an exemption is a list, never a `return []`") start.
-DELIBERATE = {
-    # The gateway keeps a handler for an event Management cannot send: it has no endpoint that
-    # deletes a pipeline — clearing one is a PUT with no steps, and a use case's pipeline goes
-    # with the use case. The branch is forward compatibility, which is what lets an older gateway
-    # survive a rolling update against a newer Management that grows the endpoint (`FRD-127`).
-    # `_TOPIC_FOR` says the same thing from the other side, and says why.
-    "pipeline.deleted": "applied but never emitted — forward compatibility, see `_TOPIC_FOR`",
+DELIBERATE: dict[str, str] = {
+    # Empty since `pipeline.deleted` gained its sender: retiring or purging a use case ends its
+    # pipeline on the pipeline's own key (`FRD-607` §4.1b). A new entry is a decision, written
+    # with its reason.
 }
 
 
@@ -132,15 +129,15 @@ def test_every_branch_the_gateway_carries_is_one_management_can_send() -> None:
         "The gateway applies these and nothing in Management sends them:\n  "
         + "\n  ".join(unsent)
         + "\n\nEither Management lost an `emit`, or the branch is forward compatibility — in "
-        "which case say so in `DELIBERATE` above, as `pipeline.deleted` does."
+        "which case say so in `DELIBERATE` above, with the reason."
     )
 
 
 def test_the_exemptions_are_still_exemptions() -> None:
     """A `DELIBERATE` entry that has stopped being an asymmetry is a comment nobody will re-read.
 
-    Management growing the endpoint that sends `pipeline.deleted` should remove the entry, not
-    leave a note explaining why an event that now exists does not.
+    `pipeline.deleted` was one until retiring a use case began to send it; the entry was removed
+    then, rather than left explaining why an event that now exists does not.
     """
     both = _emitted() & _applied()
     stale = sorted(set(DELIBERATE) & both)

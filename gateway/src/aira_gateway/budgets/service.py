@@ -18,6 +18,7 @@ Counters are keyed by ``(scope_key, period_key)`` and reset at each UTC day or m
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -65,6 +66,8 @@ class Reservation:
     period_keys: dict[int, str] = field(default_factory=dict)
     atomic: bool = False
     resolved: bool = False
+    #: Which reservation this is among those a counter carries while they are open (`ledger`).
+    ident: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def __bool__(self) -> bool:
         return bool(self.budgets or self.lifted)
@@ -192,10 +195,12 @@ class BudgetService:
                 ),
                 amounts=amounts,
                 seed=Amounts(seed.tokens, seed.requests, seed.cost_nanos),
+                reservation=reservation.ident,
+                at=now.timestamp(),
             )
             if breached:
                 await self.release(reservation)
-                raise keys.exceeded(budget, breached, now, amounts)
+                raise keys.exceeded(budget, breached, now, amounts, settled=seed)
             reservation.period_keys[budget.id] = period_key
         reservation.resolved = False  # reserved; the outcome is still open
         return reservation
@@ -341,6 +346,7 @@ class BudgetService:
                     keys.scope_key(budget, reservation.subject),
                     period_key,
                     amounts=amounts,
+                    reservation=reservation.ident,
                 )
             except CountersUnavailable:
                 # The counter keeps this request's estimate until it expires and is rebuilt from

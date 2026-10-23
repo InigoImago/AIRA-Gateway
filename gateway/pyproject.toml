@@ -8,10 +8,10 @@ dependencies = [
     "aira-common",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "opentelemetry-instrumentation-fastapi>=0.50b0",
+    "opentelemetry-instrumentation-fastapi>=0.66b1",
     "sqlalchemy[asyncio]>=2.0",
     "psycopg[binary]>=3.2",
-    "pyjwt[crypto]>=2.9",
+    "pyjwt[crypto]>=2.15.0",
     "alembic>=1.13",
     "httpx>=0.28",
     # What this gateway **calls**, as spans (`FRD-117` FR-5). Specified in that FRD's §5.3 and
@@ -19,8 +19,8 @@ dependencies = [
     # anything, so the trace of a request that spent nine seconds inside a model was one span with
     # nothing underneath it. See `aira_gateway/telemetry.py`, including the credential of *ours*
     # that the httpx spans had to not carry.
-    "opentelemetry-instrumentation-httpx>=0.50b0",
-    "opentelemetry-instrumentation-sqlalchemy>=0.50b0",
+    "opentelemetry-instrumentation-httpx>=0.66b1",
+    "opentelemetry-instrumentation-sqlalchemy>=0.66b1",
 ]
 
 [build-system]

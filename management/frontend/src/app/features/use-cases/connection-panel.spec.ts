@@ -80,6 +80,19 @@ describe('ConnectionPanel', () => {
     expect(text()).toContain('x-goog-api-key');
   });
 
+  // The credentials sit outside the tabs because they are the surfaces' common ground — except the
+  // query parameter, which only the Gemini surface reads. Said where the three forms are listed, or
+  // a KIRA client copies the third and is refused.
+  it('says the key in a URL is the Gemini surface’s alone', () => {
+    build(['chat-model']);
+    answer();
+
+    const note = testid('connection-key-url')?.textContent ?? '';
+    expect(note).toContain('the Gemini API reads it');
+    expect(note).toContain('KIRA API reads the two headers alone');
+    expect(testid('connection-key-forms')?.textContent).toContain('?key=');
+  });
+
   // A bearer token is how a group grant reaches the data plane, and it carries an identity, not a
   // use case — which sends the reader to the naming section instead of an unexplained 403.
   it('covers the OIDC bearer, and says what it does not carry', () => {

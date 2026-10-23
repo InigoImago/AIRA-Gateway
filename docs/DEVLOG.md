@@ -5,6 +5,98 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The security check's findings, fixed (2026-10-22)
+
+A second security check, with the owner's weight on the KIRA surface and on money that leaves
+without a budget seeing it, found three High findings, eight Medium and a tail of Low ones; none of
+the 31 from 2026-10-18 had been fixed. The owner asked for the fixes on a branch, decided against
+an installation-wide cap on use-case budgets, chose to read a left stream to its end for real
+figures, and kept the local `.env` as it is. 14 commits; 90 new mutations, all caught.
+
+**`/ki-usage` answered past its use case.** Since it stopped needing `report.read_all` it counted
+the caller's traffic in *every* use case, so a key an administrator issued in a member's name read
+that member's figures in use cases the administrator has no part in, past strict data mode and with
+no recorded read. It counts in the credential's use cases now (`FRD-146` FR-21a), over a year at
+most, as one grouped query through a person filter an index can answer (`request_person_is`; every
+report narrowed to a person uses it). Measured before: seven aggregates per call, a sequential
+scan on Postgres, and 40 parallel calls slowed an ordinary read of the request path from 2.9 ms to
+9 s. A plain date beside Unix seconds was a 500 and is a window. An empty KIRA answer left two rows,
+both with its cost: the refusal is the shared `UpstreamError` now.
+
+**The reservation was a guess where the bound was known.** An uncapped request — almost every SDK
+request, since the shipped model reference gives every entry a maximum and none a default — was
+sent no cap and reserved 1024 tokens for an answer that could be 65 536. Measured with the real
+ledger: 98 requests admitted against room for two, 58.8 times the limit booked. What bounds the
+answer is reserved now, a thinking budget inside a cap is not reserved twice, a ranking is reserved
+at the input rate it is booked at, and a refusal says when a limit is held by requests in flight
+rather than spent. A counter rebuilt from Postgres forgot every open reservation (2970 tokens
+booked against 1000); each reservation is written beside its counter until it is resolved.
+
+**Fan-out the rate limit did not see.** A ranking with a redactor configured was 401 model calls at
+a weight of two; it weighs one per text the pipeline reads. A pipeline dry run weighs one per step,
+and its steps meet production's conditions on their models — it reached an unpriced model under a
+cost cap before.
+
+**A stream its caller left booked nothing on most dialects** (`ADR-0041`, `FRD-128` FR-7). Several
+vendors report usage only in the last chunk; only Vertex's Gemini could be counted, so on Azure,
+Foundry, the open models and any OpenAI-compatible server a caller who read the answer and hung up
+before the end was never billed — and neither was a coding assistant's cancelled turn. The
+upstream is read by a task of its own, every chunk is taken down as it is read, and a left stream
+is read to the vendor's end (`AIRA_DRAIN_LEFT_STREAMS_SECONDS`, 600) and booked at its last report.
+The answer is then billed whole. A stopping server cuts the reads short and still writes their rows;
+the image passes `--timeout-graceful-shutdown 5`. The privacy notice says the rest is received and
+not stored.
+
+**Supply chain.** OpenTelemetry 1.45.1 (its `tracestate` parse was quadratic before
+authentication: 32 KB, 1.76 s), certifi without the compromised emSign intermediates, DRF 3.18.3,
+PyJWT 2.15.1, Django 6.0.9, sqlparse, urllib3 — `pip-audit` finds nothing. Verifying D-1 found the
+same pattern in `baggage`, inside an 8 KB bound (0.106 s against 0.0002 s): every process propagates
+W3C trace context only. The upgrades moved an exporter seam (a stand-in shaped like the old one
+stayed green), added a JWKS cooldown of PyJWT's own (switched off, so the bounded refresh stays the
+only rule), and turned DRF's body limit into a 500 (a 413 again). The console image is on the nginx
+1.30 stable line (2 critical and 57 high findings to none), uv is pinned by digest, every action by
+commit; the release runs as four jobs cut by permission, restores no cache, and signs the plugin
+archive, SBOMs and images through attestations (`ADR-0043`). The OpenCode plugin sends its key to
+the gateway and nowhere else: no redirect, no plain http off the machine.
+
+**The Kafka trust boundary, built and taken back out** (2026-10-23). Management signed every
+configuration event with Ed25519 where it wrote the outbox row, the consumer applied only what its
+public keys verified, and outside `local` every process that talks to Kafka needed `SASL_SSL` or TLS
+with a client certificate. Right in the code, and not deployable: an installation that already runs
+would start neither plane again until a signing key was in Vault, its public half with the gateway,
+the configuration announced again and the broker reached over TLS with an identity per service —
+each a change, and a ticket, with whoever runs that piece. Both left the branch before it was
+merged, and with them the consumer refusing key events Management never sends, which was built on
+the signature (unsigned, anybody who writes to the broker shapes an event that passes). The work is
+kept on a branch of its own until that change is decided; the gap map states the gap.
+
+**A purged use case's children came back on a replay.** Its key, members, grants, budgets, limits,
+rules and pipeline live on compaction keys of their own, and only `usecase.deleted` was ever sent,
+so the retirement protected them while it was the last record of the slug's key — and a purge
+replaces it. A rebuild or an offset reset then re-admitted the old administrator and group grant,
+and a slug used again inherited the old key. Retiring now ends each child on its own key (keys
+revoked, every other child's removal sent, `pipeline.deleted` for the first time), and a purge sends
+the same again, which covers use cases retired before. Built with the Kafka work and carried over
+without its signature on 2026-10-23; a use case purged before stays uncovered, because Management no
+longer holds the rows that name its keys.
+
+**Parsing and the KIRA surface.** A back-reference in an operator's pattern — `(.*)\1!`, cubic,
+2.85 s at 2 000 characters on the one event loop — passed every path; any group reference is
+refused. A body is bounded in structure before it is parsed (250 000 values; 10 000 turns, 20 000
+parts, 128 function declarations): 645 000 minimal parts cost 3.4 s and 830 MB before any control,
+and are refused in 0.1 s. The KIRA refusal log names only the request models' own fields, two
+caller values that were 500s with no row are refusals, a nullable `type` list is supported, and a
+key in the URL is not read on KIRA (its predecessor never took one). Tool calls and results are
+refused where tool calling is off, and the mock's schema answers no longer echo the prompt.
+
+**Stated, not closed.** AI Studio embeddings report no tokens, so they are booked unpriced (needs a
+live look at what Google returns); audio input is priced at the text rate (a feature: a price field
+on both planes); both planes read one Vault path (M7); the trace context still travels to the
+model providers; and the 2026-10-18 findings outside this round's scope — the realm's
+service-account secret, demo mode outside `local`, the strict-data-mode gaps — wait for the owner.
+
+Mutations `SPD-1`–`SPD-28`, `SUP-1`–`SUP-28`, `HP-1`–`HP-25`, `PRG-1`–`PRG-9`; 2222 properties.
+
 ## KIRA parity, the second comparison (2026-10-22)
 
 The owner ran the comparison again, in more depth this time, and brought the

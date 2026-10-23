@@ -1,6 +1,7 @@
 """OpenTelemetry for both planes (`FRD-001`), one module per concern.
 
-providers    the global tracer/meter/logger providers and the health-probe exclusion
+providers    the global tracer/meter/logger providers, the health-probe exclusion and which
+             trace headers are read
 export       the watched OTLP exporter: one line per export, partial rejections included
 payload      a batch rendered as OTLP/JSON, for debugging
 diagnostics  the SDK's own log lines, kept out of the pipeline they describe
@@ -24,9 +25,11 @@ from aira_common.observability.propagation import (
 from aira_common.observability.providers import (
     EXCLUDED_URLS_ENV,
     HEALTH_PATHS,
+    PROPAGATORS_ENV,
     build_resource_attributes,
     configure_observability,
     exclude_health_probes,
+    propagate_trace_context_only,
     request_sampler,
 )
 from aira_common.observability.redaction import (
@@ -52,6 +55,7 @@ __all__ = [
     "ACCESS_LOGGERS",
     "EXCLUDED_URLS_ENV",
     "HEALTH_PATHS",
+    "PROPAGATORS_ENV",
     "REDACTED",
     "SENSITIVE_QUERY_PARAMS",
     "AccessLogRedaction",
@@ -71,6 +75,7 @@ __all__ = [
     "model_call",
     "model_call_attributes",
     "payload_as_json",
+    "propagate_trace_context_only",
     "redact_query_string",
     "redact_target",
     "redact_url_credentials",

@@ -114,8 +114,9 @@ class _ReportsUsageFirst(_SlowProvider):
 
 
 async def test_a_caller_who_leaves_after_usage_arrived_is_billed_for_it_and_recorded() -> None:
-    """What the upstream reported was spent and reached the caller, so it is settled — and the row
-    still says the caller left (`499`), which is what the Gemini surface once got wrong."""
+    """What the upstream reported was spent, so it is settled — and the row still says the caller
+    left (`499`), which is what the Gemini surface once got wrong. The answer is read to its end
+    after the caller left (`ADR-0041`), so the figure is the vendor's last, not its first."""
     provider = _ReportsUsageFirst()
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0, allowed_regions="eu"))
     app.state.providers = ProviderRegistry([provider])
@@ -130,16 +131,17 @@ async def test_a_caller_who_leaves_after_usage_arrived_is_billed_for_it_and_reco
         task = asyncio.create_task(_drive(routes, _kira_request(app), None))
         await asyncio.wait_for(provider.entered.wait(), timeout=5)
         task.cancel()
+        # The rest of the answer arrives after the caller has gone, and is read to its end.
+        provider.finish.set()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        provider.finish.set()
         await asyncio.sleep(0.1)
 
         async with app.state.db_sessionmaker() as session:
             rows = list((await session.execute(select(RequestLog))).scalars())
 
     assert [(row.status, row.outcome, row.completion_tokens) for row in rows] == [
-        (499, "client_gone", 2)
+        (499, "client_gone", 4)
     ]
 
 
@@ -165,9 +167,9 @@ async def test_a_caller_that_goes_away_while_the_model_answers_is_still_recorded
         task = asyncio.create_task(_drive(routes, request, None))
         await asyncio.wait_for(provider.entered.wait(), timeout=5)
         task.cancel()
+        provider.finish.set()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        provider.finish.set()
         await asyncio.sleep(0.1)
 
         async with app.state.db_sessionmaker() as session:
@@ -180,9 +182,11 @@ async def test_a_caller_that_goes_away_while_the_model_answers_is_still_recorded
     assert rows[0].operation == "streaming-chat"
 
 
-async def test_a_cancelled_stream_is_not_billed_for_what_it_did_not_deliver() -> None:
-    """Nothing chargeable was produced, so nothing is booked. A use case with a request limit must
-    not lose allowance to a caller who hung up.
+async def test_a_stream_closed_with_its_caller_before_any_usage_is_not_billed() -> None:
+    """Closed when its caller left — reading on switched off — and with nothing reported, the
+    stream has no figure to book, so the reservation goes back and a use case with a request limit
+    loses no allowance to a caller who hung up. (Read on, the vendor's figure is booked instead:
+    `test_cancelled_requests.py`.)
 
     Asserted on the **counter**, not on a call to `release`. A tracking stand-in cannot see it:
     `hold` is the real service's own method and its internal `self.release(...)` never passes
@@ -191,7 +195,14 @@ async def test_a_cancelled_stream_is_not_billed_for_what_it_did_not_deliver() ->
     from aira_gateway.db.models import BudgetRead, BudgetUsage
 
     provider = _SlowProvider()
-    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0, allowed_regions="eu"))
+    app = create_app(
+        GatewaySettings(
+            auth_required=False,
+            log_queue_size=0,
+            allowed_regions="eu",
+            drain_left_streams_seconds=0,
+        )
+    )
     app.state.providers = ProviderRegistry([provider])
 
     with TestClient(app):

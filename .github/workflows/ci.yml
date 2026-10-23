@@ -26,6 +26,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
+# **Every action is pinned to the commit its release tag named**, with that tag beside it. A tag
+# can be moved to other code by whoever holds the action's repository, and the next run would
+# execute it with this workflow's token; a commit cannot be moved. Raised by hand, tag and commit
+# together. And **no checkout leaves the token in the clone**: nothing here pushes, and a token in
+# `.git/config` is readable by every later step, the install scripts `npm ci` runs included.
+# `tools/tests/test_a_release_is_published_only_behind_the_gates.py` holds both.
 permissions:
   contents: read
 
@@ -35,10 +41,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -68,9 +76,11 @@ jobs:
       run:
         working-directory: management/frontend
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version-file: management/frontend/.nvmrc
           cache: npm
@@ -120,15 +130,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version-file: management/frontend/.nvmrc
           cache: npm
@@ -163,10 +175,12 @@ jobs:
     env:
       AIRA_STRICT_DATA_MODE: ${{ matrix.strict_data_mode }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -223,15 +237,17 @@ jobs:
       # job tests, and a test that waits it out tests the clock.
       AIRA_THROTTLE_USER: 6000/minute
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version-file: management/frontend/.nvmrc
 
@@ -271,7 +287,7 @@ jobs:
 
       - name: Upload the Playwright report
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: playwright-report
           path: |
@@ -286,9 +302,19 @@ jobs:
   # ── Releasing ───────────────────────────────────────────────────────────────────────────────────
   #
   # A release is an **annotated tag** `vX.Y.Z`, and its message is the release notes
-  # (`ADR-0030`, `FRD-137`). Two jobs, because they answer different questions at very different
-  # prices: `described` costs seconds and runs beside the gates, `publish` costs a build and runs
-  # behind them.
+  # (`ADR-0030`, `FRD-137`). Four jobs, cut by what each one may write (`ADR-0043`):
+  #
+  #   described   nothing                       the description check, in seconds, beside the gates
+  #   publish     the images (packages)         Docker's build actions and nothing else from outside
+  #   inventory   nothing                       Syft, reading the pushed images back by digest
+  #   release     the Release, and a signature  GitHub's own actions only
+  #
+  # **A token is held only where it is used, beside code it has to trust.** A step can read the
+  # token of every step in its job, so a permission granted to a job is granted to every action in
+  # it. Pushing an image needs Docker's actions next to `packages: write`; nothing else from outside
+  # GitHub runs where anything can be written, and the job that can mint the workflow's identity
+  # runs GitHub's actions alone. **And no release job restores a cache**: caches are written by
+  # ordinary pushes, so a release built from one is built from whatever the last push left there.
   described:
     name: The tag says what the release is
     # **No `needs`.** The one thing worth knowing in the first half-minute is whether the tag
@@ -318,15 +344,16 @@ jobs:
 
       # Full history and tags: the notes quote the commits since the previous release, and
       # `--depth 1` would make every release look like the first one.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          # On by default on GitHub's runners; a release job restores no cache (above).
+          enable-cache: false
 
       - run: uv sync --frozen
 
@@ -384,7 +411,7 @@ jobs:
   publish:
     name: Publish versioned images to GHCR
     # Every gate, plus the description check — so a published version is one that six jobs agreed
-    # about, on this commit, in this run.
+    # about, on this commit, in this run. The jobs after this one need it, so they wait for all six.
     needs: [python, frontend, clients, stack, browser, described]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -395,10 +422,17 @@ jobs:
 
     permissions:
       # `packages: write` is what GHCR accepts `GITHUB_TOKEN` for in the repository's own
-      # namespace — no personal access token, nothing to configure as a secret. `contents: write`
-      # is for the GitHub Release; the tag already exists, so nothing here writes to a branch.
-      contents: write
+      # namespace — no personal access token, nothing to configure as a secret. Nothing else here
+      # can write: the Release, and the signatures, are the `release` job's.
+      contents: read
       packages: write
+
+    # What the later jobs describe and sign: the digests just pushed, never a tag that can move.
+    outputs:
+      owner: ${{ steps.release.outputs.owner }}
+      gateway: ${{ steps.gateway.outputs.digest }}
+      management: ${{ steps.management.outputs.digest }}
+      frontend: ${{ steps.frontend.outputs.digest }}
 
     steps:
       # The same spelling `tools/release_version.py` accepts — ASCII digits, no leading zero —
@@ -410,37 +444,9 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          fetch-depth: 0
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - run: uv sync --frozen
-
-      # **The tag object, which the checkout above flattens into a lightweight ref.**
-      # `actions/checkout` creates `refs/tags/<name>` pointing at the *commit* it checked out, so
-      # the annotated tag object — the thing that carries the release notes — is not in this
-      # clone. `%(contents)` of a ref that points at a commit is **the commit's message**, which
-      # is a plausible-looking description with a subject and a body, so nothing failed: `v0.1.1`
-      # was published on 2026-10-11 with `def905f`'s commit message as its notes and
-      # `fix(tests): wait for the rows a request makes, not for one` as its title.
-      #
-      # `--force` because the ref already exists, pointing at the commit. The type is then
-      # asserted rather than assumed: if a future version of the checkout action changes this
-      # again, the release must stop here and say so, not publish the nearest available prose.
-      - name: Restore the annotated tag object
-        run: |
-          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
-          kind="$(git cat-file -t "refs/tags/$TAG")"
-          if [ "$kind" != tag ]; then
-            echo "::error::refs/tags/$TAG is a $kind, not an annotated tag"
-            exit 1
-          fi
+          persist-credentials: false
 
       - name: Name the release
         id: release
@@ -463,9 +469,9 @@ jobs:
             exit 1
           fi
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -476,10 +482,11 @@ jobs:
       # moves and is what a deployment pins; `sha-<commit>`, which ties an image to the commit a
       # rolling update is advancing to (`FRD-127`); and `latest`, for a reader trying it out.
       # `sbom` and `provenance` put BuildKit's SBOM (SPDX) and how the image was built beside it in
-      # the registry, as attestations of the digest a deployment pulls (`FRD-148`).
+      # the registry, as attestations of the digest a deployment pulls (`FRD-148`). **No layer
+      # cache**, in either direction: a release builds from its own commit and nothing else.
       - name: Build and push the gateway
         id: gateway
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: gateway/Dockerfile
@@ -488,14 +495,12 @@ jobs:
             ghcr.io/${{ steps.release.outputs.owner }}/aira-gateway:${{ steps.release.outputs.version }}
             ghcr.io/${{ steps.release.outputs.owner }}/aira-gateway:sha-${{ github.sha }}
             ghcr.io/${{ steps.release.outputs.owner }}/aira-gateway:latest
-          cache-from: type=gha,scope=gateway
-          cache-to: type=gha,scope=gateway,mode=max
           sbom: true
           provenance: mode=max
 
       - name: Build and push the management backend
         id: management
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: management/backend/Dockerfile
@@ -504,14 +509,12 @@ jobs:
             ghcr.io/${{ steps.release.outputs.owner }}/aira-management:${{ steps.release.outputs.version }}
             ghcr.io/${{ steps.release.outputs.owner }}/aira-management:sha-${{ github.sha }}
             ghcr.io/${{ steps.release.outputs.owner }}/aira-management:latest
-          cache-from: type=gha,scope=management
-          cache-to: type=gha,scope=management,mode=max
           sbom: true
           provenance: mode=max
 
       - name: Build and push the console
         id: frontend
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: management/frontend/Dockerfile
@@ -520,54 +523,178 @@ jobs:
             ghcr.io/${{ steps.release.outputs.owner }}/aira-frontend:${{ steps.release.outputs.version }}
             ghcr.io/${{ steps.release.outputs.owner }}/aira-frontend:sha-${{ github.sha }}
             ghcr.io/${{ steps.release.outputs.owner }}/aira-frontend:latest
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,scope=frontend,mode=max
           sbom: true
           provenance: mode=max
 
-      # What the release contains, as CycloneDX files on the Release (`FRD-148`): one per image,
-      # scanned back from the registry **by the digest just pushed**, and one of the source's lock
-      # files — the console's image holds a compiled bundle in which no scanner finds its npm
-      # packages. A document that lists nothing stops the release here.
+  inventory:
+    name: Describe what the release contains
+    # What the release contains, as CycloneDX files on the Release (`FRD-148`): one per image,
+    # scanned back from the registry **by the digest just pushed**, and one of the source's lock
+    # files — the console's image holds a compiled bundle in which no scanner finds its npm
+    # packages. A document that lists nothing stops the release here. A job of its own because
+    # Syft is fetched by a third party's action, and nothing here can write.
+    needs: [publish]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.ref_name }}
+
+    permissions:
+      # Read only: the packages start private, so Syft has to sign in to read them back.
+      contents: read
+      packages: read
+
+    steps:
+      - name: Refuse a tag name that is not a release version
+        run: |
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::the pushed tag is not a release version (vX.Y.Z)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # The release tools need Python and nothing from PyPI.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Syft
         id: syft
-        uses: anchore/sbom-action/download-syft@v0.24.3
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: v1.54.1
 
       - name: Describe what the release contains
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
-          OWNER: ${{ steps.release.outputs.owner }}
-          VERSION: ${{ steps.release.outputs.version }}
-          GATEWAY: ${{ steps.gateway.outputs.digest }}
-          MANAGEMENT: ${{ steps.management.outputs.digest }}
-          FRONTEND: ${{ steps.frontend.outputs.digest }}
+          OWNER: ${{ needs.publish.outputs.owner }}
+          GATEWAY: ${{ needs.publish.outputs.gateway }}
+          MANAGEMENT: ${{ needs.publish.outputs.management }}
+          FRONTEND: ${{ needs.publish.outputs.frontend }}
         run: |
-          uv run python tools/release_sbom.py "$VERSION" --syft "$SYFT" \
+          python tools/release_sbom.py "$TAG" --syft "$SYFT" \
             --image "aira-gateway=ghcr.io/$OWNER/aira-gateway@$GATEWAY" \
             --image "aira-management=ghcr.io/$OWNER/aira-management@$MANAGEMENT" \
             --image "aira-frontend=ghcr.io/$OWNER/aira-frontend@$FRONTEND" \
             --source . \
             --out "$RUNNER_TEMP/assets"
 
+      - name: Hand the documents to the release job
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-sboms
+          path: ${{ runner.temp }}/assets
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish the release notes, signed
+    # After the images, never before, and it is what makes a release legible: the tag's own
+    # message, then the commits since the previous release, then the three image references. A
+    # failed build therefore leaves a tag with no Release against it — visibly unfinished, rather
+    # than a version that silently names nothing.
+    needs: [publish, inventory]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.ref_name }}
+
+    permissions:
+      # `contents: write` for the GitHub Release. `id-token` and `attestations` sign what it attaches
+      # and the three images it names: a Sigstore signature over a statement of which run, commit
+      # and workflow made each, kept in GitHub's attestation store (`gh attestation verify`).
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Refuse a tag name that is not a release version
+        run: |
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::the pushed tag is not a release version (vX.Y.Z)"
+            exit 1
+          fi
+
+      # Full history and tags: the notes quote the commits since the previous release.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The release tools need Python and nothing from PyPI — so nothing from PyPI is installed
+      # where the Release can be written.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      # **The tag object, which the checkout flattens into a lightweight ref** — see `described`.
+      - name: Restore the annotated tag object
+        run: |
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          kind="$(git cat-file -t "refs/tags/$TAG")"
+          if [ "$kind" != tag ]; then
+            echo "::error::refs/tags/$TAG is a $kind, not an annotated tag"
+            exit 1
+          fi
+
+      - name: Collect the documents the inventory wrote
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release-sboms
+          path: ${{ runner.temp }}/assets
+
       # The OpenCode budget plugin as an archive, attached to the Release: an address that does not
       # move and needs no credentials, for a rollout that puts it on workstations. GitHub's npm
-      # registry would need a token even to install a public package.
+      # registry would need a token even to install a public package. Packed here, from the tagged
+      # source, so the file signed below is made where only GitHub's actions run.
       - name: Pack the OpenCode plugin
         env:
-          VERSION: ${{ steps.release.outputs.version }}
-        run: uv run python tools/opencode_plugin_archive.py "$VERSION" --out "$RUNNER_TEMP/assets"
+          VERSION: ${{ github.ref_name }}
+        run: python tools/opencode_plugin_archive.py "$VERSION" --out "$RUNNER_TEMP/assets"
 
-      # **After the images, never before**, and it is what makes a release legible: the tag's own
-      # message, then the commits since the previous release, then the three image references. A
-      # failed build therefore leaves a tag with no Release against it — visibly unfinished, rather
-      # than a version that silently names nothing.
+      # **Signed before the Release exists**, so no version is ever downloadable without them. One
+      # statement for the files a rollout downloads, one per image by the digest just pushed.
+      - name: Sign the files the release attaches
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/assets/*.tar.gz
+            ${{ runner.temp }}/assets/*.cdx.json
+
+      - name: Sign the gateway image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ needs.publish.outputs.owner }}/aira-gateway
+          subject-digest: ${{ needs.publish.outputs.gateway }}
+
+      - name: Sign the management image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ needs.publish.outputs.owner }}/aira-management
+          subject-digest: ${{ needs.publish.outputs.management }}
+
+      - name: Sign the console image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ needs.publish.outputs.owner }}/aira-frontend
+          subject-digest: ${{ needs.publish.outputs.frontend }}
+
       - name: Publish the release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ steps.release.outputs.owner }}
-          VERSION: ${{ steps.release.outputs.version }}
+          OWNER: ${{ needs.publish.outputs.owner }}
+          VERSION: ${{ github.ref_name }}
         run: |
           owner="$OWNER"
           version="$VERSION"
@@ -577,7 +704,7 @@ jobs:
           for file in "$RUNNER_TEMP"/assets/*; do
             [[ "$file" == *.sha256 ]] || assets+=(--asset "$(basename "$file")")
           done
-          uv run python tools/release_notes.py "$version" \
+          python tools/release_notes.py "$version" \
             --image "ghcr.io/$owner/aira-gateway:$version" \
             --image "ghcr.io/$owner/aira-management:$version" \
             --image "ghcr.io/$owner/aira-frontend:$version" \
@@ -588,7 +715,7 @@ jobs:
           # flattened, the body and the title were both the commit's, and only the body looked
           # like a mistake worth noticing. One place asks Git what the tag says.
           gh release create "$version" \
-            --title "$version — $(uv run python tools/release_notes.py --subject "$version")" \
+            --title "$version — $(python tools/release_notes.py --subject "$version")" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             "$RUNNER_TEMP"/assets/*
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"

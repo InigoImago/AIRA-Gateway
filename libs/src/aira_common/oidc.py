@@ -236,7 +236,10 @@ class BoundedRefreshJwkClient(PyJWKClient):
         refresh_interval: float = JWKS_REFRESH_INTERVAL_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        super().__init__(uri, timeout=timeout)
+        # **One bound, and it is this one.** PyJWT applies a refetch cooldown of its own, timed
+        # from every fetch on a clock nobody can move; with both in force a rotated key is refused
+        # for the longer of the two, and the rule here could not be tested. So PyJWT's is off.
+        super().__init__(uri, timeout=timeout, cooldown_duration=0)
         self._refresh_interval = refresh_interval
         self._clock = clock
         self._refreshed_at: float | None = None

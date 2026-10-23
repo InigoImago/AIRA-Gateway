@@ -33,6 +33,38 @@ SAMPLING_CONTROLS = (
     "stop_sequences",
 )
 
+#: How many functions one request may offer. Google's own maximum for a request to Gemini, and
+#: OpenAI's, so no client of either can depend on more; each is a schema the model reads with
+#: every turn and the reservation counts, and past this a request is a catalogue rather than a
+#: conversation. Both surfaces refuse more — the KIRA one in its own code.
+MAX_TOOLS = 128
+
+#: How many turns one request may carry, history and system instruction included, and how many
+#: parts all of them together. **Counted before a surface validates a single one**: a turn is the
+#: most expensive thing in a body to parse, and a bound checked afterwards bounds nothing that was
+#: already paid for. A long agent session sends a few thousand turns before its client compacts
+#: the history; at ten thousand, every turn would have to stay under a hundred tokens for the
+#: conversation to fit the largest context window on offer. Two parts a turn on average, at the
+#: same bound — a call and its result, a document and its question.
+MAX_MESSAGES = 10_000
+MAX_MESSAGE_PARTS = 2 * MAX_MESSAGES
+
+
+def too_long_a_conversation(messages: int, parts: int) -> str | None:
+    """Why a request of ``messages`` turns and ``parts`` parts is refused, or ``None``: one wording
+    for both surfaces, each of which counts its own wire format."""
+    if messages > MAX_MESSAGES:
+        return (
+            f"The request carries {messages} turns, more than the {MAX_MESSAGES} one request may. "
+            "A conversation that long is past every model's context window; send its recent turns."
+        )
+    if parts > MAX_MESSAGE_PARTS:
+        return (
+            f"The request carries {parts} parts across its turns, more than the "
+            f"{MAX_MESSAGE_PARTS} one request may."
+        )
+    return None
+
 
 class Role(StrEnum):
     SYSTEM = "system"

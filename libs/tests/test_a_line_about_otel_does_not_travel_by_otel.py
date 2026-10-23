@@ -25,6 +25,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+import requests
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import (
     InMemoryLogRecordExporter,
@@ -311,13 +312,42 @@ def test_an_export_line_for_otel_is_held_back_but_one_for_kafka_is_not(
 # --- what "SUCCESS" actually attests ------------------------------------------------------------
 
 
-class Response:
-    """The `requests.Response` the exporter throws away."""
+class CannedSession:
+    """A `requests.Session` that answers every request with one canned response, in process.
+
+    Handed to the **real** `OTLPSpanExporter` through its public `session` parameter, so the path
+    the SDK takes — encoder, retry loop, transport, and the seam `WatchedExport` reads — runs as it
+    does against a collector. A stand-in exporter shaped like an older release passed every test
+    here while the real one had moved its seam and the partial-success reading had gone quiet.
+    """
 
     def __init__(self, status: int = 200, content: bytes = b"") -> None:
-        self.status_code = status
+        self.status = status
         self.content = content
-        self.ok = 200 <= status < 300
+        self.sent = 0
+        # The transport sets these on the session it is given.
+        self.verify: Any = True
+        self.cert: Any = None
+
+    def request(self, **_: Any) -> requests.Response:
+        self.sent += 1
+        response = requests.Response()
+        response.status_code = self.status
+        response.reason = "canned"
+        response._content = self.content
+        return response
+
+    def close(self) -> None:
+        return None
+
+
+def _exporter(status: int = 200, content: bytes = b"") -> Any:
+    """The real OTLP/HTTP span exporter, answered by a :class:`CannedSession`."""
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    return OTLPSpanExporter(
+        endpoint="http://collector:4318/v1/traces", session=CannedSession(status, content)
+    )
 
 
 def _partial_body(rejected: int, message: str) -> bytes:
@@ -331,31 +361,21 @@ def _partial_body(rejected: int, message: str) -> bytes:
     return response.SerializeToString()
 
 
-class RespondingExporter(FakeSpanExporter):
-    """An exporter shaped like the real one: `_export` posts, `export` reads `resp.ok`."""
-
-    def __init__(self, response: Response) -> None:
-        super().__init__()
-        self.response = response
-
-    def _export(self, serialized: bytes, timeout_sec: float | None = None) -> Response:
-        return self.response
-
-    def export(self, spans: Any) -> SpanExportResult:
-        resp = self._export(b"")
-        return SpanExportResult.SUCCESS if resp.ok else SpanExportResult.FAILURE
-
-
 def test_a_batch_the_collector_partly_threw_away_is_not_reported_as_a_success(
     capsys: Any,
 ) -> None:
     """**The green line that was not true.** OTLP answers 200 with a `partial_success` body when it
     takes some of a batch and drops the rest — a full queue, an attribute limit — and the Python
-    exporter reads `resp.ok` and nothing else, so it comes back `SUCCESS`. Before this the channel
+    exporter reads the status and nothing else, so it comes back `SUCCESS`. Before this the channel
     printed a clean `outcome: ok` for telemetry that had been thrown away.
     """
-    exporter = RespondingExporter(Response(200, _partial_body(3, "queue is full")))
-    _one_span(watched_export(exporter, "traces", "http://collector:4318/v1/traces"))
+    _one_span(
+        watched_export(
+            _exporter(200, _partial_body(3, "queue is full")),
+            "traces",
+            "http://collector:4318/v1/traces",
+        )
+    )
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "export"]
     assert line["outcome"] == "failed"
@@ -368,9 +388,7 @@ def test_a_batch_the_collector_partly_threw_away_is_not_reported_as_a_success(
 
 def test_a_batch_the_collector_took_whole_stays_a_success(capsys: Any) -> None:
     """An empty body is the ordinary full-success answer; it must not read as a rejection."""
-    _one_span(
-        watched_export(RespondingExporter(Response(200, b"")), "traces", "http://collector:4318")
-    )
+    _one_span(watched_export(_exporter(200, b""), "traces", "http://collector:4318"))
 
     (line,) = [c for c in calls(capsys) if c["operation"] == "export"]
     assert line["outcome"] == "ok"
@@ -380,42 +398,51 @@ def test_a_batch_the_collector_took_whole_stays_a_success(capsys: Any) -> None:
 
 def test_the_status_the_success_is_about_is_reported(capsys: Any) -> None:
     """`export()` returns SUCCESS for any 2xx, so the code is the only thing that says *which*."""
-    _one_span(
-        watched_export(RespondingExporter(Response(202, b"")), "traces", "http://collector:4318")
-    )
+    _one_span(watched_export(_exporter(202, b""), "traces", "http://collector:4318"))
     assert calls(capsys)[0]["http_status"] == 202
 
 
 def test_an_unparseable_body_is_not_turned_into_a_failure(capsys: Any) -> None:
     """This reads a response the caller already treated as a success. A diagnostic that turned an
     unfamiliar body into an error would break the export it exists to watch."""
-    exporter = RespondingExporter(Response(200, b"\xff\xfe not protobuf at all"))
+    exporter = _exporter(200, b"\xff\xfe not protobuf at all")
     _one_span(watched_export(exporter, "traces", "http://collector:4318"))
 
     assert calls(capsys)[0]["outcome"] == "ok"
 
 
 def test_the_exporter_still_has_the_seam_we_reach_through() -> None:
-    """`_export` is private, and reaching for it is a real cost taken deliberately.
+    """`_client._transport.request` is private, and reaching for it is a cost taken deliberately.
 
-    It has to fail **loudly** on the upgrade that renames it, or the partial-success reading goes
-    vacuous with nothing turning red — `LESSONS.md` §7. Asked of the real exporter, not a stand-in.
+    It has to fail **loudly** on the upgrade that moves it, or the partial-success reading goes
+    vacuous with nothing turning red — `LESSONS.md` §7. It moved once already: the exporter that
+    posted through its own `_export` became a client over a transport. Asked of the real exporter,
+    not a stand-in, and asked whether the wrapper actually took the seam.
     """
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-    exporter = OTLPSpanExporter(endpoint="http://127.0.0.1:1/v1/traces")
-    assert callable(getattr(exporter, "_export", None)), (
-        "OTLPSpanExporter._export is gone; WatchedExport can no longer see the HTTP response, so "
-        "a partially-rejected batch would silently read as a clean success again"
+    exporter = _exporter()
+    transport = getattr(getattr(exporter, "_client", None), "_transport", None)
+    original = getattr(transport, "request", None)
+    assert callable(original), (
+        "OTLPSpanExporter no longer sends through `_client._transport.request`; WatchedExport can "
+        "no longer see the HTTP response, so a partially-rejected batch would silently read as a "
+        "clean success again"
     )
+
+    watched_export(exporter, "traces", "http://collector:4318")
+
+    assert exporter._client._transport.request is not original, "the seam was not taken"
 
 
 def test_wrapping_the_seam_does_not_change_what_the_exporter_returns() -> None:
     """`FR-6` at the seam: the wrapper records the response and hands back exactly it."""
-    exporter = RespondingExporter(Response(200, b""))
-    original = exporter.response
-    watched_export(exporter, "traces", "http://collector:4318")
-    assert exporter._export(b"") is original
+    exporter = _exporter(200, b"body")
+    wrapped = watched_export(exporter, "traces", "http://collector:4318")
+
+    result = exporter._client._transport.request("POST", "http://collector:4318", data=b"")
+
+    assert result.content() == b"body"
+    assert result.status_code == 200
+    assert wrapped._last is result
 
 
 def test_the_export_line_says_how_many_requests_are_in_the_batch(capsys: Any) -> None:

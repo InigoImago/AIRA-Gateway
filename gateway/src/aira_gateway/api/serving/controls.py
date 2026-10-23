@@ -187,28 +187,42 @@ def check_sampling(canonical: CanonicalRequest) -> None:
 
 
 async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -> None:
-    """A request may declare functions only if its use case enabled tool calling (`FRD-131` FR-3).
+    """A request may declare functions, or carry a function call or a function's result, only if
+    its use case enabled tool calling (`FRD-131` FR-3).
 
-    Costs nothing for requests without tools. `FAILED_PRECONDITION`, not `PERMISSION_DENIED`: the
+    **The parts as much as the declarations.** A result is what a tool returned — a file, a page,
+    a screenshot — and reaches the model unscanned, because no pipeline step reads it; a replayed
+    call is half of the same exchange. A use case that switched tool calling off has said that no
+    such content reaches its model, and a conversation carrying one without declaring anything
+    would otherwise slip past that by leaving the declarations out.
+
+    Costs nothing for requests without either. `FAILED_PRECONDITION`, not `PERMISSION_DENIED`: the
     request is fine; a configuration somebody can change is missing.
     """
-    if not canonical.tools:
+    declares = bool(canonical.tools)
+    carries = any(message.tool_calls or message.tool_results for message in canonical.messages)
+    if not declares and not carries:
         return
+    what = (
+        "declare functions"
+        if declares
+        else "carry a function call or a function's result, which this request does"
+    )
     use_case = getattr(attribution_of(request), "use_case", None)
     if use_case is None:
         raise ToolsNotPermitted(
             400,
-            "Tool calling is configured per use case, and this request names none. Send it with a "
-            "use case that has tool calling enabled.",
+            f"Tool calling is configured per use case, and this request names none; only a use "
+            f"case that has enabled it may {what}. Send it with one.",
             "FAILED_PRECONDITION",
         )
     record = await use_case_record(request, use_case)
     if record is None or not record.tools_enabled:
         raise ToolsNotPermitted(
             400,
-            f"Use case '{use_case}' has not enabled tool calling. An administrator of the use "
-            "case can turn it on; it is off by default so that only the use cases which need "
-            "functions can declare them.",
+            f"Use case '{use_case}' has not enabled tool calling, so a request to it may not "
+            f"{what}. An administrator of the use case can turn it on; it is off by default so "
+            "that only the use cases which need functions can use them.",
             "FAILED_PRECONDITION",
         )
 
@@ -409,6 +423,7 @@ async def estimate(
     units: int = 1,
     input_texts: Iterable[str] = (),
     extra_tokens: int = 0,
+    input_units: int = 0,
     answers_in_tokens: bool = True,
 ) -> Amounts:
     """What this request is expected to consume, for the reservation (FRD-405).
@@ -416,12 +431,18 @@ async def estimate(
     Deliberately on the high side, because over-reserving briefly is the safe direction for a
     spend limit, and `settle` replaces the estimate with the real figure:
 
-    - **output**: the cap that will be sent — the caller's, else the model's default, else the
-      installation's estimate — and ``extra_tokens``, a thinking budget, which bills as output;
-    - **input**: the request's own text (``input_texts``, `text_tokens`) and each attachment at
-      what the model declares it costs. Without the prompt, an agent's 100 000-token context
-      reserved what its answer might cost, and twelve such requests in flight all passed a limit
-      with room for one.
+    - **output**: what bounds the answer — the cap that will be sent (the caller's, else the
+      model's default), else the most the model can produce (its declared maximum: with no cap on
+      the wire, that is what bounds it), and only where no figure bounds it the installation's
+      estimate plus ``extra_tokens``, a thinking budget. A thinking budget is drawn from the output
+      allowance (`check_budget_fits`), so a bound on the answer bounds the thinking too. A
+      reservation below what the answer may cost lets every request in flight pass a limit with
+      room for one: the reservation is what makes them see each other;
+    - **input**: the request's own text (``input_texts``, `text_tokens`), each attachment at
+      what the model declares it costs, and ``input_units`` — input the body does not predict as
+      text, a ranking's billing units (`FRD-147` FR-7), booked as input and so reserved at the
+      input rate. Without the prompt, an agent's 100 000-token context reserved what its answer
+      might cost, and twelve such requests in flight all passed a limit with room for one.
 
     ``answers_in_tokens`` is off for a request whose answer is no text — a ranking, billed by the
     query (`FRD-147` FR-7) — so nothing is held back for output it cannot produce.
@@ -434,15 +455,16 @@ async def estimate(
     """
     settings = settings_of(request)
     declaration = await catalog_of(request).declaration(model)
-    tokens = (
-        declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens
-        if answers_in_tokens
-        else 0
-    )
-    # A thinking budget is billed as output and is often the largest number on the request.
-    tokens += extra_tokens
+    tokens = 0
+    if answers_in_tokens:
+        bound = declaration.output_cap(max_output_tokens) or declaration.max_output_tokens
+        # A thinking budget is billed as output and is often the largest number on the request;
+        # it is drawn from the bound where there is one, so it is added only where there is none.
+        tokens = (
+            bound if bound is not None else settings.budget_estimate_output_tokens + extra_tokens
+        )
     output = tokens = max(0, tokens)
-    tokens += text_tokens(input_texts)
+    tokens += text_tokens(input_texts) + max(0, input_units)
     # Attachments are input a character count cannot predict (FRD-110 §5.3).
     tokens += max(0, declaration.attachment_tokens(attachments or []))
     # Clamped here, where no single caller wrote the sum (caller-named figures are refused by name
@@ -469,14 +491,16 @@ async def enforce_pre_dispatch(
     units: int = 1,
     input_texts: Iterable[str] = (),
     extra_tokens: int = 0,
+    input_units: int = 0,
     answers_in_tokens: bool = True,
 ) -> Reservation:
     """Reserve budget against the model **routing** chose — so it runs after the pipeline.
 
     The reservation makes requests in flight visible to each other's check. ``units`` is how many
     requests this call is (one per text in an embedding batch, `FRD-113` FR-6); ``input_texts`` is
-    what the request sends (`prompt_texts`, or the texts to embed); ``extra_tokens`` is consumption
-    the body does not predict, today a thinking budget (`FRD-111` FR-5).
+    what the request sends (`prompt_texts`, or the texts to embed); ``extra_tokens`` is output the
+    body does not predict, a thinking budget (`FRD-111` FR-5), and ``input_units`` input it does not
+    predict, a ranking's billing units (`FRD-147` FR-7).
     """
     if not getattr(request.state, "early_gate_taken", False):
         # Reserving without the early gate would serve traffic nobody is rate-limiting.
@@ -498,6 +522,7 @@ async def enforce_pre_dispatch(
         units=units,
         input_texts=input_texts,
         extra_tokens=extra_tokens,
+        input_units=input_units,
         answers_in_tokens=answers_in_tokens,
     )
     reservation = await budgets_of(request).guard(use_case, caller, estimated=expected)

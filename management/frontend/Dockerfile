@@ -37,7 +37,11 @@ COPY management/frontend/ ./
 RUN npm run build
 
 # ---- runtime -------------------------------------------------------------------------------
-FROM nginx:1.27-alpine AS runtime
+# **nginx's stable line**, which the image's maintainers rebuild whenever Alpine ships a fix, so a
+# release build carries the patched OpenSSL and libraries of its day. A line is rebuilt only until
+# the next stable one replaces it, so this tag follows nginx's current stable line: check it at
+# every release, because an image whose line has ended keeps building and stops being patched.
+FROM nginx:1.30-alpine AS runtime
 
 # `AIRA_CSP_CONNECT_SRC` is deliberately **not** given a value here. The entrypoint derives it
 # from `AIRA_OIDC_ISSUER`, and a baked default would win over that derivation silently: a probe

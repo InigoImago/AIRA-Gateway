@@ -89,6 +89,12 @@ class GatewaySettings(BaseAiraSettings):
     #: and such a stream stays unknown — booked as nothing. On by default: a cancelled stream was
     #: billed, and a budget that cannot see it is a budget an agent client walks through.
     count_cancelled_streams: bool = True
+    #: How long a stream whose caller left is read on, for the vendor's own figure of what the
+    #: answer cost (`ADR-0041`). Several dialects report usage only in a stream's last chunk, so a
+    #: stream closed when its caller left books nothing the vendor said. Read to its end, the answer
+    #: is finished — and billed whole, which can cost more than one stopped early — and the booking
+    #: is the vendor's own. `0` closes it at once and falls back to the count above.
+    drain_left_streams_seconds: float = Field(default=600.0, ge=0, allow_inf_nan=False)
     #: Anomaly detection (`FRD-501`). Off evaluates nothing; authored rules stay authored.
     detect_anomalies: bool = True
     #: Whether a suspension stops traffic (`FRD-503`). Off records findings and refuses nobody.
@@ -119,8 +125,9 @@ class GatewaySettings(BaseAiraSettings):
     # refusals only, so a working credential is never throttled by it. 0 disables it.
     max_auth_failures_per_minute: int = Field(default=60, ge=0)
 
-    # Output tokens assumed when a request does not bound its output, for the budget reservation
-    # (FRD-405 §4.2). Reconciled to actual usage; erring high is the safe direction.
+    # Output tokens assumed for the budget reservation when nothing bounds the answer — no cap from
+    # the caller, and neither a default nor a maximum in the model's catalogue entry (FRD-405 §4.2).
+    # Reconciled to actual usage; erring high is the safe direction.
     budget_estimate_output_tokens: int = Field(default=1024, ge=0)
 
     # Requests buffered for the off-path request-log writer (FRD-405 §4.4). A full queue writes

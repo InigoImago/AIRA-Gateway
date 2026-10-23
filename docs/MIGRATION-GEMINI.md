@@ -271,6 +271,14 @@ cannot take comes back as its 400, with its reason. Both are bounded alike: 32 K
 256 properties. `thinkingLevel` (`low`, `high`, …) is the model's own level word and must be one the
 catalogue declares for the model. `tools` may be a list or a single tool object.
 
+**How much one request may hold.** At most 128 function declarations across its tools — Google's
+own maximum for a request to Gemini — 10 000 turns in `contents` and 20 000 parts across them, and a
+body of at most 250 000 JSON values nesting at most 64 levels — the last two counted before the body
+is decoded, the others before the request is validated — each refused with a `400` naming it: what
+a body costs is its structure, and every bit of it is paid before a rate limit can refuse anything.
+An inline attachment or a long text is one value, however long, so the bound is never about size —
+a large tool result that would break it travels as text.
+
 **Functions, as current clients write them.**
 
 - A parameter may be a union without a `type` (`{"anyOf": [{"type": "string"}, {"type": "null"}]}`)
@@ -284,6 +292,11 @@ catalogue declares for the model. `tools` may be a list or a single tool object.
   Claude. The OpenAI dialect's tool messages take text only, so such a model is skipped.
 - A call and its result are paired by `id` where both carry one; without an id they are paired by
   name, as Google pairs them.
+- Function calling is the use case's to switch on, and the switch covers the conversation as well
+  as the declarations: where it is off, a request carrying a `functionCall` or a `functionResponse`
+  is refused `400 FAILED_PRECONDITION` even when it declares nothing. A function's result reaches
+  the model unread by any checking step, so a use case that has not enabled functions receives
+  none.
 - `usageMetadata.cachedContentTokenCount` reports what a provider's prompt cache served.
 
 Google's API rejects unknown fields and so does this one. A field accepted and dropped answers with

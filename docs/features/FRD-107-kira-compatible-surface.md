@@ -246,6 +246,12 @@ found later, and one entry is withdrawn and struck through)*
   always names a default (`FRD-146` FR-12).
 - **No Live endpoint.** `WS /live/{model_id}` is not served; it needs a transport of its own and
   decisions on budget, duration and audit first (`FRD-146` §2).
+- **A key in the URL is not read.** *Added 2026-10-22, after a security audit.* The predecessor
+  authenticates with a bearer token alone, so no client of it sends `?key=`; that form is Google's
+  convention and stays on the Gemini surface for the clients that follow it. Here a key in the URL
+  is answered `401 NOT_AUTHENTICATED` saying which headers are read — a key in a URL is written
+  into the log of every proxy it passes, which is the reason not to invite one
+  (`auth/credentials.py`).
 
 ### 5.6 A surface with an ending
 
@@ -409,6 +415,13 @@ it. Six differences, all on the tolerance axis, none of them in the document. Th
   never a value — beside the audit row it already produced. Logging the body itself (as it once
   did, up to 12 KB) put prompts and attachments into the observability stack, past every control
   on stored content and against the privacy notice's promise that no log line carries any.
+  *Corrected 2026-10-22, after a security audit:* "its fields" had meant **every key**, so the keys
+  of the objects a caller fills with data — a function's arguments and result, an error, the opaque
+  metadata, a schema's property names — reached the line, a name and a diagnosis among them in the
+  audit's sample; and the list of unmodelled fields was unbounded, a 7.3 MB body a 7 MB line. Now
+  the shape names only the contract's own fields, along the objects the contract defines, read off
+  the request models (`api/kira/log_shape.py`); every other value is its kind and size, and
+  unmodelled names are bounded as the response header bounds them. The 7.3 MB body's line is 18 kB.
 
 Worth stating for the next surface: every one of these was a **rule kept by the wrong mechanism**.
 The rules themselves — no silent drop, a closed schema vocabulary, do not approximate a stated

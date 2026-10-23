@@ -27,8 +27,9 @@ UNMODELLED_HEADER = "X-AIRA-Unmodelled-Fields"
 _NAMEABLE = re.compile(r"[A-Za-z0-9_.$@-]{1,64}")
 
 #: How many names, and how many characters of them, the header carries before it counts the rest:
-#: a reverse proxy refuses a response whose headers outgrow its buffer (nginx: 4 or 8 KB). The
-#: request keeps the full list for the log line and the stored body.
+#: a reverse proxy refuses a response whose headers outgrow its buffer (nginx: 4 or 8 KB). The log
+#: line names them by the same rule, because a list the caller writes is unbounded there too; the
+#: stored body keeps every one of them, under the controls on stored content.
 MAX_NAMED_FIELDS = 20
 MAX_NAMED_CHARACTERS = 512
 
@@ -47,21 +48,31 @@ def note_unmodelled(request: Request, *models: Any, ignored: Sequence[str] = ())
         request.state.unmodelled = names
 
 
-def unmodelled_header(names: Sequence[str]) -> str:
-    """The header's value: the nameable fields in the order sent, then ``+<n> more``."""
+def is_nameable(name: str) -> bool:
+    """Whether a field name the caller chose may be repeated — in a header, or in a log line."""
+    return _NAMEABLE.fullmatch(name) is not None
+
+
+def nameable(names: Sequence[str]) -> list[str]:
+    """The nameable fields in the order sent, bounded, then ``+<n> more`` for the rest."""
     named: list[str] = []
     length = 0
     for name in names:
         if len(named) == MAX_NAMED_FIELDS:
             break
-        if not _NAMEABLE.fullmatch(name):
+        if not is_nameable(name):
             continue
         if length + len(name) + 2 > MAX_NAMED_CHARACTERS:
             break
         named.append(name)
         length += len(name) + 2
     hidden = len(names) - len(named)
-    return ", ".join([*named, *([f"+{hidden} more"] if hidden else [])])
+    return [*named, *([f"+{hidden} more"] if hidden else [])]
+
+
+def unmodelled_header(names: Sequence[str]) -> str:
+    """The header's value: :func:`nameable`, joined."""
+    return ", ".join(nameable(names))
 
 
 def surface_headers(request: Request) -> dict[str, str]:

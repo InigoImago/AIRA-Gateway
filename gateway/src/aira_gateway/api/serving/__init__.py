@@ -30,7 +30,7 @@ from aira_gateway.api.serving.answers import (
     with_notices,
     withheld_because,
 )
-from aira_gateway.api.serving.body import ensure_body_is_encodable, json_body
+from aira_gateway.api.serving.body import BodyTooComplex, ensure_body_is_encodable, json_body
 from aira_gateway.api.serving.context import (
     attribution_of,
     catalog_of,
@@ -86,6 +86,7 @@ __all__ = [
     "REFUSALS",
     "AccountedStream",
     "Accounting",
+    "BodyTooComplex",
     "Prepared",
     "StreamAccounting",
     "NotAReranker",

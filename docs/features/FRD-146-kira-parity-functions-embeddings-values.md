@@ -120,6 +120,18 @@ confirm or correct it.
   No other person's figures, whatever the caller's role — the console's reports are where those are
   read, under their own rules. Strict data mode is unaffected: it governs who sees **another**
   person.
+- **FR-21a In the credential's use cases.** The rows count the caller's traffic in the use cases
+  the credential may act in — an API key's one use case, a signed-in person's memberships — exactly
+  as `/v1beta/me/budget` does. A key a use-case administrator issued in a member's name (`FRD-604`
+  FR-5) acts as that member, and the administrator holds its plaintext: without this bound, the key
+  answered for the member's traffic in **every** use case, including ones the administrator has no
+  part in, past strict data mode and without a recorded read. A credential that may act nowhere is
+  answered with nothing.
+- **FR-21b A bounded window, asked once.** The window spans at most 366 days, the console's bound
+  (`400 INVALID_TIME_RANGE` past it), and the answer is one aggregate over the request log, filtered
+  by person in columns an index can answer. Any credential holder may call this, so it must not
+  cost more than the figure it returns. Both ends of the window are compared in UTC: a date without
+  an offset is read as UTC, one with an offset converted.
 - **FR-22 CSV** when the caller sends `Accept: text/csv`: the same columns, UTF-8 with a BOM.
 
 ## 5. Design & Architecture
@@ -143,6 +155,14 @@ Validation rules (FR-1), each with a test: a name matches `^[A-Za-z_][A-Za-z0-9_
 unique; the description says something; `parameters` passes the predecessor's rule
 (`tool_schema.fault`) and its root `type` is `object`; at most 128 functions;
 `function_call`/`function_result` parts without `tools` on the request are refused.
+
+*Since 2026-10-22, after a security audit:* a property's `type` may also be one of the six beside
+`"null"` — `["string", "null"]`, JSON Schema's spelling of an optional argument and Google's
+documented one — carried to the model as written; every dialect reads it. It had been looked up in
+a set and was a `500` with no audit row. Any other list or object there is
+`INVALID_TOOL_CONFIGURATION` naming the path, and a part whose `type` is not a word is
+`VALIDATION_ERROR` (`test_a_kira_callers_value_is_never_a_server_error.py`, which also sweeps every
+function field with every kind of JSON value).
 
 ### 5.2 The predecessor's embedding
 
@@ -201,7 +221,8 @@ neither shape had been released.
 ## 8. Security & Privacy
 - Functions stay behind the use case's switch (FR-6) and are never executed (`ADR-0013`).
 - `/ki-usage` no longer needs `report.read_all` because it no longer answers about anyone else
-  (FR-21); the figures are the ones `/v1beta/me/budget` already gives the same caller.
+  (FR-21); the figures are the ones `/v1beta/me/budget` already gives the same caller, in the same
+  use cases (FR-21a).
 - No new stored field, transmission or telemetry: the privacy notice is unchanged.
 
 ## 9. Observability
@@ -216,7 +237,8 @@ neither shape had been released.
 - `2003` answers 3072 values and `2004` answers 768, from one upstream model; an alias unreleased to
   the use case is refused although its upstream model is released.
 - `/ki-usage` returns only the caller's rows, never a colleague's, whatever the caller's role, and
-  the CSV starts with a BOM.
+  the CSV starts with a BOM; a key answers for its own use case only, a window over a year is
+  refused, a mixed-zone window answers, and the answer is one query over the request log.
 - Mutations for each property.
 
 ## 11. Dependencies & Risks
@@ -250,8 +272,10 @@ neither shape had been released.
   opposite and was turned round.
 - **Stream** — `api/kira/keepalive.py` reads the model's chunks in one task of its own and sends a
   comment when fifteen seconds pass without one.
-- **`/ki-usage`** — `ReportingService.report(person=…)` by model; a credential with no person is
-  answered with nothing rather than with the installation.
+- **`/ki-usage`** — `ReportingService.by_model(principal.use_cases, …, person=…)`, one grouped
+  query; a credential with no person or no use case is answered with nothing rather than with the
+  installation. The person filter is `request_person_is` (`db/models/owned.py`), the indexable
+  spelling of the grouping expression, which every report narrowed to a person now uses.
 - **Sampling defaults** — `model_catalog.default_sampling` on both planes (Management migration
   `0011`, gateway `0054`), validated against `fixed_sampling`, applied in `prepare.fitted` only for
   the controls the routed adapter expresses; two fields in the console's model editor.

@@ -21,7 +21,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from aira_common.logging import get_logger
 from aira_common.observability import trace_context_fields
 from aira_gateway.api.gemini.errors import gemini_error_response
-from aira_gateway.api.kira import BASE as KIRA_BASE
+from aira_gateway.api.kira import is_kira_path
 from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
 from aira_gateway.api.kira.headers import surface_refusal
 from aira_gateway.audit import Outcome
@@ -49,15 +49,6 @@ _RESOURCE = re.compile(r"/models/(?P<resource>[^/]+)$")
 #: number, and one past this would fail the very audit write it belongs to; a request that large is
 #: measured as large either way.
 _MAX_RECORDED_BYTES = 2**31 - 1
-
-
-def is_kira_path(path: str) -> bool:
-    """Whether ``path`` — with any `/uc/<slug>` prefix already stripped — is on the KIRA surface.
-
-    One definition for every refusal answered before or outside a route: the body ceiling, the
-    audit row it writes (`describe_target`) and the application's exception handlers.
-    """
-    return path.startswith(KIRA_BASE)
 
 
 def too_large_message(limit: int) -> str:

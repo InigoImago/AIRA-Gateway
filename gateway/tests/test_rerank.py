@@ -295,6 +295,92 @@ async def test_a_ranking_is_booked_in_the_providers_unit_and_priced() -> None:
     assert row.response_payload is None or "Regen" not in json.dumps(row.response_payload)
 
 
+async def test_a_ranking_weighs_one_per_text_where_the_pipeline_reads_each() -> None:
+    """A redactor runs once per text — the query, then every record's title and content — and each
+    run is a model call. An embedding batch weighs one per text for the same reason; a ranking
+    weighed one per hundred records, so 200 records were 401 calls at a weight of two."""
+    from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, CanonicalUsage
+    from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
+    from aira_gateway.pipeline.engine import PipelineEngine
+
+    class _Store:
+        def __init__(self, *steps: PipelineStep) -> None:
+            self._pipeline = Pipeline(steps=steps)
+
+        async def get(self, use_case: str | None) -> Pipeline:
+            return self._pipeline
+
+    class _Redactor(MockProvider):
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            return CanonicalResponse(
+                model=request.model,
+                text=request.messages[-1].text,
+                usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+            )
+
+    weighed: dict[str, list[int]] = {}
+    for name, steps in (
+        ("redacted", (PipelineStep(type=StepType.PII_FILTER, config={"model": "mock-1"}),)),
+        ("plain", ()),
+    ):
+        app = _app()
+        registry = ProviderRegistry([_Redactor()])
+        app.state.providers = registry
+        app.state.pipeline_engine = PipelineEngine(registry)
+        app.state.pipeline_store = _Store(*steps)
+        with TestClient(app) as client:
+            await _ranker(app)
+            limits = app.state.rate_limits
+            seen: list[int] = []
+
+            async def spy(
+                use_case: Any,
+                caller: Any,
+                units: int = 1,
+                *,
+                _check: Any = limits.check,
+                _seen: list[int] = seen,
+                **kwargs: Any,
+            ) -> Any:
+                _seen.append(units)
+                return await _check(use_case, caller, units, **kwargs)
+
+            limits.check = spy
+            response = client.post(KIRA, json=_kira(), headers=UC)
+        assert response.status_code == 200, response.text
+        weighed[name] = seen
+
+    assert weighed["redacted"] == [1 + 2 * len(RECORDS)], "the query and both fields of each"
+    assert weighed["plain"] == [1], "without a step that reads each text, the provider's unit"
+
+
+async def test_a_ranking_reserves_its_units_at_the_rate_they_are_booked_at() -> None:
+    """A ranking is booked as input — its billing units at the input rate — so it is reserved
+    there. Reserved at the output rate, a ranker priced on input alone, as Google's is, set aside
+    nothing against a cost limit, and every ranking in flight passed a limit with room for one."""
+    app = _app()
+    with TestClient(app) as client:
+        await _ranker(
+            app,
+            input_price_per_million_nanos=1_000 * 10**9,
+            output_price_per_million_nanos=0,
+        )
+        reserved: list[Any] = []
+        budgets = app.state.budgets
+        guard = budgets.guard
+
+        async def recording(*args: Any, estimated: Any = None, **kwargs: Any) -> Any:
+            reserved.append(estimated)
+            return await guard(*args, estimated=estimated, **kwargs)
+
+        budgets.guard = recording
+        response = client.post(KIRA, json=_kira(), headers=UC)
+
+    assert response.status_code == 200, response.text
+    assert reserved[0].tokens == 1, "one ranking unit, held as input"
+    assert reserved[0].cost_nanos == 1_000_000, "one unit at the input rate, as it is booked"
+
+
 async def test_an_unpriced_reranker_is_refused_where_spend_is_capped() -> None:
     google = Google()
     app = _google_app(google)

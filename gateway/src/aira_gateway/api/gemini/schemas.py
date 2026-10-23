@@ -15,6 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from aira_gateway.core.canonical import MAX_MESSAGES, MAX_TOOLS, too_long_a_conversation
+
 #: Request models forbid what they do not model. Response models keep ignoring extras — a provider
 #: adding a field must never break a caller, which is the opposite direction and the opposite rule.
 _STRICT = ConfigDict(extra="forbid")
@@ -70,6 +72,18 @@ _REQUEST_NOT_SERVED = {
         "for its fallback is worse than none"
     ),
 }
+
+
+def _entries(raw: Any, field: str) -> int:
+    """How many entries the list ``raw[field]`` holds — before anything validated ``raw``, so
+    anything that is not a list there counts for nothing and is the validation's to refuse."""
+    found = raw.get(field) if isinstance(raw, dict) else None
+    return len(found) if isinstance(found, list) else 0
+
+
+def _parts_in(turns: Any) -> int:
+    """The parts of every turn in ``turns``, counted on the raw body."""
+    return sum(_entries(turn, "parts") for turn in turns)
 
 
 def _refuse(values: Any, reasons: dict[str, str]) -> None:
@@ -576,6 +590,38 @@ class GenerateContentRequest(BaseModel):
                 "'systemInstruction'. Put the style in the text, such as 'Say cheerfully: …'."
             )
         return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _counted_before_validated(cls, values: Any) -> Any:
+        """The turns, their parts and the functions, counted on the raw body before any of them is
+        validated: past the bounds (`core.canonical`), validating them is the cost the bound is
+        there to refuse, and a count afterwards would only report it."""
+        if not isinstance(values, dict):
+            return values
+        contents = values.get("contents")
+        turns: list[Any] = contents if isinstance(contents, list) else []
+        system = values.get("systemInstruction")
+        messages = len(turns) + (system is not None)
+        # Not counted past the turns' own bound: the refusal is decided, and the count would walk
+        # the very list it refuses.
+        parts = 0 if messages > MAX_MESSAGES else _parts_in((*turns, system))
+        problem = too_long_a_conversation(messages, parts)
+        if problem is not None:
+            raise ValueError(problem)
+        tools = values.get("tools")
+        tools = [tools] if isinstance(tools, dict) else tools
+        declared = (
+            sum(_entries(tool, "functionDeclarations") for tool in tools)
+            if isinstance(tools, list)
+            else 0
+        )
+        if declared > MAX_TOOLS:
+            raise ValueError(
+                f"'tools' declares {declared} functions, more than the {MAX_TOOLS} one request may "
+                "offer — Google's own maximum for a request to Gemini."
+            )
+        return values
 
     @model_validator(mode="before")
     @classmethod

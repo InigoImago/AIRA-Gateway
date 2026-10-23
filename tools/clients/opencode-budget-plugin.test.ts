@@ -191,6 +191,79 @@ describe("locating the gateway", () => {
   })
 })
 
+// == where the key may go ===========================================================================
+
+describe("the key goes to the gateway and nowhere else", () => {
+  const where = (base: string) => ({ base, key: "aira_not_a_real_key", headers: {}, missing: null })
+
+  test("not across a redirect, to another origin or anywhere else", async () => {
+    // Real sockets and the runtime's own fetch: what is asserted is what Bun does with the option.
+    const seen: (string | null)[] = []
+    const elsewhere = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        seen.push(request.headers.get("x-goog-api-key"))
+        return Response.json({ allowances: [], currency: "EUR" })
+      },
+    })
+    const gateway = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(null, { status: 302, headers: { location: `http://127.0.0.1:${elsewhere.port}/collect` } })
+      },
+    })
+    try {
+      // `realFetch`: the tests below replace the global one with a recorder.
+      const refused = plugin.read(where(`http://127.0.0.1:${gateway.port}`), realFetch)
+      await expect(refused).rejects.toBeInstanceOf(plugin.Refused)
+      await expect(plugin.read(where(`http://127.0.0.1:${gateway.port}`), realFetch)).rejects.toThrow("redirect")
+      expect(seen).toEqual([])
+    } finally {
+      gateway.stop(true)
+      elsewhere.stop(true)
+    }
+  })
+
+  test("not over plain http, unless the gateway is on this machine", async () => {
+    let asked = 0
+    const fetcher: any = async () => {
+      asked++
+      return new Response("{}", { status: 200 })
+    }
+    for (const base of ["http://gw.example", "http://10.0.0.5:8001", "http://localhost.example.org", "ftp://gw.example", "gw.example"]) {
+      await expect(plugin.read(where(base), fetcher)).rejects.toBeInstanceOf(plugin.Refused)
+      expect(plugin.unsafeAddress(base)).toBeTruthy()
+    }
+    expect(asked).toBe(0)
+    expect(plugin.unsafeAddress("http://gw.example:8001")).toContain("http://gw.example:8001 is not https")
+    // Ports nothing here publishes: the loopback rule is about the host, whatever the port.
+    for (const base of ["https://gw.example/gw/uc/coding", "http://localhost:9", "http://127.0.0.1:9", "http://[::1]:9"]) {
+      expect(plugin.unsafeAddress(base)).toBeNull()
+      await plugin.read(where(base), fetcher)
+    }
+    expect(asked).toBe(4)
+  })
+
+  test("an answer that came from another origin is not read", async () => {
+    const answered = (fields: Record<string, unknown>): any => async () => ({
+      ok: true,
+      status: 200,
+      redirected: false,
+      url: "",
+      json: async () => budget(),
+      text: async () => "",
+      ...fields,
+    })
+    const base = "https://gw.example"
+    await expect(plugin.read(where(base), answered({ redirected: true, url: "https://gw.example/v1beta/me/budget" }))).rejects.toBeInstanceOf(plugin.Refused)
+    await expect(plugin.read(where(base), answered({ url: "https://elsewhere.example/v1beta/me/budget" }))).rejects.toThrow("elsewhere.example")
+    // The comparison's other half: an answer from the gateway itself is read.
+    expect((await plugin.read(where(base), answered({ url: "https://gw.example/v1beta/me/budget" }))).currency).toBe("EUR")
+  })
+})
+
 // == what is drawn ==================================================================================
 
 describe("the sidebar", () => {
@@ -395,6 +468,20 @@ describe("OpenCode 2", () => {
     seen.handlers["session.execution.succeeded"]()
     await settle()
     expect(seen.toasts).toEqual([{ variant: "warning", title: "AIRA budget unavailable", message: plugin.advice("key"), duration: 8000 }])
+    cleanup()
+  })
+
+  test("a gateway over plain http on another machine is asked nothing, and the refusal says why", async () => {
+    const { context, seen } = openCode2({
+      infos: [{ id: "aira", integrationID: "aira", settings: { baseURL: "http://gw.example/v1beta" }, headers: {} }],
+    })
+    const cleanup = await plugin.default.setup(context)
+    await settle()
+    expect(fetched).toEqual([])
+    // The plugin's own refusal, not "did not answer": the gateway was never asked.
+    expect(seen.toasts).toEqual([
+      { variant: "warning", title: "AIRA budget unavailable", message: plugin.unsafeAddress("http://gw.example"), duration: 8000 },
+    ])
     cleanup()
   })
 

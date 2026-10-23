@@ -34,6 +34,23 @@ _ALONE_MESSAGES = {
     ),
 }
 
+#: The refusal when what is **settled** is still under the limit and requests in flight hold the
+#: rest: their reservations free as they finish, so the period's end is not when to come back.
+_HELD_MESSAGES = {
+    "cost": (
+        "Cost budget for {scope} ({period}) is held by requests still in flight: their "
+        "reservations free as they finish. Asking for fewer output tokens reserves less."
+    ),
+    "requests": (
+        "Request budget for {scope} ({period}) is held by requests still in flight: their "
+        "reservations free as they finish."
+    ),
+    "tokens": (
+        "Token budget for {scope} ({period}) is held by requests still in flight: their "
+        "reservations free as they finish. Asking for fewer output tokens reserves less."
+    ),
+}
+
 #: Where each dimension's limit and this request's amount are read from.
 _LIMIT_FIELDS = {"cost": "limit_cost_nanos", "requests": "limit_requests", "tokens": "limit_tokens"}
 _AMOUNT_FIELDS = {"cost": "cost_nanos", "requests": "requests", "tokens": "tokens"}
@@ -95,19 +112,29 @@ def scope_key(budget: BudgetRead, caller: str | None = None) -> str:
 
 
 def exceeded(
-    budget: BudgetRead, dimension: str, now: datetime, asked: Any | None = None
+    budget: BudgetRead,
+    dimension: str,
+    now: datetime,
+    asked: Any | None = None,
+    settled: Any | None = None,
 ) -> BudgetExceeded:
     """The refusal for ``budget``, breached on ``dimension`` (`cost`, `requests` or `tokens`).
 
     It says when the period resets (`FRD-628` FR-6), and — where ``asked``, this request's own
     estimate, is more than the whole limit — that it is this request that cannot fit, not a budget
-    that is spent: a caller told "exhausted" waits for a reset that will not help them.
+    that is spent: a caller told "exhausted" waits for a reset that will not help them. Where
+    ``settled``, what finished requests booked, is still under the limit, the limit is met by
+    reservations of requests in flight, and the refusal says so: they free within the minute, and
+    a caller told "exhausted" would wait for the period to end.
     """
     scope, period = _scope_label(budget), budget.period
     resets_at = period_ends(budget.period, now).isoformat()
     limit = getattr(budget, _LIMIT_FIELDS[dimension])
     alone = getattr(asked, _AMOUNT_FIELDS[dimension], 0) if asked is not None else 0
-    if limit is not None and alone > limit:
+    booked = getattr(settled, _AMOUNT_FIELDS[dimension], None) if settled is not None else None
+    if limit is not None and booked is not None and booked < limit:
+        message = _HELD_MESSAGES[dimension].format(scope=scope, period=period)
+    elif limit is not None and alone > limit:
         message = _ALONE_MESSAGES[dimension].format(
             scope=scope,
             period=period,

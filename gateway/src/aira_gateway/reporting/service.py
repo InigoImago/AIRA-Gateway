@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from aira_common.money import format_display
 from aira_gateway.audit import FAILURES, Outcome
 from aira_gateway.db.models import RequestLog
-from aira_gateway.db.models.owned import REQUEST_PERSON
+from aira_gateway.db.models.owned import REQUEST_PERSON, request_person_is
 from aira_gateway.reporting import series as series_module
 
 #: What a caller may see: ``None`` is every use case, a tuple exactly those, and the empty tuple
@@ -260,6 +260,18 @@ class ReportingService:
                 )
             return report
 
+    async def by_model(
+        self, scope: Scope, start: datetime, end: datetime, *, person: str
+    ) -> list[Figures]:
+        """One person's figures per model over ``[start, end)`` — and nothing else.
+
+        `/ki-usage`'s whole question, asked as **one** query: :meth:`report` would answer it too,
+        with six more aggregates over the same rows that nobody reads, on an endpoint every
+        credential holder may call.
+        """
+        async with self._sessionmaker() as session:
+            return await self._grouped(session, scope, start, end, RequestLog.model, person)
+
     async def totals(
         self,
         scope: Scope,
@@ -399,12 +411,9 @@ class ReportingService:
         if person:
             # **One predicate, on the one window.** Narrowing the report to a person anywhere else
             # would be a second place that decides what a figure is about, and the first screen to
-            # use it puts that figure next to the use case's own total (`FRD-626` FR-15).
-            # Spelled `__eq__` rather than `==`, and only because of the linter: `SIM300` reads a
-            # column on the left of a comparison as a Yoda condition and offers to flip it. Flipped,
-            # `person == _PERSON` compares a `str` with a column, answers `False`, and the filter
-            # silently disappears — the suggested fix is the bug, so the call is written out.
-            statement = statement.where(_PERSON.__eq__(person))
+            # use it puts that figure next to the use case's own total (`FRD-626` FR-15). The
+            # indexable spelling of `_PERSON == person`: the grouping expression reaches no index.
+            statement = statement.where(request_person_is(person))
         if scope is None:
             return statement
         if not scope:

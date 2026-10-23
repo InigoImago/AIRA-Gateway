@@ -133,6 +133,19 @@ who may invoke them, what they may submit, and what the system does by default.
   whose ambiguity is a *constant*, such as a phone number written as bounded digit groups, stays
   allowed, because the redactor **raises** on a refusal and a false positive there is a gateway
   that will not start.
+
+  *Amended 2026-10-22: a third shape, refused whole.* A back-reference (`\1`, `(?P=name)`) matches
+  whatever its group captured, and a conditional (`(?(1)…)`) branches on whether it did, so what
+  either costs is decided by the text rather than by the pattern. The analysis read a reference as
+  consuming nothing, and `(.*)\1!` — cubic in the prompt, 2.8 s on 2 000 characters — passed it, in
+  Management, in the gateway's pipeline check, in the injection filter and in the dry run, where a
+  use-case administrator could post it unsaved. Every pattern holding a reference is refused now,
+  including the two shapes the rule had allowed as harmless (`(.)\1{3,}`, `(\w+)\s*=\s*\1`):
+  telling a reference to one character from a reference to the whole prompt is a judgement about
+  the text, which the check cannot make. Moving the search to a worker thread was measured and
+  rejected — `re` holds the GIL for the whole of a match, so the loop stalls exactly as long — and
+  a time bound would need another regex engine or a process, which this decision does not take
+  on.
 - **Trade-off — `directAccessGrantsEnabled: false`** removes the password grant from the dev
   realm, so scripts that fetched a token with username/password must use the code flow (or
   re-enable it locally).

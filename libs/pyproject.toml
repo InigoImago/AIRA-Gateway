@@ -8,16 +8,20 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "structlog>=24.4",
-    "opentelemetry-sdk>=1.29",
-    "opentelemetry-exporter-otlp-proto-http>=1.29",
+    # **The OpenTelemetry family is one release, and never older than 1.45.1**: the API before it
+    # parses `tracestate` in quadratic time (GHSA-xcq7-p3pf-p88h), and the server instrumentation
+    # parses it on every request, before anything is authenticated. A floor keeps a re-lock from
+    # resolving back below a fix (`tools/tests/test_no_dependency_is_locked_below_its_advisory.py`).
+    "opentelemetry-sdk>=1.45.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
     # Imported directly too, so declared rather than reached through the two above: the API
     # (`from opentelemetry import trace`), the OTLP wire format (`observability.export` reads a
     # collector's partial-success answer) and the exporter's own encoders (`observability.payload`
     # renders a batch with them). `test_declared_dependencies.py` tells the namespace's
     # distributions apart.
-    "opentelemetry-api>=1.29",
-    "opentelemetry-proto>=1.29",
-    "opentelemetry-exporter-otlp-proto-common>=1.29",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-proto>=1.45.1",
+    "opentelemetry-exporter-otlp-proto-common>=1.45.1",
     # `aira_common.observability` renders an OTLP batch as JSON for `AIRA_DEBUG_OTEL_PAYLOAD`,
     # which needs `google.protobuf.json_format`. It resolves today because the OTLP exporter above
     # pulls protobuf in — and a transitive dependency is one an upgrade may drop. The third time
@@ -27,7 +31,9 @@ dependencies = [
     # aira_common.oidc verifies JWTs and fetches JWKS; it was only ever resolvable because the
     # gateway happened to declare pyjwt and the dev environment installs the whole workspace.
     # An isolated management image has no gateway, and failed to import at startup.
-    "pyjwt[crypto]>=2.9",
+    # 2.15.0 at least: the releases before it follow a redirect while fetching a key set
+    # (GHSA-9v7f-9g4p-ffgj), so the keys could come from wherever the issuer's address pointed.
+    "pyjwt[crypto]>=2.15.0",
     # aira_common.secrets reads Vault over HTTP (FRD-116). Declared for exactly the reason above,
     # and the second time this project has learned it: the management image failed to import at
     # startup because `httpx` happened to be a *gateway* dependency and the dev environment

@@ -108,6 +108,42 @@ key arrives deactivated), and children arriving before it are swept by the retir
 orders converge. Pinned by `test_a_read_model_rebuilt_from_the_topics_still_refuses_it` and
 `test_a_replay_does_not_bring_back_what_the_retirement_ended`.
 
+### 4.1b …and a purge does not undo it
+
+*Added after the second security check (finding A-1).* The protection above lasted only while the
+retirement was the last record of the slug's key. A purge replaces it with `usecase.purged`, and the
+gateway drops its tombstone; the children's own keys still ended on records that granted, because
+Management's purge removed its rows by `CASCADE` and announced none of them. A rebuild, or an offset
+reset, then re-admitted the old administrator and group grant — and, once the slug was used again,
+activated the old key against the new use case.
+
+So **retiring ends each child on the child's own key** (`end_access` in `views/lifecycle.py`):
+active keys are revoked, here too, and every membership, group grant, budget, rate limit, rule and
+the pipeline gets its removal event, while Management keeps those rows as the record (§4.4). The
+last record of every key of a retired use case then ends it, and every replay in every order
+converges on no access, whatever the slug's own record is by then. **A purge asks the same again**
+before its rows go: a use case retired before retirement did this has children whose last records
+still grant, and the purge is the last moment Management holds the rows that name their keys. For
+one retired since, the removals are sent twice, which changes nothing.
+
+Three designs were weighed:
+
+- **A permanent purge marker in the gateway** is a row in a database a rebuild starts without; and
+  once the slug is used again, the marker cannot tell the old incarnation's children from the new
+  one's, which may arrive before the use case they belong to.
+- **Binding children to an incarnation id** would be correct, and needs every child event and every
+  read-model table to carry the id, while every record already on the topics carries none.
+- **Ending each child on its own key** needs no new state anywhere: once each child's last record is
+  terminal, every replay in every order converges to *no access*. **Chosen** — at retirement,
+  because that is where access ends (FR-2), and again at the purge, for retirements that did not.
+
+**Not covered:** a use case purged before this. Its children's last records still grant on a
+replay, and Management no longer holds the rows that name their keys. Pinned by
+`tools/tests/test_a_purged_use_case_stays_purged_under_every_replay.py` (retired now and retired
+before, five replay orders after a rebuild, and an offset reset) and
+`management/backend/tests/test_retiring_ends_every_child_on_its_own_key.py`; mutations `PRG-1` to
+`PRG-9`.
+
 ### 4.2 The retention promise survives the deletion
 
 `retention.py` reads a use case's `retention_days` and `store_payloads` from that same row. While

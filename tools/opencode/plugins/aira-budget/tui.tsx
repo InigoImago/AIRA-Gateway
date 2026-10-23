@@ -41,7 +41,8 @@
  * AIRA console generates names it so), with the key OpenCode itself sends to it: from the
  * configuration, from the environment variable the configuration names, or from OpenCode's own
  * credential store (`opencode auth login aira`). `AIRA_BASE_URL` and `AIRA_API_KEY` override both.
- * Wherever OpenCode can call the model, this can read the budget, and it keeps no copy of a key.
+ * It keeps no copy of a key, and sends it to that address alone: over https, or over plain http to
+ * this machine, and never after a redirect.
  */
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
@@ -316,12 +317,56 @@ export function advice(missing: Location["missing"]): string {
   return "No AIRA gateway configured: use the configuration the AIRA console generates, or set AIRA_BASE_URL and AIRA_API_KEY."
 }
 
-/** Ask the gateway. The error carries the gateway's own reason: a bare status sends nobody anywhere. */
+/**
+ * The hosts a key may reach in plain http: this machine's own, where nothing it sends leaves it.
+ * Anywhere else the key — the one every model request carries too — is readable on the way.
+ */
+export const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
+
+/** A refusal of the plugin's own, said as it is rather than as a gateway that did not answer. */
+export class Refused extends Error {}
+
+/** Why the key may not be sent to `base`, or `null` when it may: https, or http to this machine. */
+export function unsafeAddress(base: string): string | null {
+  let url: URL
+  try {
+    url = new URL(base)
+  } catch {
+    return `${base} is not an address; the API key is not sent to it.`
+  }
+  if (url.protocol === "https:") return null
+  if (url.protocol === "http:" && LOOPBACK_HOSTS.includes(url.hostname)) return null
+  return `${url.protocol}//${url.host} is not https: the API key goes only over https, or over plain http to this machine. Use the gateway's https address.`
+}
+
+/**
+ * Ask the gateway. The error carries the gateway's own reason: a bare status sends nobody anywhere.
+ *
+ * **The key goes to the gateway and nowhere else.** Not over plain http to another machine, not
+ * after a redirect — `fetch` would carry a header of ours to wherever the answer points, another
+ * host or the same one over http — and an answer is read only from the origin it was asked of.
+ */
 export async function read(where: Location, fetcher: typeof fetch = fetch): Promise<any> {
-  const response = await fetcher(`${where.base}/v1beta/me/budget`, {
-    headers: { ...where.headers, "x-goog-api-key": where.key },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  })
+  const refusal = unsafeAddress(where.base)
+  if (refusal) throw new Refused(refusal)
+  const address = `${where.base}/v1beta/me/budget`
+  let response: Response
+  try {
+    response = await fetcher(address, {
+      headers: { ...where.headers, "x-goog-api-key": where.key },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      redirect: "error",
+    })
+  } catch (error: any) {
+    // The runtime's refusal of a redirect, said in the developer's words.
+    if (/redirect/i.test(`${error?.code ?? ""} ${error?.message ?? ""}`)) {
+      throw new Refused(`${where.base} answered with a redirect; the API key is not sent after one.`)
+    }
+    throw error
+  }
+  if (response.redirected || (response.url && new URL(response.url).origin !== new URL(address).origin)) {
+    throw new Refused(`${where.base} answered from ${response.url || "another address"}; that answer is not read.`)
+  }
   if (!response.ok) {
     const body = await response.text().catch(() => "")
     let reason = body
@@ -548,7 +593,7 @@ export function budgetPlugin(host: Host, env: Record<string, string | undefined>
         )
       }
     } catch (error: any) {
-      trouble(`${found.base} did not answer: ${error?.message ?? error}`)
+      trouble(error instanceof Refused ? error.message : `${found.base} did not answer: ${error?.message ?? error}`)
     }
   }
 

@@ -178,6 +178,11 @@ be sent upstream"*, and that identity is exactly what forced every model to carr
   own refusal, *"supported values are integers from 1 to 24576"*.
 - A model with no declared ceiling reserves nothing extra rather than guessing. The output cap
   already bounds the request, and a guess here is the thing this change removed.
+- **Where a cap bounds the answer, the thinking is not reserved on top of it.** A thinking budget is
+  drawn from the output allowance (`check_budget_fits` refuses one that does not fit), so the bound
+  on the answer — the caller's cap, the model's default, or the model's maximum when nothing is
+  sent — is the bound on both. Only where no figure bounds the answer is the installation's output
+  estimate plus the reserved thinking held back (`FRD-405` §4.2).
 
 Conservative in the safe direction, and settled against the real figure the moment the response
 returns, exactly as the output estimate already is.

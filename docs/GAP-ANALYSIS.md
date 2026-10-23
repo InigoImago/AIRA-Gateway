@@ -234,7 +234,11 @@ answer; nothing is checked by machine.
 
 | Gap | Note |
 |---|---|
-| The pipeline dry run asks release and approval, not price | A step's models are checked against the use case's release (`FRD-308`) and the installation's approval (`FRD-307`) before it runs; its step calls are not asked the price condition (`FRD-610` §3.2) that a production step is |
+| Whoever can write to the configuration topics configures the gateway | The consumer applies what arrives there to the read-model its authorization comes from, and the broker's credentials are the only boundary: outside local the gateway's API process and Management refuse `PLAINTEXT`, the consumer and retention workers check nothing, and `SASL_PLAINTEXT` and TLS without a client certificate pass everywhere. Signed events and the stricter transport rule are built and not merged, because both need infrastructure that already runs to change — a signing key in Vault, its public half with the gateway, TLS with an identity per service at the broker |
+| A use case purged before retirement ended its children can grant again on a replay | Each child is on a compaction key of its own; for a use case purged before retirement and purge ended them there, the children's last records still grant, a rebuild or an offset reset applies them again, and a re-created slug inherits them. Management no longer holds the rows that name those keys |
+| Google AI Studio embeddings are booked unpriced | Its embedding answer carries no token count, so such a request is counted apart as unpriced and no cost limit sees it (Vertex and the OpenAI dialect report one). What AI Studio returns has not been looked at live |
+| Audio input is priced at the text rate | Several Gemini models price audio input apart; the catalogue has one input price, and no dialect's audio share of the prompt is read. A price field on both planes and the share from each dialect's usage is the feature |
+| The trace context travels to the model providers | The HTTP instrumentation sends `traceparent` and the caller's `tracestate` with every upstream call; the privacy register does not name it. Whether providers should receive it at all is open |
 | `FRD-625` §11 — two decisions the privacy notice states | IP addresses in finding details (mask them or keep them); no automatic deletion outside request content — findings, suspensions, counters, accounts of people who left, and records kept forever by default |
 | `FRD-121` — document conversion for models that cannot read a type | Deliberately not built: the recommendation is to refuse rather than convert |
 | Local model prices | Invented, and they say so in their display name |
@@ -253,6 +257,10 @@ Kept so a closed gap is not reopened by somebody reading an older copy.
 | Nothing was paginated | `FRD-207`/`FRD-208` — the use-case list is paged at the server; findings and requests are paged by cursor |
 | Membership could drift between Keycloak groups and Management | [`FRD-209`](features/FRD-209-access-by-group.md) — a grant names a group or a person, and both planes resolve it with `aira_common.access.resolve` |
 | An unpriced model escaped a cost limit; the console did not say when budgets were off | `FRD-610` §3.2 (`AIRA_ENFORCE_PRICED_MODELS`) and §3.3 |
+| A request that set no output cap reserved a guess, and a burst booked many times its budget | `FRD-405` §4.2 — what bounds the answer is reserved (the cap sent, else the model's maximum), and a rebuilt counter keeps the reservations still open |
+| A purged use case's members, grants and keys came back on a replay, onto a re-created slug | [`FRD-607`](features/FRD-607-retiring-a-use-case.md) §4.1b — retirement ends each child on the child's own key, and a purge again for a retirement that did not |
+| A stream its caller left booked nothing on most dialects | [`FRD-128`](features/FRD-128-one-post-dispatch-sequence.md) FR-7, `ADR-0041` — the upstream is read to its end and booked at the vendor's last report |
+| The pipeline dry run did not ask a step's model the price condition | `FRD-306` — a dry run's steps meet production's conditions, and it weighs one per step |
 | A `pii_filter` did not reach an embedding | `FRD-309` FR-9 |
 | The approved-model catalog had no pickers | `FRD-307`, with the pickers in `FRD-308` |
 | No Git remote, and CI had never run | `origin` is on GitHub; `.github/workflows/ci.yml` runs on every push, and a release is published only behind its gates (`FRD-137`) |

@@ -371,3 +371,56 @@ the same transform runs over a **response** payload whose shape nobody here chos
 property guarded twice is one a single assertion cannot see losing half of itself.
 
 Mutations `ND1`–`ND8`.
+
+## 14. Extension (2026-10-22) — how much structure, not only how deep
+
+The depth bound closed the door for a structure nothing can *walk*; a security audit found the one
+beside it, for a structure everything has to *pay for*. What a body costs is its values, not its
+bytes: each one is an object to the decoder, a model to the parse where a surface models it, and
+four more walks in the writer. A body of minimal parts packs a value into six bytes, so the byte
+ceiling let a caller choose the work — and all of it ran before the rate limit, a suspension or a
+budget, which come after the parse. Measured on this gateway, every module loaded before the clock
+started, against the same bodies before and after:
+
+| An 8 MiB body of … | before: parse, validate, map | after |
+| --- | --- | --- |
+| 645 000 parts `{"text":"a"}` (Gemini) | 3.4 s, +830 MB, then 2.2 s in the writer | refused unread: 0.10 s, +7 MB |
+| 150 000 history turns (KIRA) | 3.2 s, +534 MB | refused unread: 0.08 s, +6 MB |
+| 2.8 million `{}` in a function result | 0.5 s, +214 MB, then 4.2 s in the writer | refused unread: 0.14 s, +8 MB |
+| 4.2 million numbers in a function result | 0.4 s, +56 MB, then 2.3 s in the writer | refused unread: 0.02 s, +4 MB |
+| 87 000 function declarations (Gemini) | 1.6 s, +248 MB | refused unread: 0.05 s, +5 MB |
+
+The "after" column is the scan alone, which the depth bound already ran for every one of these
+bodies; it got no slower.
+
+**Two bounds, each in front of the cost it bounds.**
+
+- `aira_common.nesting.MAX_JSON_VALUES` (250 000), counted in the depth's own scan on the raw bytes
+  — one for the document, one per comma and one per opening bracket outside strings, an upper bound
+  that never undercounts — and refused before `json.loads`: a named `400`, on the KIRA surface its
+  `422 VALIDATION_ERROR`, and a `400` in Management, which reads the same constant. The figure is
+  derived from what a legitimate request carries — 128 functions with the schemas generators write,
+  a thousand-turn agent conversation, a structured tool result of a few thousand records, an
+  embedding batch, two hundred records to rank: together under 60 000 — and is four times that.
+  It is a constant rather than a setting and independent of the byte ceiling, because an
+  installation raises that ceiling for attachments, which are one value however long.
+- `core.canonical.MAX_MESSAGES` (10 000 turns), `MAX_MESSAGE_PARTS` (20 000 parts across them) and
+  `MAX_TOOLS` (128 functions, Google's own maximum and the KIRA surface's bound before this), counted
+  on the parsed body **before** a surface validates any of them, since validating a turn is the most
+  expensive thing a body asks for. Under the value bound, a body of 120 000 parts or 40 000 turns
+  cost 0.5–0.75 s to validate; refused by count, 0.15–0.19 s, almost all of it the decoder.
+
+Both are refusals of an attributed caller and are recorded as such (`invalid_request`), which is
+also what lets an anomaly rule see somebody sending them.
+
+**What is left, said rather than left to be found.** Three lists are bounded by an installation's
+settings — an embedding batch (`AIRA_MAX_EMBEDDING_BATCH`), the records to rank
+(`AIRA_RERANK_MAX_RECORDS`) — or by a rule the KIRA surface checks after parsing (128 functions,
+in its own code), and their entries are validated before those bounds are asked. Under the value
+bound that costs up to half a second before the rate limit. And the parse as a whole still runs
+before the rate limit and a suspension, because those need the use case the surface has not
+resolved until then; the bounds make it cheap, not later.
+
+`test_a_body_is_bounded_in_structure_before_it_is_parsed.py` (both surfaces, every route that reads a
+body, the row, and the decoder replaced by one that fails if it is asked), `test_nesting.py`'s
+oracle over every window, and the control plane's sweep. Mutations `HP-4`–`HP-14`.

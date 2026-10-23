@@ -1225,6 +1225,13 @@ channel's records — refused attempts included — never reaches a SIEM; the sh
 id, which a caller can choose, so a caller who sends a high one is always among the dropped; and a
 dropped request still answers with an `x-trace-id`, stored on its audit row, that names no trace.
 
+**Only the trace context is read.** Both applications take a caller's `traceparent` and
+`tracestate`, and nothing else a caller sends for tracing: a `tracestate` longer than 8192
+characters is dropped unread — the trace id beside it still continues — and `baggage` is not read
+at all. Nothing here uses baggage, reading it costs work before the request is authenticated, and
+the HTTP client would otherwise carry a caller's baggage on to every upstream it calls. An
+installation that wants other propagators names them in `OTEL_PROPAGATORS`, and that choice stands.
+
 **The records are the gateway's.** Management marks no span with `aira.*`, so the control plane's
 own accesses are not among them; its log records travel, as all logs do.
 

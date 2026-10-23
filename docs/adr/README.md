@@ -50,3 +50,5 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0037 | [Google is reached without a Google key, through the installation's own identity](ADR-0037-google-without-a-google-key.md) | **Accepted** | 2026-10-17 |
 | 0038 | [A catalog entry starts from a public model list, and is still decided by a person](ADR-0038-the-catalog-starts-from-a-public-model-list.md) | **Accepted** | 2026-10-17 |
 | 0039 | [Reranking is a capability of the core, served on both surfaces](ADR-0039-reranking-is-a-capability-of-the-core.md) | **Accepted** | 2026-10-21 |
+| 0041 | [A stream its caller left is read to its end](ADR-0041-a-stream-its-caller-left-is-read-to-its-end.md) | **Accepted** | 2026-10-22 |
+| 0043 | [A release is built from pinned code, by jobs that hold only their own token, and signed](ADR-0043-a-release-is-built-from-pinned-code-by-jobs-that-hold-only-their-own-token.md) | **Accepted** | 2026-10-22 |

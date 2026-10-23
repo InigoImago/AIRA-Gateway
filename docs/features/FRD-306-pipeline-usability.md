@@ -96,6 +96,14 @@ and `incidents/diagnostics.py`. In the last, the reachability check (`:check`, `
 generates, but *Ask the model* (`:checkThinking`) makes real one-token generations — recorded as
 `diagnostic` rows, capped by no budget (`FRD-610` §3 names the gap).
 
+**One press is not one request.** A dry run runs every step of the pipeline it is given — up to
+32, each of which may call a model — and was weighed as one request, so the rate limit saw a
+thirty-second of what it allowed. It weighs one per step now. And its steps meet production's
+conditions on their models (release, approval, residency, and a price where spend is capped):
+without them, an administrator of a cost-capped use case reached an approved, released but
+unpriced model through the dry run, with an instruction of their own, booked at no cost
+(DEVLOG, 2026-10-22).
+
 What the audit did **not** find, checked in the same pass: budgets and rate limits carry the same
 fields on both planes; `upserted` and `deleted` are emitted, routed and applied for both, in both
 directions (`test_outbox_routing.py`); both scopes are evaluated together on every verb, because

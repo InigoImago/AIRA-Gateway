@@ -732,7 +732,7 @@ async def test_a_validation_refusal_logs_which_fields_failed(
 
 
 def test_the_logged_shape_is_bounded_however_large_the_body() -> None:
-    from aira_gateway.api.kira.routes import SHAPE_ENTRIES, body_shape
+    from aira_gateway.api.kira.log_shape import SHAPE_ENTRIES, body_shape
 
     shape = body_shape({"request": {"parts": [{"text": "x" * 50}] * 100_000}})
 

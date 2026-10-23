@@ -3,7 +3,7 @@ import os
 from collections.abc import Iterator
 
 import pytest
-from opentelemetry import trace
+from opentelemetry import propagate, trace
 from opentelemetry._logs import _internal as logs_api
 from opentelemetry.metrics import _internal as metrics_api
 from opentelemetry.sdk.trace import TracerProvider
@@ -18,6 +18,15 @@ _GLOBAL_PROVIDERS = (
     (metrics_api, "_METER_PROVIDER", "_METER_PROVIDER_SET_ONCE"),
     (logs_api, "_LOGGER_PROVIDER", "_LOGGER_PROVIDER_SET_ONCE"),
 )
+
+
+@pytest.fixture(autouse=True)
+def _propagators_put_back() -> Iterator[None]:
+    """`configure_observability` sets the process's propagators, enabled or not; each test here
+    leaves them as the session had them."""
+    before = propagate.get_global_textmap()
+    yield
+    propagate.set_global_textmap(before)
 
 
 @pytest.fixture
@@ -312,3 +321,25 @@ def test_configure_observability_is_what_excludes_them(
     import os
 
     assert os.environ.get(EXCLUDED_URLS_ENV) == HEALTH_PATHS
+
+
+@pytest.mark.parametrize("exporting", [True, False])
+def test_configure_observability_is_what_restricts_the_propagators(
+    monkeypatch, providers_put_back: None, exporting: bool
+) -> None:
+    """The twin of the test above, for which trace headers a request has read. Driven through the
+    function every process calls, **exporting or not**: the control plane instruments Django on
+    `AIRA_OTEL_ENABLED` alone, so an instrumentation can parse a request's headers with nothing
+    configured to receive a span."""
+    import aira_common.observability as observability
+
+    monkeypatch.delenv(observability.PROPAGATORS_ENV, raising=False)
+    monkeypatch.setattr("aira_common.observability.providers._configured", False)
+
+    observability.configure_observability(
+        service_name="probe",
+        endpoint="http://127.0.0.1:1" if exporting else None,
+        enabled=exporting,
+    )
+
+    assert propagate.get_global_textmap().fields == {"traceparent", "tracestate"}

@@ -1,6 +1,25 @@
 # AIRA — uv workspace root (virtual; no package of its own).
 # Shared tooling config lives here; each member has its own pyproject.
 
+[tool.uv]
+# **Floors for what the workspace only reaches through another package.** None of these is a
+# dependency of ours, so no member can state its floor; a constraint takes part in every resolution
+# without installing anything. Each is the first release no published advisory names, and
+# `tools/tests/test_no_dependency_is_locked_below_its_advisory.py` holds the lock to it.
+constraint-dependencies = [
+    # GHSA-6q48-6c7w-9gw2: the bundle before it trusts a root whose intermediates' private keys
+    # were compromised — and it is the trust store of every upstream and Vault connection.
+    "certifi>=2026.10.19",
+    # Streaming decompression and proxy TLS advisories (GHSA-vxq7-64xx-v4gw, GHSA-gh4c-6fx4-qh6g,
+    # GHSA-8988-9cw3-xx77).
+    "urllib3>=2.8.0",
+    # Quadratic and backtracking parses of SQL text (GHSA-prg7-hcfm-mfcr and four more).
+    "sqlparse>=0.6.0",
+    # CVE-2026-102991, a template path that escapes its directory on Windows. Not reachable here —
+    # Alembic renders its own templates, on Linux — and a scanner of the gateway image names it.
+    "mako>=1.4.2",
+]
+
 [tool.uv.workspace]
 members = ["gateway", "libs", "management/backend"]
 

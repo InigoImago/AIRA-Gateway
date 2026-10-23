@@ -44,6 +44,7 @@ from aira_gateway.api.serving.controls import (
     resolve_reasoning,
 )
 from aira_gateway.api.serving.pipeline_run import (
+    reads_each_text,
     run_pipeline,
     run_pipeline_over_rerank,
     run_pipeline_over_texts,
@@ -210,12 +211,19 @@ async def _prepare_rerank(
     """The same sequence for a ranking request (`FRD-147` FR-6), in the same order.
 
     Use case, then the refusals that need no model, then the rate limit at the request's weight —
-    one per ranking unit, the provider's — then the pipeline over every text, the declaration, and
-    the reservation last. Nothing is reserved for output: a ranking answers no text. Called once
-    the use case is known to be live, as every verb is.
+    one per ranking unit, the provider's, or one per text where the pipeline reads each text — then
+    the pipeline over every text, the declaration, and the reservation last. Nothing is reserved
+    for output: a ranking answers no text. Called once the use case is known to be live, as every
+    verb is.
     """
     check_rerank_shape(rerank, settings_of(request).rerank_max_records)
-    await guard_before_work(request, units=rerank.units)
+    # A step that reads each text calls a model for each, so the ranking weighs what it makes the
+    # pipeline do — as an embedding batch weighs one per text — or 200 records were 401 model calls
+    # at the rate limit's weight of two.
+    units = rerank.units
+    if await reads_each_text(request):
+        units = max(units, len(rerank.texts()))
+    await guard_before_work(request, units=units)
     rerank = await run_pipeline_over_rerank(request, rerank, trail)
     declaration = await check_declaration(
         request, model=rerank.model, method=RERANK_METHOD, requested=None
@@ -226,8 +234,9 @@ async def _prepare_rerank(
         model=rerank.model,
         max_output_tokens=None,
         units=rerank.units,
-        # The input figure is the ranking unit (FR-7), so that is what is held back for it.
-        extra_tokens=rerank.units,
+        # The input figure is the ranking unit (FR-7), so that is what is held back for it — at the
+        # input rate it is booked at, or a ranker priced on input alone reserves nothing.
+        input_units=rerank.units,
         answers_in_tokens=False,
     )
     set_span_attributes({"aira.rerank.records": len(rerank.records)})
