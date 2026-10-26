@@ -6,9 +6,10 @@ wants it to go through AIRA instead of straight to Google.
 Responses are shown as the gateway words them, shortened with `…`. Where something is *not*
 verified, it says so rather than implying it.
 
-> The short version: the client changes its **base URL** and its **API key**, and nothing else.
-> What has to happen first is administration — every request must belong to a **use case**, and
-> somebody must have released the models it may call.
+> The short version: the client changes its **base URL** — to one that names its use case,
+> `https://<gateway>/uc/<use-case>/v1beta` — and its **API key**, and nothing else. What has to
+> happen first is administration — every request must belong to a **use case**, and somebody must
+> have released the models it may call.
 
 Related reading: [`deployment/`](deployment/README.md) to get a stack running,
 [`MIGRATION-KIRA.md`](MIGRATION-KIRA.md) for the predecessor's own wire contract,
@@ -18,7 +19,8 @@ Related reading: [`deployment/`](deployment/README.md) to get a stack running,
 
 ## 1. The surface
 
-Mounted at **`/v1beta`**, with Google's colon-verb convention:
+Mounted at **`/v1beta`**, with Google's colon-verb convention — behind `/uc/<use-case>`, which a
+model call carries whatever its credential (§3):
 
 | | |
 |---|---|
@@ -31,11 +33,12 @@ Mounted at **`/v1beta`**, with Google's colon-verb convention:
 
 Any other verb — `:countTokens`, for one — is answered `400` *"Unknown method"*.
 
-**Ranking** is served on Google's own path, so Google's ranking client works with only its endpoint
-changed, and an API key or token of the gateway as its credential. `model` is required and names a
-catalogue entry declared a reranker; the project, location and configuration in the path select
-nothing — the gateway ranks in its own Google project, at the locations the catalogue gives the
-model, for the use case the request belongs to. A ranking weighs one request per hundred records
+**Ranking** is served on Google's own path, so Google's ranking client is pointed at the gateway by
+its endpoint, with an API key or token of the gateway as its credential — and names the use case
+as any client does, with `/uc/<use-case>` in front of the path or the `X-AIRA-Use-Case` header
+(§3). `model` is required and names a catalogue entry declared a reranker; the project, location
+and configuration in the path select nothing — the gateway ranks in its own Google project, at the
+locations the catalogue gives the model, for the use case the request belongs to. A ranking weighs one request per hundred records
 against the use case's rate limit and budget.
 
 The credential goes in `x-goog-api-key`, `?key=` or a bearer header — whichever your client already
@@ -97,30 +100,34 @@ is skipped by a fallback chain.
 
 ---
 
-## 3. The use case — `X-AIRA-Use-Case`
+## 3. The use case — in the base URL
 
-An API key is issued **for one use case**, so a client using one sends nothing extra.
-
-An OIDC bearer token carries no use case, so on this surface a model call made with one **always
-names it** — with the header, or with a path prefix for clients that cannot set a header:
+**Every model call names its use case, whatever the credential** — an API key as much as a
+Keycloak token. A key is issued for one use case and may name only that one; a person names one of
+those their grants reach. Either puts the use case in front of the path, which is the only thing a
+client that takes a base URL needs to change — or sends a header, where a client can set one and
+not its path:
 
 ```
-X-AIRA-Use-Case: assistant
-POST /uc/assistant/v1beta/models/…
+POST /uc/assistant/v1beta/models/…        base URL https://<gateway>/uc/assistant/v1beta
+X-AIRA-Use-Case: assistant                with the base URL https://<gateway>/v1beta
 ```
 
-Where both appear the header wins. A model call that names none is refused, however many use cases
-the caller belongs to:
+The gateway strips the prefix before routing, so everything after it is the URL Google's clients
+already build. Where both appear the header wins. A model call that names none is refused, and the
+refusal says what to add — for a key, its own use case:
 
 ```
 400  {"error": {"code": 400,
-      "message": "Missing use case (X-AIRA-Use-Case header or /uc/<use-case> path).",
+      "message": "Missing use case: every model call names one, with the /uc/<use-case> path prefix
+                  or the X-AIRA-Use-Case header. This key belongs to 'assistant': put /uc/assistant
+                  in front of the path.",
       "status": "INVALID_ARGUMENT"}}
 ```
 
-This differs from the KIRA surface, which attributes a caller who belongs to exactly one use case
-to it ([`MIGRATION-KIRA.md` §3.3](MIGRATION-KIRA.md#33-the-use-case--x-aira-use-case)). Reading the
-catalog (`GET`) spends nothing and needs no use case.
+The KIRA surface applies the same rule ([`MIGRATION-KIRA.md`
+§3.3](MIGRATION-KIRA.md#33-the-use-case--in-the-base-url)). Reading the catalog (`GET`) or what
+is left of a budget spends nothing and names no use case; a key's reading is its own use case's.
 
 **Neither spelling grants access.** Naming a use case you are not in is a 403, not a shortcut, and
 so is a key naming a use case other than its own.
@@ -143,7 +150,10 @@ from google.genai import types
 
 client = genai.Client(
     api_key="aira_a69e58c1_68d4…",
-    http_options=types.HttpOptions(base_url="http://localhost:8001", api_version="v1beta"),
+    # The SDK adds `/v1beta` itself, so its base is the use case's address without it.
+    http_options=types.HttpOptions(
+        base_url="http://localhost:8001/uc/assistant", api_version="v1beta"
+    ),
 )
 
 response = client.models.generate_content(
@@ -195,7 +205,7 @@ generations read:
     "aira": {
       "npm": "@ai-sdk/google",
       "options": {
-        "baseURL": "http://localhost:8001/v1beta",
+        "baseURL": "http://localhost:8001/uc/assistant/v1beta",
         "apiKey": "aira_…"
       },
       "models": { "qwen3:0.6b": { "name": "qwen3:0.6b via AIRA …" } }
@@ -245,19 +255,22 @@ Three things that make OpenCode fail against a Gemini endpoint and are not the g
   (`~/.local/share/opencode/auth.json`), OpenCode 2 with `opencode auth login aira`, which asks for
   it. Then `apiKey` can be left out of the configuration. Do not pass the key on OpenCode 2's command
   line (`--answer`): it writes its command line into its log.
-- **A path prefix instead of the header**, where a client cannot set one: `baseURL`
+- **The use case in the base URL**, which every model call needs: `baseURL`
   `https://<host>/gw/uc/<use-case>/v1beta` through the console's proxy, or
-  `https://<gateway>/uc/<use-case>/v1beta` directly.
+  `https://<gateway>/uc/<use-case>/v1beta` directly — the console's file carries it already. A
+  configuration rolled out before every call had to name its use case lacks it, and every turn is
+  answered `400` until it is added.
 
 ### Anything else
 
 Any client that lets you override the base URL should work — that is the whole claim of a
-compatible surface. AIRA has not been run against LangChain, LlamaIndex or the Vertex SDK, and
-this page will not pretend otherwise. If you try one, the fastest check is `GET /v1beta/models`
-with your key: a `200` means the credential is accepted, and lists what this gateway serves. It
-does not check the use case — a model call does, and a `403` there saying the use case is *not
-known to this gateway* means its configuration has not arrived yet. Anything after that is the
-client's own configuration.
+compatible surface — given a base URL that names its use case, `…/uc/<use-case>/v1beta`. AIRA has
+not been run against LangChain, LlamaIndex or the Vertex SDK, and this page will not pretend
+otherwise. If you try one, the fastest check is `GET /v1beta/models` with your key: a `200` means
+the credential is accepted, and lists what this gateway serves. It does not check the use case — a
+model call does: a `400` *"Missing use case"* means the base URL lacks `/uc/<use-case>`, and a `403`
+saying the use case is *not known to this gateway* means its configuration has not arrived yet.
+Anything after that is the client's own configuration.
 
 ---
 

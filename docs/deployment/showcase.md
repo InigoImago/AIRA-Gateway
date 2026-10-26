@@ -195,28 +195,38 @@ The showcase is a real gateway with a real Keycloak, so a client you already hav
 KIRA-compatible chatbot, an SDK, anything that speaks one of the two surfaces — can be aimed at it
 without changing the client's code. Two ways in, and the first takes about a minute.
 
-**The two base URLs.** Both are on the gateway, and both are also reachable through the console's
-own proxy at `http://localhost:4200/gw/…` if that is easier to reach from where your client runs.
+**The two base URLs, per use case.** Every model call names its use case — with a key as much as
+with a sign-in — so a base URL carries it as `/uc/<use-case>`. Both are on the gateway, and both
+are also reachable through the console's own proxy at `http://localhost:4200/gw/uc/<use-case>/…` if
+that is easier to reach from where your client runs.
 
 | Surface | Base URL | Verbs |
 |---|---|---|
-| KIRA compatibility | `http://localhost:8001/kira/api/external` | `POST /chat`, `POST /streaming-chat`, `POST /embed`, `POST /rerank`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage` |
-| Gemini dialect | `http://localhost:8001/v1beta` | `GET /models`, `POST /models/{model}:generateContent`, `:streamGenerateContent`, `:embedContent`, `:batchEmbedContents` |
+| KIRA compatibility | `http://localhost:8001/uc/<use-case>/kira/api/external` | `POST /chat`, `POST /streaming-chat`, `POST /embed`, `POST /rerank`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage` |
+| Gemini dialect | `http://localhost:8001/uc/<use-case>/v1beta` | `GET /models`, `POST /models/{model}:generateContent`, `:streamGenerateContent`, `:embedContent`, `:batchEmbedContents` |
 
 ### With an API key — the quickest test
 
 `make showcase` prints a ready-made request with `kundenservice`'s key, and the console shows the
-same thing on a use case's **Overview** tab — base URL, the models it may call, and a ready-made
-example per surface. Credentials are read in one order: `Authorization: Bearer <token>` →
-`x-goog-api-key` → `?key=`, so a client that can set *either* header works unchanged.
+same thing on a use case's **Overview** tab, under *Connecting a client* — the address of each
+interface, the models it may call, and a request for curl, Python, TypeScript, OpenCode and a KIRA
+client. Credentials are read in one order: `Authorization: Bearer <token>` → `x-goog-api-key` →
+`?key=`, so a client that can set *either* header works unchanged.
 
 ```bash
 curl -s http://localhost:8001/kira/api/external/models \
   -H "x-goog-api-key: aira_…"      # the key printed for kundenservice
 ```
 
-A key is bound to its use case, so nothing else has to be configured: attribution, budget, rate
-limit and audit row all follow from the key.
+Reading the model list names no use case. A model call does, with the prefix — the key is bound to
+`kundenservice` and may name only that one, and attribution, budget, rate limit and audit row all
+follow:
+
+```bash
+curl -s http://localhost:8001/uc/kundenservice/kira/api/external/chat \
+  -H "x-goog-api-key: aira_…" -H 'content-type: application/json' \
+  -d '{"model_id": 1004, "request": {"parts": [{"text": "say hi"}]}}'
+```
 
 ### Or make a use case of your own
 
@@ -299,9 +309,9 @@ groups             : *** ABSENT ***   ← the join is invisible
 preferred_username : service-account-probe-groups
 ```
 
-The request that follows is authenticated and then refused with `403
-STANDARD_USER_PERMISSION_REQUIRED` — *"cannot be attributed to a use case"* — which reads like a
-permission problem and is a mapper problem.
+The request that follows — `/uc/entwicklung/…`, naming the use case — is authenticated and then
+refused with `403` *"Not a member of use case 'entwicklung'"*, which reads like a permission
+problem and is a mapper problem.
 
 **Clients → your client → Client scopes → `<clientId>-dedicated` → Add mapper → By configuration.**
 
@@ -358,7 +368,7 @@ The message names the control, and each of these means something different:
 | Answer | Means |
 |---|---|
 | `401 INVALID_TOKEN` | the token is not valid *for this gateway* — usually the issuer above, or an expired token |
-| `403 STANDARD_USER_PERMISSION_REQUIRED`, *"cannot be attributed to a use case"* | authenticated fine; you named no use case. Use `/uc/<slug>` or the `X-AIRA-Use-Case` header |
+| `403 STANDARD_USER_PERMISSION_REQUIRED`, *"Missing use case"* | authenticated fine; you named no use case. Use `/uc/<slug>` or the `X-AIRA-Use-Case` header — a key too |
 | `403 … not known to this gateway` | the use case's configuration has not reached the gateway yet — a new one, a few seconds after it was created — or Management has no such use case |
 | `403 Not a member of use case …` | the use case is named but this caller does not reach it — the group or membership step above |
 | `429` / over budget | it worked, and the demo's deliberately small limits did their job |

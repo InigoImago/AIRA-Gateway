@@ -1,14 +1,15 @@
 import { vi } from 'vitest';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { CatalogModel, KiraModel } from '../../core/api/models';
-import { ConnectionPanel } from './connection-panel';
+import { Capability, CatalogModel, KiraModel } from '../../core/api/models';
+import { ClientKind, ConnectionPanel } from './connection-panel';
 
 /**
- * The connection block builds its examples from what the use case actually has.
+ * The connection block builds its addresses and examples from what the use case actually has.
  *
- * The property under test is that it only ever offers what would work: never a model the use case
- * may not call, a KIRA id for a model that has none, or an example before the gateway answered.
+ * The property under test is that it only ever offers what would work: every address names this
+ * use case, as every model call must (`FRD-149`); never a model the use case may not call, a KIRA
+ * id for a model that has none, or an example before the gateway answered.
  */
 describe('ConnectionPanel', () => {
   let fixture: ComponentFixture<ConnectionPanel>;
@@ -31,20 +32,22 @@ describe('ConnectionPanel', () => {
    * The catalogue says the same as the listing unless a test says otherwise: the two disagreeing is
    * its own case below.
    */
-  function answer(models: KiraModel[] = KIRA_MODELS): void {
+  function answer(models: KiraModel[] = KIRA_MODELS, extra: CatalogModel[] = []): void {
     fixture.componentRef.setInput('kira', models);
-    declare(
-      models.map((model) => ({
+    declare([
+      ...models.map((model) => ({
         name: model.name,
         capabilities: [
           ...(model.capabilities.includes('Chat') ? (['generate'] as const) : []),
           ...(model.capabilities.includes('Embedding') ? (['embed'] as const) : []),
+          ...(model.capabilities.includes('Reranker') ? (['rerank'] as const) : []),
         ],
       })),
-    );
+      ...extra,
+    ]);
   }
 
-  /** What the model catalogue declares — the Gemini surface's source. */
+  /** What the model catalogue declares — the source of every example but the KIRA ones. */
   function declare(catalog: CatalogModel[] | null): void {
     fixture.componentRef.setInput('catalog', catalog);
     fixture.detectChanges();
@@ -58,15 +61,89 @@ describe('ConnectionPanel', () => {
     return (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`);
   }
 
-  /** Switch surface. The two are tabs, so only one is in the DOM at a time. */
-  function open(surface: 'gemini' | 'kira'): void {
-    testid(`conn-tab-${surface}`)?.click();
+  /** Switch client. The clients are tabs, so only one is in the DOM at a time. */
+  function open(client: ClientKind): void {
+    testid(`conn-tab-${client}`)?.click();
     fixture.detectChanges();
   }
+
+  const model = (name: string, ...capabilities: Capability[]): CatalogModel => ({
+    name,
+    capabilities,
+  });
 
   beforeEach(() => {
     TestBed.configureTestingModule({ providers: [provideRouter([])] });
   });
+
+  // ---- every address names the use case (`FRD-149`) ----------------------------------
+
+  it('gives every interface an address that names this use case', () => {
+    build(['chat-model']);
+    answer([...KIRA_MODELS, { id: 3001, name: 'ranker', capabilities: ['Reranker'] }]);
+    fixture.componentRef.setInput('released', ['chat-model', 'ranker']);
+    fixture.detectChanges();
+
+    expect(testid('connection-gemini-base')?.textContent?.trim()).toMatch(
+      /\/gw\/uc\/demo-uc\/v1beta$/,
+    );
+    expect(testid('connection-kira-base')?.textContent?.trim()).toMatch(
+      /\/gw\/uc\/demo-uc\/kira\/api\/external$/,
+    );
+    expect(testid('connection-rank-url')?.textContent).toContain('/gw/uc/demo-uc/v1/projects/');
+  });
+
+  it('builds every example from an address that names this use case', () => {
+    // An example that names none is refused when pasted, whichever credential it is sent with.
+    build(['chat-model', 'embed-model', 'speaker', 'ranker']);
+    answer(
+      [...KIRA_MODELS, { id: 3001, name: 'ranker', capabilities: ['Reranker'] }],
+      [model('speaker', 'speech'), model('tool-model', 'generate', 'tools')],
+    );
+
+    const examples: string[] = [];
+    for (const client of ['curl', 'python', 'typescript', 'kira'] as const) {
+      open(client);
+      examples.push(
+        ...[...(fixture.nativeElement as HTMLElement).querySelectorAll('pre.code-block')]
+          .map((node) => node.textContent ?? '')
+          .filter((example) => example.includes('/gw')),
+      );
+    }
+    expect(examples.length).toBeGreaterThan(8);
+    for (const example of examples) {
+      expect(example, example).toContain('/gw/uc/demo-uc');
+    }
+  });
+
+  it('says in the summary that every call names the use case, and where to send it', () => {
+    // The question somebody opens it with is "where do I send this": the summary answers it, with
+    // the address, before anything is opened.
+    build(['chat-model']);
+    answer();
+
+    const summary = (testid('connection') as HTMLElement | null)?.querySelector('summary');
+    expect(summary?.textContent).toContain('Every model call names this use case');
+    expect(summary?.textContent).toContain('/gw/uc/demo-uc/v1beta');
+    // The claim this panel made before a key had to name its use case must not come back.
+    expect(summary?.textContent).not.toContain('no use case in the URL');
+    expect(text()).not.toContain('issued for one use case and carries it');
+  });
+
+  it('explains the prefix and the header, and that naming grants nothing', () => {
+    build(['chat-model']);
+    answer();
+
+    const section = testid('connection-attribution')?.textContent ?? '';
+    expect(section).toContain('Every model call names its use case');
+    expect(section).toContain('a key too');
+    expect(section).toContain('/uc/demo-uc');
+    expect(section).toContain('400');
+    expect(section).toContain('403');
+    expect(testid('connection-header-example')?.textContent).toContain('X-AIRA-Use-Case: demo-uc');
+  });
+
+  // ---- who is calling ------------------------------------------------------------------
 
   // Every example asks for `<your key>`, so the block names the tab where keys are issued — in
   // words, with no second route to it (see 'offers no key-issuing control of its own').
@@ -80,10 +157,10 @@ describe('ConnectionPanel', () => {
     expect(text()).toContain('x-goog-api-key');
   });
 
-  // The credentials sit outside the tabs because they are the surfaces' common ground — except the
-  // query parameter, which only the Gemini surface reads. Said where the three forms are listed, or
-  // a KIRA client copies the third and is refused.
-  it('says the key in a URL is the Gemini surface’s alone', () => {
+  // Credentials are common to every interface — except the query parameter, which only the Gemini
+  // API reads. Said where the three forms are listed, or a KIRA client copies the third and is
+  // refused.
+  it('says the key in a URL is the Gemini API’s alone', () => {
     build(['chat-model']);
     answer();
 
@@ -94,13 +171,13 @@ describe('ConnectionPanel', () => {
   });
 
   // A bearer token is how a group grant reaches the data plane, and it carries an identity, not a
-  // use case — which sends the reader to the naming section instead of an unexplained 403.
-  it('covers the OIDC bearer, and says what it does not carry', () => {
+  // use case — which is why the address names one.
+  it('covers the Keycloak bearer, and says what it does not carry', () => {
     build(['chat-model']);
     answer();
 
     expect(testid('connection-bearer-example')?.textContent).toContain('Authorization: Bearer');
-    expect(testid('connection-credentials')?.textContent).toContain('carries no use');
+    expect(testid('connection-credentials')?.textContent).toContain('carries no use case');
   });
 
   // Configuration reaches the gateway over the event bus, so a fresh grant is answered 403 for a
@@ -121,6 +198,8 @@ describe('ConnectionPanel', () => {
     expect(text()).not.toContain('Issue a key');
   });
 
+  // ---- the models -----------------------------------------------------------------------
+
   it('offers only the models this use case may call', () => {
     build(['chat-model', 'embed-model']);
     answer();
@@ -133,69 +212,185 @@ describe('ConnectionPanel', () => {
     expect(table).not.toContain('not-released');
   });
 
-  it('carries the KIRA id into the compatibility example', () => {
+  it('says how each interface addresses a model, which is the thing that differs', () => {
     build(['chat-model']);
     answer();
 
-    // Gemini first, because that is the tab a reader lands on.
-    expect(testid('connection-gemini-chat')?.textContent).toContain(
-      '/models/chat-model:generateContent',
-    );
-
-    open('kira');
-    // The one field a migrating client actually has to fill in, and the one nobody could see: it
-    // lives in the catalog, which an administrator of a use case may not read.
-    expect(testid('connection-kira-chat')?.textContent).toContain('"model_id":9001');
+    const addressing = testid('connection-addressing')?.textContent ?? '';
+    expect(addressing).toContain('by name');
+    expect(addressing).toContain('by number');
   });
 
-  it('shows one surface at a time, and says which one is open', () => {
+  it('shows an id as unknown rather than absent while the gateway has not answered', () => {
+    build(['chat-model']);
+    // No `answer()`: `null` is "we have not looked" and `[]` is "there is none", and the two must
+    // not render the same — otherwise a slow gateway looks exactly like a model with no id.
+    expect(testid('connection-models')?.textContent).not.toContain('none assigned');
+    expect(testid('connection-kira-id')?.textContent).toContain('…');
+  });
+
+  it('says a model without a KIRA number has none, rather than that it is unserved', () => {
+    build(['chat-model']);
+    answer(
+      [{ id: 9001, name: 'somebody-else', capabilities: ['Chat'] }],
+      [model('chat-model', 'generate')],
+    );
+
+    expect(testid('connection-kira-id')?.textContent).toContain('none assigned');
+    // No KIRA example: nothing here can address that model by number.
+    open('kira');
+    expect(testid('connection-kira-chat')).toBeNull();
+    expect(testid('connection-no-kira-chat')).not.toBeNull();
+  });
+
+  it('says a released model the catalogue does not hold is undeclared, not that it is unserved', () => {
+    build(['chat-model', 'local-model']);
+    answer();
+
+    expect(testid('connection-models')?.textContent).toContain('not declared in the catalog');
+  });
+
+  it('names everything a model serves, from the catalogue', () => {
+    build(['both-model', 'speaker', 'ranker']);
+    answer(
+      [{ id: 9005, name: 'both-model', capabilities: ['Chat', 'Embedding'] }],
+      [model('speaker', 'speech'), model('ranker', 'rerank')],
+    );
+
+    const table = testid('connection-models')?.textContent ?? '';
+    expect(table).toContain('generation, embeddings');
+    expect(table).toContain('speech');
+    expect(table).toContain('ranking');
+  });
+
+  // ---- a request per client --------------------------------------------------------------
+
+  it('shows one client at a time, and says which one is open', () => {
     build(['chat-model']);
     answer();
 
-    // The point of the split: a KIRA client will never send a model name and a Gemini client will
-    // never send an id, so showing both at once made every reader discard half of what they saw.
-    expect(testid('connection-gemini-base')).not.toBeNull();
-    expect(testid('connection-kira-base')).toBeNull();
-    expect(testid('conn-tab-gemini')?.getAttribute('aria-selected')).toBe('true');
+    expect(testid('connection-gemini-chat')).not.toBeNull();
+    expect(testid('connection-kira-chat')).toBeNull();
+    expect(testid('conn-tab-curl')?.getAttribute('aria-selected')).toBe('true');
 
     open('kira');
 
-    expect(testid('connection-kira-base')).not.toBeNull();
-    expect(testid('connection-gemini-base')).toBeNull();
+    expect(testid('connection-kira-chat')).not.toBeNull();
+    expect(testid('connection-gemini-chat')).toBeNull();
     expect(testid('conn-tab-kira')?.getAttribute('aria-selected')).toBe('true');
   });
 
-  it('says how each surface addresses a model, which is the thing that differs', () => {
-    build(['chat-model']);
-    answer();
-
-    expect(testid('connection-gemini-addressing')?.textContent).toContain('by name');
-    open('kira');
-    expect(testid('connection-kira-addressing')?.textContent).toContain('integer id');
-  });
-
-  it('does not claim a model is unserved when it may simply have no KIRA number', () => {
-    build(['chat-model']);
-    answer([{ id: 9001, name: 'somebody-else', capabilities: ['Chat'] }]);
-    open('kira');
-
-    // An entry absent from the KIRA listing is either no id or not served; the panel cannot tell.
-    expect(testid('connection-models')?.textContent).toContain("not in the gateway's KIRA listing");
-    expect(testid('connection-models')?.textContent).not.toContain('does not serve');
-    // No example either way: nothing here knows what that model can do.
-    expect(testid('connection-kira-chat')).toBeNull();
-  });
-
-  it('builds the embedding example from a model that embeds, not from the first one released', () => {
+  it('gives curl a generation, a stream, an embedding and the budget, from models that do each', () => {
     build(['chat-model', 'embed-model']);
     answer();
 
+    expect(testid('connection-gemini-chat')?.textContent).toContain(
+      '/models/chat-model:generateContent',
+    );
+    expect(testid('connection-gemini-stream')?.textContent).toContain(
+      '/models/chat-model:streamGenerateContent?alt=sse',
+    );
+    // From a model that embeds, not from the first one released.
     expect(testid('connection-gemini-embed')?.textContent).toContain(
       '/models/embed-model:embedContent',
     );
-    open('kira');
-    expect(testid('connection-kira-embed')?.textContent).toContain('"model_id":9002');
+    expect(testid('connection-budget-check')?.textContent).toContain('/v1beta/me/budget');
   });
+
+  it('offers speech and ranking only where a released model declares them', () => {
+    build(['chat-model']);
+    answer();
+    expect(testid('connection-gemini-speech')).toBeNull();
+    expect(testid('connection-gemini-rank')).toBeNull();
+    expect(testid('connection-rank-url')).toBeNull();
+
+    build(['chat-model', 'speaker', 'ranker']);
+    answer(KIRA_MODELS, [model('speaker', 'speech'), model('ranker', 'rerank')]);
+    expect(testid('connection-gemini-speech')?.textContent).toContain(
+      '/models/speaker:generateContent',
+    );
+    expect(testid('connection-gemini-speech')?.textContent).toContain(
+      '"responseModalities":["AUDIO"]',
+    );
+    expect(testid('connection-gemini-rank')?.textContent).toContain('"model":"ranker"');
+  });
+
+  it('gives Python the SDK the use case is verified with, its base URL naming the use case', () => {
+    build(['chat-model', 'embed-model']);
+    answer();
+    open('python');
+
+    const python = testid('connection-python')?.textContent ?? '';
+    expect(python).toContain('from google import genai');
+    // google-genai adds `/v1beta` itself, so its base is the use case's address without it.
+    expect(python).toMatch(/base_url="[^"]*\/gw\/uc\/demo-uc", api_version="v1beta"/);
+    expect(python).toContain('model="chat-model"');
+    expect(python).toContain('embed_content(model="embed-model"');
+  });
+
+  it('gives TypeScript the AI SDK, whose base URL carries /v1beta', () => {
+    build(['chat-model']);
+    answer();
+    open('typescript');
+
+    const typescript = testid('connection-typescript')?.textContent ?? '';
+    expect(typescript).toContain("from '@ai-sdk/google'");
+    expect(typescript).toMatch(/baseURL: '[^']*\/gw\/uc\/demo-uc\/v1beta'/);
+    expect(typescript).toContain("aira('chat-model')");
+  });
+
+  it('points OpenCode at the configuration the API keys tab writes, with the models it can use', () => {
+    build(['chat-model', 'tool-model']);
+    answer(KIRA_MODELS, [model('tool-model', 'generate', 'tools')]);
+    open('opencode');
+
+    expect(testid('connection-opencode-where')?.textContent).toContain('API keys tab');
+    const config = JSON.parse(testid('connection-opencode')?.textContent ?? '{}');
+    expect(config.provider.aira.options.baseURL).toMatch(/\/gw\/uc\/demo-uc\/v1beta$/);
+    // Only a model that calls tools: an assistant cannot work with one that answers in prose.
+    expect(Object.keys(config.provider.aira.models)).toEqual(['tool-model']);
+    expect(config.model).toBe('aira/tool-model');
+  });
+
+  it('says when the use case has tool calling switched off, and only from an answer', () => {
+    // OpenCode's first turn declares tools, and a use case that carries none refuses it by name:
+    // the file would be handed out working and the client would fail at once.
+    build(['tool-model']);
+    answer(KIRA_MODELS, [model('tool-model', 'generate', 'tools')]);
+    open('opencode');
+    expect(testid('connection-tools-off')).toBeNull();
+
+    fixture.componentRef.setInput('toolsEnabled', false);
+    fixture.detectChanges();
+    expect(testid('connection-tools-off')?.textContent).toContain('Capabilities');
+
+    fixture.componentRef.setInput('toolsEnabled', true);
+    fixture.detectChanges();
+    expect(testid('connection-tools-off')).toBeNull();
+  });
+
+  it('says so when nothing released can serve OpenCode', () => {
+    build(['chat-model']);
+    answer();
+    open('opencode');
+
+    expect(testid('connection-opencode')).toBeNull();
+    expect(testid('connection-no-tools')?.textContent).toContain('calling tools');
+  });
+
+  it('carries the KIRA id into the KIRA examples, reranking included', () => {
+    build(['chat-model', 'embed-model', 'ranker']);
+    answer([...KIRA_MODELS, { id: 3001, name: 'ranker', capabilities: ['Reranker'] }]);
+    open('kira');
+
+    // The one field a migrating client actually has to fill in, and the one nobody could see: it
+    // lives in the catalog, which an administrator of a use case may not read.
+    expect(testid('connection-kira-chat')?.textContent).toContain('"model_id":9001');
+    expect(testid('connection-kira-embed')?.textContent).toContain('"model_id":9002');
+    expect(testid('connection-kira-rerank')?.textContent).toContain('"model_id":3001');
+  });
+
+  // ---- what is not there ----------------------------------------------------------------
 
   it('says why it is empty when nothing is released', () => {
     build([]);
@@ -213,17 +408,17 @@ describe('ConnectionPanel', () => {
     expect(testid('connection-no-chat')?.textContent).toContain('generating text');
   });
 
-  it('takes the Gemini example from the catalogue, so a failed KIRA listing costs only KIRA', () => {
-    // The KIRA listing failed and the page passed `[]`: the Gemini tab then said nothing released
-    // could generate text, about a released chat model — while its own hint said the Gemini API
-    // "is unaffected" by the KIRA listing.
+  it('takes the Gemini examples from the catalogue, so a failed KIRA listing costs only KIRA', () => {
+    // The KIRA listing failed and the page passed `[]`: a released chat model must still have its
+    // Gemini examples, which do not depend on that listing.
     build(['chat-model']);
     fixture.componentRef.setInput('kira', []);
     fixture.componentRef.setInput('failure', 'The gateway could not be asked for its model ids.');
-    declare([{ name: 'chat-model', capabilities: ['generate'] }]);
+    declare([model('chat-model', 'generate')]);
 
     expect(testid('connection-gemini-chat')?.textContent).toContain('chat-model:generateContent');
     expect(testid('connection-no-chat')).toBeNull();
+    expect(testid('connection-failure')).not.toBeNull();
   });
 
   it('says nothing about what generates before the catalogue has answered', () => {
@@ -235,51 +430,17 @@ describe('ConnectionPanel', () => {
     expect(testid('connection-gemini-chat')).toBeNull();
   });
 
-  it('says a released model the catalogue does not hold is undeclared, not that it is unserved', () => {
-    build(['chat-model', 'local-model']);
-    answer();
-
-    expect(testid('connection-models')?.textContent).toContain('not declared in the catalog');
-    expect(testid('connection-models')?.textContent).not.toContain('KIRA listing');
-  });
-
-  it('reports a gateway that cannot be asked instead of showing every id as absent', () => {
-    build(['chat-model']);
-    fixture.componentRef.setInput('kira', []);
-    fixture.componentRef.setInput('failure', 'The gateway could not be asked for its model ids.');
-    fixture.detectChanges();
-
-    // Swallowed, this reads as a deployment where no model has a number — which is a real state
-    // and a different one. The two must not look alike.
-    expect(testid('connection-failure')).not.toBeNull();
-  });
-
-  it('names the base URL as the console proxy rather than presenting it as the gateway', () => {
+  it('names the address as the console proxy rather than presenting it as the gateway', () => {
     build(['chat-model']);
     answer();
 
-    expect(testid('connection-gemini-base')?.textContent).toContain('/gw/v1beta');
-    open('kira');
-    expect(testid('connection-kira-base')?.textContent).toContain('/gw/kira/api/external');
     // A URL that is right here and wrong everywhere else is worse than one that explains itself.
     expect(testid('connection-base-note')?.textContent).toContain('this console');
+    expect(testid('connection-base-note')?.textContent).toContain('/uc/');
   });
 
-  it('shows the id as unknown rather than absent while the page has not answered', () => {
-    build(['chat-model']);
-    // No `answer()`: `null` is "we have not looked" and `[]` is "there is none", and the two must
-    // not render the same — otherwise a slow gateway looks exactly like a model with no id.
-    expect(fixture.nativeElement.textContent).not.toContain('Gemini API only');
-  });
+  // ---- copying ----------------------------------------------------------------------------
 
-  it('says the use case comes from the key rather than from the address', () => {
-    build(['chat-model']);
-    answer();
-
-    // The question that prompted this panel. An example with no explanation sends a caller looking
-    // for a per-use-case URL that does not exist.
-    expect(text()).toContain('issued for one use case');
-  });
   it('copies an example and says that it did', async () => {
     const written: string[] = [];
     Object.defineProperty(navigator, 'clipboard', {
@@ -315,71 +476,48 @@ describe('ConnectionPanel', () => {
     // A copy button that reports success on a refusal sends the reader to paste nothing.
     expect(testid('connection-copy-failure')).not.toBeNull();
     expect(testid('copy-gemini-chat')?.textContent).toContain('Copy');
-  });
-
-  it('keeps a clipboard refusal apart from the gateway being unreachable', async () => {
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText: () => Promise.reject(new Error('denied')) },
-      configurable: true,
-    });
-    build(['chat-model']);
-    answer();
-
-    testid('copy-gemini-chat')?.click();
-    await fixture.whenStable();
-    fixture.detectChanges();
-
-    // Two different things arriving from two different places. Folding one into the other would
-    // have a browser permission read as a broken gateway.
+    // And it is not the gateway being unreachable: two different things from two places.
     expect(testid('connection-failure')).toBeNull();
   });
 
-  it('puts a model that both generates and embeds into both examples', () => {
-    build(['both-model']);
-    answer([{ id: 9005, name: 'both-model', capabilities: ['Chat', 'Embedding'] }]);
-
-    expect(testid('connection-gemini-chat')?.textContent).toContain('both-model:generateContent');
-    expect(testid('connection-gemini-embed')?.textContent).toContain('both-model:embedContent');
-    expect(testid('connection-models')?.textContent).toContain('generation and embeddings');
-  });
-
-  it('gives no KIRA embedding example for an embedding model without an id', () => {
-    build(['embed-model']);
-    answer([{ id: 0, name: 'other', capabilities: ['Chat'] }]);
-    open('kira');
-
-    // The embedding model is released and the gateway knows nothing about it, so neither example
-    // can be built — and the table says which of the two is missing rather than showing a blank.
-    expect(testid('connection-kira-embed')).toBeNull();
-    expect(testid('connection-models')?.textContent).toContain("not in the gateway's KIRA listing");
-  });
-  it('copies every example and every base URL it offers', async () => {
+  it('copies every address and every example it offers', async () => {
     const written: string[] = [];
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: (text: string) => (written.push(text), Promise.resolve()) },
       configurable: true,
     });
-    build(['chat-model', 'embed-model']);
-    answer();
+    build(['chat-model', 'embed-model', 'tool-model']);
+    answer(KIRA_MODELS, [model('tool-model', 'generate', 'tools')]);
 
-    // Every button, per surface (only one tab is in the DOM): a copy control wired to the wrong
-    // string still works and hands over somebody else's command.
-    for (const surface of ['gemini', 'kira'] as const) {
-      open(surface);
-      for (const id of [`copy-${surface}-base`, `copy-${surface}-chat`, `copy-${surface}-embed`]) {
-        testid(id)?.click();
-        await fixture.whenStable();
-      }
+    // Every button against the text beside it: a copy control wired to the wrong string still
+    // works and hands over somebody else's command.
+    const pairs: [string, string][] = [
+      ['copy-gemini-base', 'connection-gemini-base'],
+      ['copy-kira-base', 'connection-kira-base'],
+      ['copy-gemini-chat', 'connection-gemini-chat'],
+      ['copy-gemini-stream', 'connection-gemini-stream'],
+      ['copy-gemini-embed', 'connection-gemini-embed'],
+      ['copy-budget-check', 'connection-budget-check'],
+    ];
+    const tabs: [ClientKind, string, string][] = [
+      ['python', 'copy-python', 'connection-python'],
+      ['typescript', 'copy-typescript', 'connection-typescript'],
+      ['opencode', 'copy-opencode', 'connection-opencode'],
+      ['kira', 'copy-kira-chat', 'connection-kira-chat'],
+      ['kira', 'copy-kira-embed', 'connection-kira-embed'],
+    ];
+    for (const [button, shown] of pairs) {
+      testid(button)?.click();
+      await fixture.whenStable();
+      expect(written.at(-1), button).toBe(testid(shown)?.textContent?.trim());
     }
-    fixture.detectChanges();
-
-    expect(written).toHaveLength(6);
-    expect(written[0]).toContain('/gw/v1beta');
-    expect(written[1]).toContain('chat-model:generateContent');
-    expect(written[2]).toContain('embed-model:embedContent');
-    expect(written[3]).toContain('/gw/kira/api/external');
-    expect(written[4]).toContain('"model_id":9001');
-    expect(written[5]).toContain('"model_id":9002');
+    for (const [client, button, shown] of tabs) {
+      open(client);
+      testid(button)?.click();
+      await fixture.whenStable();
+      expect(written.at(-1), button).toBe(testid(shown)?.textContent?.trim());
+    }
+    expect(written).toHaveLength(pairs.length + tabs.length);
   });
 
   it('stops saying Copied after a moment, so the label describes the last press', async () => {
@@ -407,33 +545,6 @@ describe('ConnectionPanel', () => {
       vi.useRealTimers();
     }
   });
-  it('explains the path prefix, and builds it from the same base as the examples', () => {
-    build(['chat-model']);
-    answer();
-
-    // Stated in the panel, not in a hover hint: this caller does not suspect there is anything to know.
-    const section = testid('connection-attribution')?.textContent ?? '';
-    expect(section).toContain('/uc/');
-    expect(section).toContain('403');
-    expect(section).toContain('header');
-
-    // Built, not written: the whole claim about the prefix is that everything after it is the URL
-    // shown above, so the two must come from one place.
-    expect(testid('connection-uc-example')?.textContent).toContain('/uc/demo-uc/v1beta');
-    expect(testid('connection-header-example')?.textContent).toContain('X-AIRA-Use-Case: demo-uc');
-  });
-
-  it('shows the path prefix for whichever surface is open', () => {
-    build(['chat-model']);
-    answer();
-    expect(testid('connection-uc-example')?.textContent).toContain('/uc/demo-uc/v1beta');
-
-    open('kira');
-
-    // A prefix example that kept naming the other surface would be the one thing on this panel a
-    // reader is most likely to paste unread.
-    expect(testid('connection-uc-example')?.textContent).toContain('/uc/demo-uc/kira/api/external');
-  });
 
   // ---- folded shut -------------------------------------------------------------------
   // A reference, not a status: read once when a client is wired up, so it must not fill the overview.
@@ -446,18 +557,6 @@ describe('ConnectionPanel', () => {
     expect(panel?.open).toBe(false);
   });
 
-  it('keeps the sentence that answers the question, outside the fold', () => {
-    // The panel exists because a caller went looking for a per-use-case URL that does not exist.
-    // Putting *that* behind the fold would hide the answer and leave the examples — the wrong way
-    // round. A reader decides whether to open a block from what the summary says.
-    build(['chat-model']);
-    answer();
-
-    const summary = (testid('connection') as HTMLElement | null)?.querySelector('summary');
-    expect(summary?.textContent).toContain('issued for one use case');
-    expect(summary?.textContent).toContain('no use case in the URL');
-  });
-
   it('still has everything it had, once opened', () => {
     // A fold that quietly lost content would be a worse defect than the height it fixed.
     build(['chat-model']);
@@ -466,7 +565,8 @@ describe('ConnectionPanel', () => {
     panel.open = true;
     fixture.detectChanges();
 
-    expect(text()).toContain('Base URL');
-    expect(text()).toContain('Credentials');
+    for (const step of ['Where to send it', 'Who is calling', 'Which models', 'A request']) {
+      expect(text()).toContain(step);
+    }
   });
 });

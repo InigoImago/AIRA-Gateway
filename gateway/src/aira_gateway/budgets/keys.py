@@ -8,7 +8,7 @@ from typing import Any
 from aira_common.money import format_display
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.db.models import BudgetRead
-from aira_gateway.scopes import INSTALLATION, USE_CASE, Scope
+from aira_gateway.scopes import INSTALLATION, MEMBER, USE_CASE, Scope
 
 #: The refusal for each dimension a budget can cap, by the ledger's name for it.
 _BREACH_MESSAGES = {
@@ -98,13 +98,15 @@ def scope_key(budget: BudgetRead, caller: str | None = None) -> str:
 
     Enforcement asks only about budgets `store.applicable` found binding; a reader asking about
     every budget of a use case resolves the scope first (`BudgetService.usage`). An `each_member`
-    budget names nobody, so **the caller is the key**: one configured row, one counter per head.
-    An explicit check rather than an `assert`, which `python -O` removes.
+    budget names nobody, so **the caller is the key**: one configured row, one counter per head —
+    the counter a person's own budget keeps too. An explicit check rather than an `assert`, which
+    `python -O` removes.
     """
     scope = Scope.applying(
         scope=budget.scope,
         use_case=budget.use_case,
         caller=caller,
+        named=budget.subject,
     )
     if scope is None:
         raise Unbound(f"budget {budget.id} ({budget.scope}) does not bind caller {caller!r}")
@@ -153,9 +155,12 @@ def _amount(dimension: str, value: int) -> str:
 def _scope_label(budget: BudgetRead) -> str:
     """How the exhausted budget is named to a caller who did not write the configuration.
 
-    `installation` is named rather than falling through to "member": a refusal naming the wrong
-    owner sends somebody to edit a budget that was never involved.
+    Each scope by its own name rather than falling through to "member": a refusal naming the wrong
+    budget sends somebody to edit one that was never involved — and a person refused by a budget
+    set for them alone asks somebody else than one refused by the allowance everybody has.
     """
     if budget.scope == INSTALLATION:
         return "installation"
+    if budget.scope == MEMBER:
+        return "individual member"
     return "use case" if budget.scope == USE_CASE else "member"

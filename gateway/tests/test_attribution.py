@@ -11,7 +11,7 @@ from aira_gateway.auth import keys
 from aira_gateway.auth.attribution import resolve_use_case
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
-from aira_gateway.db.models import ApiKey, UseCaseRead
+from aira_gateway.db.models import ApiKey, BudgetRead, UseCaseRead
 
 _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
 _OIDC_HEADERS = {"authorization": "Bearer tok"}
@@ -170,12 +170,94 @@ async def test_a_bound_key_cannot_act_on_another_use_case(authed_client) -> None
         await session.commit()
 
     headers = {"x-goog-api-key": full}
-    assert _generate(authed_client, "", headers).status_code == 200  # its own, implicitly
     assert _generate(authed_client, "/uc/bound-a", headers).status_code == 200  # its own, named
 
     refused = _generate(authed_client, "/uc/other-b", headers)
     assert refused.status_code == 403
     assert refused.json()["error"]["status"] == "PERMISSION_DENIED"
+
+
+async def test_a_bound_key_names_its_use_case_like_every_other_caller(authed_client) -> None:
+    """A key is bound to one use case, and a model call still names it (`FRD-149`): the binding
+    checks the name, it does not supply one. A client that sends no use case is told which to name
+    — the key's own — rather than served under a use case it never stated.
+
+    And only a model call: a **reading** spends nothing, so a key that names none still lists the
+    catalogue and reads its own allowance, as every caller does."""
+    app = authed_client.app
+    full, prefix, key_hash = generate_api_key()
+    async with app.state.db_sessionmaker() as session:
+        session.add(UseCaseRead(slug="bound-a", name="A"))
+        session.add(
+            ApiKey(
+                id=f"{prefix}-bound",
+                prefix=prefix,
+                key_hash=key_hash,
+                subject="alice",
+                use_case="bound-a",
+                label="bound",
+                is_active=True,
+            )
+        )
+        await session.commit()
+    headers = {"x-goog-api-key": full}
+
+    refused = _generate(authed_client, "", headers)
+    assert refused.status_code == 400
+    error = refused.json()["error"]
+    assert error["status"] == "INVALID_ARGUMENT"
+    # The fix in the refusal: the key's own use case, spelled as the prefix a base URL takes.
+    assert "/uc/bound-a" in error["message"], error["message"]
+    assert "X-AIRA-Use-Case" in error["message"], error["message"]
+
+    assert _generate(authed_client, "/uc/bound-a", headers).status_code == 200
+    assert (
+        authed_client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=_BODY,
+            headers={**headers, "x-aira-use-case": "bound-a"},
+        ).status_code
+        == 200
+    )
+
+    assert authed_client.get("/v1beta/models", headers=headers).status_code == 200
+    own = authed_client.get("/v1beta/me/budget", headers=headers)
+    assert own.status_code == 200
+    assert own.json()["use_case"] == "bound-a"
+
+
+async def test_a_bound_key_is_its_own_use_case_where_none_must_be_named() -> None:
+    """With `AIRA_REQUIRE_USE_CASE=false` — refused anywhere but `local` — nothing has to be
+    named, and a bound key's traffic goes to its own use case rather than to no budget at all:
+    its use case's one-request budget is what refuses the second call."""
+    app = create_app(
+        GatewaySettings(log_json=True, auth_required=True, demo_mode=True, require_use_case=False)
+    )
+    with TestClient(app) as client:
+        full, prefix, key_hash = generate_api_key()
+        async with app.state.db_sessionmaker() as session:
+            session.add(UseCaseRead(slug="bound-a", name="A"))
+            session.add(
+                ApiKey(
+                    id=f"{prefix}-bound",
+                    prefix=prefix,
+                    key_hash=key_hash,
+                    subject="alice",
+                    use_case="bound-a",
+                    label="bound",
+                    is_active=True,
+                )
+            )
+            session.add(
+                BudgetRead(
+                    id=1, use_case="bound-a", scope="use_case", period="day", limit_requests=1
+                )
+            )
+            await session.commit()
+
+        headers = {"x-goog-api-key": full}
+        assert _generate(client, "", headers).status_code == 200
+        assert _generate(client, "", headers).status_code == 429
 
 
 async def test_an_unbound_key_is_not_restricted(authed_client) -> None:

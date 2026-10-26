@@ -142,10 +142,12 @@ CALLS: dict[str, tuple[str, dict[str, Any]]] = {
 EMBEDDING_CALLS = ("gemini:embed", "gemini:batchEmbed", "kira:embed")
 
 
-async def _send(key: str, which: str) -> httpx.Response:
+async def _send(slug: str, key: str, which: str) -> httpx.Response:
     path, body = CALLS[which]
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=90.0) as client:
-        return await client.post(path, json=body, headers={"x-goog-api-key": key})
+        return await client.post(
+            path, json=body, headers={"x-goog-api-key": key, "x-aira-use-case": slug}
+        )
 
 
 async def _steps_that_spent(engine: AsyncEngine, slug: str) -> set[str]:
@@ -247,7 +249,7 @@ async def test_which_steps_a_verb_runs(
     slug, key = await _use_case(read_model)
     await _pipeline(engine, slug, steps)
 
-    response = await _send(key, which)
+    response = await _send(slug, key, which)
     assert response.status_code == 200, response.text
 
     expected = on_embedding if which in EMBEDDING_CALLS else on_generation
@@ -299,7 +301,7 @@ async def test_a_redactor_that_cannot_be_reached_refuses_an_embedding(
     await _pipeline(engine, slug, [{"type": "pii_filter", "config": {"model": UNREACHABLE}}])
 
     for which in EMBEDDING_CALLS:
-        response = await _send(key, which)
+        response = await _send(slug, key, which)
         assert response.status_code == 400, f"{which}: {response.text}"
         assert "Personal data could not be removed" in response.text
 
@@ -322,7 +324,7 @@ async def test_serving_anyway_is_not_storing_anyway(engine: AsyncEngine, read_mo
         [{"type": "pii_filter", "config": {"model": UNREACHABLE, "on_failure": "allow"}}],
     )
 
-    response = await _send(key, "gemini:embed")
+    response = await _send(slug, key, "gemini:embed")
     assert response.status_code == 200, response.text
 
     row = await _callers_row(engine, slug)
@@ -343,7 +345,7 @@ async def test_a_batch_leaves_one_decision_carrying_its_two_numbers(
     slug, key = await _use_case(read_model)
     await _pipeline(engine, slug, [_pii()])
 
-    response = await _send(key, "gemini:batchEmbed")
+    response = await _send(slug, key, "gemini:batchEmbed")
     assert response.status_code == 200, response.text
 
     row = await _callers_row(engine, slug)
@@ -371,12 +373,12 @@ async def test_an_injection_reaches_the_embedding_model_and_refuses_the_chat(
         chat = await client.post(
             f"/v1beta/models/{CHAT}:generateContent",
             json={"contents": [{"role": "user", "parts": [{"text": INJECTION}]}]},
-            headers={"x-goog-api-key": key},
+            headers={"x-goog-api-key": key, "x-aira-use-case": slug},
         )
         embedded = await client.post(
             f"/v1beta/models/{EMBED}:embedContent",
             json={"model": f"models/{EMBED}", "content": {"parts": [{"text": INJECTION}]}},
-            headers={"x-goog-api-key": key},
+            headers={"x-goog-api-key": key, "x-aira-use-case": slug},
         )
 
     assert chat.status_code == 400, chat.text

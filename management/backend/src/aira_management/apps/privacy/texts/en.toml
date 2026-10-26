@@ -84,7 +84,7 @@ items = [
 
 [access]
 "usecase.read_all" = "see the configuration and members of every use case"
-"usecase.manage_all" = "manage the members and API keys of every use case"
+"usecase.manage_all" = "manage the members, API keys and budgets of every use case, including the budget set for one person"
 "trace.read_all" = "see the request records of every use case"
 "report.read_all" = "see consumption per person in every use case, including as an export"
 "anomaly.read_all" = "see the security findings and blocks of every use case, including any IP addresses they name"
@@ -200,11 +200,11 @@ recipients = "Roles that may see the record of reads of content (see “Who has 
 
 [activities.consumption]
 title = "Consumption, budgets and rate limits"
-data = "Counters per person and use case of requests, tokens and costs per day or month; reports built from them per person with requests, failures, tokens and costs, and response times unless strict data mode is on, including as a CSV export. To fend off attacks, failed sign-ins are counted briefly per IP address."
-purpose = "To allocate costs, and to enforce budgets and rate limits per person so that nobody uses up other people's allowance, and to protect availability. Not: to assess the performance of individuals."
+data = "Counters per person and use case of requests, tokens and costs per day or month; budgets the administrators of a use case set for one named person, with that person's username, the period and the limits, which take the place of the budget every member has; reports built from them per person with requests, failures, tokens and costs, and response times unless strict data mode is on, including as a CSV export. To fend off attacks, failed sign-ins are counted briefly per IP address."
+purpose = "To allocate costs, and to enforce budgets and rate limits per person so that nobody uses up other people's allowance, to give one person an allowance of their own where their work needs a larger or a smaller one, and to protect availability. Not: to assess the performance of individuals."
 legal_basis = "Art. 6(1)(f) GDPR (cost control and availability)."
 retention = "Counters per period are kept without automatic deletion; counters for rate limits and sign-in attempts lapse after minutes. Reports are computed from the request record each time they are opened."
-recipients = "You see your own consumption yourself, and the members of a use case see its totals. Who else sees figures per person follows the installation's data mode (see “No monitoring of performance or behaviour”)."
+recipients = "You see your own consumption yourself, and the members of a use case see its totals. Who else sees figures per person follows the installation's data mode (see “No monitoring of performance or behaviour”). A budget set for you is seen by you and by the administrators of the use case who set it; while strict data mode is on, other members see that such a budget exists but not for whom, and the name is seen besides only by roles that manage every use case or investigate incidents (see “Who has access within the organisation”)."
 
 [activities.security]
 title = "Anomaly detection and security incidents"

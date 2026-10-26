@@ -17,6 +17,10 @@ whose base URL is configurable and whose headers are not, which is the case the 
 **The tests are written as a pair on purpose.** Each case is asserted on *both* surfaces, because
 the property is not "KIRA honours the prefix" but "the two agree about what a selector is". A test
 of one surface alone is how the two came to differ.
+
+And both now agree that a model call **names** its use case, whoever makes it (`FRD-149`): the
+KIRA surface also took a caller's only membership as the selector, which made a client's requests
+mean something else the day its caller was given a second use case.
 """
 
 from __future__ import annotations
@@ -25,10 +29,11 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from aira_common.apikeys import generate_api_key
 from aira_gateway.app import create_app
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
-from aira_gateway.db.models import ModelRead, UseCaseRead
+from aira_gateway.db.models import ApiKey, BudgetRead, ModelRead, UseCaseRead
 
 KIRA = "/kira/api/external/chat"
 GEMINI = "/v1beta/models/mock-1:generateContent"
@@ -106,17 +111,37 @@ async def test_a_caller_in_several_use_cases_and_no_selector_is_refused_on_both(
     assert answers["gemini"] in (400, 403)
 
 
+async def test_a_caller_in_one_use_case_names_it_too_on_both() -> None:
+    """**The shortcut is gone** (`FRD-149`): a caller whose only membership the KIRA surface used to
+    pick is refused like everybody else when they name none, and served once they do — the same
+    answer on both surfaces, so a client means one thing whatever its caller reaches."""
+    client = await _client("demo-uc", require_use_case=True)
+    with client:
+        unnamed = _both(client, "", TOKEN)
+        named = _both(client, "/uc/demo-uc", TOKEN)
+        kira = client.post(KIRA, json=_KIRA_BODY, headers=TOKEN).json()
+
+    assert unnamed == {"kira": 403, "gemini": 400}
+    assert named == {"kira": 200, "gemini": 200}
+    assert kira["code"] == "STANDARD_USER_PERMISSION_REQUIRED"
+    # What to name is in the refusal: the one use case this caller reaches.
+    assert "demo-uc" in kira["message"], kira["message"]
+
+
 async def test_the_refusal_names_the_prefix_as_well_as_the_header() -> None:
     """The message is the fix. A caller who *cannot* set a header must not be told to set one —
     which is what it said, on the surface where that caller is most likely to be."""
-    client = await _client("demo-uc", "other-uc")
+    client = await _client("demo-uc", "other-uc", require_use_case=True)
     with client:
-        response = client.post(KIRA, json=_KIRA_BODY, headers=TOKEN)
+        kira = client.post(KIRA, json=_KIRA_BODY, headers=TOKEN)
+        gemini = client.post(GEMINI, json=_GEMINI_BODY, headers=TOKEN)
 
-    assert response.status_code == 403
-    message = response.json()["message"]
-    assert "/uc/<use-case>" in message, message
-    assert "X-AIRA-Use-Case" in message, message
+    assert kira.status_code == 403
+    # One sentence for both surfaces, in each one's envelope.
+    for message in (kira.json()["message"], gemini.json()["error"]["message"]):
+        assert "/uc/<use-case>" in message, message
+        assert "X-AIRA-Use-Case" in message, message
+        assert "demo-uc" in message and "other-uc" in message, message
 
 
 async def test_the_header_wins_over_the_prefix_on_both_surfaces() -> None:
@@ -142,12 +167,51 @@ async def test_a_prefix_that_is_not_a_slug_is_refused_rather_than_carried() -> N
     assert response.status_code != 200
 
 
-async def test_a_bound_api_key_still_needs_no_selector() -> None:
-    """The common case must not have changed. A key belongs to one use case and carries it, so the
-    prefix is not something a migrating client is now obliged to add."""
-    client = await _client()
+async def test_a_bound_key_names_its_use_case_on_both_surfaces() -> None:
+    """A key is bound to one use case, and its model calls name it like anybody's (`FRD-149`). The
+    refusal says which — the key's own — so the fix is one prefix in the client's base URL. A
+    reading names nothing and is still answered: the KIRA model listing spends nothing."""
+    client = await _client("bound-a", require_use_case=True)
     with client:
-        response = client.post(KIRA, json=_KIRA_BODY, headers=TOKEN)
+        full, prefix, key_hash = generate_api_key()
+        async with client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
+            session.add(
+                ApiKey(
+                    id=f"{prefix}-bound",
+                    prefix=prefix,
+                    key_hash=key_hash,
+                    subject="alice",
+                    use_case="bound-a",
+                    label="bound",
+                    is_active=True,
+                )
+            )
+            await session.commit()
+        key = {"x-goog-api-key": full}
 
-    # No membership, no selector, and `require_use_case` off: served, exactly as before.
-    assert response.status_code == 200, response.text
+        unnamed = _both(client, "", key)
+        named = _both(client, "/uc/bound-a", key)
+        refusal = client.post(KIRA, json=_KIRA_BODY, headers=key).json()
+        listing = client.get("/kira/api/external/models", headers=key)
+
+    assert unnamed == {"kira": 403, "gemini": 400}
+    assert named == {"kira": 200, "gemini": 200}
+    assert "/uc/bound-a" in refusal["message"], refusal["message"]
+    assert listing.status_code == 200, listing.text
+
+
+async def test_without_the_requirement_an_unnamed_call_goes_unattributed_on_both() -> None:
+    """`AIRA_REQUIRE_USE_CASE=false` is refused anywhere but `local` (`security.py`); there, a
+    person's call that names nothing goes unattributed on either surface — never to a use case
+    picked for them. Their only use case has a one-request budget, and both calls are served: had
+    either surface picked it, the second would have been refused."""
+    client = await _client("demo-uc")
+    with client:
+        async with client.app.state.db_sessionmaker() as session:  # type: ignore[attr-defined]
+            session.add(
+                BudgetRead(
+                    id=1, use_case="demo-uc", scope="use_case", period="day", limit_requests=1
+                )
+            )
+            await session.commit()
+        assert _both(client, "", TOKEN) == {"kira": 200, "gemini": 200}

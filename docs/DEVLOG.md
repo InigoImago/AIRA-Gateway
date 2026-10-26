@@ -5,6 +5,89 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A person's own budget, a use case named on every call, and a connection panel that shows every way in (2026-10-25)
+
+Three requests from the owner, built on one branch.
+
+**A person's own budget** (`FRD-407`, `ADR-0044`). A use case had a budget for all of it and one
+budget the same for every member; it can now give one named person a budget of their own. The owner
+stated the hierarchy — the use case's budget, then the individual one, then the one for everybody —
+and that is what `aira_gateway.scopes.binding` applies: the use case's budget bounds everybody, a
+person's own budget takes the place of the per-person budget **of its period**, everybody else keeps
+the per-person budget. This is not the scope removed on 2026-08-14. That one was *additive*, so it
+could only ever lower somebody's allowance; this one *replaces*, so it raises an allowance as
+readily — the colleague whose agent works for the team — and the pot still caps the total.
+
+Two decisions inside it, both taken for the owner and both in the ADR. *Per period*: a monthly
+exception leaves the daily per-person limit where it is. *Switched off*: a person's own budget that
+is off hands them back to the per-person budget rather than leaving them unlimited, the direction a
+budget must not be wrong in. Both rows count on the person's one counter
+(`member:<use case>:<person>`), so replacing one by the other mid-period hands out no fresh
+allowance — and the removed design, had it met a per-person budget for the same person, would have
+booked every request into that counter twice; `binding` keeps one row per person and period, and a
+test asserts one request books once.
+
+Every reader asks the same function: the reservation, the early gate, the pipeline's side calls, the
+price condition, the console's figures (`binds`, `replaced_by` on `/v1beta/usage`), a caller's own
+allowance (`/v1beta/me/budget`, which now lists only what binds the caller — OpenCode's sidebar would
+otherwise have drawn a colleague's limit beside the caller's figure) and the rate limiter, which has
+no individual rows to offer and follows the rule anyway. Management refuses a name no account has,
+one the gateway would read as somebody else, and somebody who cannot call the use case — asked with
+`may_call`, the gateway's own rule — and a database constraint holds that only this scope names
+anybody. Under strict data mode the name is for the administrators who set it, the person and
+whoever sees people; a colleague reads *another member*. The privacy notice says so, in both
+languages (edition 2026-10-25). The console offers the scope, suggests the members, lists the
+budgets in the hierarchy's order, says how they combine, tells each reader which card is theirs and
+why another shows no figures, and marks a budget whose person can no longer call.
+
+**Every model call names its use case** (`FRD-149`, `ADR-0045`). The owner noticed that a person in
+one use case could call it without naming it — the KIRA surface took a caller's only membership —
+and asked that the use case always be named; asked whether that covered API keys, decided that it
+does. So `require_attribution` no longer fills in a bound key's use case where naming one is
+required: `implied_use_case` supplies it only for a reading, or where `AIRA_REQUIRE_USE_CASE` is off.
+The KIRA resolver does the same, and both refuse with one sentence that names the fix — a key's own
+use case as the prefix to add, or the use cases a person reaches. **A key-based client with a base
+URL without `/uc/<slug>` stops working at the upgrade**; the release notes must say it. Everything
+the product hands out names the use case now: the console's OpenCode file, `opencode.showcase.json`,
+the hand-editable `tools/opencode/opencode.json`, the demo traffic, `make showcase`'s printed
+requests and the load test. The integration and browser suites name it on every model call: in
+the shared header helpers, and at each call site that builds its own headers, found by walking
+every call's syntax tree rather than by reading.
+
+**Connecting a client.** The panel said *"a key is issued for one use case and carries it, so a
+client normally sends nothing else"* — false since the item above. It is rebuilt around four steps:
+where to send it (an address per interface, each naming the use case, ranking where a released
+model ranks), who is calling, which models (by name and by KIRA id), and a request for curl —
+generation, streaming, embeddings, speech, ranking and the budget check —, Python (`google-genai`,
+whose `base_url` with a path was checked against a capturing server first), TypeScript (the AI SDK),
+OpenCode (pointing at the file the *API keys* tab writes) and a KIRA client. An example appears only
+where a released model can serve it, and the OpenCode tab says when the use case has tool calling
+switched off. Looked at in a browser at a phone's width as well: the first layout, a table of three
+columns, broke each address mid-word and squeezed its copy button to half its label — every
+address has a line of its own now. The browser suite reads the generation example off the page and
+sends it with a key issued on the same page: served; the same address without the prefix is refused
+with the prefix to add.
+
+**Measured.** The hermetic gates pass on each of the three commits; on the last, 7654 Python tests
+at 97.49 % coverage and 1688 console tests. The round adds 22 properties to the mutation harness,
+2254 in all, and with the six it re-anchored all 28 are caught. The live suite against this branch's
+images: 1056 passed and 19 failed, none of them in the gateway. Eighteen were the suites' own —
+their shared header helper names the use case as `x-aira-use-case`, a test that named another as
+`X-AIRA-Use-Case` sent both, and the gateway read the first. Merged as HTTP compares names, the 284
+tests of the four files concerned pass, and the case that a blank selector is no selector now
+asserts the new rule: through the path it is served, with nothing else it is refused with the prefix
+the key needs. The nineteenth, the hung-up stream whose row is waited for 90 s, was the machine,
+which the run had shared with two runs of the hermetic gates, two image builds and the real-client
+job. Alone it passed three times in 14–16 s; under twelve busy loops on eight cores it failed the
+same way, and the row arrived after 256 s, whole — `499`, `client_gone`, 400 tokens. The browser
+suite: 179 passed and three failed, each for the test's own reason — the OpenCode file's address was
+still expected without the use case, the served-example test released the mock, which every gateway
+serves and no catalogue lists, and the run crossed Management's per-user throttle, as a whole local
+run on the default rate does. Corrected, the three files pass whole. The real clients: 18 of 18,
+five runs in a row.
+
+---
+
 ## The real-client tests serve the gateway on a database that takes requests at once (2026-10-23)
 
 The second run that was to publish v0.1.8 failed its clients job on

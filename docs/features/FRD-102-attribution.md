@@ -47,9 +47,10 @@ Management (Phase 2, FRD-205).
   but `local`) — an authenticated request without a use case is rejected **400 INVALID_ARGUMENT**,
   the unbound break-glass key excepted (`ADR-0015`).
 - **FR-6 Non-OIDC**: API-key/demo requests attribute the provided use case as-is (no group check yet).
-  *As built:* a key issued by Management is **bound** to one use case — it needs no selector, and
-  naming another is refused 403 (`use_case_refusal`). The unbound break-glass key may name any use
-  case (`ADR-0015`), and demo mode has no identity to check.
+  *As built:* a key issued by Management is **bound** to one use case, and naming another is
+  refused 403 (`use_case_refusal`). Since `FRD-149` a bound key's model call names its use case
+  like any other — the key no longer stands in for the selector (`ADR-0045`). The unbound
+  break-glass key may name any use case (`ADR-0015`), and demo mode has no identity to check.
 
 ## 5. Design & Architecture
 ```

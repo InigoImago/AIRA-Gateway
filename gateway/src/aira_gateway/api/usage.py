@@ -86,9 +86,10 @@ async def my_budget(
     What it answers, in the order somebody reads it:
 
     - ``allowances`` — one entry per budget that binds **this** caller: the shared pot of their use
-      case, and their own counter where the use case gives each member one. Each carries the limit,
-      what is used, what is left and when the period rolls over. A colleague's counter is never
-      among them: an `each_member` budget is keyed on the person asking.
+      case, and their own counter where the use case gives each member one — their own budget in
+      place of the one for everybody where an administrator set one for them (`FRD-407`). Each
+      carries the limit, what is used, what is left and when the period rolls over. A colleague's
+      counter is never among them, and neither is a budget that gives way to another for them.
     - ``this_period`` — what this caller has spent in the current month **from the audit trail**,
       whether or not any budget exists. A use case with no budget still answers the question the
       feature was asked for ("what have I used"), and a client can show a figure without inventing
@@ -114,8 +115,10 @@ async def my_budget(
 
     service: BudgetService = budgets_of(request)
     # The same method the console reads, so the arithmetic of "what is left" exists once
-    # (`BudgetService.usage`). `subject=person` is what makes an `each_member` row this caller's.
-    allowances = await service.usage(use_case or "", subject=person) if use_case else []
+    # (`BudgetService.usage`). `subject=person` is what makes a per-person row this caller's, and
+    # `binds` is enforcement's own answer to which rows those are.
+    figures = await service.usage(use_case or "", subject=person) if use_case else []
+    allowances = [row for row in figures if row["binds"]]
 
     windows = _windows(datetime.now(UTC))
     reporting: ReportingService = request.app.state.reporting

@@ -7,7 +7,8 @@ The requests below are the ones a client sends, and the responses are shown as t
 them, shortened with `…` — a model's own text differs from run to run. Where AIRA answers
 differently from the predecessor, it says so.
 
-> The short version: a KIRA client changes its **base URL** and its **credential**. What it cannot
+> The short version: a KIRA client changes its **base URL** — to one that names its use case,
+> `https://<gateway>/uc/<use-case>/kira/api/external` — and its **credential**. What it cannot
 > bring with it is the thing AIRA exists for — every request has to belong to a **use case**, and
 > somebody has to have released the models it may call. Those are administration steps, done once
 > per client, and the rest of this page is them.
@@ -176,8 +177,11 @@ INVALID_TOKEN`. A retired use case answers `403` for good.
 
 ```diff
 - https://kira.example.internal/api/external/chat
-+ https://aira.example.internal/kira/api/external/chat
++ https://aira.example.internal/uc/migration-demo/kira/api/external/chat
 ```
+
+The new base URL **names the use case** — `/uc/migration-demo` — as every model call must
+(§3.3). Everything after it is the predecessor's path.
 
 ### 3.2 The credential
 
@@ -195,31 +199,41 @@ URL is written into the log of every proxy it passes. Here such a request is ans
 
 An OIDC bearer token also works, and is the better choice for a client that acts *as a person*.
 
-### 3.3 The use case — `X-AIRA-Use-Case`
+### 3.3 The use case — in the base URL
 
-This is the one genuinely new concept, and how it behaves depends on the credential:
-
-| the caller belongs to | what happens |
-|---|---|
-| **exactly one** use case | nothing to do — the request is attributed to it |
-| **several** | `403` naming the candidates; send `X-AIRA-Use-Case` |
-| **none** | `403` — an unattributed request would bypass every budget and limit |
-
-An API key issued for a use case belongs to exactly one, so a migrated client normally sends
-**nothing**. The header exists for an OIDC caller who is in several:
+This is the one genuinely new concept: **every model call names the use case it belongs to,
+whatever the credential** — an API key, which belongs to one use case and may name only that one,
+as much as a Keycloak token. The base URL of §3.1 does it with a path prefix; a client that can set
+headers and not its path sends `X-AIRA-Use-Case` to the plain one instead:
 
 ```bash
+curl -X POST http://localhost:8001/uc/migration-demo/kira/api/external/chat \
+  -H "x-goog-api-key: $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"request":{"parts":[{"text":"Sag OK."}]},"model_id":1004,"maxTokens":16}'
+# 200  {"parts":[{"text":"Sag."}],"usage_data":{"token_input":20,"token_output":4}}
+
 curl -X POST http://localhost:8001/kira/api/external/chat \
   -H "x-goog-api-key: $KEY" \
   -H 'X-AIRA-Use-Case: migration-demo' \
   -H 'content-type: application/json' \
   -d '{"request":{"parts":[{"text":"Sag OK."}]},"model_id":1004,"maxTokens":16}'
-# 200  {"parts":[{"text":"Sag."}],"usage_data":{"token_input":20,"token_output":4}}
+# 200  the same answer
 ```
 
-A client that can change its base URL but not its headers names the use case in the path instead:
-`https://aira.example.internal/uc/migration-demo/kira/api/external/chat`. Where both appear the
-header wins.
+Where both appear the header wins. A call that names none is refused, and the refusal says what to
+add — for a key, its own use case; for a person, the use cases they reach:
+
+```
+403  {"code":"STANDARD_USER_PERMISSION_REQUIRED",
+      "message":"Missing use case: every model call names one, with the /uc/<use-case> path prefix
+                 or the X-AIRA-Use-Case header. This key belongs to 'migration-demo': put
+                 /uc/migration-demo in front of the path."}
+```
+
+The rule does not depend on how many use cases a caller reaches, so a client keeps working the day
+its user is given a second one. `GET /models`, `/health`, `/version-info` and `/ki-usage` spend
+nothing and name no use case.
 
 **Neither grants access — they only choose among what you already have.** Naming somebody else's
 use case is refused:
@@ -345,7 +359,7 @@ name:
 interface with the same credential and use case:
 
 ```bash
-curl -X POST http://localhost:8001/v1beta/models/gemini-2.5-flash-tts:generateContent \
+curl -X POST http://localhost:8001/uc/migration-demo/v1beta/models/gemini-2.5-flash-tts:generateContent \
   -H "x-goog-api-key: $KEY" \
   -H 'content-type: application/json' \
   -d '{"contents":[{"role":"user","parts":[{"text":"Guten Morgen"}]}],

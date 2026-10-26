@@ -52,10 +52,12 @@ async def _pipeline(engine: AsyncEngine, slug: str, steps: list, fallbacks: list
         )
 
 
-async def _post(key: str, body: dict, model: str = "mock-1") -> httpx.Response:
+async def _post(slug: str, key: str, body: dict, model: str = "mock-1") -> httpx.Response:
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=20.0) as client:
         return await client.post(
-            f"/v1beta/models/{model}:generateContent", json=body, headers={"x-goog-api-key": key}
+            f"/uc/{slug}/v1beta/models/{model}:generateContent",
+            json=body,
+            headers={"x-goog-api-key": key},
         )
 
 
@@ -80,7 +82,7 @@ async def test_a_use_case_without_a_pipeline_passes_through(read_model) -> None:
     would take every unconfigured use case offline the moment the feature shipped."""
     slug, key = await read_model.use_case()
 
-    assert (await _post(key, INJECTION)).status_code == 200
+    assert (await _post(slug, key, INJECTION)).status_code == 200
 
 
 async def test_a_configured_injection_filter_actually_refuses(
@@ -95,12 +97,12 @@ async def test_a_configured_injection_filter_actually_refuses(
         [],
     )
 
-    refused = await _post(key, INJECTION)
+    refused = await _post(slug, key, INJECTION)
     assert refused.status_code == 400
     assert refused.json()["error"]["status"] == "INVALID_ARGUMENT"
 
     # And a harmless prompt is untouched by the same configuration.
-    assert (await _post(key, BODY)).status_code == 200
+    assert (await _post(slug, key, BODY)).status_code == 200
 
 
 async def test_flagging_annotates_without_refusing(engine: AsyncEngine, read_model) -> None:
@@ -114,7 +116,7 @@ async def test_flagging_annotates_without_refusing(engine: AsyncEngine, read_mod
         [],
     )
 
-    assert (await _post(key, INJECTION)).status_code == 200
+    assert (await _post(slug, key, INJECTION)).status_code == 200
 
 
 async def test_a_model_the_use_case_was_not_released_is_refused(read_model) -> None:
@@ -124,10 +126,10 @@ async def test_a_model_the_use_case_was_not_released_is_refused(read_model) -> N
     Deliberately. `NoCapableModel` means every candidate was excluded, which an operator can fix by
     releasing the model — and 403 reads as "your credential may not", which sends them to the wrong
     system entirely. Same argument the residency and capability refusals already make."""
-    _, key = await read_model.use_case(released=["other-1"])
+    slug, key = await read_model.use_case(released=["other-1"])
     await _require_real_model(key)
 
-    refused = await _post(key, BODY, REAL_MODEL)
+    refused = await _post(slug, key, BODY, REAL_MODEL)
     assert refused.status_code == 400
     assert refused.json()["error"]["status"] == "FAILED_PRECONDITION"
     assert "released" in refused.json()["error"]["message"]
@@ -137,10 +139,10 @@ async def test_a_released_model_is_admitted(read_model) -> None:
     """The other half of the pair, and it has to use the same model as the refusal above or the
     two together prove nothing: one says a model off the list is refused, this says the same model
     on the list is served. Against a test double both are true whatever the list says."""
-    _, key = await read_model.use_case(released=[REAL_MODEL])
+    slug, key = await read_model.use_case(released=[REAL_MODEL])
     await _require_real_model(key)
 
-    assert (await _post(key, BODY, REAL_MODEL)).status_code == 200
+    assert (await _post(slug, key, BODY, REAL_MODEL)).status_code == 200
 
 
 async def test_a_use_case_no_event_has_described_still_serves(read_model) -> None:
@@ -149,7 +151,7 @@ async def test_a_use_case_no_event_has_described_still_serves(read_model) -> Non
     on a half-upgraded stack."""
     slug, key = await read_model.use_case()
 
-    assert (await _post(key, BODY)).status_code == 200
+    assert (await _post(slug, key, BODY)).status_code == 200
 
 
 async def test_an_edited_pipeline_takes_effect_without_a_restart(
@@ -161,7 +163,7 @@ async def test_an_edited_pipeline_takes_effect_without_a_restart(
     very next request is the one that must see it."""
     slug, key = await read_model.use_case()
     await _pipeline(engine, slug, [], [])
-    assert (await _post(key, INJECTION)).status_code == 200
+    assert (await _post(slug, key, INJECTION)).status_code == 200
 
     await _pipeline(
         engine,
@@ -170,7 +172,7 @@ async def test_an_edited_pipeline_takes_effect_without_a_restart(
         [],
     )
 
-    assert (await _post(key, INJECTION)).status_code == 400
+    assert (await _post(slug, key, INJECTION)).status_code == 400
 
 
 async def test_an_unknown_step_type_does_not_take_the_use_case_down(
@@ -182,7 +184,7 @@ async def test_an_unknown_step_type_does_not_take_the_use_case_down(
     slug, key = await read_model.use_case()
     await _pipeline(engine, slug, [{"type": "from_the_future", "config": {}}], [])
 
-    assert (await _post(key, BODY)).status_code == 200
+    assert (await _post(slug, key, BODY)).status_code == 200
 
 
 async def test_the_dry_run_reports_what_the_saved_pipeline_would_do(

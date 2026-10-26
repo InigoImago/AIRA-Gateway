@@ -65,13 +65,14 @@ async def test_a_key_is_accepted_however_the_google_protocol_spells_it(
             )
         elif how == "query":
             response = await client.post(
-                f"{GEMINI}/models/{MOCK_MODEL}:generateContent?key={governed.key}",
+                f"/uc/{governed.slug}{GEMINI}/models/{MOCK_MODEL}:generateContent"
+                f"?key={governed.key}",
                 json=_body(),
                 headers={"content-type": "application/json"},
             )
         else:
             response = await client.post(
-                f"{GEMINI}/models/{MOCK_MODEL}:generateContent",
+                f"/uc/{governed.slug}{GEMINI}/models/{MOCK_MODEL}:generateContent",
                 json=_body(),
                 headers={
                     "content-type": "application/json",
@@ -90,7 +91,7 @@ async def test_a_credential_in_the_query_string_never_reaches_the_stored_payload
     await governed.set_flag("store_payloads", True)
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=90.0) as client:
         response = await client.post(
-            f"{GEMINI}/models/{MOCK_MODEL}:generateContent?key={governed.key}",
+            f"/uc/{governed.slug}{GEMINI}/models/{MOCK_MODEL}:generateContent?key={governed.key}",
             json=_body(),
             headers={"content-type": "application/json"},
         )
@@ -191,23 +192,33 @@ async def test_a_blank_selector_is_no_selector_rather_than_a_bad_one(
     governed: Governed,
 ) -> None:
     """An empty header is a client sending an unset variable, not an attempt to name something. It
-    falls through to what the key is bound to, which is the only reading that does not break a
-    caller whose template rendered nothing — and it is deliberately *not* in the list above, where
-    it would have asserted a refusal the gateway is right not to give.
+    falls through to the path, which is the only reading that does not break a caller whose
+    template rendered nothing — and it is deliberately *not* in the list above, where it would have
+    asserted a refusal the gateway is right not to give. With no path prefix either, the call names
+    no use case and is refused as one that names none, with the prefix this key needs (`FRD-149`).
 
     Only the empty string, not a whitespace one: `httpx` refuses to put `"   "` on the wire at all
     (`Illegal header value`), so that case cannot reach the gateway over HTTP and a test for it
     would be a test of the client library.
     """
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=90.0) as client:
-        response = await client.post(
+        through_the_path = await client.post(
+            f"/uc/{governed.slug}{GEMINI}/models/{MOCK_MODEL}:generateContent",
+            json=_body(),
+            headers=governed.headers(**{"X-AIRA-Use-Case": ""}),
+        )
+        assert through_the_path.status_code == 200, through_the_path.text[:300]
+        assert (await governed.last_row())["use_case"] == governed.slug
+
+        named_nowhere = await client.post(
             f"{GEMINI}/models/{MOCK_MODEL}:generateContent",
             json=_body(),
             headers=governed.headers(**{"X-AIRA-Use-Case": ""}),
         )
 
-    assert response.status_code == 200, response.text[:300]
-    assert (await governed.last_row())["use_case"] == governed.slug
+    assert named_nowhere.status_code == 400, named_nowhere.text[:300]
+    assert "missing use case" in named_nowhere.text.lower(), named_nowhere.text
+    assert f"/uc/{governed.slug}" in named_nowhere.text, named_nowhere.text
 
 
 async def test_the_header_wins_over_the_path(governed: Governed, second_governed: Governed) -> None:

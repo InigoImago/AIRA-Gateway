@@ -4,13 +4,16 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
-import { Budget, BudgetUsage } from '../../core/api/models';
-import { LimitScope } from '../../core/api/models';
+import { Budget, BudgetScope, BudgetUsage, Membership } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { displayCount, nanosOf, storedAmount } from '../../core/ui/money';
 import { PageFeedback } from '../../core/ui/page-feedback';
-import { bindsEachMember, scopeLabel } from './limit-scope';
+import { ANOTHER_MEMBER } from '../../core/ui/withheld';
+import { bindsEachMember, hierarchyRank, scopeLabel } from './limit-scope';
+
+/** The scopes a use case's own budget form offers; the installation's is set on reporting. */
+type UseCaseBudgetScope = Exclude<BudgetScope, 'installation'>;
 
 /** A budget the gateway has never counted: nothing has been spent, and that is known. */
 const NO_USAGE: BudgetUsage = {
@@ -23,11 +26,16 @@ const NO_USAGE: BudgetUsage = {
 };
 
 /**
- * The budgets panel of a use case (FRD-400/401/403): the form, its validation, and the arithmetic
- * behind the consumption bars.
+ * The budgets panel of a use case (FRD-400/401/403/407): the form, its validation, and the
+ * arithmetic behind the consumption bars.
  *
  * Limits come from Management and consumption from the gateway, so both arrive as inputs: the
  * parent knows that an unreachable gateway must not blank out the limits as well.
+ *
+ * **The hierarchy is the page's order** (`FRD-407`): the whole use case's budget first, then the
+ * budgets set for one person, then the one for each member — the order the gateway applies them
+ * in, and said in words above the cards, because *Each member: 20* read alone claims to bind
+ * somebody whose own budget has taken its place.
  */
 @Component({
   selector: 'app-budgets-tab',
@@ -53,6 +61,14 @@ export class BudgetsTab {
   readonly canManage = input(false);
   /** The spend limit's unit — an input, because the parent already holds `/v1/me` (`CLAUDE.md` §3). */
   readonly currency = input('');
+  /**
+   * Who may be named in a budget of their own: the members the page loaded, offered as
+   * suggestions. Suggestions only — access can come through a group, which writes no member row,
+   * and the server decides who can call the use case.
+   */
+  readonly members = input<Membership[]>([]);
+  /** The reader's username, so a budget set for them reads as theirs. */
+  readonly me = input<string | null>(null);
   readonly changed = output<void>();
 
   private readonly service = inject(UseCaseService);
@@ -69,12 +85,45 @@ export class BudgetsTab {
   });
 
   protected readonly showForm = signal(false);
-  protected readonly budgetScope = signal<LimitScope>('use_case');
+  protected readonly budgetScope = signal<UseCaseBudgetScope>('use_case');
+  /** The person a budget of their own is for, as typed; only read for that scope. */
+  protected readonly budgetSubject = signal('');
   protected readonly budgetPeriod = signal<'day' | 'month'>('month');
   protected readonly budgetTokens = signal<number | null>(null);
   protected readonly budgetRequests = signal<number | null>(null);
   /** Kept as text: a spend limit must not round-trip through a JS number. */
   protected readonly budgetCost = signal('');
+
+  /** The budgets in the order the gateway applies them, so the page reads top-down as it decides. */
+  protected readonly ordered = computed(() =>
+    [...this.budgets()].sort(
+      (a, b) =>
+        hierarchyRank(a.scope) - hierarchyRank(b.scope) ||
+        (a.subject ?? '').localeCompare(b.subject ?? '') ||
+        a.period.localeCompare(b.period),
+    ),
+  );
+
+  /** Whether any budget is set for one person — when the hierarchy needs saying at all. */
+  protected readonly hasOwnBudgets = computed(() =>
+    this.budgets().some((budget) => budget.scope === 'member'),
+  );
+
+  /** The members' usernames, for the person field's suggestions. */
+  protected readonly memberNames = computed(() =>
+    this.members()
+      .map((member) => member.username)
+      .sort((a, b) => a.localeCompare(b)),
+  );
+
+  /**
+   * Whether the typed person is on this use case's member list. Not a refusal: somebody reached
+   * through a group is on no list here and can still be named — the server checks who can call.
+   */
+  protected readonly subjectListed = computed(() => {
+    const typed = this.budgetSubject().trim();
+    return !typed || this.memberNames().includes(typed);
+  });
 
   /** Total requests in the period whose cost is unknown because the model has no price. */
   protected readonly unpricedRequests = computed(() =>
@@ -82,6 +131,9 @@ export class BudgetsTab {
   );
 
   protected validationError(): string | null {
+    if (this.budgetScope() === 'member' && !this.budgetSubject().trim()) {
+      return 'Name the person this budget is for, by their username.';
+    }
     const cost = this.budgetCost().trim();
     if (cost && !/^\d+([.,]\d{1,6})?$/.test(cost)) {
       return 'The spend limit must be an amount, e.g. 250 or 250.00.';
@@ -107,9 +159,9 @@ export class BudgetsTab {
   }
 
   /** The budget a new one would replace: the endpoint upserts on scope, subject and period. */
-  private replaces(scope: LimitScope, period: string): Budget | undefined {
+  private replaces(scope: UseCaseBudgetScope, subject: string, period: string): Budget | undefined {
     return this.budgets().find(
-      (row) => row.scope === scope && !row.subject && row.period === period,
+      (row) => row.scope === scope && (row.subject ?? '') === subject && row.period === period,
     );
   }
 
@@ -121,9 +173,12 @@ export class BudgetsTab {
     if (!this.canAdd()) {
       return;
     }
-    // "+ Add" with the scope and period of a budget that exists replaces it, and a limit left
-    // empty here is cleared there — asked first, and said afterwards.
-    const replaced = this.replaces(this.budgetScope(), this.budgetPeriod());
+    // "+ Add" with the scope, person and period of a budget that exists replaces it, and a limit
+    // left empty here is cleared there — asked first, and said afterwards.
+    const scope = this.budgetScope();
+    // Only a budget of somebody's own names anybody; the server drops a name sent with another.
+    const subject = scope === 'member' ? this.budgetSubject().trim() : '';
+    const replaced = this.replaces(scope, subject, this.budgetPeriod());
     if (
       replaced &&
       !this.confirmService.ask(
@@ -136,9 +191,8 @@ export class BudgetsTab {
     }
     const cost = this.budgetCost().trim().replace(',', '.');
     const budget: Budget = {
-      scope: this.budgetScope(),
-      // No scope names a person.
-      subject: '',
+      scope,
+      subject,
       period: this.budgetPeriod(),
       limit_cost: cost || null,
       limit_tokens: this.budgetTokens(),
@@ -151,6 +205,7 @@ export class BudgetsTab {
       failure: 'Could not save the budget.',
       success: () => {
         this.feedback.succeed(replaced ? 'Budget replaced.' : 'Budget saved.');
+        this.budgetSubject.set('');
         this.budgetCost.set('');
         this.budgetTokens.set(null);
         this.budgetRequests.set(null);
@@ -274,8 +329,53 @@ export class BudgetsTab {
     return bindsEachMember(this.budgets());
   }
 
+  /**
+   * Who a budget binds, as the card heads it. A budget of somebody's own names them — "you" to
+   * the person — and reads as another member's where strict data mode withholds the name.
+   */
   protected labelFor(budget: Budget): string {
-    return scopeLabel(budget.scope);
+    if (budget.scope !== 'member') {
+      return scopeLabel(budget.scope);
+    }
+    if (budget.subject_withheld || !budget.subject) {
+      return `${scopeLabel(budget.scope)}: ${ANOTHER_MEMBER}`;
+    }
+    const me = this.me();
+    return `${scopeLabel(budget.scope)}: ${budget.subject === me ? `you (${me})` : budget.subject}`;
+  }
+
+  /**
+   * Why a card shows no figures although the gateway answered, in the words that fit its row —
+   * or `null` where its figures are shown. Each case is a different fact about the reader, and
+   * one sentence for all of them would be wrong for most.
+   */
+  protected unmeasuredReason(budget: Budget): string | null {
+    if (this.usageUnavailable() || this.measured(budget)) {
+      return null;
+    }
+    const entry = budget.id != null ? this.usage()[budget.id] : undefined;
+    if (budget.scope === 'member') {
+      if (entry?.replaced_by != null) {
+        return (
+          'Switched off, so you are held to the budget for each member of this period instead; ' +
+          'your figures are on that card.'
+        );
+      }
+      return (
+        'Counted for this person alone. What they used is theirs to see, so no figures are ' +
+        'shown here.'
+      );
+    }
+    if (entry?.replaced_by != null) {
+      return (
+        'A budget of your own takes the place of this one for you, so your figures are on that ' +
+        'card rather than here.'
+      );
+    }
+    return (
+      'Counted per person, so the limits below apply to each member separately. You have no ' +
+      'consumption of your own here, so no figures are shown.'
+    );
   }
 }
 

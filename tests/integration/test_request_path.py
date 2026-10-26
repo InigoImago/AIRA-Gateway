@@ -78,7 +78,7 @@ async def test_a_dispatched_request_is_recorded_with_its_attribution_and_cost(
         response = await client.post(
             "/v1beta/models/mock-1:generateContent",
             json=BODY,
-            headers={"x-goog-api-key": key},
+            headers={"x-goog-api-key": key, "x-aira-use-case": slug},
         )
     assert response.status_code == 200
 
@@ -120,7 +120,7 @@ async def test_an_unpriced_model_records_no_cost_rather_than_zero(
             await client.post(
                 "/v1beta/models/mock-1:generateContent",
                 json=BODY,
-                headers={"x-goog-api-key": key},
+                headers={"x-goog-api-key": key, "x-aira-use-case": slug},
             )
         ).status_code == 200
 
@@ -145,7 +145,7 @@ async def test_a_streamed_request_is_recorded_once_it_finishes(
             "POST",
             "/v1beta/models/mock-1:streamGenerateContent",
             json=BODY,
-            headers={"x-goog-api-key": key},
+            headers={"x-goog-api-key": key, "x-aira-use-case": slug},
         ) as response,
     ):
         assert response.status_code == 200
@@ -163,18 +163,18 @@ async def test_a_streamed_request_is_recorded_once_it_finishes(
 async def test_sse_is_served_when_the_client_asks_for_it(read_model) -> None:
     """The google-genai SDK asks for `?alt=sse` and reads `data:` frames; the default form is a
     JSON array. Serving the wrong one to either caller breaks it in a way no status code shows."""
-    _, key = await read_model.use_case()
+    slug, key = await read_model.use_case()
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         sse = await client.post(
             "/v1beta/models/mock-1:streamGenerateContent?alt=sse",
             json=BODY,
-            headers={"x-goog-api-key": key},
+            headers={"x-goog-api-key": key, "x-aira-use-case": slug},
         )
         plain = await client.post(
             "/v1beta/models/mock-1:streamGenerateContent",
             json=BODY,
-            headers={"x-goog-api-key": key},
+            headers={"x-goog-api-key": key, "x-aira-use-case": slug},
         )
 
     assert sse.headers["content-type"].startswith("text/event-stream")
@@ -214,7 +214,7 @@ async def test_a_client_that_stops_reading_still_leaves_the_request_accounted_fo
             "POST",
             "/v1beta/models/mock-1:streamGenerateContent",
             json=BODY,
-            headers={"x-goog-api-key": key},
+            headers={"x-goog-api-key": key, "x-aira-use-case": slug},
         ) as response,
     ):
         assert response.status_code == 200

@@ -143,6 +143,16 @@ def _budgets() -> list[dict[str, Any]]:
             "period": Budget.DAY,
             "limit_cost": Decimal("0.000250"),
         },
+        # One person's own, in place of the per-head cap for them (`FRD-407`): `ucuser` may spend
+        # more in a day than everybody else, and the use case's monthly pot still bounds them —
+        # here it is the tighter of the two, so the demo traffic reaches the pot as before.
+        {
+            "use_case": "kundenservice",
+            "scope": Budget.MEMBER,
+            "subject": "ucuser",
+            "period": Budget.DAY,
+            "limit_cost": Decimal("0.000400"),
+        },
         # Tokens rather than money, for a team that thinks in tokens.
         {
             "use_case": "entwicklung",

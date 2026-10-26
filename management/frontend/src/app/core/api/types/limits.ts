@@ -2,25 +2,36 @@
  * Who a budget or a rate limit applies to.
  *
  * `use_case` is a **shared pot** the first caller can spend entirely; `each_member` bounds every
- * person the same way without naming any of them, including people who join later. A scope naming
- * one person was removed by the owner's decision; `subject` stays on the wire for older rows and is
- * ignored.
+ * person the same way without naming any of them, including people who join later.
  */
 export type LimitScope = 'use_case' | 'each_member';
 
 /**
- * A budget's scope, one word wider than a rate limit's (`FRD-610`).
+ * A budget's scope, wider than a rate limit's (`FRD-610`, `FRD-407`).
  *
- * `installation` is spend that belongs to **no** use case — the console's model checks, a
- * break-glass key, demo traffic. Kept out of `LimitScope` because nothing enforces a
- * per-installation request rate, and a type offering the word would let a form ask for it.
+ * `member` is **one person's own** budget: it takes the place of the `each_member` budget of its
+ * period for the person it names, higher or lower, and the `use_case` budget still bounds them.
+ * Offered for budgets only. `installation` is spend that belongs to **no** use case — the console's
+ * model checks, a break-glass key, demo traffic. Both are kept out of `LimitScope`, because a
+ * type offering a word would let the rate-limit form ask for it.
  */
-export type BudgetScope = LimitScope | 'installation';
+export type BudgetScope = LimitScope | 'member' | 'installation';
 
 export interface Budget {
   id?: number;
   scope: BudgetScope;
-  subject?: string;
+  /**
+   * The person a `member` budget is for, by username; empty for every other scope. `null` where
+   * strict data mode withholds the name from this reader (`subject_withheld`).
+   */
+  subject?: string | null;
+  /** True when the server withholds who a `member` budget is for (`FRD-627`). */
+  subject_withheld?: boolean;
+  /**
+   * Whether the person a `member` budget names can still call the use case. `false` is a budget
+   * that binds nobody now; `null` is "not known to this reader" or "no person named".
+   */
+  reaches?: boolean | null;
   period: 'day' | 'month';
   /** Spend limit for the period, as an exact decimal string (never a JS number). */
   limit_cost?: string | null;
@@ -61,4 +72,11 @@ export interface BudgetUsage {
   used_cost: string | null;
   /** Requests served by a model with no price on file; their cost is unknown, not zero. */
   unpriced_requests: number | null;
+  /** Whether this budget binds the reader under the hierarchy (`FRD-407`). Absent from older gateways. */
+  binds?: boolean;
+  /**
+   * Where a per-person budget gives way to another for the reader — their own budget in place of
+   * the one for everybody, or the reverse while their own is switched off — the one that binds.
+   */
+  replaced_by?: number | null;
 }

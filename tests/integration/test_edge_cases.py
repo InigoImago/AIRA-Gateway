@@ -30,7 +30,13 @@ import pytest
 
 from aira_gateway.api.kira import errors as kira_errors
 
-from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, LOCAL_EMBED_MODEL_ID, Fixture
+from .conftest import (
+    GATEWAY_URL,
+    LOCAL_CHAT_MODEL_ID,
+    LOCAL_EMBED_MODEL_ID,
+    Fixture,
+    merged_headers,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -51,7 +57,7 @@ async def _post(
 ) -> httpx.Response:
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=90.0) as client:
         return await client.post(
-            path, json=body, headers={**fixture.headers(), **(headers or {})}, **kwargs
+            path, json=body, headers=merged_headers(fixture.headers(), headers or {}), **kwargs
         )
 
 
@@ -354,7 +360,7 @@ async def test_a_valid_key_in_the_query_string_works_like_the_header(fixture: Fi
     redacted from spans; that is the tracing suite's to assert, not a status code's.)"""
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=90.0) as client:
         response = await client.post(
-            f"{GENERATE}?key={fixture.key}",
+            f"/uc/{fixture.slug}{GENERATE}?key={fixture.key}",
             json={"contents": [{"parts": [{"text": "hi"}]}]},
         )
     _check(response, expect=(200,))
@@ -403,10 +409,11 @@ async def test_a_selector_that_is_not_this_keys_use_case_is_refused(
         {"contents": [{"parts": [{"text": "hi"}]}]},
         headers={"X-AIRA-Use-Case": selector},
     )
-    # An empty header is no header at all, so the key's own use case applies. A well-formed slug
-    # that is not the key's is refused naming the key's binding; anything else is not a slug.
+    # An empty header is no header at all, so the call names no use case and is refused as one that
+    # names none (`FRD-149`). A well-formed slug that is not the key's is refused naming the key's
+    # binding; anything else is not a slug.
     if selector == "":
-        _check(response, expect=(200,))
+        _check(response, expect=(400,), names="missing use case")
     elif selector in ("no-such-use-case", "null"):
         _check(response, expect=(403,), names="bound to use case")
     else:

@@ -283,7 +283,8 @@ config-distribution mechanism: `FRD-204` and [`ARCHITECTURE.md`](ARCHITECTURE.md
   Kafka into a local read-model; the **Gateway only validates**. OIDC validation lives in the Gateway.
 - **FR-GW-3 Attribution**: Resolve each request to `user`, ~~`project`~~, `use_case`, and
   `user∈use_case`. Attribution derives from the credential + request context. *Non-goal:* a
-  project (§2.2).
+  project (§2.2). *As built (`FRD-149`):* a model call names its use case in the request — path
+  prefix or header — whatever the credential; a key's binding checks the name.
 - **FR-GW-4 Routing & rerouting**: Route requests to a model/upstream based on use-case config;
   support **cost-based rerouting** (classify request difficulty → cheaper model when possible).
 - **FR-GW-5 Sequential/parallel execution**: Execute pipeline steps and/or multiple models
@@ -321,7 +322,9 @@ config-distribution mechanism: `FRD-204` and [`ARCHITECTURE.md`](ARCHITECTURE.md
   replacement and routing; parallel branches are a non-goal (§2.2), and the allow-check became the
   per-use-case release (`FRD-308`).
 - **FR-MG-4 Model routing config**: Configure routing rules and cost-based rerouting per use case.
-- **FR-MG-5 Budget control**: Set budgets per use case and per member; view consumption.
+- **FR-MG-5 Budget control**: Set budgets per use case and per member; view consumption. *As
+  built:* per use case, the same per head for every member, and — since `FRD-407` — one person's
+  own, which takes the place of the per-head budget for them; the use case's budget bounds all.
 - **FR-MG-6 Anomaly self-service**: Define anomaly rules, e.g. too many requests per time window,
   oversized requests, requests that leak internal information. *Not built:* a rule for leaked
   information — the seven kinds watch rates, spend, sizes and addresses (`FRD-500`).

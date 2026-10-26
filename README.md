@@ -110,14 +110,18 @@ the [gap analysis](docs/GAP-ANALYSIS.md).
 - **Two ways in.** API keys bound to a use case (hashed at rest, always with an end date: 30 days
   by default, 180 at most), and Keycloak OIDC bearer tokens — from one realm or several. Windows
   sign-on works through Keycloak's Kerberos federation, with nothing in AIRA changed for it.
+  **Every model call names its use case** — `/uc/<use-case>` in the base URL, or a header — with
+  either credential, so what a request is billed to is in the request itself.
 - **Access follows the group.** A grant binds a person *or* a Keycloak group to a use case. AIRA
   never writes to your directory.
 - **Three built-in roles, and the roles an installation defines.** Global Administrator, IT
   Security and IT Steuerung, each held through a Keycloak group; further roles are sets of
   permissions defined in the console. Administering or using a use case is a grant on it, not a
   role. The differences are load-bearing: [**who may do what**](docs/ROLES.md).
-- **Budgets** on spend, tokens or requests — a use case's shared pot, each member's own counter, and
-  the installation's own bucket for traffic that belongs to no use case — per day or per month.
+- **Budgets** on spend, tokens or requests — a use case's shared pot, each member's own counter, a
+  budget of their own for one named person in place of that, and the installation's own bucket for
+  traffic that belongs to no use case — per day or per month. The pot bounds everybody, a person's
+  own budget replaces the per-person one for them, everybody else has the per-person one.
   Reserved before dispatch and settled after, so concurrent requests cannot all pass a limit with
   room for one. By default a model without a price cannot serve a request a cost limit binds.
 - **A caller sees their own allowance**: `GET /v1beta/me/budget` answers from the credential that
@@ -236,7 +240,7 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Configuration**](docs/CONFIGURATION.md) | Every variable, what it does, what breaks without it |
 | [**Configuration files**](config/README.md) | One YAML per installation, naming every external system — and no secrets |
 | [**Integrations**](docs/INTEGRATIONS.md) | What each connected system must provide |
-| [**Migrating a KIRA client**](docs/MIGRATION-KIRA.md) | Use case, released models, members, key — and `X-AIRA-Use-Case` |
+| [**Migrating a KIRA client**](docs/MIGRATION-KIRA.md) | Use case, released models, members, key — and the use case in the base URL |
 | [**Pointing a Gemini client at AIRA**](docs/MIGRATION-GEMINI.md) | The same steps, for `google-genai` and anything that speaks it |
 | [**Operations**](docs/DEPLOYMENT.md) | Deploying it: §0 is a runbook for an integration, in order, with the command that checks each step. Then topics, jobs, degradation, backups |
 | [**Sizing**](docs/DEPLOYMENT.md#1a-sizing-what-one-instance-carries) | What one instance carries, measured: the CPU a request of each workload costs, the three places a deployment gives way, and what the audit trail fills |

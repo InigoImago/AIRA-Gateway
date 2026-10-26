@@ -29,7 +29,9 @@ becomes a break-glass tool only.
 - **FR-3 Distribution**: `api_key.*` events via Kafka (FRD-204) → Gateway read-model upsert/deactivate.
 - **FR-4 Gateway binding**: the Gateway's `ApiKey` read-model gains `use_case`; a verified API-key
   `Principal` carries it; `require_attribution` uses the key's use case (no selector needed) and does
-  not require group membership.
+  not require group membership. *Changed by `FRD-149` (`ADR-0045`): a key's model call names its
+  use case like any other — the binding checks the selector instead of standing in for one; a
+  reading, which spends nothing, is still attributed to the key's use case.*
 - **FR-5 Security**: plaintext never leaves Management except once to the browser; never in events/logs.
 
 ## 4. Design & Architecture

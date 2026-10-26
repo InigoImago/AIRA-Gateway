@@ -1,8 +1,12 @@
-"""Budget definitions per use case / member (FRD-400).
+"""Budget definitions per use case / member (FRD-400, FRD-407).
 
 Authored in Management and distributed to the gateway, which accounts usage and enforces the
 limits (FRD-401). A limit is a **cost** in the installation currency (FRD-403) and/or a token
 or request count, over a day/month period.
+
+The hierarchy between the scopes is the gateway's to apply (`aira_gateway.scopes.binding`): the
+use case's budget bounds everybody; a person's own budget takes the place of the per-person one of
+the same period for that person; everybody else has the per-person one (`ADR-0044`).
 
 Cost is the limit that answers the question a budget is usually asked — token counts differ in
 price by more than an order of magnitude between models, so a token cap says little about spend.
@@ -25,8 +29,10 @@ class Budget(models.Model):
     #: keeps applying to people who join later. `USE_CASE` is a **shared pot** instead; neither
     #: substitutes for the other.
     EACH_MEMBER = "each_member"
-    # There is no scope naming one person (owner's decision): singling somebody out is not a
-    # governance decision this product makes easy.
+    #: **One person's own** (`FRD-407`): it takes the place of the `EACH_MEMBER` budget of its
+    #: period for the person it names — higher or lower — and the `USE_CASE` budget still bounds
+    #: them. ``subject`` is that person's username, the key their allowance is counted under.
+    MEMBER = "member"
 
     #: **The installation's own spend** (`FRD-610`): the residual bucket for what belongs to no use
     #: case — the console's model checks, break-glass keys, demo traffic. Not a global cap: a use
@@ -35,6 +41,7 @@ class Budget(models.Model):
     SCOPE_CHOICES = [
         (USE_CASE, "Use case"),
         (EACH_MEMBER, "Each member"),
+        (MEMBER, "One person"),
         (INSTALLATION, "Installation"),
     ]
 
@@ -49,7 +56,9 @@ class Budget(models.Model):
         UseCase, on_delete=models.CASCADE, related_name="budgets", null=True, blank=True
     )
     scope = models.CharField(max_length=16, choices=SCOPE_CHOICES)
-    subject = models.CharField(max_length=255, blank=True)  # member username; empty for use_case
+    #: The username a `MEMBER` budget names, as it is stored here — empty for every other scope,
+    #: which `ck_budget_names_only_one_person` holds for every writer.
+    subject = models.CharField(max_length=255, blank=True)
     period = models.CharField(max_length=8, choices=PERIOD_CHOICES, default=MONTH)
     limit_cost = models.DecimalField(
         max_digits=14,
@@ -86,6 +95,17 @@ class Budget(models.Model):
                     | (~models.Q(scope="installation") & models.Q(use_case__isnull=False))
                 ),
                 name="ck_budget_scope_matches_owner",
+            ),
+            # A person's own budget names somebody and no other budget does. A `MEMBER` row naming
+            # nobody would bind nobody while looking configured; a name on any other row would key
+            # the uniqueness above on a person the row does not honour, so a second save would
+            # create a second budget instead of replacing the first.
+            models.CheckConstraint(
+                condition=(
+                    (models.Q(scope="member") & ~models.Q(subject=""))
+                    | (~models.Q(scope="member") & models.Q(subject=""))
+                ),
+                name="ck_budget_names_only_one_person",
             ),
         ]
 

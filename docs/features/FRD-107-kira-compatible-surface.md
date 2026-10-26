@@ -143,6 +143,13 @@ naming the candidates. A caller with **no** membership goes unattributed only wh
 refused. The path prefix matters for a client whose base URL is configurable and whose headers are
 not.
 
+*Changed by `FRD-149` (`ADR-0045`, the owner's decision):* rule 1 is gone, on this surface and for
+keys alike. **A model call names its use case** — a migrating client puts `/uc/<slug>` in its base
+URL — and one that names none is refused `403 STANDARD_USER_PERMISSION_REQUIRED` with the use case
+to name. The trade this section accepted, a client that changes nothing, turned out to have its
+cost the other way round: the same client's requests changed meaning the day its user was given a
+second use case.
+
 ### 5.4 Two permission levels onto five roles
 
 The predecessor's "standard user" and "admin" come from configured group names. Ours come from

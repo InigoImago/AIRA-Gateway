@@ -17,14 +17,11 @@ def test_a_use_case_scope_binds_every_caller() -> None:
 
 
 def test_an_unknown_scope_binds_nobody() -> None:
-    """Forward compatibility, and now also **backward**: a scope a newer Management knows about
-    must be ignored rather than applied to the wrong caller — and so must `member`, which a
-    *older* Management may still be sending while its own migration has not run.
-
-    A row that binds nobody is the right answer for a scope this gateway no longer has. Both
-    planes delete such rows; they do not delete them at the same instant.
-    """
+    """Forward compatibility: a scope a newer Management knows about must be ignored rather than
+    applied to the wrong caller. A row that binds nobody is the right answer for a scope this
+    gateway does not have — and a person's own row naming nobody binds nobody either."""
     assert Scope.applying(scope="api_key", use_case="uc", caller="x") is None
+    assert Scope.applying(scope="team", use_case="uc", caller="alice", named="alice") is None
     assert Scope.applying(scope="member", use_case="uc", caller="alice") is None
 
 
@@ -74,8 +71,8 @@ def test_a_per_person_row_binds_whoever_turns_up() -> None:
         assert scope is not None
         assert scope.member == caller
 
-    # The stored key shape is unchanged by the removal of the named scope: a counter written
-    # before it went keeps being found, which is the whole reason `usage_key` is not free to move.
+    # The stored key shape is the one a person's own row uses too: a counter written under either
+    # keeps being found, which is the whole reason `usage_key` is not free to move.
     each = Scope.applying(scope=EACH_MEMBER, use_case="uc", caller="alice")
     assert each is not None
     assert each.usage_key == "member:uc:alice"

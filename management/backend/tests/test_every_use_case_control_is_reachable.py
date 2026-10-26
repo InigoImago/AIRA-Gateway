@@ -170,16 +170,17 @@ def _typed_literals(kind: str) -> set[str]:
             continue
         for literal in literals:
             keys.update(re.findall(r"([a-z_]+)\s*:", literal))
+            # `{ scope, subject, … }` — shorthand is the same field, as `_fields_the_console_writes`
+            # reads it: a spelling the guard does not know reads as a control nobody can reach.
+            keys.update(re.findall(r"(?:^|,)\s*([a-z_]+)\s*(?=,|$)", literal))
         keys.update(re.findall(r"\{\s*\.\.\.[a-zA-Z]+,\s*([a-z_]+)\s*\}", source))
     return keys
 
 
 #: Fields of a budget or a rate limit that no panel sends, with the reason.
 #:
-#: `subject` is on the wire and ignored: no scope names a person any more (2026-08-14), and the
-#: field is kept while both planes' migrations run. It is sent as `''` by both tabs, so it is
-#: reachable in the only sense that matters — but naming it here would be wrong, and it does not
-#: need to be: the tabs do send it.
+#: None. `subject` names the person a budget of their own is for (`FRD-407`), and the budgets tab
+#: sends it — as `''` for every other scope, as the rate-limit tab does for both of its.
 LIMIT_FIELDS_NOT_SENT: dict[str, str] = {}
 
 

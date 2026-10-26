@@ -1571,6 +1571,24 @@ reading code.
   serializer, but in the console, where `rule-form.ts` sends the whole object on every edit under a
   comment explaining that a partial one *"would be checked against the default instead"*. **A
   workaround in one client is not a property of the endpoint** — it is a report nobody filed.
+- **What a request is billed to belongs in the request, not in the state of its caller.** The KIRA
+  surface took a person's only membership as their use case, and a key bound to a use case stood in
+  for the selector on both surfaces — each convenient, tested and documented, and each made one
+  request mean different things at different times. A client worked until its user was given a
+  second use case, and then every call answered `403`; a person holding keys for two use cases
+  billed whichever one a tool was configured with, and nothing in the request, the client's
+  configuration or a proxy log said which. **A default inferred from how many of something a caller
+  has is a rule whose answer changes when the count does**, at a moment nobody connects with the
+  request. The owner's fix was the plain one: every model call names its use case, a key's binding
+  checks the name, and the refusal says which name to add (`FRD-149`).
+
+  *And a hierarchy over rows that share a counter has to choose one of them.* The scope naming one
+  person, removed in August, was additive and counted on the same per-person key as the budget for
+  everybody: had both existed for one person and period, every request would have been booked into
+  that counter twice, with each figure looking plausible on its own. Brought back as a person's own
+  budget in place of the one for everybody, it is one rule — `scopes.binding`, one row per person
+  and period — that the reservation, the console's figures, the caller's own allowance and the rate
+  limiter all ask (`FRD-407`).
 - **Deprecation warns, revocation blocks.** Conflating them removes the ability to announce a
   retirement.
 - **Off has to be said out loud** — but only where there is something to switch off. A model that
@@ -2322,7 +2340,11 @@ reading code.
   mutation rendered the same claim under a different label — assert the element, not the wording;
   a panel test that left the usage map empty proved the line was missing because nothing had been
   *measured*, not because the scope was wrong. Four of these were found by the harness in one
-  session, two of them in tests written minutes earlier.
+  session, two of them in tests written minutes earlier. *A header has two spellings and a dict
+  has one key per spelling:* the live suites' helper named the use case as `x-aira-use-case`, a
+  test laid `X-AIRA-Use-Case` over it, both went out, and the gateway read the helper's — so the
+  test that a blank selector is no selector stayed green, for the helper's reason, after the rule it
+  described had changed. **Merge headers as HTTP compares their names.**
 - **A test that assumes what the installation is *not* configured for reads the developer's
   machine too.** *"A model nobody serves says so"* asked about `gemini-2.5-pro`, on the assumption
   that this stack had no Vertex key. One was configured, and the test then asserted the opposite of

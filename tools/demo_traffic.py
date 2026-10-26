@@ -87,7 +87,8 @@ INJECTION_USE_CASE = "kundenservice"
 # this model reasons by default and would spend the whole token allowance on it.
 async def ask(client: httpx.AsyncClient, slug: str, prompt: str, person: str | None = None) -> int:
     response = await client.post(
-        f"{GATEWAY}/v1beta/models/{CHAT}:generateContent",
+        # Named in the address, as every model call names its use case (`FRD-149`).
+        f"{GATEWAY}/uc/{slug}/v1beta/models/{CHAT}:generateContent",
         headers={"x-goog-api-key": key_for(slug, person), "content-type": "application/json"},
         json={
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -104,7 +105,7 @@ async def ask(client: httpx.AsyncClient, slug: str, prompt: str, person: str | N
 
 async def embed(client: httpx.AsyncClient, slug: str, person: str | None = None) -> int:
     response = await client.post(
-        f"{GATEWAY}/v1beta/models/{EMBED}:batchEmbedContents",
+        f"{GATEWAY}/uc/{slug}/v1beta/models/{EMBED}:batchEmbedContents",
         headers={"x-goog-api-key": key_for(slug, person), "content-type": "application/json"},
         json={
             "requests": [

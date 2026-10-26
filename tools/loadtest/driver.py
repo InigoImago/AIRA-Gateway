@@ -320,7 +320,12 @@ def _declared(profile: Profile, tool_call: bool = False) -> float:
 async def _gateway_request(
     client: httpx.AsyncClient, profile: Profile, key: str, turn: int, salt: int
 ) -> Sample:
-    headers = {"x-goog-api-key": key, "content-type": "application/json"}
+    # The use case named, as every model call names it whatever the credential (`FRD-149`).
+    headers = {
+        "x-goog-api-key": key,
+        "x-aira-use-case": profile.use_case,
+        "content-type": "application/json",
+    }
 
     if profile.embedding_batch:
         body = {

@@ -141,13 +141,14 @@ seconds, and until the use case has arrived a request for it is refused `403` *"
 gateway"* — wait a moment. Then call it:
 
 ```bash
-curl -s http://localhost:8001/v1beta/models/qwen3:0.6b:generateContent \
+curl -s http://localhost:8001/uc/<use-case>/v1beta/models/qwen3:0.6b:generateContent \
   -H "x-goog-api-key: aira_..." \
   -H "content-type: application/json" \
   -d '{"contents":[{"parts":[{"text":"Say OK"}]}]}'
 ```
 
-The key is bound to the use case, so the request needs nothing else. It appears on the use case's
+`/uc/<use-case>` names the use case, which every model call does — with a key as much as with a
+sign-in; the key may name only the one it was issued for. The request appears on the use case's
 **Requests** tab once its row is written.
 
 ---

@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, login, uniqueSlug } from './support';
+import { USERS, api, createUseCase, issueKey, login, uniqueSlug } from './support';
+
+/** The model every stack catalogues and serves itself, so a released example costs nothing. */
+const LOCAL_MODEL = 'qwen3:0.6b';
 
 /**
  * How to call a use case, on the page that governs it.
@@ -37,21 +40,23 @@ async function openConnectionBlock(page: import('@playwright/test').Page) {
 }
 
 test.describe('Connecting a client', () => {
-  test('shows both surfaces, with a base URL and an example for each', async ({ page }) => {
+  test('gives each interface an address that names the use case', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
 
-    const block = await openConnectionBlock(page);
-    await block.scrollIntoViewIfNeeded();
+    // The answer to "where do I send it" is on the shut card already, address included.
+    const summary = page.getByTestId('connection-summary');
+    await expect(summary).toContainText('/uc/kundenservice/v1beta', { timeout: 20_000 });
 
-    // Two surfaces, two tabs — alternatives rather than steps, so only one is on screen. A reader
-    // migrating a KIRA client should not have to read the Gemini half to find their own.
-    await expect(page.getByTestId('connection-gemini-base')).toContainText('/v1beta');
-    await expect(page.getByTestId('connection-kira-base')).toHaveCount(0);
-
-    await page.getByTestId('conn-tab-kira').click();
-    await expect(page.getByTestId('connection-kira-base')).toContainText('/kira/api/external');
-    await expect(page.getByTestId('connection-gemini-base')).toHaveCount(0);
+    await openConnectionBlock(page);
+    // Every model call names its use case, whatever the credential (`FRD-149`): an address
+    // without the prefix is one a key is refused at.
+    await expect(page.getByTestId('connection-gemini-base')).toHaveText(
+      /\/uc\/kundenservice\/v1beta$/,
+    );
+    await expect(page.getByTestId('connection-kira-base')).toHaveText(
+      /\/uc\/kundenservice\/kira\/api\/external$/,
+    );
 
     // The address is described rather than asserted as *the* gateway: it is the console's proxy,
     // which works from anywhere that reaches the console and is not what a client elsewhere uses.
@@ -65,7 +70,6 @@ test.describe('Connecting a client', () => {
     await page.goto('/use-cases/kundenservice');
     await openConnectionBlock(page);
 
-    await page.getByTestId('conn-tab-kira').click();
     const table = page.getByTestId('connection-models');
     await expect(table).toBeVisible();
 
@@ -77,6 +81,58 @@ test.describe('Connecting a client', () => {
     await expect(ids.first()).toBeVisible();
     const shown = await ids.allTextContents();
     expect(shown.some((text) => /\d/.test(text))).toBe(true);
+  });
+
+  /**
+   * **The example works when it is pasted.** The panel's whole claim, made where it can be checked:
+   * the generation example's address is read off the page and sent a request with a key issued on
+   * the same page — through the console's proxy, with the use case in the path. A model released
+   * on purpose: the stack's own local one, so nothing is spent. Not the mock, which every gateway
+   * serves and no catalogue lists, so there is nothing to release.
+   */
+  test('the generation example is served, as written, with a key from this page', async ({
+    page,
+  }) => {
+    await login(page, USERS.globalAdmin);
+    const slug = await createUseCase(page, uniqueSlug('connect'), 'Connection example probe');
+    const released = await api(page, 'PATCH', `/api/v1/use-cases/${slug}/`, {
+      allowed_models: [LOCAL_MODEL],
+    });
+    expect(released.status, JSON.stringify(released.body)).toBeLessThan(300);
+    const key = await issueKey(page, slug, 'connection-example');
+
+    await page.goto(`/use-cases/${slug}`);
+    await openConnectionBlock(page);
+    const example = (await page.getByTestId('connection-gemini-chat').textContent()) ?? '';
+    const url = example.match(/curl -s (\S+)/)?.[1];
+    expect(url, example).toContain(`/uc/${slug}/v1beta/models/${LOCAL_MODEL}:generateContent`);
+
+    // A key reaches the gateway over Kafka, so it is valid within a moment rather than at once.
+    await expect
+      .poll(
+        async () =>
+          (
+            await page.request.post(url!, {
+              headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+              data: {
+                contents: [{ parts: [{ text: 'Say OK.' }] }],
+                generationConfig: { maxOutputTokens: 8 },
+              },
+              timeout: 180_000,
+            })
+          ).status(),
+        { timeout: 60_000, intervals: [1000] },
+      )
+      .toBe(200);
+
+    // And the same address without the use case is refused, with the prefix to add: the
+    // requirement is real, not only written down.
+    const unnamed = await page.request.post(url!.replace(`/uc/${slug}`, ''), {
+      headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+      data: { contents: [{ parts: [{ text: 'Say OK.' }] }] },
+    });
+    expect(unnamed.status()).toBe(400);
+    expect(await unnamed.text()).toContain(`/uc/${slug}`);
   });
 
   test('the examples name a model this use case is actually allowed to call', async ({ page }) => {
@@ -145,27 +201,21 @@ test.describe('Connecting a client', () => {
     await expect(page.getByTestId('connection-nothing-released')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('connection-gemini-chat')).toHaveCount(0);
   });
-  test('explains the path prefix, for a client that can set a URL and not a header', async ({
+  test('explains why every address names the use case, and the header instead', async ({
     page,
   }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
     await openConnectionBlock(page);
 
-    // It was half a sentence in a hover hint. A caller whose client can only be given a base URL
-    // does not go looking in a hint — they conclude the gateway has no way to do what they need.
+    // Stated in the panel, not in a hover hint: a reader whose old client sent no use case meets
+    // a refusal, and the reason has to be where they look.
     const section = page.getByTestId('connection-attribution');
-    await expect(section).toContainText('/uc/');
+    await expect(section).toContainText('/uc/kundenservice');
+    await expect(section).toContainText('a key too');
     await expect(section).toContainText('403');
-    await expect(page.getByTestId('connection-uc-example')).toContainText(
-      '/uc/kundenservice/v1beta',
-    );
-
-    // And it follows the open tab, because a prefix example naming the other surface is the one
-    // thing on this panel most likely to be pasted unread.
-    await page.getByTestId('conn-tab-kira').click();
-    await expect(page.getByTestId('connection-uc-example')).toContainText(
-      '/uc/kundenservice/kira/api/external',
+    await expect(page.getByTestId('connection-header-example')).toContainText(
+      'X-AIRA-Use-Case: kundenservice',
     );
   });
 

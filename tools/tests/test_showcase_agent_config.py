@@ -103,7 +103,9 @@ def test_the_key_reaches_the_config_and_the_base_url_is_the_gateway() -> None:
 
     options = document["provider"]["aira"]["options"]
     assert options["apiKey"] == "the-key"
-    assert options["baseURL"].endswith("/v1beta")
+    # The use case named in the address, as every model call names it (`FRD-149`): without it the
+    # showcase's own assistant is refused on its first turn.
+    assert options["baseURL"].endswith("/uc/coding-assistant/v1beta")
 
 
 @pytest.mark.parametrize(

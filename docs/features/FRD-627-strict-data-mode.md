@@ -96,6 +96,9 @@ one named person included. A use case's administrator could also leave the rung 
   the prompt and response only to a reader who can read them.
 - **FR-15 — A key's person.** The use case's key list shows owner and issuer only to them and to
   whoever sees people; everybody else reads `owner_withheld: true` and "another member".
+- **FR-17 — A budget set for one person** (`FRD-407`) names them to the person, to the use case's
+  administrators, who set it, and to whoever sees people; everybody else reads `subject: null`,
+  `subject_withheld: true` and "another member". The consumption against it is the person's own.
 
 ## 5. Design & Architecture
 

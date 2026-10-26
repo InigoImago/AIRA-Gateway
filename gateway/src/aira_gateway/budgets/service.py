@@ -34,9 +34,9 @@ from aira_common.money import format_display
 from aira_gateway.budgets import keys
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger, Limits
-from aira_gateway.budgets.store import accumulate, applicable, read_usage
+from aira_gateway.budgets.store import accumulate, applicable, read_usage, slot_of
 from aira_gateway.db.models import BudgetRead
-from aira_gateway.scopes import EACH_MEMBER, Scope
+from aira_gateway.scopes import PER_PERSON, Scope, binding
 from aira_gateway.shielding import uninterrupted
 
 __all__ = ["Amounts", "BudgetExceeded", "BudgetService", "Reservation"]
@@ -58,7 +58,7 @@ class Reservation:
     #: Budgets that bind and refuse nothing — lifted (`enabled` false). Never reserved against;
     #: booked when the request settles, so their figures stay true (`store.applicable`).
     lifted: list[BudgetRead] = field(default_factory=list)
-    #: Who the request is from: an `each_member` budget's counter key **is** the caller, and
+    #: Who the request is from: a per-person budget's counter key **is** the caller, and
     #: settle/release run long after the subject was resolved.
     subject: str | None = None
     #: What this request set aside, so `settle` can correct it and `release` can hand it back.
@@ -487,7 +487,14 @@ class BudgetService:
         Cost comes as a decimal string for people and as nano-units for a progress bar. A
         **per-person** budget is one counter per head, so ``measured_for`` names whose figure it
         is; a reader it does not bind gets ``None`` for every figure rather than a zero, which is
-        also what an untouched allowance looks like (`FRD-603`).
+        also what an untouched allowance looks like (`FRD-603`). A person's own budget is
+        measured for that person alone, and the name it carries is not repeated here: who may read
+        it is Management's to decide (`FRD-407`).
+
+        ``binds`` says whether the row binds the reader under the hierarchy (`scopes.binding`) —
+        `/v1beta/me/budget` keeps only those — and a per-person row that gives way to another for
+        this reader names the one that binds instead (``replaced_by``): the reader's own budget in
+        place of the one for everybody, or the reverse while their own is switched off.
 
         Each row also carries **what the limit is and what is left of it**, so that one answer is
         enough for the question people actually ask. Three dimensions, each capped or not: a
@@ -504,21 +511,45 @@ class BudgetService:
             result = await session.execute(
                 select(BudgetRead).where(BudgetRead.use_case == use_case)
             )
+            budgets = list(result.scalars())
+            # The rows enforcement books for this reader — one definition, so this view and the
+            # refusal cannot disagree about which budget is the reader's.
+            bound = binding(budgets, caller=subject, slot=slot_of)
+            binds = {budget.id for budget in bound}
+            # Per period, the per-person row that binds the reader: what a row giving way names.
+            personal = {
+                slot_of(budget): budget.id for budget in bound if budget.scope in PER_PERSON
+            }
             out: list[dict[str, Any]] = []
-            for budget in result.scalars():
-                # Only `each_member` depends on the reader; any other row resolves to its own scope.
-                caller = subject if budget.scope == EACH_MEMBER else None
-                scope = Scope.applying(scope=budget.scope, use_case=budget.use_case, caller=caller)
-                measured_for = subject if budget.scope == EACH_MEMBER else budget.subject
+            for budget in budgets:
+                per_person = budget.scope in PER_PERSON
+                bound_here = budget.id in binds
+                applies = Scope.applying(
+                    scope=budget.scope,
+                    use_case=budget.use_case,
+                    caller=subject,
+                    named=budget.subject,
+                )
+                scope = applies if bound_here else None
                 row: dict[str, Any] = {
                     "id": budget.id,
-                    "measured_for": measured_for,
+                    # A shared row is everybody's; a per-person row is the reader's where it binds
+                    # them and nobody's they could be told about where it does not.
+                    "measured_for": (subject if bound_here else None) if per_person else "",
                     "scope": budget.scope,
                     "period": budget.period,
                     # When this counter is replaced by the next one — the moment an exhausted
                     # allowance comes back, which is the second thing a refused caller asks.
                     "period_ends": keys.period_ends(budget.period, now).isoformat(),
                     "enabled": budget.enabled,
+                    "binds": bound_here,
+                    # Only a row that applies to the reader can give way to another for them; one
+                    # set for somebody else was never theirs to give way.
+                    "replaced_by": (
+                        personal.get(slot_of(budget))
+                        if per_person and applies is not None and not bound_here
+                        else None
+                    ),
                     "limit_cost_nanos": budget.limit_cost_nanos,
                     "limit_cost": (
                         None
@@ -529,9 +560,10 @@ class BudgetService:
                     "limit_requests": budget.limit_requests,
                 }
                 if scope is None:
-                    # No counter to read: a per-person budget asked about by nobody, or a scope this
-                    # build does not know — reported as stored, with no figures, rather than a 500
-                    # for every budget of the use case. Enforcement skips the same row.
+                    # No counter of the reader's: a per-person budget asked about by nobody, one
+                    # set for somebody else, one that gives way to another for this reader, or a
+                    # scope this build does not know — reported as stored, with no figures, rather
+                    # than a 500 for every budget of the use case. Enforcement skips the same row.
                     row.update(
                         used_tokens=None,
                         used_requests=None,

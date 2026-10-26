@@ -304,7 +304,7 @@ def _include_routers(app: FastAPI) -> None:
     # What a vendor offers this installation (`FRD-507` stage C). Bounded by role and about the
     # installation, so not mounted under the Gemini surface's use-case attribution.
     app.include_router(providers_router)
-    # KIRA resolves its own attribution (FRD-107 §5.3): one membership, or a header.
+    # KIRA resolves its own attribution (FRD-107 §5.3): the same selector, in its own envelope.
     app.include_router(kira_router)
     app.include_router(kira_info_router)
     app.include_router(gemini_router, dependencies=[Depends(require_attribution)])

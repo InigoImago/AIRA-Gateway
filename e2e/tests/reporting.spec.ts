@@ -28,14 +28,18 @@ const GATEWAY = GATEWAY_URL;
  * The key reaches the gateway over Kafka, so the first attempts may be refused while the
  * read-model catches up — that is the distribution working, not a failure. Retry until it lands.
  */
-async function sendTraffic(request: APIRequestContext, key: string): Promise<void> {
+async function sendTraffic(request: APIRequestContext, slug: string, key: string): Promise<void> {
   await expect
     .poll(
       async () => {
-        const response = await request.post(`${GATEWAY}/v1beta/models/mock-1:generateContent`, {
-          headers: { 'x-goog-api-key': key },
-          data: { contents: [{ role: 'user', parts: [{ text: 'reporting probe' }] }] },
-        });
+        // Named in the address: every model call names its use case, a key's too.
+        const response = await request.post(
+          `${GATEWAY}/uc/${slug}/v1beta/models/mock-1:generateContent`,
+          {
+            headers: { 'x-goog-api-key': key },
+            data: { contents: [{ role: 'user', parts: [{ text: 'reporting probe' }] }] },
+          },
+        );
         return response.status();
       },
       { timeout: 30_000, message: 'the issued key never reached the gateway' },
@@ -53,7 +57,7 @@ test.describe('Reporting', () => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('report');
     await createUseCase(page, slug, 'Reporting probe');
-    await sendTraffic(request, await issueKey(page, slug, 'reporting-e2e'));
+    await sendTraffic(request, slug, await issueKey(page, slug, 'reporting-e2e'));
 
     // A new user needs the old Keycloak session gone, or the SPA lands straight back in as
     // whoever was there before.
@@ -180,7 +184,7 @@ test.describe('Reporting', () => {
     const slug = uniqueSlug('mine');
     await createUseCase(page, slug, 'Own usage probe');
     // The key belongs to whoever issued it (`FRD-604`), so this traffic is recorded under `admin`.
-    await sendTraffic(request, await issueKey(page, slug, 'reporting-e2e'));
+    await sendTraffic(request, slug, await issueKey(page, slug, 'reporting-e2e'));
 
     const [asked] = await Promise.all([
       page.waitForRequest(

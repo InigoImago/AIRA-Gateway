@@ -39,7 +39,13 @@ from aira_gateway.audit import PIPELINE_OPERATION_PREFIX
 from aira_gateway.ratelimit.service import CONFIG_CACHE_SECONDS
 
 from . import installation
-from .conftest import GATEWAY_URL, insert_use_case_and_key, read_model_id, write_suspension
+from .conftest import (
+    GATEWAY_URL,
+    insert_use_case_and_key,
+    merged_headers,
+    read_model_id,
+    write_suspension,
+)
 
 #: The two models `make showcase` and CI pull. Small on purpose: what is under test is the gateway,
 #: not the answer.
@@ -74,7 +80,16 @@ class Governed:
     # ---- talking to it ------------------------------------------------------------------
 
     def headers(self, **extra: str) -> dict[str, str]:
-        return {"x-goog-api-key": self.key, "content-type": "application/json", **extra}
+        # The use case named, as every model call names it, a key's too (`FRD-149`) — and replaced,
+        # whatever its spelling, by a selector a test names itself.
+        return merged_headers(
+            {
+                "x-goog-api-key": self.key,
+                "x-aira-use-case": self.slug,
+                "content-type": "application/json",
+            },
+            extra,
+        )
 
     async def key_for(self, subject: str) -> str:
         """A second key on this use case, owned by **somebody else**.
@@ -110,7 +125,11 @@ class Governed:
             return await client.post(
                 f"{GEMINI}/models/{model}:generateContent",
                 json=body,
-                headers={"x-goog-api-key": key, "content-type": "application/json"},
+                headers={
+                    "x-goog-api-key": key,
+                    "x-aira-use-case": self.slug,
+                    "content-type": "application/json",
+                },
             )
 
     async def generate(

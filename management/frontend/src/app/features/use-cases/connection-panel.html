@@ -1,6 +1,7 @@
 <!--
   Where to send a request. Folded shut in a `<details>`: it is a reference, not a status, and would
-  otherwise dominate the overview; the summary keeps the one sentence needed to decide to open it.
+  otherwise dominate the overview; the summary keeps the sentence needed to decide to open it — and
+  the address itself, which is the answer to the question somebody opens it with.
 
   The callout sits before the card, not inside it: everything after `</summary>` is hidden while
   shut, and "why is there nothing here" (`FRD-308`) must be met without opening anything.
@@ -18,9 +19,11 @@
     <span>
       <span class="section-title">Connecting a client</span>
       <!-- The answer itself, not a label: a reader asks it before deciding to open anything. -->
-      <span class="muted connect__hint">
-        A key is issued for one use case and carries it, so a client normally sends nothing else —
-        no use case in the URL, no header. Open for base URLs and a request for each surface.
+      <span class="muted connect__hint" data-testid="connection-summary">
+        Every model call names this use case, with an API key or a Keycloak sign-in alike: send it
+        to <code class="connect__address">{{ geminiBase() }}</code> — the
+        <code>/uc/{{ slug() }}</code> in it does that. Open for the KIRA API, credentials, the
+        models, and a request for curl, Python, TypeScript and OpenCode.
       </span>
     </span>
   </summary>
@@ -37,288 +40,119 @@
       </p>
     }
 
-    @if (!released().length) {
-      <!-- Said in the summary instead: see the block above. -->
-    } @else {
-      <!--
-      Two surfaces as tabs, because they are alternatives. Same markup as the page's own tab bar,
-      with distinct ids so the two strips cannot collide.
-    -->
-      <div
-        class="tabs"
-        role="tablist"
-        aria-label="API surface"
-        style="margin-top: 1rem"
-        data-testid="connection-tabs"
-      >
-        <button
-          type="button"
-          class="tab"
-          role="tab"
-          id="conn-tab-gemini"
-          data-testid="conn-tab-gemini"
-          [attr.aria-selected]="surface() === 'gemini'"
-          [class.is-active]="surface() === 'gemini'"
-          (click)="selectSurface('gemini')"
-        >
-          Gemini API
-        </button>
-        <button
-          type="button"
-          class="tab"
-          role="tab"
-          id="conn-tab-kira"
-          data-testid="conn-tab-kira"
-          [attr.aria-selected]="surface() === 'kira'"
-          [class.is-active]="surface() === 'kira'"
-          (click)="selectSurface('kira')"
-        >
-          KIRA API
-        </button>
-      </div>
-
-      @if (surface() === 'gemini') {
-        <div
-          role="tabpanel"
-          aria-labelledby="conn-tab-gemini"
-          class="stack"
-          style="margin-top: 1rem"
-        >
-          <div>
-            <p class="muted" style="margin: 0 0 0.25rem">Base URL</p>
-            <code data-testid="connection-gemini-base">{{ geminiBase() }}</code>
+    @if (released().length) {
+      <!-- 1. Where to send it: one address per interface, each already naming this use case. -->
+      <h4 class="section-title connect__step">1 · Where to send it</h4>
+      <div class="stack" data-testid="connection-addresses">
+        <div>
+          <p style="margin: 0">
+            <strong>Gemini API</strong>
+            <span class="muted text-sm">
+              — Google's own interface: generation, streaming, embeddings, speech. What the Google
+              SDKs, the AI SDK and OpenCode speak.</span
+            >
+          </p>
+          <div class="spread connect__address-row">
+            <code class="connect__address" data-testid="connection-gemini-base">{{
+              geminiBase()
+            }}</code>
             <button
               type="button"
               class="btn btn--sm"
-              style="margin-left: 0.5rem"
               data-testid="copy-gemini-base"
               (click)="copy('gemini-base', geminiBase())"
             >
               {{ copied() === 'gemini-base' ? 'Copied' : 'Copy' }}
             </button>
           </div>
-
-          <p class="muted" style="margin: 0" data-testid="connection-gemini-addressing">
-            A model is addressed <strong>by name</strong>, in the path, followed by the verb — for
-            example <code>…/models/&lt;model&gt;:generateContent</code>.
-          </p>
-
-          <div class="table-wrap">
-            <table class="table" data-testid="connection-models">
-              <thead>
-                <tr>
-                  <th scope="col">Model</th>
-                  <th scope="col">Serves</th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (model of reachable(); track model.name) {
-                  <tr>
-                    <td>
-                      <code>{{ model.name }}</code>
-                    </td>
-                    <td>
-                      @if (model.generates && model.embeds) {
-                        generation and embeddings
-                      } @else if (model.generates) {
-                        generation
-                      } @else if (model.embeds) {
-                        embeddings
-                      } @else if (model.generates === false) {
-                        <span class="muted">neither, as the catalog declares it</span>
-                      } @else if (declaredKnown()) {
-                        <span class="muted">not declared in the catalog</span>
-                      } @else {
-                        <span class="muted">…</span>
-                      }
-                    </td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-
-          @if (chatModel(); as chat) {
-            <div>
-              <div class="spread">
-                <p class="muted" style="margin: 0">Generation</p>
-                <button
-                  type="button"
-                  class="btn btn--sm"
-                  data-testid="copy-gemini-chat"
-                  (click)="copy('gemini-chat', geminiChat(chat))"
-                >
-                  {{ copied() === 'gemini-chat' ? 'Copied' : 'Copy' }}
-                </button>
-              </div>
-              <pre class="code-block" data-testid="connection-gemini-chat">{{
-                geminiChat(chat)
-              }}</pre>
-            </div>
-          } @else if (declaredKnown()) {
-            <p class="callout" data-testid="connection-no-chat">
-              None of the released models is declared in the catalog as generating text, so there is
-              no generation example to give. Release one that does if a client needs to send
-              prompts.
-            </p>
-          }
-
-          @if (embedModel(); as embed) {
-            <div>
-              <div class="spread">
-                <p class="muted" style="margin: 0">Embeddings</p>
-                <button
-                  type="button"
-                  class="btn btn--sm"
-                  data-testid="copy-gemini-embed"
-                  (click)="copy('gemini-embed', geminiEmbed(embed))"
-                >
-                  {{ copied() === 'gemini-embed' ? 'Copied' : 'Copy' }}
-                </button>
-              </div>
-              <pre class="code-block" data-testid="connection-gemini-embed">{{
-                geminiEmbed(embed)
-              }}</pre>
-            </div>
-          }
         </div>
-      } @else {
-        <div role="tabpanel" aria-labelledby="conn-tab-kira" class="stack" style="margin-top: 1rem">
-          <div>
-            <p class="muted" style="margin: 0 0 0.25rem">Base URL</p>
-            <code data-testid="connection-kira-base">{{ kiraBase() }}</code>
+        <div>
+          <p style="margin: 0">
+            <strong>KIRA API</strong>
+            <span class="muted text-sm">
+              — the predecessor's interface, for a client migrating from it. Transitional: new work
+              uses the Gemini API.</span
+            >
+          </p>
+          <div class="spread connect__address-row">
+            <code class="connect__address" data-testid="connection-kira-base">{{
+              kiraBase()
+            }}</code>
             <button
               type="button"
               class="btn btn--sm"
-              style="margin-left: 0.5rem"
               data-testid="copy-kira-base"
               (click)="copy('kira-base', kiraBase())"
             >
               {{ copied() === 'kira-base' ? 'Copied' : 'Copy' }}
             </button>
           </div>
-
-          <p class="muted" style="margin: 0" data-testid="connection-kira-addressing">
-            A model is addressed <strong>by an integer id</strong>, in the body, as
-            <code>model_id</code> — the predecessor's shape, so a migrating client's configuration
-            keeps the number it already holds.
-          </p>
-
-          <div class="table-wrap">
-            <table class="table" data-testid="connection-models">
-              <thead>
-                <tr>
-                  <th scope="col">Model</th>
-                  <th scope="col">
-                    model_id
-                    <app-info-hint label="what the id is for">
-                      The predecessor addresses a model by an integer, and a migrating client's
-                      configuration holds that number rather than a name. A model without one cannot
-                      be reached over this API at all — the Gemini API addresses it by name and is
-                      unaffected.
-                    </app-info-hint>
-                  </th>
-                  <th scope="col">Serves</th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (model of reachable(); track model.name) {
-                  <tr>
-                    <td>
-                      <code>{{ model.name }}</code>
-                    </td>
-                    <td data-testid="connection-kira-id">
-                      @if (model.kiraId !== null) {
-                        <code>{{ model.kiraId }}</code>
-                      } @else if (answered()) {
-                        <span class="muted">none assigned</span>
-                      } @else {
-                        <span class="muted">…</span>
-                      }
-                    </td>
-                    <td>
-                      @if (model.kiraGenerates && model.kiraEmbeds) {
-                        generation and embeddings
-                      } @else if (model.kiraGenerates) {
-                        generation
-                      } @else if (model.kiraEmbeds) {
-                        embeddings
-                      } @else if (answered()) {
-                        <!-- Absent from the listing means no id *or* not served; say only that. -->
-                        <span class="muted">not in the gateway's KIRA listing</span>
-                      } @else {
-                        <span class="muted">…</span>
-                      }
-                    </td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-
-          @if (kiraChatModel(); as chat) {
-            <div>
-              <div class="spread">
-                <p class="muted" style="margin: 0">Generation</p>
-                <button
-                  type="button"
-                  class="btn btn--sm"
-                  data-testid="copy-kira-chat"
-                  (click)="copy('kira-chat', kiraChat(chat))"
-                >
-                  {{ copied() === 'kira-chat' ? 'Copied' : 'Copy' }}
-                </button>
-              </div>
-              <pre class="code-block" data-testid="connection-kira-chat">{{ kiraChat(chat) }}</pre>
-            </div>
-          } @else if (answered()) {
-            <p class="callout" data-testid="connection-no-chat">
-              None of the released models is listed for generation with a number in the gateway's
-              KIRA listing, so there is no example for this API to give.
-            </p>
-          }
-
-          @if (kiraEmbedModel(); as embed) {
-            <div>
-              <div class="spread">
-                <p class="muted" style="margin: 0">Embeddings</p>
-                <button
-                  type="button"
-                  class="btn btn--sm"
-                  data-testid="copy-kira-embed"
-                  (click)="copy('kira-embed', kiraEmbed(embed))"
-                >
-                  {{ copied() === 'kira-embed' ? 'Copied' : 'Copy' }}
-                </button>
-              </div>
-              <pre class="code-block" data-testid="connection-kira-embed">{{
-                kiraEmbed(embed)
-              }}</pre>
-            </div>
-          }
         </div>
-      }
+        @if (rankModel()) {
+          <div>
+            <p style="margin: 0">
+              <strong>Ranking</strong>
+              <span class="muted text-sm">
+                — Google's ranking API: records ordered against a query. The project, location and
+                configuration in the path select nothing here.</span
+              >
+            </p>
+            <div class="spread connect__address-row">
+              <code class="connect__address" data-testid="connection-rank-url">{{
+                rankUrl()
+              }}</code>
+              <button
+                type="button"
+                class="btn btn--sm"
+                data-testid="copy-rank-url"
+                (click)="copy('rank-url', rankUrl())"
+              >
+                {{ copied() === 'rank-url' ? 'Copied' : 'Copy' }}
+              </button>
+            </div>
+          </div>
+        }
+      </div>
 
       <!-- The address above is the console's proxy, not the gateway's published address. -->
-      <p class="muted" style="margin-top: 1rem" data-testid="connection-base-note">
+      <p class="muted" style="margin: 0.5rem 0 0" data-testid="connection-base-note">
         That is the address <em>this console</em> reaches the gateway at, so it works from anywhere
         that can reach the console. A client elsewhere uses whatever address your operator publishes
-        for the gateway; only the base changes.
+        for the gateway; only the part before <code>/uc/</code> changes.
       </p>
 
+      <!-- Why every address carries the use case, and the one alternative to it. -->
+      <div data-testid="connection-attribution" class="stack" style="margin-top: 1rem">
+        <p class="muted" style="margin: 0">
+          <strong>Every model call names its use case</strong>, whatever the credential — a key too.
+          The addresses above do it with <code>/uc/{{ slug() }}</code> in front of the path, which
+          the gateway strips before routing. A client that cannot change its path but can set a
+          header sends this instead, to the same address without <code>/uc/{{ slug() }}</code
+          >:
+        </p>
+        <pre class="code-block" data-testid="connection-header-example">
+X-AIRA-Use-Case: {{ slug() }}</pre>
+        <p class="muted" style="margin: 0">
+          A model call that names no use case is refused — <code>400</code> on the Gemini API,
+          <code>403</code> on the KIRA API — with the prefix to add.
+          <strong>Naming one grants nothing</strong>: a use case the credential cannot reach is
+          answered <code>403</code>, and a key names only its own. Where both are sent, the header
+          wins. Reading the model list or what is left of a budget names none.
+        </p>
+      </div>
+
       <!--
-      Credentials and attribution sit outside the tabs: they are the same on both surfaces but for
-      the query parameter, which the note under the forms names, and one statement cannot drift from
-      another. A token carries an identity and not a use case, which is why naming a use case
-      follows.
-    -->
-      <h4 class="section-title" style="margin-top: 1.5rem">Credentials</h4>
+        2. Who is calling. The same on every interface but for the query parameter, which the note
+        under the key's forms names, and one statement cannot drift from another.
+      -->
+      <h4 class="section-title connect__step">2 · Who is calling</h4>
       <div data-testid="connection-credentials" class="stack">
         <div>
           <p class="muted" style="margin: 0 0 0.25rem">
-            <strong>An API key</strong> — what the examples above use. Issued on this page under
-            <strong>API keys</strong>, shown once, and bound to this use case. Any of the three
-            forms a Gemini client already speaks is accepted, in this order:
+            <strong>An API key</strong> — for an application, an agent or a script. Issued on this
+            page under <strong>API keys</strong>, shown once, bound to this use case, and expiring
+            on the date shown there. Any of the three forms a Gemini client already speaks is
+            accepted, in this order:
           </p>
           <pre class="code-block" data-testid="connection-key-forms">
 x-goog-api-key: &lt;your key&gt;
@@ -332,56 +166,378 @@ Authorization: Bearer &lt;your key&gt;
         </div>
         <div>
           <p class="muted" style="margin: 0 0 0.25rem">
-            <strong>An OIDC token</strong> — for a person or a service account, with no key to mint
-            or store. The same header as above; the gateway tells the two apart by their shape.
+            <strong>A Keycloak token</strong> — for a person or a service account, with no key to
+            mint or store. The same header as above; the gateway tells the two apart by their shape.
           </p>
           <pre class="code-block" data-testid="connection-bearer-example">
 Authorization: Bearer &lt;access token&gt;</pre>
         </div>
         <p class="muted" style="margin: 0">
           The token has to reach this use case — through membership, or through a Keycloak group
-          somebody granted it under <strong>Members</strong>. And
-          <strong>it carries no use case</strong>, so unlike a key it must name one; that is the
-          section below.
+          somebody granted it under <strong>Members</strong>. It carries no use case, so like a key
+          it names this one through the address.
         </p>
         <p class="muted" style="margin: 0" data-testid="connection-grant-delay">
-          A grant just made takes a few seconds to reach the gateway — configuration travels to the
-          data plane over the event bus, so the console can already show somebody as a member while
-          a request of theirs is still answered <code>403</code>.
+          A grant or a key just made takes a few seconds to reach the gateway — configuration
+          travels to the data plane over the event bus, so the console can already show somebody as
+          a member while a request of theirs is still answered <code>403</code>.
         </p>
       </div>
 
-      <h4 class="section-title" style="margin-top: 1.5rem">Naming a use case</h4>
-      <div data-testid="connection-attribution" class="stack">
-        <p class="muted" style="margin: 0">
-          <strong>Usually nothing to do.</strong> A key belongs to exactly one use case, so a client
-          holding one sends no use case at all — the request is attributed to the key's own.
-        </p>
-        <p class="muted" style="margin: 0">
-          A caller who reaches <em>several</em> — an OIDC token, or the unbound break-glass key —
-          has to say which one. There are two ways and they mean the same thing:
-        </p>
-        <div>
-          <p class="muted" style="margin: 0 0 0.25rem">
-            <strong>A header</strong>, when the client can set one:
-          </p>
-          <pre class="code-block" data-testid="connection-header-example">
-X-AIRA-Use-Case: {{ slug() }}</pre>
-        </div>
-        <div>
-          <p class="muted" style="margin: 0 0 0.25rem">
-            <strong>A path prefix</strong>, when it cannot — a client that only lets you configure a
-            base URL. <code>/uc/&lt;use-case&gt;</code> goes in front of the whole path; the gateway
-            strips it before routing, so everything after it is exactly the URL above. It works on
-            both surfaces:
-          </p>
-          <pre class="code-block" data-testid="connection-uc-example">{{ ucExample() }}</pre>
-        </div>
-        <p class="muted" style="margin: 0">
-          <strong>Neither grants anything.</strong> A selector chooses among the use cases the
-          caller already reaches; naming one they do not is answered <code>403</code>, not served.
-          Where both are present, the <em>header</em> wins.
-        </p>
+      <!-- 3. Which models, by the name the Gemini API takes and the number the KIRA API takes. -->
+      <h4 class="section-title connect__step">3 · Which models</h4>
+      <p class="muted" style="margin: 0 0 0.5rem" data-testid="connection-addressing">
+        The Gemini API addresses a model <strong>by name</strong>, in the path —
+        <code>…/models/&lt;model&gt;:generateContent</code>. The KIRA API addresses it
+        <strong>by number</strong>, as <code>model_id</code> in the body.
+      </p>
+      <div class="table-wrap">
+        <table class="table" data-testid="connection-models">
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">
+                KIRA model_id
+                <app-info-hint label="what the id is for">
+                  The predecessor addresses a model by an integer, and a migrating client's
+                  configuration holds that number rather than a name. A model without one cannot be
+                  reached over the KIRA API at all — the Gemini API addresses it by name and is
+                  unaffected.
+                </app-info-hint>
+              </th>
+              <th scope="col">Serves</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (model of reachable(); track model.name) {
+              <tr>
+                <td>
+                  <code>{{ model.name }}</code>
+                </td>
+                <td data-testid="connection-kira-id">
+                  @if (model.kiraId !== null) {
+                    <code>{{ model.kiraId }}</code>
+                  } @else if (answered()) {
+                    <span class="muted">none assigned</span>
+                  } @else {
+                    <span class="muted">…</span>
+                  }
+                </td>
+                <td>
+                  @if (serves(model); as kinds) {
+                    {{ kinds }}
+                  } @else if (declaredKnown()) {
+                    <span class="muted">not declared in the catalog</span>
+                  } @else {
+                    <span class="muted">…</span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 4. A request, per kind of client: alternatives, so tabs, with the same address in each. -->
+      <h4 class="section-title connect__step">4 · A request from your client</h4>
+      <div class="tabs" role="tablist" aria-label="Client" data-testid="connection-tabs">
+        @for (tab of clients; track tab.kind) {
+          <button
+            type="button"
+            class="tab"
+            role="tab"
+            [id]="'conn-tab-' + tab.kind"
+            [attr.data-testid]="'conn-tab-' + tab.kind"
+            [attr.aria-selected]="client() === tab.kind"
+            [class.is-active]="client() === tab.kind"
+            (click)="selectClient(tab.kind)"
+          >
+            {{ tab.label }}
+          </button>
+        }
+      </div>
+
+      <div
+        role="tabpanel"
+        class="stack"
+        style="margin-top: 1rem"
+        [attr.aria-labelledby]="'conn-tab-' + client()"
+        data-testid="connection-client"
+      >
+        @switch (client()) {
+          @case ('curl') {
+            @if (chatModel(); as chat) {
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">Generation</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-gemini-chat"
+                    (click)="copy('gemini-chat', geminiChat(chat))"
+                  >
+                    {{ copied() === 'gemini-chat' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-gemini-chat">{{
+                  geminiChat(chat)
+                }}</pre>
+              </div>
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">Streaming, as server-sent events</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-gemini-stream"
+                    (click)="copy('gemini-stream', geminiStream(chat))"
+                  >
+                    {{ copied() === 'gemini-stream' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-gemini-stream">{{
+                  geminiStream(chat)
+                }}</pre>
+              </div>
+            } @else if (declaredKnown()) {
+              <p class="callout" data-testid="connection-no-chat">
+                None of the released models is declared in the catalog as generating text, so there
+                is no generation example to give. Release one that does if a client needs to send
+                prompts.
+              </p>
+            }
+            @if (embedModel(); as embed) {
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">Embeddings</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-gemini-embed"
+                    (click)="copy('gemini-embed', geminiEmbed(embed))"
+                  >
+                    {{ copied() === 'gemini-embed' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-gemini-embed">{{
+                  geminiEmbed(embed)
+                }}</pre>
+              </div>
+            }
+            @if (speechModel(); as speech) {
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">Speech: text in, audio out</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-gemini-speech"
+                    (click)="copy('gemini-speech', geminiSpeech(speech))"
+                  >
+                    {{ copied() === 'gemini-speech' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-gemini-speech">{{
+                  geminiSpeech(speech)
+                }}</pre>
+              </div>
+            }
+            @if (rankModel(); as ranker) {
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">Ranking</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-gemini-rank"
+                    (click)="copy('gemini-rank', geminiRank(ranker))"
+                  >
+                    {{ copied() === 'gemini-rank' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-gemini-rank">{{
+                  geminiRank(ranker)
+                }}</pre>
+              </div>
+            }
+            <div>
+              <div class="spread">
+                <p class="muted" style="margin: 0">What is left of your budget</p>
+                <button
+                  type="button"
+                  class="btn btn--sm"
+                  data-testid="copy-budget-check"
+                  (click)="copy('budget-check', budgetCheck())"
+                >
+                  {{ copied() === 'budget-check' ? 'Copied' : 'Copy' }}
+                </button>
+              </div>
+              <pre class="code-block" data-testid="connection-budget-check">{{
+                budgetCheck()
+              }}</pre>
+              <p class="muted text-sm" style="margin: 0.25rem 0 0">
+                It spends nothing, and it is what the OpenCode budget plugin reads.
+              </p>
+            </div>
+          }
+          @case ('python') {
+            <p class="muted" style="margin: 0">
+              Google's own SDK, <code>google-genai</code>, unmodified: the address is its
+              <code>base_url</code>, and the SDK adds <code>/v1beta</code> itself.
+            </p>
+            <div>
+              <div class="spread">
+                <p class="muted" style="margin: 0">Python</p>
+                <button
+                  type="button"
+                  class="btn btn--sm"
+                  data-testid="copy-python"
+                  (click)="copy('python', python(chatModel(), embedModel()))"
+                >
+                  {{ copied() === 'python' ? 'Copied' : 'Copy' }}
+                </button>
+              </div>
+              <pre class="code-block" data-testid="connection-python">{{
+                python(chatModel(), embedModel())
+              }}</pre>
+            </div>
+          }
+          @case ('typescript') {
+            @if (chatModel(); as chat) {
+              <p class="muted" style="margin: 0">
+                The AI SDK's Google provider, <code>&#64;ai-sdk/google</code>, which most TypeScript
+                agents are built on: the address with <code>/v1beta</code> is its
+                <code>baseURL</code>.
+              </p>
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">TypeScript</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-typescript"
+                    (click)="copy('typescript', typescript(chat))"
+                  >
+                    {{ copied() === 'typescript' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-typescript">{{
+                  typescript(chat)
+                }}</pre>
+              </div>
+            } @else if (declaredKnown()) {
+              <p class="callout" data-testid="connection-no-chat">
+                None of the released models is declared in the catalog as generating text, so there
+                is no example to give.
+              </p>
+            }
+          }
+          @case ('opencode') {
+            <p class="muted" style="margin: 0" data-testid="connection-opencode-where">
+              <strong>The API keys tab writes this file for you</strong> when it issues a key —
+              <em>Download opencode.json</em>, with the key in it — and offers the budget plugin
+              beside it, which shows what is left of your budget in OpenCode's sidebar. Both
+              generations of OpenCode read it.
+            </p>
+            @if (toolsEnabled() === false) {
+              <p class="callout callout--warning" data-testid="connection-tools-off">
+                Tool calling is switched off for this use case, so a coding assistant's first turn
+                is refused. An administrator switches it on under <strong>Capabilities</strong> on
+                this page.
+              </p>
+            }
+            @if (toolModels().length) {
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">opencode.json</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-opencode"
+                    (click)="copy('opencode', opencode(toolModels()))"
+                  >
+                    {{ copied() === 'opencode' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-opencode">{{
+                  opencode(toolModels())
+                }}</pre>
+              </div>
+            } @else if (declaredKnown()) {
+              <p class="callout" data-testid="connection-no-tools">
+                None of the released models is declared in the catalog as calling tools, and a
+                coding assistant cannot work without that. Release one that does to use OpenCode
+                with this use case.
+              </p>
+            }
+          }
+          @case ('kira') {
+            <p class="muted" style="margin: 0">
+              A client migrating from the predecessor changes its base URL to the KIRA address above
+              — the prefix carries the use case — and sends the key in one of the two headers. Its
+              requests and model ids stay as they were.
+            </p>
+            @if (kiraChatModel(); as chat) {
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">Chat</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-kira-chat"
+                    (click)="copy('kira-chat', kiraChat(chat))"
+                  >
+                    {{ copied() === 'kira-chat' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-kira-chat">{{
+                  kiraChat(chat)
+                }}</pre>
+              </div>
+            } @else if (answered()) {
+              <p class="callout" data-testid="connection-no-kira-chat">
+                None of the released models is listed for chat with a number in the gateway's KIRA
+                listing, so there is no example for this interface to give.
+              </p>
+            }
+            @if (kiraEmbedModel(); as embed) {
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">Embeddings</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-kira-embed"
+                    (click)="copy('kira-embed', kiraEmbed(embed))"
+                  >
+                    {{ copied() === 'kira-embed' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-kira-embed">{{
+                  kiraEmbed(embed)
+                }}</pre>
+              </div>
+            }
+            @if (kiraRankModel(); as ranker) {
+              <div>
+                <div class="spread">
+                  <p class="muted" style="margin: 0">Reranking</p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    data-testid="copy-kira-rerank"
+                    (click)="copy('kira-rerank', kiraRerank(ranker))"
+                  >
+                    {{ copied() === 'kira-rerank' ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <pre class="code-block" data-testid="connection-kira-rerank">{{
+                  kiraRerank(ranker)
+                }}</pre>
+              </div>
+            }
+          }
+        }
       </div>
     }
   </div>

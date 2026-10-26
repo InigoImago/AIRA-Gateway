@@ -84,7 +84,7 @@ items = [
 
 [access]
 "usecase.read_all" = "Konfiguration und Mitglieder aller Use Cases sehen"
-"usecase.manage_all" = "Mitglieder und API-Schlüssel aller Use Cases verwalten"
+"usecase.manage_all" = "Mitglieder, API-Schlüssel und Budgets aller Use Cases verwalten, auch das für eine Person festgelegte Budget"
 "trace.read_all" = "Anfrage-Protokolle aller Use Cases sehen"
 "report.read_all" = "Verbrauch je Person in allen Use Cases sehen, auch als Export"
 "anomaly.read_all" = "Sicherheitsbefunde und Sperren aller Use Cases sehen, einschließlich darin genannter IP-Adressen"
@@ -200,11 +200,11 @@ recipients = "Rollen, die das Protokoll der Zugriffe auf Inhalte einsehen dürfe
 
 [activities.consumption]
 title = "Verbrauch, Budgets und Ratenbegrenzung"
-data = "Zähler je Person und Use Case für Anfragen, Tokens und Kosten je Tag oder Monat; daraus erstellte Berichte je Person mit Anfragen, Fehlern, Tokens und Kosten sowie, außer im strengen Datenmodus, Antwortzeiten, auch als CSV-Export. Zur Abwehr von Angriffen werden fehlgeschlagene Anmeldungen je IP-Adresse kurzzeitig gezählt."
-purpose = "Kosten zuzuordnen, Budgets und Ratenbegrenzungen je Person durchzusetzen, damit niemand das Kontingent anderer aufbraucht, und die Verfügbarkeit zu schützen. Nicht: die Leistung einzelner Personen zu bewerten."
+data = "Zähler je Person und Use Case für Anfragen, Tokens und Kosten je Tag oder Monat; Budgets, die die Administration eines Use Case für eine namentlich genannte Person festlegt, mit deren Benutzernamen, dem Zeitraum und den Grenzen, und die für sie an die Stelle des Budgets treten, das jedes Mitglied hat; daraus erstellte Berichte je Person mit Anfragen, Fehlern, Tokens und Kosten sowie, außer im strengen Datenmodus, Antwortzeiten, auch als CSV-Export. Zur Abwehr von Angriffen werden fehlgeschlagene Anmeldungen je IP-Adresse kurzzeitig gezählt."
+purpose = "Kosten zuzuordnen, Budgets und Ratenbegrenzungen je Person durchzusetzen, damit niemand das Kontingent anderer aufbraucht, einer Person ein eigenes, größeres oder kleineres Kontingent zu geben, wo ihre Arbeit es braucht, und die Verfügbarkeit zu schützen. Nicht: die Leistung einzelner Personen zu bewerten."
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Kostenkontrolle und Verfügbarkeit)."
 retention = "Zähler bleiben je Zeitraum ohne automatische Löschung erhalten; Zähler für Ratenbegrenzung und Anmeldeversuche verfallen nach Minuten. Berichte werden bei jedem Abruf aus dem Protokoll der Anfragen berechnet."
-recipients = "Ihre eigenen Verbrauchswerte sehen Sie selbst, die Summen eines Use Case seine Mitglieder. Wer darüber hinaus Zahlen je Person sieht, folgt dem Datenmodus der Installation (siehe „Keine Leistungs- und Verhaltenskontrolle“)."
+recipients = "Ihre eigenen Verbrauchswerte sehen Sie selbst, die Summen eines Use Case seine Mitglieder. Wer darüber hinaus Zahlen je Person sieht, folgt dem Datenmodus der Installation (siehe „Keine Leistungs- und Verhaltenskontrolle“). Ein für Sie festgelegtes Budget sehen Sie selbst und die Administration des Use Case, die es festgelegt hat; solange der strenge Datenmodus eingeschaltet ist, sehen andere Mitglieder, dass es ein solches Budget gibt, aber nicht für wen, und den Namen sehen darüber hinaus nur Rollen, die alle Use Cases verwalten oder Sicherheitsvorfälle untersuchen (siehe „Wer innerhalb der Organisation Zugriff hat“)."
 
 [activities.security]
 title = "Erkennung von Auffälligkeiten und Sicherheitsvorfälle"

@@ -14,7 +14,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_gateway.db.models import BudgetRead, BudgetUsage
-from aira_gateway.scopes import Scope
+from aira_gateway.scopes import binding
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,17 +38,20 @@ async def applicable(
     each caller asks `enabled` where it decides whether to refuse, and books every row it gets.
 
     A request naming a use case reads that use case's rows; one naming none reads the
-    installation's (`FRD-610`). `Scope.applying` decides which of the fetched rows bind — the one
-    place a scope is defined, which the rate limiter follows too.
+    installation's (`FRD-610`). `scopes.binding` decides which of the fetched rows bind — the one
+    place a scope and the hierarchy between scopes are defined, which the rate limiter follows too:
+    per period, a person's own budget in place of the one for everybody (`ADR-0044`).
     """
     result = await session.execute(
         select(BudgetRead).where(BudgetRead.use_case == (use_case or ""))
     )
-    return [
-        budget
-        for budget in result.scalars()
-        if Scope.applying(scope=budget.scope, use_case=budget.use_case, caller=subject) is not None
-    ]
+    return binding(result.scalars(), caller=subject, slot=slot_of)
+
+
+def slot_of(budget: BudgetRead) -> str:
+    """The slot a per-person budget holds: one per period, so a person's own monthly budget takes
+    the place of the monthly one for everybody and leaves the daily one where it is."""
+    return budget.period
 
 
 async def read_usage(session: AsyncSession, scope_key: str, period_key: str) -> Usage:

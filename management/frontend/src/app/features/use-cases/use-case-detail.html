@@ -253,6 +253,7 @@
           [catalog]="catalog()"
           [kira]="kiraModels()"
           [failure]="kiraFailure()"
+          [toolsEnabled]="useCase()?.tools_enabled ?? null"
         />
       }
 
@@ -324,6 +325,8 @@
       [enforced]="enforced()"
       [usageRefused]="usageRefused()"
       [canManage]="canManage()"
+      [members]="members()"
+      [me]="myName()"
       (changed)="loadBudgets()"
     />
   }

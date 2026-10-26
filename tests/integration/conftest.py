@@ -141,6 +141,19 @@ def _kira_ids() -> list[str]:
     ]
 
 
+def merged_headers(base: dict[str, str], extra: dict[str, str]) -> dict[str, str]:
+    """``base`` with ``extra`` laid over it, names matched **case-insensitively**, as HTTP does.
+
+    A dict merge keys on the spelling, so `X-AIRA-Use-Case` laid over `x-aira-use-case` sends both,
+    the gateway reads the first, and the selector a test names is not the one it asks about.
+    """
+    replaced = {name.lower() for name in extra}
+    return {
+        **{name: value for name, value in base.items() if name.lower() not in replaced},
+        **extra,
+    }
+
+
 async def wait_for_row(engine: AsyncEngine, sql: str, params: dict, timeout: float = 8.0):
     """Poll until a query returns a row, or give up and say why.
 
@@ -503,7 +516,12 @@ class Fixture:
         self._suspensions: list[str] = []
 
     def headers(self) -> dict[str, str]:
-        return {"x-goog-api-key": self.key, "content-type": "application/json"}
+        # The use case named, as every model call names it, a key's too (`FRD-149`).
+        return {
+            "x-goog-api-key": self.key,
+            "x-aira-use-case": self.slug,
+            "content-type": "application/json",
+        }
 
     async def budget(self, **limits: int | None) -> None:
         async with self.engine.begin() as connection:

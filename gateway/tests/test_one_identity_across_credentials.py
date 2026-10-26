@@ -804,6 +804,9 @@ NAMED_COMPARISONS = {
     "api/incidents/content_reads.py::content_reads": "a filter, matched beside `username` too",
     "consumer/apply.py::_upsert_member": "the event's username is what the membership row stores",
     "consumer/apply.py::_remove_member": "the same event key",
+    "scopes.py::binding": (
+        "a person's own budget names them by the key `scopes.person` gives both credentials"
+    ),
 }
 
 

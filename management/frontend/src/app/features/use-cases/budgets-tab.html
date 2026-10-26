@@ -43,17 +43,51 @@
           >
             <option value="use_case">The whole use case — one shared pot</option>
             <option value="each_member">Each person — the same limit for everybody</option>
+            <option value="member">One person — a budget of their own</option>
           </select>
           <span class="field__hint">
             @if (budgetScope() === 'use_case') {
-              One budget for all of it: the first caller to arrive can spend the lot.
+              One budget for all of it: the first caller to arrive can spend the lot. It bounds
+              everybody together, including anybody with a budget of their own.
             } @else if (budgetScope() === 'each_member') {
               Everybody gets this much, separately — including people who join later. No names to
-              keep up to date.
+              keep up to date. Somebody with a budget of their own for the same period has that one
+              instead.
+            } @else {
+              Higher or lower than the budget for each person: it takes that budget's place for this
+              one person, in the same period. The budget for the whole use case still applies.
             }
           </span>
         </div>
-        @if (budgetScope() === 'each_member') {
+        @if (budgetScope() === 'member') {
+          <div class="field">
+            <label for="budget-subject">Person</label>
+            <input
+              id="budget-subject"
+              name="subject"
+              list="budget-subject-suggestions"
+              autocomplete="off"
+              placeholder="username"
+              data-testid="budget-subject"
+              [ngModel]="budgetSubject()"
+              (ngModelChange)="budgetSubject.set($event)"
+            />
+            <datalist id="budget-subject-suggestions">
+              @for (name of memberNames(); track name) {
+                <option [value]="name"></option>
+              }
+            </datalist>
+            <span class="field__hint" data-testid="budget-subject-hint">
+              @if (subjectListed()) {
+                Their username — the name they sign in with, and the owner of their keys.
+              } @else {
+                Not on this use case's member list. Somebody reached through a group can still be
+                named; saving checks that they can call this use case.
+              }
+            </span>
+          </div>
+        }
+        @if (budgetScope() !== 'use_case') {
           <ng-container [ngTemplateOutlet]="twoPots" />
         }
         <div class="field">
@@ -176,13 +210,26 @@
     </p>
   }
 
+  <!--
+    The hierarchy, in words, wherever a budget set for one person exists: a reader of the card for
+    each member would otherwise conclude it binds everybody. The order of the cards below is the
+    same order (`FRD-407`).
+  -->
+  @if (hasOwnBudgets()) {
+    <p class="callout" style="margin-top: 1rem" data-testid="budget-hierarchy">
+      <strong>How these combine.</strong> The budget for the whole use case bounds everybody
+      together. A person with a budget of their own is held to it instead of the budget for each
+      member of the same period. Everybody else is held to the budget for each member.
+    </p>
+  }
+
   <!-- Also shown to somebody reading the configuration, not only to somebody creating it. -->
   @if (hasPerHead()) {
     <ng-container [ngTemplateOutlet]="twoPots" />
   }
 
   <div class="stack" style="margin-top: 1rem">
-    @for (budget of budgets(); track budget.id) {
+    @for (budget of ordered(); track budget.id) {
       <div class="card card--compact">
         <div class="spread">
           <div class="row">
@@ -228,12 +275,24 @@
           </div>
         </div>
 
+        <!-- A budget for somebody who can no longer call binds nobody, and says so rather than
+             looking like a working limit. -->
+        @if (budget.scope === 'member' && budget.reaches === false) {
+          <p
+            class="callout callout--warning"
+            style="margin: 0.6rem 0 0"
+            [attr.data-testid]="'budget-reaches-nobody-' + budget.id"
+          >
+            {{ budget.subject }} can no longer call this use case, so this budget binds nobody until
+            they can again. Remove it if they have left.
+          </p>
+        }
+
         <!-- Not when the gateway is unreachable: the callout above says that, and this sentence
              would give the wrong reason for the missing figures. -->
-        @if (!usageUnavailable() && !measured(budget)) {
+        @if (unmeasuredReason(budget); as reason) {
           <p class="muted text-sm" style="margin: 0.4rem 0 0" data-testid="budget-not-yours">
-            Counted per person, so the limits below apply to each member separately. You have no
-            consumption of your own here, so no figures are shown.
+            {{ reason }}
           </p>
         }
 

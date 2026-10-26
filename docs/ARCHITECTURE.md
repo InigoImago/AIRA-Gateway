@@ -125,10 +125,11 @@ Management as any use case's administrator, and by itself opens nothing in the g
 use case still takes a grant reaching it, just as seeing a use case never implies the right to act
 inside it.
 
-Every model request belongs to **exactly one use case**: an API key *is* a use case, and a person's
-login names one — on the KIRA surface the one use case a person belongs to is taken when none is
-named — and is refused without a grant reaching it. The single exception is the operator's
-break-glass key (§8.8).
+Every model request belongs to **exactly one use case, and names it** — with `/uc/<use-case>` in
+front of the path, or the `X-AIRA-Use-Case` header — whatever the credential: a person's login, and
+an API key too, which belongs to one use case and may name only that one. A request that names none
+is refused, so what it is billed to is in the request and does not change when its caller is given
+a second use case. The single exception is the operator's break-glass key (§8.8).
 
 #### What this needs in Keycloak — the short list
 
@@ -226,7 +227,7 @@ Read this table first: almost every sentence afterwards is about one of these.
 | **Model catalogue entry** | One model a caller may name: who serves it, how it is addressed, what it can do, what it costs. **Undeclared means unsupported.** | Management authors, gateway decides with |
 | **Release** | Which catalogue entries *this* use case may call. A model can be approved installation-wide and still unavailable here. | Management |
 | **Pipeline** | Ordered steps that run *before* dispatch for a use case: injection filter, model routing, PII redaction. Config, not code. | Management authors, gateway runs |
-| **Budget** · **Rate limit** | How much may be spent and how fast requests may arrive, per use case and per person — and the installation's own budget for spend no use case owns. Counted in Redis so the figure is shared across instances. | Management authors, gateway enforces |
+| **Budget** · **Rate limit** | How much may be spent and how fast requests may arrive, per use case and per person — and the installation's own budget for spend no use case owns. A budget may also be set for one named person, and then takes the place of the per-person one for them; the use case's budget still bounds everybody. Counted in Redis so the figure is shared across instances. | Management authors, gateway enforces |
 | **Audit row** | One row per model request once it is attributed — served, refused, or abandoned mid-answer — plus one per model call a pipeline step makes (`pipeline:<step>`) and per model check an administrator presses (`diagnostic`). A request refused before attribution has none; its trace is its record. The system of record for what happened. | Gateway |
 | **Anomaly rule** · **Suspension** | A rule evaluated against the audit rows; a suspension is the resulting stop, applied on the next request. | Management authors the rule, gateway detects and enforces |
 | **Role** | A set of installation-wide permissions, held through one Keycloak group. Global Administrator and IT Security are fixed in code; IT Steuerung and any role an installation adds are stored. | Management authors, both planes resolve |
@@ -585,7 +586,7 @@ Read it in the order a request travels.
 | `api/usage.py`, `api/pipeline.py`, `api/providers.py` | Around the surfaces: a use case's consumption for the console, and **the caller's own allowance** (`GET /v1beta/me/budget`) — what the OpenCode plugin the console hands out shows inside a developer's editor; trying a pipeline (`pipeline:dryRun`); what each platform offers for import. |
 | `pipeline/` | The per-use-case steps and the chains: `engine/` runs the configured steps (each with its own chain of models to ask), `classifiers/` are the steps themselves (injection, routing, redaction), `dispatch.py` picks a model that can actually serve the request — a finished answer or a stream, through one candidate walk. |
 | `catalog.py`, `requirements.py`, `residency.py`, `thinking.py`, `embedding.py`, `attachments.py` | What a model may be asked for, and what it must be able to do to be asked. One question per module. |
-| `ratelimit/`, `budgets/`, `scopes.py`, `pricing.py` | How fast and how much. `scopes.py` holds the scoping rule once, because budgets and limits scope identically. |
+| `ratelimit/`, `budgets/`, `scopes.py`, `pricing.py` | How fast and how much. `scopes.py` holds the scoping rule once — and the order the scopes apply in: the use case's pot over everybody, a person's own budget in place of the one for everybody — because budgets and limits scope identically. |
 | `upstreams/` | **Where the vendors live.** One package or module per platform — `vertex/` (Gemini, Claude and the open models), `gemini.py` (AI Studio), `foundry/`, `openai/` — each split into a transport (how to reach it) and a dialect (what the wire looks like); `mock.py` is the offline double. An architecture test fails when one of the platform-specific names it lists — `anthropic`, `claude`, `azure`, the open models' publishers and endpoints, among others — appears in code outside `upstreams/vertex/`, `upstreams/foundry/` and the region list in `residency.py`. |
 | `core/canonical.py`, `core/schema.py` | The provider-agnostic request and answer everything above `upstreams/` speaks. |
 | `persistence/` | The audit trail: `writer.py` (a bounded queue off the request path; a full queue writes inline rather than drop a row), `redaction.py` (credential shapes in stored content), `sanitize.py`. |
@@ -1080,15 +1081,15 @@ sequenceDiagram
     alt starts with aira_ (API key)
         G->>R: find the key by its prefix, compare the hash
         R-->>G: use case, owner, active, expiry
-        Note over G: a key belongs to exactly one use case
+        Note over G: a key belongs to exactly one use case and may name only that one
     else anything else (Keycloak token)
         G->>K: signing keys, cached
         K-->>G: JWKS
         G->>G: verify signature, iss, aud, exp
         G->>R: roles and grants for the token's groups
         R-->>G: permissions and the use cases they reach
-        Note over G: the use case comes from X-AIRA-Use-Case or /uc/{slug} and must be reachable
     end
+    Note over G: the use case comes from X-AIRA-Use-Case or /uc/{slug}, for a key as for a token, and must be reachable
     alt valid, and the use case is allowed
         G->>G: use case live, suspension, rate limit, budget, pipeline, model
         G-->>X: answer
@@ -1109,18 +1110,20 @@ sequenceDiagram
    also says whether it is still active and not expired. A token goes through the four checks
    in §8.3.
 4. **Decide which use case the request belongs to.** The `X-AIRA-Use-Case` header wins; otherwise a
-   `/uc/<slug>` path segment. For a key issued by Management, the use case is the key's own and
-   needs no selector. On the KIRA surface, whose contract has no field for a use case, a person who
-   belongs to exactly one is attributed to it without a selector, and one who belongs to several is
-   refused with the list to choose from. **A selector never grants access — it only chooses among
-   what the caller already has.** Naming a use case the caller is not in is refused.
+   `/uc/<slug>` path segment. **A model call names one, whatever the credential**: a key issued by
+   Management belongs to one use case and may name only that one, and a person names one of those
+   their grants reach — on both surfaces, also the KIRA surface, whose contract has no field for a
+   use case of its own. A call that names none is refused, and the refusal says which to name: the
+   key's own use case, or the ones the person reaches. **A selector never grants access — it only
+   chooses among what the caller already has.** Naming a use case the caller is not in is refused.
 5. **Then the governed part of the request begins** — whether that caller is currently stopped,
    rate limits, budgets, the use case's pipeline, and which model it may use. That is
    [`REQUEST-LIFECYCLE.md`](REQUEST-LIFECYCLE.md).
 
 A read-only call (`GET`, `HEAD`, `OPTIONS`) needs no use case: listing what is configured spends
 nothing, and an administrator who is a member of no use case must still be able to read the
-catalogue.
+catalogue. A key's reading is its own use case's, so a client that asks what is left of its budget
+before it names anything is still answered.
 
 **What is refused, and with which answer** — none of these writes an audit row, because the request
 was never attributed; its span is the record (§8.8):
@@ -1128,8 +1131,8 @@ was never attributed; its span is the record (§8.8):
 | Answer | When |
 |---|---|
 | `401` | No credential, or one that does not verify: bad signature, wrong issuer or audience, expired, unknown or revoked key. The answer never says which — that would tell a prober how close they are. |
-| `403` | A valid credential asking for a use case it may not use: not a member, or a key bound to another use case. On the KIRA surface also: no use case named where one is required, or several the person could mean. |
-| `400` | A use case named in a form that is not a valid identifier, or — on the Gemini surface — none named where one is required. |
+| `403` | A valid credential asking for a use case it may not use: not a member, or a key bound to another use case. On the KIRA surface also: no use case named, which that surface's vocabulary answers as a permission refusal. |
+| `400` | A use case named in a form that is not a valid identifier, or — on the Gemini surface — none named. |
 | `429` | Too many **refused** authentication attempts from one source address (default 60 a minute, on both planes). Successful requests never touch that counter, so an ordinary integration cannot trip it, however busy. `Retry-After` says when to come back. |
 
 ### 8.7 Directory lookups — the one thing AIRA asks Keycloak

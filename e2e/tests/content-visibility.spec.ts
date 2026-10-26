@@ -47,7 +47,7 @@ async function issueKeyAndClose(page: Page, slug: string): Promise<string> {
 /** One recorded request. Polled: a key reaches the gateway over Kafka (`FRD-205`). */
 async function spend(page: Page, slug: string, key: string) {
   const send = () =>
-    page.request.post(`${GATEWAY_URL}/v1beta/models/qwen3:0.6b:generateContent`, {
+    page.request.post(`${GATEWAY_URL}/uc/${slug}/v1beta/models/qwen3:0.6b:generateContent`, {
       headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
       data: {
         contents: [{ parts: [{ text: sentence(slug) }] }],

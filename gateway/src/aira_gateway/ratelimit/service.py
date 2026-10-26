@@ -18,7 +18,7 @@ from aira_common.logging import get_logger
 from aira_gateway.db.models import RateLimitRead
 from aira_gateway.ratelimit.buckets import BucketRequest, TokenBucket, per_minute
 from aira_gateway.ratelimit.errors import RateLimited, TooHeavyForTheLimit
-from aira_gateway.scopes import Scope
+from aira_gateway.scopes import Scope, binding
 
 _log = get_logger("aira_gateway.ratelimit")
 
@@ -112,13 +112,15 @@ class RateLimitService:
 
         The use-case and the member bucket are both returned where both apply — only the narrower
         would let one member spend the use case's allowance, only the wider would make a member
-        limit decorative.
+        limit decorative. Which per-person row binds is `scopes.binding`'s answer, the one the
+        budgets follow: a rate limit has no period, so its per-person rows share one slot.
         """
+        enabled = [record for record in records if record.enabled and record.limit_rpm > 0]
         buckets: list[BucketRequest] = []
-        for record in records:
-            if not record.enabled or record.limit_rpm <= 0:
-                continue
-            scope = Scope.applying(scope=record.scope, use_case=use_case, caller=subject)
+        for record in binding(enabled, caller=subject, slot=_one_slot):
+            scope = Scope.applying(
+                scope=record.scope, use_case=use_case, caller=subject, named=record.subject
+            )
             if scope is None:
                 continue
             buckets.append(
@@ -147,3 +149,8 @@ class RateLimitService:
             self._cache.clear()
         else:
             self._cache.pop(use_case, None)
+
+
+def _one_slot(record: RateLimitRead) -> str:
+    """A rate limit's per-person rows hold one slot: they share one bucket per person."""
+    return ""

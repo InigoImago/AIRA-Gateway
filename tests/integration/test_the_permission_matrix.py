@@ -504,7 +504,7 @@ async def _context(client: httpx.AsyncClient, admin: str, suffix: str) -> Contex
     deadline = time.monotonic() + PROPAGATION_SECONDS
     while True:
         called = await client.post(
-            f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
+            f"{GATEWAY_URL}/uc/{live}/v1beta/models/{MODEL}:generateContent",
             headers={"x-goog-api-key": key},
             json={"contents": [{"role": "user", "parts": [{"text": "matrix"}]}]},
         )

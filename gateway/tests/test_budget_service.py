@@ -156,6 +156,9 @@ async def test_usage_reports_current_period(sessionmaker) -> None:
             # exhausted allowance comes back.
             "period_ends": "2026-08-05T00:00:00+00:00",
             "enabled": True,
+            # A shared pot binds every reader, and gives way to nothing (`FRD-407`).
+            "binds": True,
+            "replaced_by": None,
             "limit_cost_nanos": None,
             "limit_cost": None,
             "limit_tokens": None,
@@ -382,19 +385,20 @@ async def test_a_budget_of_a_scope_this_build_does_not_know_is_reported_without_
     sessionmaker,
 ) -> None:
     """`usage()` read every row of the use case and asserted each one bound somebody: one row of a
-    scope this build cannot resolve — the dropped `member`, or one a newer Management adds — made
-    the budget screen and `/v1beta/me/budget` answer 500 for the whole use case, while enforcement
-    skipped the same row. It is reported as stored, with no figures, and the rest still are."""
+    scope this build cannot resolve — one a newer Management adds — made the budget screen and
+    `/v1beta/me/budget` answer 500 for the whole use case, while enforcement skipped the same row.
+    It is reported as stored, with no figures and binding nobody, and the rest still are."""
     await _add(sessionmaker, id=1, limit_requests=10)
-    await _add(sessionmaker, id=2, scope="member", subject="bob", limit_requests=5)
+    await _add(sessionmaker, id=2, scope="team", subject="bob", limit_requests=5)
     service = BudgetService(sessionmaker)
     await service.record((await service.guard("uc", "bob", NOW)).budgets, 7, now=NOW)
 
     rows = {row["id"]: row for row in await service.usage("uc", NOW, subject="bob")}
 
     assert rows[1]["used_tokens"] == 7
-    assert rows[2]["scope"] == "member"
+    assert rows[2]["scope"] == "team"
     assert rows[2]["used_tokens"] is None and rows[2]["remaining_requests"] is None
+    assert rows[2]["binds"] is False
 
 
 async def test_asking_a_budget_for_a_caller_it_does_not_bind_is_an_explicit_error(

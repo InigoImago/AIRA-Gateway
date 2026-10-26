@@ -31,7 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from . import installation
-from .conftest import GATEWAY_URL, Fixture  # noqa: F401  (Fixture is the annotation)
+from .conftest import GATEWAY_URL, Fixture, merged_headers  # noqa: F401  (an annotation)
 
 pytestmark = pytest.mark.integration
 
@@ -213,7 +213,7 @@ async def test_a_key_bound_to_one_use_case_cannot_select_another(
             response = await client.post(
                 f"/v1beta/models/{MODEL}:generateContent",
                 json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
-                headers={**fixture.headers(), "X-AIRA-Use-Case": other},
+                headers=merged_headers(fixture.headers(), {"X-AIRA-Use-Case": other}),
             )
         assert response.status_code == 403, response.text
     finally:

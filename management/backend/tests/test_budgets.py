@@ -62,24 +62,176 @@ def test_create_use_case_budget_and_emit(captured_events) -> None:
     assert published[0]["limit_tokens"] == 100000
 
 
-def test_a_budget_naming_one_person_is_refused() -> None:
-    """The `member` scope was removed on the owner's decision (2026-08-14): singling somebody out
-    is not a governance decision this product wants to make easy.
+# == a person's own budget (`FRD-407`) ===========================================================
 
-    Refused rather than quietly stored, and refused **by the choices** rather than by a hand-written
-    check — a value outside the field's vocabulary is exactly what `choices` is for, and a second
-    validator would be a second place for the two to disagree.
-    """
+
+def _member(admin, slug: str, username: str, role: str = "user"):
+    """``username`` as an account, given access to ``slug`` the way the console gives it."""
+    user = get_user_model().objects.filter(username=username).first() or _user(username)
+    resp = _client(admin).post(
+        f"{BASE}{slug}/members/", {"username": username, "role": role}, format="json"
+    )
+    assert resp.status_code == 201, resp.content
+    return user
+
+
+def _own(client: APIClient, slug: str, subject: str, **limits: object):
+    body = {"scope": "member", "subject": subject, "period": "month", **limits}
+    return client.post(f"{BASE}{slug}/budgets/", body, format="json")
+
+
+def test_a_persons_own_budget_is_stored_under_their_account_and_published(
+    captured_events,
+) -> None:
+    """The name the gateway counts the person by is what is stored and sent — the account's own
+    spelling, never the typed one, whitespace and all."""
     admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
-    resp = _client(admin).post(
-        f"{BASE}demo-uc/budgets/",
-        {"scope": "member", "subject": "bob", "period": "day", "limit_requests": 10},
-        format="json",
+    _member(admin, "demo-uc", "bob")
+
+    resp = _own(_client(admin), "demo-uc", "  bob ", limit_cost="80.00")
+
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["subject"] == "bob"
+    assert resp.json()["reaches"] is True
+    budget = Budget.objects.get(use_case__slug="demo-uc", scope="member")
+    assert budget.subject == "bob"
+    published = [payload for topic, payload in captured_events if topic == "budget.upserted"]
+    assert (published[-1]["scope"], published[-1]["subject"]) == ("member", "bob")
+
+
+def test_a_persons_own_budget_needs_a_name() -> None:
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    resp = _own(_client(admin), "demo-uc", " ", limit_requests=5)
+    assert resp.status_code == 400
+    # Said as what to do, on the field it concerns — not as an account nobody could have.
+    assert resp.json()["error"]["details"]["subject"] == [
+        "Name the person this budget is for, by their username."
+    ]
+    assert not Budget.objects.filter(scope="member").exists()
+
+
+def test_a_name_no_account_has_is_refused_by_name() -> None:
+    """A budget for a name nobody has would bind nobody while looking configured."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    resp = _own(_client(admin), "demo-uc", "nobody", limit_requests=5)
+    assert resp.status_code == 400
+    assert "There is no user 'nobody'" in str(resp.json())
+    assert not Budget.objects.filter(scope="member").exists()
+
+
+def test_somebody_who_cannot_call_the_use_case_is_refused() -> None:
+    """Their requests never reach the use case, so the budget would bound nothing — and a Global
+    Administrator's blanket is not access to call it (`may_call`, the gateway's own rule)."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    _user("outsider")
+    other_admin = _user("admin2", "global-admin")
+
+    for name in ("outsider", other_admin.username):
+        resp = _own(_client(admin), "demo-uc", name, limit_requests=5)
+        assert resp.status_code == 400, name
+        assert "cannot call this use case" in str(resp.json()), name
+    assert not Budget.objects.filter(scope="member").exists()
+
+
+def test_a_plain_member_cannot_set_anybodys_own_budget() -> None:
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    carol = _member(admin, "demo-uc", "carol")
+    _member(admin, "demo-uc", "bob")
+    assert _own(_client(carol), "demo-uc", "carol", limit_requests=99).status_code == 403
+    assert _own(_client(carol), "demo-uc", "bob", limit_requests=1).status_code == 403
+
+
+def test_each_person_has_one_own_budget_per_period() -> None:
+    """Upserted on (scope, person, period): a second save for the same person and period replaces
+    the first, another person or another period is another budget."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    _member(admin, "demo-uc", "bob")
+    _member(admin, "demo-uc", "carol")
+    client = _client(admin)
+
+    assert _own(client, "demo-uc", "bob", limit_requests=5).status_code == 201
+    assert _own(client, "demo-uc", "bob", limit_requests=7).status_code == 201
+    assert _own(client, "demo-uc", "carol", limit_requests=5).status_code == 201
+    daily = {"scope": "member", "subject": "bob", "period": "day", "limit_requests": 1}
+    assert client.post(f"{BASE}demo-uc/budgets/", daily, format="json").status_code == 201
+
+    rows = sorted(
+        Budget.objects.filter(scope="member").values_list("subject", "period", "limit_requests")
     )
-    assert resp.status_code == 400, resp.content
-    assert "scope" in str(resp.json())
-    assert not Budget.objects.filter(use_case__slug="demo-uc").exists()
+    assert rows == [("bob", "day", 1), ("bob", "month", 7), ("carol", "month", 5)]
+
+
+def test_the_database_holds_who_a_budget_names() -> None:
+    """A fixture, a shell or a migration writes past the serializer: a person's own budget that
+    names nobody, or a shared one that names somebody, is refused where it is stored."""
+    from django.db import IntegrityError, transaction
+
+    admin = _user("admin1", "global-admin")
+    usecase = _make_uc(admin, "demo-uc")
+    for scope, subject in (("member", ""), ("use_case", "bob"), ("each_member", "bob")):
+        with pytest.raises(IntegrityError), transaction.atomic():
+            Budget.objects.create(use_case=usecase, scope=scope, subject=subject, limit_requests=1)
+
+
+def _rows_for(reader, slug: str = "demo-uc") -> dict[str, dict]:
+    resp = _client(reader).get(f"{BASE}{slug}/budgets/")
+    assert resp.status_code == 200, resp.content
+    return {f"{row['scope']}#{row['id']}": row for row in resp.json()}
+
+
+def _a_use_case_with_bobs_own_budget():
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    _member(admin, "demo-uc", "bob")
+    carol = _member(admin, "demo-uc", "carol")
+    deputy = _member(admin, "demo-uc", "deputy", role="admin")
+    assert _own(_client(admin), "demo-uc", "bob", limit_requests=3).status_code == 201
+    budget = Budget.objects.get(scope="member")
+    return admin, deputy, carol, budget
+
+
+def test_under_strict_data_mode_the_name_is_for_those_who_set_it_and_the_person() -> None:
+    """A colleague reads the row as another member's, as they read a key's owner (`FRD-627`
+    FR-15): the limit stays visible, the person does not."""
+    admin, deputy, carol, budget = _a_use_case_with_bobs_own_budget()
+    bob = get_user_model().objects.get(username="bob")
+    security = _user("sec1", "it-security")
+    steering = _user("gov1", "it-steuerung")
+    key = f"member#{budget.pk}"
+
+    for reader in (admin, deputy, bob, security):
+        row = _rows_for(reader)[key]
+        assert (row["subject"], row["subject_withheld"]) == ("bob", False), reader.username
+        assert row["reaches"] is True, reader.username
+    for reader in (carol, steering):
+        row = _rows_for(reader)[key]
+        assert (row["subject"], row["subject_withheld"]) == (None, True), reader.username
+        # Whether somebody withheld can still call is about that somebody too.
+        assert row["reaches"] is None, reader.username
+        assert row["limit_requests"] == 3, reader.username
+
+
+def test_with_strict_data_mode_off_everybody_who_sees_the_use_case_reads_the_name(
+    strict_data_off,
+) -> None:
+    """As member lists and key owners are read in that installation."""
+    _admin, _deputy, carol, budget = _a_use_case_with_bobs_own_budget()
+    row = _rows_for(carol)[f"member#{budget.pk}"]
+    assert (row["subject"], row["subject_withheld"]) == ("bob", False)
+
+
+def test_a_budget_for_somebody_who_left_says_so() -> None:
+    """Removing a person ends their access and leaves their budget, which binds nobody now: the
+    row says it reaches nobody rather than looking configured."""
+    admin, _deputy, _carol, budget = _a_use_case_with_bobs_own_budget()
+    assert _client(admin).delete(f"{BASE}demo-uc/members/bob/").status_code == 200
+    assert _rows_for(admin)[f"member#{budget.pk}"]["reaches"] is False
 
 
 def test_a_per_person_budget_names_nobody(captured_events) -> None:
@@ -383,3 +535,29 @@ def test_dropping_the_member_scope_cannot_be_rolled_back() -> None:
     ):
         migration = importlib.import_module(module).Migration
         assert not all(operation.reversible for operation in migration.operations), module
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_upgrade_clears_a_name_left_on_a_shared_budget() -> None:
+    """**The upgrade, run**: back to the state before `0006`, a per-head row carrying a name as an
+    older writer could store one, then forwards. The name is cleared rather than the constraint
+    refusing the deployment, and the row stays what it was."""
+    from django.core.management import call_command
+    from django.db import connection
+
+    usecase = UseCase.objects.create(slug="older", name="Older")
+    call_command("migrate", "budgets", "0005", verbosity=0)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO budgets_budget (use_case_id, scope, subject, period, limit_requests, "
+            " enabled, created_at, updated_at) "
+            "VALUES (%s, 'each_member', 'bob', 'month', 5, true, CURRENT_TIMESTAMP, "
+            "        CURRENT_TIMESTAMP)",
+            [usecase.pk],
+        )
+
+    call_command("migrate", "budgets", verbosity=0)
+
+    assert list(Budget.objects.values_list("scope", "subject", "limit_requests")) == [
+        ("each_member", "", 5)
+    ]

@@ -251,7 +251,7 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
         # The distributed key works over real HTTP and is bound to its use case.
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
-                f"{GATEWAY_URL}/v1beta/models/mock-1:generateContent",
+                f"{GATEWAY_URL}/uc/{slug}/v1beta/models/mock-1:generateContent",
                 json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
                 headers={"x-goog-api-key": full},
             )
@@ -314,7 +314,7 @@ async def test_deleting_a_use_case_stops_its_key_from_working(engine: AsyncEngin
     from tests.integration.conftest import GATEWAY_URL
 
     body = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
-    headers = {"x-goog-api-key": full}
+    headers = {"x-goog-api-key": full, "x-aira-use-case": slug}
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=20.0) as client:
         before = await client.post(
             "/v1beta/models/mock-1:generateContent", json=body, headers=headers

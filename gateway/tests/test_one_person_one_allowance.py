@@ -159,7 +159,12 @@ async def test_a_key_and_a_sign_in_spend_one_allowance(surfaces: tuple[str, str]
         token = await _key_for(app, slug)
 
         for surface in surfaces:
-            assert _call(client, surface, {"x-goog-api-key": token}).status_code == 200, surface
+            assert (
+                _call(
+                    client, surface, {"x-goog-api-key": token, "x-aira-use-case": slug}
+                ).status_code
+                == 200
+            ), surface
             assert (
                 _call(
                     client,
@@ -192,7 +197,7 @@ async def test_the_audit_trail_still_says_which_credential_it_was() -> None:
         app.state.oidc_validator = _Erika(slug)
         token = await _key_for(app, slug)
 
-        _call(client, "gemini", {"x-goog-api-key": token})
+        _call(client, "gemini", {"x-goog-api-key": token, "x-aira-use-case": slug})
         _call(client, "gemini", {"authorization": "Bearer jwt", "x-aira-use-case": slug})
 
         async with app.state.db_sessionmaker() as session:
@@ -217,7 +222,7 @@ async def test_a_request_budget_is_shared_across_the_two_credentials() -> None:
         app.state.oidc_validator = _Erika(slug)
         token = await _key_for(app, slug)
 
-        first = _call(client, "gemini", {"x-goog-api-key": token})
+        first = _call(client, "gemini", {"x-goog-api-key": token, "x-aira-use-case": slug})
         second = _call(client, "kira", {"authorization": "Bearer jwt", "x-aira-use-case": slug})
 
     assert first.status_code == 200, first.text
@@ -241,10 +246,33 @@ async def test_a_rate_limit_is_shared_across_the_two_credentials() -> None:
         token = await _key_for(app, slug)
 
         first = _call(client, "kira", {"authorization": "Bearer jwt", "x-aira-use-case": slug})
-        second = _call(client, "gemini", {"x-goog-api-key": token})
+        second = _call(client, "gemini", {"x-goog-api-key": token, "x-aira-use-case": slug})
 
     assert first.status_code == 200, first.text
     assert second.status_code == 429, second.text
+
+
+async def test_a_persons_own_budget_binds_their_key_and_their_sign_in_alike() -> None:
+    """A budget set for one person names them by the key both credentials share (`FRD-407`): the
+    key spends it and the sign-in is refused by it, on either surface — not one budget for the key
+    and none for the browser."""
+    slug = _slug()
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, slug)
+        await _budget(app, slug, limit_requests=100)
+        await _budget(app, slug, id=2, scope="member", subject=USERNAME, limit_requests=1)
+        app.state.oidc_validator = _Erika(slug)
+        token = await _key_for(app, slug)
+
+        first = _call(client, "gemini", {"x-goog-api-key": token, "x-aira-use-case": slug})
+        second = _call(client, "kira", {"authorization": "Bearer jwt", "x-aira-use-case": slug})
+
+        keys = await _usage_keys(app)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 429, second.text
+    assert keys == {f"member:{slug}:{USERNAME}": 1}
 
 
 async def test_two_different_people_still_have_two_allowances() -> None:
@@ -259,8 +287,8 @@ async def test_two_different_people_still_have_two_allowances() -> None:
         mine = await _key_for(app, slug, subject="erika")
         theirs = await _key_for(app, slug, subject="ahmed")
 
-        _call(client, "gemini", {"x-goog-api-key": mine})
-        _call(client, "gemini", {"x-goog-api-key": theirs})
+        _call(client, "gemini", {"x-goog-api-key": mine, "x-aira-use-case": slug})
+        _call(client, "gemini", {"x-goog-api-key": theirs, "x-aira-use-case": slug})
 
         keys = await _usage_keys(app)
 

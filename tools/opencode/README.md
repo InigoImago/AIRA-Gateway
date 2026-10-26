@@ -52,6 +52,10 @@ cd <a scratch project>
 OPENCODE_CONFIG=/path/to/AIRA/tools/opencode/opencode.json opencode run "list the files here"
 ```
 
+**Its `baseURL` names the use case** — `/uc/coding-assistant/v1beta` — because every model call
+names its use case, with a key as much as with a sign-in; for a use case of your own, change that
+part of the path.
+
 **First set `"model"` in that file to a model the use case may call.** Its default, `qwen2.5:3b`,
 has no catalog entry in the showcase (see §1 below), so the gateway refuses it; the showcase's
 `coding-assistant` may call `qwen3:0.6b`, whose entry declares `tools`.
@@ -105,7 +109,7 @@ The figure a developer actually needs is the one that will **refuse** them, whic
 
 ```bash
 # The same key the assistant uses. No console login, no permission beyond the key.
-curl -s http://localhost:8001/v1beta/me/budget -H "x-goog-api-key: $AIRA_API_KEY" | jq -r '
+curl -s http://localhost:8001/uc/coding-assistant/v1beta/me/budget -H "x-goog-api-key: $AIRA_API_KEY" | jq -r '
   (.allowances[] | select(.limit_cost != null)
     | "\(.remaining_cost) of \(.limit_cost) left (resets \(.period_ends[0:10]))")
   // "spent \(.this_period.cost) this month"'

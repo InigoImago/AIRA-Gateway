@@ -30,6 +30,9 @@ from demo_keys import key_for  # noqa: E402
 SLUG = "coding-assistant"
 
 GATEWAY = os.environ.get("AIRA_GATEWAY_URL") or stack_addresses.url("gateway")
+#: The gateway's address **for this use case**: a model call names its use case, whatever the
+#: credential (`FRD-149`), and the prefix is how a base URL names it.
+USE_CASE_BASE = f"{GATEWAY}/uc/{SLUG}"
 CHAT_MODEL = os.environ.get("AIRA_DEMO_CHAT_MODEL", "qwen3:0.6b")
 
 
@@ -96,7 +99,7 @@ def usable(entry: dict, key: str) -> bool:
         }
     ).encode()
     request = urllib.request.Request(  # noqa: S310 - this deployment's own gateway
-        f"{GATEWAY}/v1beta/models/{name}:generateContent",
+        f"{USE_CASE_BASE}/v1beta/models/{name}:generateContent",
         data=body,
         headers={"x-goog-api-key": key, "content-type": "application/json"},
     )
@@ -141,7 +144,7 @@ def config(models: list[dict], key: str) -> dict:
             "aira": {
                 "npm": "@ai-sdk/google",
                 "name": "AIRA Gateway (showcase)",
-                "options": {"baseURL": f"{GATEWAY}/v1beta", "apiKey": key},
+                "options": {"baseURL": f"{USE_CASE_BASE}/v1beta", "apiKey": key},
                 "models": entries,
             }
         },

@@ -135,7 +135,8 @@ export class ApiKeysPanel {
    * Built while the plaintext exists: it is never retrievable later, so a config offered on any
    * other screen could only carry a placeholder. The key is written into the file rather than
    * referenced from the environment because the file goes to one developer's workstation; the
-   * banner says so.
+   * banner says so. The base URL names the use case, as every model call must (`FRD-149`) — and
+   * the budget plugin reads its allowance under the same address.
    */
   protected openCodeConfig(issued: IssuedApiKey): string {
     return JSON.stringify(
@@ -145,7 +146,10 @@ export class ApiKeysPanel {
           aira: {
             npm: '@ai-sdk/google',
             name: 'AIRA Gateway',
-            options: { baseURL: `${gatewayBase()}/v1beta`, apiKey: issued.api_key },
+            options: {
+              baseURL: `${gatewayBase()}/uc/${this.slug()}/v1beta`,
+              apiKey: issued.api_key,
+            },
             models: Object.fromEntries(
               this.toolModels().map((m) => [m.name, openCodeModel(m, this.currency())]),
             ),

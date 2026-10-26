@@ -52,14 +52,15 @@ many refused credentials from one address answer `429` with `Retry-After`
 (`AIRA_MAX_AUTH_FAILURES_PER_MINUTE`).
 
 **A request names its use case** with the `X-AIRA-Use-Case` header, or by putting `/uc/<slug>` in
-front of any gateway path — `/uc/assistant/v1beta/models/…`; the header wins where both appear. A
-key issued for a use case needs neither. The name only chooses among the use cases the caller
-already holds a grant on: naming another is `403` (`use_case_refusal`). On the Gemini surface a
-`POST` that names no use case is refused `400` unless its credential is a key, however many use
-cases the caller holds (`must_name_a_use_case`); a `GET` spends nothing and needs none. The KIRA
-surface, whose contract has no field for a use case, attributes a request that names none to the
-caller's use case when they hold exactly one, and refuses it `403`, listing the candidates, when
-they hold several (`api/kira/attribution.py`).
+front of any gateway path — `/uc/assistant/v1beta/models/…`; the header wins where both appear.
+**A model call names one whatever the credential** — a key issued for a use case too, which may
+name only that one. The name only chooses among the use cases the caller already holds a grant on:
+naming another is `403` (`use_case_refusal`). A `POST` that names no use case is refused — `400
+INVALID_ARGUMENT` on the Gemini surface, `403 STANDARD_USER_PERMISSION_REQUIRED` on the KIRA
+surface — and the message says which to name: a key's own use case, or those the caller reaches
+(`must_name_a_use_case`, `missing_use_case`, `api/kira/attribution.py`). A `GET` spends nothing and
+needs none; a key's `GET` is its own use case's (`implied_use_case`). The unbound break-glass key
+and demo mode may name none.
 
 **Management** accepts a Keycloak bearer token and nothing else (`apps/api/authentication.py`).
 Refused authentications are bounded per address (`AIRA_THROTTLE_AUTH_FAILURES`) and every signed-in
@@ -221,8 +222,8 @@ a model name may contain one; any other verb, `:countTokens` among them, is `400
 
 | Operation                     | Who may call | Answers |
 | ----------------------------- | ------------ | ------- |
-| `GET /v1beta/usage/{use_case}` | `report.read_all`, or a grant on the use case | `200 {use_case, usage, enforced}`: one entry per budget with its limits, `used_*`, `remaining_*` and `period_ends`; a budget for each member shows the caller's own counter. `enforced` says whether budgets refuse at all (`AIRA_ENFORCE_BUDGETS`). |
-| `GET /v1beta/me/budget`       | any credential; the use case comes from the key, the header or `/uc/<slug>` | `200 {use_case, person, enforced, currency, allowances, today, this_week, this_period}`: `allowances` are the counters enforcement reads, one per budget that binds this caller; `today`, `this_week` (since Monday) and `this_period` (the calendar month) are what the audit trail says the caller spent, in UTC, with or without a budget — each `{from, to}` with the reporting totals. |
+| `GET /v1beta/usage/{use_case}` | `report.read_all`, or a grant on the use case | `200 {use_case, usage, enforced}`: one entry per budget with its limits, `used_*`, `remaining_*`, `period_ends`, `binds` and `replaced_by`. A per-person budget shows the caller's own counter where it binds them: a budget for each member, or one set for this caller alone. `binds` is whether the budget binds the caller under the hierarchy — the use case's budget over everybody, a person's own in place of the one for each member of its period — and `replaced_by` names the budget that binds the caller instead of a per-person one that gives way; a budget set for somebody else names nobody here and carries no figures. `enforced` says whether budgets refuse at all (`AIRA_ENFORCE_BUDGETS`). |
+| `GET /v1beta/me/budget`       | any credential; the use case comes from the header or `/uc/<slug>`, or is a key's own | `200 {use_case, person, enforced, currency, allowances, today, this_week, this_period}`: `allowances` are the counters enforcement reads, one per budget that binds this caller — a budget set for them in place of the one for each member; `today`, `this_week` (since Monday) and `this_period` (the calendar month) are what the audit trail says the caller spent, in UTC, with or without a budget — each `{from, to}` with the reporting totals. |
 
 ### 2.5 Figures, requests and findings
 
@@ -348,8 +349,8 @@ record is deleted by its id; an id the use case does not have is `400`.
 | --------- | ------------ | ------- |
 | `GET /api/v1/use-cases/{slug}/pipeline/` | sees it | `{steps, fallback_models, updated_at}`; a use case with none answers `{steps: [], fallback_models: []}`. |
 | `PUT /api/v1/use-cases/{slug}/pipeline/` | admin | Body `{steps, fallback_models}`; every model it names must be released to the use case. `200`. A pipeline is cleared by saving it with no steps, never deleted. Emits `pipeline.upserted`. |
-| `GET /api/v1/use-cases/{slug}/budgets/` | sees it | `[{id, scope, subject, period, limit_cost, limit_tokens, limit_requests, enabled, created_at, updated_at}]`. |
-| `POST /api/v1/use-cases/{slug}/budgets/` | admin | Upserts on `scope` (`use_case`, a shared pot, or `each_member`, one per person) and `period` (`day`, `month`); at least one limit. `201`. Emits `budget.upserted`. |
+| `GET /api/v1/use-cases/{slug}/budgets/` | sees it | `[{id, scope, subject, subject_withheld, reaches, period, limit_cost, limit_tokens, limit_requests, enabled, created_at, updated_at}]`. A `member` budget's `subject` is the person it is for; under strict data mode it is `null` with `subject_withheld: true` to a reader who neither administers the use case nor is that person nor holds `incident.investigate`. `reaches` says whether that person can still call the use case — `false` is a budget that binds nobody now — and is `null` where nobody is named or the name is withheld. |
+| `POST /api/v1/use-cases/{slug}/budgets/` | admin | Upserts on `scope`, `subject` and `period` (`day`, `month`); at least one limit. `scope` is `use_case`, a shared pot; `each_member`, one per person; or `member`, one person's own, which takes the place of the `each_member` budget of its period for them — `subject` names them by username, stored as their account spells it, and is refused `400` for a name no account has, one the gateway would read as somebody else, or somebody who cannot call the use case. Any other scope drops a `subject`. `201`. Emits `budget.upserted`. |
 | `DELETE /api/v1/use-cases/{slug}/budgets/{id}/` | admin | `204`. Emits `budget.deleted`. |
 | `GET /api/v1/use-cases/{slug}/rate-limits/` | sees it | `[{id, scope, subject, limit_rpm, burst, enabled, created_at, updated_at}]`. |
 | `POST /api/v1/use-cases/{slug}/rate-limits/` | admin | Upserts on `scope` (`use_case` or `each_member`). `201`. Emits `ratelimit.upserted`. |
@@ -580,7 +581,7 @@ same function (`apps/usecases/views/payloads.py`, `catalog/views.py` `_payload`,
 | `api_key.revoked` | `prefix`, `use_case`, `status` | |
 | `pipeline.upserted` | `use_case`, `steps`, `fallback_models` | |
 | `pipeline.deleted` | `use_case` | Sent when its use case is retired or purged. |
-| `budget.upserted` | `id`, `use_case`, `scope`, `subject`, `period`, `limit_cost`, `limit_tokens`, `limit_requests`, `enabled` | `limit_cost` is a decimal string. |
+| `budget.upserted` | `id`, `use_case`, `scope`, `subject`, `period`, `limit_cost`, `limit_tokens`, `limit_requests`, `enabled` | `limit_cost` is a decimal string. `subject` is the person a `member` budget is for, and empty for every other scope; a gateway that knows no `member` scope applies such a row to nobody. |
 | `budget.deleted` | `id`, `use_case`, `period` | `period` is sent for the installation's budget only. |
 | `ratelimit.upserted` | `id`, `use_case`, `scope`, `subject`, `limit_rpm`, `burst`, `enabled` | |
 | `ratelimit.deleted` | `id`, `use_case` | |

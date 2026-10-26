@@ -17,6 +17,8 @@ interface PersonView {
   /** The per-head allowance, where one is configured, and what remains of it. */
   allowance: string | null;
   remaining: string | null;
+  /** True where the allowance is a budget set for this person, in place of the one for everybody. */
+  own: boolean;
   /** True once this person is over the allowance — a fact, not a warning to be softened. */
   over: boolean;
 }
@@ -126,7 +128,8 @@ function half(person: PersonRow, method: string): string | null {
                   <th scope="col">
                     Left of allowance
                     <app-info-hint label="Left of allowance" testid="people-left" [wide]="true">
-                      From the per-person budget on this use case and what this person has recorded
+                      From the budget that applies to this person — one set for them alone where
+                      there is one, the per-person budget otherwise — and what they have recorded
                       against it in the current period. The gateway refuses on its own counter,
                       which is the authoritative one; this is what the request log shows.
                     </app-info-hint>
@@ -164,6 +167,11 @@ function half(person: PersonRow, method: string): string | null {
                       } @else {
                         <span [class.is-over]="person.over">{{ person.remaining }}</span>
                         <span class="muted"> of {{ person.allowance }}</span>
+                        @if (person.own) {
+                          <span class="muted" [attr.data-testid]="'own-allowance-' + person.name">
+                            · their own budget</span
+                          >
+                        }
                       }
                     </td>
                   }
@@ -278,24 +286,58 @@ export class PeoplePanel {
     return out;
   });
 
-  /** The per-head budget this use case has, if any. Only that scope binds one person. */
+  /** The per-head budget this use case has, if any: the allowance of everybody without their own. */
   private readonly perHead = computed(() =>
     this.budgets().find((budget) => budget.scope === 'each_member' && budget.enabled !== false),
   );
 
-  protected readonly hasAllowance = computed(() => !!this.perHead()?.limit_cost);
+  /**
+   * The budgets set for one person, by whom they are for (`FRD-407`). A name the reader may not
+   * see matches nobody, so such a row never lends its limit to a stranger's figures.
+   */
+  private readonly ownBudgets = computed(() =>
+    this.budgets().filter(
+      (budget) => budget.scope === 'member' && budget.enabled !== false && !!budget.subject,
+    ),
+  );
+
+  /**
+   * The period these figures cover: the per-person budget's, else that of a budget set for one
+   * person, else the month. One period for the whole table, because an allowance only means
+   * anything against the period it resets in.
+   */
+  private readonly period = computed<'day' | 'month'>(
+    () => this.perHead()?.period ?? this.ownBudgets()[0]?.period ?? 'month',
+  );
+
+  /**
+   * The budget that applies to one person in this panel's period, as the gateway decides it:
+   * their own where one is set and on, the one for everybody otherwise.
+   */
+  private allowanceOf(person: string): Budget | null {
+    const own = this.ownBudgets().find(
+      (budget) => budget.subject === person && budget.period === this.period(),
+    );
+    if (own) return own;
+    const everybody = this.perHead();
+    return everybody?.period === this.period() ? everybody : null;
+  }
+
+  protected readonly hasAllowance = computed(
+    () =>
+      !!this.perHead()?.limit_cost ||
+      this.ownBudgets().some((budget) => budget.period === this.period() && !!budget.limit_cost),
+  );
 
   /**
    * The window whose figures are shown: the budget's period where there is one, so a daily
    * allowance is compared with today rather than the month.
    */
-  private readonly window = computed(() =>
-    this.perHead()?.period === 'day' ? this.today() : this.month(),
-  );
+  private readonly window = computed(() => (this.period() === 'day' ? this.today() : this.month()));
 
   /** Whether the window this panel reads arrived — the other one's fate is not this panel's. */
   protected readonly unavailable = computed(() =>
-    this.perHead()?.period === 'day' ? this.todayUnavailable() : this.monthUnavailable(),
+    this.period() === 'day' ? this.todayUnavailable() : this.monthUnavailable(),
   );
 
   protected readonly people = computed(() => {
@@ -309,7 +351,7 @@ export class PeoplePanel {
   protected readonly sharedPeriod = computed(() => this.shared()?.period ?? 'month');
 
   protected readonly windowLabel = computed(
-    () => `${this.perHead()?.period === 'day' ? 'today' : 'this month'} (${PERIOD_CLOCK})`,
+    () => `${this.period() === 'day' ? 'today' : 'this month'} (${PERIOD_CLOCK})`,
   );
 
   /**
@@ -323,7 +365,7 @@ export class PeoplePanel {
    * control for the longer view (`FRD-626` FR-17).
    */
   protected readonly windowReason = computed(() =>
-    this.perHead()?.period === 'day'
+    this.period() === 'day'
       ? `Today in ${PERIOD_CLOCK}, because the per-person allowance on this use case resets at
          midnight ${PERIOD_CLOCK} — a remainder is only meaningful against the period it is measured
          in. For a longer view, use the period control on the usage chart above.`
@@ -334,7 +376,7 @@ export class PeoplePanel {
 
   protected readonly view = computed<PersonView[]>(() =>
     this.people().map((person) => {
-      const budget = this.perHead();
+      const budget = this.allowanceOf(person.key);
       const limit = budget?.limit_cost ?? null;
       // In integer nano-units, read on the digits, so the remainder stays exact.
       const limitNanos = limit === null ? null : nanosOf(limit);
@@ -350,6 +392,7 @@ export class PeoplePanel {
         // Clamped at zero for reading; running out is carried by `over`.
         remaining: left === null ? null : money(Math.max(0, left), limit ?? '', person.cost),
         over: left !== null && left < 0,
+        own: budget?.scope === 'member',
       };
     }),
   );

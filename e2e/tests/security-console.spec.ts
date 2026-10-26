@@ -32,14 +32,18 @@ import {
 const GATEWAY = GATEWAY_URL;
 
 /** One request through the gateway, retried until the key has reached it over Kafka. */
-async function sendTraffic(request: APIRequestContext, key: string): Promise<void> {
+async function sendTraffic(request: APIRequestContext, slug: string, key: string): Promise<void> {
   await expect
     .poll(
       async () => {
-        const response = await request.post(`${GATEWAY}/v1beta/models/mock-1:generateContent`, {
-          headers: { 'x-goog-api-key': key },
-          data: { contents: [{ role: 'user', parts: [{ text: 'security console probe' }] }] },
-        });
+        // Named in the address: every model call names its use case, a key's too.
+        const response = await request.post(
+          `${GATEWAY}/uc/${slug}/v1beta/models/mock-1:generateContent`,
+          {
+            headers: { 'x-goog-api-key': key },
+            data: { contents: [{ role: 'user', parts: [{ text: 'security console probe' }] }] },
+          },
+        );
         return response.status();
       },
       { timeout: 30_000, message: 'the issued key never reached the gateway' },
@@ -207,7 +211,7 @@ test.describe('Warnings and traces on a use case', () => {
     await page.goto(`/use-cases/${slug}?tab=traces`);
     await expect(page.locator('[data-testid="no-traces"]')).toBeVisible({ timeout: 20_000 });
 
-    await sendTraffic(request, key);
+    await sendTraffic(request, slug, key);
 
     // No reload, no click: the row arrives on its own.
     await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 40_000 });
@@ -254,10 +258,13 @@ test.describe('Warnings and traces on a use case', () => {
     await expect
       .poll(
         async () => {
-          const response = await request.post(`${GATEWAY}/v1beta/models/mock-1:generateContent`, {
-            headers: { 'x-goog-api-key': key },
-            data: { contents: [{ role: 'user', parts: [{ text: secret }] }] },
-          });
+          const response = await request.post(
+            `${GATEWAY}/uc/${slug}/v1beta/models/mock-1:generateContent`,
+            {
+              headers: { 'x-goog-api-key': key },
+              data: { contents: [{ role: 'user', parts: [{ text: secret }] }] },
+            },
+          );
           return response.status();
         },
         { timeout: 30_000 },

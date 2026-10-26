@@ -935,7 +935,11 @@ async def _after_a_reload(engine: AsyncEngine) -> None:
             for _ in range(30):
                 refused = await client.post(
                     f"{GATEWAY_URL}/v1beta/models/mock-1:generateContent",
-                    headers={"x-goog-api-key": key, "content-type": "application/json"},
+                    headers={
+                        "x-goog-api-key": key,
+                        "x-aira-use-case": control,
+                        "content-type": "application/json",
+                    },
                     json=_body(),
                 )
                 if refused.status_code == 429:
@@ -1119,7 +1123,7 @@ async def test_e11_the_kira_surface_refuses_a_suspended_caller_too(fixture) -> N
     async with httpx.AsyncClient(timeout=180.0) as client:
         response = await client.post(
             f"{GATEWAY_URL}/kira/api/external/chat",
-            headers={"x-goog-api-key": fixture.key, "content-type": "application/json"},
+            headers=fixture.headers(),
             json={
                 "model_id": KIRA_MODEL_ID,
                 "request": {"parts": [{"text": "hi"}]},
@@ -1708,7 +1712,11 @@ async def test_h7_the_gateway_still_serves_everybody_else(fixture, engine) -> No
         async with httpx.AsyncClient(timeout=180.0) as client:
             free = await client.post(
                 f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
-                headers={"x-goog-api-key": full_key, "content-type": "application/json"},
+                headers={
+                    "x-goog-api-key": full_key,
+                    "x-aira-use-case": other_slug,
+                    "content-type": "application/json",
+                },
                 json=_body(),
             )
         assert free.status_code == 200, free.text

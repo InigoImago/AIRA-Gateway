@@ -51,7 +51,9 @@ those costs. Picking one would have put an untestable integration in this reposi
   and, where the use case gives each member one, **their own** counter. A colleague's counter is
   never among them. Each entry carries `scope`, `period`, `period_ends`, `enabled`, `limit_cost`,
   `limit_tokens`, `limit_requests`, the matching `used_*` and `remaining_*`, and
-  `unpriced_requests`.
+  `unpriced_requests`. *Since `FRD-407`:* "binds" is the hierarchy's answer (`binds` on each row of
+  `BudgetService.usage`) — a budget set for this caller alone in place of the one for each member,
+  never both, and never a budget set for somebody else.
 - **FR-3 — Not capped is `None`, never a number.** A budget that limits requests and not tokens
   answers `limit_tokens: null` and `remaining_tokens: null`. A large number would be rendered as a
   full bar — a limit nobody set.

@@ -418,3 +418,75 @@ describe('PeoplePanel — narrowed to the reader', () => {
     expect(harness.text()).toContain('What each person used');
   });
 });
+
+describe("PeoplePanel — a budget of somebody's own (FRD-407)", () => {
+  const everybody: Budget = {
+    id: 5,
+    scope: 'each_member',
+    subject: '',
+    period: 'month',
+    limit_cost: '10.00',
+    enabled: true,
+  };
+  const own = (subject: string, extra: Partial<Budget> = {}): Budget => ({
+    id: 7,
+    scope: 'member',
+    subject,
+    period: 'month',
+    limit_cost: '50.00',
+    enabled: true,
+    ...extra,
+  });
+
+  it('reads a person against their own budget, and everybody else against the one for all', () => {
+    const harness = setup();
+    harness.host.budgets.set([everybody, own('erika')]);
+    harness.host.month.set([
+      row({ key: 'erika', cost_nanos: 12_000_000_000, cost: '12.00' }),
+      row({ key: 'ahmed', cost_nanos: 4_000_000_000, cost: '4.00' }),
+    ]);
+    harness.render();
+
+    const erika = harness.testid('person-erika')?.textContent ?? '';
+    const ahmed = harness.testid('person-ahmed')?.textContent ?? '';
+    // Twelve spent of her fifty: past the ten everybody has, and not over anything.
+    expect(erika).toContain('38.00');
+    expect(erika).toContain('of 50.00');
+    expect(harness.testid('own-allowance-erika')).not.toBeNull();
+    expect(ahmed).toContain('6.00');
+    expect(ahmed).toContain('of 10.00');
+    expect(harness.testid('own-allowance-ahmed')).toBeNull();
+  });
+
+  it('hands a person whose own budget is switched off back to the one for all', () => {
+    const harness = setup();
+    harness.host.budgets.set([everybody, own('erika', { enabled: false })]);
+    harness.host.month.set([row({ key: 'erika', cost_nanos: 12_000_000_000, cost: '12.00' })]);
+    harness.render();
+
+    const erika = harness.testid('person-erika')?.textContent ?? '';
+    expect(erika).toContain('of 10.00');
+    expect(harness.testid('own-allowance-erika')).toBeNull();
+  });
+
+  it('leaves a budget of another period where it is', () => {
+    // A daily budget of her own does not change what the monthly one for everybody leaves her.
+    const harness = setup();
+    harness.host.budgets.set([everybody, own('erika', { period: 'day', limit_cost: '1.00' })]);
+    harness.host.month.set([row({ key: 'erika', cost_nanos: 2_000_000_000, cost: '2.00' })]);
+    harness.render();
+
+    expect(harness.testid('person-erika')?.textContent).toContain('of 10.00');
+  });
+
+  it('shows a reader their own budget where the use case has none for everybody', () => {
+    const harness = setup();
+    harness.host.only.set('erika');
+    harness.host.budgets.set([own('erika')]);
+    harness.host.month.set([row({ key: 'erika', cost_nanos: 1_000_000_000, cost: '1.00' })]);
+    harness.render();
+
+    expect(harness.text()).toContain('Left of allowance');
+    expect(harness.testid('person-erika')?.textContent).toContain('49.00');
+  });
+});

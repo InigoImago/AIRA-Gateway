@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { Observable, of, throwError } from 'rxjs';
-import { Budget, BudgetUsage } from '../../core/api/models';
+import { Budget, BudgetUsage, Membership } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -14,7 +14,8 @@ interface Overrides {
 
 interface Tab {
   showForm: { set: (v: boolean) => void; (): boolean };
-  budgetScope: { set: (v: 'use_case' | 'each_member') => void; (): string };
+  budgetScope: { set: (v: 'use_case' | 'each_member' | 'member') => void; (): string };
+  budgetSubject: { set: (v: string) => void; (): string };
   budgetPeriod: { set: (v: 'day' | 'month') => void; (): string };
   budgetTokens: { set: (v: number | null) => void; (): number | null };
   budgetRequests: { set: (v: number | null) => void; (): number | null };
@@ -47,6 +48,10 @@ interface Options {
   overrides?: Overrides;
   confirmAnswer?: boolean;
   canManage?: boolean;
+  /** The use case's members, offered as names for a budget of somebody's own. */
+  members?: Membership[];
+  /** The reader's username. */
+  me?: string | null;
 }
 
 function setup(options: Options = {}) {
@@ -98,6 +103,8 @@ function setup(options: Options = {}) {
   // test of its own, below.
   fixture.componentRef.setInput('canManage', options.canManage ?? true);
   fixture.componentRef.setInput('currency', options.currency ?? '');
+  fixture.componentRef.setInput('members', options.members ?? []);
+  fixture.componentRef.setInput('me', options.me ?? null);
   const changes: number[] = [];
   fixture.componentInstance.changed.subscribe(() => changes.push(1));
   fixture.detectChanges();
@@ -539,7 +546,7 @@ describe('BudgetsTab — a budget per person, and a window to make one in', () =
     const scope = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
       '#budget-scope',
     )!;
-    expect([...scope.options].map((o) => o.value)).toEqual(['use_case', 'each_member']);
+    expect([...scope.options].map((o) => o.value)).toEqual(['use_case', 'each_member', 'member']);
 
     harness.component.budgetScope.set('each_member');
     harness.fixture.detectChanges();
@@ -849,5 +856,197 @@ describe('BudgetsTab — enforcement', () => {
       (fixture.nativeElement as HTMLElement).querySelector('[data-testid="budgets-not-enforced"]'),
     ).not.toBeNull();
     expect(text()).toContain('40');
+  });
+});
+
+describe("BudgetsTab — a budget of somebody's own (FRD-407)", () => {
+  const own = (subject: string | null, extra: Partial<Budget> = {}): Budget => ({
+    id: 7,
+    scope: 'member',
+    subject,
+    period: 'month',
+    limit_requests: 3,
+    enabled: true,
+    ...extra,
+  });
+  const everybody: Budget = {
+    id: 5,
+    scope: 'each_member',
+    subject: '',
+    period: 'month',
+    limit_requests: 10,
+    enabled: true,
+  };
+  const pot: Budget = {
+    id: 1,
+    scope: 'use_case',
+    subject: '',
+    period: 'month',
+    limit_requests: 100,
+    enabled: true,
+  };
+  const figures = (id: number, extra: Partial<BudgetUsage> = {}): BudgetUsage => ({
+    id,
+    used_tokens: 0,
+    used_requests: 1,
+    used_cost_nanos: 0,
+    used_cost: '0.00',
+    unpriced_requests: 0,
+    binds: true,
+    replaced_by: null,
+    ...extra,
+  });
+  const none = (id: number, extra: Partial<BudgetUsage> = {}): BudgetUsage => ({
+    id,
+    used_tokens: null,
+    used_requests: null,
+    used_cost_nanos: null,
+    used_cost: null,
+    unpriced_requests: null,
+    binds: false,
+    replaced_by: null,
+    ...extra,
+  });
+
+  it('asks for the person, offers the members, and says when a name is not among them', () => {
+    const harness = setup({
+      members: [
+        { username: 'carol', role: 'user' },
+        { username: 'bob', role: 'user' },
+      ],
+    });
+    harness.component.showForm.set(true);
+    harness.component.budgetScope.set('member');
+    harness.fixture.detectChanges();
+
+    const html = harness.fixture.nativeElement as HTMLElement;
+    expect(html.querySelector('#budget-subject')).not.toBeNull();
+    const offered = [...html.querySelectorAll('#budget-subject-suggestions option')].map(
+      (option) => (option as HTMLOptionElement).value,
+    );
+    expect(offered).toEqual(['bob', 'carol']);
+    // Its place in the hierarchy, while it is chosen.
+    expect(harness.text()).toContain("it takes that budget's place for this");
+    expect(harness.component.validationError()).toBe(
+      'Name the person this budget is for, by their username.',
+    );
+
+    harness.component.budgetSubject.set('dora');
+    harness.fixture.detectChanges();
+    expect(harness.testid('budget-subject-hint')?.textContent).toContain(
+      "Not on this use case's member list",
+    );
+    harness.component.budgetSubject.set('bob');
+    harness.fixture.detectChanges();
+    expect(harness.testid('budget-subject-hint')?.textContent).not.toContain('Not on');
+  });
+
+  it('sends the person with a budget of their own, and nobody with any other', () => {
+    const harness = setup();
+    harness.component.budgetScope.set('member');
+    harness.component.budgetSubject.set('  bob ');
+    harness.component.budgetRequests.set(3);
+    harness.component.add();
+    expect(harness.calls).toEqual(['create:member:bob:null:null:true']);
+
+    // A name typed before switching to a shared scope is not sent with it.
+    harness.component.budgetScope.set('member');
+    harness.component.budgetSubject.set('bob');
+    harness.component.budgetScope.set('each_member');
+    harness.component.budgetRequests.set(3);
+    harness.component.add();
+    expect(harness.calls[1]).toBe('create:each_member::null:null:true');
+  });
+
+  it("asks before replacing the same person's budget, and not another person's", () => {
+    const harness = setup({ budgets: [own('bob')] });
+    harness.component.budgetScope.set('member');
+    harness.component.budgetSubject.set('carol');
+    harness.component.budgetRequests.set(5);
+    harness.component.add();
+    expect(harness.asked).toEqual([]);
+
+    harness.component.budgetSubject.set('bob');
+    harness.component.budgetRequests.set(5);
+    harness.component.add();
+    expect(harness.asked.length).toBe(1);
+    expect(harness.asked[0]).toContain('one person: bob');
+  });
+
+  it('lists the budgets in the order the gateway applies them, and says how they combine', () => {
+    const harness = setup({ budgets: [everybody, own('bob'), pot] });
+    const html = harness.fixture.nativeElement as HTMLElement;
+    const heads = [...html.querySelectorAll('.card--compact strong')].map((node) =>
+      node.textContent?.trim(),
+    );
+    expect(heads).toEqual(['Whole use case', 'One person: bob', 'Each member, individually']);
+    expect(harness.testid('budget-hierarchy')?.textContent).toContain(
+      'held to it instead of the budget for each',
+    );
+  });
+
+  it('says nothing about a hierarchy where nobody has a budget of their own', () => {
+    const harness = setup({ budgets: [everybody, pot] });
+    expect(harness.testid('budget-hierarchy')).toBeNull();
+  });
+
+  it('names the reader as "you", and a name it may not see as another member', () => {
+    const mine = setup({ budgets: [own('alice')], me: 'alice' });
+    expect(mine.component.labelFor(own('alice'))).toBe('One person: you (alice)');
+
+    const withheld = own(null, { subject_withheld: true });
+    const theirs = setup({ budgets: [withheld], me: 'carol' });
+    expect(theirs.component.labelFor(withheld)).toBe('One person: another member');
+  });
+
+  it('says why a card has no figures, in the words that fit it', () => {
+    const harness = setup({
+      budgets: [everybody, own('bob')],
+      me: 'alice',
+      usage: { 5: figures(5), 7: none(7) },
+    });
+    const notes = [
+      ...(harness.fixture.nativeElement as HTMLElement).querySelectorAll(
+        '[data-testid="budget-not-yours"]',
+      ),
+    ].map((node) => node.textContent ?? '');
+    // Bob's is his: a colleague is not shown what he used, nor told it was nothing.
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain('Counted for this person alone');
+    expect(harness.testid('budget-requests-7')?.textContent).toContain('—');
+  });
+
+  it('tells a reader whose own budget replaced the one for everybody where their figures are', () => {
+    const harness = setup({
+      budgets: [everybody, own('alice')],
+      me: 'alice',
+      usage: { 5: none(5, { replaced_by: 7 }), 7: figures(7) },
+    });
+    const notes = (harness.fixture.nativeElement as HTMLElement).querySelectorAll(
+      '[data-testid="budget-not-yours"]',
+    );
+    expect(notes).toHaveLength(1);
+    expect(notes[0].textContent).toContain('A budget of your own takes the place of this one');
+    expect(harness.testid('budget-requests-7')?.textContent).toContain('1');
+  });
+
+  it('tells a reader whose own budget is switched off which one holds them', () => {
+    const harness = setup({
+      budgets: [everybody, own('alice', { enabled: false })],
+      me: 'alice',
+      usage: { 5: figures(5), 7: none(7, { replaced_by: 5 }) },
+    });
+    expect(harness.testid('budget-not-yours')?.textContent).toContain(
+      'Switched off, so you are held to the budget for each member',
+    );
+  });
+
+  it('says so when the person a budget names can no longer call the use case', () => {
+    const harness = setup({ budgets: [own('bob', { reaches: false })] });
+    expect(harness.testid('budget-reaches-nobody-7')?.textContent).toContain(
+      'bob can no longer call this use case',
+    );
+    const reaching = setup({ budgets: [own('bob', { reaches: true })] });
+    expect(reaching.testid('budget-reaches-nobody-7')).toBeNull();
   });
 });

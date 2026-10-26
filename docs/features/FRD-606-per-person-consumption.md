@@ -63,7 +63,8 @@ authenticate.
   and the two are also given as one total. Both halves are named in the reader's words: a sign-in
   and a key.
 - **FR-4** Where the use case has an `each_member` budget, each person's row shows the allowance,
-  what they have used of it in the **current period of that budget**, and what remains.
+  what they have used of it in the **current period of that budget**, and what remains. *Since
+  `FRD-407`:* a person with a budget of their own is read against that one, marked as theirs.
 - **FR-5** FR-4's figures are derived from recorded requests and say so. The authoritative counter
   for *enforcement* is the shared budget counter (`ADR-0008`); a display that silently claimed to
   be that counter would be a second answer to one question.
@@ -172,7 +173,9 @@ scrolled past every day after. A `<details>`, shut by default — 3467 px → **
 The **substantive sentence stays outside the fold**. It is the answer to the question that prompted
 the panel — a caller hunting for a per-use-case URL that does not exist — and a reader decides
 whether to open a block from what its summary says. Shortening it to "base URLs and examples" put
-the answer behind the fold that exists to hide the examples; a test holds it there.
+the answer behind the fold that exists to hide the examples; a test holds it there. *Since
+`FRD-149` the per-use-case URL exists — every model call names its use case — and the summary
+gives it: the answer moved, the rule that it stays outside the fold did not.*
 
 Two of the four tests written for this section could not fail, both found by the harness rather than
 by reading them: one asserted the *wording* of a line that must not appear, so a mutation rendering

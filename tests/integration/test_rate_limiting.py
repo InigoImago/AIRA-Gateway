@@ -270,7 +270,7 @@ async def test_the_gateway_answers_429_with_retry_after_when_over_the_limit(
     await _rate_limit(engine, slug, rpm=60, burst=2)
 
     body = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
-    headers = {"x-goog-api-key": full_key}
+    headers = {"x-goog-api-key": full_key, "x-aira-use-case": slug}
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=10.0) as client:
         statuses = []
         for _ in range(6):

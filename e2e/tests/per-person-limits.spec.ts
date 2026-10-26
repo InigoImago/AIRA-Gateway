@@ -14,8 +14,9 @@ import {
 
 const GATEWAY = GATEWAY_URL;
 
-async function ask(request: APIRequestContext, key: string) {
-  return request.post(`${GATEWAY}/v1beta/models/mock-1:generateContent`, {
+async function ask(request: APIRequestContext, slug: string, key: string) {
+  // Named in the address: every model call names its use case, a key's too.
+  return request.post(`${GATEWAY}/uc/${slug}/v1beta/models/mock-1:generateContent`, {
     headers: { 'x-goog-api-key': key },
     data: { contents: [{ role: 'user', parts: [{ text: 'per-person probe' }] }] },
   });
@@ -119,15 +120,70 @@ test.describe('Per-person limits', () => {
     // The key and the budget travel over Kafka; the first served request is the signal that both
     // have arrived. Polling for it rather than sleeping, because the wait is a queue, not a clock.
     await expect
-      .poll(async () => (await ask(request, key)).status(), {
+      .poll(async () => (await ask(request, slug, key)).status(), {
         timeout: 30_000,
         message: 'the issued key never reached the gateway',
       })
       .toBe(200);
 
-    const refused = await ask(request, key);
+    const refused = await ask(request, slug, key);
     expect(refused.status()).toBe(429);
     expect(JSON.stringify(await refused.json())).toContain('Request budget');
+  });
+
+  /**
+   * **A budget of one's own, in place of the one for everybody** (`FRD-407`), end to end: chosen
+   * in the window, named, stored as the person's, carried over Kafka, and enforced by the gateway
+   * against the counter the per-person budget uses. The person is the signed-in administrator —
+   * the use case's creator, and so somebody who can call it — so the key issued below is theirs.
+   *
+   * Their own allows three requests a day where everybody else has one: three are served, past
+   * the one for everybody, and the fourth is refused by name as theirs.
+   */
+  test('a person can be given a budget of their own, in place of the one for everybody', async ({
+    page,
+    request,
+  }) => {
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('ownbudget');
+    await createUseCase(page, slug, 'Own budget probe');
+    await releaseAllModels(page, slug);
+
+    await page.goto(`/use-cases/${slug}?tab=budgets`);
+    await page.click('button:has-text("Add budget")');
+    await page.selectOption('#budget-scope', 'each_member');
+    await page.selectOption('#budget-period', 'day');
+    await page.fill('#budget-requests', '1');
+    await (await submitOfOpenForm(page)).click();
+    await expect(page.locator('[data-testid="budget-editor"]')).toBeHidden();
+
+    await page.click('button:has-text("Add budget")');
+    await page.selectOption('#budget-scope', 'member');
+    await page.fill('#budget-subject', USERS.globalAdmin.username);
+    await page.selectOption('#budget-period', 'day');
+    await page.fill('#budget-requests', '3');
+    await (await submitOfOpenForm(page)).click();
+    await expect(page.locator('[data-testid="budget-editor"]')).toBeHidden();
+
+    // Named as theirs, and the order of the hierarchy said where it is configured.
+    await expect(
+      page.locator('.card--compact strong', { hasText: 'One person: you' }),
+    ).toBeVisible();
+    await expect(page.getByTestId('budget-hierarchy')).toContainText('held to it instead');
+
+    const key = await issueKey(page, slug, 'own-budget-e2e');
+    await expect
+      .poll(async () => (await ask(request, slug, key)).status(), {
+        timeout: 30_000,
+        message: 'the issued key never reached the gateway',
+      })
+      .toBe(200);
+    expect((await ask(request, slug, key)).status()).toBe(200);
+    expect((await ask(request, slug, key)).status()).toBe(200);
+
+    const refused = await ask(request, slug, key);
+    expect(refused.status()).toBe(429);
+    expect(JSON.stringify(await refused.json())).toContain('individual member');
   });
 
   test('a per-person rate is enforced per person, not per use case', async ({ page, request }) => {
@@ -151,13 +207,13 @@ test.describe('Per-person limits', () => {
 
     const key = await issueKey(page, slug, 'per-person-e2e');
     await expect
-      .poll(async () => (await ask(request, key)).status(), {
+      .poll(async () => (await ask(request, slug, key)).status(), {
         timeout: 30_000,
         message: 'the issued key never reached the gateway',
       })
       .toBe(200);
 
-    const refused = await ask(request, key);
+    const refused = await ask(request, slug, key);
     expect(refused.status()).toBe(429);
     // A well-behaved client is told when to come back, not merely that it was refused.
     expect(refused.headers()['retry-after']).toBeTruthy();
@@ -195,7 +251,7 @@ test.describe('Per-person limits', () => {
 
     const key = await issueKey(page, slug, 'per-person-e2e');
     await expect
-      .poll(async () => (await ask(request, key)).status(), {
+      .poll(async () => (await ask(request, slug, key)).status(), {
         timeout: 30_000,
         message: 'the issued key never reached the gateway',
       })

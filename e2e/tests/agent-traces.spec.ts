@@ -115,8 +115,9 @@ test.describe('The OpenCode configuration', () => {
     for await (const chunk of stream) chunks.push(chunk as Buffer);
     const config = JSON.parse(Buffer.concat(chunks).toString('utf8'));
 
-    // The three things that decide whether it runs: where to talk, what to say, who is calling.
-    expect(config.provider.aira.options.baseURL).toContain('/gw/v1beta');
+    // The three things that decide whether it runs: where to talk — the use case included, as
+    // every model call names it (`FRD-149`) —, what to say, who is calling.
+    expect(config.provider.aira.options.baseURL).toContain(`/gw/uc/${slug}/v1beta`);
     expect(config.provider.aira.options.apiKey).toMatch(/^aira_/);
     expect(config.model).toMatch(/^aira\//);
   });
@@ -172,7 +173,7 @@ test.describe('Reading what was actually sent', () => {
     // immediately. Polled rather than slept: a fixed wait is either too short on a loaded machine
     // or wasted on an idle one, and both read as flakiness.
     const send = () =>
-      page.request.post(`${GATEWAY_URL}/v1beta/models/qwen3:0.6b:generateContent`, {
+      page.request.post(`${GATEWAY_URL}/uc/${slug}/v1beta/models/qwen3:0.6b:generateContent`, {
         headers: { 'x-goog-api-key': key.trim(), 'content-type': 'application/json' },
         data: {
           contents: [{ parts: [{ text: 'A sentence this test can look for.' }] }],

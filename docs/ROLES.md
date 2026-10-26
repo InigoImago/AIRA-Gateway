@@ -127,7 +127,7 @@ A grant binds a **principal** — a person or a Keycloak group — to a use case
 | Grant role | May                                                                                            |
 | ---------- | ---------------------------------------------------------------------------------------------- |
 | `user`     | call the gateway attributed to this use case; see it, its requests, its figures, its findings (**Warnings**) and its anomaly rules (**Rules**), as far as its `payload_visibility` allows; issue an API key for itself |
-| `admin`    | additionally change what happens inside it: members and group grants, API keys, the models released to it, pipeline, budgets, rate limits, its own anomaly rules, storage, visibility and retention; run the question catalogue on it; search the directory for people and groups to add; and retire it |
+| `admin`    | additionally change what happens inside it: members and group grants, API keys, the models released to it, pipeline, budgets — a budget for one named person included — rate limits, its own anomaly rules, storage, visibility and retention; run the question catalogue on it; search the directory for people and groups to add; and retire it |
 
 Two rules the code enforces so that neither plane has to restate them:
 
@@ -159,6 +159,10 @@ installation setting, not a use case's, so no administrator can lift it. While i
   person concerned.
 - **A key's owner and issuer** on the use case's key list are shown to them and to the two roles
   only; everybody else reads "another member".
+- **A budget set for one person** names them to the person, to the use case's administrators, who
+  set it, and to the two roles; everybody else reads the row — its limits and its period — as
+  "another member's". What that person spent against it is shown to them alone, as for every
+  per-person budget.
 - **`payload.read_any` and `incident.investigate`** — the two permissions that see a person —
   cannot be granted to IT Steuerung or to a role the installation defines.
 
@@ -207,15 +211,17 @@ while the directory cannot be asked.
 
 A caller reaches the gateway with one of two credentials, and the difference matters:
 
-| Credential                             | Carries a use case     | Selector                                                  |
-| -------------------------------------- | ---------------------- | --------------------------------------------------------- |
-| **API key** (`aira_<prefix>_<secret>`) | yes, bound at issuance | none needed; a mismatched selector is refused             |
+| Credential                             | Carries a use case     | Selector                                                                    |
+| -------------------------------------- | ---------------------- | --------------------------------------------------------------------------- |
+| **API key** (`aira_<prefix>_<secret>`) | yes, bound at issuance | still named on a model call; a selector naming another use case is refused   |
 | **OIDC bearer token**                  | no                     | `/uc/<slug>` in the path, or the `X-AIRA-Use-Case` header (the header wins) |
 
-On the Gemini surface a model call with a bearer token always names its use case: naming none is a
-`400`. The KIRA surface, whose contract has no field for one, attributes a caller who belongs to
-exactly one use case to it and refuses one who belongs to several with a `403` naming them
-(`gateway/src/aira_gateway/api/kira/attribution.py`).
+**A model call names its use case whatever the credential**, on both surfaces: one that names none
+is refused — `400` on the Gemini surface, `403` on the KIRA surface, whose contract has no field
+for one — and the refusal names the use case to add, the key's own or those the caller reaches. A
+read (`GET`) names none, and a key's read is its own use case's. The operator's break-glass key,
+bound to no use case, is the one credential that may call without naming one
+(`gateway/src/aira_gateway/auth/dependencies.py`).
 
 For a bearer token, membership comes from the Keycloak group `/use-cases/<slug>` and from grants
 distributed to the gateway. A caller who names a use case they are not in is refused — **an empty

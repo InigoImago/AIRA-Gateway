@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**107 of 111 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**109 of 113 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -59,6 +59,7 @@ status that goes stale in the copy nobody opens.
 | [146](FRD-146-kira-parity-functions-embeddings-values.md) | KIRA parity: function calling, the predecessor's vectors, and its values | 8 (KIRA parity) | ✅ Built |
 | [147](FRD-147-reranking.md) | Reranking, on both surfaces | 8 (KIRA parity) | ✅ Built |
 | [148](FRD-148-a-release-says-what-it-contains.md) | A release says what it contains | 7 | ✅ Built |
+| [149](FRD-149-every-model-call-names-its-use-case.md) | Every model call names its use case, and the console says how to connect | 6 (governance) | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |
@@ -84,6 +85,7 @@ status that goes stale in the copy nobody opens.
 | [404](FRD-404-retention.md) | Payload storage and retention (per use case, one week by default) | 4 | ✅ Done |
 | [405](FRD-405-rate-limiting.md) | Rate limiting, atomic budget reservation, and persistence off the hot path | 4 | ✅ Done |
 | [406](FRD-406-content-redaction.md) | Redaction of credentials in stored payloads | 4 | ✅ Done — credential half only |
+| [407](FRD-407-a-persons-own-budget.md) | A person's own budget, in the use case's hierarchy | 4 | ✅ Built |
 | [500](FRD-500-anomaly-rules.md) | Anomaly rules | 5 | ✅ Done |
 | [501](FRD-501-anomaly-detection-engine.md) | The detection engine | 5 | ✅ Done |
 | [502](FRD-502-security-console-and-traces.md) | The IT Security console, own warnings, and per-use-case traces | 5 | ✅ Done |

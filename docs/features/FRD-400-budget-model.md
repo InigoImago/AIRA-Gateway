@@ -3,6 +3,10 @@
 > **Extended by [FRD-403](FRD-403-cost-budgets.md)**: a budget may now cap **spend**
 > in the installation currency, not only tokens and request counts. A token limit could not
 > express cost — a token differs in price by more than an order of magnitude between models.
+>
+> **Extended by [FRD-407](FRD-407-a-persons-own-budget.md)** (`ADR-0044`): a budget may again name
+> one person — not as the additive scope removed below, but as their own budget in a hierarchy, in
+> place of the per-person one of its period, under the use case's.
 
 > Phase: 4 · Status: **Done** · Owner: Vadim Scheibe
 > Related: `docs/ROADMAP.md` Phase 4; builds on FRD-102 (attribution), FRD-103 (request logs),
@@ -39,7 +43,8 @@ shape for a cap on what the organisation is willing to spend and the wrong one f
 `each_member` is *a fair share per head*: one configured row, one counter per person, applying to
 whoever turns up including people who join afterwards.
 
-A third scope, `member`, bounded **one named person**. It is gone on the owner's decision:
+A third scope, `member`, bounded **one named person**. It is gone on the owner's decision
+*(and back since `FRD-407`, as a replacement rather than an addition — see there)*:
 singling somebody out is not a governance decision this product should make easy, and it only ever
 answered the question after somebody had already caused a problem — while needing a row per person,
 kept up to date as people join and leave. Existing rows are deleted by a migration in each plane

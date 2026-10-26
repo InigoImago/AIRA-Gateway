@@ -100,11 +100,13 @@ graph LR
     which -->|"Bearer &lt;JWT&gt;"| oidc["OIDC<br/><i>JWKS, issuer, audience</i>"]
     which -->|"none, or one that fails"| anon["401, or 429 past the bound<br/><i>no audit row — a security event,<br/>not a usage row</i>"]
 
-    key --> bound["Key is bound to a use case<br/><i>no selector needed</i>"]
+    key --> bound["Key is bound to one use case<br/><i>and may name only that one</i>"]
     oidc --> groups["Use cases from grants<br/><i>group · person · /use-cases/&lt;slug&gt;</i>"]
 
-    bound --> attr["Attribution:<br/>subject · credential · use case<br/>roles and permissions from groups only"]
-    groups --> attr
+    bound --> named{"use case named?<br/><i>/uc/&lt;slug&gt; · X-AIRA-Use-Case</i>"}
+    groups --> named
+    named -->|"yes, and reachable"| attr["Attribution:<br/>subject · credential · use case<br/>roles and permissions from groups only"]
+    named -->|"none, on a model call"| none["400 Gemini · 403 KIRA<br/><i>naming the one to add</i>"]
 ```
 
 - **The credential** is read from `Authorization: Bearer`, then `x-goog-api-key`, then — on the
@@ -125,13 +127,14 @@ graph LR
   membership is the union of three routes — a grant to one of the person's groups, a grant naming
   the person, and the `/use-cases/<slug>` convention — and the strongest role wins. A non-member
   gets 403.
-- **Which use case.** On the Gemini surface, the `X-AIRA-Use-Case` header, else a `/uc/<slug>` path
-  prefix; a key issued by Management brings its own. A model request that names none where one is
-  required is a **400**. The KIRA contract has no field for a use case, so that surface also takes a
-  person's only membership when none is named; a person with several is refused with a **403**
-  naming them, and one with none, where one is required, with a 403 too. A selector in a form that
-  is not a valid identifier is a 400 on both surfaces. A read (`GET`, `HEAD`, `OPTIONS`) needs no
-  use case.
+- **Which use case.** The `X-AIRA-Use-Case` header, else a `/uc/<slug>` path prefix — on both
+  surfaces, and **whatever the credential**: a key issued by Management belongs to one use case and
+  must still name it, so that what a request is billed to is in the request. A model request that
+  names none is a **400** on the Gemini surface and a **403** on the KIRA surface, whose vocabulary
+  has no closer code; either refusal names the fix — the key's own use case, or those the person
+  reaches. A selector in a form that is not a valid identifier is a 400 on both surfaces. A read
+  (`GET`, `HEAD`, `OPTIONS`) needs no use case, and a key's read is its own use case's. Only the
+  operator's break-glass key, bound to no use case, may go unattributed.
 - The **credential identity** (an API key's prefix, or the OIDC client id) travels onto the audit
   row separately from the subject. Without it, five keys issued for one use case by one person are
   one identity in the log, and a leaked key can be revoked but its blast radius cannot be assessed.
@@ -145,7 +148,7 @@ they are known — the subject, the credential and the use case asked for (`aira
 | --- | --- |
 | `unauthenticated` | no credential, one that does not verify (401), or too many of those from one address (429) |
 | `forbidden` | a use case the credential may not act on (403) |
-| `unattributed` | a known caller whose request no use case could be attributed to: none named where one is required, a malformed one (400), or — on KIRA — several or none to choose from (403) |
+| `unattributed` | a known caller whose request no use case could be attributed to: none named (400 on Gemini, 403 on KIRA) or a malformed one (400) |
 
 That outcome is what keeps a refused attempt in the **delivery channel**, the collector's
 forwarding to a second destination such as a SIEM: it passes on a request's own span, recognised by
@@ -260,6 +263,14 @@ A per-head allowance is counted against the **person**, not the credential: an A
 Keycloak sign-in by the same human share one budget and one bucket. A suspension is the exception
 and deliberately so — it aims at exactly what it names, so blocking a leaked key does not block the
 person holding it.
+
+**Which budgets bind a request** follows one order. The use case's own budget bounds everybody in
+it together. A budget set for one person — higher or lower — takes the place of the per-person
+budget **of the same period** for that person, and everybody else is held to the per-person budget.
+Switched off, a person's own budget refuses nothing and hands them back to the per-person budget,
+never to no limit. The two count on one counter per person and period, so replacing one with the
+other mid-period starts from what that person already spent, and a request is booked once whichever
+of them binds.
 
 It is called once, _before the verb branch_. Inside the pipeline it would have been tidier, and every
 request that runs no pipeline step — a use case with no pipeline, an embedding without a

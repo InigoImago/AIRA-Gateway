@@ -101,10 +101,13 @@ async function refuseSomeRequests(page: Page, slug: string): Promise<void> {
   expect(issued.status, JSON.stringify(issued.body)).toBe(201);
   const send = async () =>
     (
-      await page.request.post(`${GATEWAY_URL}/v1beta/models/no-such-model:generateContent`, {
-        headers: { 'x-goog-api-key': issued.body.api_key, 'content-type': 'application/json' },
-        data: { contents: [{ parts: [{ text: 'hi' }] }] },
-      })
+      await page.request.post(
+        `${GATEWAY_URL}/uc/${slug}/v1beta/models/no-such-model:generateContent`,
+        {
+          headers: { 'x-goog-api-key': issued.body.api_key, 'content-type': 'application/json' },
+          data: { contents: [{ parts: [{ text: 'hi' }] }] },
+        },
+      )
     ).status();
   await expect.poll(send, { timeout: 60_000, intervals: [1_000] }).toBe(404);
   for (let i = 0; i < 3; i += 1) expect(await send()).toBe(404);

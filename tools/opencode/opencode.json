@@ -5,7 +5,7 @@
       "npm": "@ai-sdk/google",
       "name": "AIRA Gateway (Gemini surface)",
       "options": {
-        "baseURL": "http://localhost:8001/v1beta",
+        "baseURL": "http://localhost:8001/uc/coding-assistant/v1beta",
         "apiKey": "{env:AIRA_API_KEY}"
       },
       "models": {

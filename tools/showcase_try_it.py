@@ -79,9 +79,10 @@ def main() -> int:
     model, numeric_id = found
 
     print("  The demo has already done the four steps above for its own use cases, so a KIRA")
-    print("  client can be pointed at it **right now** — no set-up, one base URL:")
+    print("  client can be pointed at it **right now** — no set-up, one base URL, which names")
+    print("  the use case as every model call must:")
     print()
-    print(f"      curl -s {GATEWAY}/kira/api/external/chat \\")
+    print(f"      curl -s {GATEWAY}/uc/{SLUG}/kira/api/external/chat \\")
     print(f"        -H 'x-goog-api-key: {key}' \\")
     print("        -H 'content-type: application/json' \\")
     print(
@@ -93,21 +94,21 @@ def main() -> int:
     print("  send the predecessor's ids, an administrator can give AIRA's models exactly those")
     print("  numbers — then the client's model ids do not change either. The same key streams:")
     print()
-    print(f"      curl -N {GATEWAY}/kira/api/external/streaming-chat …")
+    print(f"      curl -N {GATEWAY}/uc/{SLUG}/kira/api/external/streaming-chat …")
     print("      # the predecessor's own SSE: status: update, update, … then one completed")
     print()
     print("  And the same request on the Gemini surface, for a client that speaks Google's API:")
     print()
-    print(f"      curl -s {GATEWAY}/v1beta/models/{model}:generateContent \\")
+    print(f"      curl -s {GATEWAY}/uc/{SLUG}/v1beta/models/{model}:generateContent \\")
     print(f"        -H 'x-goog-api-key: {key}' -H 'content-type: application/json' \\")
     print('        -d \'{"contents":[{"role":"user","parts":[{"text":"Say OK."}]}]}\'')
     print()
     print("  Both land in the same audit trail, under different API names. Watch either arrive:")
     print(f"      {CONSOLE}/use-cases/{SLUG}  →  Traces")
     print()
-    print("  This key is bound to one use case, so it needs no header. A caller who belongs to")
-    print("  several names one with 'X-AIRA-Use-Case: <slug>' — which chooses among what they")
-    print("  already have, and never grants anything: naming another use case answers 403.")
+    print(f"  '/uc/{SLUG}' names the use case; a client that cannot change its path sends")
+    print(f"  'X-AIRA-Use-Case: {SLUG}' instead. A model call that names none is refused, a key")
+    print("  too — and naming one grants nothing: another use case than the key's answers 403.")
     return 0
 
 

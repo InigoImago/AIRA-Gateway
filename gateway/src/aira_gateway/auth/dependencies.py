@@ -220,8 +220,10 @@ def must_name_a_use_case(request: Request, principal: Principal) -> bool:
     - the **unbound break-glass key** (`ADR-0015`), for when Management is what is broken. Its row
       still carries the key prefix and subject, so the request belongs to a revocable credential.
 
-    Everybody else names one: an unattributed OIDC call charges no budget, applies no use-case rate
-    limit and consults no model release (`FRD-308`).
+    Everybody else names one, **a bound key included** (`FRD-149`): what a request is billed to is
+    in the request, not inferred from how many use cases its credential happens to reach. An
+    unattributed OIDC call would charge no budget, apply no use-case rate limit and consult no
+    model release (`FRD-308`).
     """
     if not request.app.state.settings.require_use_case:
         return False
@@ -234,6 +236,34 @@ def must_name_a_use_case(request: Request, principal: Principal) -> bool:
     return not (principal.method == "api_key" and not principal.use_cases)
 
 
+def implied_use_case(request: Request, principal: Principal) -> str | None:
+    """The use case a request that names none is attributed to: a bound key's own, **only where no
+    name is required** — a reading, or an installation that does not require one (`FRD-149`).
+
+    Where a model call must name its use case the binding checks the name and never supplies it,
+    on both surfaces: what a request is billed to is then in the request — in the client's address
+    and every log that records it — and a key put into the wrong client is refused there rather
+    than billing its own use case unnoticed.
+    """
+    if principal.method != "api_key" or not principal.use_cases:
+        return None
+    return None if must_name_a_use_case(request, principal) else principal.use_cases[0]
+
+
+def missing_use_case(principal: Principal) -> str:
+    """The refusal of a model call that names no use case: how to name one, and **which** where the
+    credential knows — a key its own, a person the use cases they reach (`FRD-149`, `FRD-628`
+    FR-6: the message is the fix). One wording for both surfaces; only the envelope differs."""
+    how = f"the {USE_CASE_PATH_FORM} path prefix or the {USE_CASE_HEADER_NAME} header"
+    message = f"Missing use case: every model call names one, with {how}."
+    if principal.method == "api_key" and principal.use_cases:
+        own = principal.use_cases[0]
+        return f"{message} This key belongs to '{own}': put /uc/{own} in front of the path."
+    if principal.use_cases:
+        return f"{message} You can name one of {sorted(principal.use_cases)}."
+    return message
+
+
 async def require_attribution(
     request: Request, principal: Principal = Depends(require_principal)
 ) -> Attribution:
@@ -244,19 +274,13 @@ async def require_attribution(
             _mark_unattributed(principal, 400)
         require_valid_use_case(use_case)
 
-    # An API key issued by Management is bound to exactly one use case (`FRD-205`) and needs no
-    # selector. Unbound keys (demo/CLI break-glass) fall through to the selector-based path.
-    if principal.method == "api_key" and principal.use_cases and use_case is None:
-        use_case = principal.use_cases[0]
+    if use_case is None:
+        use_case = implied_use_case(request, principal)
 
     if use_case is None:
         if must_name_a_use_case(request, principal):
             _mark_unattributed(principal, 400)
-            raise GeminiHTTPError(
-                400,
-                f"Missing use case ({USE_CASE_HEADER_NAME} header or {USE_CASE_PATH_FORM} path).",
-                "INVALID_ARGUMENT",
-            )
+            raise GeminiHTTPError(400, missing_use_case(principal), "INVALID_ARGUMENT")
     else:
         authorize_use_case(principal, use_case)
 

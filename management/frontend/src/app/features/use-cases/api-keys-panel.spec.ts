@@ -423,7 +423,8 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
     const config = configFor();
 
     expect(config.provider.aira.options.apiKey).toBe('aira_ab_cd');
-    expect(config.provider.aira.options.baseURL).toContain('/gw/v1beta');
+    // Every model call names its use case (`FRD-149`): the key alone no longer does.
+    expect(config.provider.aira.options.baseURL).toMatch(/\/gw\/uc\/demo-uc\/v1beta$/);
   });
 
   it('names only the models that declare tool calling', () => {

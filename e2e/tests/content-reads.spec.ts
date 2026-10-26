@@ -25,7 +25,7 @@ test.describe('Platform administration — content reads', () => {
       .poll(
         async () =>
           (
-            await request.post(`${GATEWAY_URL}/v1beta/models/mock-1:generateContent`, {
+            await request.post(`${GATEWAY_URL}/uc/${slug}/v1beta/models/mock-1:generateContent`, {
               headers: { 'x-goog-api-key': key },
               data: { contents: [{ role: 'user', parts: [{ text: 'content read probe' }] }] },
             })
