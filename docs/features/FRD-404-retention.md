@@ -126,7 +126,8 @@ nothing is deleted** — the period configured in the UI is a promise that only 
   credentials, `PatternRedactor`; declined for personal data)*; a retention period for
   the management database's own records; exporting or archiving before deletion for use cases
   with a statutory retention duty; surfacing "payload removed" distinctly from "never stored" in
-  a future request-log viewer.
+  a future request-log viewer. *(Built in the requests view, `FRD-505` FR-7 and FR-7a: storage
+  off, expired, past retention and never kept are four answers.)*
 
 
 ## The clock the deleted use case fell off

@@ -106,6 +106,18 @@ installation, and two of them are somebody's to change. One message for all thre
 to distrust the screen. A model call the gateway made itself — a pipeline step's, a model check —
 keeps no text by design and says so (`never_kept`) rather than claiming retention removed it.
 
+**FR-7a — The clock tells an absence, not the status.** A refused request keeps the prompt it was
+refused for — a blocked one, one over its budget, one whose caller hung up mid-answer — so "never
+reached a model", chosen by the status alone, told an investigator that a prompt which had existed
+never did. Once a refused request is older than its use case's retention period (the installation
+default for a request with no known use case, as the pruner applies it), the answer is
+`past_retention`: whatever was stored has been removed, and a refusal before the content was read
+never had any. Inside the period it is `never_had_one`. A period **raised** since leaves an older
+refusal reading as `never_had_one` although its prompt was removed under the shorter period: the
+row records no erasure of its own, and adding one was not worth a column. When one half of an
+available payload is absent — a refusal has no answer, a failed redaction keeps no prompt — the
+view says so under that heading instead of drawing an empty box.
+
 ## 4. What the walkthroughs found
 
 Every item below was reported from the running console, and none was visible to the hermetic tests.

@@ -5,6 +5,36 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A refused request past its retention period is no longer called one that never had a prompt (2026-10-26)
+
+Asked how the console behaves when a use case's metadata is still there and its prompts and
+responses have been removed by retention. It holds: the list, the details and every figure render
+from the row, the content read answers `200 available: false` with the server's reason, and
+nothing in the view breaks on the absent columns. What did not hold was the **sentence**.
+
+The absence was chosen by the status alone — a success whose payload is gone is `expired`,
+anything else `never_had_one`, *"This request never reached a model"*. But a refusal keeps the
+prompt it was refused for (`accounting._write_refusal` stores the body), so once retention removed
+it a blocked prompt, a request over its budget and a stream whose caller hung up — which had
+reached a model — all told an investigator that no prompt had ever existed. Counted on the
+showcase database: 29 pipeline blocks, 136 budget and rate-limit refusals, 8 hung-up streams and
+2 suspensions, every one older than its week, every one answering that way.
+
+Now the retention clock tells it, read as the pruner reads it — the use case's period, else the
+installation default: a refused request past its period answers `past_retention` (whatever was
+stored has been removed), inside it `never_had_one` with a sentence that is true of what remains,
+a refusal before its content was kept (`FRD-505` FR-7a). The one case it cannot tell is a period
+raised since, stated in the FRD. And when one half of an available payload is absent, the view
+says so under its heading — *"No response: the request ended with 429."* — instead of drawing an
+empty box that reads as an empty answer.
+
+**Measured.** Five new mutation properties (`PRT-1`–`3`, `UI-22`, `UI-23`), all caught. In a
+browser on the showcase stack, as Global Administrator: a pipeline block and a hung-up stream past
+their week, a served request past it, and a fresh budget refusal with its prompt — each opened,
+read and answered with its own sentence, no console error.
+
+---
+
 ## A person's own budget, a use case named on every call, and a connection panel that shows every way in (2026-10-25)
 
 Three requests from the owner, built on one branch.

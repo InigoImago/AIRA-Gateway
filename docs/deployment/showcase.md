@@ -155,6 +155,12 @@ make showcase-strict-off   # each use case's own setting decides again; containe
 make showcase-strict-on    # back to the default
 ```
 
+Under the mode a use case's *Data protection* panel offers two choices instead of four — *not
+stored*, or *oversight roles only* — and says why the others are missing. Prompts and responses
+the retention period has removed leave the request's row and figures in place; opening one as
+Global Administrator answers with the reason the content is gone, and nobody else is offered the
+button.
+
 Each switch writes one line of `deploy/compose/.env`, `AIRA_STRICT_DATA_MODE`, and recreates the
 containers whose environment changed; the data stays. `kundenservice` stores the most open setting
 there is — *every member reads everything* — so the difference is as large as it can be. Sign in as

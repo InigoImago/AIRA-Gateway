@@ -21,6 +21,7 @@ one refusal.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol, overload
 
@@ -34,6 +35,7 @@ from aira_common.permissions import Permission
 from aira_gateway.audit import PIPELINE_OPERATION_PREFIX, Outcome
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import RequestLog, UseCaseMemberRead, UseCaseRead
+from aira_gateway.retention import DEFAULT_RETENTION_DAYS
 
 
 class PayloadVisibility(StrEnum):
@@ -102,7 +104,12 @@ class PayloadRefusal(StrEnum):
     NOT_STORED = "not_stored"
     #: Stored once, and removed by retention since (`FRD-404`).
     EXPIRED = "expired"
-    #: This request never had one — a refusal recorded before dispatch has nothing to show.
+    #: A refused request older than its use case's retention period. A refusal keeps the prompt it
+    #: was refused for, so the row alone cannot say whether it had one — only that the clock has
+    #: removed whatever it had.
+    PAST_RETENTION = "past_retention"
+    #: This request never had one — a refusal recorded before its content was read has nothing to
+    #: show.
     NEVER_HAD_ONE = "never_had_one"
     #: A model call the gateway made itself — a pipeline step deciding about a request, or a model
     #: check — which keeps no text by design, whatever the use case stores.
@@ -144,8 +151,14 @@ MESSAGES = {
         "The prompt and response were stored and have since passed this use case's retention "
         "period."
     ),
+    PayloadRefusal.PAST_RETENTION: (
+        "This request is older than its use case's retention period, so whatever was stored with "
+        "it has been removed. A refused request keeps the prompt it was refused for until then; "
+        "one refused before its content was read never had one."
+    ),
     PayloadRefusal.NEVER_HAD_ONE: (
-        "This request never reached a model, so there is no prompt or response to show."
+        "This request was refused before its content was kept, so there is no prompt or response "
+        "to show."
     ),
     PayloadRefusal.NEVER_KEPT: (
         "This is a model call the gateway made itself — a pipeline step deciding about a request, "
@@ -262,12 +275,23 @@ async def grant_role_in(session: AsyncSession, principal: Principal, use_case: s
 
 
 async def may_read_payload(
-    session: AsyncSession, principal: Principal, row: RequestLog, *, strict_data: bool
+    session: AsyncSession,
+    principal: Principal,
+    row: RequestLog,
+    *,
+    strict_data: bool,
+    default_retention_days: int = DEFAULT_RETENTION_DAYS,
+    now: datetime | None = None,
 ) -> PayloadVerdict:
     """The whole decision, in one place and in one order.
 
     Authority first, then whether the data exists: telling somebody who may not look that a payload
     *would* have been there is itself a disclosure.
+
+    An absence is told by the retention clock, not by the status alone: a refused request keeps the
+    prompt it was refused for — a blocked one, one over its budget, one whose caller hung up — so
+    once its period has passed "it never reached a model" would tell an investigator that a prompt
+    which existed never did.
     """
     ground = await _authority(session, principal, row, strict_data=strict_data)
     if isinstance(ground, PayloadRefusal):
@@ -285,9 +309,24 @@ async def may_read_payload(
         if row.status is not None and 200 <= row.status < 300:
             # Served, so a payload existed and retention removed it (`FRD-404`).
             return PayloadVerdict(allowed=False, refusal=PayloadRefusal.EXPIRED)
+        if _past_retention(row, use_case, default_days=default_retention_days, now=now):
+            return PayloadVerdict(allowed=False, refusal=PayloadRefusal.PAST_RETENTION)
         return PayloadVerdict(allowed=False, refusal=PayloadRefusal.NEVER_HAD_ONE)
 
     return PayloadVerdict(allowed=True, ground=ground)
+
+
+def _past_retention(
+    row: RequestLog, use_case: UseCaseRead | None, *, default_days: int, now: datetime | None
+) -> bool:
+    """Whether the pruner's clock has reached ``row`` — the period it applies, read the same way
+    (`retention.RetentionService._periods`): the use case's own, else the installation default."""
+    days = max(1, (use_case.retention_days if use_case is not None else None) or default_days)
+    created = row.created_at
+    if created.tzinfo is None:
+        # SQLite hands back a naive time; the column is written in UTC.
+        created = created.replace(tzinfo=UTC)
+    return created < (now or datetime.now(UTC)) - timedelta(days=days)
 
 
 def _is_the_gateways_own_call(row: RequestLog) -> bool:

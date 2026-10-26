@@ -411,15 +411,35 @@
                         <div class="payload-grid">
                           <div>
                             <h4 class="section-title">Prompt</h4>
-                            <pre class="payload" data-testid="payload-request">{{
-                              asText(content.request)
-                            }}</pre>
+                            @if (content.request != null) {
+                              <pre class="payload" data-testid="payload-request">{{
+                                asText(content.request)
+                              }}</pre>
+                            } @else {
+                              <!-- One half can be absent on its own: a redaction step that failed
+                                   leaves nothing safe to keep of the prompt. -->
+                              <p class="empty" data-testid="payload-request-absent">
+                                No prompt was kept with this request.
+                              </p>
+                            }
                           </div>
                           <div>
                             <h4 class="section-title">Response</h4>
-                            <pre class="payload" data-testid="payload-response">{{
-                              asText(content.response)
-                            }}</pre>
+                            @if (content.response != null) {
+                              <pre class="payload" data-testid="payload-response">{{
+                                asText(content.response)
+                              }}</pre>
+                            } @else {
+                              <!-- A refused request keeps the prompt it was refused for and has no
+                                   answer — an empty box would read as an empty answer. -->
+                              <p class="empty" data-testid="payload-response-absent">
+                                @if (row.status >= 300) {
+                                  No response: the request ended with {{ row.status }}.
+                                } @else {
+                                  No response was kept with this request.
+                                }
+                              </p>
+                            }
                           </div>
                         </div>
                       } @else {

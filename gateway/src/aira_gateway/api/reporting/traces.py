@@ -330,8 +330,13 @@ async def trace_payload(
             # One answer for "no such row" and "not yours", so nothing confirms a request exists.
             raise GeminiHTTPError(404, "No such request.", "NOT_FOUND")
 
+        settings = settings_of(request)
         verdict = await may_read_payload(
-            session, principal, row, strict_data=settings_of(request).strict_data_mode
+            session,
+            principal,
+            row,
+            strict_data=settings.strict_data_mode,
+            default_retention_days=settings.default_retention_days,
         )
         if not verdict.allowed:
             if verdict.is_authority_refusal:

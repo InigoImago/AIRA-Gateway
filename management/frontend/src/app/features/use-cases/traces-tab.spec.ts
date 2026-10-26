@@ -637,6 +637,34 @@ describe('TracesTab — while a page is in flight', () => {
     expect(testid('payload-request')).toBeNull();
   });
 
+  it('says a refused request has no answer, rather than showing an empty one', () => {
+    /** A refusal keeps the prompt it was refused for and nothing else; an empty box under
+     *  "Response" reads as a model that answered with nothing. */
+    const { testid, readFirst } = setup({
+      permissions: ['payload.read_any'],
+      pages: [{ traces: [trace({ status: 429 })], next_cursor: null, scope: 'use_cases' }],
+      payload: { id: 't1', available: true, request: { text: 'over budget' }, response: null },
+    });
+    readFirst();
+
+    expect(testid('payload-request')?.textContent).toContain('over budget');
+    expect(testid('payload-response')).toBeNull();
+    expect(testid('payload-response-absent')?.textContent).toContain('ended with 429');
+  });
+
+  it('says which half was not kept when only the prompt is missing', () => {
+    // A failed redaction step drops the prompt and keeps the answer.
+    const { testid, readFirst } = setup({
+      permissions: ['payload.read_any'],
+      payload: { id: 't1', available: true, request: null, response: { text: 'ok' } },
+    });
+    readFirst();
+
+    expect(testid('payload-request')).toBeNull();
+    expect(testid('payload-request-absent')?.textContent).toContain('No prompt was kept');
+    expect(testid('payload-response')?.textContent).toContain('ok');
+  });
+
   it('reports a refused read instead of leaving an empty panel open', () => {
     /** Asserted on the page's **single** `PageFeedback` rather than on this panel's own DOM: one
      *  banner per page is the rule, and the parent renders it. A first version of this test looked

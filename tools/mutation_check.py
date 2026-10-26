@@ -594,6 +594,22 @@ MUTATIONS = [
         "    escape,",
         "management/frontend/src/app/features/use-cases/traces-tab.spec.ts",
     ),
+    Mutation(
+        "UI-22",
+        "a refused request's missing answer is said, not shown as an empty one",
+        "management/frontend/src/app/features/use-cases/traces-tab.html",
+        "@if (content.response != null) {",
+        "@if (true) {",
+        "management/frontend/src/app/features/use-cases/traces-tab.spec.ts",
+    ),
+    Mutation(
+        "UI-23",
+        "a prompt that was not kept is said, not shown as an empty one",
+        "management/frontend/src/app/features/use-cases/traces-tab.html",
+        "@if (content.request != null) {",
+        "@if (true) {",
+        "management/frontend/src/app/features/use-cases/traces-tab.spec.ts",
+    ),
     # ---- the platform tables: the essentials in columns, the rest behind a click ----------------
     Mutation(
         "UI-19",
@@ -4315,6 +4331,32 @@ MUTATIONS = [
         "gateway/src/aira_gateway/payloads.py",
         "    if visibility == PayloadVisibility.OWN_REQUESTS_ONLY and not is_own_request(",
         "    if False and not is_own_request(",
+        "gateway/tests/test_payload_access.py",
+    ),
+    # An absence is told by the retention clock: a refused request keeps the prompt it was refused
+    # for, and once its period passed the reader was told it had never had one.
+    Mutation(
+        "PRT-1",
+        "a refused request past its period is not called one that never had a prompt",
+        "gateway/src/aira_gateway/payloads.py",
+        "        if _past_retention(row, use_case, default_days=default_retention_days, now=now):",
+        "        if False:",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "PRT-2",
+        "the clock read for an absence is the use case's own period",
+        "gateway/src/aira_gateway/payloads.py",
+        "    days = max(1, (use_case.retention_days if use_case is not None else None) or default_days)",  # noqa: E501
+        "    days = max(1, default_days)",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "PRT-3",
+        "the reader's clock is the installation default the pruner applies",
+        "gateway/src/aira_gateway/api/reporting/traces.py",
+        "            default_retention_days=settings.default_retention_days,\n",
+        "",
         "gateway/tests/test_payload_access.py",
     ),
     Mutation(

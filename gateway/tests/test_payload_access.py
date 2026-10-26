@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import anyio
 import pytest
@@ -71,6 +71,8 @@ async def _seed(
     payload: bool = True,
     status: int = 200,
     row_id: str = "",
+    retention_days: int = 7,
+    created_at: datetime = NOW,
 ) -> None:
     async with sessions() as session:
         session.add(
@@ -79,6 +81,7 @@ async def _seed(
                 name="A",
                 store_payloads=store_payloads,
                 payload_visibility=visibility,
+                retention_days=retention_days,
             )
         )
         session.add(UseCaseMemberRead(use_case_slug="uc-a", subject="boss", role="admin"))
@@ -95,7 +98,7 @@ async def _seed(
                 model="mock-1",
                 status=status,
                 outcome="served" if status < 300 else "invalid_request",
-                created_at=NOW,
+                created_at=created_at,
                 request_payload=PROMPT if payload else None,
                 response_payload=ANSWER if payload else None,
             )
@@ -230,29 +233,101 @@ def test_who_may_read_a_stored_prompt(reader: str, visibility: str) -> None:
         assert body["reason"] == reason
 
 
+#: How old a row is, against the use case's period of seven days: the pruner's clock, which the
+#: reader's answer follows.
+FRESH = timedelta(days=1)
+PAST = timedelta(days=8)
+
+
 @pytest.mark.parametrize(
-    ("store_payloads", "payload", "status", "reason"),
+    ("store_payloads", "status", "age", "reason"),
     [
-        (False, False, 200, "not_stored"),
-        (True, False, 200, "expired"),
-        (True, False, 400, "never_had_one"),
+        (False, 200, FRESH, "not_stored"),
+        (True, 200, PAST, "expired"),
+        (True, 400, FRESH, "never_had_one"),
+        (True, 429, PAST, "past_retention"),
     ],
-    ids=["storage-off", "retention-removed-it", "refused-before-dispatch"],
+    ids=["storage-off", "retention-removed-it", "refused-before-it-was-read", "refused-and-past"],
 )
-def test_three_ways_to_have_nothing_are_three_different_answers(
-    store_payloads, payload, status, reason
-) -> None:
+def test_every_way_to_have_nothing_is_its_own_answer(store_payloads, status, age, reason) -> None:
     """A single "not available" would leave the reader unable to tell a *setting* from a *clock*
-    from a request that never reached a model. Two of those are somebody's to change."""
+    from a request that never had a prompt. Two of those are somebody's to change."""
     with _client(IT_SECURITY) as client:
-        _fill(client, store_payloads=store_payloads, payload=payload, status=status)
+        _fill(
+            client,
+            store_payloads=store_payloads,
+            payload=False,
+            status=status,
+            created_at=datetime.now(UTC) - age,
+        )
         response = client.get("/v1beta/traces/row-1/payload")
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["available"] is False
     assert body["reason"] == reason
-    assert body["message"], "a reason with no sentence is a code the reader cannot act on"
+    assert body["message"] == MESSAGES[PayloadRefusal(reason)]
+
+
+@pytest.mark.parametrize("outcome", ["blocked_by_pipeline", "budget_exceeded", "client_gone"])
+def test_a_refused_prompt_past_its_period_is_not_called_one_that_never_was(outcome) -> None:
+    """A refusal keeps the prompt it was refused for — the blocked one is exactly what an
+    investigator opens. Once retention has taken it, "never reached a model" told them it had
+    never existed; a hung-up stream had even reached one."""
+
+    async def seed(sessions) -> None:
+        await _seed(sessions, payload=False, status=499, created_at=datetime.now(UTC) - PAST)
+        async with sessions() as session:
+            row = await session.get(RequestLog, "row-1")
+            assert row is not None
+            row.outcome = outcome
+            await session.commit()
+
+    with _client(GLOBAL_ADMIN) as client:
+        with anyio.from_thread.start_blocking_portal() as portal:
+            portal.call(lambda: seed(client.app.state.db_sessionmaker))
+        body = client.get("/v1beta/traces/row-1/payload").json()
+
+    assert body["reason"] == "past_retention"
+    assert "never reached" not in body["message"]
+
+
+def test_the_clock_is_the_use_cases_own_period() -> None:
+    """Eight days old is past a week and inside a month: the answer reads the period the pruner
+    applies to this use case, not one fixed number."""
+    with _client(IT_SECURITY) as client:
+        _fill(
+            client,
+            payload=False,
+            status=429,
+            retention_days=30,
+            created_at=datetime.now(UTC) - PAST,
+        )
+        body = client.get("/v1beta/traces/row-1/payload").json()
+
+    assert body["reason"] == "never_had_one"
+
+
+def test_a_request_with_no_known_use_case_follows_the_installation_default() -> None:
+    """As the pruner does: a purged use case's rows, and unclaimed traffic, are on the default."""
+    settings = GatewaySettings(auth_required=False, default_retention_days=30)
+
+    async def seed(sessions) -> None:
+        await _seed(sessions, payload=False, status=429, created_at=datetime.now(UTC) - PAST)
+        async with sessions() as session:
+            row = await session.get(RequestLog, "row-1")
+            assert row is not None
+            row.use_case = None
+            await session.commit()
+
+    app = create_app(settings)
+    app.dependency_overrides[require_principal] = lambda: GLOBAL_ADMIN
+    with TestClient(app) as client:
+        with anyio.from_thread.start_blocking_portal() as portal:
+            portal.call(lambda: seed(client.app.state.db_sessionmaker))
+        inside = client.get("/v1beta/traces/row-1/payload").json()
+
+    assert inside["reason"] == "never_had_one", "the default period was not the one applied"
 
 
 # ═══ the record that makes the permission defensible ════════════════════════════════════════════

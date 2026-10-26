@@ -596,10 +596,28 @@ every `return` is a fact eventually forgotten at one of them.
   row, a pipeline step's own `pipeline:<step>` row and a model check's `diagnostic` row keep none.
 - **For how long.** Until the use case's retention period has passed (default 7 days), or until the
   next run for a use case that has switched storage off. The row itself stays (§7).
-- **Who reads it.** Under strict data mode, the default, the Global Administrator and IT Security
-  only. With the mode off, the use case's `payload_visibility` decides who inside it may, and
-  `payload.read_any` who outside it may. Every read is recorded in `payload_access` before the
-  content is handed over.
+- **Who reads it.** Under strict data mode, the default, a use case has **two** choices: *not
+  stored*, so nothing is written and the next retention run removes what was; or *oversight roles
+  only*, so the bodies are kept for the retention period and read by the Global Administrator and
+  IT Security alone — not by the use case's own administrators either. A use case that stores
+  content is read as the second whatever visibility it chose, and gets that choice back when the
+  mode is switched off. With the mode off,
+  two more choices return — every member reads the use case's requests, or its administrators read
+  all and everybody else their own — and `payload.read_any` decides who outside the use case may.
+  Every read is recorded in `payload_access` before the content is handed over.
+- **What a reader is told when there is nothing.** The request's row and every figure on it stay
+  readable after the bodies are gone; only the content read answers differently, and always with
+  the reason rather than an error. In the order it is decided: whether this reader may read the
+  use case's content at all — a refusal says why, and nobody who may not is told whether anything
+  was there, so under strict data mode only the two oversight roles reach the next answers, and the
+  console offers the button to nobody else; then *not stored* (the use case keeps no bodies);
+  *removed by retention* (a served request whose period has passed); *past retention* (a refused
+  request older than the period: whatever it kept is gone); *refused before its content was kept*;
+  and *never kept* (a pipeline step's or a model check's own call). The period is the one the
+  retention run applies — the use case's own, else `AIRA_DEFAULT_RETENTION_DAYS` — so a period
+  raised later makes an older refusal read as never kept, although the shorter period removed it.
+  When only one half is absent — a refusal has no answer, a failed redaction keeps no request —
+  the view says so under that heading.
 
 ---
 

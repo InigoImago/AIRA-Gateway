@@ -157,8 +157,10 @@ export interface Trace {
 /**
  * A stored prompt and answer, or the precise reason there is none (`FRD-505`).
  *
- * `available: false` is an answer, not an error, and `reason` says which of three: the use case
- * does not store payloads, retention removed them, or the request never reached a model.
+ * `available: false` is an answer, not an error, and `reason` says which absence: the use case
+ * does not store payloads, retention removed them, a refused request is past its use case's
+ * retention period, the request was refused before its content was kept, or the gateway made the
+ * call itself. Either half of an available payload may still be `null` — a refusal has no answer.
  */
 export interface TracePayload {
   id: string;
