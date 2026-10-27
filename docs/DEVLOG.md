@@ -5,6 +5,33 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Each plane its own database user and Kafka identity, on one Vault path (2026-10-27)
+
+A feature request from an installation whose database gives each plane a user of its own and whose
+broker a consumer that only reads and a relay that writes, with one Vault path for the whole
+application. Both planes read one `AIRA_POSTGRES_PASSWORD` and one `AIRA_KAFKA_SASL_PASSWORD`, and
+Vault outranks the environment, so the path could hold one of each — and the shipped Compose files
+passed one of each to both, so not even the environment could separate them. The integrated guide
+had asked its platform team for *"a broker identity per plane"* all along.
+
+The request was half right. Two paths already work — `VAULT_PATH` and `VAULT_ROLE_ID` are read per
+process — and are the stronger separation, since neither plane can then read the other's password.
+What could not work was one path. Each plane now also reads `AIRA_GATEWAY_*` or `AIRA_MANAGEMENT_*`
+for the four settings, and its own name replaces the shared one wherever either was read from
+(`FRD-150`): one rule on `BaseAiraSettings`, written into the shared field, so the connection, the
+broker and the published-password refusal read the value in effect without knowing the new names.
+The request had named passwords only; the user names are their pairs and come with them.
+
+**Measured.** Seven tests through the real settings classes and source; mutations `PLC-1`–`3` all
+caught. Live, on throwaway containers: one Vault path holding a wrong shared password and each
+plane's own; the gateway's migrations ran as `aira_gatewayusr` (17 tables), Management's as
+`aira_mgmtusr` (29), and Postgres refused the shared user, the gateway as Management's user, and
+Management in the gateway's database. The same is now a live-suite test on the stack's own Vault
+and Postgres (five cases, roles and databases made and dropped per run); with the rule broken its
+three positive cases fail. Kafka SASL was not run live: the stack's broker is `PLAINTEXT`.
+
+---
+
 ## A refused request past its retention period is no longer called one that never had a prompt (2026-10-26)
 
 Asked how the console behaves when a use case's metadata is still there and its prompts and

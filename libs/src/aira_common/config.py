@@ -6,7 +6,7 @@ above both (`FRD-116`). Component settings subclass :class:`BaseAiraSettings`.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar, Self
 
 from pydantic import Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -17,6 +17,17 @@ from pydantic_settings import (
 )
 
 from aira_common.secrets import by_setting, load_secrets
+
+#: The settings a plane may also hold under its own name, `AIRA_<PLANE>_<SETTING>` (`FRD-150`).
+#: Both planes read one name for each, so an installation whose single Vault path serves both
+#: could not give the gateway and Management different database users or Kafka identities — the
+#: separation of privilege a database and a broker are set up to have.
+PLANE_CREDENTIALS = (
+    "postgres_user",
+    "postgres_password",
+    "kafka_sasl_username",
+    "kafka_sasl_password",
+)
 
 
 class VaultSource(PydanticBaseSettingsSource):
@@ -76,6 +87,28 @@ class BaseAiraSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    #: The plane whose own credentials replace the shared ones (`PLANE_CREDENTIALS`); a subclass
+    #: that names one declares a `<plane>_<setting>` field for each.
+    credential_plane: ClassVar[str] = ""
+
+    @model_validator(mode="after")
+    def _the_planes_own_credentials(self) -> Self:
+        """A plane's own name wins over the shared one, **wherever each was read from**.
+
+        So a Vault path holding `AIRA_POSTGRES_PASSWORD` and `AIRA_MANAGEMENT_POSTGRES_PASSWORD`
+        gives Management its own and the gateway the shared one, and an installation that never
+        writes a plane's name runs as it always has. Empty is unset, as compose passes an optional
+        variable. Written into the shared field, so every reader — the connection, the broker, the
+        check against the published development password — uses the value in effect.
+        """
+        if self.credential_plane:
+            for name in PLANE_CREDENTIALS:
+                own = getattr(self, f"{self.credential_plane}_{name}")
+                if own:
+                    # Past validation, so not through `setattr`, which would validate again.
+                    self.__dict__[name] = own
+        return self
 
     @model_validator(mode="before")
     @classmethod

@@ -117,6 +117,12 @@ services:
       AIRA_POSTGRES_DB: ${AIRA_POSTGRES_DB:-aira_gateway}
       AIRA_POSTGRES_USER: ${AIRA_POSTGRES_USER:-${POSTGRES_USER:-aira}}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
+      # The gateway's own database user and Kafka identity, in place of the shared ones above
+      # whichever source each comes from — so one Vault path can hold both planes'. Empty: shared.
+      AIRA_GATEWAY_POSTGRES_USER: ${AIRA_GATEWAY_POSTGRES_USER:-}
+      AIRA_GATEWAY_POSTGRES_PASSWORD: ${AIRA_GATEWAY_POSTGRES_PASSWORD:-}
+      AIRA_GATEWAY_KAFKA_SASL_USERNAME: ${AIRA_GATEWAY_KAFKA_SASL_USERNAME:-}
+      AIRA_GATEWAY_KAFKA_SASL_PASSWORD: ${AIRA_GATEWAY_KAFKA_SASL_PASSWORD:-}
       AIRA_KAFKA_BOOTSTRAP_SERVERS: ${AIRA_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       # `aira.<stage>.<entity>` on a cluster several stages share; empty keeps `aira.<entity>`.
       AIRA_KAFKA_STAGE: ${AIRA_KAFKA_STAGE:-}
@@ -281,6 +287,12 @@ services:
       AIRA_POSTGRES_DB: aira_mgmt
       AIRA_POSTGRES_USER: ${AIRA_POSTGRES_USER:-${POSTGRES_USER:-aira}}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
+      # Management's own database user and Kafka identity — the relay's, which writes — in place
+      # of the shared ones, as on the gateway. Empty: shared.
+      AIRA_MANAGEMENT_POSTGRES_USER: ${AIRA_MANAGEMENT_POSTGRES_USER:-}
+      AIRA_MANAGEMENT_POSTGRES_PASSWORD: ${AIRA_MANAGEMENT_POSTGRES_PASSWORD:-}
+      AIRA_MANAGEMENT_KAFKA_SASL_USERNAME: ${AIRA_MANAGEMENT_KAFKA_SASL_USERNAME:-}
+      AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD: ${AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD:-}
       AIRA_KAFKA_BOOTSTRAP_SERVERS: ${AIRA_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       # `aira.<stage>.<entity>` on a cluster several stages share; empty keeps `aira.<entity>`.
       AIRA_KAFKA_STAGE: ${AIRA_KAFKA_STAGE:-}

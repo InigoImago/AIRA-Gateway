@@ -84,7 +84,8 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
     ):
         problems.append(
             "AIRA_POSTGRES_PASSWORD is still the published development default — "
-            "set a unique value (from Vault) per deployment."
+            "set a unique value (from Vault) per deployment. The gateway connects with "
+            "AIRA_GATEWAY_POSTGRES_PASSWORD instead where that is set."
         )
     # Every configured issuer (`FRD-118`), not the single setting, which a multi-realm deployment
     # leaves empty — reading only that would pass vacuously.

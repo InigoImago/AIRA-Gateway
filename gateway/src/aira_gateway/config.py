@@ -7,6 +7,7 @@ of them.
 from __future__ import annotations
 
 import sys
+from typing import ClassVar
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import URL
@@ -36,6 +37,8 @@ def _default_jwks_uri(issuer: str) -> str:
 class GatewaySettings(BaseAiraSettings):
     """Configuration for the Gateway API service."""
 
+    credential_plane: ClassVar[str] = "gateway"
+
     app_name: str = "aira-gateway"
 
     # Postgres (system of record). Defaults target the local Compose stack from the host.
@@ -44,6 +47,10 @@ class GatewaySettings(BaseAiraSettings):
     postgres_db: str = "aira_gateway"
     postgres_user: str = "aira"
     postgres_password: str = "aira-local"
+    # The gateway's own database user and password, in place of the shared two, for a Vault path
+    # both planes read (`FRD-150`). Empty: the shared ones.
+    gateway_postgres_user: str = ""
+    gateway_postgres_password: str = ""
 
     # Kafka event bus. Host-facing listener from the Compose stack.
     kafka_bootstrap_servers: str = "localhost:29092"
@@ -140,6 +147,9 @@ class GatewaySettings(BaseAiraSettings):
     kafka_sasl_mechanism: str = ""
     kafka_sasl_username: str = ""
     kafka_sasl_password: str = ""
+    # The gateway's own Kafka identity — the consumer's — in place of the shared one (`FRD-150`).
+    gateway_kafka_sasl_username: str = ""
+    gateway_kafka_sasl_password: str = ""
     kafka_ssl_cafile: str = ""
     #: The stage in every topic name and in the consumer group, on a cluster several stages share
     #: (`aira.t.usecases`). Empty keeps today's names. Management must be given the same one.

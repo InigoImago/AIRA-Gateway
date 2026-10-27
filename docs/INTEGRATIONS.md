@@ -653,6 +653,13 @@ AIRA_KAFKA_SASL_PASSWORD=…                 # from Vault
 AIRA_KAFKA_SSL_CAFILE=/etc/ssl/private-ca.pem   # only for a private CA
 ```
 
+Each plane reads these two for itself. Where both planes share one environment or one Vault path,
+the per-plane names carry the two identities instead and replace the shared ones:
+`AIRA_GATEWAY_KAFKA_SASL_USERNAME` / `AIRA_GATEWAY_KAFKA_SASL_PASSWORD` for the consumer (the
+gateway's), `AIRA_MANAGEMENT_KAFKA_SASL_USERNAME` / `AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD` for the
+relay (Management's). The database works the same way, with `AIRA_GATEWAY_POSTGRES_USER` /
+`_PASSWORD` and `AIRA_MANAGEMENT_POSTGRES_USER` / `_PASSWORD`.
+
 The identity is a username and a password: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`. Kerberos
 (`GSSAPI`) and `OAUTHBEARER` are not supported, and `SSL` on its own identifies nobody — there is no
 client-certificate setting — so it is `SASL_SSL`. `SASL_PLAINTEXT` is not refused outside `local`,

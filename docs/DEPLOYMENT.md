@@ -148,8 +148,9 @@ Both planes read Vault **once, at start-up**, and a configured Vault that cannot
 process rather than falling back to the environment. So the secrets go in before Step 6.
 
 The config file withholds every credential: `AIRA_SECRET_KEY` and `AIRA_POSTGRES_PASSWORD` always,
-and whichever of the others your installation uses — the Kafka SASL password, the directory client's
-secret, the model platforms' keys, a Redis password (the example's `secrets.in_vault`). Vault ranks
+and whichever of the others your installation uses — the Kafka SASL password, each plane's own
+database and Kafka passwords where it has them, the directory client's secret, the model platforms'
+keys, a Redis password (the example's `secrets.in_vault`). Vault ranks
 **above** the environment on purpose, so a value written there wins over anything a `.env` holds.
 [`deployment/integrated.md` §4](deployment/integrated.md) has the procedure, including how the
 AppRole's secret-id reaches the containers — which Compose does not do for you.
@@ -646,20 +647,27 @@ CREATE DATABASE aira_gateway;
 CREATE DATABASE aira_mgmt;
 ```
 
-Both services take the same connection variables and a different `AIRA_POSTGRES_DB`:
+Both services take the same connection variables and a different `AIRA_POSTGRES_DB` — and, where
+each plane has a role of its own, each its own user and password:
 
 | Variable                                        | Gateway          | Management       |
 | ----------------------------------------------- | ---------------- | ---------------- |
 | `AIRA_POSTGRES_HOST`                            | your host        | your host        |
 | `AIRA_POSTGRES_PORT`                            | `5432`           | `5432`           |
 | `AIRA_POSTGRES_DB`                              | `aira_gateway`   | `aira_mgmt`      |
-| `AIRA_POSTGRES_USER` / `AIRA_POSTGRES_PASSWORD` | the same role    | the same role    |
+| `AIRA_POSTGRES_USER` / `AIRA_POSTGRES_PASSWORD` | the shared role  | the shared role  |
+| … or a role per plane, replacing the shared one | `AIRA_GATEWAY_POSTGRES_USER` / `_PASSWORD` | `AIRA_MANAGEMENT_POSTGRES_USER` / `_PASSWORD` |
 
-**One role, under the shipped Compose files.** `docker-compose.apps.yml` gives both planes the same
-`AIRA_POSTGRES_USER`, fills both planes' `AIRA_POSTGRES_PASSWORD` from `POSTGRES_PASSWORD` (default
-`aira-local`) rather than from a variable of its own name, and points both at one Vault path — so a
-password in Vault is one password. Give that role `CREATE` on both databases. A deployment that runs
-the processes some other way can give each plane its own environment, and so its own role.
+**One role by default, a role per plane if you set one.** `docker-compose.apps.yml` gives both
+planes the same `AIRA_POSTGRES_USER` and fills both planes' `AIRA_POSTGRES_PASSWORD` from
+`POSTGRES_PASSWORD` (default `aira-local`), and points both at one Vault path — so with the shared
+names alone, a password in Vault is one password, and that role needs `CREATE` on both databases.
+For a role per database, set `AIRA_GATEWAY_POSTGRES_USER` and `AIRA_MANAGEMENT_POSTGRES_USER`
+(configuration) and write `AIRA_GATEWAY_POSTGRES_PASSWORD` and `AIRA_MANAGEMENT_POSTGRES_PASSWORD`
+into the same Vault path: a plane's own name replaces the shared one wherever either was read from,
+and a plane never reads the other's. Each role then needs `CREATE` on its own database only. On one
+path each plane's AppRole can still read the other's password; a path and an AppRole per plane
+(`VAULT_PATH`, `VAULT_ROLE_ID`, set per service) is the stronger separation.
 
 Schema management differs per service — run both on every deployment, before the new code starts:
 
@@ -744,6 +752,11 @@ AIRA_KAFKA_SASL_USERNAME=aira-gateway     # one broker identity per plane
 AIRA_KAFKA_SASL_PASSWORD=…                # a credential: from Vault
 AIRA_KAFKA_SSL_CAFILE=/etc/ssl/certs/internal-ca.pem   # empty uses the system trust store
 ```
+
+The two `SASL_*` lines are one identity for whichever plane reads them. Where both planes share an
+environment or a Vault path, give each its own instead — `AIRA_GATEWAY_KAFKA_SASL_USERNAME` and
+`_PASSWORD` for the consumer, `AIRA_MANAGEMENT_KAFKA_SASL_USERNAME` and `_PASSWORD` for the relay —
+which replace the shared two in that plane.
 
 Outside `local`, `PLAINTEXT` stops both planes at start-up (the gateway waives it under
 `AIRA_DEMO_MODE`; Management does not). The check refuses only `PLAINTEXT`: `SASL_PLAINTEXT`
@@ -1027,7 +1040,9 @@ VAULT_ADDR=https://vault.internal:8200
 VAULT_ROLE_ID=<the AppRole's role id>
 VAULT_SECRET_ID_FILE=/run/secrets/vault-secret-id
 # in Vault: AIRA_POSTGRES_PASSWORD, AIRA_KAFKA_SASL_PASSWORD, AIRA_VERTEX_API_KEY
-#           (or AIRA_VERTEX_CREDENTIALS), and AIRA_REDIS_URL, since it carries a password
+#           (or AIRA_VERTEX_CREDENTIALS), and AIRA_REDIS_URL, since it carries a password —
+#           on a path Management reads too, the two passwords as AIRA_GATEWAY_POSTGRES_PASSWORD
+#           and AIRA_GATEWAY_KAFKA_SASL_PASSWORD, and the user names as AIRA_GATEWAY_*
 ```
 
 Management (same database server, different database):
@@ -1054,7 +1069,8 @@ VAULT_ADDR=https://vault.internal:8200
 VAULT_ROLE_ID=<the AppRole's role id>
 VAULT_SECRET_ID_FILE=/run/secrets/vault-secret-id
 # in Vault: AIRA_SECRET_KEY, AIRA_POSTGRES_PASSWORD, AIRA_KAFKA_SASL_PASSWORD,
-#           AIRA_DIRECTORY_CLIENT_SECRET
+#           AIRA_DIRECTORY_CLIENT_SECRET — on a path the gateway reads too, the two passwords
+#           as AIRA_MANAGEMENT_POSTGRES_PASSWORD and AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD
 ```
 
 The audience is the same on both: the console's token goes to both planes. The consumer and the

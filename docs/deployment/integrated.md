@@ -118,6 +118,27 @@ export AIRA_VERTEX_CREDENTIALS=...        # and/or AIRA_VERTEX_API_KEY, AIRA_GOO
 uv run python tools/vault_setup.py --from-env
 ```
 
+**Where the database and the broker give each plane its own identity** — a database user per
+database, a Kafka consumer that only reads and a relay that writes — the two planes cannot share
+`AIRA_POSTGRES_PASSWORD` and `AIRA_KAFKA_SASL_PASSWORD`. Write each plane's own beside the shared
+names on the same path; a plane's own name replaces the shared one, and a plane never reads the
+other's:
+
+```bash
+export AIRA_GATEWAY_POSTGRES_PASSWORD=...          # the gateway's database user's
+export AIRA_MANAGEMENT_POSTGRES_PASSWORD=...       # Management's
+export AIRA_GATEWAY_KAFKA_SASL_PASSWORD=...        # the consumer's, which only reads
+export AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD=...     # the relay's, which writes
+uv run python tools/vault_setup.py --from-env
+```
+
+The user names identify and are configuration: `gateway.postgres_user`,
+`gateway.kafka_sasl_username`, `management.postgres_user` and `management.kafka_sasl_username` in
+the file of §5 (`AIRA_GATEWAY_POSTGRES_USER` and its three siblings). On one path each plane's
+AppRole can still *read* the other's password. Where that matters, give each plane a path and an
+AppRole of its own instead: `VAULT_PATH` and `VAULT_ROLE_ID` are read by each service, so a Compose
+file of your own can set them per service, and each path then holds the shared names alone.
+
 Then configure the applications with the **address and role id** (these identify; they do not
 authorise) and the path of the secret-id **file** inside the containers:
 
@@ -183,7 +204,7 @@ deployment starts, and whether it starts as a deployment:
 | `AIRA_OIDC_ISSUER`, `AIRA_OIDC_JWKS_URI`, `AIRA_OIDC_AUDIENCE` | your realm's values | An audience is **required** outside `local`, on both planes |
 | `AIRA_ROLE_GROUPS` | your groups for the three built-in roles | Management refuses to start without a group for `global-admin` |
 | `AIRA_PRIVACY_CONTROLLER` | your organisation's name, address and a contact | Management refuses to start without it: the privacy notice every console user is shown names the controller |
-| `AIRA_KAFKA_SECURITY_PROTOCOL` and the SASL settings | `SASL_SSL` (or `SSL`), and each plane's broker identity | `PLAINTEXT` is refused on both planes |
+| `AIRA_KAFKA_SECURITY_PROTOCOL` and the SASL settings | `SASL_SSL` (or `SSL`), and each plane's broker identity — `AIRA_GATEWAY_KAFKA_SASL_USERNAME` and `AIRA_MANAGEMENT_KAFKA_SASL_USERNAME`, their passwords in Vault (§4) | `PLAINTEXT` is refused on both planes; with only the shared `AIRA_KAFKA_SASL_USERNAME`, both planes authenticate as one identity |
 | `AIRA_DIRECTORY_CLIENT_ID`, `AIRA_DIRECTORY_URL` | the directory client, and where Management reaches Keycloak | Without them no role can be bound to a group |
 | `AIRA_ALLOWED_REGIONS` | the regions you are permitted to use | A model configured outside them stops the gateway at startup; a catalogued one is refused per request. `AIRA_ALLOWED_MODEL_REGIONS` permits a region for named models alone |
 | `AIRA_TRUST_FORWARDED_FOR`, `AIRA_TRUSTED_PROXY_HOPS` | `true`, and the number of proxies that append, **only** behind proxies you control | Otherwise a caller can dictate the address in your audit trail |
@@ -236,7 +257,8 @@ they come from Vault (§4). The database password needs a word of its own: Compo
 `AIRA_POSTGRES_PASSWORD` from `POSTGRES_PASSWORD`, an infrastructure variable whose default is the
 published `aira-local`, and gives both planes the same `AIRA_POSTGRES_USER`. With Vault holding
 `AIRA_POSTGRES_PASSWORD`, Vault's value wins; without Vault the gateway refuses the published one
-outside `local`, and Management does not check it. `KEYCLOAK_ADMIN_PASSWORD` and `KC_DB_PASSWORD`
+outside `local`, and Management does not check it. A plane's own user and password (§4) replace
+both, and the gateway's refusal reads the password it actually connects with. `KEYCLOAK_ADMIN_PASSWORD` and `KC_DB_PASSWORD`
 belong to the bundled stack and play no part here.
 
 ---

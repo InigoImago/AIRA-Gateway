@@ -202,8 +202,23 @@ csp:
 # the services' addresses as the console reaches them.
 management:
   upstream: http://management:8002
+  # Management's own database user and Kafka identity — the relay's, which writes — in place of
+  # `postgres.user` and `kafka.sasl_username`, where the database and the broker give each plane an
+  # identity of its own. Their passwords go to Vault beside the shared ones (`secrets:`), so one
+  # path serves both planes. Empty: the shared ones.
+  #
+  #     postgres_user: aira_mgmtusr
+  #     kafka_sasl_username: aira-relay
+  postgres_user: ''
+  kafka_sasl_username: ''
 gateway:
   upstream: http://gateway:8001
+  # The gateway's own, the same way — the consumer's identity, which only reads.
+  #
+  #     postgres_user: aira_gatewayusr
+  #     kafka_sasl_username: aira-consumer
+  postgres_user: ''
+  kafka_sasl_username: ''
 
 # nginx re-resolves the upstreams on every request through this, so a redeploy of either service
 # does not leave the proxy talking to an address that has moved. Docker's embedded DNS by default.
@@ -525,6 +540,10 @@ secrets:
     - AIRA_GOOGLE_API_KEY
     - AIRA_FOUNDRY_API_KEY
     - AIRA_KAFKA_SASL_PASSWORD
+    - AIRA_GATEWAY_POSTGRES_PASSWORD     # a plane's own, in place of the shared one; optional
+    - AIRA_MANAGEMENT_POSTGRES_PASSWORD
+    - AIRA_GATEWAY_KAFKA_SASL_PASSWORD
+    - AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD
     - AIRA_DIRECTORY_CLIENT_SECRET
     - AIRA_PSEUDONYM_SECRET              # telemetry's pseudonyms under strict data mode
     - AIRA_REDIS_PASSWORD

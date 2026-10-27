@@ -4333,6 +4333,31 @@ MUTATIONS = [
         "    if False and not is_own_request(",
         "gateway/tests/test_payload_access.py",
     ),
+    # Each plane's own credentials, on one Vault path (`FRD-150`).
+    Mutation(
+        "PLC-1",
+        "a plane's own database user and Kafka identity replace the shared ones",
+        "libs/src/aira_common/config.py",
+        "                if own:\n",
+        "                if False:\n",
+        "tools/tests/test_each_plane_reads_its_own_credentials.py",
+    ),
+    Mutation(
+        "PLC-2",
+        "the gateway reads the gateway's own credentials",
+        "gateway/src/aira_gateway/config.py",
+        '    credential_plane: ClassVar[str] = "gateway"\n',
+        '    credential_plane: ClassVar[str] = ""\n',
+        "tools/tests/test_each_plane_reads_its_own_credentials.py",
+    ),
+    Mutation(
+        "PLC-3",
+        "Management reads Management's own credentials",
+        "management/backend/src/aira_management/config/app_settings.py",
+        '    credential_plane: ClassVar[str] = "management"\n',
+        '    credential_plane: ClassVar[str] = ""\n',
+        "tools/tests/test_each_plane_reads_its_own_credentials.py",
+    ),
     # An absence is told by the retention clock: a refused request keeps the prompt it was refused
     # for, and once its period passed the reader was told it had never had one.
     Mutation(

@@ -9,6 +9,7 @@ Vault in real deployments (see PRD §9).
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from typing import ClassVar
 
 from pydantic import ValidationInfo, field_validator
 
@@ -31,6 +32,8 @@ _REALMS_MARKER = "/realms/"
 class ManagementSettings(BaseAiraSettings):
     """Configuration for the Management backend service."""
 
+    credential_plane: ClassVar[str] = "management"
+
     app_name: str = "aira-management"
 
     # Django core (dev defaults; real secrets come from Vault)
@@ -44,6 +47,10 @@ class ManagementSettings(BaseAiraSettings):
     postgres_db: str = "aira_mgmt"
     postgres_user: str = "aira"
     postgres_password: str = "aira-local"  # noqa: S105
+    # Management's own database user and password, in place of the shared two, for a Vault path
+    # both planes read (`FRD-150`). Empty: the shared ones.
+    management_postgres_user: str = ""
+    management_postgres_password: str = ""
 
     # Kafka event bus
     kafka_bootstrap_servers: str = "localhost:29092"
@@ -89,6 +96,10 @@ class ManagementSettings(BaseAiraSettings):
     kafka_sasl_mechanism: str = ""
     kafka_sasl_username: str = ""
     kafka_sasl_password: str = ""
+    # Management's own Kafka identity — the relay's, which writes — in place of the shared one
+    # (`FRD-150`).
+    management_kafka_sasl_username: str = ""
+    management_kafka_sasl_password: str = ""
     kafka_ssl_cafile: str = ""
     #: The stage in every topic name this service publishes to (`aira.t.usecases`); the gateway
     #: must be given the same one. Empty keeps today's names.

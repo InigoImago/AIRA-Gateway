@@ -44,6 +44,8 @@ from **Vault** when one is configured, and Vault **wins** over the environment
 | `AIRA_DEBUG_INTEGRATIONS`                                      | _(empty)_                                                  | One log line per call to another system, while you are wiring one up. See [§1a](#1a-watching-a-call-to-another-system) — empty is off, and off is what a working installation runs. |
 | `AIRA_DEBUG_OTEL_PAYLOAD`                                      | `0`                                                        | Print this many items of each OTLP batch as OTLP/JSON on stdout. 0 is off. Expensive and loud; see [`INTEGRATIONS.md` §6](INTEGRATIONS.md#6-observability).                       |
 | `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / _(differs)_ / `aira` / `aira-local` | **Two different databases** — see the note below.                                                                                                                                 |
+| `AIRA_GATEWAY_POSTGRES_USER` / `AIRA_GATEWAY_POSTGRES_PASSWORD` / `AIRA_GATEWAY_KAFKA_SASL_USERNAME` / `AIRA_GATEWAY_KAFKA_SASL_PASSWORD` | _(empty)_ | **The gateway's own** database user and password and Kafka identity, in place of the shared `AIRA_POSTGRES_USER`, `AIRA_POSTGRES_PASSWORD`, `AIRA_KAFKA_SASL_USERNAME` and `AIRA_KAFKA_SASL_PASSWORD` — read by the gateway, its consumer and its retention run, and by nothing of Management's. Empty is the shared one. **The plane's own name wins wherever each was read from**, so a single Vault path can hold the shared values and each plane's own beside them; an installation that never writes one runs as before. The two passwords are secrets — Vault ([§7](#7-secrets-from-vault)). |
+| `AIRA_MANAGEMENT_POSTGRES_USER` / `AIRA_MANAGEMENT_POSTGRES_PASSWORD` / `AIRA_MANAGEMENT_KAFKA_SASL_USERNAME` / `AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD` | _(empty)_ | **Management's own**, the same way — its database user and the relay's Kafka identity, which writes the configuration topics — read by Management and its relay only. |
 | `AIRA_KAFKA_BOOTSTRAP_SERVERS`                                 | `localhost:29092`                                          | Comma-separated `host:port` brokers (no port means `9092`); an IPv6 broker as `[address]:port`. Empty means no broker, and readiness reports Kafka as not configured. An entry nothing could dial refuses to start. Readiness counts the cluster reachable while any broker answers, and Kafka never makes an instance not ready ([§6](#6-what-happens-when-something-is-missing)). |
 | `AIRA_KAFKA_STAGE`                                             | _(empty)_                                                  | The stage in every topic name and in the gateway's consumer group, on a cluster several stages share: `t` gives `aira.t.usecases` and `aira-gateway.t`. **Both planes need the same one.** Empty keeps `aira.usecases`. One to sixteen lower-case letters or digits; anything else refuses to start. |
 
@@ -112,6 +114,15 @@ audit row. That is why the check is a startup refusal rather than a warning.
 > `aira_mgmt`. They are not interchangeable: one holds configuration and the other holds the
 > read-model plus everything that happened. Pointing both at one database will appear to work until
 > a migration from one plane meets a table from the other.
+>
+> **Each plane may have its own credentials**, where the database server and the broker give it
+> an identity of its own — a database user per database, a Kafka consumer that only reads and a
+> relay that writes. Without them both planes read one `AIRA_POSTGRES_PASSWORD` and one
+> `AIRA_KAFKA_SASL_PASSWORD`, so a Vault path both read could hold one value of each. Either give
+> each plane a path of its own (`VAULT_PATH`, set per service, and an AppRole that reads only it —
+> the stronger separation, since then neither plane can read the other's password), or write
+> `AIRA_GATEWAY_*` and `AIRA_MANAGEMENT_*` beside the shared names on the one path. On one path
+> each plane's AppRole can still *read* the other's password; only the settings it acts on differ.
 
 ---
 
