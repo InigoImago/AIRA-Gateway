@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.kira import errors
-from aira_gateway.api.serving import REFUSALS, NotAReranker, ToolsNotPermitted, upstream_status
+from aira_gateway.api.serving import REFUSALS, NotAReranker, ToolsNotPermitted, upstream_answer
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.core.schema import SchemaRejected
@@ -85,7 +85,7 @@ def refusal_response(exc: Exception) -> JSONResponse:
         # **One status for every provider failure but one**, as the predecessor answers: `502`, and
         # `429` where the provider asked the caller to slow down, which is the one a client acts on
         # differently (`FRD-146` FR-16). What the provider said stays in the message.
-        if upstream_status(exc.status_code)[0] == 429:
+        if upstream_answer(exc)[0] == 429:
             return errors.kira_error_response(
                 429, errors.EXTERNAL_KI_API_TOO_MANY_REQUEST, exc.message
             )

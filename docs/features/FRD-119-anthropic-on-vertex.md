@@ -64,8 +64,16 @@ provider-agnostic. Until now "two surfaces, two upstreams" meant two spellings o
 
 ## 4. Functional Requirements
 
-- **FR-1 Generation and streaming** via `:rawPredict` / `:streamRawPredict`, with
-  `anthropic_version` set as Vertex requires.
+- **FR-1 Generation and streaming** via `:streamRawPredict`, with `anthropic_version` set as Vertex
+  requires. *Amended 2026-10-27:* a request the caller did not stream is sent as a stream too and
+  assembled from its events (`MessageAssembler`), as Anthropic's own SDKs assemble one: on
+  `:rawPredict` this gateway's time limit for an answer ran out on long answers to large contexts
+  the model was still writing, while a stream carries something the whole time. A stream cut off
+  before `message_stop` is the provider's failure, never a shorter answer, and an error inside it
+  moves on to the next region, since nothing reached the caller.
+- **FR-1a Overloaded is unavailable.** Anthropic's `529` (`overloaded_error`), in a status or inside
+  a stream, is a fact about the place: it moves a regional failover on as a `503` does, and reaches
+  a caller as `503 UNAVAILABLE`, explained as nobody's fault here.
 - **FR-2 Message mapping.** Canonical `Role.MODEL` ⇄ `assistant`; `Role.SYSTEM` ⇄ the top-level
   `system` parameter, **concatenated** when several system messages exist, because Anthropic takes
   one and the canonical model permits more.

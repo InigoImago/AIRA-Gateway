@@ -312,7 +312,8 @@ class RequestIdMiddleware:
                 headers.extend(
                     (name.encode("latin-1"), header_value(value))
                     for name, value in added.items()
-                    if name.encode("latin-1") not in present
+                    # `None` is a header a route withheld (`explaining.withhold`).
+                    if value is not None and name.encode("latin-1") not in present
                 )
                 message = {**message, "headers": headers}
             await send(message)

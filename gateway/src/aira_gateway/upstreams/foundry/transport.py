@@ -36,7 +36,7 @@ class FoundryTransport(OpenAITransport):
         tokens: TokenSource | None = None,
         timeout: float | None = None,
     ) -> None:
-        super().__init__(client=client, timeout=timeout)
+        super().__init__(client=client, timeout=timeout, name="Microsoft Foundry")
         self._azure_key = api_key
         self._tokens = tokens
 

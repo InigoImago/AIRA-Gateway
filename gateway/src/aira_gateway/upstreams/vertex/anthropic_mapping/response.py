@@ -17,7 +17,7 @@ from aira_gateway.core.canonical import (
     FinishReason,
     ToolCallPart,
 )
-from aira_gateway.upstreams.base import stream_failure
+from aira_gateway.upstreams.base import UpstreamError, stream_failure
 
 #: The finish reason for "the model answered, but not with the document asked for". A value rather
 #: than an error, so it takes the path every abnormal finish takes and is refused in one place
@@ -346,3 +346,90 @@ class StreamAssembler:
                 arguments=arguments if isinstance(arguments, dict) else {},
             )
         )
+
+
+class MessageAssembler:
+    """Anthropic's typed SSE events → the message a non-streamed call answers with.
+
+    For a request the caller did not stream, sent as a stream all the same (`FRD-119`): a long
+    answer to a large context takes longer than any time limit a request/response can be given,
+    while a stream carries something — its events, the provider's pings — the whole time, so this
+    gateway's time limit measures a silence rather than the whole answer. Anthropic's own SDKs
+    refuse a non-streamed request they expect to take ten minutes for the same reason.
+
+    The events are put together as those SDKs put them together (`get_final_message`): each block
+    from its start, its deltas appended, a function call's arguments parsed when the block stops,
+    the usage replaced field by field as the running totals arrive. The message is then read by
+    :func:`anthropic_to_canonical`, exactly as a non-streamed answer is — one reading of an
+    answer, not two. A stream that ends without `message_stop` was cut off, and is the
+    provider's failure rather than a shorter answer.
+    """
+
+    def __init__(self) -> None:
+        self._message: dict[str, Any] | None = None
+        self._blocks: dict[int, dict[str, Any]] = {}
+        #: A function call's argument fragments, by block, until the block stops.
+        self._arguments: dict[int, str] = {}
+        self._finished = False
+
+    def feed(self, event: dict[str, Any]) -> None:
+        kind = event.get("type")
+        if kind == "error":
+            raise stream_failure(event.get("error"))
+        if kind == "message_start":
+            message = event.get("message")
+            self._message = dict(message) if isinstance(message, dict) else {}
+            usage = self._message.get("usage")
+            self._message["usage"] = dict(usage) if isinstance(usage, dict) else {}
+            return
+        index = event.get("index")
+        if kind == "content_block_start" and isinstance(index, int):
+            block = event.get("content_block")
+            self._blocks[index] = dict(block) if isinstance(block, dict) else {}
+        elif kind == "content_block_delta" and isinstance(index, int):
+            self._delta(index, event.get("delta") or {})
+        elif kind == "content_block_stop" and isinstance(index, int):
+            self._close(index)
+        elif kind == "message_delta" and self._message is not None:
+            delta = event.get("delta") or {}
+            for field in ("stop_reason", "stop_sequence"):
+                if field in delta:
+                    self._message[field] = delta[field]
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                # Running totals, each the figure so far: replaced, never added (`StreamAssembler`).
+                self._message["usage"].update(usage)
+        elif kind == "message_stop":
+            self._finished = True
+
+    def message(self) -> dict[str, Any]:
+        """The whole message — or the provider's failure, for a stream it cut off."""
+        if self._message is None or not self._finished:
+            raise UpstreamError("The model provider ended the answer before it was complete.", 502)
+        return {**self._message, "content": [self._blocks[i] for i in sorted(self._blocks)]}
+
+    def _delta(self, index: int, delta: dict[str, Any]) -> None:
+        block = self._blocks.setdefault(index, {})
+        kind = delta.get("type")
+        if kind == "text_delta":
+            block["text"] = str(block.get("text") or "") + str(delta.get("text") or "")
+        elif kind == "thinking_delta":
+            block["thinking"] = str(block.get("thinking") or "") + str(delta.get("thinking") or "")
+        elif kind == "signature_delta":
+            block["signature"] = str(delta.get("signature") or "")
+        elif kind == "input_json_delta":
+            self._arguments[index] = self._arguments.get(index, "") + str(
+                delta.get("partial_json") or ""
+            )
+
+    def _close(self, index: int) -> None:
+        if index not in self._arguments:
+            return
+        fragments = self._arguments.pop(index)
+        try:
+            arguments = json.loads(fragments) if fragments else {}
+        except ValueError:
+            # The name is kept, so the caller sees that the model asked (`StreamAssembler`).
+            arguments = {}
+        block = self._blocks.setdefault(index, {})
+        block["input"] = arguments if isinstance(arguments, dict) else {}

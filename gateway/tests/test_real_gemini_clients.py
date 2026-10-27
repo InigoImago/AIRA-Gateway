@@ -48,6 +48,7 @@ from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from aira_gateway.api.gemini.routes import KEEPALIVE as SKIPPED_LINE
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import watch_connections
@@ -76,11 +77,14 @@ SENDS = {
 
 
 class _Recorder:
-    """The app, and the JSON body of every request it was sent."""
+    """The app, the JSON body of every request it was sent, and how many keepalives it sent back."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
         self.bodies: list[dict[str, Any]] = []
+        #: Bare lines a Gemini stream sent while its model was quiet (`ADR-0046`): a client that
+        #: passes a quiet case without having been sent one has not been tested against them.
+        self.keepalives = 0
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http" or scope["method"] != "POST":
@@ -102,7 +106,12 @@ class _Recorder:
             # leaving, and an invented disconnect would end every stream after its first chunk.
             return messages.pop(0) if messages else await receive()
 
-        await self.app(scope, replay, send)
+        async def counting(message: Any) -> None:
+            if message.get("type") == "http.response.body" and message.get("body") == KEEPALIVE:
+                self.keepalives += 1
+            await send(message)
+
+        await self.app(scope, replay, counting)
 
 
 def _on_a_file(path: Path) -> AsyncEngine:
@@ -132,11 +141,42 @@ def _on_a_file(path: Path) -> AsyncEngine:
     return watch_connections(engine)
 
 
+#: What the Gemini surface sends while its stream is quiet, as it goes on the wire.
+KEEPALIVE = SKIPPED_LINE.encode()
+
+#: How long the quiet model below says nothing — before its first chunk and between two — and the
+#: keepalive interval the gateway is served with beside it: several keepalives in every pause.
+QUIET_SECONDS = 0.6
+KEPT_ALIVE_EVERY = 0.15
+
+
+def _quietly(stream: Callable[..., Any]) -> Callable[..., Any]:
+    """The mock's stream, with a silence before its first chunk and between every two — as a model
+    reading a large context, thinking, or writing a call's arguments is silent (`ADR-0046`)."""
+
+    async def quiet(self: Any, request: Any) -> Any:
+        async for chunk in stream(self, request):
+            await asyncio.sleep(QUIET_SECONDS)
+            yield chunk
+
+    return quiet
+
+
 @contextmanager
-def _served(*, daily_requests: int | None = None) -> Iterator[tuple[str, _Recorder]]:
+def _served(
+    *, daily_requests: int | None = None, quiet: bool = False
+) -> Iterator[tuple[str, _Recorder]]:
     """The app on a real socket, with a model and a use case — and, given ``daily_requests``, a
-    budget on that use case that is enforced, for what a budget display has to show."""
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+    budget on that use case that is enforced, for what a budget display has to show. ``quiet``
+    makes the model pause before every chunk and the gateway keep its streams alive meanwhile."""
+    from aira_gateway.upstreams.mock import MockProvider
+
+    pausing = (
+        mock.patch.object(MockProvider, "stream_generate", _quietly(MockProvider.stream_generate))
+        if quiet
+        else contextlib.nullcontext()
+    )
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory, pausing:
         engine = _on_a_file(Path(directory) / "gateway.db")
         with mock.patch("aira_gateway.app.build_engine", return_value=engine):
             app = create_app(
@@ -144,6 +184,7 @@ def _served(*, daily_requests: int | None = None) -> Iterator[tuple[str, _Record
                     auth_required=False,
                     enforce_budgets=daily_requests is not None,
                     log_queue_size=0,
+                    **({"stream_keepalive_seconds": KEPT_ALIVE_EVERY} if quiet else {}),
                 )
             )
         recorder = _Recorder(app)
@@ -276,6 +317,59 @@ def test_the_ai_sdk_google_provider_works_in_every_major(node_clients: None, maj
     tools_field, schema_field = SENDS[major]
     assert declared == {tools_field}, f"provider {major} declared its tools with {declared}"
     assert answered == {schema_field}, f"provider {major} asked for structure with {answered}"
+
+
+@pytest.mark.parametrize("major", sorted(SENDS))
+def test_the_ai_sdk_reads_a_stream_kept_alive_while_its_model_is_quiet(
+    node_clients: None, major: str
+) -> None:
+    """A model that says nothing for a while — before its first word and between two — and a
+    gateway that keeps the stream alive meanwhile with bare lines (`ADR-0046`). The AI SDK reads
+    SSE by the specification, which dispatches nothing for a blank line; each major is run, because
+    each major shipped its own parser."""
+    with _served(quiet=True) as (base, recorder):
+        completed = subprocess.run(  # noqa: S603 — fixed arguments, our own script
+            ["node", "run.mjs", major, f"{base}/v1beta", "uc"],  # noqa: S607
+            cwd=CLIENTS,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    assert completed.returncode == 0, completed.stderr
+    results = json.loads(completed.stdout.strip().splitlines()[-1])
+
+    assert all(outcome["ok"] for outcome in results.values()), results
+    assert results["stream"]["text"].strip()
+    assert recorder.keepalives >= 2, "the stream was never quiet long enough to be kept alive"
+
+
+def test_google_genai_reads_a_stream_kept_alive_while_its_model_is_quiet() -> None:
+    """Google's own SDK hands every line of a stream that is not `data:` to its JSON parser — so
+    the keepalive is a bare line, which it skips, and not an SSE comment, which it would raise on
+    (`ADR-0046`). Both of its readers: the synchronous one and the asynchronous one."""
+    with _served(quiet=True) as (base, recorder):
+        client = genai.Client(
+            api_key="not-checked-here",
+            http_options=types.HttpOptions(
+                base_url=base, headers={"x-aira-use-case": "uc"}, api_version="v1beta"
+            ),
+        )
+        read = "".join(
+            chunk.text or ""
+            for chunk in client.models.generate_content_stream(model="mock-1", contents="say hello")
+        )
+
+        async def read_async() -> str:
+            stream = await client.aio.models.generate_content_stream(
+                model="mock-1", contents="say hello"
+            )
+            return "".join([chunk.text or "" async for chunk in stream])
+
+        read_aloud = asyncio.run(read_async())
+
+    assert read.strip() and read == read_aloud
+    assert recorder.keepalives >= 4, "the streams were never quiet long enough to be kept alive"
 
 
 def test_google_genai_sends_json_schema_and_a_thinking_level() -> None:
@@ -486,6 +580,31 @@ def test_opencode_carries_a_coding_turn(
         assert declared == {"parametersJsonSchema"}, declared
     else:
         assert declared, "OpenCode 1 declared no tools"
+
+
+@pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
+def test_opencode_carries_a_turn_through_a_model_that_is_quiet_for_a_while(
+    opencode: None, opencode_cache: Path, tmp_path: Path, generation: str
+) -> None:
+    """A tool call and the answer after it, from a model that pauses before every chunk while the
+    gateway keeps the stream alive (`ADR-0046`) — OpenCode 1 through the AI SDK, OpenCode 2 through
+    its own runtime, which parses the stream itself."""
+    with _served(quiet=True) as (base, recorder):
+        project = _project(tmp_path, base, configuration="v1")
+        run = [*_command(generation)[:1], "run", *_command(generation)[1:], "read hello.py"]
+        completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
+            run,
+            cwd=project,
+            env=_environment(tmp_path, project, opencode_cache),
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output[-3000:]
+    assert "acted on the tool result" in output, output[-3000:]
+    assert recorder.keepalives >= 2, "the stream was never quiet long enough to be kept alive"
 
 
 @pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])

@@ -91,9 +91,14 @@ months before it existed. The chain was built; its document was the companion no
   candidate that fails before producing that chunk is passed over, and its iterator is closed. The
   chunk is then handed to the surface together with the chosen model, so the recorded, billed and
   reported model is the one that answered.
-  - **FR-6a** The HTTP response begins only once a candidate has produced a chunk. A streamed
-    request that no candidate can serve is therefore an error **status**, recorded like any other
-    refusal — not a `200` carrying an empty array.
+  - **FR-6a** The HTTP response begins once a candidate has produced a chunk — or after
+    `AIRA_STREAM_KEEPALIVE_SECONDS` (15), whichever comes first (`ADR-0046`). A streamed request
+    that no candidate can serve within that time is an error **status**, recorded like any other
+    refusal — not a `200` carrying an empty array. A chain still looking after it goes on looking
+    while the response begins, still passing over a candidate that fails before its first chunk,
+    and a refusal it ends in is the stream's last element, recorded with the status it would have
+    had. A model that reads a large context or thinks before its first word is minutes of silence,
+    which a proxy between caller and gateway ends by closing the connection.
   - **FR-6b** After the first chunk the stream is committed: a later failure ends it and is
     recorded, with whatever was delivered.
   - **FR-6c** A candidate whose stream ends with **no chunk at all** has answered. The chain stops

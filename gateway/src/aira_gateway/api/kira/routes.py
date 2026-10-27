@@ -44,6 +44,7 @@ from aira_gateway.api.kira.refusals import KIRA_REFUSALS, refusal_response
 from aira_gateway.api.serving import (
     AccountedStream,
     BodyTooComplex,
+    Opening,
     Prepared,
     StreamAccounting,
     accounting,
@@ -54,6 +55,7 @@ from aira_gateway.api.serving import (
     ensure_body_is_encodable,
     fitting,
     json_body,
+    keepalive_seconds,
     prepare_for_dispatch,
     rank,
     record_refusal,
@@ -137,22 +139,29 @@ async def streaming_chat(
     terminal event is unaffected by the updates. A stream cannot fall back once its first chunk is
     out — but it can until then, so the chain is **opened** before the response exists
     (`stream_with_fallback`, `FRD-302` FR-6): the candidates meet every condition there, and a
-    chain with nothing left to offer is still a status rather than a stream that stops.
+    chain with nothing left to offer is still a status rather than a stream that stops — for as
+    long as `AIRA_STREAM_KEEPALIVE_SECONDS` (`ADR-0046`). A chain still looking after that does
+    not hold the caller without a byte: the response begins, the chain goes on, and a refusal it
+    ends in is a stream without `completed`.
     """
     started = time.monotonic()
     trail = AuditTrail(operation="streaming-chat", api="kira")
+    quiet = keepalive_seconds(request)
     try:
         prepared = await _prepare(request, principal, trail)
         asked = prepared.asked
         assert asked is not None
-        streamed = await stream_with_fallback(
-            providers_of(request),
-            asked,
-            prepared.fallbacks,
-            permits=await requirements_for(request, asked),
-            routing_of=await declared_routing(request),
-            fit=fitting(request),
+        opening = Opening(
+            stream_with_fallback(
+                providers_of(request),
+                asked,
+                prepared.fallbacks,
+                permits=await requirements_for(request, asked),
+                routing_of=await declared_routing(request),
+                fit=fitting(request),
+            )
         )
+        streamed = await opening.within(quiet) or opening
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
 
@@ -165,15 +174,13 @@ async def streaming_chat(
         operation="streaming-chat",
         started=started,
     )
-    served = streamed.model
 
     async def events() -> AsyncGenerator[str]:
         async with stream.accounted():
             try:
-                # The first chunk is already in hand; the chain marked its model call where the
-                # request was issued. A quiet model is a comment every fifteen seconds, never an
-                # event (`keepalive`).
-                async for chunk in with_pings(stream.chunks):
+                # The first chunk is in hand, or on its way; the chain marked its model call where
+                # the request was issued. A quiet model is a comment, never an event (`keepalive`).
+                async for chunk in with_pings(stream.chunks, quiet):
                     if chunk is TICK:
                         yield PING
                         continue
@@ -194,7 +201,7 @@ async def streaming_chat(
 
             # Built from what was streamed, so the terminal event carries exactly that.
             answer = CanonicalResponse(
-                model=served,
+                model=stream.model,
                 text=stream.text,
                 usage=stream.usage or CanonicalUsage(prompt_tokens=0, completion_tokens=0),
                 finish_reason=stream.finish_reason or "stop",

@@ -54,3 +54,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0043 | [A release is built from pinned code, by jobs that hold only their own token, and signed](ADR-0043-a-release-is-built-from-pinned-code-by-jobs-that-hold-only-their-own-token.md) | **Accepted** | 2026-10-22 |
 | 0044 | [A person's own budget replaces the one for everybody, under the use case's](ADR-0044-a-persons-own-budget-replaces-the-one-for-everybody.md) | **Accepted** | 2026-10-25 |
 | 0045 | [A model call names its use case, whatever the credential](ADR-0045-a-model-call-names-its-use-case.md) | **Accepted** | 2026-10-25 |
+| 0046 | [A stream is never silent for long, and its status waits for a model no longer than that](ADR-0046-a-stream-is-never-silent-for-long.md) | **Accepted** | 2026-10-27 |

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
-from aira_gateway.api.serving import refusal_metadata, refusal_reason, upstream_status
+from aira_gateway.api.serving import refusal_metadata, refusal_reason, upstream_answer
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.core.schema import SchemaRejected
@@ -73,7 +73,7 @@ def _parts(exc: Exception) -> tuple[int, str, str, dict[str, str] | None]:
     if isinstance(exc, UpstreamError):
         # Shared with the other surface: which upstream statuses pass through is a fact about the
         # upstream, and one outage must not look like two different problems by URL.
-        code, status = upstream_status(exc.status_code)
+        code, status = upstream_answer(exc)
         return code, exc.message, status, None
     assert isinstance(exc, GeminiHTTPError)
     return exc.code, exc.message, exc.status, exc.headers

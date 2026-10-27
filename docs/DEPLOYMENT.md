@@ -1268,6 +1268,10 @@ Operations:
       what the payload is stored for. A use case can replace personal data before the prompt
       leaves with a `pii_filter` step — the rewritten request is then what is stored. For data
       that must not be persisted at all, the control is the per-use-case storage switch below
+- [ ] `AIRA_STREAM_KEEPALIVE_SECONDS` below the shortest idle timeout of every proxy and load
+      balancer between callers and the gateway (15 s by default; nginx closes after 60): a streamed
+      answer sends its status and then a keepalive within that long while the model is quiet. `0`
+      only for clients that cannot take a keepalive — Google's `@google/genai` before 1.21
 - [ ] `AIRA_DRAIN_LEFT_STREAMS_SECONDS` reviewed: a stream whose caller left is read on — 600 s at
       most — so the vendor's own figure is booked; the answer is then billed whole, and the stream
       holds its upstream connection until the vendor finishes. `0` closes it with the caller

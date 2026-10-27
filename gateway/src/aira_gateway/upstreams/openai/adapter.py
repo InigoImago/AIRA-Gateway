@@ -43,7 +43,7 @@ from aira_gateway.upstreams.openai.mapping import (
     schema_refusal as strict_schema_refusal,
 )
 from aira_gateway.upstreams.openai.routes import Routes, StandardRoutes
-from aira_gateway.upstreams.openai.transport import NAME, OpenAITransport
+from aira_gateway.upstreams.openai.transport import OpenAITransport
 
 CHAT_METHODS = ("generateContent", "streamGenerateContent")
 EMBED_METHODS = ("embedContent", "batchEmbedContents")
@@ -191,7 +191,7 @@ class OpenAIAdapter:
         assembler = StreamAssembler(include_reasoning=request.include_reasoning)
         async with (
             self._transport.stream(self._routes.chat(request.model), body) as response,
-            aclosing(sse_payloads(response, NAME)) as payloads,
+            aclosing(sse_payloads(response, self._transport.name)) as payloads,
         ):
             async for payload in payloads:
                 chunk = assembler.feed(payload)

@@ -30,7 +30,10 @@ from aira_gateway.api.gemini.refusals import refusal_response
 from aira_gateway.api.serving import (
     EMBEDDING_METHODS,
     REFUSALS,
+    STREAM_HEADERS,
+    TICK,
     AccountedStream,
+    Opening,
     Prepared,
     StreamAccounting,
     accounting,
@@ -42,15 +45,21 @@ from aira_gateway.api.serving import (
     ensure_body_is_encodable,
     fitting,
     json_body,
+    keepalive_seconds,
     prepare_for_dispatch,
     record_refusal,
     requirements_for,
     resolve_direct_target,
     schema_bounds,
     served_models,
+    with_pings,
 )
 from aira_gateway.audit import AuditTrail
-from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRequest
+from aira_gateway.core.canonical import (
+    CanonicalChunk,
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+)
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
 from aira_gateway.telemetry import model_call_span
@@ -59,6 +68,14 @@ router = APIRouter(tags=["gemini"])
 
 #: The verbs that generate. The embedding verbs are `serving.EMBEDDING_METHODS`.
 GENERATION_METHODS = frozenset({"generateContent", "streamGenerateContent"})
+
+#: What a quiet stream sends to keep its connection (`ADR-0046`): **a bare line**. In SSE a line
+#: with nothing on it ends an event, and with no event pending it ends nothing, so a client
+#: dispatches nothing; between the elements of the JSON array it is whitespace, as Google itself
+#: writes between them. Not an SSE comment, which is what the KIRA surface sends: the `google-genai`
+#: SDK, every version, hands any line that is not `data:` to its JSON parser and raises. Its
+#: JavaScript twin skips a bare line from 1.21 (September 2025) and stalls on one before that.
+KEEPALIVE = "\n"
 
 
 # == model listing ================================================================================
@@ -266,30 +283,40 @@ async def _stream_response(
     A failure after the status went out is sent the way Google sends one: an error element, the
     last event of the SSE stream or the last element of the array. The google-genai SDK raises it
     as an `APIError`; a stream that merely stopped would read as a complete answer.
+
+    **The status waits for the chain no longer than `AIRA_STREAM_KEEPALIVE_SECONDS`**
+    (`ADR-0046`). A model that reads a large context or thinks first produces nothing for minutes,
+    and a proxy or a client that sees no byte for that long closes the connection. So the response
+    then begins anyway, the chain goes on looking for its first chunk — falling back as before —
+    and the stream sends `KEEPALIVE` whenever it has been quiet for that long, before the first
+    chunk and after it. A refusal that comes after that is the stream's last element, like a
+    failure after the first chunk.
     """
+    quiet = keepalive_seconds(request)
     # Before the chain is opened: the wait for a candidate's first chunk is time this request
     # took, and a `started` taken after it would report every stream as faster than it was.
     started = time.monotonic()
     # The caller's request, fitted to each candidate in turn (`fitting`), as on `generateContent`.
-    streamed = await stream_with_fallback(
-        providers_of(request),
-        asked,
-        prepared.fallbacks,
-        permits=await requirements_for(request, asked),
-        routing_of=await declared_routing(request),
-        fit=fitting(request),
+    opening = Opening(
+        stream_with_fallback(
+            providers_of(request),
+            asked,
+            prepared.fallbacks,
+            permits=await requirements_for(request, asked),
+            routing_of=await declared_routing(request),
+            fit=fitting(request),
+        )
     )
     stream = StreamAccounting(
         request,
         trail,
         prepared,
-        streamed,
+        await opening.within(quiet) or opening,
         api="gemini",
         operation="streamGenerateContent",
         started=started,
         shows_reasoning=True,
     )
-    served = streamed.model
 
     async def generate_chunks() -> AsyncGenerator[str]:
         async with stream.accounted():
@@ -297,10 +324,14 @@ async def _stream_response(
             if not sse:
                 yield "["
             try:
-                # The first chunk is already in hand; its own model call is marked where the
-                # request was issued, inside the chain.
-                async for chunk in stream.chunks:
-                    payload = chunk_to_gemini(stream.take(chunk), served).model_dump_json(
+                # The first chunk is in hand, or on its way; its own model call is marked where
+                # the request was issued, inside the chain.
+                async for chunk in with_pings(stream.chunks, quiet):
+                    if chunk is TICK:
+                        yield KEEPALIVE
+                        continue
+                    assert isinstance(chunk, CanonicalChunk)
+                    payload = chunk_to_gemini(stream.take(chunk), stream.model).model_dump_json(
                         exclude_none=True
                     )
                     if sse:
@@ -318,7 +349,12 @@ async def _stream_response(
             stream.delivered()
 
     media_type = "text/event-stream" if sse else "application/json"
-    return AccountedStream(stream, generate_chunks(), media_type=media_type, headers=headers)
+    return AccountedStream(
+        stream,
+        generate_chunks(),
+        media_type=media_type,
+        headers={**(headers or {}), **STREAM_HEADERS},
+    )
 
 
 # == parsing ======================================================================================

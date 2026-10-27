@@ -65,6 +65,10 @@ core:
   # seconds, so the vendor's own figure is booked (`ADR-0041`); the answer is then billed whole.
   # 0 closes it with the caller, and the count below applies.
   drain_left_streams_seconds: 600
+  # The longest a streamed answer leaves its connection silent (`ADR-0046`): the status goes out
+  # after this long even before the model's first word, and a quiet stream sends a keepalive this
+  # often, so a proxy's idle timeout never closes it. 0 sends nothing, as before.
+  stream_keepalive_seconds: 15
   # A stream whose caller left before the vendor said what it used is counted at the vendor's own
   # free endpoint and booked as a floor (`FRD-128` FR-6). Off sends nothing to the vendor a second
   # time — the privacy notice says it does — and such a stream stays unknown.

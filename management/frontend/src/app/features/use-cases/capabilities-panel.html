@@ -68,12 +68,14 @@
           />
           Cache the stable part of each request at the provider
           <app-info-hint label="Prompt caching" testid="prompt-caching" [wide]="true">
-            Marks the tool declarations and the system instruction — measured at 99 % of an
-            assistant's request — so the provider charges a fraction for them on a repeat within
-            five minutes. It changes the price, never the answer, and a model that cannot do it is
-            served normally rather than skipped. Off by default: on Google Cloud the cache is shared
-            across the whole organisation, so a use case whose system prompt is itself confidential
-            should decide for itself.
+            Marks the tool declarations, the system instruction and the conversation so far, so the
+            provider charges a fraction for them on a repeat within five minutes — and reads a long
+            conversation back from its cache instead of anew before the first word. An assistant
+            resends all of it every turn; a request that is never repeated pays about a quarter
+            extra for being written to the cache. It changes the price, never the answer, and a
+            model that cannot do it is served normally rather than skipped. Off by default: on
+            Google Cloud the cache is shared across the whole organisation, so a use case whose
+            system prompt is itself confidential should decide for itself.
           </app-info-hint>
         </label>
 

@@ -5,8 +5,10 @@ and an outage, a refusal or a broken body must read the same on all three: which
 must not decide whether the caller sees a reason, a status or a 500. So the judgement lives here
 once, and a transport only names itself:
 
-    refused         a non-200 answer → `UpstreamError` with its status, and a 400's stated reason
-    unreachable     no answer at all → `UpstreamError` without a status
+    refused         a non-200 answer → `UpstreamError` with its status, and a 400's or 413's stated
+                    reason
+    unreachable     no answer at all → `UpstreamError` without a status, saying who stopped — and
+                    the gateway's own `504`/`503` where it was this gateway's time or pool
     json_object     a 200 whose body is not a JSON object → `UpstreamError` 502
     opened_stream   a streamed request, judged before it is read; a refusal is read for its
                     reason and closed
@@ -49,15 +51,23 @@ def timeout(seconds: float) -> httpx.Timeout:
     return httpx.Timeout(seconds, connect=min(seconds, CONNECT_TIMEOUT_SECONDS))
 
 
+#: The statuses whose stated reason is carried to the caller: both name a fault in the body *we*
+#: built from the caller's request — refused as written, or too large for the provider — which is
+#: the most actionable thing anybody gets.
+_REASON_CARRIED = frozenset({400, 413})
+
+
 def refused(response: httpx.Response, name: str) -> UpstreamError:
     """A non-200 answer, with its status so 429/503/504 pass through for every vendor.
 
-    The provider's reason is carried for a ``400`` only (`upstream_reason`): it names a fault in the
-    body *we* built. A 401/403 is about our credentials and a 5xx is the provider's internal noise.
-    For every status the **cause it stated** rides along (`FRD-141`): its reason word in the
-    message, so a caller can report it, and its explanation on the error, for the operator.
+    The provider's reason is carried for a ``400`` and a ``413`` only (`upstream_reason`): each
+    names a fault in the body *we* built. A 401/403 is about our credentials and a 5xx is the
+    provider's internal noise. For every status the **cause it stated** rides along (`FRD-141`):
+    its reason word in the message, so a caller can report it, and its explanation on the error,
+    for the operator. The message begins with the provider's name, so a reader knows whose answer
+    it was.
     """
-    detail = upstream_reason(response) if response.status_code == 400 else ""
+    detail = upstream_reason(response) if response.status_code in _REASON_CARRIED else ""
     diagnosis = diagnosis_of_response(response)
     said = f" Reason: {diagnosis.reason}." if diagnosis else ""
     return UpstreamError(
@@ -69,10 +79,62 @@ def refused(response: httpx.Response, name: str) -> UpstreamError:
 
 def unreachable(exc: httpx.HTTPError, name: str) -> UpstreamError:
     """No answer, or an answer that broke off: the exception's type, never its text, which can
-    carry a URL with a credential in it — and, where the chain shows it, why (`FRD-141`)."""
+    carry a URL with a credential in it — and, where the chain shows it, why (`FRD-141`).
+
+    Said as **who stopped**, because that is what a caller cannot see: this gateway giving up on a
+    provider that sent nothing for its time limit is not the provider refusing, and an answer the
+    provider broke off is not the gateway failing. Where the gateway stopped, its own status goes
+    with it (`UpstreamError.gateway_status`): `504` for its time limit, `503` for its pool.
+    """
     diagnosis = diagnosis_of_transport(exc)
     said = f" Reason: {diagnosis.reason}." if diagnosis else ""
-    return UpstreamError(f"{name} error: {type(exc).__name__}.{said}", diagnosis=diagnosis)
+    kind = type(exc).__name__
+    waited = _allowance(exc)
+    if isinstance(exc, httpx.ReadTimeout):
+        return UpstreamError(
+            f"AIRA stopped waiting: {name} sent nothing for {waited}, the longest this gateway "
+            f"waits for it.{said}",
+            diagnosis=diagnosis,
+            gateway_status=504,
+        )
+    if isinstance(exc, httpx.WriteTimeout):
+        return UpstreamError(
+            f"AIRA could not finish sending the request to {name} within {waited}.{said}",
+            diagnosis=diagnosis,
+            gateway_status=504,
+        )
+    if isinstance(exc, httpx.PoolTimeout):
+        return UpstreamError(
+            f"AIRA had no free connection to {name} within {waited}: too many requests to it "
+            f"were in flight at once.{said}",
+            diagnosis=diagnosis,
+            gateway_status=503,
+        )
+    if isinstance(exc, httpx.ConnectError | httpx.ConnectTimeout | httpx.ProxyError):
+        return UpstreamError(f"AIRA could not reach {name} ({kind}).{said}", diagnosis=diagnosis)
+    if isinstance(exc, httpx.RemoteProtocolError | httpx.ReadError):
+        return UpstreamError(
+            f"{name} broke off the connection ({kind}).{said}", diagnosis=diagnosis
+        )
+    return UpstreamError(f"{name} error: {kind}.{said}", diagnosis=diagnosis)
+
+
+def _allowance(exc: httpx.HTTPError) -> str:
+    """How long this gateway gave the step that ran out, as httpx recorded it on the request —
+    ``"its time limit"`` where it did not."""
+    try:
+        limits = exc.request.extensions.get("timeout") or {}
+    except RuntimeError:  # httpx raises when an exception carries no request
+        return "its time limit"
+    phases: dict[type[httpx.HTTPError], str] = {
+        httpx.ReadTimeout: "read",
+        httpx.WriteTimeout: "write",
+        httpx.PoolTimeout: "pool",
+        httpx.ConnectTimeout: "connect",
+    }
+    key = phases.get(type(exc))
+    seconds = limits.get(key) if key else None
+    return f"{seconds:g} s" if isinstance(seconds, int | float) else "its time limit"
 
 
 def json_object(response: httpx.Response, name: str) -> dict[str, Any]:

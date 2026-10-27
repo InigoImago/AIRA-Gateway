@@ -186,6 +186,15 @@ traffic starts failing with a 429.
   or a higher price is settled at what it used; a chain does not widen the reservation to its
   costliest candidate. Under concurrency the requests in flight therefore count for less than a
   fallback then spends.
+- **A slow stream that is refused is a `200` with an error at its end** ([`ADR-0046`](adr/ADR-0046-a-stream-is-never-silent-for-long.md)).
+  The status waits for the chain at most `AIRA_STREAM_KEEPALIVE_SECONDS`; a refusal after that is
+  the stream's last element. Stated, because the alternative was a stream silent for minutes.
+- **A region that cannot be reached does not move the regional failover on.** A refused connection
+  or a connect timeout is an `UpstreamError` without a status, and `regions._across_regions` moves
+  on only for a status about the place; the fallback chain still moves on to the next model.
+- **A non-streamed request cannot be kept alive, and one whose caller left is recorded as served.**
+  No byte can precede its status, so a proxy's read timeout bounds the answer; and nothing tells
+  the gateway the caller has gone before it sends the answer, so the row says `served`.
 
 ---
 
@@ -260,6 +269,8 @@ Kept so a closed gap is not reopened by somebody reading an older copy.
 | A request that set no output cap reserved a guess, and a burst booked many times its budget | `FRD-405` §4.2 — what bounds the answer is reserved (the cap sent, else the model's maximum), and a rebuilt counter keeps the reservations still open |
 | A purged use case's members, grants and keys came back on a replay, onto a re-created slug | [`FRD-607`](features/FRD-607-retiring-a-use-case.md) §4.1b — retirement ends each child on the child's own key, and a purge again for a retirement that did not |
 | A stream its caller left booked nothing on most dialects | [`FRD-128`](features/FRD-128-one-post-dispatch-sequence.md) FR-7, `ADR-0041` — the upstream is read to its end and booked at the vendor's last report |
+| A stream was silent until the model's first visible word, and callers behind a proxy were recorded as gone (`499`) | [`ADR-0046`](adr/ADR-0046-a-stream-is-never-silent-for-long.md) — the status goes out within `AIRA_STREAM_KEEPALIVE_SECONDS`, and a quiet stream sends a keepalive |
+| A failure did not say whether AIRA or the provider stopped | `FRD-628` FR-6, `FRD-141` — a message names who acted, AIRA's own time limit is a `504`, the console says where a request ended |
 | The pipeline dry run did not ask a step's model the price condition | `FRD-306` — a dry run's steps meet production's conditions, and it weighs one per step |
 | A `pii_filter` did not reach an embedding | `FRD-309` FR-9 |
 | The approved-model catalog had no pickers | `FRD-307`, with the pickers in `FRD-308` |

@@ -116,16 +116,27 @@ def test_every_mutation_changes_something() -> None:
     assert not inert, f"these mutations replace their anchor with itself: {inert}"
 
 
+def _selects_nothing(selection: str) -> bool:
+    """Whether a selection names a file that is not there — or, for a pytest node id
+    (`file::test`), a test the file does not define, which pytest refuses the same way."""
+    path, _, test = selection.partition("::")
+    if not (ROOT / path).exists():
+        return True
+    return bool(test) and f"def {test.split('[')[0]}(" not in (ROOT / path).read_text()
+
+
 def test_every_test_selection_names_files_that_exist() -> None:
     """A selection naming a deleted file is a mutation checked against a narrower suite than it
     claims. `pytest` refuses a missing path as a usage error, which the harness reads as a run that
     asked the tests nothing: its baseline check stops there, and every property behind that
-    selection goes unchecked until somebody runs the whole set — hours, and not in CI."""
+    selection goes unchecked until somebody runs the whole set — hours, and not in CI. A node id
+    names one test of a file, for a property that only a slow file defends; its test must exist
+    too."""
     missing = [
         f"{mutation.ident} -> {selection}"
         for mutation in _mutations()
         for selection in mutation.tests.split()
-        if not (ROOT / selection).exists()
+        if _selects_nothing(selection)
     ]
 
     assert not missing, (

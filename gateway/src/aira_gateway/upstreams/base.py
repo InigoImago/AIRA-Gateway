@@ -72,6 +72,11 @@ class UpstreamError(Exception):
     meaningful codes like 429/503 through; ``None`` for a transport failure with no response.
     ``diagnosis`` is the cause the provider or the connection stated (`FRD-141`): its reason word
     is in ``message``, its explanation is for the operator's screens and the log.
+
+    ``gateway_status`` is the status a caller is answered with where the provider gave none because
+    **this gateway** stopped: its time limit for an answer (`504`) or its own connection pool
+    (`503`). Not ``status_code``, which decides a regional failover (`regions`) — a second region
+    asked after a time limit would start the same long answer again, and both would be billed.
     """
 
     def __init__(
@@ -79,11 +84,14 @@ class UpstreamError(Exception):
         message: str,
         status_code: int | None = None,
         diagnosis: Diagnosis | None = None,
+        *,
+        gateway_status: int | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.diagnosis = diagnosis
+        self.gateway_status = gateway_status
 
 
 class DialectUnsupported(Exception):
@@ -161,8 +169,11 @@ def stream_failure(error: Any) -> UpstreamError:
     )
     message = details.get("message")
     reason = f" {str(message)[:300]}" if status == 400 and message else ""
+    # Said as the provider's act, so a caller reading it knows whom it is about: the answer had
+    # begun, and the provider ended it.
     return UpstreamError(
-        f"The upstream failed mid-stream{f': {kind}' if kind else ''}.{reason}", status
+        f"The model provider broke off the answer mid-stream{f': {kind}' if kind else ''}.{reason}",
+        status,
     )
 
 

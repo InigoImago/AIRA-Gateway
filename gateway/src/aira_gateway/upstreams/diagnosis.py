@@ -245,6 +245,35 @@ _GOOGLE_STATUS: dict[str, str] = {
     ),
 }
 
+#: The error types of the Messages API — its `error.type`, which Anthropic's models on Vertex
+#: answer with in their own envelope — explained. Each names who has to act, because the word alone
+#: does not: an overloaded model is nobody's fault here and passes, a request too large is the
+#: caller's to shrink.
+_ERROR_TYPES: dict[str, str] = {
+    "overloaded_error": (
+        "The model is overloaded at its provider right now. Not a fault of the request or of this "
+        "installation; retry later, or give the use case a fallback model."
+    ),
+    "rate_limit_error": (
+        "The installation's quota for this model is used up for now. Retry later, or raise the "
+        "quota for the project."
+    ),
+    "request_too_large": (
+        "The request is larger than the provider accepts. Send less: fewer or smaller "
+        "attachments, or a shorter conversation."
+    ),
+    "invalid_request_error": (
+        "The provider refused the request as it was sent; its own message, carried with a 400, "
+        "says what to change."
+    ),
+    "api_error": "The provider failed internally. Retry later.",
+    "authentication_error": "The provider did not accept this installation's credential.",
+    "permission_error": "The provider accepted the credential and refused it this call.",
+    "not_found_error": (
+        "The provider has no such model at this address: check the model id and its region."
+    ),
+}
+
 #: Whatever any platform means by a bare status, for an answer that said nothing more.
 _BY_STATUS: dict[int, tuple[str, str]] = {
     401: ("UNAUTHENTICATED", "The provider did not accept the credential."),
@@ -258,9 +287,19 @@ _BY_STATUS: dict[int, tuple[str, str]] = {
         "The provider has no such model or deployment at this address. Check the name and the "
         "region or endpoint it is reached at.",
     ),
+    413: (
+        "REQUEST_TOO_LARGE",
+        "The request is larger than the provider accepts. Send less: fewer or smaller "
+        "attachments, or a shorter conversation.",
+    ),
     429: (
         "RATE_LIMITED",
         "The provider's quota or rate limit is exhausted for this credential.",
+    ),
+    529: (
+        "OVERLOADED",
+        "The provider is overloaded right now. Not a fault of the request or of this "
+        "installation; retry later.",
     ),
 }
 
@@ -300,7 +339,8 @@ def from_body(body: Any, status: int) -> Diagnosis | None:
     if google_status in _GOOGLE_STATUS:
         return Diagnosis(google_status, _GOOGLE_STATUS[google_status])
 
-    # Azure and the OpenAI dialect: `code` (`DeploymentNotFound`, `model_not_found`) or `type`.
+    # Azure and the OpenAI dialect: `code` (`DeploymentNotFound`, `model_not_found`) or `type`;
+    # Anthropic: `type` (`overloaded_error`).
     for key in ("code", "type"):
         word = error.get(key)
         if isinstance(word, str) and _REASON.match(word):
@@ -309,7 +349,8 @@ def from_body(body: Any, status: int) -> Diagnosis | None:
             # and its support find.
             return Diagnosis(
                 word[:MAX_REASON_LENGTH],
-                fallback.explanation if fallback else "The provider refused.",
+                _ERROR_TYPES.get(word)
+                or (fallback.explanation if fallback else "The provider refused."),
             )
     return _from_status(status)
 
@@ -400,7 +441,18 @@ def from_transport(exc: BaseException) -> Diagnosis | None:
     if any(isinstance(link, httpx.ReadTimeout) for link in chain):
         return Diagnosis(
             "READ_TIMEOUT",
-            f"{host} accepted the connection and did not answer in time.",
+            f"{host} accepted the connection and sent nothing for as long as this gateway waits "
+            "for it, so the gateway stopped waiting. A long answer to a large context, or long "
+            "thinking, takes longer than that when it is not streamed: stream it, or raise the "
+            "platform's timeout (AIRA_VERTEX_TIMEOUT_SECONDS, AIRA_FOUNDRY_TIMEOUT_SECONDS, "
+            "AIRA_OLLAMA_TIMEOUT_SECONDS).",
+        )
+    if any(isinstance(link, httpx.PoolTimeout) for link in chain):
+        return Diagnosis(
+            "POOL_EXHAUSTED",
+            f"Every connection this gateway keeps to {host} was busy for as long as it waits for "
+            "one: too many requests to this platform at once for one instance. Add instances, or "
+            "spread the load.",
         )
     return None
 

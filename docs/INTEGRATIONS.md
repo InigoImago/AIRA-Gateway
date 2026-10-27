@@ -1080,7 +1080,7 @@ as unpriced rather than guessed.
 The console's **Check reachability** asks each region a question that costs nothing, and when the
 answer is no it says why: the cause Google stated, as one word from Google's own list, and what to
 change. Requests that fail the same way carry the word in their error message
-(`Vertex upstream returned 403. Reason: SERVICE_DISABLED.`), so a developer can tell the fault is
+(`Google Vertex AI returned 403. Reason: SERVICE_DISABLED.`), so a developer can tell the fault is
 the installation's and say which; the explanation, with project numbers and permissions, is for
 whoever runs the installation — the check, `/readyz` and the gateway's log. Google's own message is
 never repeated: it can quote the address it was called at.
@@ -2030,6 +2030,15 @@ Timeouts should exceed your slowest model. A self-deployed model cold-starting c
 which is why its own timeout defaults to 300 seconds (`AIRA_OLLAMA_TIMEOUT_SECONDS`, for every
 OpenAI-compatible server); Vertex and Foundry wait 120 (`AIRA_VERTEX_TIMEOUT_SECONDS`,
 `AIRA_FOUNDRY_TIMEOUT_SECONDS`). The shipped console proxy allows 310 seconds on `/gw`.
+
+**A stream needs no longer read timeout than its keepalive.** A model reading a large context or
+thinking says nothing for minutes; a streamed answer therefore sends its status within
+`AIRA_STREAM_KEEPALIVE_SECONDS` (15) and something every 15 seconds while the model is quiet, so an
+idle timeout above that — nginx's default 60 seconds, a load balancer's 30 — never closes it.
+Keep that setting below the shortest idle timeout between your callers and the gateway. A
+**non-streamed** answer has nothing to send before its status: there the read timeout of every
+proxy on the way has to exceed the longest answer, or the caller's request is cut off while the
+model still works — and a client that works with large contexts should stream.
 
 ### The caller's address, through your proxies
 

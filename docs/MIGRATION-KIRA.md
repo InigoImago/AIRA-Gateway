@@ -369,8 +369,11 @@ curl -X POST http://localhost:8001/uc/migration-demo/v1beta/models/gemini-2.5-fl
 #        {"mimeType":"audio/L16;codec=pcm;rate=24000","data":"…"}}]}, …}], …}
 ```
 
-**The stream** sends a `: ping` comment every 15 seconds while the model is quiet, and
-`X-Accel-Buffering: no`, so a proxy neither closes nor buffers it.
+**The stream** sends a `: ping` comment every 15 seconds while the model is quiet — from the moment
+it is asked, so before its first word too, while it reads a large context or thinks — and
+`X-Accel-Buffering: no`, so a proxy neither closes nor buffers it. Its status waits at most those 15
+seconds for the model's first word: a chain whose models all fail later ends the stream without
+`completed`, as a stream that breaks off does. The interval is `AIRA_STREAM_KEEPALIVE_SECONDS`.
 
 ---
 

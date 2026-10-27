@@ -149,7 +149,12 @@ def build_openai_upstreams(settings: GatewaySettings) -> list[Upstream]:
         if server.region:
             check_region(server.region, allowed)
         client = httpx.AsyncClient(base_url=server.url, verify=True)
-        transport = OpenAITransport(client=client, timeout=server.timeout)
+        transport = OpenAITransport(
+            client=client,
+            timeout=server.timeout,
+            # By the name the installation gave it: the one a caller's error message can point at.
+            name=f"The model server '{server.name}'",
+        )
         upstreams.append(
             OpenAIAdapter(
                 transport,

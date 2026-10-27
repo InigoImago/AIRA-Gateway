@@ -104,6 +104,13 @@ says which happened — `skipped` for a condition, `failed` for an attempt.
   the arrival of headers as "the gateway is alive" sees that signal later, and a slow model now
   looks like a slow response rather than a stalled stream. Accepted: the alternative is keeping
   the status code useless on exactly the requests where it matters.
+
+  > **Amended 2026-10-27 (`ADR-0046`).** "A caller waits for the model either way" held for the
+  > caller and not for a proxy between it and the gateway, which closes a connection that carries
+  > nothing — and for Claude the first chunk is the first *visible* word, after minutes of reading
+  > a large context and thinking. Those streams ended as `499`. The status now waits for the chain
+  > at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15), then goes out while the chain keeps falling back,
+  > and a quiet stream sends a keepalive. A refusal that comes in time is still a status.
 - Negative: a per-step chain can cost more than one classifier call for one request. Each attempt
   is audited and billed as `pipeline:<step>` like any other (`FRD-125b`), so the spend is visible;
   what it cannot do is exceed the chain's length.

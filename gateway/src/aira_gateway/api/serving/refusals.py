@@ -42,10 +42,20 @@ REFUSALS = (
 
 #: Upstream statuses passed through to the caller, with their Google status name.
 UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
+    # The provider's request size limit, below this gateway's own: the request is the caller's to
+    # make smaller, and a `502` would have it retried as it is. Its reason goes with it.
+    413: (413, "INVALID_ARGUMENT"),
     429: (429, "RESOURCE_EXHAUSTED"),
     503: (503, "UNAVAILABLE"),
     504: (504, "DEADLINE_EXCEEDED"),
+    # Anthropic's own "overloaded", which Claude on Vertex answers with. `529` means nothing to a
+    # client; *unavailable, try again* is what it says.
+    529: (503, "UNAVAILABLE"),
 }
+
+#: Google's status word for the statuses this gateway answers with where it stopped itself
+#: (`UpstreamError.gateway_status`): its time limit, its connection pool.
+_GATEWAY_STATUS_WORDS = {503: "UNAVAILABLE", 504: "DEADLINE_EXCEEDED"}
 
 #: An upstream **400** means the body we built from this deployment's catalogue is one the model
 #: rejects — a configuration fault an operator can fix, so not `502 UNAVAILABLE`. Only 400: a 401
@@ -63,6 +73,14 @@ _REFUSAL_OUTCOMES: dict[int, Outcome] = {
 }
 
 
+def upstream_answer(exc: UpstreamError) -> tuple[int, str]:
+    """The status a caller is given for an upstream failure: the provider's, mapped — or, where it
+    gave none because this gateway stopped, the gateway's own (`UpstreamError.gateway_status`)."""
+    if exc.status_code is None and exc.gateway_status in _GATEWAY_STATUS_WORDS:
+        return exc.gateway_status, _GATEWAY_STATUS_WORDS[exc.gateway_status]
+    return upstream_status(exc.status_code)
+
+
 def upstream_status(status_code: int | None) -> tuple[int, str]:
     mapped = UPSTREAM_STATUS_MAP.get(status_code or 0)
     if mapped is not None:
@@ -77,12 +95,16 @@ def stream_failure_status(exc: Exception) -> int:
 
     Nobody is sent it — the caller already has a `200` — so it is decided here, alike on every
     surface: the upstream's status where the upstream failed (as `upstream_error` renders it), a
-    refusal's own where it carries one, and `502` for anything else that stopped the stream.
+    refusal's own where it carries one, `400` for a chain that had nothing to offer — what both
+    surfaces answer it with when it is still a status (`ADR-0046`) — and `502` for anything else
+    that stopped the stream.
     """
     if isinstance(exc, UpstreamError):
-        return upstream_status(exc.status_code)[0]
+        return upstream_answer(exc)[0]
     if isinstance(exc, GeminiHTTPError):
         return exc.code
+    if isinstance(exc, NoCapableModel | DialectUnsupported | AmbiguousModel | RegionNotAllowed):
+        return 400
     return 502
 
 

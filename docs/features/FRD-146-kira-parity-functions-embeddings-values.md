@@ -108,7 +108,10 @@ confirm or correct it.
 - **FR-18 Documents before text**, as the predecessor orders a turn, unless the turn carries function
   parts — their order is the conversation's.
 - **FR-19 The stream keeps its connection**: a `: ping` comment every 15 seconds while nothing else
-  was sent, and `X-Accel-Buffering: no`, so a proxy neither closes nor buffers it.
+  was sent, and `X-Accel-Buffering: no`, so a proxy neither closes nor buffers it — **from the
+  moment the model is asked**, not from its first chunk (`ADR-0046`): the silence this is for is
+  the one before a thinking model's first word, and a status that waited for that word kept the
+  connection silent through all of it. The interval is `AIRA_STREAM_KEEPALIVE_SECONDS`.
 - **FR-20 Sampling defaults are a catalogue field**, `default_sampling` (`top_p`, `top_k`), applied
   where the caller sets none, **shipped empty**: the predecessor's `0.8`/`40` are an installation's
   choice, not this gateway's. The model's maximum as the default output cap is
@@ -270,7 +273,7 @@ neither shape had been released.
   (a text of blanks was `EMPTY_EMBEDDING_INPUT` until the second comparison, §14).
 - **Turn order** — documents first in a turn without function parts; an earlier test pinned the
   opposite and was turned round.
-- **Stream** — `api/kira/keepalive.py` reads the model's chunks in one task of its own and sends a
+- **Stream** — `api/serving/keepalive.py` reads the model's chunks in one task of its own and sends a
   comment when fifteen seconds pass without one.
 - **`/ki-usage`** — `ReportingService.by_model(principal.use_cases, …, person=…)`, one grouped
   query; a credential with no person or no use case is answered with nothing rather than with the

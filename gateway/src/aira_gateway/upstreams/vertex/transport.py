@@ -30,8 +30,9 @@ from aira_gateway.upstreams.exchange import (
     unreachable,
 )
 
-#: How this transport names itself in an error: "Vertex upstream returned 429."
-NAME = "Vertex upstream"
+#: How this transport names itself in an error: "Google Vertex AI returned 429." The platform's
+#: own name, so a caller who reads it knows the answer was the provider's, not the gateway's.
+NAME = "Google Vertex AI"
 
 #: What a caller is told when this deployment's own credential fails. The cause — an expired key, a
 #: clock off by minutes — is the operator's to fix and goes to the log; an API caller can do

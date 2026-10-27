@@ -368,7 +368,20 @@ parses anything new:
   the line a developer reads;
 * every response carries `X-AIRA-Request-Id`; an answer carries `X-AIRA-Model`, the model that
   actually answered, and `X-AIRA-Pipeline`, what the use case's pipeline did (`pii_filter=redacted`,
-  `model_route=a>b`, …); a refusal carries `X-AIRA-Reason`.
+  `model_route=a>b`, …); a refusal carries `X-AIRA-Reason`;
+* the message says who acted: the provider by its name (`Google Vertex AI returned 529. Reason:
+  overloaded_error.`), or AIRA where the gateway stopped (`AIRA stopped waiting: …`, a `504`).
+
+**A stream is never silent for long.** A model reading a large context or thinking says nothing for
+minutes, and a proxy between you and AIRA closes a connection that carries nothing. So the status
+of `streamGenerateContent` waits at most 15 seconds for the first chunk, and a quiet stream sends a
+blank line every 15 seconds — which SSE dispatches nothing for, and which is whitespace inside the
+JSON array. The `google-genai` SDK, every version, the AI SDK's Google provider in every major and
+both OpenCode generations read such a stream; so does `@google/genai`, Google's JavaScript SDK,
+**from 1.21.0** (September 2025) — an older one stops at the first blank line with *Incomplete JSON
+segment at the end*. If every model of the chain fails after the status went out, the stream ends
+with Google's error object, which the SDKs raise as an error. `AIRA_STREAM_KEEPALIVE_SECONDS=0`
+turns this off for an installation whose clients cannot take it.
 
 With strict data mode on — the default — the use case's own people cannot read prompts and answers.
 Paste the request id into **Use case → Requests → Request id**: the request's details say, step by

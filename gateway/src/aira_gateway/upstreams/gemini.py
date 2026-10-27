@@ -60,8 +60,9 @@ DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 #: own. Connecting is bounded apart (`exchange.timeout`).
 TIMEOUT_SECONDS = 120.0
 
-#: How this adapter names itself in an error: "Gemini upstream returned 429."
-NAME = "Gemini upstream"
+#: How this adapter names itself in an error: "Google AI Studio returned 429." The platform's own
+#: name, so a caller who reads it knows the answer was the provider's, not the gateway's.
+NAME = "Google AI Studio"
 
 #: This endpoint in the residency vocabulary. It names no region and guarantees none — unlike
 #: Vertex, where the region is in the URL — so it is `global`, which an EU allow-list does not

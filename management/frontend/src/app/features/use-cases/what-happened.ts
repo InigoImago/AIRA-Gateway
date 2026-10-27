@@ -15,9 +15,12 @@ const OUTCOME_SENTENCES: Record<string, string> = {
   model_not_found: 'The model asked for is not known here, or not released to this use case.',
   invalid_request: 'The request was malformed, and was refused before any model was asked.',
   request_too_large: 'The request was larger than the gateway accepts.',
-  upstream_error: 'The model provider answered with an error, or not at all.',
-  internal_error: 'The gateway failed while handling this request.',
-  client_gone: 'The caller went away before the answer was complete.',
+  upstream_error:
+    'The model provider did not deliver an answer: it returned an error or broke the answer off, it could not be reached, or AIRA stopped waiting for it.',
+  internal_error:
+    'AIRA itself failed while handling this request — a defect in the gateway, not the caller’s doing and not the provider’s.',
+  client_gone:
+    'The caller’s connection closed before the answer was complete: the caller cancelled — an assistant does when its user stops it — or a timeout in the client, or in a proxy between the caller and AIRA, closed it.',
   diagnostic:
     'A model check, made to see whether the model answers — not a request of the use case.',
 };
@@ -33,10 +36,31 @@ const OUTCOME_LABELS: Record<string, string> = {
   model_not_found: 'unknown model',
   invalid_request: 'invalid request',
   request_too_large: 'too large',
-  upstream_error: 'upstream error',
-  internal_error: 'gateway error',
-  client_gone: 'caller went away',
+  upstream_error: 'provider error',
+  internal_error: 'AIRA error',
+  client_gone: 'caller left',
   diagnostic: 'model check',
+};
+
+/**
+ * Where a request that was not served ended — the first question a reader has: was it the request,
+ * a rule of AIRA's, AIRA itself, the model provider, or the caller's side of the connection? The
+ * sentence above it says what happened; this says whose it was.
+ */
+const OUTCOME_PARTIES: Record<string, string> = {
+  rate_limited: 'In AIRA, on purpose: a rule of this use case or installation.',
+  budget_exceeded: 'In AIRA, on purpose: a rule of this use case or installation.',
+  suspended: 'In AIRA, on purpose: a rule of this use case or installation.',
+  blocked_by_pipeline: 'In AIRA, on purpose: a rule of this use case or installation.',
+  no_capable_model:
+    'In AIRA’s configuration: the models released to the use case, or the catalogue.',
+  model_not_found:
+    'In the request, or the use case’s configuration: the model named is not served to it.',
+  invalid_request: 'In the request: the caller has to change it.',
+  request_too_large: 'In the request: the caller has to send less.',
+  upstream_error: 'At the model provider — or in AIRA’s wait for it; the lines below say which.',
+  internal_error: 'In AIRA.',
+  client_gone: 'On the caller’s side of the connection.',
 };
 
 /** The pipeline steps by the name a reader knows them under in the builder. */
@@ -77,6 +101,14 @@ export function outcomeSentence(outcome: string | null, status: number): string 
       : `The request ended with status ${status}; this row predates the recorded outcome.`;
   }
   return OUTCOME_SENTENCES[outcome] ?? `The request ended as “${words(outcome)}”.`;
+}
+
+/**
+ * Whose a request's ending was, for one that was not served; `null` for an answer, a model check,
+ * and an outcome the console does not know — saying nothing rather than a guess.
+ */
+export function outcomeParty(outcome: string | null): string | null {
+  return outcome ? (OUTCOME_PARTIES[outcome] ?? null) : null;
 }
 
 /** The short badge for an outcome. */

@@ -1,7 +1,7 @@
 import { Component, computed, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Trace } from '../../core/api/models';
-import { degradedLine, outcomeSentence, storyOf } from './what-happened';
+import { degradedLine, outcomeParty, outcomeSentence, storyOf } from './what-happened';
 
 /**
  * "What happened" in an opened request (`FRD-628` FR-5, FR-7): the outcome in words, the status,
@@ -28,6 +28,7 @@ export class WhatHappenedPanel {
   protected readonly sentence = computed(() =>
     outcomeSentence(this.trace().outcome, this.trace().status),
   );
+  protected readonly party = computed(() => outcomeParty(this.trace().outcome));
   protected readonly story = computed(() => storyOf(this.trace()));
   protected readonly degraded = computed(() => degradedLine(this.trace().degraded));
 }

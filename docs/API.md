@@ -121,12 +121,19 @@ is the `X-AIRA-Reason` header.
 | --- | --- | --- |
 | `X-AIRA-Request-Id` | always | the request's id — its audit row's, which the console's request search and `GET /v1beta/traces/{id}` find |
 | `X-AIRA-Reason` | a refusal | the outcome in lower case, as in `ErrorInfo` |
-| `X-AIRA-Model` | an answer | the model that answered — after routing and fallback |
+| `X-AIRA-Model` | an answer | the model that answered — after routing and fallback; absent on a stream whose status went out before a model answered |
 | `X-AIRA-Pipeline` | a pipeline ran | one `step=action` per step, comma-separated: `injection_filter=passed`, `pii_filter=redacted`, `model_route=a>b` |
 
 Headers, because a client validates the body it parses and ignores a header it does not know: the
 `google-genai` SDK and the AI SDK's Google provider (OpenCode's) read every answer and every
 refusal as before.
+
+**A failure says who acted**, in its first words: the provider by its platform's name
+(`Google Vertex AI returned 529. Reason: overloaded_error.`), or AIRA where the gateway stopped —
+`AIRA stopped waiting: Google Vertex AI sent nothing for 120 s …` is `504 DEADLINE_EXCEEDED`, a
+connection pool with nothing free `503 UNAVAILABLE`. Anthropic's `529` "overloaded" is answered as
+`503 UNAVAILABLE` once the next region was tried, and a provider's `413` as `413 INVALID_ARGUMENT`
+with the provider's reason.
 
 Other refusals' messages say what they need to be acted on: an exhausted fallback chain names every
 model it tried and why each did not answer, keeping the last provider's status; a budget refusal
@@ -178,12 +185,12 @@ thins every span. The guides say the rest.
 | `GET /v1beta/models` | any credential | The models this gateway has an upstream for, as Google's `Model` resource with the verbs each answers and what the catalogue declares about it (`airaCapabilities`, `airaDeclared`, …). One the catalogue holds and has not approved is left out. |
 | `GET /v1beta/models/{model}` | any credential | One model of that list; `404` for any other. |
 | `POST /v1beta/models/{model}:generateContent` | a grant on the use case it is attributed to | The whole answer in one response. Google's request body: a function's parameters as `parameters` (the OpenAPI subset) or `parametersJsonSchema` (JSON Schema, carried as written), not both; an answer's schema as `responseSchema` or `responseJsonSchema`, with `responseMimeType` `application/json`; thinking as `thinkingBudget` or `thinkingLevel`; `tools` as a list or one tool object. |
-| `POST /v1beta/models/{model}:streamGenerateContent` | the same | The answer in chunks: a JSON array, or server-sent events with `?alt=sse`. |
+| `POST /v1beta/models/{model}:streamGenerateContent` | the same | The answer in chunks: a JSON array, or server-sent events with `?alt=sse`. The status waits at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15) for the model's first chunk; a refusal decided later — every model of the chain failed before its first word — arrives as the stream's last element, Google's error object, after a `200`. A blank line whenever the stream was quiet for that long: SSE dispatches nothing for it, and in the array it is whitespace. `X-Accel-Buffering: no`. |
 | `POST /v1beta/models/{model}:embedContent` | the same | `{embedding: {values}}`. |
 | `POST /v1beta/models/{model}:batchEmbedContents` | the same | `{embeddings: [{values}]}`, one per entry of the body's `requests`. |
 | `POST /v1/projects/{project}/locations/{location}/rankingConfigs/{config}:rank` | a grant on the use case it is attributed to | Google's ranking API: `{model, query, records: [{id, title?, content?}], topN?, ignoreRecordDetailsInResponse?}` answered with `{records: [{id, score, title?, content?}]}` in the reranker's order. `model` is required and names a catalogue entry declared `rerank`; the path's project, location and configuration select nothing — the gateway ranks in its own project, at the locations the catalogue gives the model. At most `AIRA_RERANK_MAX_RECORDS` records. Booked as one ranking unit per hundred records: that many requests against a rate limit, and that many units as the input figure the entry's input price applies to. |
 | `POST /kira/api/external/chat` | a grant on the use case it is attributed to | The whole answer in one response, in the predecessor's shape. `tools` declares functions (`{type?: "function", name, description, parameters}`, parameters a JSON Schema object under the predecessor's rule) where the use case enables tool calling; a call comes back as a part `{type: "function_call", id, name, arguments, opaque_metadata}` (`opaque_metadata` `null` or `{thoughtSignature}`), and its result goes back as `{type?: "function_result", call_id, name, result, error?}` in the next request. `usage_data.token_output` leaves out thinking. An answer with no text, no call and no output token is `502 EXTERNAL_KI_API_ERROR`; one that cost output and says nothing is `parts: []`. |
-| `POST /kira/api/external/streaming-chat` | the same | Server-sent events: an `update` per text chunk — none for a `responseSchema` answer, which comes whole in `completed` — a `function_call` event per call, then `completed` with the whole answer and its usage. A `: ping` comment every 15 seconds while nothing else was sent; `X-Accel-Buffering: no`. |
+| `POST /kira/api/external/streaming-chat` | the same | Server-sent events: an `update` per text chunk — none for a `responseSchema` answer, which comes whole in `completed` — a `function_call` event per call, then `completed` with the whole answer and its usage. A `: ping` comment every `AIRA_STREAM_KEEPALIVE_SECONDS` (15) while nothing else was sent — from the moment the model is asked, before its first word too; `X-Accel-Buffering: no`. A stream whose models all failed after that ends without `completed`. |
 | `POST /kira/api/external/embed` | the same | One vector. For a model whose upstream name begins with `gemini-embedding-2`, each text goes as its own part inside its task's prompt (`task: search result \| query: …`), and a list is one embedding of all parts; for any other, a list of texts is joined into one text. |
 | `POST /kira/api/external/rerank` | the same | `{model_id, query, records: [{id, title, content}]}`, every field filled, answered with `{records: [{id, score, title, content}]}` in the reranker's order. `422 NO_RERANKER_CAPABILITIES` for a model not declared `rerank`. Booked as on Google's ranking path. |
 | `GET /kira/api/external/models` | any credential | The served models that have a KIRA id, by that id, with their capabilities (`Chat`, `Embedding`, `Reranker`), limits, thinking (modes and level words, a default, `null` for an undeclared bound) and embedding options. |

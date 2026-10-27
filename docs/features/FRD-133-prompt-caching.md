@@ -113,7 +113,8 @@ confidential it might be. Hence FR-7.
   is stable". One flag on a part, not a separate structure — the same lesson as `FRD-110`'s ordered
   parts. *As built, the marker is request-level:* `cache_prefix` marks the stable prefix — the tool
   declarations and the system instruction — and is set from the use case's configuration, never by
-  the caller (`core/canonical.py`).
+  the caller (`core/canonical.py`). On the Anthropic dialect it marks the conversation so far as
+  well, on its last block (§5.1, amended).
 - **FR-2** Catalog capability `prompt_caching`. Undeclared means unsupported; a candidate that
   cannot do it is **not** skipped — unlike attachments or tools, a missing cache changes the _price_
   and not the _answer_, so the correct behaviour is to serve it uncached and **record that it was
@@ -164,7 +165,15 @@ leave open — _the measurement says don't build it_ — did not happen.
 | Gap between turns         | median **41 s**; 13 of 14 within five minutes         | An ephemeral window survives comfortably      |
 | Input share of tokens     | **93.3 %** (26,610 prompt / 1,924 completion)         | Input caching reaches nearly all of the spend |
 
-### 5.1 It is not the conversation
+### 5.1 It is not the conversation — on a short one
+
+> **Amended 2026-10-27.** True of the 26 turns measured, whose conversations were 47 bytes to
+> 1.6 KB. On a large repository the files an assistant read and its tools' results are hundreds of
+> thousands of tokens — and that is the case where Claude, reading them anew each turn, took
+> minutes before its first word. The conversation is now marked too, on its last block: a third
+> breakpoint of the four, under the same switch and lifetime. A request that is never repeated
+> pays about a quarter extra on it for the write; a conversation's next turn reads it at a tenth.
+> The console's switch says both.
 
 The assumption this feature is usually justified by — _the whole conversation is resent every turn_
 — is **wrong here**, and the correction changes where the marker goes:

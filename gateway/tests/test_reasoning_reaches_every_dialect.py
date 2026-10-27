@@ -21,6 +21,7 @@ mapper that read the field unconditionally would hand every caller a chain of th
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -64,6 +65,41 @@ def _anthropic() -> dict[str, Any]:
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 10, "output_tokens": 40},
     }
+
+
+def _as_stream(message: dict[str, Any]) -> httpx.Response:
+    """A whole answer as `:streamRawPredict` sends it — Anthropic's events, one block at a time —
+    which is how every Claude request is sent now, the ones a caller did not stream included."""
+    usage = dict(message.get("usage") or {})
+    output = usage.pop("output_tokens", 0)
+    events: list[dict[str, Any]] = [
+        {"type": "message_start", "message": {"id": "msg", "role": "assistant", "usage": usage}}
+    ]
+    for index, block in enumerate(message.get("content") or []):
+        kind = block["type"]
+        if kind == "text":
+            start, delta = {**block, "text": ""}, {"type": "text_delta", "text": block["text"]}
+        elif kind == "thinking":
+            start = {**block, "thinking": ""}
+            delta = {"type": "thinking_delta", "thinking": block["thinking"]}
+        else:
+            start = {**block, "input": {}}
+            delta = {"type": "input_json_delta", "partial_json": json.dumps(block["input"])}
+        events += [
+            {"type": "content_block_start", "index": index, "content_block": start},
+            {"type": "content_block_delta", "index": index, "delta": delta},
+            {"type": "content_block_stop", "index": index},
+        ]
+    events += [
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": message.get("stop_reason")},
+            "usage": {"output_tokens": output},
+        },
+        {"type": "message_stop"},
+    ]
+    body = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events)
+    return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
 
 
 @pytest.mark.parametrize(
@@ -165,7 +201,7 @@ async def test_the_vertex_anthropic_adapter_carries_it_too(asked: bool) -> None:
             project="p",
             tokens=StaticTokenSource("t"),
             client=httpx.AsyncClient(
-                transport=httpx.MockTransport(lambda _: httpx.Response(200, json=_anthropic()))
+                transport=httpx.MockTransport(lambda _: _as_stream(_anthropic()))
             ),
         ),
         [VertexModel("eu", "anthropic", "claude-1")],

@@ -88,7 +88,7 @@ async def test_an_api_that_is_not_enabled_says_which_and_where() -> None:
     )
 
     assert error.status_code == 403, "a status is never changed"
-    assert error.message == "Vertex upstream returned 403. Reason: SERVICE_DISABLED."
+    assert error.message == "Google Vertex AI returned 403. Reason: SERVICE_DISABLED."
     assert error.diagnosis is not None
     assert "aiplatform.googleapis.com" in error.diagnosis.explanation
     assert "project 4711" in error.diagnosis.explanation

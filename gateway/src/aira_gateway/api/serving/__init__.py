@@ -11,6 +11,7 @@ and its routes.
     prepare       the pre-dispatch sequence, in its guaranteed order
     accounting    settle and record the request, however it ended
     streaming     the same for a streamed answer, however its connection ended
+    keepalive     a streamed response is never silent for long (`AIRA_STREAM_KEEPALIVE_SECONDS`)
     answers       notices, the structured-output check, response headers
     refusals      which exceptions are refusals, and their statuses and outcomes
 """
@@ -56,6 +57,12 @@ from aira_gateway.api.serving.controls import (
     refuse_unless_live,
     resolve_reasoning,
 )
+from aira_gateway.api.serving.keepalive import (
+    STREAM_HEADERS,
+    TICK,
+    keepalive_seconds,
+    with_pings,
+)
 from aira_gateway.api.serving.pipeline_run import (
     _rewritten_body,
     record_pipeline_calls,
@@ -77,16 +84,20 @@ from aira_gateway.api.serving.refusals import (
     refusal_outcome,
     refusal_reason,
     stream_failure_status,
+    upstream_answer,
     upstream_status,
 )
-from aira_gateway.api.serving.streaming import AccountedStream, StreamAccounting
+from aira_gateway.api.serving.streaming import AccountedStream, Opening, StreamAccounting
 
 __all__ = [
     "EMBEDDING_METHODS",
     "REFUSALS",
+    "STREAM_HEADERS",
+    "TICK",
     "AccountedStream",
     "Accounting",
     "BodyTooComplex",
+    "Opening",
     "Prepared",
     "StreamAccounting",
     "NotAReranker",
@@ -110,6 +121,7 @@ __all__ = [
     "fitting",
     "guard_before_work",
     "json_body",
+    "keepalive_seconds",
     "notice_outcome",
     "prepare_for_dispatch",
     "rank",
@@ -131,9 +143,11 @@ __all__ = [
     "schema_bounds",
     "served_models",
     "stream_failure_status",
+    "upstream_answer",
     "upstream_status",
     "use_case_of",
     "use_case_record",
     "with_notices",
+    "with_pings",
     "withheld_because",
 ]

@@ -555,23 +555,59 @@ def test_every_stop_reason_has_one_canonical_word(
     assert finish_reason(stop_reason) is expected
 
 
+def _as_stream(message: dict[str, Any]) -> httpx.Response:
+    """A whole answer as `:streamRawPredict` sends it — Anthropic's events, one block at a time —
+    which is how every Claude request is sent now, the ones a caller did not stream included."""
+    usage = dict(message.get("usage") or {})
+    output = usage.pop("output_tokens", 0)
+    events: list[dict[str, Any]] = [
+        {"type": "message_start", "message": {"id": "msg", "role": "assistant", "usage": usage}}
+    ]
+    for index, block in enumerate(message.get("content") or []):
+        kind = block["type"]
+        if kind == "text":
+            start, delta = {**block, "text": ""}, {"type": "text_delta", "text": block["text"]}
+        elif kind == "thinking":
+            start = {**block, "thinking": ""}
+            delta = {"type": "thinking_delta", "thinking": block["thinking"]}
+        else:
+            start = {**block, "input": {}}
+            delta = {"type": "input_json_delta", "partial_json": json.dumps(block["input"])}
+        events += [
+            {"type": "content_block_start", "index": index, "content_block": start},
+            {"type": "content_block_delta", "index": index, "delta": delta},
+            {"type": "content_block_stop", "index": index},
+        ]
+    events += [
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": message.get("stop_reason")},
+            "usage": {"output_tokens": output},
+        },
+        {"type": "message_stop"},
+    ]
+    body = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events)
+    return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+
 # -- through the transport ----------------------------------------------------------------------
 
 
-async def test_an_anthropic_request_carries_the_bearer_and_hits_raw_predict() -> None:
+async def test_an_anthropic_request_carries_the_bearer_and_is_sent_as_a_stream() -> None:
+    """A request the caller did not stream is streamed all the same: on `:rawPredict` this
+    gateway's time limit ran out on long answers the model was still writing."""
     seen: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
         seen["auth"] = request.headers.get("authorization")
         seen["body"] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            json={
+        return _as_stream(
+            {
                 "content": [{"type": "text", "text": "hi"}],
                 "stop_reason": "end_turn",
                 "usage": {"input_tokens": 1, "output_tokens": 1},
-            },
+            }
         )
 
     adapter = VertexAnthropicAdapter(
@@ -581,8 +617,126 @@ async def test_an_anthropic_request_carries_the_bearer_and_hits_raw_predict() ->
 
     assert response.text == "hi"
     assert seen["auth"] == "Bearer test-token"
-    assert seen["url"].endswith("/publishers/anthropic/models/claude-1:rawPredict")
+    assert seen["url"].endswith("/publishers/anthropic/models/claude-1:streamRawPredict")
+    assert seen["body"]["stream"] is True
     assert seen["body"]["max_tokens"] == 2048, "max_tokens is required and must always be sent"
+
+
+async def test_a_whole_answer_is_put_together_as_the_provider_sent_it() -> None:
+    """Thoughts, text and a function call, its arguments in fragments, the usage in two halves —
+    read into the answer the non-streamed endpoint would have given, by the one reader of answers
+    this dialect has (`anthropic_to_canonical`)."""
+    message = {
+        "content": [
+            {"type": "thinking", "thinking": "the file first"},
+            {"type": "text", "text": "Reading it."},
+            {"type": "tool_use", "id": "c1", "name": "read", "input": {"path": "hello.py"}},
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+            "input_tokens": 12,
+            "cache_read_input_tokens": 900,
+            "cache_creation_input_tokens": 30,
+            "output_tokens": 41,
+        },
+    }
+    adapter = VertexAnthropicAdapter(
+        _transport(lambda request: _as_stream(message)),
+        [VertexModel("eu", "anthropic", "claude-1")],
+        default_max_tokens=2048,
+    )
+
+    answer = await adapter.generate(_request(include_reasoning=True))
+
+    whole = anthropic_to_canonical(message, "claude-1", include_reasoning=True)
+    assert (answer.text, answer.reasoning, answer.finish_reason) == (
+        whole.text,
+        whole.reasoning,
+        whole.finish_reason,
+    )
+    assert answer.tool_calls == whole.tool_calls
+    assert answer.tool_calls[0].arguments == {"path": "hello.py"}
+    assert answer.usage == whole.usage
+    assert (answer.usage.prompt_tokens, answer.usage.completion_tokens) == (942, 41)
+
+
+async def test_an_answer_the_provider_cut_off_is_its_failure_not_a_shorter_answer() -> None:
+    """No `message_stop`: the connection ended inside the answer. Returned as it stood, the caller
+    would take half an answer for a whole one."""
+
+    def cut_off(request: httpx.Request) -> httpx.Response:
+        whole = _as_stream({"content": [{"type": "text", "text": "half"}], "usage": {}}).text
+        return httpx.Response(
+            200,
+            text=whole.split("event: message_delta")[0],
+            headers={"content-type": "text/event-stream"},
+        )
+
+    adapter = VertexAnthropicAdapter(
+        _transport(cut_off), [VertexModel("eu", "anthropic", "claude-1")], default_max_tokens=2048
+    )
+
+    with pytest.raises(UpstreamError) as caught:
+        await adapter.generate(_request())
+    assert caught.value.status_code == 502
+    assert "before it was complete" in caught.value.message
+
+
+async def test_an_answer_overloaded_inside_its_stream_is_the_providers_and_says_so() -> None:
+    """Not a stream that merely ended: the provider said why, and the caller is told — `503`,
+    *overloaded*, which a client retries — rather than `502`, *incomplete*."""
+    overloaded = (
+        "event: message_start\n"
+        'data: {"type": "message_start", "message": {"usage": {"input_tokens": 3}}}\n\n'
+        "event: error\n"
+        'data: {"type": "error", "error": {"type": "overloaded_error", "message": "Over"}}\n\n'
+    )
+    adapter = VertexAnthropicAdapter(
+        _transport(
+            lambda request: httpx.Response(
+                200, text=overloaded, headers={"content-type": "text/event-stream"}
+            )
+        ),
+        [VertexModel("eu", "anthropic", "claude-1")],
+        default_max_tokens=2048,
+    )
+
+    with pytest.raises(UpstreamError) as caught:
+        await adapter.generate(_request())
+    assert caught.value.status_code == 503
+    assert caught.value.message == (
+        "The model provider broke off the answer mid-stream: overloaded_error."
+    )
+
+
+async def test_an_answer_overloaded_inside_its_stream_moves_to_the_next_region() -> None:
+    """Overloaded after the stream began is overloaded all the same — and nothing of it reached a
+    caller who did not stream, so the next region may answer, as it does for a `529`."""
+    asked: list[str] = []
+    overloaded = (
+        "event: message_start\n"
+        'data: {"type": "message_start", "message": {"usage": {"input_tokens": 3}}}\n\n'
+        "event: error\n"
+        'data: {"type": "error", "error": {"type": "overloaded_error", "message": "Over"}}\n\n'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        region = request.url.host.split("-aiplatform")[0]
+        asked.append(region)
+        if region == "europe-west1":
+            return httpx.Response(
+                200, text=overloaded, headers={"content-type": "text/event-stream"}
+            )
+        return _as_stream({"content": [{"type": "text", "text": "answered"}], "usage": {}})
+
+    adapter = VertexAnthropicAdapter(_transport(handler), [], default_max_tokens=2048)
+
+    answer = await adapter.generate(
+        _request("claude-2", addressing={"regions": ["europe-west1", "europe-west4"]})
+    )
+
+    assert asked == ["europe-west1", "europe-west4"]
+    assert (answer.text, answer.served_region) == ("answered", "europe-west4")
 
 
 async def test_the_callers_own_output_bound_wins_over_the_default() -> None:
@@ -590,7 +744,7 @@ async def test_the_callers_own_output_bound_wins_over_the_default() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"content": [], "usage": {}})
+        return _as_stream({"content": [], "usage": {}})
 
     adapter = VertexAnthropicAdapter(
         _transport(handler), [VertexModel("eu", "anthropic", "claude-1")], default_max_tokens=2048

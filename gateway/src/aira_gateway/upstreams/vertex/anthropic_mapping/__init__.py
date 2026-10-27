@@ -4,7 +4,8 @@ Pure functions, no I/O, tested without HTTP — the same shape as `gemini_mappin
 
     request    canonical → a Messages body: roles, system prompt, thinking, tools, caching
     schema     our response schema in the shape this API requires, and what it cannot express
-    response   answers and the streamed event sequence → canonical
+    response   answers and the streamed event sequence → canonical, and the events of an answer
+               nobody streamed → the message they make up
 
 Every difference from the Gemini dialect is a mapping this package owns:
 
@@ -23,6 +24,7 @@ from aira_gateway.upstreams.vertex.anthropic_mapping.request import (
 )
 from aira_gateway.upstreams.vertex.anthropic_mapping.response import (
     SCHEMA_UNSATISFIED,
+    MessageAssembler,
     StreamAssembler,
     answer_text,
     anthropic_to_canonical,
@@ -43,6 +45,7 @@ __all__ = [
     "SAMPLING",
     "SCHEMA_UNSATISFIED",
     "UNSUPPORTED_SCHEMA_FIELDS",
+    "MessageAssembler",
     "StreamAssembler",
     "answer_text",
     "anthropic_to_canonical",

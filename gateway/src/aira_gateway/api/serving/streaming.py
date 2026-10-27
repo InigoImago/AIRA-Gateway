@@ -10,19 +10,21 @@ What a stream's ending means is the same on every surface, so it is decided here
                                 settled at that floor — otherwise unknown, and the reservation goes
                                 back
 
-A surface writes only its wire format. Inside :meth:`StreamAccounting.accounted` it passes each
-chunk through :meth:`~StreamAccounting.take` and says whether the stream was
-:meth:`~StreamAccounting.delivered` or :meth:`~StreamAccounting.broke_off`; then it returns an
-:class:`AccountedStream`, which sees the accounting run however the response ends — finished,
-cancelled inside the body, cancelled while a frame was being sent, or cancelled before the body
-began. The body itself cannot see the last two.
+A surface writes only its wire format. It opens the dispatch chain through :class:`Opening`, which
+waits for a first chunk no longer than a caller can be kept without a byte (`ADR-0046`). Inside
+:meth:`StreamAccounting.accounted` it passes each chunk through :meth:`~StreamAccounting.take` and
+says whether the stream was :meth:`~StreamAccounting.delivered` or
+:meth:`~StreamAccounting.broke_off`; then it returns an :class:`AccountedStream`, which sees the
+accounting run however the response ends — finished, cancelled inside the body, cancelled while a
+frame was being sent, or cancelled before the body began. The body itself cannot see the last two.
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
-from contextlib import ExitStack, asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Coroutine, Mapping
+from contextlib import ExitStack, asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import Request
@@ -43,11 +45,77 @@ from aira_gateway.api.serving.refusals import (
 from aira_gateway.audio import AudioDigest
 from aira_gateway.audit import AuditTrail
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalUsage, ToolCallPart
-from aira_gateway.pipeline.dispatch import Streaming
+from aira_gateway.explaining import MODEL_HEADER, withhold
+from aira_gateway.pipeline.dispatch import Streaming, passed_over_by
 from aira_gateway.shielding import uninterrupted
 from aira_gateway.state import drains_of, settings_of
 
 _log = get_logger("aira_gateway")
+
+
+class Opening:
+    """The dispatch chain of a streamed request, looking for the candidate whose first chunk opens
+    the stream (`ADR-0032`) — and waited for no longer than a caller can be kept without a byte
+    (`ADR-0046`).
+
+    The chain runs as a task of its own from the moment it is made. :meth:`within` waits for it;
+    what the chain decides in that time is what it always was — a stream, or a refusal the surface
+    still answers with a status. A chain that has not decided by then **goes on deciding**: the
+    response begins without it, and this object is what the response reads, its first chunk
+    arriving whenever a candidate produces one. Until then the chain still moves on from a
+    candidate that fails, because nothing of any model has reached the caller; what changed is only
+    that a refusal is now the stream's last element rather than its status.
+
+    Iterated like the stream it opens, and closed like it: closing it before the chain has decided
+    stops the chain, and closing it after closes the stream the chain opened.
+    """
+
+    def __init__(self, chain: Coroutine[Any, Any, Streaming]) -> None:
+        self._task: asyncio.Future[Streaming] = asyncio.ensure_future(chain)
+        self._streamed: Streaming | None = None
+        #: Told which candidate opened the stream, before its first chunk is handed over.
+        self.on_open: Callable[[Streaming], None] | None = None
+
+    async def within(self, seconds: float | None) -> Streaming | None:
+        """The opened stream, if the chain opened one within ``seconds``; a refusal it raised in
+        that time is raised here, where it is still a status. ``None``: still looking. With no
+        ``seconds`` — keepalives switched off — the chain is waited for, however long it takes."""
+        try:
+            done, _ = await asyncio.wait({self._task}, timeout=seconds)
+        except asyncio.CancelledError:
+            await self.aclose()
+            raise
+        if not done:
+            return None
+        self._streamed = self._task.result()
+        return self._streamed
+
+    def __aiter__(self) -> Opening:
+        return self
+
+    async def __anext__(self) -> CanonicalChunk:
+        if self._streamed is None:
+            # A refusal the chain raises is raised here, by the reader, as the stream's failure.
+            self._streamed = await self._task
+            if self.on_open is not None:
+                self.on_open(self._streamed)
+        return await anext(self._streamed.chunks)
+
+    async def aclose(self) -> None:
+        """Stop the chain if it is still looking; close the stream it opened if it found one."""
+        if not self._task.done():
+            self._task.cancel()
+            # Waited for, not awaited: the chain closes the candidate it was opening before this
+            # returns, and a cancellation of the caller is still delivered to the caller.
+            await asyncio.wait({self._task})
+        # `exception()` retrieves it either way, so a refusal nobody read is not reported as lost.
+        if not self._task.cancelled() and self._task.exception() is None and self._streamed is None:
+            self._streamed = self._task.result()
+        if self._streamed is not None:
+            close = getattr(self._streamed.chunks, "aclose", None)
+            if close is not None:
+                with suppress(Exception):
+                    await close()
 
 
 class StreamAccounting:
@@ -58,17 +126,15 @@ class StreamAccounting:
         request: Request,
         trail: AuditTrail,
         prepared: Prepared,
-        streamed: Streaming,
+        streamed: Streaming | Opening,
         *,
         api: str,
         operation: str,
         started: float,
         shows_reasoning: bool = False,
     ) -> None:
-        self.model = streamed.model
-        #: The upstream's chunks, read by a task of their own (`pump`): what the vendor sends is
-        #: observed as it arrives, and a stream whose caller left can be read to its end.
-        self.chunks = Pump(streamed.chunks, self._observe)
+        #: The model that answered, once a candidate has; until then the one asked first.
+        self.model = streamed.model if isinstance(streamed, Streaming) else prepared.model
         self.usage: CanonicalUsage | None = None
         self.finish_reason: str | None = None
         self._request = request
@@ -92,19 +158,41 @@ class StreamAccounting:
         # count when the caller leaves before the vendor says what it used (`counting`).
         self._answer: list[str] = []
         self._calls: list[ToolCallPart] = []
-        self._provider = streamed.provider
-        self._sent = streamed.sent
-        self._opened_in = streamed.region
+        #: Who answered and with what request — known once a candidate opened the stream.
+        self._provider: Any = None
+        self._sent: Any = None
+        self._opened_in = ""
         self._audio = AudioDigest()
         self._region_seen = False
         self._failure: Exception | None = None
         self._delivered = False
         self._payload: dict[str, Any] | None = None
-        # Recorded now, because this is where it is known: the end of the stream is not reached by
-        # a caller who leaves. The model is the one that answered — for a fallback, not the one
-        # the caller named.
-        trail.served_by(streamed.model, streamed.candidate_index)
-        trail.passed_over(streamed.skipped, streamed.failed)
+        if isinstance(streamed, Opening):
+            # The response begins before any model answered (`ADR-0046`), so its headers cannot
+            # name one: a fallback may yet answer instead of the model asked first.
+            withhold(request.state, MODEL_HEADER)
+            streamed.on_open = self._opened
+            source: AsyncIterator[CanonicalChunk] = streamed
+        else:
+            self._opened(streamed)
+            source = streamed.chunks
+        #: The upstream's chunks, read by a task of their own (`pump`): what the vendor sends is
+        #: observed as it arrives, and a stream whose caller left can be read to its end.
+        self.chunks = Pump(source, self._observe)
+
+    def _opened(self, streamed: Streaming) -> None:
+        """A candidate produced the first chunk: it is the model that answers.
+
+        Recorded now, because this is where it is known: the end of the stream is not reached by a
+        caller who leaves. The model is the one that answered — for a fallback, not the one the
+        caller named.
+        """
+        self.model = streamed.model
+        self._provider = streamed.provider
+        self._sent = streamed.sent
+        self._opened_in = streamed.region
+        self._trail.served_by(streamed.model, streamed.candidate_index)
+        self._trail.passed_over(streamed.skipped, streamed.failed)
 
     @property
     def text(self) -> str:
@@ -154,11 +242,20 @@ class StreamAccounting:
         self._payload = payload
 
     def broke_off(self, exc: Exception) -> None:
-        """The stream ended in a failure after its status had gone out."""
+        """The stream ended in a failure after its status had gone out.
+
+        Either the model that answered broke off, or — on a response that had to begin before any
+        model answered (`ADR-0046`) — the chain ran out of candidates. The second says whom it
+        tried and passed over, as a refusal's row does (`FRD-302` FR-11).
+        """
         self._failure = exc
+        chain = passed_over_by(exc)
+        if chain is not None:
+            self._trail.passed_over(list(chain.skipped), list(chain.failed))
         _log.error(
             "upstream_stream_error",
             error=str(exc),
+            error_type=type(exc).__name__,
             status=getattr(exc, "status_code", None),
             model=self.model,
         )

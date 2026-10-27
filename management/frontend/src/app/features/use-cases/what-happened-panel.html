@@ -5,6 +5,13 @@
     <span class="muted text-sm" data-testid="outcome-status">HTTP {{ trace().status }}</span>
   </p>
 
+  @if (party(); as where) {
+    <!-- Whose the ending was: the request, a rule, AIRA, the provider, or the caller's side. -->
+    <p class="what-happened__party text-sm" data-testid="outcome-party">
+      <span class="muted">Where it ended:</span> {{ where }}
+    </p>
+  }
+
   @if (trace().error; as message) {
     <!-- The caller's own message, word for word: it is what they saw, and what they will quote. -->
     <div class="what-happened__message">

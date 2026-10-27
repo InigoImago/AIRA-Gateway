@@ -350,6 +350,14 @@ reading code.
   the next person, which is worse than its absence. The counterpart is cheap: apply it, or assert
   the two copies are equal.
 
+  *An eleventh, and like the tenth the wire was **when**.* The KIRA stream's keepalive existed
+  *"for a thinking model that says nothing for a minute before its first word"*, and the stream's
+  status waited for that first word (`ADR-0032`): the keepalive started after the silence it was
+  written for, and the Gemini surface had none. Claude, reading a large context and thinking, was
+  minutes of that silence; proxies closed the connection, and the rows said the callers had left.
+  Both halves were tested — the keepalive with a chunk already in hand, the chain without a clock —
+  and nothing asked when the first starts relative to the second. **Test such a wire by watching
+  it**: what leaves the application, in order, while the far end is made to wait.
 - **The explanation that fits every symptom is not the cause — ask the far end.** An embedding model
   recorded no tokens and therefore no cost, and *"this runtime does not report usage"* accounted for
   all of it: the NULL columns, the unpriced counter, the `0.00` on screen. It was false. One `curl`
@@ -1226,6 +1234,13 @@ reading code.
   default existed*, *for the non-streamed verb* — because the copy nobody re-reads is the one that
   keeps being quoted.
 
+  Twice more, found by one report of `499`s on Claude with large contexts: `ADR-0032` accepted a
+  stream's silent wait with *"a caller waits for the model either way"* — true of the caller, not
+  of a proxy between it and the gateway — and `FRD-133` §5.1 marked no cache in the conversation
+  because *"it is not the conversation"*, measured on conversations of 47 bytes to 1.6 KB. On a
+  large repository the conversation is nearly all of it. **A measurement is a reason for the
+  sizes it measured**; write them into the sentence it justifies.
+
 ## 2. Evidence and the audit trail
 
 - **The log records what was *asked*, not only what was served.** A refused request that leaves no
@@ -1794,6 +1809,13 @@ reading code.
   the configuration — written for a host that never says when it is ready: **what a host shows
   before it has done anything is not yet its answer; ask again, and say nothing until it has had
   its turn.**
+
+  *And what a client skips is a fact to measure, per generation.* An SSE comment is ignored by
+  every parser that follows the specification — and the `google-genai` SDK, every version from 1.0
+  to 2.17, hands a comment line to its JSON parser and raises; `@google/genai` before 1.21 stalls
+  on a blank line. The keepalive the Gemini surface sends was chosen by running each generation
+  against a stream that actually carried keepalives, and the test asserts that they were sent: a
+  stream that was never quiet proves nothing about what a client does when it is.
 - **Keeping a provider's text out must not keep its cause out.** The model check reported the
   exception's type, rightly refusing to repeat a message that can quote a URL with a key in it — and
   so answered *Not reachable (UpstreamError)* to an API not enabled, a missing role, a model not in

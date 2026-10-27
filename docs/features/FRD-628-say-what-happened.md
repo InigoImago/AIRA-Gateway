@@ -41,7 +41,9 @@ not stored at all.
   is the audit row's id, which the console and `GET /v1beta/traces/{id}` find.
 - **FR-2 — What the pipeline did, on a served answer.** `X-AIRA-Model`: the model that answered.
   `X-AIRA-Pipeline`: one `step=action` per step that ran, comma-separated (`model_route=a>b` for a
-  re-route). Both exposed to browsers (CORS).
+  re-route). Both exposed to browsers (CORS). A stream whose response had to begin before any
+  model answered (`ADR-0046`) carries no `X-AIRA-Model`: a fallback may yet answer, and the chunks
+  and the row name the one that did.
 - **FR-3 — Which control refused.** `X-AIRA-Reason` on every refusal, one word from a closed list
   (`blocked_by_pipeline`, `budget_exceeded`, …, the audit's own outcome words). On the Gemini surface
   also Google's own form: `error.details` with one `google.rpc.ErrorInfo` (`reason` in upper case,
@@ -52,10 +54,18 @@ not stored at all.
 - **FR-5 — The details explain.** `GET /v1beta/traces/{id}` adds `pipeline_decisions` (the stored, content-free
   summary), `degraded` and `error`. The console renders the outcome in words, a timeline of the
   decisions — steps with their verdicts, routes, redactions, each candidate tried or skipped and why
-  — and the caller's message; and a field to find a request by its id.
+  — and the caller's message; and a field to find a request by its id. For a request that was not
+  served it says first **where it ended**: in the request, in a rule of AIRA's, in AIRA's
+  configuration, in AIRA itself, at the model provider, or on the caller's side of the connection —
+  the owner's question about every failure, *was it AIRA or the provider?*
 - **FR-6 — Better messages where they said too little.** An exhausted chain names every candidate and
   why it failed; a budget refusal names when the period resets and whether the limit is spent or this
-  request's estimate is too large to fit; a body too large names the limit.
+  request's estimate is too large to fit; a body too large names the limit. A failure says **who
+  acted** in its first words: the provider by its platform's name (`Google Vertex AI returned 529.`,
+  `The model provider broke off the answer mid-stream: …`), or AIRA where the gateway stopped
+  (`AIRA stopped waiting: Google Vertex AI sent nothing for 120 s …`, `AIRA could not reach …`,
+  `AIRA had no free connection …`) — and the status follows: the gateway's own `504` or `503` where
+  it stopped, never the masked `502` that reads as the provider being down.
 - **FR-7 — From a request to the pipeline's test.** A row a pipeline decided about links to the
   use case's pipeline test, to try it with text of one's own where the original cannot be read.
 

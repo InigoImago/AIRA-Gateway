@@ -30,6 +30,7 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.core.schema import ResponseSchema
 from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError, UpstreamModel
+from aira_gateway.upstreams.exchange import sse_payloads
 from aira_gateway.upstreams.gemini_mapping import (
     SAMPLING as GEMINI_SAMPLING,
 )
@@ -53,6 +54,7 @@ from aira_gateway.upstreams.vertex.anthropic_mapping import (
     SAMPLING as ANTHROPIC_SAMPLING,
 )
 from aira_gateway.upstreams.vertex.anthropic_mapping import (
+    MessageAssembler,
     StreamAssembler,
     anthropic_to_canonical,
     canonical_to_anthropic,
@@ -77,7 +79,7 @@ from aira_gateway.upstreams.vertex.regions import (
     _open_stream,
     _targets,
 )
-from aira_gateway.upstreams.vertex.transport import VertexTransport
+from aira_gateway.upstreams.vertex.transport import NAME, VertexTransport
 
 GEMINI_METHODS = ("generateContent", "streamGenerateContent", "embedContent")
 #: Anthropic and the open models have no embedding endpoint here; the capability declaration
@@ -357,7 +359,13 @@ class VertexGeminiAdapter(_VertexAdapter):
 
 
 class VertexAnthropicAdapter(_VertexAdapter):
-    """Anthropic models on Vertex: `:rawPredict`, and a different body in both directions."""
+    """Anthropic models on Vertex: `:streamRawPredict`, and a different body in both directions.
+
+    **Every request is sent as a stream**, the ones the caller did not stream included: a long
+    answer — a large context read, long thinking, a file written through a tool — takes longer
+    than `AIRA_VERTEX_TIMEOUT_SECONDS`, and on `:rawPredict` that limit ran out on an answer the
+    model was still writing, while a stream carries something the whole time (`MessageAssembler`).
+    """
 
     serves_publisher = "anthropic"
     _methods = ANTHROPIC_METHODS
@@ -390,17 +398,27 @@ class VertexAnthropicAdapter(_VertexAdapter):
         return anthropic_schema_refusal(schema)
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
-        body = self._body(request)
+        """The answer whole, read from a stream (class docstring). A failure inside it — the
+        provider overloaded before it finished — is a failure of this region, which the next one
+        may serve: nothing of it has reached the caller."""
+        body = {**self._body(request), "stream": True}
 
         async def attempt(region: str, publisher: str) -> CanonicalResponse:
             url = self._transport.url(
                 region=region,
                 publisher=publisher,
                 model=request.model,
-                method="rawPredict",
+                method="streamRawPredict",
                 wire_model=wire_name(request.model, request.addressing),
             )
-            data = await self._transport.post(url, body)
+            assembler = MessageAssembler()
+            async with (
+                self._transport.stream(url, body) as response,
+                aclosing(sse_payloads(response, NAME)) as payloads,
+            ):
+                async for payload in payloads:
+                    assembler.feed(payload)
+            data = assembler.message()
             # Told whether a schema was asked for, so an answer that is not the document is
             # refused as `SCHEMA_UNSATISFIED` rather than returned as prose.
             answer = anthropic_to_canonical(

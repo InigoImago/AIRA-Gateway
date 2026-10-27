@@ -87,6 +87,16 @@ def canonical_to_anthropic(
             continue
         messages.append({"role": role, "content": blocks})
 
+    if request.cache_prefix and messages:
+        # **The conversation so far**, on its last block — the third of the four breakpoints a
+        # request may carry. A coding assistant's context grows turn by turn: the files it read,
+        # the results of its tools. Each turn resends all of it and appends to the end, so
+        # everything up to this block is the prefix of the next request. Unmarked, every turn paid
+        # the whole conversation at full price, and the provider read it anew before the first
+        # word — minutes, on a large context. Marked, the next turn reads it at a tenth and
+        # writes only what it added.
+        messages[-1]["content"][-1]["cache_control"] = _cache_control(request)
+
     body: dict[str, Any] = {
         "anthropic_version": ANTHROPIC_VERSION,
         "messages": messages,

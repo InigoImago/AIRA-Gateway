@@ -10,6 +10,12 @@
   margin: 0.25rem 0 0.5rem;
 }
 
+/* Where a request that was not served ended — the request, a rule, AIRA, the provider, the caller's
+ * side — read right after the outcome, so it sits close under it. */
+.what-happened__party {
+  margin: -0.25rem 0 0.5rem;
+}
+
 /* A caller's message is long and may hold an unbroken id or URL: it wraps rather than widening the
  * table, and keeps its own line breaks. */
 /* The block that holds the caller's message and its label, spaced like the outcome above it. */

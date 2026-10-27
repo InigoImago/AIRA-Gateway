@@ -79,9 +79,9 @@ describe('WhatHappenedPanel — the outcome', () => {
     ['model_not_found', 404, 'The model asked for is not known here'],
     ['invalid_request', 400, 'The request was malformed'],
     ['request_too_large', 413, 'larger than the gateway accepts'],
-    ['upstream_error', 502, 'The model provider answered with an error'],
-    ['internal_error', 500, 'The gateway failed'],
-    ['client_gone', 499, 'The caller went away'],
+    ['upstream_error', 502, 'The model provider did not deliver an answer'],
+    ['internal_error', 500, 'AIRA itself failed'],
+    ['client_gone', 499, 'The caller’s connection closed before the answer was complete'],
     ['diagnostic', 200, 'A model check'],
   ];
 
@@ -105,6 +105,38 @@ describe('WhatHappenedPanel — the outcome', () => {
     expect(
       render({ outcome: null, status: 502 }).testid('outcome-sentence')?.textContent,
     ).toContain('status 502');
+  });
+
+  // Whose the ending was, before anything else is read: the owner's question about every failure —
+  // was it AIRA, the provider, or the request?
+  const parties: [string, number, string][] = [
+    ['rate_limited', 429, 'In AIRA, on purpose'],
+    ['budget_exceeded', 429, 'In AIRA, on purpose'],
+    ['suspended', 429, 'In AIRA, on purpose'],
+    ['blocked_by_pipeline', 400, 'In AIRA, on purpose'],
+    ['no_capable_model', 400, 'In AIRA’s configuration'],
+    ['model_not_found', 404, 'In the request, or the use case’s configuration'],
+    ['invalid_request', 400, 'In the request'],
+    ['request_too_large', 413, 'In the request'],
+    ['upstream_error', 503, 'At the model provider'],
+    ['internal_error', 500, 'In AIRA.'],
+    ['client_gone', 499, 'On the caller’s side of the connection'],
+  ];
+
+  for (const [outcome, status, words] of parties) {
+    it(`says where ${outcome} ended`, () => {
+      const shown = render({ outcome, status, model: '' }).testid('outcome-party');
+      // Where it ended comes first, and nothing else does: a provider's failure placed "In AIRA"
+      // is the very confusion this line exists to end.
+      const said = shown?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+      expect(said.startsWith(`Where it ended: ${words}`)).toBe(true);
+    });
+  }
+
+  it('says no party for an answer, a model check, or an outcome it does not know', () => {
+    for (const outcome of ['served', 'diagnostic', 'quota_moved']) {
+      expect(render({ outcome, status: 200 }).testid('outcome-party')).toBeNull();
+    }
   });
 
   it('shows the message the caller was given, whole and as text', () => {

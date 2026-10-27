@@ -102,6 +102,12 @@ class GatewaySettings(BaseAiraSettings):
     #: is finished — and billed whole, which can cost more than one stopped early — and the booking
     #: is the vendor's own. `0` closes it at once and falls back to the count above.
     drain_left_streams_seconds: float = Field(default=600.0, ge=0, allow_inf_nan=False)
+    #: The longest a streamed response stays silent (`ADR-0046`): its status waits this long for a
+    #: model's first chunk and then goes out anyway, and a quiet stream sends a keepalive after this
+    #: long. A model reading a large context or thinking says nothing for minutes, and a proxy or a
+    #: client that sees no byte for its own timeout closes the connection — recorded as a caller who
+    #: left. `0` sends nothing: the status waits for the first chunk, as it once did.
+    stream_keepalive_seconds: float = Field(default=15.0, ge=0, allow_inf_nan=False)
     #: Anomaly detection (`FRD-501`). Off evaluates nothing; authored rules stay authored.
     detect_anomalies: bool = True
     #: Whether a suspension stops traffic (`FRD-503`). Off records findings and refuses nobody.

@@ -259,6 +259,56 @@ def test_the_marker_lands_on_the_system_block_and_the_last_tool() -> None:
     assert "cache_control" not in body["tools"][0], "one breakpoint per tool exhausts the budget"
 
 
+def test_the_conversation_so_far_is_marked_on_its_last_block() -> None:
+    """**The third breakpoint: the conversation.** §5.1 measured short conversations — 47 bytes to
+    1.6 KB — beside 31 KB of tools and system prompt. A coding assistant on a large repository
+    turns that round: the files it read and its tools' results are hundreds of thousands of tokens,
+    resent every turn and appended to at the end. Unmarked, each turn paid all of it at full price
+    and the provider read it anew before the first word; marked on its last block, the next turn
+    reads everything up to here from the cache (`ADR-0046`'s context)."""
+    from aira_gateway.core.canonical import CanonicalMessage, Role, ToolCallPart, ToolResultPart
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    turns = [
+        CanonicalMessage(role=Role.SYSTEM, text="You are a coding assistant."),
+        CanonicalMessage(role=Role.USER, text="read hello.py"),
+        CanonicalMessage(
+            role=Role.MODEL,
+            parts=[ToolCallPart(id="c1", name="read", arguments={"path": "hello.py"})],
+        ),
+        CanonicalMessage(
+            role=Role.USER,
+            parts=[ToolResultPart(call_id="c1", name="read", content='print("hello")')],
+        ),
+    ]
+    body = canonical_to_anthropic(_request(messages=turns, cache_prefix=True), max_tokens=256)
+
+    last = body["messages"][-1]["content"][-1]
+    assert last["type"] == "tool_result"
+    assert last["cache_control"] == {"type": "ephemeral"}
+    earlier = [block for message in body["messages"][:-1] for block in message["content"]]
+    assert all("cache_control" not in block for block in earlier)
+    markers = (
+        sum("cache_control" in block for block in body["system"])
+        + sum("cache_control" in tool for tool in body["tools"])
+        + sum("cache_control" in block for m in body["messages"] for block in m["content"])
+    )
+    assert markers == 3, "Anthropic refuses a fifth breakpoint; three leave one to spare"
+
+
+def test_the_conversation_is_kept_as_long_as_the_rest() -> None:
+    """One lifetime for every marker: a longer one after a shorter one is refused by the provider,
+    and the use case chose one."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    body = canonical_to_anthropic(_request(cache_prefix=True, cache_ttl="1h"), max_tokens=256)
+
+    assert body["messages"][-1]["content"][-1]["cache_control"] == {
+        "type": "ephemeral",
+        "ttl": "1h",
+    }
+
+
 def test_without_the_marker_the_body_is_what_it_always_was() -> None:
     """The compatibility property. A use case that has not opted in must produce a byte-identical
     request — including `system` staying a plain string, because `cache_control` only exists on the
@@ -270,6 +320,7 @@ def test_without_the_marker_the_body_is_what_it_always_was() -> None:
 
     assert body["system"] == "You are a coding assistant."
     assert all("cache_control" not in tool for tool in body["tools"])
+    assert all("cache_control" not in b for m in body["messages"] for b in m["content"])
 
 
 def test_the_five_minute_lifetime_is_chosen_rather_than_the_hour() -> None:

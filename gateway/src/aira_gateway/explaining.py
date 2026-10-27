@@ -38,13 +38,24 @@ _NOT_A_STEP = frozenset({"dispatch", "notice"})
 EXPLAINING_HEADERS = "aira_headers"
 
 
-def explain(state: object, name: str, value: str) -> None:
-    """Add one explaining header to the response this request will get (`FRD-628`)."""
+def explain(state: object, name: str, value: str | None) -> None:
+    """Add one explaining header to the response this request will get (`FRD-628`). ``None``
+    withholds it, including what the trail would have said (`withhold`)."""
     headers = getattr(state, EXPLAINING_HEADERS, None)
     if headers is None:
         headers = {}
         setattr(state, EXPLAINING_HEADERS, headers)
     headers[name.lower()] = value
+
+
+def withhold(state: object, name: str) -> None:
+    """Send no ``name`` header on this response, whatever the trail says when it starts.
+
+    For a stream whose headers go out before any model answered (`ADR-0046`): the trail then holds
+    the model asked first, and a fallback may answer instead — a header naming it would be a claim
+    the answer can contradict.
+    """
+    explain(state, name, None)
 
 
 def header_value(value: str) -> bytes:

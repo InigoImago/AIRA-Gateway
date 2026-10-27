@@ -29,18 +29,23 @@ from aira_gateway.upstreams.exchange import (
 #: accepts no connection is down, not warming up.
 DEFAULT_TIMEOUT_SECONDS = 300.0
 
-#: How this transport names itself in an error: "Upstream returned 429." The status passes through
-#: so `UPSTREAM_STATUS_MAP` keeps its meaning — a 429 from a self-deployed endpoint means *no free
-#: replica*, not quota (`ADR-0012` §5).
-NAME = "Upstream"
+#: How this transport names itself in an error where nobody named it: "The model server returned
+#: 429." The status passes through so `UPSTREAM_STATUS_MAP` keeps its meaning — a 429 from a
+#: self-deployed endpoint means *no free replica*, not quota (`ADR-0012` §5).
+NAME = "The model server"
 
 
 class OpenAITransport:
     """One base URL, and no credential of its own."""
 
-    def __init__(self, *, client: httpx.AsyncClient, timeout: float | None = None) -> None:
+    def __init__(
+        self, *, client: httpx.AsyncClient, timeout: float | None = None, name: str = NAME
+    ) -> None:
         self._client = client
         self._timeout = timeout or DEFAULT_TIMEOUT_SECONDS
+        #: How this server is named in an error — by the name an operator gave it, so a caller who
+        #: reads one knows which provider's answer it was.
+        self.name = name
 
     async def headers(self) -> dict[str, str]:
         """No credential. Async because a subclass may have to *fetch* one (`FRD-120`)."""
@@ -53,10 +58,10 @@ class OpenAITransport:
                 path, json=body, headers=headers, timeout=timeout(self._timeout)
             )
         except httpx.HTTPError as exc:
-            raise unreachable(exc, NAME) from exc
+            raise unreachable(exc, self.name) from exc
         if response.status_code != httpx.codes.OK:
-            raise refused(response, NAME)
-        return json_object(response, NAME)
+            raise refused(response, self.name)
+        return json_object(response, self.name)
 
     async def get(self, path: str) -> dict[str, Any]:
         """A read, for listings and the readiness probe. Same credential and errors as a post."""
@@ -64,10 +69,10 @@ class OpenAITransport:
         try:
             response = await self._client.get(path, headers=headers, timeout=timeout(self._timeout))
         except httpx.HTTPError as exc:
-            raise unreachable(exc, NAME) from exc
+            raise unreachable(exc, self.name) from exc
         if response.status_code != httpx.codes.OK:
-            raise refused(response, NAME)
-        return json_object(response, NAME)
+            raise refused(response, self.name)
+        return json_object(response, self.name)
 
     @asynccontextmanager
     async def stream(self, path: str, body: dict[str, Any]) -> AsyncIterator[httpx.Response]:
@@ -75,7 +80,12 @@ class OpenAITransport:
         headers have gone out — with a refusal read for its reason (`exchange.opened_stream`)."""
         headers = await self.headers()
         async with opened_stream(
-            self._client, path, NAME, json=body, headers=headers, timeout=timeout(self._timeout)
+            self._client,
+            path,
+            self.name,
+            json=body,
+            headers=headers,
+            timeout=timeout(self._timeout),
         ) as response:
             yield response
 

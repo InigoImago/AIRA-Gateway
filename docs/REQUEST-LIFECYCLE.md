@@ -472,11 +472,36 @@ carries both lists, and the refusal's row records them.
 **A streamed request uses this chain too.** The chain is *opened* rather than awaited: for each
 candidate in turn, the conditions, then the upstream stream, then its **first chunk** — the
 `__anext__` that issues the HTTP request. A candidate that fails before producing that chunk is
-passed over; the one that produced it owns the rest of the answer. Two things follow. The response
-does not begin until a model has produced something, so a streamed request nothing can serve is a
-**status** rather than a `200` whose body is an empty array; and once a chunk is on the wire the
+passed over; the one that produced it owns the rest of the answer. Once a chunk is on the wire the
 stream is **committed**, because text from two models spliced into one answer would be worse than
 the failure it hid.
+
+**The response waits for that first chunk for at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15).** A
+model that reads a large context, thinks, or writes a function call's arguments produces no chunk
+for minutes — for Claude the first chunk is the first *visible* word — and a proxy between caller
+and gateway closes a connection that carries nothing for its idle timeout (nginx: 60 s), as a
+client gives up on headers that do not come. So:
+
+- a chain that decides within that time answers as it always did — a stream, or a refusal with its
+  **status**, so a streamed request nothing can serve is still a status rather than a `200`;
+- a chain still looking after it lets the response **begin anyway** and goes on looking: a
+  candidate that fails before its first chunk is still passed over, because nothing of any model
+  has reached the caller. A refusal it ends in then arrives as the stream's last element, like a
+  failure after the first chunk (below), and the response's headers name no model, since a
+  fallback may yet answer;
+- a stream that has been **quiet** for that long — before its first chunk or after it — sends a
+  keepalive its clients skip: a blank line on the Gemini surface, which SSE dispatches nothing for
+  and which is whitespace inside the JSON array; the `: ping` comment on the KIRA surface. Both
+  surfaces send `X-Accel-Buffering: no`, so a proxy does not hold the keepalives back.
+
+`0` switches all three off: the status waits for the first chunk and a quiet stream stays quiet.
+
+**A Claude request the caller did not stream is sent as a stream all the same**, and the answer is
+assembled from it before it is returned. A non-streamed request has nothing to keep alive — no byte
+can precede its status — but this gateway's own time limit for an answer
+(`AIRA_VERTEX_TIMEOUT_SECONDS`) then measures a silence rather than the whole answer: a long answer
+to a large context takes longer than any such limit, while the stream carries something the whole
+time. A failure inside that stream moves on to the next region, as nothing reached the caller.
 
 **What a candidate must meet**, asked of every candidate by one mechanism (`requirements_for`)
 rather than each feature inventing its own:
@@ -680,13 +705,19 @@ off by default, so the audit rows themselves are kept. Each run is recorded in `
 | No candidate could serve it | 400 `FAILED_PRECONDITION` | 400 `VALIDATION_ERROR`; no permitted place to send the model: `MODEL_NOT_FOUND` | `no_capable_model` |
 | Declared, but the dialect has no field for it | 400 `FAILED_PRECONDITION`, **naming the reason** | 400 `VALIDATION_ERROR` | `invalid_request` |
 | Upstream said 400 | 400 `FAILED_PRECONDITION`, carrying its reason | 502 `EXTERNAL_KI_API_ERROR`, carrying its reason | `upstream_error` |
+| Upstream said 413 — the request too large for the provider | 413 `INVALID_ARGUMENT`, carrying its reason | 502 `EXTERNAL_KI_API_ERROR`, carrying its reason | `upstream_error` |
 | Upstream said 429, 503 or 504 | the same status (`RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`), no `Retry-After` | 429 `EXTERNAL_KI_API_TOO_MANY_REQUEST` for a 429; 502 `EXTERNAL_KI_API_ERROR` for the others | `upstream_error` |
+| Upstream said 529 — Anthropic's "overloaded" — in its status or inside its stream | 503 `UNAVAILABLE`, after the next region was tried | 502 `EXTERNAL_KI_API_ERROR` | `upstream_error` |
+| This gateway stopped waiting: the provider sent nothing for the platform's timeout | 504 `DEADLINE_EXCEEDED`, saying *AIRA stopped waiting* and for how long | 502 `EXTERNAL_KI_API_ERROR`, saying the same | `upstream_error` |
+| This gateway had no free connection to the provider in time | 503 `UNAVAILABLE` | 502 `EXTERNAL_KI_API_ERROR` | `upstream_error` |
 | Upstream 401/403, any other status, or unreachable | 502 `UNAVAILABLE`, **masked** | 502 `EXTERNAL_KI_API_ERROR` | `upstream_error` |
 | Document left incomplete | 502, with what it cost; a stream is not checked | 502 `EXTERNAL_KI_API_ERROR`; a stream ends without `completed` | `upstream_error` |
 | A stream that fails after its first chunk | the 200 stands; Google's error element ends it | the 200 stands; it ends without `completed` | `upstream_error`, with the upstream's status |
+| A stream whose chain is refused after its status went out — no first chunk within `AIRA_STREAM_KEEPALIVE_SECONDS` | the 200 stands; Google's error element ends it | the 200 stands; it ends without `completed` | the refusal's outcome, with the status it would have had |
 | This gateway failed (a defect) during dispatch | 500 `INTERNAL` | 500 `INTERNAL_SERVER_ERROR` | `internal_error` |
 | This gateway failed before dispatch | 500 `INTERNAL` | 500 `INTERNAL_SERVER_ERROR` | _(no row; logged as `unhandled_error`)_ |
-| Caller hung up | — | — | `client_gone` (status 499) |
+| Caller hung up during a stream — it cancelled, or a timeout in its client or a proxy closed the connection | — | — | `client_gone` (status 499) |
+| Caller hung up while a non-streamed answer was being produced | — | — | `served`: nothing tells the gateway the caller has gone before it sends the answer — a stated gap |
 
 Two outcomes are not refusals: `served`, and `diagnostic` — a model check pressed in the console
 (`:check`, `:checkThinking`), recorded with what it cost under no use case and counted in no use
@@ -702,6 +733,14 @@ while a near-miss spelling of a field it does model is refused. An upstream's **
 failures stay masked, because they are _our_ credentials, the caller cannot act on them, and the
 message may name one. And an upstream's 429 carries no `Retry-After` and has the status of AIRA's
 own; only its message says which upstream answered.
+
+**Every message about a failure says who acted**, in its first words: the provider by its name
+(`Google Vertex AI returned 529. Reason: overloaded_error.`, `The model provider broke off the
+answer mid-stream: …`), this gateway where it stopped (`AIRA stopped waiting: Google Vertex AI sent
+nothing for 120 s …`, `AIRA could not reach …`), or a control of this installation, which names
+itself. A request's details in the console say the same in one line — *where it ended*: in the
+request, in a rule of AIRA's, in AIRA, at the model provider, or on the caller's side of the
+connection.
 
 ---
 

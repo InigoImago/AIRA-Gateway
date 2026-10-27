@@ -5,6 +5,89 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A stream is never silent for long; a failure says who stopped (2026-10-27)
+
+Reported by the owner: callers of Claude models with large contexts had their streams end as `499`
+after a fixed while, with error messages that helped nobody — and no way to tell from a message or
+the console whether AIRA or the provider was at fault.
+
+**The cause was the gateway's own silence, and it was two correct halves with no wire.** A stream's
+status waited for the chain's first chunk (`ADR-0032`), and for the Anthropic dialect the first
+chunk is the first *visible* word: `message_start`, `ping`, every thinking delta — empty by default
+on the newest models — and every fragment of a function call's arguments produce none, and a turn
+that is only a function call produces its first chunk at `message_stop`. Reading a large context,
+thinking and writing a file through a tool is minutes of that. The KIRA surface's keepalive
+(`FRD-146` FR-19) existed for exactly this silence — *"a thinking model can say nothing for a minute
+before its first word"* — and started after the first chunk; the Gemini surface had none. A proxy
+closes a connection that carries nothing (nginx: 60 s), a client gives up on headers that do not
+come, and the gateway noticed only when the first chunk finally arrived: it read the answer to its
+end for the vendor's figure (`ADR-0041`), billed it whole, and recorded the caller as gone. The
+local showcase's own log shows the same shape on a local thinking model: eight `499`s of `qwen3:4b`
+after 74 to 898 seconds, none with a token. `ADR-0032` had accepted the wait with *"a caller waits
+for the model either way"* — true of the caller, not of what stands between it and the gateway.
+
+**Built (`ADR-0046`).** The chain runs as a task of its own (`streaming.Opening`); the status waits
+for it at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15), then goes out while the chain keeps falling
+back — nothing of any model has reached the caller — and a refusal decided later is the stream's
+last element, recorded with the status it would have had and every candidate passed over. A quiet
+stream sends a keepalive on both surfaces, before the first chunk and after it: KIRA's `: ping`, and
+on the Gemini surface **a bare line**, because the `google-genai` SDK hands any line that is not
+`data:` to its JSON parser. `0` restores the old behaviour. The headers of a response that began
+before a model answered name none (`X-AIRA-Model` is withheld); `X-Accel-Buffering: no` on every
+stream.
+
+**Measured against real clients, not assumed.** Read in their sources first, then run against a
+gateway whose model pauses before every chunk while 28 keepalives went out: `google-genai` 1.0 to
+2.17 skip a blank line and *raise* on an SSE comment (`UnknownApiResponseError: Failed to parse
+response as JSON. Raw response: : keepalive` — mutation `QS-12`); `@google/genai` 1.21.0 and 2.31.0
+read the stream, 1.20.0 stops with *Incomplete JSON segment at the end* (its parser was anchored on
+`^data:` until 2025-09-26); the AI SDK's Google provider in all four majors and both OpenCode
+generations read it — seven cases in `test_real_gemini_clients.py`, each asserting that keepalives
+were actually sent.
+
+**What else the Anthropic adapter got wrong.** Its `529` "overloaded" was a status nothing knew: it
+did not move a regional failover on and reached the caller as a masked `502` explained as *"The
+provider refused."* Now it fails over like a `503`, reaches the caller as `503 UNAVAILABLE`, and
+Anthropic's `error.type` words are explained by who has to act. A request the caller did not stream
+went to `:rawPredict`, where `AIRA_VERTEX_TIMEOUT_SECONDS` (120) bounded the **whole** answer — a
+long answer to a large context ran out while the model was still writing; every Claude request is
+now sent as a stream and assembled (`MessageAssembler`), so the limit bounds a silence. And with
+prompt caching on, only the tools and the system prompt were marked — `FRD-133` §5.1 had measured
+conversations of 47 bytes to 1.6 KB — so a large conversation was read anew, at full price, before
+every first word; it is now the third breakpoint.
+
+**Who stopped.** A message names who acted in its first words: the provider by its platform's name
+(`Google Vertex AI returned 529. Reason: overloaded_error.`), or AIRA where the gateway stopped —
+*AIRA stopped waiting … 120 s* is a `504`, a full connection pool a `503`, where both were a `502`
+that reads as the provider being down. A provider's `413` reaches the caller as `413` with its
+reason. The console's request details say first **where it ended** — in the request, in a rule of
+AIRA's, in AIRA, at the model provider, on the caller's side of the connection — and its badges say
+*provider error*, *AIRA error*, *caller left*. The moment the caller left was not recorded: it
+would be a new item of processing, and the privacy notice would need a new edition for it.
+
+**Proven.** 21 cases in `test_a_quiet_model_keeps_its_connection.py` watch the wire through a model
+that speaks only once the test has *seen* the status and the keepalives go out — no stopwatch.
+15 in `test_a_failure_says_who_stopped.py`, four for the assembler, two for the conversation
+marker, the console's party line in its spec. Mutations `QS-1`–`QS-14` and `WS-1`–`WS-16`, all
+caught; nine older anchors moved with the code (`MF6`, `MF7`, `GS-8`–`GS-10`, `V23`,
+`FX-G3-12b`/`12c`, `FX-G3-1a`) and were re-pointed — `MF6`/`MF7` at assertions, where they had been
+caught by a `NameError`. **Three survived the first run**, each a test that could not tell the
+property from its neighbour: the console's party line was asserted with *contains*, so a provider's
+failure placed "In AIRA" passed; an overloaded Claude was explained twice, by its error type and by
+its status, so losing the first changed nothing; and an error inside an unstreamed answer's stream,
+ignored, still failed over — as an *incomplete* stream. Each got the test that tells them apart.
+Two more were caught only by the harness's time limit: a stalled case was cancelled like a caller
+who left and then read on for the full 600 s; the cases now read nothing on unless they are about
+it, and fail at their own bound with their message.
+
+**Not built, and stated.** A non-streamed request cannot be kept alive — no byte precedes its
+status — and one whose caller left is answered to its end and recorded as `served`, since uvicorn
+cancels nothing and nothing listens; a connection that cannot be opened to one region does not move
+the regional failover on, only the fallback chain. Claude was not called live: the sandbox holds no
+service account Vertex accepts for Anthropic models.
+
+---
+
 ## Each plane its own database user and Kafka identity, on one Vault path (2026-10-27)
 
 A feature request from an installation whose database gives each plane a user of its own and whose

@@ -22,7 +22,9 @@ from aira_gateway.upstreams.vertex.transport import NAME, VertexTransport
 #: here), `429` (no quota here) or `5xx` (unwell here) is a fact about a *place*; a `400` or
 #: `401`/`403` is a fact about the *request*, identical in every region. A content refusal arrives
 #: as a `200` and is the model's answer — asking another region would be shopping for a verdict.
-REGION_FAILOVER_STATUSES = frozenset({404, 408, 429, 500, 502, 503, 504})
+#: `529` is Anthropic's own "overloaded", which Claude on Vertex answers with: unwell here, as a
+#: `503` is.
+REGION_FAILOVER_STATUSES = frozenset({404, 408, 429, 500, 502, 503, 504, 529})
 
 #: One dialect's stream reader: a parsed SSE event in, a canonical chunk (or nothing) out.
 ChunkReader = Callable[[dict[str, Any]], CanonicalChunk | None]
