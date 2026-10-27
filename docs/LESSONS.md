@@ -1765,6 +1765,19 @@ reading code.
   correct only for the models it was checked against. Re-read the vendor's reference when a new
   family is catalogued. Hold the dialect to every shape the reference list can declare. And where a
   rule differs per model, make it a declaration (`fixed_sampling`), not a branch.
+  **And the same holds for what a model does when nobody asks.** The public list says which thinking
+  settings a model accepts, never which one it uses when a request names none — and the vendors set
+  that per model: Claude Sonnet 4.6 thinks only when asked, Sonnet 5 whenever it is not told
+  otherwise. A thinking default proposed per family would have switched thinking on, and billed
+  it, for every model of the family that thinks only when asked. The reference's proposals are a
+  table of named models, each beside the vendor page it was read from.
+- **What a vendor needs to continue a turn is part of the turn — even where the caller's protocol has
+  no field for it.** Claude needs its own thinking blocks back within a tool loop; a Gemini-speaking
+  client has nowhere to keep them, and the gateway dropped them, so every step of every agent loop
+  on Claude reasoned again from nothing. No status showed it — only the bill and the silence on the
+  wire. The state now travels in the one field every client already hands back unread, a function
+  call's signature, and which clients hand it back was measured before relying on it. A gateway
+  that translates between two protocols owns the state neither of them can say.
 - **Listed is not usable.** `gemini-2.5-flash` is listed and refuses every request from a new key —
   hence *declared · served · reachable* as three separate answers, and `reachable: null` is never
   reported as healthy.
@@ -1816,6 +1829,15 @@ reading code.
   on a blank line. The keepalive the Gemini surface sends was chosen by running each generation
   against a stream that actually carried keepalives, and the test asserts that they were sent: a
   stream that was never quiet proves nothing about what a client does when it is.
+
+  *And what a client does with its own configuration is measured the same way.* The thinking
+  variants the console writes for OpenCode looked like a menu, and their **order** is an
+  instruction: OpenCode 1 sends the first one with its own small requests, a session's title among
+  them, so a file listing `high` first would have made every title think hard. OpenCode 2 adds
+  `includeThoughts` itself once a variant is chosen, and the `reasoning` flag makes OpenCode 1 send
+  `thinkingLevel: "high"` to a model that may not take it. None of it is documented; all of it was
+  read from the request each generation sent. Every key in a client's file is an instruction to code
+  you did not write.
 - **Keeping a provider's text out must not keep its cause out.** The model check reported the
   exception's type, rightly refusing to repeat a message that can quote a URL with a key in it — and
   so answered *Not reachable (UpstreamError)* to an API not enabled, a missing role, a model not in

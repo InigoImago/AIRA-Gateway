@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from typing import Any
 
+from aira_common.logging import get_logger
 from aira_common.models import ThinkingMode
 from aira_gateway.core.canonical import (
     CanonicalChunk,
@@ -103,6 +104,8 @@ _PING_BODY = {"contents": [{"role": "user", "parts": [{"text": "ping"}]}]}
 #: Opening one dialect's stream in one place — ``(region, publisher)`` in, the opened and not yet
 #: read stream out (`regions._open_stream`).
 StreamAttempt = Callable[[str, str], Awaitable[AsyncGenerator[CanonicalChunk]]]
+
+_log = get_logger("aira_gateway.upstreams")
 
 
 class _VertexAdapter:
@@ -411,9 +414,18 @@ class VertexAnthropicAdapter(_VertexAdapter):
                 method="streamRawPredict",
                 wire_model=wire_name(request.model, request.addressing),
             )
+            try:
+                return await read(url, body, region)
+            except UpstreamError as exc:
+                plain = self._without_carried_thinking(request, body, exc)
+                if plain is None:
+                    raise
+                return await read(url, plain, region)
+
+        async def read(url: str, sent: dict[str, object], region: str) -> CanonicalResponse:
             assembler = MessageAssembler()
             async with (
-                self._transport.stream(url, body) as response,
+                self._transport.stream(url, sent) as response,
                 aclosing(sse_payloads(response, NAME)) as payloads,
             ):
                 async for payload in payloads:
@@ -443,23 +455,50 @@ class VertexAnthropicAdapter(_VertexAdapter):
                 method="streamRawPredict",
                 wire_model=wire_name(request.model, request.addressing),
             )
+
             # A fresh assembler per attempt: it accumulates tool calls across events.
-            return await _open_stream(
-                self._transport,
-                url,
-                body,
-                lambda: StreamAssembler(include_reasoning=request.include_reasoning).feed,
-                region,
-            )
+            def reader() -> Callable[[dict[str, Any]], CanonicalChunk | None]:
+                return StreamAssembler(include_reasoning=request.include_reasoning).feed
+
+            try:
+                return await _open_stream(self._transport, url, body, reader, region)
+            except UpstreamError as exc:
+                plain = self._without_carried_thinking(request, body, exc)
+                if plain is None:
+                    raise
+                return await _open_stream(self._transport, url, plain, reader, region)
 
         return attempt
 
-    def _body(self, request: CanonicalRequest) -> dict[str, object]:
+    def _body(self, request: CanonicalRequest, *, carry_thinking: bool = True) -> dict[str, object]:
         return canonical_to_anthropic(
             request,
             max_tokens=request.max_output_tokens or self._default_max_tokens,
             strict_tools=self._strict_tools,
+            carry_thinking=carry_thinking,
         )
+
+    def _without_carried_thinking(
+        self, request: CanonicalRequest, body: dict[str, object], exc: UpstreamError
+    ) -> dict[str, object] | None:
+        """The body once more without the thinking the turn carried back, where Anthropic refused
+        that thinking (`FRD-152`) — else ``None``, and the refusal stands.
+
+        The blocks go back exactly as they came, so a refusal means the history changed under
+        them in a way this gateway cannot see — a client that edited an earlier turn. Without
+        them the turn goes on as it did before they were carried: one refused request, which is
+        not billed, rather than a conversation that cannot continue.
+        """
+        said = exc.message.lower()
+        if exc.status_code != 400 or "thinking" not in said:
+            return None
+        if "signature" not in said and "block" not in said:
+            return None
+        plain = {**self._body(request, carry_thinking=False), "stream": True}
+        if plain == body:
+            return None
+        _log.warning("carried_thinking_refused", model=request.model)
+        return plain
 
 
 class VertexOpenModelAdapter(_VertexAdapter):

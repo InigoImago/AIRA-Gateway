@@ -75,7 +75,9 @@ and an installation watching its own agents has no way to see why a model did wh
   where thinking is on for the request, by the caller's setting or the model's declared default.
   Google refuses `includeThoughts` whenever the model is not thinking: with thinking off, for a
   speech model, and for a model that thinks only when given a budget. A model with no declared
-  thinking default therefore returns no reasoning unless the caller sets thinking.
+  thinking default therefore returns no reasoning unless the caller sets thinking. *Since
+  `FRD-151` the model reference proposes that default wherever the vendor documents a model
+  thinking unasked, and the editor offers it for a model on file.*
 - **FR-6 The console offers it** on the use case, beside `store_payloads` and `tools_enabled`.
 - **FR-7 Where a provider returns no reasoning**, the switch changes nothing and says so: a use case
   with reasoning on, calling a model that reports none, is not an error.
@@ -88,6 +90,8 @@ and an installation watching its own agents has no way to see why a model did wh
   does not read those as conversation, and forwarded as plain text they would tell the model it had
   *said* its private reasoning — so a request's thought parts are left out of what is sent on,
   as Google leaves them, rather than refused, which would fail every second turn of such a chat.
+  *A Claude turn's thinking blocks, which Anthropic does need back, travel in the signature of the
+  message's first function call instead (`FRD-152`, `ADR-0047`).*
 
 ## 5. Design & Architecture
 

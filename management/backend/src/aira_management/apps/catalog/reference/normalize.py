@@ -20,6 +20,8 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from aira_management.apps.catalog.reference.thinking_defaults import with_vendor_default
+
 #: The list's providers this gateway reaches, as `(platform, publisher)` — the provider name the
 #: gateway stamps on the model, and who made it. `None` takes the publisher from the model's id.
 PROVIDERS: dict[str, tuple[str, str | None]] = {
@@ -178,6 +180,7 @@ def draft(name: str, entry: dict[str, Any], platform: str, publisher: str) -> di
     fixed_sampling = entry.get("temperature") is False and not embeds
 
     name = name.removesuffix(DEFAULT_VERSION_SUFFIX)
+    thinking = with_vendor_default(name, thinking, notes)
     if cost.get("context_over_200k") or cost.get("tiers"):
         notes.append("costs more above a context length — the list price is the lower tier")
     if cost.get("input_audio") is not None:

@@ -3743,6 +3743,112 @@ describe('ModelEditor — filling a model named by hand (FRD-508)', () => {
   });
 });
 
+/**
+ * The thinking default the reference proposes (`FRD-151`): what the vendor documents a model doing
+ * when a request names nothing. Without it the gateway cannot know the model is thinking, and its
+ * reasoning — billed either way — never comes back.
+ */
+describe('ModelEditor — the thinking default the reference proposes (FRD-151)', () => {
+  const THINKS_UNASKED: ReferenceEntry = {
+    ...SONNET,
+    declaration: {
+      ...SONNET.declaration,
+      thinking: { modes: ['auto'], levels: ['low', 'high'], default: { mode: 'auto' } },
+    },
+  };
+  const ON_FILE: CatalogModel = {
+    ...FLASH,
+    name: 'claude-sonnet-9',
+    provider: 'vertex',
+    capabilities: ['generate', 'thinking'],
+    thinking: { modes: [], levels: ['low', 'high'] },
+  };
+
+  function editing(model: CatalogModel, entry: ReferenceEntry = THINKS_UNASKED) {
+    const harness = setup({ reference: of({ ...REFERENCE, entries: [entry] }) });
+    harness.component.edit(model);
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  it('offers it beside a model on file that names none, and takes it — with `auto` — on a click', async () => {
+    const harness = editing(ON_FILE);
+
+    expect(harness.testid('thinking-default-proposed')?.textContent).toContain('auto');
+    harness.click('[data-testid="adopt-thinking-default"]');
+    await harness.fixture.whenStable();
+    harness.fixture.detectChanges();
+
+    expect(harness.editor.thinkingDefault()).toBe('auto');
+    // The declaration on file never offered `auto`; a default it does not offer would not save.
+    expect((harness.testid('mode-auto') as HTMLInputElement).checked).toBe(true);
+    expect(harness.testid('thinking-default-proposed')).toBeNull();
+  });
+
+  it('proposes nothing over a default on file', () => {
+    const harness = editing({
+      ...ON_FILE,
+      thinking: { modes: [], levels: ['low', 'high'], default: { mode: 'low' } },
+    });
+
+    expect(harness.testid('thinking-default-proposed')).toBeNull();
+  });
+
+  it('proposes no level the declaration on file does not offer', () => {
+    const harness = editing(ON_FILE, {
+      ...THINKS_UNASKED,
+      declaration: {
+        ...THINKS_UNASKED.declaration,
+        thinking: { modes: [], levels: ['medium'], default: { mode: 'medium' } },
+      },
+    });
+
+    expect(harness.testid('thinking-default-proposed')).toBeNull();
+  });
+
+  it('proposes a level the declaration on file offers', () => {
+    const harness = editing(ON_FILE, {
+      ...THINKS_UNASKED,
+      declaration: {
+        ...THINKS_UNASKED.declaration,
+        thinking: { modes: [], levels: ['low', 'high'], default: { mode: 'high' } },
+      },
+    });
+
+    harness.click('[data-testid="adopt-thinking-default"]');
+
+    expect(harness.editor.thinkingDefault()).toBe('high');
+    expect(harness.editor.thinkingModes()).toEqual([]);
+  });
+
+  it('proposes nothing for another model, nor where the reference names no default', () => {
+    const another = editing({ ...ON_FILE, name: 'claude-sonnet-8' });
+    const unproposed = editing(ON_FILE, SONNET);
+
+    expect(another.testid('thinking-default-proposed')).toBeNull();
+    expect(unproposed.testid('thinking-default-proposed')).toBeNull();
+    // Shown at all, so the two above are absences and not a tab nobody opened.
+    expect(editing(ON_FILE).testid('thinking-default-proposed')).not.toBeNull();
+  });
+
+  it('fills a new entry with it from the reference, like every other fact', async () => {
+    const harness = setup({ reference: of({ ...REFERENCE, entries: [THINKS_UNASKED] }) });
+    const editor = harness.editor as unknown as Editor & {
+      startOn: (upstream: GatewayProvider | null) => void;
+    };
+    editor.startOn(VERTEX);
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+
+    harness.type('model-name-input', 'claude-sonnet-9');
+    harness.click('[data-testid="fill-from-reference"]');
+
+    expect(editor.thinkingDefault()).toBe('auto');
+    expect(editor.thinkingModes()).toEqual(['auto']);
+  });
+});
+
 describe('ModelEditor — what a model costs this installation (FRD-509)', () => {
   const BILLED: BillingPrices = {
     model: 'claude-sonnet-9',

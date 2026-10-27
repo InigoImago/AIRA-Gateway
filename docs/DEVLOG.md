@@ -5,6 +5,79 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Claude's thinking travels with the turn that continues it (2026-10-27)
+
+Asked by the owner before merging `FRD-151`: were the `499`s on Claude with large contexts related
+to the thinking? Yes, in two ways (`FRD-152`, `ADR-0047`).
+
+- **The silence was mostly thinking.** The newest Claude models think on every request and send
+  their thinking blocks empty unless asked for a summary, and Opus 5.5, Sonnet 5.5 and Fable 5.1
+  write their notes between function calls into such blocks too — read from Anthropic's current
+  documentation. That was what the stream carried nothing of until `ADR-0046`'s keepalive.
+- **And it was longer than it had to be.** Anthropic's rule: within a tool-use turn, the model's
+  thinking blocks must come back complete, unmodified and in place. This gateway reduced each
+  block to reasoning text and dropped its signature, so at every step of a tool loop the model
+  reasoned again from nothing — billed twice, silent meanwhile. Under a budget Anthropic stops the
+  thinking without the block, and the gateway refused such a continuation by name: `FRD-151`'s
+  advice to declare a budget as a default would have failed the second step of every OpenCode loop.
+  `FRD-145` had deferred carrying the blocks "until it can be measured against Claude".
+
+Built: the blocks are sealed into the signature of the message's first function call — base64 of
+a marked document only the Anthropic dialect opens — and put back in place in the turn in progress;
+earlier turns go without, the same way every time, because Anthropic checks each block against
+everything sent before it and OpenCode clears old tool results (found in both binaries). Text is
+sealed only where the use case returns reasoning, or where it is empty. A `400` naming a thinking
+block is sent once more without the blocks. A default budget a turn cannot continue with is left
+out; a budget the caller asked for is refused as before. Google is never sent the envelope, and no
+stored payload keeps a signature — the request rows kept Google's until now.
+
+Measured, with the mock signing the calls it makes while thinking: OpenCode 1 and 2, `google-genai`'s
+chat and the AI SDK's majors 2–4 hand a call's signature back unchanged; major 1 drops it. Not
+measured: Claude itself — no model is reachable here. Mutations `CT-1`–`CT-19`.
+
+---
+
+## A model's reasoning, shown in OpenCode (2026-10-27)
+
+Asked by the owner, from OpenCode: other providers, Copilot among them, let a developer watch the
+model think — does AIRA? It returned reasoning (`FRD-135`, streamed since `FRD-145`), and OpenCode
+showed none. Measured with both generations, three reasons, each enough alone: the console's file
+named no thinking setting, so OpenCode had no variant to offer and sent none; a request without a
+setting asks for no reasoning, because the gateway asks only where it knows the model is thinking;
+and it knows that only from a declared thinking default, which the model reference never drafted.
+So Gemini 2.5 Pro and Flash, every Gemini 3 and later and Claude from Opus 5 on thought on every
+request, were billed for it, and nobody asked to see it (`FRD-151`).
+
+- **The console's file offers variants**, from the catalogue entry: `none`, the level words from
+  `minimal` to `high`, `auto`. Only the four words OpenCode's Google client can send — it refuses
+  Claude's `xhigh` and `max` before sending — and no budget, whose ceiling does not fit inside the
+  32 000-token output cap OpenCode sends. No `includeThoughts`: the gateway asks wherever the use
+  case returns reasoning.
+- **Least thinking first, found by measuring.** The first run showed OpenCode 1's title request
+  sent with `thinkingLevel: "low"` while the turns used the chosen `high`: OpenCode 1 sends the
+  *first* variant with its own small requests. The order is now fixed from off to `high`, whatever
+  order the catalogue holds the words in, and the real-client test asserts what the title request
+  carried. OpenCode 2 adds `includeThoughts: true` itself once a variant is chosen.
+- **The reference proposes the vendor's default**, per model, from Google's per-model table of
+  default levels and dynamic budgets and Anthropic's migration guide: `auto` for Gemini 2.5 Pro and
+  Flash and for Claude Fable 5 and 5.1, Opus 5 and 5.5, Sonnet 5 and 5.5 and Haiku 5.5; Google's
+  level for each Gemini 3 and later model. None where the level is `minimal`, none for Gemini 2.5
+  Flash-Lite — Vertex AI documents it dynamic, the Gemini API off — and none for Claude up to Opus
+  4.8, which thinks only when asked. The shipped copy was regenerated with the table, 27 drafts.
+- **The editor offers the proposal for a model on file** with no default, and takes it on a click —
+  ticking `auto` where the declaration on file lacked it, so the entry still saves.
+- **The gateway did not change.** A declared default already resolved into the thinking setting,
+  and a setting is what makes the gateway ask: `includeThoughts` on Google's wire, the summary on
+  Claude's. Now held end to end, from a request naming nothing to a thought in the stream.
+
+Measured: both OpenCode generations against the gateway, with a chosen variant and with none — the
+reasoning printed by `opencode run --thinking` in all four, the level sent being the variant's or
+nothing at all; the whole real-client suite, 26 cases. Not measured: Google or Anthropic
+themselves, nor OpenCode's terminal interface. Mutations `TO-1`–`TO-13`, 2305 in all; `TO-3` first
+did not compile and was rewritten.
+
+---
+
 ## A stream is never silent for long; a failure says who stopped (2026-10-27)
 
 Reported by the owner: callers of Claude models with large contexts had their streams end as `499`

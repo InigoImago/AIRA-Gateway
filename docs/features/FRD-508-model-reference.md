@@ -36,7 +36,9 @@ where, and leaves the region, the check, the approval and the release to the adm
   model); thinking from its reasoning options — effort words are levels and `none` is `disabled`, a
   budget range is `limited` with its bounds (a missing ceiling is the output cap less one, said in
   the draft's notes), a toggle is `disabled` and `auto`, and a floor above zero drops `disabled`;
-  attachments as the image and PDF media types the gateway carries; prices per million tokens. A
+  attachments as the image and PDF media types the gateway carries; prices per million tokens; and
+  where the vendor documents what the model does when a request names no thinking setting, that
+  as its thinking default, noted in the draft (`FRD-151`). A
   model whose output the gateway cannot carry, or from a publisher it does not speak, is not offered.
 - **FR-2 — Shipped, or live.** The release carries the drafts (`models.json`, with the list's MIT
   notice), refreshed by `make model-reference`. `AIRA_MODEL_REFERENCE_URL` reads the live list

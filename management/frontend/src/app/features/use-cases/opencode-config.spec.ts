@@ -1,5 +1,5 @@
 import { CatalogModel } from '../../core/api/models';
-import { openCodeModel } from './opencode-config';
+import { openCodeModel, openCodeVariants } from './opencode-config';
 
 /**
  * The OpenCode model block (`FRD-132` §11).
@@ -119,5 +119,85 @@ describe('openCodeModel', () => {
       openCodeModel(model({ input_price_per_million: '0', output_price_per_million: '0' }), 'USD')
         .cost,
     ).toEqual({ input: 0, output: 0 });
+  });
+});
+
+/**
+ * The thinking settings OpenCode offers for a model (`FRD-151`).
+ *
+ * Each variant is a request OpenCode will send the moment somebody picks it, so the question at
+ * every branch is whether the gateway — and before it OpenCode's own client — takes that request.
+ * A word the model does not declare is a refusal by name; a word OpenCode's client does not know
+ * fails before it leaves the workstation.
+ */
+describe('openCodeVariants', () => {
+  it('offers the levels the model declares, as the field OpenCode sends', () => {
+    expect(openCodeVariants({ modes: [], levels: ['low', 'medium', 'high'] })).toEqual({
+      low: { thinkingConfig: { thinkingLevel: 'low' } },
+      medium: { thinkingConfig: { thinkingLevel: 'medium' } },
+      high: { thinkingConfig: { thinkingLevel: 'high' } },
+    });
+  });
+
+  it('puts the least thinking first, whatever order the catalogue holds them in', () => {
+    // OpenCode 1 sends the first variant with its own small requests — a session's title among
+    // them — so a declaration typed as `high, minimal` must not make every title think hard.
+    const offered = openCodeVariants({ modes: ['auto'], levels: ['high', 'minimal', 'medium'] });
+
+    expect(Object.keys(offered ?? {})).toEqual(['minimal', 'medium', 'high', 'auto']);
+  });
+
+  it('leaves out the words OpenCode cannot send', () => {
+    // Claude's top two efforts: OpenCode's Google client knows four words and refuses the rest.
+    const offered = openCodeVariants({
+      modes: ['auto'],
+      levels: ['low', 'medium', 'high', 'xhigh', 'max'],
+    });
+
+    expect(Object.keys(offered ?? {})).toEqual(['low', 'medium', 'high', 'auto']);
+  });
+
+  it('offers off first and the model deciding last, as the budgets Google spells them', () => {
+    const offered = openCodeVariants({ modes: ['disabled', 'auto', 'limited'], max_tokens: 24576 });
+
+    expect(offered).toEqual({
+      none: { thinkingConfig: { thinkingBudget: 0 } },
+      auto: { thinkingConfig: { thinkingBudget: -1 } },
+    });
+    expect(Object.keys(offered ?? {})).toEqual(['none', 'auto']);
+  });
+
+  it('offers no budget, which would need a number nobody states', () => {
+    expect(
+      openCodeVariants({ modes: ['limited'], min_tokens: 1024, max_tokens: 63999 }),
+    ).toBeUndefined();
+  });
+
+  it('never asks for the reasoning itself, which the use case decides', () => {
+    // `includeThoughts: true` is refused by name where the use case does not return reasoning.
+    const offered = openCodeVariants({
+      modes: ['disabled', 'auto'],
+      levels: ['minimal', 'low', 'medium', 'high'],
+    });
+
+    expect(JSON.stringify(offered)).not.toContain('includeThoughts');
+  });
+
+  it('writes no variants for a model that declares no thinking', () => {
+    expect(openCodeVariants(null)).toBeUndefined();
+    expect(openCodeVariants(undefined)).toBeUndefined();
+    expect(openCodeModel(model(), 'USD')).not.toHaveProperty('variants');
+  });
+
+  it('puts the variants on the model OpenCode reads', () => {
+    const entry = openCodeModel(
+      model({ thinking: { modes: ['auto'], levels: ['high'], default: { mode: 'auto' } } }),
+      'USD',
+    );
+
+    expect(entry.variants).toEqual({
+      high: { thinkingConfig: { thinkingLevel: 'high' } },
+      auto: { thinkingConfig: { thinkingBudget: -1 } },
+    });
   });
 });

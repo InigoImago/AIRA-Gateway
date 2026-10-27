@@ -53,6 +53,7 @@ from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import watch_connections
 from aira_gateway.db.models import BudgetRead, ModelRead, RequestLog, UseCaseRead
+from aira_gateway.upstreams.mock import MOCK_SIGNATURE
 
 ROOT = Path(__file__).resolve().parents[2]
 CLIENTS = ROOT / "tools" / "clients"
@@ -65,6 +66,21 @@ OPENCODE = {
     "1": CLIENTS / "node_modules" / "opencode-ai" / "bin" / "opencode.exe",
     "2": CLIENTS / "node_modules" / "@opencode" / "cli" / "bin" / "opencode.exe",
 }
+
+#: How the catalogue declares the model these clients talk to: two level words, no default.
+THINKING: dict[str, Any] = {"modes": [], "levels": ["low", "high"]}
+
+#: The variants the console writes for that declaration (`opencode-config.ts`, `FRD-151`).
+CONSOLE_VARIANTS = {
+    "low": {"thinkingConfig": {"thinkingLevel": "low"}},
+    "high": {"thinkingConfig": {"thinkingLevel": "high"}},
+}
+
+#: What the mock streams as its reasoning wherever it is thinking and the use case returns it.
+MOCK_THOUGHT = "[mock thought]"
+
+#: The same model, thinking whenever nothing is asked — so every call it makes is signed.
+THINKS_UNASKED = {**THINKING, "default": {"mode": "high"}}
 
 #: What `run.mjs` should see a provider major send: the vocabulary of its tool declarations, and
 #: of its structured output.
@@ -164,11 +180,15 @@ def _quietly(stream: Callable[..., Any]) -> Callable[..., Any]:
 
 @contextmanager
 def _served(
-    *, daily_requests: int | None = None, quiet: bool = False
+    *,
+    daily_requests: int | None = None,
+    quiet: bool = False,
+    thinking: dict[str, Any] | None = None,
 ) -> Iterator[tuple[str, _Recorder]]:
     """The app on a real socket, with a model and a use case — and, given ``daily_requests``, a
     budget on that use case that is enforced, for what a budget display has to show. ``quiet``
-    makes the model pause before every chunk and the gateway keep its streams alive meanwhile."""
+    makes the model pause before every chunk and the gateway keep its streams alive meanwhile.
+    ``thinking`` replaces the model's thinking declaration."""
     from aira_gateway.upstreams.mock import MockProvider
 
     pausing = (
@@ -202,7 +222,7 @@ def _served(
                     ModelRead(
                         model="mock-1",
                         capabilities=["generate", "tools", "structured_output", "thinking"],
-                        thinking={"modes": [], "levels": ["low", "high"]},
+                        thinking=thinking or THINKING,
                     )
                 )
                 session.add(UseCaseRead(slug="uc", name="uc", tools_enabled=True))
@@ -319,6 +339,37 @@ def test_the_ai_sdk_google_provider_works_in_every_major(node_clients: None, maj
     assert answered == {schema_field}, f"provider {major} asked for structure with {answered}"
 
 
+def _signatures_handed_back(recorder: _Recorder) -> list[Any]:
+    """The signature on every function call a request carried back in its history."""
+    return [
+        part.get("thoughtSignature")
+        for body in recorder.bodies
+        for content in body.get("contents") or []
+        for part in content.get("parts") or []
+        if "functionCall" in part
+    ]
+
+
+@pytest.mark.parametrize("major", sorted(SENDS))
+def test_the_ai_sdk_hands_a_function_calls_signature_back(node_clients: None, major: str) -> None:
+    """A thinking model signs its call and validates the signature on the turn that continues it;
+    this gateway carries a Claude turn's thinking blocks in the same field (`FRD-152`). The first
+    major predates signatures and drops it — such a turn goes on without the model's thinking."""
+    with _served(thinking=THINKS_UNASKED) as (base, recorder):
+        completed = subprocess.run(  # noqa: S603 — fixed arguments, our own script
+            ["node", "run.mjs", major, f"{base}/v1beta", "uc"],  # noqa: S607
+            cwd=CLIENTS,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    assert completed.returncode == 0, completed.stderr
+    handed_back = _signatures_handed_back(recorder)
+    assert handed_back, "no call came back"
+    assert set(handed_back) == ({None} if major == "1" else {MOCK_SIGNATURE}), handed_back
+
+
 @pytest.mark.parametrize("major", sorted(SENDS))
 def test_the_ai_sdk_reads_a_stream_kept_alive_while_its_model_is_quiet(
     node_clients: None, major: str
@@ -370,6 +421,40 @@ def test_google_genai_reads_a_stream_kept_alive_while_its_model_is_quiet() -> No
 
     assert read.strip() and read == read_aloud
     assert recorder.keepalives >= 4, "the streams were never quiet long enough to be kept alive"
+
+
+def test_google_genais_chat_hands_a_function_calls_signature_back() -> None:
+    """Google's SDK keeps the answer whole in the chat's history — the signature as bytes, written
+    back as base64 — and sends it with the function's result (`FRD-152`)."""
+    with _served(thinking=THINKS_UNASKED) as (base, recorder):
+        client = genai.Client(
+            api_key="not-checked-here",
+            http_options=types.HttpOptions(
+                base_url=base, headers={"x-aira-use-case": "uc"}, api_version="v1beta"
+            ),
+        )
+        declared = types.FunctionDeclaration(
+            name="read_file",
+            description="Read a file.",
+            parameters_json_schema={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        )
+        chat = client.chats.create(
+            model="mock-1",
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(function_declarations=[declared])],
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            ),
+        )
+        (call, *_) = chat.send_message("read hello.py").function_calls or []
+        answered = chat.send_message(
+            types.Part.from_function_response(name=call.name, response={"content": "hi"})
+        )
+    assert "acted on the tool result" in (answered.text or "")
+    assert _signatures_handed_back(recorder) == [MOCK_SIGNATURE]
 
 
 def test_google_genai_sends_json_schema_and_a_thinking_level() -> None:
@@ -460,12 +545,13 @@ def _project(
     configuration: str,
     plugin: str | None = None,
     reasoning: bool = False,
+    variants: dict[str, Any] | None = None,
 ) -> Path:
     """A git project with one file, an AIRA provider, and optionally the budget plugin.
 
     ``configuration`` is ``"v1"`` — the shape the AIRA console generates, `provider`, `npm` and
     `options`, which OpenCode 2 still reads — or ``"v2"``, OpenCode 2's own `providers`, `package`
-    and `settings`.
+    and `settings`. ``variants`` are the thinking settings the console offers in the first.
     """
     project = root / "project"
     (project / ".opencode").mkdir(parents=True)
@@ -474,6 +560,8 @@ def _project(
     model = {"name": "mock-1 via AIRA (EUR)", "limit": {"context": 128000, "output": 8192}}
     # Only where it is true, which is how the console writes it.
     thinks = {"reasoning": True} if reasoning else {}
+    if variants is not None:
+        thinks["variants"] = variants
     if configuration == "v1":
         provider = {
             "provider": {
@@ -638,6 +726,86 @@ def test_opencode_streams_a_turn_to_a_thinking_model(
     # OpenCode 2 asks only once a thinking setting is chosen for the model; OpenCode 1 always.
     if generation == "1":
         assert asked, "OpenCode 1 asked a reasoning model for no thoughts"
+
+
+def _shows_thinking(generation: str, variant: str | None, prompt: str) -> list[str]:
+    """`opencode run` printing the reasoning, with the variant chosen the way each generation's
+    command line takes it: OpenCode 1 by flag, OpenCode 2 after the model's name."""
+    binary, *standalone = _command(generation)
+    chosen: list[str] = []
+    if variant is not None:
+        chosen = (
+            ["--variant", variant] if generation == "1" else ["--model", f"aira/mock-1#{variant}"]
+        )
+    return [binary, "run", *standalone, "--thinking", *chosen, prompt]
+
+
+def _thinking_sent(recorder: _Recorder, *, turns: bool) -> list[dict[str, Any]]:
+    """The thinking setting of each conversation turn — a request that declares the tools — or,
+    with ``turns`` false, of each of OpenCode's own small requests, such as the session's title."""
+    return [
+        ((body.get("generationConfig") or {}).get("thinkingConfig") or {})
+        for body in recorder.bodies
+        if body.get("contents") and bool(body.get("tools")) is turns
+    ]
+
+
+@pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
+def test_opencode_shows_the_reasoning_at_the_variant_somebody_chose(
+    opencode: None, opencode_cache: Path, tmp_path: Path, generation: str
+) -> None:
+    """The console's variants (`FRD-151`), read by both generations from the console's own shape:
+    the chosen one is the thinking level sent, and the reasoning the model streams is shown — with
+    no `reasoning` flag in the file and no `includeThoughts` from the client."""
+    with _served() as (base, recorder):
+        project = _project(tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS)
+        completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
+            _shows_thinking(generation, "high", "read hello.py"),
+            cwd=project,
+            env=_environment(tmp_path, project, opencode_cache),
+            capture_output=True,
+            text=True,
+            timeout=240,
+            check=False,
+        )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output[-3000:]
+    assert "acted on the tool result" in output, output[-3000:]
+    assert MOCK_THOUGHT in output, output[-3000:]
+    turns = _thinking_sent(recorder, turns=True)
+    assert turns, "OpenCode sent no turn"
+    # The call the thinking model signed came back signed (`FRD-152`).
+    assert _signatures_handed_back(recorder) == [MOCK_SIGNATURE]
+    # OpenCode 2 asks for the thoughts itself once a variant is chosen; the level is the console's.
+    assert all(setting.get("thinkingLevel") == "high" for setting in turns), turns
+    if generation == "1":
+        # OpenCode 1 sends its own small requests with the first variant, which is the cheapest.
+        assert _thinking_sent(recorder, turns=False) == [{"thinkingLevel": "low"}]
+
+
+@pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
+def test_opencode_shows_the_reasoning_of_a_model_that_thinks_unasked(
+    opencode: None, opencode_cache: Path, tmp_path: Path, generation: str
+) -> None:
+    """No variant chosen, so nothing OpenCode sends names thinking: the model's declared default
+    does (`FRD-151`), and the reasoning the model produces anyway is shown."""
+    with _served(thinking=THINKS_UNASKED) as (base, recorder):
+        project = _project(tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS)
+        completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
+            _shows_thinking(generation, None, "read hello.py"),
+            cwd=project,
+            env=_environment(tmp_path, project, opencode_cache),
+            capture_output=True,
+            text=True,
+            timeout=240,
+            check=False,
+        )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output[-3000:]
+    assert "acted on the tool result" in output, output[-3000:]
+    assert MOCK_THOUGHT in output, output[-3000:]
+    assert not any(_thinking_sent(recorder, turns=True)), "the client asked, not the default"
+    assert _signatures_handed_back(recorder) == [MOCK_SIGNATURE]
 
 
 def _tmux(socket: str, *arguments: str) -> str:

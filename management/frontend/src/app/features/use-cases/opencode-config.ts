@@ -1,4 +1,4 @@
-import { CatalogModel } from '../../core/api/models';
+import { CatalogModel, ThinkingDeclaration } from '../../core/api/models';
 
 /**
  * The currency OpenCode's `cost` is quoted in by convention: models.dev uses US dollars per
@@ -26,6 +26,57 @@ export interface OpenCodeModel {
   name: string;
   limit?: { context: number; output: number };
   cost?: { input: number; output: number };
+  variants?: Record<string, OpenCodeVariant>;
+}
+
+/**
+ * The level words OpenCode can send, least thinking first. Its Google client refuses any other
+ * `thinkingLevel` before a request leaves the workstation, so a model's `xhigh` or `max` gets no
+ * variant: one OpenCode cannot send would fail every turn it is chosen for.
+ */
+const OPENCODE_LEVELS: readonly string[] = ['minimal', 'low', 'medium', 'high'];
+
+/**
+ * One thinking setting OpenCode offers for a model (`FRD-151`), as the Gemini field it sends —
+ * which both OpenCode generations read from this shape.
+ *
+ * **No `includeThoughts`.** The gateway asks for the reasoning itself wherever the use case
+ * returns it; written here, it would be refused by name on a use case that does not, and the file
+ * would break the day somebody turned reasoning off.
+ */
+export interface OpenCodeVariant {
+  thinkingConfig: { thinkingLevel?: string; thinkingBudget?: number };
+}
+
+/**
+ * The thinking settings the catalogue declares for a model, as the variants OpenCode lets a
+ * developer choose between (`ctrl+t`, `--variant`), or nothing where it declares none.
+ *
+ * **Least thinking first**: off, then the levels, then the model deciding. The order is not
+ * cosmetic — OpenCode 1 sends the *first* variant with its own small requests, a session's title
+ * among them, so the cheapest setting the model takes belongs there. `limited` gets no variant: a
+ * budget needs a number, the only ones a vendor states are its bounds, and its ceiling does not fit
+ * inside the output cap OpenCode sends with every request. A request with no variant chosen gets
+ * the model's declared default, which is where such a model's thinking is set.
+ */
+export function openCodeVariants(
+  thinking: ThinkingDeclaration | null | undefined,
+): Record<string, OpenCodeVariant> | undefined {
+  const modes = thinking?.modes ?? [];
+  const levels = thinking?.levels ?? [];
+  const variants: Record<string, OpenCodeVariant> = {};
+  if (modes.includes('disabled')) {
+    variants['none'] = { thinkingConfig: { thinkingBudget: 0 } };
+  }
+  for (const level of OPENCODE_LEVELS) {
+    if (levels.includes(level)) {
+      variants[level] = { thinkingConfig: { thinkingLevel: level } };
+    }
+  }
+  if (modes.includes('auto')) {
+    variants['auto'] = { thinkingConfig: { thinkingBudget: -1 } };
+  }
+  return Object.keys(variants).length > 0 ? variants : undefined;
 }
 
 /**
@@ -70,6 +121,10 @@ export function openCodeModel(model: CatalogModel, currency: string): OpenCodeMo
   }
   if (hasPrice) {
     entry.cost = { input: input as number, output: out as number };
+  }
+  const variants = openCodeVariants(model.thinking);
+  if (variants) {
+    entry.variants = variants;
   }
   return entry;
 }

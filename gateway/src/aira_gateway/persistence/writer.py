@@ -20,6 +20,7 @@ from aira_gateway.attachments import strip_attachments
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.errors import loggable
 from aira_gateway.db.models import UseCaseRead
+from aira_gateway.persistence.model_state import without_model_state
 from aira_gateway.persistence.redaction import Redactor
 from aira_gateway.persistence.sanitize import (
     MAX_STORED_DEPTH,
@@ -247,9 +248,10 @@ class RequestLogWriter:
                 # Bound the structure first: each walk below recurses (see `within_depth`).
                 bounded: dict[str, Any] = within_depth(payload)
                 # Strip, then redact: binary the gateway never inspected stays out of the row and
-                # out of the redactor (`FRD-110` §5.4). Unconditional, so swapping the redactor
-                # cannot turn it off.
-                stripped: dict[str, Any] = strip_attachments(bounded)
+                # out of the redactor (`FRD-110` §5.4), and so does a model's signature, which is
+                # state rather than anything said. Unconditional, so swapping the redactor cannot
+                # turn it off.
+                stripped: dict[str, Any] = without_model_state(strip_attachments(bounded))
                 # `storable` last, so it also covers whatever a redactor substitutes in.
                 redacted: dict[str, Any] = self._redactor.redact(stripped)
                 return as_object(storable(redacted))

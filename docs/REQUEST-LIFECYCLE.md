@@ -613,7 +613,8 @@ every `return` is a fact eventually forgotten at one of them.
   record of stores nothing; a request with no use case follows the installation's switch.
 - **What.** The request as the caller sent it, with the pipeline's PII rewrite in place of the text
   it replaced; when a redaction failed, or the rewritten text cannot be found in the body, nothing
-  of the request is kept. The answer as the caller received it, without the model's signatures.
+  of the request is kept. The answer as the caller received it. Neither keeps a model's
+  signature: it is the state a model needs to continue a turn, not anything said.
   Inline attachments and audio are replaced by a description — media type, size, SHA-256; an
   embedding's vectors are described, never stored; and credential-shaped strings are replaced by
   `[REDACTED]` (`AIRA_REDACT_PATTERNS` adds shapes).

@@ -29,6 +29,7 @@ from aira_gateway.core.canonical import (
     paired_tool_results,
 )
 from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError, stream_failure
+from aira_gateway.upstreams.carried import is_sealed
 
 #: Google's `GenerationConfig` names all six sampling controls (`FRD-124`) — the one dialect that
 #: can express everything the canonical request carries.
@@ -95,8 +96,9 @@ def _wire_parts(
             if part.id in answered:
                 function_call["id"] = part.id
             call: dict[str, Any] = {"functionCall": function_call}
-            if part.signature:
+            if part.signature and not is_sealed(part.signature):
                 # Back on the part it came from: the model validates it on the call it continues.
+                # Another dialect's sealed state is not Google's signature, and is not sent as one.
                 call[_SIGNATURE_FIELD] = part.signature
             wire.append(call)
             continue

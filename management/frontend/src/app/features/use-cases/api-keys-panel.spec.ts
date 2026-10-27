@@ -459,6 +459,32 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
     });
   });
 
+  it('says beside the file where its thinking settings are found', () => {
+    const { component, fixture, html } = setup();
+    component.issueKey();
+    fixture.detectChanges();
+
+    const hint = html().querySelector('[data-testid="thinking-variants-hint"]');
+    expect(hint?.textContent).toContain('ctrl+t');
+  });
+
+  it('offers the thinking settings the catalogue declares as OpenCode variants', () => {
+    // `FRD-151`: what `ctrl+t` cycles through in OpenCode, from the model's own declaration.
+    const config = configFor([
+      {
+        name: 'qwen2.5:3b',
+        capabilities: ['tools', 'thinking'],
+        thinking: { modes: ['disabled'], levels: ['low', 'high', 'max'] },
+      },
+    ]);
+
+    expect(config.provider.aira.models['qwen2.5:3b'].variants).toEqual({
+      none: { thinkingConfig: { thinkingBudget: 0 } },
+      low: { thinkingConfig: { thinkingLevel: 'low' } },
+      high: { thinkingConfig: { thinkingLevel: 'high' } },
+    });
+  });
+
   it('leaves a limit out rather than writing a zero the catalog never declared', () => {
     // `0` is a full context window to a client, not "unknown".
     const config = configFor([{ name: 'qwen2.5:3b', capabilities: ['tools'] }]);

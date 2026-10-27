@@ -319,7 +319,9 @@ written; `required` naming only properties; `items` on an array and nowhere else
 
 `opaque_metadata` is always there, `null` when the model sent no signature. The client runs the
 function, puts the call into `conversation_history` as a `model` turn — with its `opaque_metadata`
-unchanged, which a thinking model needs to continue — and sends the outcome in the next request:
+unchanged, which a thinking model needs to continue — and sends the outcome in the next request. On
+a Claude model the signature carries the model's own thinking for the turn, so a call handed back
+without it continues without the model's reasoning so far:
 
 ```json
 {"type": "function_result", "call_id": "…", "name": "get_weather", "result": {"temperature": 14}}

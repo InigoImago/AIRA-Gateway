@@ -39,6 +39,11 @@ _STREAM_WORDS_PER_CHUNK = 3
 #: What the mock streams as its thought, where one was asked for.
 _MOCK_THOUGHT = "[mock thought] "
 
+#: The signature a thinking model puts on its function call, which the caller has to hand back on
+#: that call — base64, as Google's own are, since its SDKs decode the field into bytes and encode
+#: it again. Fixed, so a test can tell that it came back.
+MOCK_SIGNATURE = "YWlyYSBtb2NrIHRob3VnaHQgc2lnbmF0dXJl"
+
 _DEFAULT_DIMENSIONS = 8
 
 #: What the mock's speech sounds like, in the numbers Google's speech models use (`FRD-624`):
@@ -213,7 +218,16 @@ class MockProvider:
             text="",
             finish_reason=FinishReason.TOOL_USE,
             usage=usage,
-            tool_calls=(ToolCallPart(id=f"mock-{tool.name}", name=tool.name, arguments=arguments),),
+            tool_calls=(
+                ToolCallPart(
+                    id=f"mock-{tool.name}",
+                    name=tool.name,
+                    arguments=arguments,
+                    # A thinking model signs its call, and validates the signature on the turn
+                    # that continues it.
+                    signature=MOCK_SIGNATURE if _thinking_on(request) else None,
+                ),
+            ),
         )
 
     def _structured(self, request: CanonicalRequest) -> CanonicalResponse:
@@ -328,14 +342,14 @@ def _overlap(words: set[str], text: str) -> float:
     return round(len(words & found) / len(words), 4)
 
 
+def _thinking_on(request: CanonicalRequest) -> bool:
+    """Whether the model is thinking on this request."""
+    return request.thinking is not None and request.thinking.mode != ThinkingMode.DISABLED
+
+
 def _thinks_aloud(request: CanonicalRequest) -> bool:
     """Whether a thought is streamed: the use case wants reasoning, and the model is thinking."""
-    thinking = request.thinking
-    return (
-        request.include_reasoning
-        and thinking is not None
-        and thinking.mode != ThinkingMode.DISABLED
-    )
+    return request.include_reasoning and _thinking_on(request)
 
 
 def _thinking(request: CanonicalRequest) -> str:

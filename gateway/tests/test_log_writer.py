@@ -14,6 +14,7 @@ the queue while work is in flight, and only touch the table once it has drained.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 
 import pytest
@@ -261,6 +262,31 @@ async def test_the_use_cases_storage_setting_is_applied_by_the_worker(sessionmak
     # so the token count is no evidence either way.
     assert (row.status, row.cost_nanos) == (200, 100)
     await writer.stop()
+
+
+async def test_a_signature_is_kept_in_no_stored_payload(sessionmaker) -> None:
+    """A signature is the model's state, handed to the caller and back (`FRD-152`): a Claude turn's
+    carries its reasoning, encoded, and every later request of the conversation carries it again."""
+    signed = {"functionCall": {"name": "read_file", "args": {}}, "thoughtSignature": "U0lH"}
+    entry = dataclasses.replace(
+        _entry(),
+        request_payload={"contents": [{"role": "model", "parts": [signed]}]},
+        response_payload={"parts": [{"opaque_metadata": {"thoughtSignature": "U0lH"}}]},
+    )
+
+    writer = _writer(sessionmaker, max_queue=8)
+    await writer.start()
+    await writer.submit(entry)
+    await writer.drain()
+    await writer.stop()
+
+    row = (await _rows(sessionmaker))[0]
+    assert row.request_payload == {
+        "contents": [
+            {"role": "model", "parts": [{"functionCall": {"name": "read_file", "args": {}}}]}
+        ]
+    }
+    assert row.response_payload == {"parts": [{"opaque_metadata": {}}]}
 
 
 async def test_the_installation_kill_switch_still_wins(sessionmaker) -> None:

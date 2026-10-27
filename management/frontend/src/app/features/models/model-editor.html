@@ -742,9 +742,25 @@
                   Most requests name no mode. This is what the gateway sends for them.
                   <strong>Empty is not "off"</strong>: it means the gateway sends nothing and the
                   model does whatever it does by default — which for a reasoning model is to think,
-                  and to bill you for it. Pick <code>disabled</code> here if you want quiet answers
-                  unless somebody asks otherwise.
+                  and to bill you for it, with the reasoning unseen: the gateway asks for it only
+                  where it knows the model thinks. Name what the model does anyway and it costs
+                  nothing more. Pick <code>disabled</code> here if you want quiet answers unless
+                  somebody asks otherwise.
                 </span>
+                @if (proposedThinkingDefault(); as proposed) {
+                  <span class="field__hint" data-testid="thinking-default-proposed">
+                    The model reference proposes <code>{{ proposed }}</code
+                    >: what its vendor documents this model doing when a request names nothing.
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      (click)="adoptProposedThinkingDefault()"
+                      data-testid="adopt-thinking-default"
+                    >
+                      Use {{ proposed }}
+                    </button>
+                  </span>
+                }
               </div>
             </div>
           </fieldset>

@@ -23,6 +23,7 @@ from aira_gateway.upstreams.vertex.anthropic_mapping.schema import (
     schema_for_anthropic,
     tool_input_schema,
 )
+from aira_gateway.upstreams.vertex.anthropic_mapping.thinking_blocks import blocks_for
 
 #: Vertex requires this in the body rather than as a header.
 ANTHROPIC_VERSION = "vertex-2023-10-16"
@@ -61,25 +62,45 @@ _EPHEMERAL = {"type": "ephemeral"}
 
 
 def canonical_to_anthropic(
-    request: CanonicalRequest, *, max_tokens: int, strict_tools: bool = False
+    request: CanonicalRequest,
+    *,
+    max_tokens: int,
+    strict_tools: bool = False,
+    carry_thinking: bool = True,
 ) -> dict[str, Any]:
     """Build an Anthropic Messages body.
 
     ``max_tokens`` is required by the API and optional on the canonical request, so the caller
     resolves it: the request's value, else the model's declared default (`FRD-114` FR-2).
     ``strict_tools`` is the installation's choice (`AIRA_VERTEX_PARTNER_STRICT_TOOLS`, `FRD-143`).
+    ``carry_thinking`` sends the turn in progress with the thinking blocks its calls carried back
+    (`FRD-152`); off, the adapter's second attempt where Anthropic refused them.
     """
     messages: list[dict[str, Any]] = []
     system_parts: list[str] = []
 
     # Results are paired with their calls by id here, and a Gemini-speaking client sends none.
-    for message in paired_tool_results(request.messages):
+    conversation = paired_tool_results(request.messages)
+    in_progress = _turn_in_progress(conversation)
+    #: Whether the model turn a budget would continue goes with its thinking block (`_budget`).
+    carried = False
+    for index, message in enumerate(conversation):
         if message.role is Role.SYSTEM:
             # One system prompt here, several allowed canonically: concatenated, never reduced.
             system_parts.append(message.text)
             continue
         role = "assistant" if message.role is Role.MODEL else "user"
-        blocks = _content_blocks(message)
+        # The turn in progress goes back as the model produced it, thinking blocks in their places;
+        # an earlier turn without them, which Anthropic allows — the same way every time, so what
+        # came before each block is what it was when the block was made.
+        sealed = (
+            blocks_for(message)
+            if carry_thinking and message.role is Role.MODEL and index >= in_progress
+            else None
+        )
+        if message.role is Role.MODEL:
+            carried = sealed is not None
+        blocks = sealed if sealed is not None else _content_blocks(message)
         if not blocks:
             # A turn with nothing left to say — a model turn that was only its thoughts, which no
             # surface carries in — is refused by Anthropic as empty content. Left out, the turns
@@ -119,7 +140,9 @@ def canonical_to_anthropic(
         # absent — and bills for it — so "off" is a value on the wire, as on every other dialect.
         body["thinking"] = {"type": "disabled"}
     elif request.thinking is not None:
-        body["thinking"], effort = _thinking(request, max_tokens)
+        thinking, effort = _thinking(request, max_tokens, carried=carried)
+        if thinking is not None:
+            body["thinking"] = thinking
         if effort is not None:
             output_config["effort"] = effort
     if request.tools:
@@ -151,7 +174,9 @@ def canonical_to_anthropic(
     return body
 
 
-def _thinking(request: CanonicalRequest, max_tokens: int) -> tuple[dict[str, Any], str | None]:
+def _thinking(
+    request: CanonicalRequest, max_tokens: int, *, carried: bool
+) -> tuple[dict[str, Any] | None, str | None]:
     """The `thinking` block for a request that asks the model to think, and the effort to send.
 
     Two shapes, by what the catalogue offers for the model (`ADR-0021`):
@@ -171,7 +196,7 @@ def _thinking(request: CanonicalRequest, max_tokens: int) -> tuple[dict[str, Any
     assert request.thinking is not None
     mode = request.thinking.mode
     if mode == ThinkingMode.LIMITED:
-        return _budget(request, max_tokens), None
+        return _budget(request, max_tokens, carried=carried), None
     block: dict[str, Any] = {"type": "adaptive"}
     if request.include_reasoning:
         # Without it the newest models return their thinking blocks empty, and a use case that
@@ -180,8 +205,9 @@ def _thinking(request: CanonicalRequest, max_tokens: int) -> tuple[dict[str, Any
     return block, (None if mode == ThinkingMode.AUTO else str(mode))
 
 
-def _budget(request: CanonicalRequest, max_tokens: int) -> dict[str, Any]:
-    """`enabled` with a token budget, refused where Anthropic would refuse it."""
+def _budget(request: CanonicalRequest, max_tokens: int, *, carried: bool) -> dict[str, Any] | None:
+    """`enabled` with a token budget, refused where Anthropic would refuse it — or ``None``, no
+    thinking, for a default the turn cannot continue with."""
     assert request.thinking is not None
     budget = request.thinking.tokens
     if budget is None:
@@ -202,17 +228,23 @@ def _budget(request: CanonicalRequest, max_tokens: int) -> dict[str, Any]:
             f"{max_tokens}-token output allowance: Anthropic draws the thinking from that "
             "allowance, so the budget must be below it. Raise maxOutputTokens or lower the budget."
         )
-    if _continues_a_tool_call(request):
+    if _continues_a_tool_call(request) and not carried:
         # With a budget, Anthropic requires the model's own `thinking` block, signature and all, in
-        # front of a call it is continuing, and refuses the turn without one. This gateway never
-        # hands those blocks to a caller — their text is the model's reasoning, withheld unless a
-        # use case enables it — so it has none to send back. `adaptive` has no such rule.
+        # front of a call it is continuing, and thinks no further in the turn without one.
+        # `adaptive` has no such rule. The block travels with the call (`thinking_blocks`); a
+        # history that did not bring it back — a client that drops a call's signature, or a use
+        # case whose reasoning the block would have disclosed — cannot continue with a budget.
+        if request.thinking_from_default:
+            # The installation's default, not the caller's request: the turn goes on without
+            # thinking, as Anthropic itself would carry it on, rather than refusing a request that
+            # asked for nothing.
+            return None
         raise DialectUnsupported(
             "This turn continues a function call on a Claude model with a thinking budget. "
             "Anthropic requires the model's own thinking block in front of the call it continues, "
-            "and this gateway does not carry thinking blocks to the caller, so it cannot send one "
-            "back. Send this turn with thinking disabled, or use a level word or 'auto' on a "
-            "model that thinks adaptively."
+            "and this request's history does not carry it back — the call's signature is missing, "
+            "or this use case does not return reasoning. Send this turn with thinking disabled, "
+            "or use a level word or 'auto' on a model that thinks adaptively."
         )
     block: dict[str, Any] = {"type": "enabled", "budget_tokens": budget}
     return block
@@ -253,6 +285,19 @@ def _tool_choice(request: CanonicalRequest) -> dict[str, Any] | None:
     if len(choice.allowed) == 1:
         return {"type": "tool", "name": choice.allowed[0]}
     return {"type": "any"}
+
+
+def _turn_in_progress(messages: list[CanonicalMessage]) -> int:
+    """Where the turn in progress begins: after the caller's last message that answers no call.
+
+    A tool loop is one turn to Anthropic — the model's calls, their results and its answer — and it
+    requires the model's thinking back only there.
+    """
+    start = 0
+    for index, message in enumerate(messages):
+        if message.role is Role.USER and not message.tool_results:
+            start = index + 1
+    return start
 
 
 def _continues_a_tool_call(request: CanonicalRequest) -> bool:

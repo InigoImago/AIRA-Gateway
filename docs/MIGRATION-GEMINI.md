@@ -177,6 +177,12 @@ four majors — with the `ai` release each ships for — run a two-step tool cal
 and a stream against the gateway in its own test suite (`tools/clients`, `make test-clients`), and
 the test records which form each one sent.
 
+**A function call's `thoughtSignature` goes back unchanged**, on the call it came with. A thinking
+model validates it on the turn that continues the call, and on a Claude model it carries the
+model's own thinking for the turn: a call handed back without it continues without the model's
+reasoning so far. The second, third and fourth majors hand it back, as do Google's SDK and both
+OpenCode generations; the first major drops it.
+
 ### OpenCode, both generations
 
 Two products under one name, and they send different requests: **OpenCode 1** (npm `opencode-ai`)
@@ -245,6 +251,33 @@ gateway and stores none. For many workstations, every release from v0.1.7 on car
 OpenCode 1, add the same entry to `~/.config/opencode/tui.json`. The archive brings no `tui.json`
 of its own, so a developer's settings are never overwritten. [`tools/opencode/`](../tools/opencode/README.md) has the plugin and the
 hand-editable configuration the first measurement was made with.
+
+**The model's thinking.** The console's file gives each model the thinking settings its catalogue
+entry declares, as OpenCode *variants*: `none`, the level words from `minimal` to `high`, and
+`auto`, least thinking first — OpenCode 1 sends the first one with its own small requests, such as
+a session's title. Choose one with `ctrl+t`, or on the command line with `--variant high`
+(OpenCode 1) or `--model aira/<model>#high` (OpenCode 2); `opencode run --thinking` prints the
+reasoning. With none chosen, a model whose catalogue entry has a thinking default returns its
+reasoning as well: the default names what the model does when nothing is asked, so it costs nothing
+more, and the model reference proposes it wherever the vendor documents it. The reasoning comes
+back wherever the use case returns it. On a use case that does not, OpenCode 2 is refused once a
+variant is chosen, because it then asks for the reasoning itself.
+
+A file handed out before the variants existed has none; add them per model by hand, naming only
+words the model's catalogue entry declares — any other word is refused by name, and OpenCode's
+Google client cannot send Claude's `xhigh` or `max` at all:
+
+```json
+"models": {
+  "gemini-3.5-flash": {
+    "name": "gemini-3.5-flash via AIRA",
+    "variants": {
+      "low": { "thinkingConfig": { "thinkingLevel": "low" } },
+      "high": { "thinkingConfig": { "thinkingLevel": "high" } }
+    }
+  }
+}
+```
 
 Three things that make OpenCode fail against a Gemini endpoint and are not the gateway's:
 

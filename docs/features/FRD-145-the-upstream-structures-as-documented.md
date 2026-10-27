@@ -58,7 +58,8 @@ as a refusal.
   effort words for 4.7 and later. With the use case's reasoning on, `display: "summarized"`.
 - **FR-2 — a continued call.** With a budget, Anthropic requires the model's own thinking block
   before a call it continues, which this gateway does not carry; that stays a named refusal. With
-  `adaptive` thinking no turn has to begin with one, and the turn is sent.
+  `adaptive` thinking no turn has to begin with one, and the turn is sent. *Revised by `FRD-152`:*
+  the block now travels with the call, and only a budget whose block did not come back is refused.
 - **FR-3 — fixed sampling, declared.** A catalogue declaration `fixed_sampling` (Management field,
   console checkbox, model event, read model) says a model takes no `top_k` and no `temperature` or
   `top_p` other than 1. The reference list fills it from models.dev's `temperature: false`. A
@@ -99,6 +100,10 @@ as a refusal.
   back; in `adaptive` mode it does not require it. Carrying them would put the model's signed
   reasoning, and for older models its text, into an opaque field the caller holds, and replay must
   reproduce the original block order exactly. Left until it can be measured against Claude.
+  *Done by `FRD-152` before that measurement, on Anthropic's current rule — within a tool-use turn
+  the blocks are required — with both objections answered: text is carried only where the use case
+  returns reasoning, the order is carried with the blocks, and a refusal of them is sent again
+  without.*
 - **`countTokens`** stays unserved, as `docs/API.md` says.
 - **Claude Sonnet 5.5's "off"** is `between_tools`, not `disabled`; the reference list declares no
   `disabled` for it, so it is not offered.

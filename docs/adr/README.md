@@ -55,3 +55,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0044 | [A person's own budget replaces the one for everybody, under the use case's](ADR-0044-a-persons-own-budget-replaces-the-one-for-everybody.md) | **Accepted** | 2026-10-25 |
 | 0045 | [A model call names its use case, whatever the credential](ADR-0045-a-model-call-names-its-use-case.md) | **Accepted** | 2026-10-25 |
 | 0046 | [A stream is never silent for long, and its status waits for a model no longer than that](ADR-0046-a-stream-is-never-silent-for-long.md) | **Accepted** | 2026-10-27 |
+| 0047 | [A model's turn state travels with the caller, sealed into a function call's signature](ADR-0047-a-models-turn-state-travels-with-the-caller.md) | **Accepted** | 2026-10-27 |

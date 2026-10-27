@@ -47,6 +47,9 @@ const PRICE_DIGITS = 6;
 /** A width as the embedding field takes it: a whole number, nothing else. */
 const WIDTH = /^\d+$/;
 
+/** The gateway's own mode for "the model decides how much": the default a vendor's own often is. */
+const AUTO_THINKING: ThinkingModeName = 'auto';
+
 /** What the model or the gateway answered about one word, mode or region. */
 type Verdict = { ok: boolean; detail: string };
 
@@ -600,6 +603,32 @@ export class ModelEditor {
       .filter((entry) => entry.platform === platform)
       .map((entry) => entry.name);
   });
+
+  /**
+   * The thinking default the reference proposes for a model on file that names none (`FRD-151`):
+   * what its vendor documents it doing when a request names no setting. Offered, never applied —
+   * the declaration on file is somebody's measurement. A level the form does not declare is a
+   * disagreement between the two for a person to settle, so it is not offered.
+   */
+  protected readonly proposedThinkingDefault = computed<string | null>(() => {
+    if (!this.editing() || this.thinkingDefault()) return null;
+    const platform = this.provider().trim();
+    const name = this.name().trim();
+    const word =
+      this.reference()?.entries.find((entry) => entry.platform === platform && entry.name === name)
+        ?.declaration.thinking?.default?.mode ?? null;
+    return word === AUTO_THINKING || (word && this.thinkingLevels().includes(word)) ? word : null;
+  });
+
+  /** Take the proposal — and `auto` with it where the form does not offer it yet. */
+  protected adoptProposedThinkingDefault(): void {
+    const word = this.proposedThinkingDefault();
+    if (!word) return;
+    if (word === AUTO_THINKING && !this.hasThinkingMode(AUTO_THINKING)) {
+      this.toggleThinkingMode(AUTO_THINKING, true);
+    }
+    this.thinkingDefault.set(word);
+  }
 
   /** Fill the open form from the reference entry its id names, keeping where it lives. */
   protected fillFromReference(): void {

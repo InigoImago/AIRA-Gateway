@@ -455,3 +455,11 @@ audit row rounds; both planes agree on the tokens (§11.1). `opencode stats` sti
 because it rounds to two decimals — the figure is there, the display is coarse, and that is
 OpenCode's to change.
 
+
+## 12. The model's thinking (2026-10-27)
+
+The file now also carries each model's thinking settings as OpenCode *variants*, from the catalogue
+entry — off, the level words OpenCode can send, and `auto`, least thinking first because OpenCode 1
+sends the first one with its own small requests. Why it took a variant *and* a declared default for
+OpenCode to show a model's reasoning, and what was measured on both generations, is
+[`FRD-151`](FRD-151-a-models-reasoning-in-opencode.md).

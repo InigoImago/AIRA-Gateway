@@ -254,10 +254,12 @@ async def fitted(
     chose by `prepare_for_dispatch` and of every other candidate by `fitting`, so a fallback is
     never sent the defaults of the model in front of it.
     """
+    thinking = resolve_thinking(asked.thinking, declaration)
     return asked.model_copy(
         update={
             **sampling_defaults(request, asked, declaration),
-            "thinking": resolve_thinking(asked.thinking, declaration),
+            "thinking": thinking,
+            "thinking_from_default": asked.thinking is None and thinking is not None,
             "cache_prefix": await cache_prefix_wanted(request, declaration),
             "cache_ttl": await cache_ttl_for(request),
             "addressing": declaration.addressing,

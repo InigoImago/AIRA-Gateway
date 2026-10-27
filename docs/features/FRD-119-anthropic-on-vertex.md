@@ -8,6 +8,9 @@
 4.5 and earlier, `adaptive` with an effort word for Opus 4.7 and later — and the content, schemas,
 sampling and cache prices are held to Anthropic's current reference.
 
+*Revised by `FRD-152`:* thinking blocks are no longer only dropped. Within a tool loop they travel
+with the model's first function call and go back to the model in their places.
+
 ## 1. Problem
 
 Model Garden makes two vendors available through one platform, one project and one credential. It

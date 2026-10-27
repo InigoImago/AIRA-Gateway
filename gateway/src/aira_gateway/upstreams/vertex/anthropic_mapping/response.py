@@ -18,6 +18,7 @@ from aira_gateway.core.canonical import (
     ToolCallPart,
 )
 from aira_gateway.upstreams.base import UpstreamError, stream_failure
+from aira_gateway.upstreams.vertex.anthropic_mapping.thinking_blocks import with_carried
 
 #: The finish reason for "the model answered, but not with the document asked for". A value rather
 #: than an error, so it takes the path every abnormal finish takes and is refused in one place
@@ -177,11 +178,14 @@ def anthropic_to_canonical(
     text = answer_text(data.get("content"))
     reasoning = reasoning_text(data.get("content"), wanted=include_reasoning)
     reason = finish_reason(data.get("stop_reason"))
+    # The message's thinking rides its first call to the turn that continues it (`FRD-152`).
+    calls = with_carried(
+        tool_calls_of(data.get("content")), data.get("content"), include_reasoning=include_reasoning
+    )
 
     if structured:
         document = structured_document(data.get("content"))
         if document is None:
-            calls = tool_calls_of(data.get("content"))
             if calls:
                 # With a schema and tools, the model may call a function instead of answering: a
                 # normal agent turn, not an unsatisfied schema.
@@ -216,7 +220,7 @@ def anthropic_to_canonical(
         reasoning=reasoning,
         finish_reason=reason,
         usage=usage_of(data.get("usage")),
-        tool_calls=tool_calls_of(data.get("content")),
+        tool_calls=calls,
     )
 
 
@@ -244,6 +248,9 @@ class StreamAssembler:
         #: The open `tool_use` block, if any: its id, its name, and the argument fragments so far.
         self._open_call: dict[str, str] | None = None
         self._calls: list[ToolCallPart] = []
+        #: Every content block so far, by index, as far as the envelope needs it (`FRD-152`): the
+        #: thinking whole — sent or not — and the text and calls around it.
+        self._blocks: dict[int, dict[str, Any]] = {}
 
     def feed(self, event: dict[str, Any]) -> CanonicalChunk | None:
         kind = event.get("type")
@@ -257,6 +264,9 @@ class StreamAssembler:
 
         if kind == "content_block_start":
             block = event.get("content_block") or {}
+            index = event.get("index")
+            if isinstance(index, int) and isinstance(block, dict):
+                self._blocks[index] = dict(block)
             if block.get("type") == "tool_use":
                 self._open_call = {
                     "id": str(block.get("id") or ""),
@@ -271,6 +281,7 @@ class StreamAssembler:
 
         if kind == "content_block_delta":
             delta = event.get("delta") or {}
+            self._held(event.get("index"), delta)
             if delta.get("type") == "thinking_delta":
                 thought = str(delta.get("thinking") or "") if self._include_reasoning else ""
                 if not thought:
@@ -306,10 +317,28 @@ class StreamAssembler:
                 text_delta="",
                 finish_reason=self._finish or FinishReason.STOP,
                 usage=self._running(),
-                # Whole, on the chunk that ends the message.
-                tool_calls=tuple(self._calls),
+                # Whole, on the chunk that ends the message — the first one carrying the
+                # message's thinking to the turn that continues it.
+                tool_calls=with_carried(
+                    tuple(self._calls),
+                    [self._blocks[i] for i in sorted(self._blocks)],
+                    include_reasoning=self._include_reasoning,
+                ),
             )
         return None
+
+    def _held(self, index: Any, delta: dict[str, Any]) -> None:
+        """A delta added to its block, as `MessageAssembler` adds it."""
+        block = self._blocks.get(index) if isinstance(index, int) else None
+        if block is None:
+            return
+        kind = delta.get("type")
+        if kind == "thinking_delta":
+            block["thinking"] = str(block.get("thinking") or "") + str(delta.get("thinking") or "")
+        elif kind == "signature_delta":
+            block["signature"] = str(delta.get("signature") or "")
+        elif kind == "text_delta":
+            block["text"] = str(block.get("text") or "") + str(delta.get("text") or "")
 
     def _update_usage(self, reported: Any) -> None:
         """Take each count the event carries: it is the total so far, never an increment."""

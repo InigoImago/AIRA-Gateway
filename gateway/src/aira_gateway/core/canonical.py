@@ -312,6 +312,10 @@ class CanonicalRequest(BaseModel):
     temperature: float | None = None
     max_output_tokens: int | None = None
     thinking: Thinking | None = None
+    #: The thinking is the model's declared default, not the caller's (`FRD-152`): where a dialect
+    #: cannot carry it into a turn, it is left out — the installation's choice, not a request to
+    #: refuse — while a setting the caller asked for is refused by name.
+    thinking_from_default: bool = False
     #: Sampling controls (`FRD-124`); see :data:`SAMPLING_CONTROLS`.
     top_p: float | None = None
     top_k: int | None = None
