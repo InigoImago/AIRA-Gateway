@@ -837,6 +837,17 @@ If you serve the SPA yourself instead, route:
 The gateway's own API (`/v1beta/…`) is normally published separately for API clients — it is the
 data plane and does not need to sit behind the SPA's origin.
 
+**How large a request may be is the gateway's decision.** It refuses a body over
+`AIRA_MAX_REQUEST_BYTES` (8 MiB) itself: `413` in its own envelope, saying the limit, with an audit
+row. The image's nginx sets no limit of its own under `/gw` and streams the request through
+unbuffered, so nothing is held on its disk. Every proxy of yours in front — of the console and of
+the gateway's own address — must let at least as much through: nginx and the Kubernetes ingress
+refuse more than **1 MiB** unless told otherwise (`client_max_body_size`; the annotation
+`nginx.ingress.kubernetes.io/proxy-body-size`). A coding assistant resends its whole conversation
+with every step, so a session of about 300 000 tokens is a 1 MiB request, and such a proxy refuses
+it with an HTML page no client can read, before the gateway has seen it — the request appears
+nowhere in the audit trail.
+
 **The client address in the audit trail.** Behind proxies, decide which address is recorded:
 
 ```bash
@@ -946,7 +957,9 @@ nobody is listening on — the SPA reports the backend as unreachable while both
 perfectly healthy, and only restarting nginx fixes it.
 
 The shipped config therefore passes each upstream through a variable and configures a `resolver`,
-which defers resolution to request time. If you replace this config, keep that shape.
+which defers resolution to request time. If you replace this config, keep that shape — and under
+`/gw` keep `client_max_body_size 0` and `proxy_request_buffering off`, which leave a request's size
+to the gateway (§3.7).
 `AIRA_DNS_RESOLVER` defaults to Docker's embedded DNS (`127.0.0.11`); set it to your platform's
 resolver elsewhere (in Kubernetes, `kube-dns.kube-system.svc.cluster.local`).
 
@@ -1268,6 +1281,9 @@ Operations:
       what the payload is stored for. A use case can replace personal data before the prompt
       leaves with a `pii_filter` step — the rewritten request is then what is stored. For data
       that must not be persisted at all, the control is the per-use-case storage switch below
+- [ ] Every proxy and load balancer between callers and the gateway lets a request through up to
+      `AIRA_MAX_REQUEST_BYTES` (8 MiB by default): nginx and the Kubernetes ingress stop at 1 MiB
+      unless told otherwise, which a coding assistant's session reaches at about 300 000 tokens
 - [ ] `AIRA_STREAM_KEEPALIVE_SECONDS` below the shortest idle timeout of every proxy and load
       balancer between callers and the gateway (15 s by default; nginx closes after 60): a streamed
       answer sends its status and then a keepalive within that long while the model is quiet. `0`

@@ -1722,6 +1722,15 @@ reading code.
   unit is not the caller's unit, the refusal has to say so — this one does, and that message is
   the only reason the cause was found in minutes rather than in production.
 
+  *The same shape, one layer further out, where nobody chose the limit at all.* The console's nginx
+  refused a body over 1 MiB — its default — and a coding assistant, which counts its session in
+  tokens and resends all of it with every step, met that at about 300 000 of them: an HTML `413`
+  sent before the gateway saw the request, so no envelope, no unit and no audit row, and the owner
+  could only report "it stops past 300k". **A layer that cannot say why must not be the one that
+  refuses**: the proxy now leaves the size to the gateway, whose `413` names its limit in bytes and
+  is recorded. Ask of every hop in front what it refuses by default — a body size, an idle time —
+  before a caller finds out.
+
 ## 4. Models, providers and dispatch
 
 - **Asking a model for one word means reading one word, not searching for it.** The injection

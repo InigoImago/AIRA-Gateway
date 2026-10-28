@@ -79,6 +79,13 @@ request for every way in.
   embeddings, reranking). An example appears only where a released model can serve it, and every
   example is built from an address that names the use case. Each address sits on its own line with
   its copy button, which stays whole at a phone's width.
+- **FR-8** *(added 2026-10-28)* — Through the console's proxy a request is as large as the gateway
+  accepts. Every address above is under `/gw`, and nginx refuses a body over 1 MiB unless told
+  otherwise: a long OpenCode session — about 300 000 tokens, since every step resends the whole
+  conversation, measured at 3.17 bytes a token — ended in nginx's own HTML `413`, unrecorded, while
+  the gateway's `AIRA_MAX_REQUEST_BYTES` (8 MiB) never applied. The `/gw` location sets
+  `client_max_body_size 0` and `proxy_request_buffering off`: the gateway refuses what is over its
+  limit, in its envelope and on the record, and nothing is spooled to the proxy's disk.
 
 ## 5. Design & Architecture
 - `auth/dependencies.py`: `must_name_a_use_case` is unchanged in what it decides — a bound key was
@@ -122,8 +129,13 @@ status on the span, and writes no audit row.
 - Browser: `connection-block.spec.ts` — the addresses, and **the generation example is served as
   written** with a key issued on the page, while the same address without the prefix is refused
   with the prefix to add.
-- Live suites: every model call names its use case.
-- Mutations `NU1`–`NU8`.
+- Live suites: every model call names its use case. FR-8: `test_stack_smoke.py` sends 2 MiB through
+  the console image's proxy and gets the gateway's answer, and a body over the gateway's ceiling
+  gets the gateway's `413` and its audit row; against the image before FR-8 the first is nginx's
+  `413`.
+- Hermetic: `test_the_console_proxy_leaves_the_size_to_the_gateway.py` (FR-8's two directives, and
+  that every client the console sets up is pointed at the proxy).
+- Mutations `NU1`–`NU8`, `PB-1`–`PB-2`.
 
 ## 11. Dependencies & Risks
 - Every client in the field configured with a key and a plain base URL breaks at the upgrade until

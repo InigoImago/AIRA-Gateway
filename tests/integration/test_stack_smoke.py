@@ -5,12 +5,16 @@ Excluded from the default hermetic run via the ``integration`` marker; run with
 (the manual curl/e2e verifications) into a CI "integration" stage.
 """
 
+import uuid
+
 import pytest
 import stack_addresses
 from sqlalchemy import text
 
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine
+
+from .conftest import wait_for_row
 
 pytestmark = pytest.mark.integration
 
@@ -77,3 +81,62 @@ def test_the_spa_proxy_resolves_its_upstreams_at_request_time() -> None:
         assert f"proxy_pass       {upstream}" in rendered, (
             f"{upstream} is not passed through a variable, so its address is pinned at startup"
         )
+
+
+def _request_of(size: int) -> bytes:
+    """A generation request whose body is ``size`` bytes or a few more: one long user text."""
+    return b'{"contents":[{"parts":[{"text":"' + b"x" * size + b'"}]}]}'
+
+
+async def test_the_spa_proxy_lets_a_large_request_reach_the_gateway() -> None:
+    """Every client the console sets up is pointed at `/gw`, and nginx refuses a body over 1 MiB
+    unless told otherwise — with an HTML page of its own, before the gateway has seen the request,
+    so nothing records it. A coding assistant resends its whole conversation with every step, and a
+    session of about 300 000 tokens is past 1 MiB. Such a body must reach the gateway: refused here
+    for want of a credential, in the gateway's envelope."""
+    import httpx
+
+    async with httpx.AsyncClient(base_url=FRONTEND_URL, timeout=60.0) as client:
+        response = await client.post(
+            "/gw/v1beta/models/any:generateContent",
+            content=_request_of(2 * 1024 * 1024),
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 401, (response.status_code, response.text[:200])
+    assert "error" in response.json(), "the refusal is not the gateway's"
+
+
+async def test_the_gateway_refuses_through_the_spa_proxy_what_is_over_its_ceiling() -> None:
+    """With no limit of its own, the proxy hands the gateway a body over the gateway's ceiling as
+    well, and the gateway refuses it in its own words and on the record. The proxy does not buffer
+    the request, so it must pass on a refusal that comes while it is still sending."""
+    import httpx
+
+    ceiling = GatewaySettings().max_request_bytes
+    probe = f"proxy-ceiling-probe-{uuid.uuid4().hex[:8]}"
+    engine = build_engine(GatewaySettings().database_url(use_sqlite=False))
+    try:
+        async with httpx.AsyncClient(base_url=FRONTEND_URL, timeout=180.0) as client:
+            response = await client.post(
+                f"/gw/v1beta/models/{probe}:generateContent",
+                content=_request_of(ceiling + 1024),
+                headers={"content-type": "application/json"},
+            )
+        assert response.status_code == 413, (response.status_code, response.text[:200])
+        assert response.json()["error"]["message"].startswith("Request body too large"), (
+            response.text[:200]
+        )
+        row = await wait_for_row(
+            engine,
+            "SELECT outcome FROM request_logs WHERE model = :model",
+            {"model": probe},
+            timeout=20.0,
+        )
+        assert row.outcome == "request_too_large"
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM request_logs WHERE model = :model"), {"model": probe}
+            )
+        await engine.dispose()

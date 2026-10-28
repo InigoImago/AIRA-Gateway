@@ -107,6 +107,18 @@ server {
         # producing resets this timer per chunk; a stalled upstream still ends.
         proxy_read_timeout 310s;
         proxy_send_timeout 310s;
+
+        # **How large a request may be is the gateway's to decide, not this proxy's.** nginx
+        # refuses a body over 1 MiB unless told otherwise, and every client the console sets up is
+        # pointed here — coding assistants among them, which resend the whole conversation with
+        # every step, so a session of about 300 000 tokens is past 1 MiB. nginx's refusal is an
+        # HTML page of its own, before the gateway has seen the request: no envelope a client can
+        # read, no audit row. So no limit here — the gateway refuses a body over
+        # `AIRA_MAX_REQUEST_BYTES` itself, in its own words and on the record — and the request is
+        # not buffered either, which with no limit would spool a body of any size to this
+        # container's disk before the gateway could refuse it.
+        client_max_body_size    0;
+        proxy_request_buffering off;
     }
 
     # Angular owns the routing: anything else is a client-side route.

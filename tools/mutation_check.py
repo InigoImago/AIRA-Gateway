@@ -19758,6 +19758,22 @@ MUTATIONS = [
         "        return True",
         "gateway/tests/test_a_failure_says_who_stopped.py",
     ),
+    Mutation(
+        "PB-1",
+        "the console's proxy leaves a request's size to the gateway instead of nginx's 1 MiB",
+        "management/frontend/deploy/default.conf.template",
+        "        client_max_body_size    0;\n",
+        "",
+        "tools/tests/test_the_console_proxy_leaves_the_size_to_the_gateway.py",
+    ),
+    Mutation(
+        "PB-2",
+        "the console's proxy streams a request through rather than spooling it whole to its disk",
+        "management/frontend/deploy/default.conf.template",
+        "        proxy_request_buffering off;",
+        "        proxy_request_buffering on;",
+        "tools/tests/test_the_console_proxy_leaves_the_size_to_the_gateway.py",
+    ),
 ]
 
 

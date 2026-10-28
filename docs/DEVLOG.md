@@ -5,6 +5,45 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A long session no longer ends at the console's proxy (2026-10-28)
+
+Reported by the owner: long agentic sessions break off past about 250 000 tokens, with Claude and
+Gemini alike, and LiteLLM does the same; then, precisely, Gemini answers `413` past 300 000.
+
+- **Measured first.** A coding conversation as OpenCode sends it — this repository's files read
+  through a `read` tool, Gemini's format, compact JSON — weighs **3.17 bytes a token** by Google's
+  free `countTokens` at five sizes from 250 KB to 1.3 MB: 250 000 tokens are 0.76 MiB, and **1 MiB
+  is about 330 000 tokens**, fewer once signatures ride along. Every step resends all of it.
+- **The cause was ours.** The console writes `/gw` into every address it gives a client —
+  `opencode.json` included (`FRD-149`) — and its nginx forwarded `/gw` with no
+  `client_max_body_size`, so nginx's 1 MiB applied: an HTML `413` before the gateway had seen the
+  request, no audit row, while the gateway's own `AIRA_MAX_REQUEST_BYTES` (8 MiB) never came into
+  play. LiteLLM's symptom fits the same default on whatever proxy stands in front of it.
+- **Fixed** (`FRD-149` FR-8): `client_max_body_size 0` and `proxy_request_buffering off` under
+  `/gw` — the gateway alone refuses, in its envelope and on the record, and an unlimited body is
+  streamed through rather than spooled to the container's disk. Proven with the console image and
+  the harness gateway on a SQLite file of its own: through main's template 2 MiB, whole or
+  streamed, and 8 MiB + 1 KiB were all nginx's `413`; through the new one, the model's answer, the
+  SSE stream, and the gateway's *"Request body too large: the limit is 8388608 bytes."* — passed on
+  by nginx although it arrives while the request is still being sent. The new live test failed
+  against the running console with nginx's page and passed against a second console with the new
+  template; `PB-1`, `PB-2` caught.
+- **A silence longer than nginx's read timeout passes it too**, through the same image: nginx reads
+  the gateway's keepalive (`ADR-0046`) as traffic. Scaled down, a model silent for 2 s behind a 1 s
+  read timeout completed with keepalives every 0.5 s, and without them ended in nginx's `504` after
+  1.0 s. At the shipped 310 s the 15 s keepalive leaves a twentyfold margin.
+- **Ruled out on the way:** context windows (Claude from 4.6 and Gemini hold 1M); the gateway's own
+  limit; OpenCode's compaction, which follows the catalogue's context window. OpenCode's own timers,
+  read in its binaries: 1.19.3 waits 300 s for headers and 300 s for any byte; 2.0.32 and 2.1.3
+  300 s for headers and **900 s between SSE events** — a blank keepalive line is not an event there,
+  so `ADR-0046`'s keepalive keeps OpenCode 1 and proxies awake but not OpenCode 2's chunk timer,
+  which at a quarter of an hour does not bind.
+
+Not in this repository's reach: a proxy of the installation in front of the console or the gateway
+keeps its own default; `DEPLOYMENT.md` §3.7 and its checklist now say so.
+
+---
+
 ## The reasoning, live against Google — and a model its provider retired is final (2026-10-28)
 
 Asked by the owner before `FRD-151` and `FRD-152` go out: does the reasoning really show for Gemini,
