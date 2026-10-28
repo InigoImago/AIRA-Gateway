@@ -261,7 +261,9 @@ reasoning. With none chosen, a model whose catalogue entry has a thinking defaul
 reasoning as well: the default names what the model does when nothing is asked, so it costs nothing
 more, and the model reference proposes it wherever the vendor documents it. The reasoning comes
 back wherever the use case returns it. On a use case that does not, OpenCode 2 is refused once a
-variant is chosen, because it then asks for the reasoning itself.
+variant is chosen, because it then asks for the reasoning itself. What shows is what the vendor
+sends: Gemini a summary of its thinking — Gemini 3.5 Flash for some steps only, and at `low` often
+none — GLM its thinking whole, and OpenAI's reasoning models on Azure nothing.
 
 A file handed out before the variants existed has none; add them per model by hand, naming only
 words the model's catalogue entry declares — any other word is refused by name, and OpenCode's

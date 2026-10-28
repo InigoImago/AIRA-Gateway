@@ -42,6 +42,10 @@ REFUSALS = (
 
 #: Upstream statuses passed through to the caller, with their Google status name.
 UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
+    # The model is not served at the address the catalogue gives — retired, or never offered in
+    # that region — once every region was asked. Nothing about it passes with time, and every
+    # client retries a `502` as an outage, so it would ask again and again. Its message says why.
+    404: (404, "NOT_FOUND"),
     # The provider's request size limit, below this gateway's own: the request is the caller's to
     # make smaller, and a `502` would have it retried as it is. Its reason goes with it.
     413: (413, "INVALID_ARGUMENT"),

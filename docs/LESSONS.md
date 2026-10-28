@@ -1615,6 +1615,10 @@ reading code.
   the audit row.
 - **Two refusals that need different actions stay apart** — *"not in the catalog"* (add it) and
   *"not approved"* (release it); *"no capable model"* (operator-fixable, 400) and an outage (502).
+  And a failure that time will not change must not wear the status of one it will: a model its
+  provider had retired answered `502`, which every client retries, and OpenCode sent the same turn
+  six and eleven times before giving up. The status is the first thing a program reads, and the
+  only thing most of them read (`FRD-628` FR-6).
 - **Where a fact has no copy, look for the join.** The opposite search to the one above, and it
   found more: two halves that are each correct with nothing checking the wire between them. The
   gateway's consumer dropped an event type it did not recognise **in silence**, so a configuration

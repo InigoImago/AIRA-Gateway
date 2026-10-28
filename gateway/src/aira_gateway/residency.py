@@ -74,7 +74,7 @@ def parse_model_regions(configured: str) -> dict[str, frozenset[str]]:
         if not separator or not region.strip() or not names:
             raise ValueError(
                 f"'{entry}' does not name a region and its models. Expected "
-                "'region=model,model', e.g. 'global=glm-4.7-maas,deepseek-v3.2-maas'."
+                "'region=model,model', e.g. 'global=glm-5.2-maas'."
             )
         for name in names:
             permitted.setdefault(name, set()).add(region.strip())

@@ -707,6 +707,7 @@ off by default, so the audit rows themselves are kept. Each run is recorded in `
 | Declared, but the dialect has no field for it | 400 `FAILED_PRECONDITION`, **naming the reason** | 400 `VALIDATION_ERROR` | `invalid_request` |
 | Upstream said 400 | 400 `FAILED_PRECONDITION`, carrying its reason | 502 `EXTERNAL_KI_API_ERROR`, carrying its reason | `upstream_error` |
 | Upstream said 413 — the request too large for the provider | 413 `INVALID_ARGUMENT`, carrying its reason | 502 `EXTERNAL_KI_API_ERROR`, carrying its reason | `upstream_error` |
+| Upstream said 404 to a model call — retired, not offered in that region, not enabled for the account — in every region asked | 404 `NOT_FOUND`, saying asking again will not change that | 502 `EXTERNAL_KI_API_ERROR`, saying the same | `upstream_error` |
 | Upstream said 429, 503 or 504 | the same status (`RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`), no `Retry-After` | 429 `EXTERNAL_KI_API_TOO_MANY_REQUEST` for a 429; 502 `EXTERNAL_KI_API_ERROR` for the others | `upstream_error` |
 | Upstream said 529 — Anthropic's "overloaded" — in its status or inside its stream | 503 `UNAVAILABLE`, after the next region was tried | 502 `EXTERNAL_KI_API_ERROR` | `upstream_error` |
 | This gateway stopped waiting: the provider sent nothing for the platform's timeout | 504 `DEADLINE_EXCEEDED`, saying *AIRA stopped waiting* and for how long | 502 `EXTERNAL_KI_API_ERROR`, saying the same | `upstream_error` |

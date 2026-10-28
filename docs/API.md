@@ -133,7 +133,12 @@ refusal as before.
 `AIRA stopped waiting: Google Vertex AI sent nothing for 120 s …` is `504 DEADLINE_EXCEEDED`, a
 connection pool with nothing free `503 UNAVAILABLE`. Anthropic's `529` "overloaded" is answered as
 `503 UNAVAILABLE` once the next region was tried, and a provider's `413` as `413 INVALID_ARGUMENT`
-with the provider's reason.
+with the provider's reason. A provider's `404` to a model call — the model retired, not offered in
+the region the catalogue names, or not enabled for the account — is `404 NOT_FOUND` once every region
+was tried, saying that asking again will not change that: a client retries a `502`, and nothing about
+this one passes with time. Google's own sentence is not repeated, as it quotes the project the
+installation bills to. The KIRA surface keeps its `502 EXTERNAL_KI_API_ERROR` and carries the same
+sentence.
 
 Other refusals' messages say what they need to be acted on: an exhausted fallback chain names every
 model it tried and why each did not answer, keeping the last provider's status; a budget refusal

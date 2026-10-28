@@ -5,8 +5,8 @@ and an outage, a refusal or a broken body must read the same on all three: which
 must not decide whether the caller sees a reason, a status or a 500. So the judgement lives here
 once, and a transport only names itself:
 
-    refused         a non-200 answer → `UpstreamError` with its status, and a 400's or 413's stated
-                    reason
+    refused         a non-200 answer → `UpstreamError` with its status, a 400's or 413's stated
+                    reason, and what a 404 means
     unreachable     no answer at all → `UpstreamError` without a status, saying who stopped — and
                     the gateway's own `504`/`503` where it was this gateway's time or pool
     json_object     a 200 whose body is not a JSON object → `UpstreamError` 502
@@ -56,22 +56,41 @@ def timeout(seconds: float) -> httpx.Timeout:
 #: the most actionable thing anybody gets.
 _REASON_CARRIED = frozenset({400, 413})
 
+#: What a `404` to a model call means: the provider has no such model at that address. Said in this
+#: gateway's words, because the provider's own sentence quotes the project it bills to — and
+#: because the status alone does not say whose remedy it is: the catalogue's, not the caller's, and
+#: not time's.
+_NOT_SERVED = (
+    " The model is not available at the address the catalogue gives — retired, not offered in "
+    "that region, or not enabled for this account — and asking again will not change that."
+)
+
+
+def _asked_a_model(response: httpx.Response) -> bool:
+    """Whether the refused request was a model call. Every one is a `POST`; a `GET` is a listing or
+    a readiness probe, where a `404` means a missing route and says nothing about a model."""
+    try:
+        return response.request.method == "POST"
+    except RuntimeError:  # httpx raises when a response carries no request
+        return False
+
 
 def refused(response: httpx.Response, name: str) -> UpstreamError:
-    """A non-200 answer, with its status so 429/503/504 pass through for every vendor.
+    """A non-200 answer, with its status so 404/429/503/504 pass through for every vendor.
 
     The provider's reason is carried for a ``400`` and a ``413`` only (`upstream_reason`): each
     names a fault in the body *we* built. A 401/403 is about our credentials and a 5xx is the
-    provider's internal noise. For every status the **cause it stated** rides along (`FRD-141`):
-    its reason word in the message, so a caller can report it, and its explanation on the error,
-    for the operator. The message begins with the provider's name, so a reader knows whose answer
-    it was.
+    provider's internal noise; a model call's 404 is said in this gateway's own words
+    (`_NOT_SERVED`). For every status the **cause it stated** rides along (`FRD-141`): its reason
+    word in the message, so a caller can report it, and its explanation on the error, for the
+    operator. The message begins with the provider's name, so a reader knows whose answer it was.
     """
     detail = upstream_reason(response) if response.status_code in _REASON_CARRIED else ""
     diagnosis = diagnosis_of_response(response)
     said = f" Reason: {diagnosis.reason}." if diagnosis else ""
+    gone = _NOT_SERVED if response.status_code == 404 and _asked_a_model(response) else ""
     return UpstreamError(
-        f"{name} returned {response.status_code}.{detail}{said}",
+        f"{name} returned {response.status_code}.{detail}{said}{gone}",
         response.status_code,
         diagnosis,
     )

@@ -66,6 +66,13 @@ not stored at all.
   (`AIRA stopped waiting: Google Vertex AI sent nothing for 120 s …`, `AIRA could not reach …`,
   `AIRA had no free connection …`) — and the status follows: the gateway's own `504` or `503` where
   it stopped, never the masked `502` that reads as the provider being down.
+  **A model the provider does not serve is final, and the status says so** (amended 2026-10-28): a
+  provider's `404` to a model call — retired, not offered in the region, not enabled for the account
+  — is `404 NOT_FOUND` on the Gemini surface once every region was asked, and the message adds that
+  asking again will not change that, in this gateway's words (Google's quotes the project). As a
+  `502` it was retried as an outage: the same turn six times by OpenCode 1 and eleven by OpenCode 2.
+  The KIRA surface keeps the predecessor's one status and carries the sentence. A `404` to a `GET` —
+  a listing, a readiness probe — is a missing route and gets no sentence about a model.
 - **FR-7 — From a request to the pipeline's test.** A row a pipeline decided about links to the
   use case's pipeline test, to try it with text of one's own where the original cannot be read.
 

@@ -16424,8 +16424,8 @@ MUTATIONS = [
         "PD-3",
         "the caller's message names the reason word",
         "gateway/src/aira_gateway/upstreams/exchange.py",
-        '    said = f" Reason: {diagnosis.reason}." if diagnosis else ""\n    return UpstreamError(\n        f"{name} returned',
-        '    said = ""\n    return UpstreamError(\n        f"{name} returned',
+        '    said = f" Reason: {diagnosis.reason}." if diagnosis else ""\n    gone = _NOT_SERVED',
+        '    said = ""\n    gone = _NOT_SERVED',
         "gateway/tests/test_provider_diagnosis.py",
     ),
     Mutation(
@@ -19732,6 +19732,31 @@ MUTATIONS = [
         "                    signature=None,",
         "gateway/tests/test_real_gemini_clients.py"
         "::test_google_genais_chat_hands_a_function_calls_signature_back",
+    ),
+    # == a model its provider does not serve is final, and says so (`FRD-628` FR-6) ==============
+    Mutation(
+        "NF-1",
+        "a provider's 404 reaches the caller as 404, which no client retries, not as a 502",
+        "gateway/src/aira_gateway/api/serving/refusals.py",
+        '    404: (404, "NOT_FOUND"),\n',
+        "",
+        "gateway/tests/test_a_failure_says_who_stopped.py",
+    ),
+    Mutation(
+        "NF-2",
+        "a provider's 404 says the model is not served there and asking again will not help",
+        "gateway/src/aira_gateway/upstreams/exchange.py",
+        '    gone = _NOT_SERVED if response.status_code == 404 and _asked_a_model(response) else ""',
+        '    gone = ""',
+        "gateway/tests/test_a_failure_says_who_stopped.py",
+    ),
+    Mutation(
+        "NF-3",
+        "a 404 to a listing or a readiness probe says nothing about a retired model",
+        "gateway/src/aira_gateway/upstreams/exchange.py",
+        '        return response.request.method == "POST"',
+        "        return True",
+        "gateway/tests/test_a_failure_says_who_stopped.py",
     ),
 ]
 

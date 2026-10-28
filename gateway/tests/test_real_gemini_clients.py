@@ -53,7 +53,9 @@ from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import watch_connections
 from aira_gateway.db.models import BudgetRead, ModelRead, RequestLog, UseCaseRead
+from aira_gateway.upstreams.exchange import refused
 from aira_gateway.upstreams.mock import MOCK_SIGNATURE
+from aira_gateway.upstreams.vertex.transport import NAME as VERTEX
 
 ROOT = Path(__file__).resolve().parents[2]
 CLIENTS = ROOT / "tools" / "clients"
@@ -178,17 +180,39 @@ def _quietly(stream: Callable[..., Any]) -> Callable[..., Any]:
     return quiet
 
 
+#: Google's own answer for a model it does not serve where it is asked: retired, or never there.
+NOT_SERVED = {"error": {"code": 404, "message": "Model not found.", "status": "NOT_FOUND"}}
+
+
+def _not_served() -> Exception:
+    """The provider's `404`, judged by the gateway's own exchange, as a real answer is."""
+    asked = httpx.Request("POST", "https://europe-west1-aiplatform.googleapis.com/v1/x")
+    return refused(httpx.Response(404, json=NOT_SERVED, request=asked), VERTEX)
+
+
+async def _generate_not_served(self: Any, request: Any) -> Any:
+    raise _not_served()
+
+
+async def _stream_not_served(self: Any, request: Any) -> Any:
+    for chunk in ():  # an async generator, as the stream it stands in for
+        yield chunk
+    raise _not_served()
+
+
 @contextmanager
 def _served(
     *,
     daily_requests: int | None = None,
     quiet: bool = False,
     thinking: dict[str, Any] | None = None,
+    gone: bool = False,
 ) -> Iterator[tuple[str, _Recorder]]:
     """The app on a real socket, with a model and a use case — and, given ``daily_requests``, a
     budget on that use case that is enforced, for what a budget display has to show. ``quiet``
     makes the model pause before every chunk and the gateway keep its streams alive meanwhile.
-    ``thinking`` replaces the model's thinking declaration."""
+    ``thinking`` replaces the model's thinking declaration. ``gone`` makes its provider answer
+    as for a model it no longer serves."""
     from aira_gateway.upstreams.mock import MockProvider
 
     pausing = (
@@ -196,7 +220,18 @@ def _served(
         if quiet
         else contextlib.nullcontext()
     )
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory, pausing:
+    retired = (
+        mock.patch.multiple(
+            MockProvider, generate=_generate_not_served, stream_generate=_stream_not_served
+        )
+        if gone
+        else contextlib.nullcontext()
+    )
+    with (
+        tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory,
+        pausing,
+        retired,
+    ):
         engine = _on_a_file(Path(directory) / "gateway.db")
         with mock.patch("aira_gateway.app.build_engine", return_value=engine):
             app = create_app(
@@ -631,6 +666,8 @@ def _environment(root: Path, project: Path, cache: Path) -> dict[str, str]:
 
 def _command(generation: str) -> list[str]:
     # OpenCode 2 otherwise connects to a background service shared with the developer's sessions.
+    # Every `run` below is started with standard input closed: both generations add a piped input
+    # to the message and wait for its end, so one left open hangs the run before its first request.
     return [str(OPENCODE[generation]), *(["--standalone"] if generation == "2" else [])]
 
 
@@ -654,6 +691,7 @@ def test_opencode_carries_a_coding_turn(
             run,
             cwd=project,
             env=_environment(tmp_path, project, opencode_cache),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=240,
@@ -684,6 +722,7 @@ def test_opencode_carries_a_turn_through_a_model_that_is_quiet_for_a_while(
             run,
             cwd=project,
             env=_environment(tmp_path, project, opencode_cache),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=300,
@@ -710,6 +749,7 @@ def test_opencode_streams_a_turn_to_a_thinking_model(
             run,
             cwd=project,
             env=_environment(tmp_path, project, opencode_cache),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=240,
@@ -763,6 +803,7 @@ def test_opencode_shows_the_reasoning_at_the_variant_somebody_chose(
             _shows_thinking(generation, "high", "read hello.py"),
             cwd=project,
             env=_environment(tmp_path, project, opencode_cache),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=240,
@@ -795,6 +836,7 @@ def test_opencode_shows_the_reasoning_of_a_model_that_thinks_unasked(
             _shows_thinking(generation, None, "read hello.py"),
             cwd=project,
             env=_environment(tmp_path, project, opencode_cache),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=240,
@@ -806,6 +848,32 @@ def test_opencode_shows_the_reasoning_of_a_model_that_thinks_unasked(
     assert MOCK_THOUGHT in output, output[-3000:]
     assert not any(_thinking_sent(recorder, turns=True)), "the client asked, not the default"
     assert _signatures_handed_back(recorder) == [MOCK_SIGNATURE]
+
+
+@pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
+def test_opencode_stops_at_a_model_its_provider_does_not_serve(
+    opencode: None, opencode_cache: Path, tmp_path: Path, generation: str
+) -> None:
+    """A model its provider retired, or never offered in that region: no retry changes that, so it
+    answers `404`, which neither generation retries — a `502` each retries as an outage, again and
+    again — and the developer reads why (`FRD-628` FR-6)."""
+    with _served(gone=True) as (base, recorder):
+        project = _project(tmp_path, base, configuration="v1")
+        run = [*_command(generation)[:1], "run", *_command(generation)[1:], "read hello.py"]
+        completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
+            run,
+            cwd=project,
+            env=_environment(tmp_path, project, opencode_cache),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    output = completed.stdout + completed.stderr
+    turns = [body for body in recorder.bodies if body.get("tools")]
+    assert len(turns) == 1, f"the turn was sent {len(turns)} times\n{output[-3000:]}"
+    assert "asking again will not change that" in output, output[-3000:]
 
 
 def _tmux(socket: str, *arguments: str) -> str:

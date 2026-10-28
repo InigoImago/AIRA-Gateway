@@ -47,7 +47,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **2324 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **2327 properties** across auth, budgets,
   pipeline, retention, the management control plane, the gateway's counters and the console — a
   `.spec.ts` selection runs under Vitest, everything else under pytest; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
@@ -234,8 +234,8 @@ browser `make test-e2e` · `make mutants`, which breaks a property and requires 
   version; a refusal before attribution is on its span, not in the audit table (`FRD-122`).
 - **A model reachable only at `global` is not usable here — unless permitted by name**
   (`FRD-611`, `ADR-0012` §6, `ADR-0034`). `global` names no region and guarantees none, so it is not
-  in the residency default and `gemini-3.5-flash` stays refused where its region is typed. The open
-  models GLM and DeepSeek answer only there, so each is permitted it in `AIRA_ALLOWED_MODEL_REGIONS`.
+  in the residency default (`gemini-3.5-flash` is served in `europe-west3` and `eu` now). The open
+  models answer only there: `glm-5.2-maas` is permitted it — Google retired GLM-4.7 and DeepSeek.
 
 - **Capacity is measured** (`FRD-136`) and the answer is *not the request path*: a
   chat request costs **48 ms** of gateway CPU, an agentic one **93 ms**, and both scale linearly

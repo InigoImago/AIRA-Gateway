@@ -59,6 +59,9 @@ Agent Platform's open models — GLM, DeepSeek — answer at `global` and nowher
 FR-2a), and the owner chose to use them. Putting `global` back in the list would permit it for
 every model a catalogue entry could later place there, `gemini-3.5-flash` first; so the decision is
 written down as made: `AIRA_ALLOWED_MODEL_REGIONS=global=glm-4.7-maas,deepseek-v3.2-maas`.
+Google had retired both by 2026-10-28 — `404` at every address, as were `glm-5-maas` and
+`deepseek-v3.1-maas` — and the installation names `glm-5.2-maas` instead; no DeepSeek model
+is served on Vertex any more.
 
 - The gateway publishes it as `modelRegions` beside `allowedRegions`, and the editor permits a
   region for **exactly** the model it names — refusing it there would block the very entry the

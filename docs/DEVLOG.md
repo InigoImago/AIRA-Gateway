@@ -5,6 +5,47 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The reasoning, live against Google — and a model its provider retired is final (2026-10-28)
+
+Asked by the owner before `FRD-151` and `FRD-152` go out: does the reasoning really show for Gemini,
+GLM and DeepSeek? Measured live — the gateway of the real-client harness on its own SQLite file, real
+Vertex with this installation's API key, OpenCode 1.19.3 and 2.0.32 with the file the console
+writes, one coding turn with a tool call each. About ten US cents at catalogue prices.
+
+- **Gemini 2.5 Flash** (`europe-west1`): the reasoning shows in both generations with no variant
+  chosen — the catalogue's `auto` default asks for it — and the titles go with `none` and think
+  nothing. Google puts **no signature on a streamed call** (on a whole answer it does): nothing for
+  the gateway to lose, and Gemini 2.5 requires none.
+- **Gemini 3.5 Flash is served in `europe-west3` and `eu` now**, where on 2026-08-19 it answered only
+  at `global` — probed for nothing with `countTokens`. Its signatures went back and Google accepted
+  three tool steps in both generations, which Gemini 3 refuses without them. Its thought summaries
+  are sparse: the `medium` default produced one on the first step and none after, `low` none at all
+  though it thought; `minimal` works and thinks nothing. One `429` in `europe-west3`, which a second
+  region in the catalogue entry would have absorbed.
+- **GLM-4.7, GLM-5, DeepSeek V3.1 and V3.2 answer `404`: retired.** Probed for nothing — an empty
+  conversation is a `400` for a model that is there. No DeepSeek model is served on Vertex at all,
+  which models.dev agrees with. **GLM-5.2** works: it thinks unasked, the reasoning shows in both
+  generations, and `none` turns it off. Its usage names no reasoning tokens, so its rows say `0`;
+  the bill is unaffected, they are inside the output.
+- **A retired model was retried as an outage.** The gateway answered Google's `404` with a `502`, and
+  OpenCode sent the same turn six times (OpenCode 1) and eleven (OpenCode 2) before it gave up. A
+  model call's `404` is now `404 NOT_FOUND` on the Gemini surface once every region was asked, and
+  the message says the model is not available at the address the catalogue gives and asking again
+  will not change that — in this gateway's words, since Google's quotes the project. The KIRA
+  surface keeps its predecessor's `502` and carries the sentence; a `GET`'s `404`, a listing or a
+  readiness probe, gets none. Both generations now send the turn once
+  (`test_opencode_stops_at_a_model_its_provider_does_not_serve`). A dashboard counting `5xx` no
+  longer counts it; `aira.outcome` still says `upstream_error`. `FRD-628` FR-6, mutations `NF-1`–`NF-3`.
+- **The permission by name** reads `global=glm-5.2-maas` in this installation, and the shipped
+  examples name it.
+- **A trap in the harness:** `opencode run` adds a piped standard input to its message and waits for
+  its end, so a run started from a shell whose input stays open hangs before its first request.
+  pytest's capture closes it, which left only `-s` runs exposed; every launch now closes it.
+
+Still not measured: Claude — no service account here.
+
+---
+
 ## Claude's thinking travels with the turn that continues it (2026-10-27)
 
 Asked by the owner before merging `FRD-151`: were the `499`s on Claude with large contexts related

@@ -14,6 +14,9 @@ things were behind it:
   gateway that stopped waiting.
 - **A provider's `413` was masked as `502`**, so a request too large for the provider was retried
   as it was, with no word of why.
+- **So was its `404`.** A model the provider retired, or never offered in that region, answered
+  `502` — which every client retries as an outage — and its caller never read that asking again
+  would change nothing.
 
 So a message now begins with **who acted** — the provider by its name, or AIRA — and the status says
 the same: the provider's own where it gave one, the gateway's `504` where its time limit ran out.
@@ -52,6 +55,21 @@ TOO_LARGE = {
         "message": "Request exceeds the maximum allowed number of bytes.",
     },
 }
+
+#: Google's own envelope for a model it does not serve at that address — retired, or never there.
+NOT_SERVED = {
+    "error": {
+        "code": 404,
+        "message": (
+            "Publisher Model `projects/p/locations/europe-west1/publishers/anthropic/models/"
+            f"{MODEL}` was not found or your project does not have access to it."
+        ),
+        "status": "NOT_FOUND",
+    }
+}
+
+#: What the caller reads about it, whichever surface it asked.
+ASKING_AGAIN = "asking again will not change that"
 
 GEMINI = f"/v1beta/models/{MODEL}:generateContent"
 GEMINI_BODY = {"contents": [{"role": "user", "parts": [{"text": "read the repository"}]}]}
@@ -123,6 +141,28 @@ def test_a_request_too_large_for_the_provider_is_the_callers_to_shrink_and_says_
     assert upstream_answer(error) == (413, "INVALID_ARGUMENT")
 
 
+def test_a_model_the_provider_does_not_serve_is_final_and_says_whose_to_fix() -> None:
+    """Retired, or never offered in that region: no retry changes a `404`, so it is not dressed as
+    the `502` every client retries — and the sentence says the remedy is the catalogue's."""
+    error = refused(httpx.Response(404, json=NOT_SERVED, request=_request()), NAME)
+
+    assert error.message.startswith("Google Vertex AI returned 404. Reason: NOT_FOUND. ")
+    assert ASKING_AGAIN in error.message
+    assert "address the catalogue gives" in error.message
+    # The provider's own sentence stays out: it quotes the project this installation bills to.
+    assert "projects/" not in error.message
+    assert upstream_answer(error) == (404, "NOT_FOUND")
+
+
+def test_a_listing_that_is_not_there_says_nothing_about_a_model() -> None:
+    """A `GET` is a listing or a readiness probe: its `404` is a route the server lacks, and a
+    sentence about a retired model would send its reader to the catalogue for nothing."""
+    listing = httpx.Request("GET", "https://europe-west1-aiplatform.googleapis.com/v1/x")
+    error = refused(httpx.Response(404, json=NOT_SERVED, request=listing), NAME)
+
+    assert error.message == "Google Vertex AI returned 404. Reason: NOT_FOUND."
+
+
 def test_an_answer_the_provider_broke_off_says_it_was_the_provider() -> None:
     error = stream_failure({"type": "overloaded_error", "message": "Overloaded"})
 
@@ -191,6 +231,7 @@ ANSWERS: dict[str, Callable[[httpx.Request], httpx.Response]] = {
     "overloaded": lambda request: httpx.Response(529, json=OVERLOADED),
     "timed-out": _times_out,
     "too-large": lambda request: httpx.Response(413, json=TOO_LARGE),
+    "not-served": lambda request: httpx.Response(404, json=NOT_SERVED),
 }
 
 
@@ -200,6 +241,7 @@ ANSWERS: dict[str, Callable[[httpx.Request], httpx.Response]] = {
         ("overloaded", 503, "UNAVAILABLE", "Google Vertex AI returned 529"),
         ("timed-out", 504, "DEADLINE_EXCEEDED", "AIRA stopped waiting"),
         ("too-large", 413, "INVALID_ARGUMENT", "maximum allowed number of bytes"),
+        ("not-served", 404, "NOT_FOUND", ASKING_AGAIN),
     ],
 )
 def test_the_gemini_surface_answers_with_who_stopped(
@@ -258,3 +300,6 @@ def test_the_kira_surface_keeps_its_one_status_and_says_who_stopped(answer: str)
     assert body["code"] == "EXTERNAL_KI_API_ERROR"
     assert body["message"].startswith("No model answered this request")
     assert "Google Vertex AI" in body["message"]
+    if answer == "not-served":
+        # The one status stays the predecessor's; the reason a retry is futile travels in the text.
+        assert ASKING_AGAIN in body["message"]

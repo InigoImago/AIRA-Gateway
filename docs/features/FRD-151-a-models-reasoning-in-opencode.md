@@ -214,9 +214,10 @@ because the default names what the model did anyway.
 - **The defaults are the vendors' statements, read once.** A vendor that changes a model's
   default, or a model the table does not name, gets the state before this feature: no proposal,
   and an administrator who decides. The table is re-read when a model is added to it.
-- **Not verified against Google or Anthropic in this round.** The mock and both real OpenCode
-  generations are; Claude needs a service account this environment does not have, and Gemini was
-  not called to keep the spend at zero.
+- **Verified against Google on 2026-10-28, not against Anthropic.** Gemini 2.5 Flash, Gemini 3.5
+  Flash and GLM-5.2 through both OpenCode generations, with the console's file: the reasoning shows
+  wherever the vendor sends it — Gemini 3.5 Flash sends a summary for some steps only, and at `low`
+  often none. Claude needs a service account this environment does not have.
 - **The showcase's file has no variants.** `make showcase-agent` builds its file from the gateway's
   model listing, which carries no thinking declaration; the console's file does.
 - **A file handed out before this has no variants.** The console builds the file while a new key's

@@ -781,7 +781,7 @@ provider, publisher and region.
 | The credential, from the environment, **Vault** or a file | `AIRA_VERTEX_CREDENTIALS` (JSON), `AIRA_VERTEX_CREDENTIALS_FILE` (a path to the same JSON) or `AIRA_VERTEX_API_KEY` |
 | The **regions** you are permitted to use | Listed in `AIRA_ALLOWED_REGIONS`; a model outside them refuses to start, and the console refuses one **as it is typed**, naming what is allowed. `global` is not in the shipped default: it names no region and guarantees none, so an installation that wants it says so out loud |
 | **Model Garden access** for the publishers you want | Anthropic models need to be enabled in your project; an open model the project cannot use answers the model check with `404` |
-| For an **open model** (GLM, DeepSeek): a permission by name | They are served only at `global`, which names no region. `AIRA_ALLOWED_MODEL_REGIONS=global=glm-4.7-maas` permits it for that model and no other |
+| For an **open model** (GLM, DeepSeek): a permission by name | They are served only at `global`, which names no region. `AIRA_ALLOWED_MODEL_REGIONS=global=glm-5.2-maas` permits it for that model and no other |
 
 One transport, three dialects. Anthropic on Vertex uses `:rawPredict` with the Messages API:
 `max_tokens` is always sent, cache tokens count as input, and there are no embeddings.
