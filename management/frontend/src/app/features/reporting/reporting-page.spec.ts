@@ -169,10 +169,19 @@ describe('ReportingPage', () => {
     // 00:30 on 1 October in Berlin is still September in UTC (`FRD-629`).
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-30T22:30:00Z') });
     try {
-      const { calls, testid } = setup(of(report()), undefined, undefined, 'Europe/Berlin');
+      const { calls, testid, component } = setup(
+        of(report()),
+        undefined,
+        undefined,
+        'Europe/Berlin',
+      );
 
       expect(calls[0]).toEqual({ from: '2026-10-01', to: '2026-11-01' });
       expect(testid('report-period')?.textContent).toContain('(Europe/Berlin)');
+
+      // And a preset the reader picks afterwards, on the same clock.
+      component.applyPreset('last-month');
+      expect(calls[calls.length - 1]).toEqual({ from: '2026-09-01', to: '2026-10-01' });
     } finally {
       vi.useRealTimers();
     }
@@ -462,20 +471,47 @@ describe('ReportingPage', () => {
     expect(page.text()).toContain('ends on 2026-08-31');
   });
 
-  it('keeps a period the reader chose before `/v1/me` answered', async () => {
+  it('keeps "custom" chosen before `/v1/me` answered, and starts it from this month on the clock', async () => {
     // The clock arrives with `/v1/me` (`FRD-629`). A reader quicker than that keeps "custom" and
-    // the two date fields, rather than being sent back to this month.
+    // finds what a slower one would: this month in the two fields, its figures and their export.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-30T22:30:00Z') });
+    try {
+      const me = new Subject<unknown>();
+      const page = setup(of(report()), undefined, undefined, undefined, me);
+      page.component.applyPreset('custom');
+      page.fixture.detectChanges();
+
+      TestBed.inject(InstallationClock).zone.set('Europe/Berlin');
+      me.next({ subject: 's', username: 'u', roles: [], permissions: ['report.read_all'] });
+      page.fixture.detectChanges();
+      await page.fixture.whenStable();
+
+      expect(page.component.preset()).toBe('custom');
+      expect(page.calls).toEqual([{ from: '2026-10-01', to: '2026-11-01' }]);
+      const from = page.element.querySelector<HTMLInputElement>('#report-from');
+      expect(from?.value).toBe('2026-10-01');
+      expect(page.testid('export-breakdown')).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a date the reader typed before `/v1/me` answered, and loads nothing over it', async () => {
     const me = new Subject<unknown>();
     const page = setup(of(report()), undefined, undefined, undefined, me);
     page.component.applyPreset('custom');
     page.fixture.detectChanges();
+    await page.fixture.whenStable();
+    const from = page.element.querySelector<HTMLInputElement>('#report-from')!;
+    from.value = '2026-08-10';
+    from.dispatchEvent(new Event('input'));
 
     me.next({ subject: 's', username: 'u', roles: [], permissions: ['report.read_all'] });
     page.fixture.detectChanges();
     await page.fixture.whenStable();
 
     expect(page.component.preset()).toBe('custom');
-    expect(page.element.querySelector('#report-from')).not.toBeNull();
+    expect(from.value).toBe('2026-08-10');
     expect(page.calls.length).toBe(0);
   });
 

@@ -4,6 +4,7 @@ import { Observable, Subject, of, throwError } from 'rxjs';
 import { CatalogModel, Register, RegisterEntry, RegisterModel } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { InstallationClock } from '../../core/ui/clock';
 import { isoDay } from '../../core/ui/periods';
 import { RegisterPage } from './register-page';
 
@@ -418,18 +419,45 @@ describe('RegisterPage', () => {
     expect(harness.element.querySelector('#register-to')).not.toBeNull();
   });
 
-  it('keeps a period the reader chose before `/v1/me` answered', () => {
-    // The clock arrives with `/v1/me` (`FRD-629`); "custom" chosen before it stays chosen.
+  it('keeps "custom" chosen before `/v1/me` answered, and starts it from this month on the clock', async () => {
+    // The clock arrives with `/v1/me` (`FRD-629`); "custom" chosen before it stays chosen, with
+    // what a slower reader finds in the fields and under them.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-30T22:30:00Z') });
+    try {
+      const me = new Subject<unknown>();
+      const harness = setup(of(register()), undefined, undefined, me);
+      harness.component.applyPreset('custom');
+      harness.fixture.detectChanges();
+
+      TestBed.inject(InstallationClock).zone.set('Europe/Berlin');
+      me.next({});
+      harness.fixture.detectChanges();
+      await harness.fixture.whenStable();
+
+      expect(harness.calls).toEqual([{ from: '2026-10-01', to: '2026-11-01' }]);
+      const from = harness.element.querySelector<HTMLInputElement>('#register-from');
+      expect(from?.value).toBe('2026-10-01');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a date the reader typed before `/v1/me` answered, and loads nothing over it', async () => {
     const me = new Subject<unknown>();
     const harness = setup(of(register()), undefined, undefined, me);
     harness.component.applyPreset('custom');
     harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+    const from = harness.element.querySelector<HTMLInputElement>('#register-from')!;
+    from.value = '2026-08-10';
+    from.dispatchEvent(new Event('input'));
 
     me.next({});
     harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
 
+    expect(from.value).toBe('2026-08-10');
     expect(harness.calls.length).toBe(0);
-    expect(harness.element.querySelector('#register-from')).not.toBeNull();
   });
 
   it('says when the sweep last ran, and warns when it never has', () => {

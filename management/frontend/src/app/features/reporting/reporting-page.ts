@@ -15,6 +15,7 @@ import {
   periodText,
   windowError,
   windowFor,
+  windowOnTheClock,
 } from '../../core/ui/periods';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { saveBlob } from '../../core/ui/save-blob';
@@ -304,10 +305,13 @@ export class ReportingPage implements OnInit {
   ngOnInit(): void {
     // Once the clock is known (`FRD-629`): `/v1/me` carries it, and a month asked for before it
     // answered would be UTC's — a different month for the first hours of every one. Asked either
-    // way, since a failed `/me` leaves the console on UTC rather than without a report. The period
-    // computed is the one on screen by then, not this month again: a reader quicker than `/v1/me`
-    // keeps what they chose, and "custom" keeps the dates being typed.
-    const onTheClock = () => this.applyPreset(this.preset());
+    // way, since a failed `/me` leaves the console on UTC rather than without a report. What is
+    // asked for is the reader's choice by then, not this month again (`windowOnTheClock`).
+    const onTheClock = () => {
+      const typed = { from: this.from(), to: this.to() };
+      const window = windowOnTheClock(this.preset(), typed, new Date(), this.clock());
+      if (window) this.loadWindow(window);
+    };
     this.meService.get().subscribe({ next: onTheClock, error: onTheClock });
   }
 
@@ -316,9 +320,13 @@ export class ReportingPage implements OnInit {
     if (preset === 'custom') {
       return; // keep the two date fields; the user is about to change them
     }
-    const { from, to } = windowFor(preset, new Date(), this.clock());
-    this.from.set(from);
-    this.to.set(to);
+    this.loadWindow(windowFor(preset, new Date(), this.clock()));
+  }
+
+  /** Puts ``window`` in the two date fields and loads it. */
+  private loadWindow(window: DayWindow): void {
+    this.from.set(window.from);
+    this.to.set(window.to);
     this.load();
   }
 

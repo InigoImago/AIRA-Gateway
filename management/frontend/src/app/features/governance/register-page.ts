@@ -17,6 +17,7 @@ import {
   periodText,
   windowError,
   windowFor,
+  windowOnTheClock,
 } from '../../core/ui/periods';
 import { saveBlob } from '../../core/ui/save-blob';
 import { TableView } from '../../core/ui/table-view';
@@ -139,9 +140,13 @@ export class RegisterPage implements OnInit {
   protected readonly shownPeriod = computed(() => periodText(this.shown(), this.clock()));
 
   ngOnInit(): void {
-    // Once the clock is known, as on the reporting page (`FRD-629`), and for the period on screen
-    // by then: a reader quicker than `/v1/me` keeps what they chose.
-    const onTheClock = () => this.applyPreset(this.preset());
+    // Once the clock is known, as on the reporting page (`FRD-629`), and for the reader's choice by
+    // then (`windowOnTheClock`).
+    const onTheClock = () => {
+      const typed = { from: this.from(), to: this.to() };
+      const window = windowOnTheClock(this.preset(), typed, new Date(), this.clock());
+      if (window) this.loadWindow(window);
+    };
     this.meService.get().subscribe({ next: onTheClock, error: onTheClock });
   }
 
@@ -150,7 +155,11 @@ export class RegisterPage implements OnInit {
     if (preset === 'custom') {
       return;
     }
-    const window = windowFor(preset, new Date(), this.clock());
+    this.loadWindow(windowFor(preset, new Date(), this.clock()));
+  }
+
+  /** Puts ``window`` in the two date fields and loads it. */
+  private loadWindow(window: DayWindow): void {
     this.from.set(window.from);
     this.to.set(window.to);
     this.load();

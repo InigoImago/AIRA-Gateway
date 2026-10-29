@@ -66,6 +66,13 @@ And the reporting and register pages, which wait for `/v1/me` to learn the clock
 test that chose first on a slow runner waited 45 s for a field that had gone. They now compute the
 period on screen once the clock arrives (`TZ-39`, `TZ-40`).
 
+That fix left a race of its own, which the next run on main showed as one layout test passing only
+on its retry: a "custom" chosen before the clock now kept two *empty* fields and loaded nothing, so
+the export row under the figures never appeared — where a slower reader found this month's dates
+and figures. Both pages now ask one helper (`windowOnTheClock`): a preset is computed on the clock,
+a custom period nobody has typed starts from this month, and a typed date is left alone and
+nothing is loaded over it (`TZ-41`, `TZ-42`).
+
 Mutations `CO-*`, `FB-*` and `TZ-*`; the anchors that moved under them were re-anchored.
 
 ---

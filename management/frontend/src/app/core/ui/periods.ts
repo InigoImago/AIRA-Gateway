@@ -105,3 +105,24 @@ export function lastDayOf(to: string): string {
 export function periodText(window: DayWindow | null, zone: string = DEFAULT_CLOCK): string {
   return window ? `${window.from} to ${lastDayOf(window.to)} (${zone})` : '';
 }
+
+/**
+ * The window a period screen loads once the installation's clock is known (`FRD-629`), or `null`
+ * when it loads nothing because the dates on screen are the reader's own.
+ *
+ * The clock arrives with `/v1/me`, after the page, and a reader may have chosen by then. The answer
+ * refines that choice and never makes another, and the screen ends where a slower reader's would:
+ * a preset is computed again on the clock it names, and "custom" with neither date typed starts
+ * from this month — the dates a slower reader finds in the fields, with the figures under them. A
+ * date already typed is the reader's, and so is pressing Show.
+ */
+export function windowOnTheClock(
+  preset: Preset,
+  typed: DayWindow,
+  now: Date,
+  zone: string = DEFAULT_CLOCK,
+): DayWindow | null {
+  if (preset !== 'custom') return windowFor(preset, now, zone);
+  if (typed.from || typed.to) return null;
+  return windowFor('this-month', now, zone);
+}

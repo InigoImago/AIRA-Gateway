@@ -2090,7 +2090,9 @@ reading code.
   pages waited for `/v1/me` to learn the installation's clock and then set the period to this month
   — over a "custom" the reader had picked meanwhile, whose date fields vanished under their typing.
   CI's runner was slow enough again. **An answer that arrives after the reader has acted refines
-  what they chose; it does not choose again.**
+  what they chose; it does not choose again** — and refining means ending where a slower reader
+  would have. The first fix kept "custom" but left its fields empty and loaded nothing, which a
+  slower reader never saw; the test for a race asks for the same screen in both orders.
 - **A live view must stop, be visible, and never stack** — those are the three ways a polling view
   fails.
 - **Cursor paging over an appending table.** An offset page shows one row twice and misses another

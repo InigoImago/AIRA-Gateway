@@ -1,4 +1,12 @@
-import { isoDay, lastDayOf, periodText, utcDay, windowError, windowFor } from './periods';
+import {
+  isoDay,
+  lastDayOf,
+  periodText,
+  utcDay,
+  windowError,
+  windowFor,
+  windowOnTheClock,
+} from './periods';
 
 /**
  * The windows are the gateway's: UTC days. These cases are written as UTC instants, so they hold in
@@ -174,5 +182,36 @@ describe('windowFor, on the installation’s clock', () => {
       from: '2026-12-01',
       to: '2027-01-01',
     });
+  });
+});
+
+/**
+ * The clock arrives with `/v1/me`, after the page, and a reader may have chosen by then. Whichever
+ * came first, the screen ends the same.
+ */
+describe('the window once the installation’s clock is known', () => {
+  // 00:30 on 1 October in Berlin, still 30 September in UTC.
+  const now = new Date('2026-09-30T22:30:00Z');
+  const untyped = { from: '', to: '' };
+
+  it('computes a preset chosen before it on the clock it names', () => {
+    expect(windowOnTheClock('last-month', untyped, now, 'Europe/Berlin')).toEqual({
+      from: '2026-09-01',
+      to: '2026-10-01',
+    });
+  });
+
+  it('starts a custom period nobody has typed from this month, as a slower reader finds it', () => {
+    expect(windowOnTheClock('custom', untyped, now, 'Europe/Berlin')).toEqual({
+      from: '2026-10-01',
+      to: '2026-11-01',
+    });
+  });
+
+  it('leaves a date the reader typed, either one, and loads nothing over it', () => {
+    const typedFrom = { from: '2026-08-10', to: '' };
+    const typedTo = { from: '', to: '2026-08-20' };
+    expect(windowOnTheClock('custom', typedFrom, now, 'Europe/Berlin')).toBeNull();
+    expect(windowOnTheClock('custom', typedTo, now, 'Europe/Berlin')).toBeNull();
   });
 });
