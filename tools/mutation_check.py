@@ -20554,6 +20554,22 @@ MUTATIONS = [
         "in UTC. The limits",
         "tools/tests/test_the_opencode_plugin_holds_its_properties.py",
     ),
+    Mutation(
+        "TZ-39",
+        "a period chosen before the clock arrived is kept, and computed on the clock",
+        "management/frontend/src/app/features/reporting/reporting-page.ts",
+        "const onTheClock = () => this.applyPreset(this.preset());",
+        "const onTheClock = () => this.applyPreset('this-month');",
+        "management/frontend/src/app/features/reporting/reporting-page.spec.ts",
+    ),
+    Mutation(
+        "TZ-40",
+        "the register keeps a period chosen before the clock arrived",
+        "management/frontend/src/app/features/governance/register-page.ts",
+        "const onTheClock = () => this.applyPreset(this.preset());",
+        "const onTheClock = () => this.applyPreset('this-month');",
+        "management/frontend/src/app/features/governance/register-page.spec.ts",
+    ),
 ]
 
 

@@ -139,9 +139,10 @@ export class RegisterPage implements OnInit {
   protected readonly shownPeriod = computed(() => periodText(this.shown(), this.clock()));
 
   ngOnInit(): void {
-    // Once the clock is known, as on the reporting page (`FRD-629`).
-    const thisMonth = () => this.applyPreset('this-month');
-    this.meService.get().subscribe({ next: thisMonth, error: thisMonth });
+    // Once the clock is known, as on the reporting page (`FRD-629`), and for the period on screen
+    // by then: a reader quicker than `/v1/me` keeps what they chose.
+    const onTheClock = () => this.applyPreset(this.preset());
+    this.meService.get().subscribe({ next: onTheClock, error: onTheClock });
   }
 
   protected applyPreset(preset: Preset): void {

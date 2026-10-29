@@ -304,9 +304,11 @@ export class ReportingPage implements OnInit {
   ngOnInit(): void {
     // Once the clock is known (`FRD-629`): `/v1/me` carries it, and a month asked for before it
     // answered would be UTC's — a different month for the first hours of every one. Asked either
-    // way, since a failed `/me` leaves the console on UTC rather than without a report.
-    const thisMonth = () => this.applyPreset('this-month');
-    this.meService.get().subscribe({ next: thisMonth, error: thisMonth });
+    // way, since a failed `/me` leaves the console on UTC rather than without a report. The period
+    // computed is the one on screen by then, not this month again: a reader quicker than `/v1/me`
+    // keeps what they chose, and "custom" keeps the dates being typed.
+    const onTheClock = () => this.applyPreset(this.preset());
+    this.meService.get().subscribe({ next: onTheClock, error: onTheClock });
   }
 
   protected applyPreset(preset: Preset): void {

@@ -79,6 +79,8 @@ function setup(
   csv?: Observable<Blob>,
   budgets: () => Observable<Budget[]> = () => of([] as Budget[]),
   clock?: string,
+  // `/v1/me`'s answer, for a test that decides when it arrives; at once otherwise.
+  meAnswer?: Observable<unknown>,
 ) {
   TestBed.resetTestingModule();
   const calls: Array<{ from: string; to: string }> = [];
@@ -100,7 +102,8 @@ function setup(
   // no form, without the double reaching for a network.
   const me = {
     currency: signal(''),
-    get: () => of({ subject: 's', username: 'u', roles: [], permissions: ['report.read_all'] }),
+    get: () =>
+      meAnswer ?? of({ subject: 's', username: 'u', roles: [], permissions: ['report.read_all'] }),
   };
   TestBed.configureTestingModule({
     imports: [ReportingPage],
@@ -457,6 +460,42 @@ describe('ReportingPage', () => {
 
     expect(page.component.inclusiveEnd()).toBe('2026-08-31');
     expect(page.text()).toContain('ends on 2026-08-31');
+  });
+
+  it('keeps a period the reader chose before `/v1/me` answered', async () => {
+    // The clock arrives with `/v1/me` (`FRD-629`). A reader quicker than that keeps "custom" and
+    // the two date fields, rather than being sent back to this month.
+    const me = new Subject<unknown>();
+    const page = setup(of(report()), undefined, undefined, undefined, me);
+    page.component.applyPreset('custom');
+    page.fixture.detectChanges();
+
+    me.next({ subject: 's', username: 'u', roles: [], permissions: ['report.read_all'] });
+    page.fixture.detectChanges();
+    await page.fixture.whenStable();
+
+    expect(page.component.preset()).toBe('custom');
+    expect(page.element.querySelector('#report-from')).not.toBeNull();
+    expect(page.calls.length).toBe(0);
+  });
+
+  it('computes a preset chosen before `/v1/me` answered on the clock it names', () => {
+    // 00:30 on 1 October in Berlin: last month is September there and August in UTC.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-30T22:30:00Z') });
+    try {
+      const me = new Subject<unknown>();
+      const page = setup(of(report()), undefined, undefined, undefined, me);
+      page.component.applyPreset('last-month');
+
+      // What `MeService` does with the answer, before the page hears of it.
+      TestBed.inject(InstallationClock).zone.set('Europe/Berlin');
+      me.next({ subject: 's', username: 'u', roles: [], permissions: ['report.read_all'] });
+
+      expect(page.component.preset()).toBe('last-month');
+      expect(page.calls[page.calls.length - 1]).toEqual({ from: '2026-09-01', to: '2026-10-01' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('asks the gateway for the window a preset means', () => {

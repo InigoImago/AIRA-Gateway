@@ -58,6 +58,14 @@ exports, KIRA's usage window, the notice's monthly reminder, the console and the
   seventeen uses; it is impure because the zone arrives with `/v1/me` after the first render. The
   header names the clock once; periods and buckets name it beside them.
 
+**What main's CI found after the merge.** `make ci` was green; the browser suite, which runs only in
+CI, found two defects. The long-prompt prices sat in a `<fieldset>` without `bare`, so the
+browser's default 2 px margin set that group off the model editor's left edge (`layout.spec.ts`).
+And the reporting and register pages, which wait for `/v1/me` to learn the clock, then forced
+*this month* — over a "custom" the reader had already chosen, whose date fields vanished; a browser
+test that chose first on a slow runner waited 45 s for a field that had gone. They now compute the
+period on screen once the clock arrives (`TZ-39`, `TZ-40`).
+
 Mutations `CO-*`, `FB-*` and `TZ-*`; the anchors that moved under them were re-anchored.
 
 ---

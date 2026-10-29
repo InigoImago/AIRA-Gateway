@@ -88,6 +88,8 @@ function setup(
   response: Answer = of(register()),
   csv?: Observable<Blob>,
   authored: Observable<CatalogModel[]> = of([{ name: 'gemini-2.5-flash' }]),
+  // `/v1/me`'s answer, for a test that decides when it arrives; at once otherwise.
+  meAnswer?: Observable<unknown>,
 ) {
   TestBed.resetTestingModule();
   const calls: Array<{ from: string; to: string }> = [];
@@ -113,7 +115,7 @@ function setup(
     providers: [
       { provide: UseCaseService, useValue: service },
       // The page asks for its first window once `/v1/me` has said which clock it is on.
-      { provide: MeService, useValue: { currency: signal(''), get: () => of({}) } },
+      { provide: MeService, useValue: { currency: signal(''), get: () => meAnswer ?? of({}) } },
     ],
   });
   const fixture = TestBed.createComponent(RegisterPage);
@@ -414,6 +416,20 @@ describe('RegisterPage', () => {
     expect(harness.calls.length).toBe(1);
     expect(harness.element.querySelector('#register-from')).not.toBeNull();
     expect(harness.element.querySelector('#register-to')).not.toBeNull();
+  });
+
+  it('keeps a period the reader chose before `/v1/me` answered', () => {
+    // The clock arrives with `/v1/me` (`FRD-629`); "custom" chosen before it stays chosen.
+    const me = new Subject<unknown>();
+    const harness = setup(of(register()), undefined, undefined, me);
+    harness.component.applyPreset('custom');
+    harness.fixture.detectChanges();
+
+    me.next({});
+    harness.fixture.detectChanges();
+
+    expect(harness.calls.length).toBe(0);
+    expect(harness.element.querySelector('#register-from')).not.toBeNull();
   });
 
   it('says when the sweep last ran, and warns when it never has', () => {

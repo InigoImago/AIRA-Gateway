@@ -1006,8 +1006,8 @@
         <!-- A second set of prices for a long prompt (`FRD-408`): the provider bills every token
              of such a request at it, the answer included, so a figure without it under-states
              exactly the longest sessions. -->
-        <fieldset class="field" data-testid="long-context-prices">
-          <legend>
+        <fieldset class="field bare" data-testid="long-context-prices">
+          <legend class="field__legend">
             Above a prompt length
             <app-info-hint label="Long-prompt prices" testid="long-context-price" [wide]="true">
               Some providers bill a request whose prompt is longer than a stated length at higher

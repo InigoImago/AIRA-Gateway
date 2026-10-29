@@ -2085,6 +2085,12 @@ reading code.
   arrived — under the click a reader had already started. CI's runner was slow enough for the
   browser suite's click to win, every time. **A screen whose permission the server decides shows
   nothing of itself until the server has.**
+
+  *And the other direction: a late answer must not undo the reader.* The reporting and register
+  pages waited for `/v1/me` to learn the installation's clock and then set the period to this month
+  — over a "custom" the reader had picked meanwhile, whose date fields vanished under their typing.
+  CI's runner was slow enough again. **An answer that arrives after the reader has acted refines
+  what they chose; it does not choose again.**
 - **A live view must stop, be visible, and never stack** — those are the three ways a polling view
   fails.
 - **Cursor paging over an appending table.** An offset page shows one row twice and misses another
