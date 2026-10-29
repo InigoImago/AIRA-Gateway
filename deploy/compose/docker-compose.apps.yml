@@ -85,6 +85,18 @@ services:
       AIRA_STRICT_DATA_MODE: ${AIRA_STRICT_DATA_MODE:-true}
       # The key a person's name is pseudonymised with in telemetry and logs. From Vault.
       AIRA_PSEUDONYM_SECRET: ${AIRA_PSEUDONYM_SECRET:-}
+      # Mail on budgets and anomaly findings: off until a relay and a sender are named. Every
+      # address is read from Keycloak through the directory account Management searches with.
+      AIRA_SMTP_HOST: ${AIRA_SMTP_HOST:-}
+      AIRA_SMTP_PORT: ${AIRA_SMTP_PORT:-587}
+      AIRA_SMTP_SECURITY: ${AIRA_SMTP_SECURITY:-starttls}
+      AIRA_SMTP_USERNAME: ${AIRA_SMTP_USERNAME:-}
+      AIRA_SMTP_PASSWORD: ${AIRA_SMTP_PASSWORD:-}
+      AIRA_MAIL_FROM: ${AIRA_MAIL_FROM:-}
+      AIRA_CONSOLE_URL: ${AIRA_CONSOLE_URL:-}
+      AIRA_DIRECTORY_CLIENT_ID: ${AIRA_DIRECTORY_CLIENT_ID:-aira-directory}
+      AIRA_DIRECTORY_CLIENT_SECRET: ${AIRA_DIRECTORY_CLIENT_SECRET:-aira-directory-dev-secret}
+      AIRA_DIRECTORY_URL: ${AIRA_DIRECTORY_URL:-http://keycloak:8080}
       AIRA_TRUSTED_PROXY_HOPS: ${AIRA_TRUSTED_PROXY_HOPS:-1}
       AIRA_TRUST_FORWARDED_FOR: ${AIRA_TRUST_FORWARDED_FOR:-false}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
@@ -334,6 +346,9 @@ services:
       AIRA_STORE_PAYLOADS: ${AIRA_STORE_PAYLOADS:-true}
       # Both planes apply strict data mode when they read; the notice states it.
       AIRA_STRICT_DATA_MODE: ${AIRA_STRICT_DATA_MODE:-true}
+      # Whether the gateway mails at all, so the console and the notice say so.
+      AIRA_SMTP_HOST: ${AIRA_SMTP_HOST:-}
+      AIRA_MAIL_FROM: ${AIRA_MAIL_FROM:-}
       # The key a person's name is pseudonymised with in telemetry and logs. From Vault.
       AIRA_PSEUDONYM_SECRET: ${AIRA_PSEUDONYM_SECRET:-}
       AIRA_DEFAULT_RETENTION_DAYS: ${AIRA_DEFAULT_RETENTION_DAYS:-7}

@@ -33,6 +33,8 @@ content_stored = "This installation allows content to be stored; each use case d
 content_not_stored = "This installation stores no request or response content, whatever a use case specifies."
 strict_data_on = "This installation runs in strict data mode. Stored content of requests and responses can be read only by Global Administrators and IT Security — not by the members or the administrators of a use case, whatever the use case specifies. Consumption figures per person, the name and API key on a request record, and the person or API key a security finding or block concerns are visible only to Global Administrators and IT Security and to the person concerned. Response times are not evaluated per person, for anybody. A key's owner and issuer are shown only to them and to Global Administrators and IT Security, and in operational telemetry and log lines a person's name appears only as a pseudonym. While the mode is on, no other role can be given these rights. A use case's totals and every breakdown that names no person stay visible, and you always see your own requests and figures."
 strict_data_off = "This installation does not run in strict data mode, so each use case decides who inside it reads content and sees figures per person (requests, tokens, costs, response times). With “every member”, everybody in the use case reads all content and sees everybody's figures; with “own requests only”, its administrators read and see all of it and everybody else only their own; and where content is left to Global Administrators and IT Security, nobody inside the use case reads content or sees figures per person, not even its administrators. Request records show who made each request to everybody who may see them. The use case’s totals, and your own figures, are visible in every case, and roles that may read every report see all figures per person."
+mail_on = "This installation sends these mails."
+mail_off = "This installation sends no mail: no mail relay is configured, so what follows does not happen."
 unset_controller = "[Not configured — the installation has not named the controller (AIRA_PRIVACY_CONTROLLER).]"
 unset_dpo_contact = "No contact for a data protection officer is recorded for this installation. Please contact the controller."
 unset_works_agreement = "No works agreement is recorded for this installation."
@@ -110,7 +112,7 @@ paragraphs = [
 items = [
   "Providers of the AI models a use case has released (for example Google Cloud Vertex AI, the ranking service of Google Cloud Discovery Engine, Google AI Studio, Microsoft Azure AI Foundry, or a server operated by the controller), as processors under Art. 28 GDPR. They receive the content of the request, not your name or identifier.",
   "The installation admits models only in released regions; unless configured otherwise, those are regions in the EU. It can additionally release a single model by name for a region outside that list — for example Google's “global” endpoint, at which the provider decides where in the world a request is processed, and at which some open models offered by Google Cloud Vertex AI (such as GLM and DeepSeek) are exclusively available. The request record names the region each request went to. Where a provider or a company of its group outside the EU and EEA can access data, the controller bases the transfer on an adequacy decision (Art. 45 GDPR) or on appropriate safeguards such as standard contractual clauses (Art. 46 GDPR).",
-  "Operators of the infrastructure AIRA runs on and — where connected — of the observability and SIEM systems, each as a processor or as an internal function of the controller.",
+  "Operators of the infrastructure AIRA runs on and — where connected — of the observability and SIEM systems and of the mail relay, each as a processor or as an internal function of the controller.",
   "Authorities and courts, where there is a legal obligation.",
 ]
 
@@ -213,6 +215,14 @@ purpose = "To detect and contain misuse, compromised access and cost outliers."
 legal_basis = "Art. 6(1)(f) GDPR (information security); Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "Without automatic deletion; blocks are kept as history after they are lifted."
 recipients = "Roles that may see the security findings of every use case, and members of the use case concerned. The IP addresses in a finding's description, and in the reason of a block a rule set, are shown only to people who may investigate incidents. Members see a block only where it applies to the whole use case or to themselves. Whether a finding or block shows the person or API key it concerns to anybody but Global Administrators, IT Security and that person follows the installation's data mode (see “No monitoring of performance or behaviour”)."
+
+[activities.mail]
+title = "Mail about budgets and anomaly findings"
+data = "{mail_state} When a budget reaches a share its use case's administrators set — without one, when it is used up — the person whose own budget it is receives a mail with what they used in that period, the limit and when the budget starts again; for a use case's shared budget, its administrators receive the use case's figures. Where a use case's administrators switched it on, they receive a mail when one of its anomaly rules finds something: it names the rule and what it measured, never the person, API key or IP address concerned. The address is read from your profile in the organisation's directory (Keycloak) when a mail is sent, and AIRA does not store it. AIRA records which mail was due or sent: the use case, the counter concerned — for a budget of one's own with that person's username —, the period, the share, and whether and when it was sent."
+purpose = "To tell people before and when a budget stops their requests, and administrators when a use case's budget runs low or its anomaly rules find something, so that they can act. Not: to assess the performance of individuals."
+legal_basis = "Art. 6(1)(f) GDPR (cost control and information security)."
+retention = "The record of a mail is deleted {mail_retention} after the end of the period it concerned; for a finding, after the day that follows it. The mail itself remains in the recipient's mailbox under the organisation's rules for mail."
+recipients = "The person concerned, or the administrators of the use case; the organisation's mail relay, which delivers the mail."
 
 [activities.model_providers]
 title = "Transfer to model providers"

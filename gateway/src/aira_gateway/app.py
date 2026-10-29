@@ -44,6 +44,7 @@ from aira_gateway.cors import CorsMisconfigured, configure_cors
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.exception_handlers import register_exception_handlers
+from aira_gateway.mail import build_notifier
 from aira_gateway.middleware import (
     BodySizeLimitMiddleware,
     RequestIdMiddleware,
@@ -222,6 +223,9 @@ def _assemble_services(
         enabled=settings.detect_anomalies,
         suspensions=app.state.suspensions,
     )
+    # Mail when a budget crosses its use case's thresholds, or its anomaly rules find something
+    # (`FRD-409`). `None` where the installation names no relay: nothing is checked or sent.
+    app.state.mail = build_notifier(settings, sessionmaker, app.state.clock)
     # Streams read on after their caller left, so a stopping server can cut them short (`ADR-0041`).
     app.state.drains = Drains()
     # The audit write happens after the response goes out (FRD-405 §4.4): persistence stays off
@@ -261,11 +265,15 @@ def _lifespan(
         await probe.probe_once()
         probe.start()
         await app.state.anomalies.start()
+        if app.state.mail is not None:
+            await app.state.mail.start()
         yield
         # First: a stream still read after its caller left stops reading and books what it knows,
         # and its row reaches the writer before the writer closes.
         await app.state.drains.stop()
         await app.state.anomalies.stop()
+        if app.state.mail is not None:
+            await app.state.mail.stop()
         await probe.stop()
         # Drained, not dropped: a redeploy must not discard audit rows still in the queue.
         await app.state.log_writer.stop()

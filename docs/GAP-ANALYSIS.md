@@ -332,7 +332,7 @@ graph LR
     history["configuration history<br/>FR-MG-10"] --> stream["FRD-616<br/>the audit trail as events"]
     rows["audit rows, content reads,<br/>findings, suspensions<br/><i>built</i>"] --> stream
     stream --> siem["a SIEM receives the records,<br/>not only spans"]
-    findings["FRD-500/501/503<br/><i>built</i>"] --> deliver["alert delivery<br/><i>no FRD</i>"]
+    findings["FRD-500/501/503<br/><i>built</i>"] --> deliver["mail to a use case's people<br/>FRD-409 <i>built</i>"]
     budgets["FRD-401/403/610<br/><i>built</i>"] --> deliver
     fleet["FRD-127<br/>several instances"] --> rolling["a rolling update"]
 
@@ -340,9 +340,14 @@ graph LR
     style rows fill:#16a34a,color:#fff
     style findings fill:#16a34a,color:#fff
     style budgets fill:#16a34a,color:#fff
+    style deliver fill:#16a34a,color:#fff
 ```
 
 The configuration history is the item something waits on: `FRD-616` can stream only what is
-recorded, and the control plane records almost nothing about who changed it. Alert delivery has
-every input it needs and waits on a decision rather than on code — who gets told. `FRD-127` needs no
-new mechanism, only the two changes named in §3.3. Everything else is breadth.
+recorded, and the control plane records almost nothing about who changed it. Alert delivery waited
+on a decision rather than on code — who gets told — and the owner made it (`FRD-409`): mail to the
+person whose own budget crosses a threshold its use case set, to the administrators about the shared
+budget, and to them about the use case's findings where they ask, naming nobody. The installation's
+own budget and a global rule's finding about one person stay in the console; no channel but mail is
+built. `FRD-127` needs no new mechanism, only the two changes named in §3.3. Everything else is
+breadth.

@@ -30,6 +30,8 @@ import { UsageChart } from '../../core/ui/charts/usage-chart';
 import { AboutPanel } from './about-panel';
 import { AccessPanel } from './access-panel';
 import { ApiKeysPanel } from './api-keys-panel';
+import { AnomalyMailPanel } from './anomaly-mail-panel';
+import { BudgetMailPanel } from './budget-mail-panel';
 import { BudgetsTab } from './budgets-tab';
 import { CapabilitiesPanel } from './capabilities-panel';
 import { ConnectionPanel } from './connection-panel';
@@ -67,7 +69,9 @@ type Tab = (typeof TABS)[number];
     RouterLink,
     AboutPanel,
     AccessPanel,
+    AnomalyMailPanel,
     ApiKeysPanel,
+    BudgetMailPanel,
     BudgetsTab,
     CapabilitiesPanel,
     ConnectionPanel,
@@ -225,6 +229,9 @@ export class UseCaseDetail implements OnInit {
    * offers depends on it before any report has arrived.
    */
   protected readonly strictData = signal(false);
+  /** Whether this installation sends mail at all (`FRD-409` FR-11), for the two mail settings;
+   *  from the same `/me` answer, and off until it says otherwise. */
+  protected readonly mailEnabled = signal(false);
 
   /** The signed-in reader's name — what the gateway groups a person's figures under (`FRD-606`). */
   protected readonly myName = signal<string | null>(null);
@@ -290,6 +297,7 @@ export class UseCaseDetail implements OnInit {
       next: (me) => {
         this.myName.set(me.username || null);
         this.strictData.set(strictDataOf(me));
+        this.mailEnabled.set(me.mail_enabled === true);
         this.managesAll.set(can(me, 'usecase.manage_all'));
         // **Here and not in `ngOnInit`**: the chart is about this person, and until `/me` answers
         // there is nobody to ask about. Started earlier it would fetch the use case's whole traffic

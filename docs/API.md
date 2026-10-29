@@ -317,7 +317,7 @@ written in one transaction, so neither happens without the other.
 
 | Operation         | Who may call | Answers |
 | ----------------- | ------------ | ------- |
-| `GET /api/v1/me`  | signed in | `{subject, username, email, roles, role_labels, permissions, use_cases, api_key_default_days, api_key_max_days, currency, time_zone, may_test, strict_data}` — what the server decides, so the console asks rather than guesses: `permissions` from the caller's roles, `use_cases` the slugs the token's `/use-cases/<slug>` groups name, `time_zone` the installation's clock (`AIRA_TIME_ZONE`) every time on the console is shown on, `may_test` whether the pipeline tests are offered, `strict_data` whether the installation runs strict data mode (`AIRA_STRICT_DATA_MODE`). |
+| `GET /api/v1/me`  | signed in | `{subject, username, email, roles, role_labels, permissions, use_cases, api_key_default_days, api_key_max_days, currency, time_zone, mail_enabled, may_test, strict_data}` — what the server decides, so the console asks rather than guesses: `permissions` from the caller's roles, `use_cases` the slugs the token's `/use-cases/<slug>` groups name, `time_zone` the installation's clock (`AIRA_TIME_ZONE`) every time on the console is shown on, `mail_enabled` whether the installation sends mail at all (`AIRA_SMTP_HOST` and `AIRA_MAIL_FROM` both set), `may_test` whether the pipeline tests are offered, `strict_data` whether the installation runs strict data mode (`AIRA_STRICT_DATA_MODE`). |
 | `GET /api/v1/`    | signed in | DRF's router index, `{"use-cases": "<url>"}`. The console does not call it. |
 
 ### 3.3 Use cases
@@ -325,10 +325,14 @@ written in one transaction, so neither happens without the other.
 `apps/usecases/views/` — `viewset.py`, `retirement.py`. A use case is answered with `slug`, `name`,
 `description`, `processing_notes`, `store_payloads`, `payload_visibility`, `tools_enabled`,
 `include_reasoning`, `prompt_caching_enabled`, `prompt_cache_ttl`, `retention_days`,
-`allowed_models`, `created_at`, `updated_at` and `permissions` — what this caller may do here:
-`can_admin`, `can_manage`, `is_member`, `may_call`. While strict data mode is on, `payload_visibility`
-is answered as `oversight` whatever is stored, and saving any other value is refused `400`; the
-stored value is kept and is what the event carries, so turning the mode off restores it.
+`budget_mail_thresholds`, `mail_admins_on_anomalies`, `allowed_models`, `created_at`, `updated_at`
+and `permissions` — what this caller may do here: `can_admin`, `can_manage`, `is_member`,
+`may_call`. While strict data mode is on, `payload_visibility` is answered as `oversight` whatever is
+stored, and saving any other value is refused `400`; the stored value is kept and is what the event
+carries, so turning the mode off restores it. `budget_mail_thresholds` are the shares of a budget, in
+percent, at which a mail goes out — up to five whole numbers from 1 to 100, answered ascending,
+`[100]` for a new use case, `[]` for no budget mail — and anything else is refused `400` with the
+reason; `mail_admins_on_anomalies` mails the use case's administrators what its anomaly rules find.
 
 | Operation | Who may call | Answers |
 | --------- | ------------ | ------- |
@@ -592,7 +596,7 @@ same function (`apps/usecases/views/payloads.py`, `catalog/views.py` `_payload`,
 
 | Events | Fields | Notes |
 | ------ | ------ | ----- |
-| `usecase.upserted`, `usecase.deleted` | `slug`, `name`, `description`, `processing_notes`, `store_payloads`, `payload_visibility`, `restrict_members_to_own_requests`, `tools_enabled`, `include_reasoning`, `prompt_caching_enabled`, `prompt_cache_ttl`, `retention_days`, `allowed_models` | The use case as it stands; `usecase.deleted` carries it as it stood when retired, so a read-model rebuilt from the compacted topic still knows its retention. `restrict_members_to_own_requests` is the retired form of `payload_visibility`, derived from it, for a gateway that predates it. `allowed_models` is sorted. |
+| `usecase.upserted`, `usecase.deleted` | `slug`, `name`, `description`, `processing_notes`, `store_payloads`, `payload_visibility`, `restrict_members_to_own_requests`, `tools_enabled`, `include_reasoning`, `prompt_caching_enabled`, `prompt_cache_ttl`, `retention_days`, `budget_mail_thresholds`, `mail_admins_on_anomalies`, `allowed_models` | The use case as it stands; `usecase.deleted` carries it as it stood when retired, so a read-model rebuilt from the compacted topic still knows its retention. `restrict_members_to_own_requests` is the retired form of `payload_visibility`, derived from it, for a gateway that predates it. `budget_mail_thresholds` is ascending; absent, the gateway mails at 100 % of a budget, and `mail_admins_on_anomalies` absent is off. `allowed_models` is sorted. |
 | `usecase.purged` | `slug` | |
 | `membership.upserted` | `slug`, `username`, `role` | `username` is Management's account name, which the gateway matches against a token's `preferred_username`. |
 | `membership.removed` | `slug`, `username` | |
@@ -658,7 +662,9 @@ changed again in Management or the topics are replayed.
 What an absent field is read as differs by handler, on purpose (`consumer/apply.py`):
 
 - **a use case** — `tools_enabled` and `prompt_caching_enabled` off; `store_payloads` and
-  `include_reasoning` on; `prompt_cache_ttl` `5m`; `retention_days` the installation's default. An
+  `include_reasoning` on; `prompt_cache_ttl` `5m`; `retention_days` the installation's default;
+  `budget_mail_thresholds` 100 % and `mail_admins_on_anomalies` off, and thresholds no Management
+  would have accepted are read as absent and logged. An
   absent `allowed_models` leaves the release unrecorded, which the gateway serves as unrestricted,
   while an empty list releases nothing. An absent `payload_visibility` is read from
   `restrict_members_to_own_requests`, and a value the gateway does not know as `oversight`, the

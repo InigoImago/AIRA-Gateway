@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     and_,
     func,
     or_,
@@ -336,3 +337,44 @@ class BudgetUsage(Base):
     #: Requests served by a model with no price on file, counted apart so they cannot read as free
     #: (`FRD-403`).
     unpriced_requests: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
+class MailNotice(Base):
+    """One mail owed, and what became of it (`FRD-409`).
+
+    **Unique per counter, period and threshold, or per finding**, which is what sends each mail
+    once across every instance and restart: a second round that finds the same crossing inserts
+    nothing. The row outlives the sending as the record of it, and goes 30 days after it expired.
+    """
+
+    __tablename__ = "mail_notices"
+    __table_args__ = (
+        UniqueConstraint(
+            "kind", "subject_key", "period_key", "threshold", name="uq_mail_notice_once"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    #: `budget` or `anomaly`.
+    kind: Mapped[str] = mapped_column(String(16))
+    use_case: Mapped[str] = mapped_column(String(64), index=True)
+    #: The counter's key (`Scope.usage_key`) for a budget, the finding's id for an anomaly.
+    subject_key: Mapped[str] = mapped_column(String(320))
+    #: The counter's period (`budgets.keys.period_key`); empty for an anomaly.
+    period_key: Mapped[str] = mapped_column(String(10), default="")
+    #: The share crossed, in percent; 0 for an anomaly.
+    threshold: Mapped[int] = mapped_column(Integer, default=0)
+    #: After this a mail still owed is not sent: a budget's period has ended, a finding is old news.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    #: Empty while owed; then `sent`, `superseded` (a higher threshold went instead),
+    #: `no_recipient`, `failed` (out of attempts) or `expired`.
+    outcome: Mapped[str] = mapped_column(String(16), default="", index=True)
+    #: How many addresses the mail went to.
+    recipients: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    #: Why the last attempt failed, in words that name no address.
+    last_error: Mapped[str] = mapped_column(String(255), default="")
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

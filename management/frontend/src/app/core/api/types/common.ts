@@ -52,4 +52,9 @@ export interface Me {
    * through `strictData()` in `core/auth/roles.ts`. Absent from an older server, which means off.
    */
   strict_data?: boolean;
+  /**
+   * Whether this installation sends mail at all (`AIRA_SMTP_HOST` and `AIRA_MAIL_FROM`, `FRD-409`),
+   * so a use case's mail settings say so rather than look as though they work. Absent: no mail.
+   */
+  mail_enabled?: boolean;
 }

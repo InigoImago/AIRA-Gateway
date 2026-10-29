@@ -5,6 +5,49 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A mail when a budget runs low, and when a use case's anomaly rule fires (2026-10-29)
+
+The owner asked whether AIRA could take a person's address from their Keycloak profile and tell
+them when their budget is exceeded. The address was already within reach: Management's read-only
+directory account returns it. Nothing in AIRA sent mail, and the gap analysis had recorded alert
+delivery as waiting on one decision, who gets told. The owner made it: the use case's
+administrators set the thresholds, the mail is in English, a person gets a personal mail about
+their budget, and administrators can choose to be told about their use case's anomaly findings
+(`FRD-409`).
+
+**Where it runs (`ADR-0050`).** The counters and the findings are the gateway's, and nothing flows
+from the gateway to Management. The gateway's Kafka identity only reads, and Management never calls
+the gateway. So the gateway checks and sends, in a round once a minute beside the anomaly
+evaluation, and reads each address with the same directory account when it sends. An installation
+needs a relay and a route to it from the gateway, and nothing else: no Kafka, Keycloak or database
+change. The data plane does now hold read access to every profile in the realm. That is the
+trade-off, stated in the ADR.
+
+**What it does.** Each crossing is a row in `mail_notices`, unique per counter, period and
+threshold. That is what makes "once" hold across instances and restarts, and the round claims an
+advisory lock so only one instance sends. Several thresholds crossed in one round mail the highest
+only, and a threshold added below one already mailed is noted without a mail. A person hears about
+the budget the hierarchy gives them, not the one their own replaced. A lifted budget mails nobody.
+A mail about a period that has ended is dropped. A relay that fails is tried five times. A finding
+mail lists the round's findings per use case and names no person, key or address in any data mode;
+`new_source_ip` descriptions lose their addresses as they do in the console. Without
+`AIRA_SMTP_HOST` and `AIRA_MAIL_FROM` nothing is checked or stored, and nothing refuses to start.
+Management, the console and the privacy notice all say whether mail is on at all.
+
+**Verified.** 35 notifier tests run through the real directory client against Keycloak's shapes. 5
+tests hold the real `smtplib` conversation against a small SMTP server; one of them shows STARTTLS
+refusing a relay that cannot upgrade rather than sending in the clear. The rest are the consumer's
+reading, Management's validation, the two console panels and the page that tells them whether mail
+is on. Mutations `ML-1`…`ML-20` all caught,
+and `RL8`/`FX-L-14` were re-anchored onto the refactored group lookup. A new live round sends a
+used-up budget's mail through the showcase's new mail catcher (Mailpit) to the development realm's
+address for that person. It runs only in CI, which points the gateway at the catcher.
+
+**What the round found on the way.** `0016`'s announcement test compared a historical migration's
+frozen event with today's views, so any later field broke it. Now it names the fields added since,
+together with what their absence reads as. That is exactly the condition under which no
+re-announcement is needed: the new fields' defaults are the same on both planes.
+
 ## Daily use: a fallback per kind of request, costs checked, one clock (2026-10-28)
 
 Three things the owner noticed in daily use: no default fallback model visible anywhere, costs that

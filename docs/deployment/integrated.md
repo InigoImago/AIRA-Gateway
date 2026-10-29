@@ -34,6 +34,7 @@ you can answer "what do you need that for?".
 | **Security team** | A Vault (or compatible) with a KV-v2 mount, permission to create a **read-only policy** and an **AppRole**, and a way to put the AppRole's secret-id into the containers as a file | Every credential lives there; the process fails to start rather than falling back |
 | **Cloud team** | A service account or key for your model platform, and the **regions** you are permitted to use | Residency is enforced at startup, not intended |
 | **Network** | Ingress and TLS for two hostnames (console, gateway), and egress to your model platform | The console and the API are separate origins |
+| **Mail team** *(optional)* | A relay the gateway may send through, a sender address it accepts, and a route to it from the gateway's host | Mail to people whose budget runs out, and to use cases' administrators; without it nothing is mailed and nothing else changes |
 
 You do **not** need cluster-admin anywhere. AIRA never writes to your directory, never creates
 users, and never changes a Keycloak group.

@@ -56,6 +56,9 @@ class MeView(APIView):
                 # The installation's clock (`AIRA_TIME_ZONE`, `FRD-629`): every timestamp the
                 # console prints is on it, and every period it names begins on it.
                 "time_zone": settings.time_zone,
+                # Whether this installation sends mail at all (`FRD-409` FR-11), so a use case's
+                # mail settings say so rather than look as though they work.
+                "mail_enabled": settings.mail_enabled,
                 # Whether to offer the pipeline-tests screen, answered by the permission class
                 # itself (`ADR-0020`): it is an object-level question the roles and slugs above
                 # cannot answer (`FRD-206`).

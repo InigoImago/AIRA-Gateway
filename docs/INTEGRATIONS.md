@@ -379,8 +379,11 @@ To let the console **search** your groups and users when granting access, and to
 group exists before a role is bound to it**, give AIRA a read-only service account and
 set `AIRA_DIRECTORY_CLIENT_ID` / `AIRA_DIRECTORY_CLIENT_SECRET`. It needs `view-users` and
 `query-groups` on the realm — nothing else, and it is used for nothing but these lookups, which are
-Keycloak's admin API. Where Management reaches Keycloak by another address than the one in
-`AIRA_OIDC_ISSUER` (inside a container, usually), set `AIRA_DIRECTORY_URL` to it.
+Keycloak's admin API. Where the services reach Keycloak by another address than the one in
+`AIRA_OIDC_ISSUER` (inside a container, usually), set `AIRA_DIRECTORY_URL` to it. Where the
+installation sends mail ([§4b](#4b-a-mail-relay--optional)), the gateway reads the recipient's address
+with the same account; an installation that gives each service its own Vault path puts the secret on
+the gateway's as well.
 
 **Binding a role to a group is refused without it.** A group nobody could check is not trusted: the
 console says the group could not be verified, and the three built-in roles keep working. The
@@ -403,7 +406,7 @@ a group nobody has used, so on a fresh installation the first grant of a new gro
 |---|---|---|---|
 | `aira-gateway` | public, **PKCE S256** | the SPA and the gateway's JWKS validation | exact redirect URIs and web origins — never `*` |
 | *(service accounts)* | confidential | machine-to-machine callers | `client_credentials`; membership of the groups that grant what the caller may do, and the groups and audience mappers. A realm role grants nothing |
-| *(directory, optional)* | confidential | Management's directory lookups | `view-users` and `query-groups` from `realm-management`, nothing else — see above |
+| *(directory, optional)* | confidential | Management's directory lookups, and the gateway's mail addresses | `view-users` and `query-groups` from `realm-management`, nothing else — see above |
 
 **Settings on your side that matter**
 
@@ -758,6 +761,32 @@ What decides how it behaves:
 > mounted file, and a date to replace it by · `https://`
 
 ---
+
+## 4b. A mail relay — optional
+
+With a relay, the gateway mails a person when their own budget crosses one of their use case's
+thresholds, a use case's administrators when its shared budget does, and — where they switched it
+on — the administrators when one of the use case's anomaly rules finds something. The thresholds are
+the use case's, set by its administrators; a new one mails at 100 %, the moment a budget is used up.
+
+| What | Why | Without it |
+|---|---|---|
+| A relay the gateway may send through: host, port, and whether it speaks STARTTLS (the default), TLS from the first byte, or neither (`AIRA_SMTP_HOST`, `AIRA_SMTP_PORT`, `AIRA_SMTP_SECURITY`) | The gateway hands each mail to it over SMTP | No mail: nothing is checked or stored, and nothing refuses to start |
+| A sender address the relay accepts (`AIRA_MAIL_FROM`), and a login if it asks for one (`AIRA_SMTP_USERNAME`, the password in Vault) | A relay rejects a sender it does not know | No mail, said once at start |
+| A route from the gateway's host to the relay | The gateway sends, not Management | Every mail is tried five times, a minute apart, and given up with the reason in the log |
+| The directory account above, and an address on each profile | The address is read from Keycloak when a mail is sent, and kept nowhere | A person without an address gets no mail; the log says so |
+| Where people open the console (`AIRA_CONSOLE_URL`), optional | A mail links the tab it is about | The mail names the tab |
+
+**What a mail carries.** A budget mail goes to the person it is about, with their own figures, or to
+a use case's administrators with the use case's. A mail about anomaly findings names the rule, what
+it measured and what was done — never the person, key or IP address concerned, whatever the data
+mode; the console's Warnings tab shows each reader what they may see. Each crossing is mailed once,
+however many gateway instances run; a mail about a period that has ended is dropped rather than sent
+late. The record of each mail is kept 30 days past its period, and the privacy notice describes it.
+
+To try it locally, the showcase runs a mail catcher at `http://localhost:8025`: set
+`AIRA_SMTP_HOST=mailpit`, `AIRA_SMTP_PORT=1025`, `AIRA_SMTP_SECURITY=none` and
+`AIRA_MAIL_FROM=aira@demo.aira` in `.env`. The people of the development realm have addresses.
 
 ## 5. Model platforms
 

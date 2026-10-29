@@ -228,6 +228,34 @@ class BaseAiraSettings(BaseSettings):
     person has one pseudonym. Empty, each process draws its own: no name leaks, but a SIEM can no
     longer follow one caller across processes and restarts."""
 
+    smtp_host: str = ""
+    """The mail relay the gateway sends through (`FRD-409`). Empty, the default, sends no mail and
+    checks or stores nothing about one. Shared by both planes: the gateway sends, and Management
+    tells the console and the privacy notice whether anything is sent at all."""
+
+    mail_from: str = ""
+    """The sender of every mail (`FRD-409`), such as ``AIRA <aira-noreply@example.com>``. Shared for
+    the same reason as ``smtp_host``: a relay without a sender sends nothing."""
+
+    directory_client_id: str = ""
+    """A **read-only** Keycloak service account with `view-users` and `query-groups` on the realm
+    (`FRD-209`). Management searches people and groups with it when access is granted; the gateway
+    reads the address a mail goes to (`FRD-409`). Absent by default: the console then searches what
+    Management already knows and says so, and no mail finds an address."""
+
+    directory_client_secret: str = ""
+    """The directory account's secret. A credential, so from Vault."""
+
+    directory_url: str = ""
+    """Where a service reaches Keycloak's admin API, when that is not the address in the issuer.
+    The issuer is the address *browsers* use; inside a container it is usually not Keycloak at all,
+    and every lookup would then fail as "could not be asked"."""
+
+    @property
+    def mail_enabled(self) -> bool:
+        """Whether this installation sends mail at all (`FRD-409` FR-9): a relay and a sender."""
+        return bool(self.smtp_host.strip() and self.mail_from.strip())
+
     default_retention_days: int = Field(default=7, ge=1, le=3650)
     """Payload retention in days for requests carrying no use case (FRD-404); use-case traffic
     follows its use case's period. Shared for the same reason as ``store_payloads``. Within the

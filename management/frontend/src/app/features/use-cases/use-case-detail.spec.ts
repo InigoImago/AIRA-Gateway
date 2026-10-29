@@ -107,7 +107,12 @@ interface Overrides {
    * Who is reading. `null` is a signed-in account whose username the server did not give — the
    * condition under which the reader's own cards are not rendered at all.
    */
-  me?: { username: string; strict_data?: boolean; permissions?: string[] } | null;
+  me?: {
+    username: string;
+    strict_data?: boolean;
+    permissions?: string[];
+    mail_enabled?: boolean;
+  } | null;
   addMember?: Observable<Membership>;
   removeMember?: Observable<{ revoked_keys: string[] }>;
   issueApiKey?: Observable<unknown>;
@@ -298,6 +303,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
                   roles: [],
                   strict_data: overrides.me?.strict_data,
                   permissions: overrides.me?.permissions ?? [],
+                  mail_enabled: overrides.me?.mail_enabled,
                 }),
         },
       },
@@ -903,6 +909,24 @@ describe('UseCaseDetail — every tab has a panel behind it', () => {
 
       expect(harness.component.tab()).toBe(tab);
       expect(harness.html().querySelector(selector), `${tab} has no panel`).not.toBeNull();
+    });
+  }
+
+  for (const [tab, off] of [
+    ['budgets', 'budget-mail-off'],
+    ['warnings', 'anomaly-mail-off'],
+  ] as const) {
+    it(`says under "${tab}" whether the installation sends mail, as /me answered`, async () => {
+      // `FRD-409` FR-11: a mail setting that does nothing must not look as though it works.
+      const silent = setup({}, true, tab);
+      await silent.fixture.whenStable();
+      silent.fixture.detectChanges();
+      expect(silent.html().querySelector(`[data-testid="${off}"]`)).not.toBeNull();
+
+      const mailing = setup({ me: { username: 'erika', mail_enabled: true } }, true, tab);
+      await mailing.fixture.whenStable();
+      mailing.fixture.detectChanges();
+      expect(mailing.html().querySelector(`[data-testid="${off}"]`)).toBeNull();
     });
   }
 

@@ -80,6 +80,8 @@ PLACEHOLDERS: frozenset[str] = frozenset(
         "key_max_lifetime",
         "outbox_retention",
         "data_mode",
+        "mail_state",
+        "mail_retention",
     }
 )
 
@@ -92,6 +94,8 @@ VALUES: tuple[str, ...] = (
     "content_not_stored",
     "strict_data_on",
     "strict_data_off",
+    "mail_on",
+    "mail_off",
     "unset_controller",
     "unset_dpo_contact",
     "unset_works_agreement",

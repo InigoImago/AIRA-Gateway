@@ -10,6 +10,8 @@ from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 
+from aira_common.mail import DEFAULT_BUDGET_MAIL_THRESHOLDS
+
 #: One week: long enough to investigate an incident, short enough that last month's prompts are
 #: gone (`FRD-404`).
 DEFAULT_RETENTION_DAYS = 7
@@ -26,6 +28,12 @@ PURGE_AFTER_DAYS = 30
 #: megabyte, and JSON escapes one character into as many as twelve bytes, so two notes at this
 #: bound still leave the event well inside it (`apps.outbox.subscriber`).
 MAX_PROSE_LENGTH = 20_000
+
+
+def default_budget_mail_thresholds() -> list[int]:
+    """A fresh list per use case: a shared mutable default would be one list for all of them."""
+    return list(DEFAULT_BUDGET_MAIL_THRESHOLDS)
+
 
 #: `\Z`, not `$`, which also matches before a trailing newline. The slug is a primary key on the
 #: other plane — emitted over Kafka, a group-path suffix, printed into every audit row (`FRD-613`).
@@ -145,6 +153,29 @@ class UseCase(models.Model):
             "its administrators — only roles that may read any content (payload.read_any: Global "
             "Administrator and IT Security, and any role given it); each reader sees their own "
             "figures. The use case's totals are unaffected."
+        ),
+    )
+    #: At which shares of a budget a mail goes out (`FRD-409` FR-1): to the person about their own
+    #: allowance, to the administrators about the use case's shared one. Kept ascending and
+    #: distinct (`aira_common.mail.budget_mail_thresholds`); empty is no budget mail at all.
+    budget_mail_thresholds = models.JSONField(
+        default=default_budget_mail_thresholds,
+        blank=True,
+        help_text=(
+            "At which shares of a budget a mail goes out, in percent (FRD-409): to the person "
+            "about their own allowance, to the administrators about the use case's shared budget. "
+            "Up to five, from 1 to 100; [100] by default, the moment a budget is used up; empty "
+            "for none."
+        ),
+    )
+    #: Whether the administrators are mailed when one of this use case's anomaly rules finds
+    #: something (`FRD-409` FR-6). Off by default: a mail nobody asked for is noise.
+    mail_admins_on_anomalies = models.BooleanField(
+        default=False,
+        help_text=(
+            "Mail this use case's administrators when one of its anomaly rules finds something "
+            "(FRD-409). The mail names the rule and what it measured, never a person, key or "
+            "address."
         ),
     )
     retention_days = models.PositiveSmallIntegerField(

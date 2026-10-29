@@ -307,7 +307,9 @@ Details: [**Testing**](docs/TESTING.md).
   controls are a `pii_filter` step, which rewrites the prompt before dispatch so that the rewritten
   one is what is stored, the per-use-case storage switch, `payload_visibility`, and a record of
   every read.
-- **No alert delivery.** Findings appear in the console; nothing sends mail or calls a webhook.
+- **Mail is the only alert channel.** A person is mailed when their budget crosses a threshold its
+  use case set, and a use case's administrators about its shared budget and, if they ask, its
+  anomaly findings — through a relay the installation names. No webhook, no chat.
 - **No Kubernetes or Helm charts.**
 - **Microsoft Foundry is untested against a real Azure subscription.**
 

@@ -329,6 +329,13 @@
       [me]="myName()"
       (changed)="loadBudgets()"
     />
+    <app-budget-mail-panel
+      [slug]="slug()"
+      [useCase]="useCase()"
+      [canManage]="canManage()"
+      [mailEnabled]="mailEnabled()"
+      (saved)="useCase.set($event)"
+    />
   }
 
   @if (tab() === 'rules') {
@@ -343,6 +350,13 @@
 
   @if (tab() === 'warnings') {
     <app-warnings-tab [slug]="slug()" (countChanged)="warnings.set($event)" />
+    <app-anomaly-mail-panel
+      [slug]="slug()"
+      [useCase]="useCase()"
+      [canManage]="canManage()"
+      [mailEnabled]="mailEnabled()"
+      (saved)="useCase.set($event)"
+    />
   }
 
   @if (tab() === 'traces') {

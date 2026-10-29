@@ -1,0 +1,34 @@
+<div class="card" data-testid="anomaly-mail">
+  <h3 class="section-title" style="margin-bottom: 0.25rem">Mail about findings</h3>
+  @if (!mailEnabled()) {
+    <p class="callout" style="margin: 0 0 0.75rem" data-testid="anomaly-mail-off">
+      This installation sends no mail: no mail relay is configured (<code>AIRA_SMTP_HOST</code>,
+      <code>AIRA_MAIL_FROM</code>, set by its operator). This setting takes effect once one is.
+    </p>
+  }
+  @if (canManage()) {
+    <label class="checkline">
+      <input
+        type="checkbox"
+        data-testid="anomaly-mail-toggle"
+        [checked]="on()"
+        [disabled]="feedback.busy()"
+        (change)="set($any($event.target).checked)"
+      />
+      <span
+        >Mail the administrators of this use case when one of its anomaly rules finds
+        something</span
+      >
+    </label>
+  } @else {
+    <p style="margin: 0" data-testid="anomaly-mail-readonly">
+      The administrators of this use case are
+      <strong>{{ on() ? 'mailed' : 'not mailed' }}</strong> what its anomaly rules find. Only an
+      administrator of this use case can change that.
+    </p>
+  }
+  <p class="field__hint" style="margin: 0.5rem 0 0">
+    One mail per round of the rules, naming the rule and what it measured — never which person, key
+    or address. This tab shows you what you may see of each finding.
+  </p>
+</div>

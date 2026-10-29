@@ -68,6 +68,12 @@ def period_key(period: str, now: datetime, zone: tzinfo = UTC) -> str:
     return moment.strftime("%Y-%m-%d") if period == "day" else moment.strftime("%Y-%m")
 
 
+def period_of(key: str) -> str:
+    """The period a counter key names — `period_key` read the other way: a day is written
+    `YYYY-MM-DD`, a month `YYYY-MM`."""
+    return "day" if len(key) == len("YYYY-MM-DD") else "month"
+
+
 def period_starts(period: str, now: datetime, zone: tzinfo = UTC) -> datetime:
     """The first moment of the counter `period_key` names — the other end of `period_ends`,
     decided by the same clock so the two cannot disagree about a boundary. An instant in UTC, so

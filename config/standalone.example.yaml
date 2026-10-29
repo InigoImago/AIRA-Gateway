@@ -199,6 +199,22 @@ directory:
   url: ''
   # client_secret: → Vault.
 
+# Mail: a person when their own budget crosses one of their use case's thresholds, a use case's
+# administrators about its shared budget and, where they switched it on, about what its anomaly
+# rules find. Off until both `smtp.host` and `mail.from` are set; every address is read from
+# Keycloak through the directory account above when the mail is sent. `console.url` lets a mail
+# link the tab it is about.
+smtp:
+  host: ''                 # e.g. relay.example.com
+  port: 587                # 587 submission, 465 TLS from the first byte, 25 an internal relay
+  security: starttls       # starttls | tls | none (a relay inside the network without TLS)
+  username: ''
+  # password: → Vault.
+mail:
+  from: ''                 # e.g. 'AIRA <aira-noreply@example.com>'
+console:
+  url: ''                  # e.g. https://aira.example.com
+
 # The model reference the console fills a new catalog entry from: a public list's limits,
 # capabilities and list prices, for an administrator to check. Empty answers from the copy this
 # release ships; `https://models.dev/api.json` reads today's list — Management's one outbound call
@@ -489,6 +505,7 @@ secrets:
     - AIRA_GATEWAY_KAFKA_SASL_PASSWORD
     - AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD
     - AIRA_DIRECTORY_CLIENT_SECRET
+    - AIRA_SMTP_PASSWORD                 # the mail relay's login, where it asks for one
     - AIRA_PSEUDONYM_SECRET              # telemetry's pseudonyms under strict data mode
     - AIRA_REDIS_PASSWORD
     - AIRA_REDIS_SENTINEL_PASSWORD

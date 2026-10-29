@@ -16,6 +16,7 @@ from aira_common.directory import (
     SEARCH_LIMIT,
     DirectoryUnavailable,
     KeycloakDirectory,
+    directory_for,
 )
 
 TOKEN_PATH = "/realms/aira/protocol/openid-connect/token"
@@ -439,3 +440,116 @@ def test_an_injected_client_is_left_open_for_its_owner() -> None:
     KeycloakDirectory("https://kc", "aira", "id", "secret", client=client).search("kunden")
 
     assert not client.is_closed
+
+
+# ---- the members of a group, for a mail (`FRD-409`) ------------------------------------------
+
+
+def _group_with(members: list[dict], *, path: str = "/aira-p-uc-admins") -> object:
+    """A realm with one group at ``path``, holding ``members``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == TOKEN_PATH:
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if request.url.path == f"/admin/realms/aira/group-by-path{path}":
+            return httpx.Response(200, json={"id": "g-1", "name": "admins", "path": path})
+        if request.url.path == "/admin/realms/aira/groups/g-1/members":
+            return httpx.Response(200, json=members)
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_a_groups_members_come_with_their_addresses() -> None:
+    members = _directory(
+        _group_with(
+            [
+                {"username": "ada", "email": "ada@example.com", "firstName": "Ada"},
+                {"username": "bob", "email": "bob@example.com"},
+            ]
+        )
+    ).group_members("/aira-p-uc-admins", 10)
+
+    assert [(m.id, m.detail) for m in members] == [
+        ("ada", "ada@example.com"),
+        ("bob", "bob@example.com"),
+    ]
+
+
+def test_a_disabled_account_in_the_group_is_nobody_to_write_to() -> None:
+    members = _directory(
+        _group_with(
+            [
+                {"username": "ada", "email": "ada@example.com", "enabled": False},
+                {"username": "bob", "email": "bob@example.com", "enabled": True},
+            ]
+        )
+    ).group_members("/aira-p-uc-admins", 10)
+
+    assert [m.id for m in members] == ["bob"]
+
+
+def test_a_groups_members_are_asked_for_no_more_than_the_limit() -> None:
+    asked: list[httpx.Request] = []
+    rows = [{"username": f"u{i}", "email": f"u{i}@example.com"} for i in range(5)]
+    handler = _group_with(rows)
+
+    def recording(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        return handler(request)  # type: ignore[operator]
+
+    members = _directory(recording).group_members("/aira-p-uc-admins", 3)
+
+    assert len(members) == 3
+    listing = next(r for r in asked if r.url.path.endswith("/members"))
+    assert listing.url.params["max"] == "3"
+
+
+def test_no_such_group_has_no_members_and_a_refusal_is_not_an_empty_group() -> None:
+    assert _directory(_group_with([], path="/other")).group_members("/aira-p-uc-admins", 5) == []
+
+    def refusing(request: httpx.Request) -> httpx.Response:
+        if request.url.path == TOKEN_PATH:
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        return httpx.Response(403)
+
+    with pytest.raises(DirectoryUnavailable):
+        _directory(refusing).group_members("/aira-p-uc-admins", 5)
+
+
+@pytest.mark.parametrize("path", ["", "/", "relative", "/a/../b"])
+def test_a_path_that_names_no_group_is_answered_without_asking(path: str) -> None:
+    def nobody(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"asked {request.url}")
+
+    assert _directory(nobody).group_members(path, 5) == []
+
+
+# ---- which settings make a directory -----------------------------------------------------------
+
+
+def test_the_realm_is_the_issuers_and_the_server_its_own_address_unless_one_is_given() -> None:
+    directory = directory_for("https://sso.example/realms/aira/", "", "aira-directory", "s3cret")
+    assert directory is not None
+    assert (directory._base, directory._realm) == ("https://sso.example", "aira")
+
+    inside = directory_for(
+        "https://sso.example/realms/aira", "http://keycloak:8080", "aira-directory", "s3cret"
+    )
+    assert inside is not None
+    assert (inside._base, inside._realm) == ("http://keycloak:8080", "aira")
+
+
+@pytest.mark.parametrize(
+    ("issuer", "client_id", "secret"),
+    [
+        ("https://sso.example/realms/aira", "", "s3cret"),
+        ("https://sso.example/realms/aira", "aira-directory", ""),
+        ("https://sso.example/no-realm-here", "aira-directory", "s3cret"),
+        ("", "aira-directory", "s3cret"),
+    ],
+)
+def test_without_an_account_or_a_realm_there_is_no_directory(
+    issuer: str, client_id: str, secret: str
+) -> None:
+    assert directory_for(issuer, "", client_id, secret) is None

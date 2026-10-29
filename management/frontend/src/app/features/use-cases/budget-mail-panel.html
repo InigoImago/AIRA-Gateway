@@ -1,0 +1,57 @@
+<div class="card" data-testid="budget-mail">
+  <h3 class="section-title" style="margin-bottom: 0.25rem">Mail about budgets</h3>
+  <p class="muted" style="margin: 0 0 0.75rem">
+    A person is mailed about their own budget, and the administrators of this use case about its
+    shared budget — once per period at each share below. The address is the one in the person's
+    Keycloak profile.
+  </p>
+  @if (!mailEnabled()) {
+    <p class="callout" style="margin: 0 0 0.75rem" data-testid="budget-mail-off">
+      This installation sends no mail: no mail relay is configured (<code>AIRA_SMTP_HOST</code>,
+      <code>AIRA_MAIL_FROM</code>, set by its operator). The shares below take effect once one is.
+    </p>
+  }
+  @if (!canManage()) {
+    <p style="margin: 0" data-testid="budget-mail-readonly">
+      @if (current().length) {
+        A mail goes out at <strong>{{ currentText() }}</strong> of a budget.
+      } @else {
+        No mail goes out about this use case's budgets.
+      }
+      Only an administrator of this use case can change that.
+    </p>
+  } @else {
+    <form class="form-inline" (ngSubmit)="save()">
+      <div class="field">
+        <label for="budget-mail-thresholds">Mail at these shares of a budget (%)</label>
+        <input
+          id="budget-mail-thresholds"
+          name="thresholds"
+          data-testid="budget-mail-thresholds"
+          placeholder="none"
+          [ngModel]="typed()"
+          (ngModelChange)="typed.set($event)"
+          [attr.aria-invalid]="error() ? 'true' : null"
+        />
+        @if (error(); as message) {
+          <span class="field__hint field__hint--error" data-testid="budget-mail-error">
+            {{ message }}
+          </span>
+        } @else {
+          <span class="field__hint">
+            Up to five, such as <code>80, 100</code>. 100 is the moment a budget is used up; empty
+            sends no budget mail.
+          </span>
+        }
+      </div>
+      <button
+        type="submit"
+        class="btn btn--primary"
+        data-testid="budget-mail-save"
+        [disabled]="!canSave()"
+      >
+        Save
+      </button>
+    </form>
+  }
+</div>

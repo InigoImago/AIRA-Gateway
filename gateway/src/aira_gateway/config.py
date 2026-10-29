@@ -7,7 +7,7 @@ of them.
 from __future__ import annotations
 
 import sys
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import URL
@@ -116,6 +116,21 @@ class GatewaySettings(BaseAiraSettings):
     enforce_suspensions: bool = True
     #: How often the detector wakes. A longer interval costs findings latency, not accuracy.
     anomaly_interval_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+
+    # Mail (`FRD-409`). The relay's host and the sender are shared with Management
+    # (`BaseAiraSettings.smtp_host`, `mail_from`); these say how this plane reaches the relay.
+    #: The relay's port. 587 is mail submission, 465 TLS from the first byte, 25 a relay that
+    #: takes mail from inside the network.
+    smtp_port: int = Field(default=587, gt=0, lt=65536)
+    #: `starttls` upgrades a plain connection and refuses a relay that cannot, `tls` speaks TLS from
+    #: the first byte, and `none` neither — for a relay inside the network that offers no TLS.
+    smtp_security: Literal["starttls", "tls", "none"] = "starttls"
+    #: A login, where the relay asks for one. Empty sends without.
+    smtp_username: str = ""
+    smtp_password: str = ""
+    #: Where people open the console, so a mail links the tab it is about (`FRD-409` FR-10).
+    #: Empty, the mail names the tab instead.
+    console_url: str = ""
 
     # Shared counter store for rate limits and budget reservations (ADR-0008 / FRD-405). Empty
     # makes rate limits per process and budgets racy — documented degradations, not silent ones.

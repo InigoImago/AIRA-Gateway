@@ -33,6 +33,9 @@ TIMEOUT_SECONDS = 5.0
 #: one, and a request carrying one would arrive at another admin endpoint with the token.
 DOT_SEGMENTS = frozenset({".", ".."})
 
+#: Where Keycloak names the realm in an issuer: `https://sso.example/realms/<realm>`.
+REALMS_MARKER = "/realms/"
+
 
 @dataclass(frozen=True, slots=True)
 class DirectoryEntry:
@@ -65,6 +68,28 @@ def _user_entry(row: dict[str, Any], username: str) -> DirectoryEntry:
         label=name or username,
         detail=str(row.get("email") or ""),
     )
+
+
+def directory_for(
+    issuer: str, url: str, client_id: str, client_secret: str
+) -> KeycloakDirectory | None:
+    """The directory an installation configured, or ``None`` without an account or a realm.
+
+    The realm is the issuer's. The admin API is reached at ``url`` where one is set — the issuer
+    is the address browsers use, and inside a container it is rarely Keycloak — and at the
+    issuer's server otherwise.
+    """
+    issuer = issuer.strip().rstrip("/")
+    if REALMS_MARKER not in issuer or not (client_id and client_secret):
+        return None
+    server, realm = issuer.rsplit(REALMS_MARKER, 1)
+    return KeycloakDirectory(url.strip() or server, realm, client_id, client_secret)
+
+
+def _names_a_group(path: str) -> bool:
+    """Whether ``path`` is one Keycloak could emit: absolute, not the root, without a `.` or `..`
+    segment. Anything else names no group and is answered without asking."""
+    return path.startswith("/") and path != "/" and DOT_SEGMENTS.isdisjoint(path.split("/"))
 
 
 class KeycloakDirectory:
@@ -133,22 +158,50 @@ class KeycloakDirectory:
         answered without asking.
         """
         wanted = path.strip()
-        if not wanted.startswith("/") or wanted == "/":
-            return False
-        if not DOT_SEGMENTS.isdisjoint(wanted.split("/")):
+        if not _names_a_group(wanted):
             return False
         with self._connection() as http:
+            group = self._group(http, self._token(http), wanted)
+        return group is not None
+
+    def group_members(self, path: str, limit: int) -> list[DirectoryEntry]:
+        """The people directly in the group at exactly ``path`` — at most ``limit``, none when
+        there is no such group — each with their address as its ``detail`` (`FRD-409`).
+
+        Direct members only, because a grant to a group reaches only the people a token reports in
+        that very group (`aira_common.access.resolve`). A disabled account is nobody to write to.
+        """
+        wanted = path.strip()
+        if not _names_a_group(wanted) or limit < 1:
+            return []
+        with self._connection() as http:
             token = self._token(http)
-            try:
-                response = http.get(
-                    f"{self._base}/admin/realms/{self._realm}/group-by-path"
-                    f"{quote(wanted, safe='/')}",
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            except httpx.HTTPError as exc:
-                raise DirectoryUnavailable("the identity provider could not be reached") from exc
+            group = self._group(http, token, wanted)
+            group_id = group.get("id") if group is not None else None
+            if not isinstance(group_id, str) or not group_id:
+                return []
+            rows = self._get(
+                http, token, f"/groups/{quote(group_id, safe='')}/members", {"max": limit}
+            )
+        return [
+            _user_entry(row, username)
+            for row in rows
+            if isinstance(username := row.get("username"), str)
+            and username
+            and row.get("enabled") is not False
+        ][:limit]
+
+    def _group(self, http: httpx.Client, token: str, path: str) -> dict[str, Any] | None:
+        """The group at exactly ``path``, or ``None`` when the realm has none there."""
+        try:
+            response = http.get(
+                f"{self._base}/admin/realms/{self._realm}/group-by-path{quote(path, safe='/')}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        except httpx.HTTPError as exc:
+            raise DirectoryUnavailable("the identity provider could not be reached") from exc
         if response.status_code == 404:
-            return False
+            return None
         if response.status_code != 200:
             # A refusal to *look* (403 without `query-groups`) is not a "no": nobody could check.
             raise DirectoryUnavailable("the identity provider could not be asked")
@@ -156,7 +209,7 @@ class KeycloakDirectory:
             body = response.json()
         except ValueError as exc:
             raise DirectoryUnavailable("the identity provider answered unreadably") from exc
-        return isinstance(body, dict) and body.get("path") == wanted
+        return body if isinstance(body, dict) and body.get("path") == path else None
 
     def search(self, query: str) -> list[DirectoryEntry]:
         """Groups and users matching ``query``, groups first — granting to a group is the point.

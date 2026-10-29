@@ -148,9 +148,9 @@ IT Security's to author, and the API says so rather than the UI. *(Since `FRD-61
 
 ## 6. Open
 
-- Alert *delivery* (mail, webhook, Kafka topic for an external system) is `FRD-503`, not here. A
-  rule that fires records an event; who gets told is a separate decision with a separate blast
-  radius.
+- Alert *delivery* (mail, webhook, Kafka topic for an external system) is not here. A rule that
+  fires records an event; who gets told is a separate decision with a separate blast radius — taken
+  for mail to a use case's administrators in `FRD-409`.
 - `new_source_ip` compares a window with the one before it, and its first evaluation after
   deployment sees every address as new. `FRD-501` handles the warm-up; the rule only declares it.
 

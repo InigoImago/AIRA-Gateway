@@ -9,6 +9,7 @@ from django.contrib.auth.models import Group
 from django.db.models import Count
 from rest_framework import serializers
 
+from aira_common.mail import ThresholdsInvalid, budget_mail_thresholds
 from aira_management.apps.api.authentication import USERNAME_MAX_LENGTH
 from aira_management.apps.catalog.models import Model as CatalogModel
 from aira_management.apps.usecases.access import (
@@ -63,6 +64,8 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             "prompt_caching_enabled",
             "prompt_cache_ttl",
             "retention_days",
+            "budget_mail_thresholds",
+            "mail_admins_on_anomalies",
             "created_at",
             "updated_at",
         ]
@@ -106,6 +109,13 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
                 "Administrator releases a model into the catalog before a use case can be given it."
             )
         return models
+
+    def validate_budget_mail_thresholds(self, thresholds: object) -> list[int]:
+        """Kept as both planes read it: ascending, distinct, 1 to 100, at most five (`FRD-409`)."""
+        try:
+            return budget_mail_thresholds(thresholds)
+        except ThresholdsInvalid as invalid:
+            raise serializers.ValidationError(str(invalid)) from None
 
     def validate_payload_visibility(self, visibility: str) -> str:
         """Under strict data mode only `oversight` may be saved (`FRD-627` FR-3).

@@ -20,6 +20,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_common.fallback import FallbackKind
+from aira_common.mail import ThresholdsInvalid, budget_mail_thresholds
 from aira_common.money import to_nanos
 from aira_common.pipelines import MAX_FALLBACK_MODELS, MAX_MODEL_LENGTH
 from aira_gateway.db.base import Base
@@ -198,7 +199,25 @@ def _usecase_fields(payload: dict[str, Any]) -> dict[str, Any]:
         "retention_days": int(payload.get("retention_days") or DEFAULT_RETENTION_DAYS),
         # Absent keeps `None`, read as unrestricted; an empty list releases nothing (`FRD-308`).
         "allowed_models": _released_models(payload),
+        # `FRD-409`. Absent is the default both planes share, and so is no mail about findings.
+        "budget_mail_thresholds": _mail_thresholds(payload),
+        "mail_admins_on_anomalies": bool(payload.get("mail_admins_on_anomalies", False)),
     }
+
+
+def _mail_thresholds(payload: dict[str, Any]) -> list[int] | None:
+    """The use case's mail thresholds (`FRD-409` FR-1), or ``None`` — the shared default — where
+    the event says nothing, or says something Management would never have accepted. Logged in that
+    case, because the default is then a guess about what an administrator set."""
+    if "budget_mail_thresholds" not in payload:
+        return None
+    try:
+        return budget_mail_thresholds(payload["budget_mail_thresholds"])
+    except ThresholdsInvalid as unreadable:
+        _log.warning(
+            "usecase_mail_thresholds_unreadable", slug=payload.get("slug"), why=str(unreadable)
+        )
+        return None
 
 
 async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:

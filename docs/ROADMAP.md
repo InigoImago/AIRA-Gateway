@@ -110,13 +110,13 @@ FRDs: `FRD-300-pipeline-engine` (routing is specified there; `FRD-301` was never
 ## Phase 4 — Governance: Budgets & Quotas
 **Goal:** Cost/usage control per use case and per member, enforced and visible.
 
-**Delivered**, except threshold alerts.
+**Delivered.**
 
 Deliverables:
 - **Budget** definitions (per use case / per member), usage accounting, enforcement in the gateway.
-- UI for setting budgets and viewing consumption; ~~alerts on threshold breach~~ — not built. The
-  console colours a bar from 80 % and a caller can read its own allowance (`FRD-139`), but nobody is
-  told before a limit refuses (Backlog).
+- UI for setting budgets and viewing consumption; alerts on threshold breach — **done** as mail
+  (`FRD-409`, 2026-10-29): a use case's administrators set the shares of a budget at which the
+  person, or for the shared budget the administrators, are mailed; 100 % by default.
 
 FRDs: `FRD-400-budget-model`, `FRD-401-budget-enforcement`, `FRD-402-budget-ui`; then `FRD-403`
 (cost), `FRD-404` (retention), `FRD-405` (rate limits) and `FRD-406` (redaction).
@@ -384,7 +384,7 @@ has agreed to schedule are in [`GAP-ANALYSIS.md`](GAP-ANALYSIS.md).
 | **Content redaction** — masking sensitive values *inside* a stored payload | `FRD-406` | **Credentials: done (2026-08-08).** API keys, bearer tokens, JWTs, `Authorization:` values and PEM private key blocks are masked before storage, plus any pattern a deployment adds (`AIRA_REDACT_PATTERNS`, additive). **PII: deliberately not**, because names and customer numbers are what the payload is stored for and a redactor that mangles them ends with storage switched off entirely — for that, the control is `FRD-404`'s per-use-case switch, and since `FRD-309` a use case may replace personal data before the prompt is sent and stored (`pii_filter`). The PII half is declined, not deferred (`ADR-0016`). |
 | ~~Spend and usage reporting~~ | `FRD-601` | **Done (2026-08-06).** Gateway `GET /v1beta/reporting` + a **Reporting** screen: totals and breakdowns by use case, model and member over a chosen period, scoped by the caller's role (ADR-0009). Per-request *browsing* came with `FRD-505` (`ADR-0016`). |
 | ~~A use case's consumption without a budget~~ | `FRD-603` | **Done (2026-08-09).** Consumption was rendered only inside a budget card, so an unlimited use case showed neither tokens nor spend while `request_logs` held both. `GET /v1beta/reporting?use_case=` plus a Consumption card above the budgets. |
-| Budget threshold alerting | `FRD-402` follow-up | Open. The console colours a bar from 80 % and a caller can read its own allowance (`FRD-139`), but a breach is still a 429 — nobody is told before the wall is hit. |
+| ~~Budget threshold alerting~~ | `FRD-409` | **Done (2026-10-29).** Mail at the shares of a budget a use case's administrators set, to the person about their own allowance and to the administrators about the shared one; and, where they ask, to the administrators about the use case's anomaly findings, naming nobody. |
 | ~~Membership reconciliation (Keycloak groups ↔ Management)~~ | `FRD-209` | **Closed.** A grant names a group or a person, and both planes resolve access with `aira_common.access.resolve`, so there are no longer two answers to drift apart. |
 | ~~Pagination~~ | `FRD-207`/`FRD-208` | **Done (2026-08-08).** The use-case list is server-paged and explicitly ordered; findings are **cursor**-paged because they are an append-only log; the model catalog stays client-side on purpose, because two console warnings count over the *whole* catalog. |
 | ~~Read-model tombstones~~ | — | **Done (2026-08-05).** Deleting a use case left its keys authenticating and its budgets, limits and pipeline in force; the tombstone now cascades and migration 0011 cleared what earlier deletions had left. |

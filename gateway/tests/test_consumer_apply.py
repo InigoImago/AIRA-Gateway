@@ -2,12 +2,14 @@ from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from aira_common.kafka import EVENT_TYPE_HEADER
 from aira_gateway.auth import keys
 from aira_gateway.auth.service import ApiKeyService
+from aira_gateway.consumer import apply as apply_module
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.consumer.worker import decode_event_type
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
@@ -755,6 +757,63 @@ async def test_reasoning_turned_off_in_management_is_off_in_the_gateway(make_ses
         )
     (row,) = await _all(make_session, UseCaseRead)
     assert row.include_reasoning is False
+
+
+# ---- mail on budgets and findings (`FRD-409`) -------------------------------------------------
+
+
+async def test_the_mail_settings_arrive_as_management_set_them(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(
+            session,
+            "usecase.upserted",
+            {
+                "slug": "uc",
+                "name": "N",
+                "budget_mail_thresholds": [100, 80],
+                "mail_admins_on_anomalies": True,
+            },
+        )
+    (row,) = await _all(make_session, UseCaseRead)
+    assert row.budget_mail_thresholds == [80, 100]
+    assert row.mail_admins_on_anomalies is True
+
+
+async def test_an_event_without_them_reads_as_the_default_both_planes_share(make_session) -> None:
+    """An older Management says nothing: a mail when a budget is used up, none about findings."""
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+    (row,) = await _all(make_session, UseCaseRead)
+    assert row.budget_mail_thresholds is None
+    assert row.mail_thresholds == (100,)
+    assert row.mail_admins_on_anomalies is False
+
+
+async def test_no_thresholds_is_kept_as_no_mail_not_read_as_the_default(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(
+            session, "usecase.upserted", {"slug": "uc", "name": "N", "budget_mail_thresholds": []}
+        )
+    (row,) = await _all(make_session, UseCaseRead)
+    assert row.mail_thresholds == ()
+
+
+async def test_thresholds_management_would_not_accept_read_as_the_default_and_say_so(
+    make_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with structlog.testing.capture_logs() as logs:
+        # A logger first used inside the capture: the module's own may already be cached with the
+        # processors an earlier test configured, and would log past it.
+        monkeypatch.setattr(apply_module, "_log", structlog.get_logger(apply_module.__name__))
+        async with make_session() as session:
+            await apply_event(
+                session,
+                "usecase.upserted",
+                {"slug": "uc", "name": "N", "budget_mail_thresholds": [0, 250]},
+            )
+    (row,) = await _all(make_session, UseCaseRead)
+    assert row.mail_thresholds == (100,)
+    assert [entry["event"] for entry in logs] == ["usecase_mail_thresholds_unreadable"]
 
 
 # ---- who may read content, from whichever field the event carries (`FRD-622` FR-1) ---------

@@ -128,7 +128,7 @@ A grant binds a **principal** — a person or a Keycloak group — to a use case
 | Grant role | May                                                                                            |
 | ---------- | ---------------------------------------------------------------------------------------------- |
 | `user`     | call the gateway attributed to this use case; see it, its requests, its figures, its findings (**Warnings**) and its anomaly rules (**Rules**), as far as its `payload_visibility` allows; issue an API key for itself |
-| `admin`    | additionally change what happens inside it: members and group grants, API keys, the models released to it, pipeline, budgets — a budget for one named person included — rate limits, its own anomaly rules, storage, visibility and retention; run the question catalogue on it; search the directory for people and groups to add; and retire it |
+| `admin`    | additionally change what happens inside it: members and group grants, API keys, the models released to it, pipeline, budgets — a budget for one named person included — and the shares of a budget at which a mail goes out, rate limits, its own anomaly rules and whether its administrators are mailed what they find, storage, visibility and retention; run the question catalogue on it; search the directory for people and groups to add; and retire it |
 
 Two rules the code enforces so that neither plane has to restate them:
 

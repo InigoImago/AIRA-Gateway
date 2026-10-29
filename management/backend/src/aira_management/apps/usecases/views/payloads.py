@@ -41,6 +41,9 @@ def _snapshot(usecase: UseCase) -> dict[str, Any]:
         "prompt_caching_enabled": usecase.prompt_caching_enabled,
         "prompt_cache_ttl": usecase.prompt_cache_ttl,
         "retention_days": usecase.retention_days,
+        # `FRD-409`: an absent field is the gateway's default, which is this plane's too.
+        "budget_mail_thresholds": list(usecase.budget_mail_thresholds),
+        "mail_admins_on_anomalies": usecase.mail_admins_on_anomalies,
         # `FRD-308`. Sorted so the event is stable: the topic is compacted by slug, and a payload
         # differing only in ordering would make every diff of the log a false positive.
         "allowed_models": sorted(usecase.allowed_models.values_list("name", flat=True)),

@@ -390,3 +390,27 @@ def test_me_states_whether_the_installation_runs_strict_data_mode(strict: bool) 
 
     with setting(strict_data_mode=strict):
         assert client.get("/api/v1/me").json()["strict_data"] is strict
+
+
+@pytest.mark.parametrize(
+    ("relay", "sender", "sends"),
+    [
+        ("", "", False),
+        ("relay.example", "", False),
+        ("", "aira@example.com", False),
+        ("relay.example", "AIRA <aira@example.com>", True),
+    ],
+)
+def test_me_says_whether_this_installation_sends_mail_at_all(
+    monkeypatch, relay: str, sender: str, sends: bool
+) -> None:
+    """A use case's mail settings say plainly when nothing is sent (`FRD-409` FR-11): a relay and
+    a sender, or no mail at all."""
+    private, public = _keypair()
+    _use_fake_verifier(monkeypatch, public)
+    token = _token(private)
+
+    with setting(smtp_host=relay, mail_from=sender):
+        resp = APIClient().get("/api/v1/me", HTTP_AUTHORIZATION=f"Bearer {token}")
+
+    assert resp.json()["mail_enabled"] is sends

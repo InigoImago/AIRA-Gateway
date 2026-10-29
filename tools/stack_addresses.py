@@ -70,6 +70,8 @@ PUBLISHED = {
     #: The development domain's KDC (`windows-sso` profile, `FRD-140`). Not HTTP: a workstation's
     #: Kerberos asks it for Keycloak's service ticket, and takes it as `netloc`.
     "kdc": "AIRA_PUBLISH_KDC_PORT",
+    #: The showcase's mail catcher: what the gateway mailed, on a page.
+    "mailpit": "AIRA_PUBLISH_MAILPIT_PORT",
 }
 
 

@@ -138,15 +138,8 @@ class ManagementSettings(BaseAiraSettings):
             ssl_cafile=self.kafka_ssl_cafile,
         )
 
-    # Directory search (`FRD-209`): a **read-only** service account with `view-users` and
-    # `query-groups` on the realm. Absent by default; the console then searches what Management
-    # already knows, and says so.
-    directory_client_id: str = ""
-    directory_client_secret: str = ""
-    #: Where this service reaches Keycloak's admin API, when that is not the address in the
-    #: issuer. The issuer is the address *browsers* use; inside a container it is usually not
-    #: Keycloak at all, and every group check would then fail as "could not be asked".
-    directory_url: str = ""
+    # The directory account (`directory_client_id` and its two siblings) is shared with the gateway,
+    # which reads addresses for its mail (`FRD-409`), so it is declared on `BaseAiraSettings`.
 
     #: Where the model reference is read live (`FRD-508`): `https://models.dev/api.json`, or a
     #: mirror of it. Empty — the default — answers from the copy this release ships, so an

@@ -12,6 +12,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from aira_common.mail import KEEP_NOTICES_DAYS
 from aira_common.permissions import Permission, RoleDefinition
 from aira_management.apps.outbox.models import KEPT_AFTER_DAYS
 from aira_management.apps.privacy.activities import ACTIVITIES, PERSONAL_DATA_PERMISSIONS
@@ -52,6 +53,9 @@ class Installation:
     roles: tuple[RoleAccess, ...]
     #: `AIRA_STRICT_DATA_MODE` (`FRD-627` FR-11): the notice says which mode the installation runs.
     strict_data: bool = True
+    #: Whether the gateway mails at all (`AIRA_SMTP_HOST` and `AIRA_MAIL_FROM`, `FRD-409`): the
+    #: notice says whether what it describes about mail happens here.
+    mail_enabled: bool = False
 
     @classmethod
     def of(cls, settings: ManagementSettings, roles: tuple[RoleDefinition, ...]) -> Installation:
@@ -73,6 +77,7 @@ class Installation:
                 for role in roles
             ),
             strict_data=settings.strict_data_mode,
+            mail_enabled=settings.mail_enabled,
         )
 
 
@@ -103,6 +108,8 @@ def values(language: Language, installation: Installation) -> dict[str, str]:
     filled["key_max_lifetime"] = language.values["days"].format(days=installation.api_key_max_days)
     # Not configuration but the relay's own constant, read rather than restated.
     filled["outbox_retention"] = language.values["days"].format(days=KEPT_AFTER_DAYS)
+    filled["mail_state"] = language.values["mail_on" if installation.mail_enabled else "mail_off"]
+    filled["mail_retention"] = language.values["days"].format(days=KEEP_NOTICES_DAYS)
     return filled
 
 

@@ -147,4 +147,5 @@ budget tab and in the catalog.
   (approval and model pickers) on the same `Model` record; alerting when a budget approaches its
   limit. *Since done:* spend over time is `FRD-626`, approval and the pickers are `FRD-307` and
   `FRD-308`, and the demo's local models are seeded with prices
-  (`apps/seed/contributions/local_models.py`). Alerting before a budget is reached is not built.
+  (`apps/seed/contributions/local_models.py`), and alerting when a budget approaches its limit is
+  `FRD-409`, as mail.

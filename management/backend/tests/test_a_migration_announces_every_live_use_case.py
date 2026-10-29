@@ -35,6 +35,12 @@ MIGRATION = importlib.import_module(
     "aira_management.apps.usecases.migrations.0016_payload_visibility"
 )
 
+#: Fields the views send that came after `0016`, with what the gateway reads each one's absence as
+#: (`FRD-409`). Its announcement cannot carry them, and need not while a use case nobody changed
+#: holds exactly that value: a field added later whose default differs needs an announcement of its
+#: own, and belongs here only once it has one.
+ADDED_SINCE = {"budget_mail_thresholds": [100], "mail_admins_on_anomalies": False}
+
 
 # Off, because the migration is history: it ran once, with its own frozen copy of the event, and
 # derives the retired boolean from the stored value. Strict data mode is applied when read.
@@ -52,8 +58,13 @@ def test_every_live_use_case_is_announced_in_full(settings) -> None:
     assert [(e.topic, e.key, e.event_type) for e in events] == [
         ("aira.t.usecases", "live", "usecase.upserted")
     ]
-    # The event the views send, field for field: a partial one would reset what it leaves out.
-    assert events[0].payload == _snapshot(live)
+    # The event the views send, field for field: a partial one would reset what it leaves out —
+    # except the fields added after this migration, which a use case it announced still holds at
+    # the value the gateway reads their absence as.
+    sent_today = _snapshot(live)
+    for field, absent_reads_as in ADDED_SINCE.items():
+        assert sent_today.pop(field) == absent_reads_as
+    assert events[0].payload == sent_today
 
 
 def test_the_announcement_carries_the_new_field_and_the_one_an_old_gateway_reads(settings) -> None:

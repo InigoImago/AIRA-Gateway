@@ -24,6 +24,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from aira_common.mail import DEFAULT_BUDGET_MAIL_THRESHOLDS
 from aira_gateway.db.base import Base, new_id
 
 
@@ -76,7 +77,24 @@ class UseCaseRead(Base):
     #: would stop every use case on a partly upgraded stack. A JSON list rather than a relation:
     #: the gateway only asks it of the one row it already fetched.
     allowed_models: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)
+    #: At which shares of a budget a mail goes out (`FRD-409` FR-1). NULL — an event from an older
+    #: Management, or a row from before the column — reads as the default both planes share
+    #: (`aira_common.mail`); an empty list is no budget mail.
+    budget_mail_thresholds: Mapped[list[int] | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
+    #: Whether the administrators are mailed the use case's anomaly findings (`FRD-409` FR-6).
+    mail_admins_on_anomalies: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def mail_thresholds(self) -> tuple[int, ...]:
+        """The thresholds in force: the stored list, or the default where none was ever said."""
+        if self.budget_mail_thresholds is None:
+            return DEFAULT_BUDGET_MAIL_THRESHOLDS
+        return tuple(self.budget_mail_thresholds)
 
 
 class UseCaseMemberRead(Base):

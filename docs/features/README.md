@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**115 of 119 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**116 of 120 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -91,6 +91,7 @@ status that goes stale in the copy nobody opens.
 | [406](FRD-406-content-redaction.md) | Redaction of credentials in stored payloads | 4 | ✅ Done — credential half only |
 | [407](FRD-407-a-persons-own-budget.md) | A person's own budget, in the use case's hierarchy | 4 | ✅ Built |
 | [408](FRD-408-what-a-long-session-costs.md) | What a long session costs, counted where it is shown | 4 | ✅ Built |
+| [409](FRD-409-a-mail-when-a-budget-runs-low.md) | A mail when a budget runs low, and when a use case's anomaly rule fires | 4 (Budgets) | ✅ Built |
 | [500](FRD-500-anomaly-rules.md) | Anomaly rules | 5 | ✅ Done |
 | [501](FRD-501-anomaly-detection-engine.md) | The detection engine | 5 | ✅ Done |
 | [502](FRD-502-security-console-and-traces.md) | The IT Security console, own warnings, and per-use-case traces | 5 | ✅ Done |

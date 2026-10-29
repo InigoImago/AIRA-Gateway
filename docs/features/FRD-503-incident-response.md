@@ -197,6 +197,7 @@ actually exercised them. That is the argument for the layer.
 
 ## 7. Open
 
-- Alert delivery (`FRD-502`'s console will show events; sending them somewhere is later).
+- Alert delivery (`FRD-502`'s console shows events; mail to a use case's administrators is
+  `FRD-409`).
 - A suspension is not distributed to Management, so the console reads it from the gateway. That is
   deliberate for now (§4.3) and worth revisiting only if a second consumer appears.

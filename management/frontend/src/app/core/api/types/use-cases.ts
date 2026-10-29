@@ -48,6 +48,13 @@ export interface UseCase {
   /** How long stored prompts and responses are kept, in days (FRD-404). */
   retention_days?: number;
   /**
+   * At which shares of a budget a mail goes out, in percent (`FRD-409`): to the person about their
+   * own allowance, to the administrators about the shared one. `[100]` by default; empty for none.
+   */
+  budget_mail_thresholds?: number[];
+  /** Whether the administrators are mailed what the use case's anomaly rules find (`FRD-409`). */
+  mail_admins_on_anomalies?: boolean;
+  /**
    * Which catalogued models this use case may call (`FRD-308`).
    *
    * **Empty means none**: absence of a release is not a release. `undefined` means the server did

@@ -129,8 +129,9 @@ services:
                     AIRA_KAFKA_SASL_PASSWORD AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD \
                     AIRA_MANAGEMENT_POSTGRES_PASSWORD AIRA_POSTGRES_PASSWORD AIRA_PSEUDONYM_SECRET \
                     AIRA_REDIS_PASSWORD \
-                    AIRA_REDIS_SENTINEL_PASSWORD AIRA_SECRET_KEY AIRA_VERTEX_API_KEY \
-                    AIRA_VERTEX_CREDENTIALS AIRA_VERTEX_FEDERATION_CLIENT_SECRET; do
+                    AIRA_REDIS_SENTINEL_PASSWORD AIRA_SECRET_KEY AIRA_SMTP_PASSWORD \
+                    AIRA_VERTEX_API_KEY AIRA_VERTEX_CREDENTIALS \
+                    AIRA_VERTEX_FEDERATION_CLIENT_SECRET; do
           value=$$(eval echo \$$$$name)
           [ -n "$$value" ] && set -- "$$@" "$$name=$$value"
         done
@@ -164,6 +165,7 @@ services:
       AIRA_REDIS_PASSWORD: ${AIRA_REDIS_PASSWORD:-}
       AIRA_REDIS_SENTINEL_PASSWORD: ${AIRA_REDIS_SENTINEL_PASSWORD:-}
       AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-}
+      AIRA_SMTP_PASSWORD: ${AIRA_SMTP_PASSWORD:-}
       AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
       AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
       AIRA_VERTEX_FEDERATION_CLIENT_SECRET: ${AIRA_VERTEX_FEDERATION_CLIENT_SECRET:-}
@@ -223,6 +225,20 @@ services:
   # the KDC whose tickets a Windows sign-on presents. It stands in for an installation's own AD,
   # so it is behind a profile of its own — `make windows-sso-up` starts it and gives the realm
   # its half, `make test-windows-sso` proves both halves and takes the realm's half away again.
+  # A mail catcher, readable at http://localhost:8025: the relay a showcase can point the gateway at
+  # (in `.env`: `AIRA_SMTP_HOST=mailpit`, `AIRA_SMTP_PORT=1025`, `AIRA_SMTP_SECURITY=none`,
+  # `AIRA_MAIL_FROM=aira@demo.aira`), so a budget used up or a use case's anomaly finding lands
+  # here rather than in anybody's inbox. CI's integration job sets exactly those. The demo people's
+  # addresses are in the development realm; an installation names its own relay.
+  mailpit:
+    image: axllent/mailpit:v1.28
+    container_name: ${AIRA_STACK:-aira}-mailpit
+    ports:
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_MAILPIT_PORT:-8025}:8025"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_MAILPIT_PORT:-8025}:8025"
+    networks: [aira]
+    restart: unless-stopped
+
   ad:
     build:
       context: ../..

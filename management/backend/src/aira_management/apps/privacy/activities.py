@@ -218,6 +218,29 @@ SECURITY = Activity(
         ),  # fmt: skip
     ),
 )
+#: Mail about budgets and anomaly findings. The address is read from the directory when a mail is
+#: sent and kept nowhere; what is stored is which mail was owed, and what became of it.
+MAIL = Activity(
+    "mail",
+    (
+        _gw(
+            "mail_notices",
+            "id",
+            "created_at",
+            "kind",
+            "use_case",
+            "subject_key",
+            "period_key",
+            "threshold",
+            "expires_at",
+            "outcome",
+            "recipients",
+            "attempts",
+            "last_error",
+            "sent_at",
+        ),  # fmt: skip
+    ),
+)
 #: Prompts leave the installation for the model that answers them. Nothing is stored for it.
 MODEL_PROVIDERS = Activity("model_providers")
 #: Spans and log lines to the installation's observability stack and any forwarding channel.
@@ -254,6 +277,7 @@ ACTIVITIES: tuple[Activity, ...] = (
     CONTENT_READS,
     CONSUMPTION,
     SECURITY,
+    MAIL,
     MODEL_PROVIDERS,
     TELEMETRY,
     PIPELINE_TESTS,
@@ -301,6 +325,8 @@ NOT_PERSONAL_COLUMNS: dict[tuple[Plane, str], tuple[str, ...]] = {
         "prompt_cache_ttl",
         "payload_visibility",
         "retention_days",
+        "budget_mail_thresholds",
+        "mail_admins_on_anomalies",
         "created_at",
         "updated_at",
         "deleted_at",

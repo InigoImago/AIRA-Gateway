@@ -144,7 +144,7 @@ choose, and those are yours.
 | **`preferred_username`** in the access token (Keycloak's default) | Joins a person's browser session and their API key into one identity, so per-person budgets and a kill switch aimed at a person hit both | Each credential gets its own allowance; nothing is silently shared |
 | **Edit username off** in realm login settings (the default) | The name in the token decides person-grants, per-head allowances and kill switches | Somebody can rename themselves into a colleague's access |
 | **Three group paths** for the organisation-wide roles, named in `AIRA_ROLE_GROUPS` | This is how Global Administrator, IT Security and IT Steuerung are held | An installation nobody can administer; Management refuses to start without a Global Administrator group |
-| A **read-only service account** with `view-users` and `query-groups` — nothing else | So the console can *search* your groups and people when somebody grants access | No role can be bound to a group at all: a group nobody could check is refused rather than trusted |
+| A **read-only service account** with `view-users` and `query-groups` — nothing else | So the console can *search* your groups and people when somebody grants access, and the gateway can read the address a mail goes to | No role can be bound to a group at all: a group nobody could check is refused rather than trusted; and no mail finds anybody |
 
 **Why it has to *ask* the directory at all** — the question an administrator asks first, and the
 only reason any realm-management permission is requested:
@@ -163,7 +163,9 @@ treat that risk differently, on purpose:
   (*nobody yet*).
 
 `view-users` is the same lookup for a grant that names **one person** instead of a group, and is
-what lets the console offer a picker rather than a field for a directory id.
+what lets the console offer a picker rather than a field for a directory id. The gateway asks it one
+more question, only where the installation sends mail: the address of the person a mail goes to, by
+exact username, when the mail is sent — and the members of a group that administers a use case.
 
 Three properties of that lookup are worth stating to whoever grants it:
 
@@ -592,6 +594,7 @@ Read it in the order a request travels.
 | `persistence/` | The audit trail: `writer.py` (a bounded queue off the request path; a full queue writes inline rather than drop a row), `redaction.py` (credential shapes in stored content), `sanitize.py`. |
 | `audit.py`, `audio.py`, `payloads.py`, `shielding.py` | What is recorded — spoken audio as a description, never the audio — who may read stored content, every read being recorded in turn, and the exit work a dropped connection must not cancel. |
 | `anomalies/` | Detection over the audit rows, and the suspensions it produces. |
+| `mail/` | Mail when a budget crosses its use case's thresholds and when its anomaly rules find something: a round a minute beside the detection (`notifier.py`), the text (`messages.py`), the address from the directory (`recipients.py`) and the relay (`transport.py`). Off without a relay. |
 | `reporting/`, `api/reporting/` | Spend and usage, the series behind the usage chart, the register of processing activities (`register.py`), their CSV export, the request list and the findings. |
 | `api/incidents/` | The kill switch (suspensions), the two model checks (`:check`, `:checkThinking`) and the log of who read stored content. |
 | `consumer/` | The second process (`worker.py`): applies configuration events into the read-model (`apply.py`). |
@@ -905,6 +908,7 @@ flowchart LR
     machine -->|"Bearer"| gw
 
     mgmt -. "directory lookups<br/>aira-directory: view-users · query-groups" .-> kc
+    gw -. "a mail's address, only with mail on<br/>the same account" .-> kc
     gw -. "signing keys (JWKS), cached" .-> kc
     mgmt -. "signing keys (JWKS), cached" .-> kc
     mgmt -- "API key hashes, memberships and roles over Kafka" --> gw

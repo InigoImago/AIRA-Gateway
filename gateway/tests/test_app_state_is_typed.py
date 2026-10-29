@@ -85,6 +85,8 @@ NOT_A_SERVICE = {
     "counters": "may be `None` by design when Redis is absent, and every reader tests for that",
     "degradation": "a log of what is degraded, read for its contents by the readiness probe",
     "clock": "the installation's time zone, a `tzinfo` fixed at start-up and read for its value",
+    "mail": "the mail round (`None` without a relay), started and stopped with the application "
+    "and called by no request",
 }
 
 
